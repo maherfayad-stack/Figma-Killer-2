@@ -10,7 +10,6 @@
  *
  * @see server/handlers/cms/export.ts
  * @see src/core/data/bundleSchema.ts
- * @see docs/plans/2026-05-19-site-transfer-ux.md
  */
 
 import { describe, test, expect, beforeAll } from 'bun:test'

@@ -1,4 +1,5 @@
 # 02 — Measurements
+> **Trust:** historical, dated 2026-09-09. Paths may be wrong. Never act on it.
 
 Generated from [`measurements.json`](./measurements.json) — that file is the
 source of truth; if this table and the JSON ever disagree, the JSON wins and

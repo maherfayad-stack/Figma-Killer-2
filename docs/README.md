@@ -1,280 +1,145 @@
-# Studio Docs
+# Studio docs
+> **Purpose:** the doc map: every maintained doc, one row, with what it is for, when to read it and how far to trust it · **Read when:** after `PROJECT-BRIEF.md`, `STATE.md` and `ROADMAP.md`, to find the doc for your task · **Trust:** index · **Owner:** studio-scribe · **Verified:** 2026-09-23
 
-The documentation tree for Studio. This index tells you what to read, in what order, and where to look for what.
+One row per doc. This page holds no orientation of its own: what Studio is, what works and the traps are in [`PROJECT-BRIEF.md`](../PROJECT-BRIEF.md); the rules are in [`CLAUDE.md`](../CLAUDE.md); how docs are written is in [`CONVENTIONS.md`](CONVENTIONS.md).
 
-If you're an agent: start at [`PROJECT-BRIEF.md`](../PROJECT-BRIEF.md) for orientation and `CLAUDE.md` for the rules, then use [`agent-refs/`](agent-refs/) — compressed, agent-facing versions of everything below. Come here when you need the long form.
-If you're a human contributor: start with [`architecture.md`](architecture.md), then read whichever feature or reference page is closest to what you're changing.
+---
 
-> **Note:** this tree still contains documentation for the dormant CMS half of the fork (auth, plugins, the server-side publisher, site shell). Studio's own docs are the `features/studio-*.md` and `features/canvas-*.md` pages plus [`features/inspector.md`](features/inspector.md). Where a CMS doc conflicts with `PROJECT-BRIEF.md`, the brief wins. Nothing in that half has been deleted — see [`STUDIO-CMS-REMOVAL-PLAN.md`](../STUDIO-CMS-REMOVAL-PLAN.md) for what is dead, what is load-bearing under a CMS-shaped name (`src/core/publisher/`, `server/auth/`, `src/core/page-tree/`), and what is blocked on a product decision.
+## TL;DR
+
+- **Reading order for an agent:** [`PROJECT-BRIEF.md`](../PROJECT-BRIEF.md) → [`STATE.md`](../STATE.md) → [`ROADMAP.md`](../ROADMAP.md) → this map → the `agent-refs/` page the BRIEF's routing table names for your task.
+- **Trust** says how far to rely on a doc: `rule` (gated constraints), `current` (describes the tree as it is), `current-cms` (accurate, but for the dormant CMS half), `live` (changes daily), `index` (a map), `historical` (a dated record: never act on it). Every doc's line 2 carries the same header, including an **Owner** and the date it was last **Verified** against the code (`not yet` means nobody has checked it since headers were added).
+- **Where a doc conflicts with `PROJECT-BRIEF.md`, the brief wins.** Where either conflicts with the code, the code wins: fix the doc.
+
+## Entry points (repo root)
+
+| Doc | Purpose | Read when | Trust |
+|---|---|---|---|
+| [`PROJECT-BRIEF.md`](../PROJECT-BRIEF.md) | orientation: what Studio is, what works and what does not, the traps, and which agent and docs a task needs | first, before any task | current |
+| [`CLAUDE.md`](../CLAUDE.md) | the rule book: every constraint a change must satisfy, each with its gate | always, before any change | rule |
+| [`STATE.md`](../STATE.md) | live coordination only: what is in flight, what is blocked, what a human still owes | before any task; write at every stage boundary | live |
+| [`ROADMAP.md`](../ROADMAP.md) | the single living plan: what to build next, in what order, by whom, and the open questions for the owner | before designing any change, to find its bundle | live |
+| [`AGENTS.md`](../AGENTS.md) | the pointer for non-Claude coding agents (Codex and others) | you are not Claude Code and just opened this repository | rule |
+| [`README.md`](../README.md) | what Studio is, quick start and commands, for humans | you are a person setting Studio up or looking around | current |
+
+## System docs
+
+| Doc | Purpose | Read when | Trust |
+|---|---|---|---|
+| [`architecture.md`](architecture.md) | the system overview: processes, folders, layers, request lifecycle, data model, and the dormant CMS half | orienting in an unfamiliar layer, or deciding where new code belongs | current |
+| [`server.md`](server.md) | the server in depth: boot, router, handlers, auth, database, publishing, plugin runtime, the single-operator posture | adding or changing an HTTP route or server subsystem | current |
+| [`editor.md`](editor.md) | the admin shell and visual editor in depth: routing, store, canvas, sidebars, panels | changing the editor UI or its store wiring | current |
+| [`design.md`](design.md) | the visual design system: principles, tokens, surfaces, primitives and the inspector in design language | changing any admin UI styling | current |
+| [`decisions.md`](decisions.md) | every settled owner decision, with its date, source and consequence | before re-opening a product question, or when a work order cites a decision id (OD-n, D-n, FEEL §6.n, BUILTIN §0.n) | current |
+| [`CONVENTIONS.md`](CONVENTIONS.md) | how docs in this repo are written, headed, placed and retired | before adding, moving or rewriting any doc | rule |
 
 ## Agent references
 
-| Ref | Read it when |
-|---|---|
-| [`agent-refs/path-index.md`](agent-refs/path-index.md) | **Always** — where everything lives, marked Studio / shared / dormant |
-| [`agent-refs/conventions-quickref.md`](agent-refs/conventions-quickref.md) | **Always before writing code** — every rule that has a gate test |
-| [`agent-refs/studio-pipeline.md`](agent-refs/studio-pipeline.md) | Parsing, evaluation, inlining, locks, writeback, codemods |
-| [`agent-refs/canvas-internals.md`](agent-refs/canvas-internals.md) | Canvas, iframes, injectors, overlays, geometry, events, perf |
-| [`agent-refs/editor-store.md`](agent-refs/editor-store.md) | Zustand slices, tree mutations, undo history, selection |
-| [`agent-refs/handoff-protocol.md`](agent-refs/handoff-protocol.md) | **Always** — how to read and write `STATE.md` |
-| [`agent-refs/glossary.md`](agent-refs/glossary.md) | You hit a term you don't recognise |
+Compressed, agent-facing summaries. Start here for any task; follow their links for depth.
 
----
+| Doc | Purpose | Read when | Trust |
+|---|---|---|---|
+| [`agent-refs/canvas-internals.md`](agent-refs/canvas-internals.md) | how the canvas works: iframes, injectors, overlays, geometry, events, bridge frames, perf | touching the canvas, a frame, an overlay or pointer handling | current |
+| [`agent-refs/conventions-quickref.md`](agent-refs/conventions-quickref.md) | every gated rule, compressed, plus the test traps | always, before writing code | rule |
+| [`agent-refs/editor-store.md`](agent-refs/editor-store.md) | the Zustand editor store: slices, tree mutations, undo history, selection | touching store state, mutations or undo | current |
+| [`agent-refs/glossary.md`](agent-refs/glossary.md) | the project vocabulary, one entry per term | you meet a term you do not recognise | current |
+| [`agent-refs/handoff-protocol.md`](agent-refs/handoff-protocol.md) | how `STATE.md`, its archive and a PR's handoff are written, so work survives the session that did it | before writing or archiving a `STATE.md` entry, and at every stage boundary | rule |
+| [`agent-refs/path-index.md`](agent-refs/path-index.md) | where every file lives, marked Studio, shared or dormant CMS | always: "where does X live?" | index |
+| [`agent-refs/studio-pipeline.md`](agent-refs/studio-pipeline.md) | the repo-to-board pipeline: parse, evaluate, inline, lock, write back | touching parsing, evaluation, node ids or codemods | current |
 
-## How to read this tree
+## Features: Studio
 
-```text
-docs/
-├── README.md                   ← this file (start here)
-├── CONVENTIONS.md              ← how docs in this repo are written (read before authoring)
-│
-├── architecture.md             ← system overview (start here for orientation)
-├── design.md                   ← visual design system (tokens, surfaces, components)
-├── server.md                   ← server-side deep dive
-├── editor.md                   ← admin + visual editor deep dive
-│
-├── features/                   ← "what X is and how it works" (per-feature)
-│   │  Studio's own:
-│   ├── studio-import.md            ← the parser contract: repo → board
-│   ├── studio-comments.md          ← review threads pinned to the board
-│   ├── studio-git.md               ← version control as Studio's publish verb
-│   ├── studio-deploy.md            ← preview deploys via the project's own CLI
-│   ├── studio-share.md             ← read-only board snapshot at /share/<token>
-│   ├── studio-prototype.md         ← authored links + the derived code-flow map
-│   ├── canvas-iframe-per-frame.md  ← per-frame iframe rendering
-│   ├── canvas-rulers-and-guides.md ← rulers, persisted guides, useCanvas()
-│   ├── board-annotations.md        ← sticky notes + rich-text doc cards
-│   ├── inspector.md                ← the properties panel's density contract
-│   │  Inherited (dormant CMS) + shared:
-│   ├── plugin-system.md            ← plugin SDK, sandbox, lifecycle, permissions
-│   ├── publisher.md                ← page tree → static HTML/CSS pipeline
-│   ├── visual-components.md        ← VCs, slots, params, instantiation
-│   ├── auth-and-access.md          ← sessions, MFA, capabilities, roles
-│   ├── site-shell.md               ← site config (breakpoints, classes, files, deps)
-│   ├── modules.md                  ← module engine + first-party blocks
-│   ├── spotlight.md                ← Cmd+K command palette
-│   ├── agent.md                    ← AI agent integration
-│   ├── mcp-connectors.md           ← Studio as an MCP server
-│   ├── site-import.md              ← Super Import (static sites → CMS)
-│   ├── html-import.md              ← paste / import HTML into the page tree
-│   └── editor-preferences.md       ← catalog-driven editor prefs
-│
-├── reference/                  ← short cookbook pages for primitives + patterns
-│   ├── page-tree.md                ← NodeTree<TNode> primitive
-│   ├── database-dialects.md        ← PG vs SQLite rules
-│   ├── typebox-patterns.md         ← boundary validation patterns
-│   ├── ui-primitives.md            ← Button/Input/etc. usage cookbook
-│   ├── design-tokens.md            ← complete CSS token catalog
-│   ├── module-engine.md            ← defining a new module
-│   ├── canvas-dnd.md               ← drag-and-drop patterns
-│   ├── admin-router.md             ← in-house router usage
-│   ├── css-class-registry.md       ← user CSS classes + scoped classes
-│   ├── capabilities.md             ← full capability matrix
-│   ├── persistence-keys.md         ← localStorage / server prefs catalog
-│   ├── error-boundaries.md         ← boundary placements + error reporting
-│   ├── architecture-tests.md       ← catalog of every architecture gate
-│   ├── editor-history.md           ← patch-based undo/redo history
-│   ├── react-compiler.md           ← memoization rule, three exceptions, gates
-│   ├── use-async-resource.md       ← canonical async load hook; when to use vs. not
-│   └── canonical-jsx.md            ← the authoring subset + checkCanonicalJsx
-│
-├── deployment/                 ← operator docs (running the thing)
-├── e2e/                        ← browser test protocols (agent-run + Playwright automation)
-├── audits/                     ← dated read-only audit reports; historical, NOT maintained
-├── state-archive/              ← STATE.md overflow, verbatim, one file per quarter
-└── assets/                     ← images referenced by the pages above
-```
+| Doc | Purpose | Read when | Trust |
+|---|---|---|---|
+| [`features/agent.md`](features/agent.md) | the in-canvas AI agent: providers, the tool loop, the Studio tool family, refusals | touching the agent, its prompt or its tools | current |
+| [`features/auth-and-access.md`](features/auth-and-access.md) | sessions, MFA, step-up, lockout, CSRF, capabilities and roles | touching sign-in, sessions or capability checks | current |
+| [`features/board-annotations.md`](features/board-annotations.md) | sticky notes and rich-text doc cards on the board | touching board notes or doc cards | current |
+| [`features/free-canvas.md`](features/free-canvas.md) | loose layers on the empty board: storage, load, render, gestures, exclusion, security | touching the empty board, `.studio/canvas/`, `Board.layers`, or a drag that leaves or enters a frame | current |
+| [`features/canvas-iframe-per-frame.md`](features/canvas-iframe-per-frame.md) | how a static (portal) frame renders in its own iframe | touching frame rendering, injectors or cross-realm events | current |
+| [`features/canvas-rulers-and-guides.md`](features/canvas-rulers-and-guides.md) | canvas rulers, persisted guides and the useCanvas() transform API | touching rulers, guides or canvas transforms | current |
+| [`features/design-system.md`](features/design-system.md) | how Studio's own design system gets from `vendor/` onto the canvas, into a user's project, and into the Assets panel | touching `vendor/alm-design-system/`, the `alm.*` modules, a project's `design-system/` folder, the Assets panel or Add page | current |
+| [`features/editor-preferences.md`](features/editor-preferences.md) | catalog-driven editor preferences | adding or reading an editor preference | current |
+| [`features/inspector.md`](features/inspector.md) | the properties panel's density contract: laws, goals G1–G12, the field model, the height gate | touching the inspector, or reading a "Law n" / "§4 Gn" code comment | current |
+| [`features/live-canvas.md`](features/live-canvas.md) | how a board frame shows the user's real running app: the dev server, the live origin, the in-frame runtime and the frame adapter | touching a live frame, `devServer.ts`, `server/liveOrigin.ts`, `@core/studio-runtime`, or any canvas code that talks to a frame's document | current |
+| [`features/mcp-connectors.md`](features/mcp-connectors.md) | Studio as an MCP server for external agents: connectors, tokens, the live bridge | touching the MCP endpoint, a connector or a studio_* tool | current |
+| [`features/modules.md`](features/modules.md) | the module engine, the base and alm.* packs, and the built-in design system manifest | adding or changing a module | current |
+| [`features/prototype-export.md`](features/prototype-export.md) | the runnable preview shell Studio scaffolds into a project, and "Download the code" | touching the generated prototype shell or the download | current |
+| [`features/spotlight.md`](features/spotlight.md) | the ⌘K command palette | adding a command or a palette provider | current |
+| [`features/studio-comments.md`](features/studio-comments.md) | review threads pinned to the board and the agent loop over them | touching comments or the anchor model | current |
+| [`features/studio-deploy.md`](features/studio-deploy.md) | preview deploys through the project's own Vercel/Netlify CLI | touching deploys | current |
+| [`features/studio-git.md`](features/studio-git.md) | version control against the project's own repository, GitHub sign-in, the agent commit tool | touching the Git panel or git routes | current |
+| [`features/studio-import.md`](features/studio-import.md) | the parser contract: how a React repository becomes a board | touching parsing, evaluation, inlining or CSS import | current |
+| [`features/studio-prototype.md`](features/studio-prototype.md) | prototype mode: authored links and the flow map read from the project's own navigation code | touching prototype links, flows or playback | current |
+| [`features/studio-share.md`](features/studio-share.md) | read-only share links at /share/<token> | touching share links | current |
+| [`features/trust-tiers.md`](features/trust-tiers.md) | what each per-project trust tier lets Studio run, where it is stored, and which routes check it | touching anything that runs a user's own code (style compile, package bundle, dev server, deploy, `studio_render_reference`), or changing a default | current |
 
-**`audits/` is a historical record, not a reference.** Each report is a snapshot
-of what four read-only agents found on the date in its folder name. Its file
-paths were true then and many are not now — never use an audit page as the
-source of truth for where something lives; use `agent-refs/path-index.md`.
+## Features: the dormant CMS half
 
-Three categories, three voices:
+Accurate, and much of it load-bearing for Studio under a CMS-shaped name (see [`architecture.md`](architecture.md) → "The dormant CMS half: four traps"). Do not build new Studio features on these concepts.
 
-- **Top-level docs** are long-lived references that describe the system as it currently is.
-- **Feature docs** describe one first-class capability — its architecture, lifecycle, file layout.
-- **Reference docs** are short, focused cookbooks for primitives and patterns reused across features.
+| Doc | Purpose | Read when | Trust |
+|---|---|---|---|
+| [`features/html-import.md`](features/html-import.md) | HTML string to page-tree fragment (paste HTML, the agent insertHtml tool) | touching HTML paste or HTML import | current-cms |
+| [`features/plugin-system.md`](features/plugin-system.md) | the inherited plugin system: package shape, sandbox, SDK, permissions | touching plugins or the QuickJS sandbox | current-cms |
+| [`features/publisher.md`](features/publisher.md) | the page-tree-to-HTML/CSS renderer (load-bearing) and the CMS publishing pipeline around it | touching src/core/publisher/ or server/publish/ | current-cms |
+| [`features/site-import.md`](features/site-import.md) | the static-site importer and the CMS bundle import in the same modal | touching SiteImportModal or @core/siteImport | current-cms |
+| [`features/site-shell.md`](features/site-shell.md) | the persisted CMS site config: breakpoints, classes, files, dependencies | touching the DB site row | current-cms |
+| [`features/visual-components.md`](features/visual-components.md) | Visual Components: slots, params, instantiation, the recursion guard | touching Visual Components or slots | current-cms |
 
----
+## Reference
 
-## Where to look first
+| Doc | Purpose | Read when | Trust |
+|---|---|---|---|
+| [`reference/admin-router.md`](reference/admin-router.md) | the in-house admin router | adding admin navigation | current |
+| [`reference/architecture-tests.md`](reference/architecture-tests.md) | the catalogue of every architecture gate test | a gate fails, or you change a structural rule | current |
+| [`reference/canonical-jsx.md`](reference/canonical-jsx.md) | the JSX subset Studio reads and writes losslessly, and its validator | authoring or checking canonical screens | current |
+| [`reference/canvas-dnd.md`](reference/canvas-dnd.md) | drag and drop in the editor: mechanisms, drop resolution, the D2 target architecture | touching any drag, drop or insert-at-a-point gesture | current |
+| [`reference/capabilities.md`](reference/capabilities.md) | every capability string, its default roles, and how to add one | gating a route or tool on a capability | current |
+| [`reference/css-class-registry.md`](reference/css-class-registry.md) | the site style-rule registry (site.styleRules) | touching style rules or class CSS | current-cms |
+| [`reference/database-dialects.md`](reference/database-dialects.md) | running the same repositories on Postgres and SQLite | writing SQL or a migration | current-cms |
+| [`reference/design-tokens.md`](reference/design-tokens.md) | the complete catalogue of CSS tokens in globals.css | picking or adding a token | current |
+| [`reference/editor-history.md`](reference/editor-history.md) | patch-based undo/redo: HistoryEntry, the mutate helpers, coalescing | touching undo, redo or history coalescing | current |
+| [`reference/error-boundaries.md`](reference/error-boundaries.md) | where error boundaries live and how errors are reported | adding a boundary or an error surface | current |
+| [`reference/module-engine.md`](reference/module-engine.md) | adding a first-party module | defining a new module | current |
+| [`reference/page-tree.md`](reference/page-tree.md) | the NodeTree primitive and its tree-agnostic mutations | mutating a page or component tree | current |
+| [`reference/persistence-keys.md`](reference/persistence-keys.md) | every localStorage, sessionStorage and server preference key | persisting a client preference | current |
+| [`reference/react-compiler.md`](reference/react-compiler.md) | the React Compiler memoization rule and its three exceptions | tempted to write useMemo, useCallback or memo | rule |
+| [`reference/typebox-patterns.md`](reference/typebox-patterns.md) | validating every untyped boundary with TypeBox | parsing JSON, a request body or a response | rule |
+| [`reference/ui-primitives.md`](reference/ui-primitives.md) | the shared UI primitives and when to use each | building any admin UI control | current |
+| [`reference/use-async-resource.md`](reference/use-async-resource.md) | the canonical single-resource async load hook | loading data in an admin screen | current |
 
-### "I want to understand the system"
+## Operations and testing
 
-1. [`architecture.md`](architecture.md) — the 10-minute orientation. Process layout, layer responsibilities, request lifecycle, publishing pipeline, plugin sandbox, where everything lives.
-2. [`design.md`](design.md) — what the editor looks like and why. Tokens, surface system, UI primitives.
-3. [`server.md`](server.md) and [`editor.md`](editor.md) — the two deep dives. Pick whichever side you're touching.
+| Doc | Purpose | Read when | Trust |
+|---|---|---|---|
+| [`deployment/README.md`](deployment/README.md) | the deployment targets, their variables and what must persist | deploying or operating a Studio server | current |
+| [`deployment/backup-restore.md`](deployment/backup-restore.md) | what to back up and how to restore it: the workspace, the database, uploads | backing up, restoring or migrating an install | current |
+| [`deployment/docker-image.md`](deployment/docker-image.md) | the production Docker image outside the VPS Compose files | building or running the image yourself | current-cms |
+| [`deployment/railway.md`](deployment/railway.md) | the Railway image-source configuration | deploying on Railway | current-cms |
+| [`deployment/release-workflow.md`](deployment/release-workflow.md) | publishing Studio Docker images (maintainers) | cutting a release | current-cms |
+| [`deployment/render.md`](deployment/render.md) | the Render Blueprint configuration | deploying on Render | current-cms |
+| [`deployment/tls-caddy.md`](deployment/tls-caddy.md) | TLS termination with the Caddy override | putting an install behind a real domain | current-cms |
+| [`deployment/vps.md`](deployment/vps.md) | Docker Compose installs on a single VPS | installing on a VPS | current-cms |
+| [`e2e/README.md`](e2e/README.md) | the Playwright e2e suite: the fourth gate, the disposable stack, authoring rules, coverage | writing or running an e2e spec | current |
+| [`e2e/protocol.md`](e2e/protocol.md) | how an agent runs a user-facing browser audit | running a manual browser audit | current |
+| [`e2e/run-log-template.md`](e2e/run-log-template.md) | the template for a browser-audit run log | recording a browser audit | current |
+| [`e2e/dogfood-backlog.md`](e2e/dogfood-backlog.md) | every human dogfood script owed for work that landed without a browser pass | running a dogfood session, or archiving a `STATE.md` entry whose "Human action needed" block is a script | live |
+| [`scripts/bench/README.md`](../scripts/bench/README.md) | the benchmark harness: what each bench measures and its budgets | measuring or gating performance | current |
 
-### "I want to add a feature"
+## History: read for rationale, never act on it
 
-1. Skim [`architecture.md`](architecture.md) → "Where things live — decision table".
-2. Read the feature doc closest to what you're adding (e.g. [`features/plugin-system.md`](features/plugin-system.md) for a plugin SDK extension).
-3. Read the relevant reference doc(s) for the primitives you'll touch ([`reference/page-tree.md`](reference/page-tree.md), [`reference/database-dialects.md`](reference/database-dialects.md), [`reference/typebox-patterns.md`](reference/typebox-patterns.md)).
-4. Make the change. Verify with `bun test && bun run build && bun run lint`.
+| Path | What it holds | Trust |
+|---|---|---|
+| [`archive/`](archive/README.md) | Finished plans (`plans/`, filenames unchanged so code citations still resolve), the 2026-08-07 parity handoffs, one-off e2e records | historical |
+| [`state-archive/`](state-archive/INDEX.md) | Every `STATE.md` entry that left the file, verbatim, one file per month; `INDEX.md` lists them all | historical |
+| [`audits/2026-09-23-studio-audit/`](audits/2026-09-23-studio-audit/README.md) | The ten audits behind `ROADMAP.md`; every bundle's finding IDs resolve here | historical |
+| [`audits/2026-08-06/`](audits/2026-08-06/) | The twelve audits behind the finished parity plan | historical |
+| [`audits/penpot-inspector-baseline/`](audits/penpot-inspector-baseline/README.md) | Measured Penpot inspector geometry; `measurement.test.ts` and the inspector source cite it as evidence | historical |
+| [`audits/2026-09-13-live-frame-memory-baseline.md`](audits/2026-09-13-live-frame-memory-baseline.md) | The live-frame memory baseline: a 2026-09-13 placeholder, then the first measured numbers (2026-09-26, P6-C) | current (last section) |
+| [`assets/`](assets/) | Images the pages above reference | — |
 
-### "I want to change the visual design"
+## Related
 
-1. [`design.md`](design.md) — the principles, tokens, surface systems.
-2. `src/styles/globals.css` — the actual tokens.
-3. `src/ui/components/` — the actual primitives.
-4. If you're adding a new token or surface pattern, update `design.md` in the same change.
-
-### "I want to add a new HTTP endpoint"
-
-1. [`server.md`](server.md) → "Adding a new endpoint".
-2. [`reference/typebox-patterns.md`](reference/typebox-patterns.md) for body validation.
-3. [`reference/database-dialects.md`](reference/database-dialects.md) if persistence is involved.
-
-### "I want to mutate the page tree"
-
-1. [`reference/page-tree.md`](reference/page-tree.md) — the `NodeTree` primitive and `mutateActiveTree`.
-2. [`editor.md`](editor.md) → "Editor store" for how mutations are wired up.
-
-### "I want to write a plugin"
-
-1. [`features/plugin-system.md`](features/plugin-system.md) — the SDK surface, lifecycle, sandbox rules.
-2. `examples/plugins/template/` — working example.
-3. `src/core/plugin-sdk/capabilities.ts` — permission catalog (source of truth).
-
-### "I want to open a React repo as a board"
-
-1. [`features/studio-import.md`](features/studio-import.md) — the parser contract: what is read, what is refused, and why nothing executes.
-2. [`agent-refs/studio-pipeline.md`](agent-refs/studio-pipeline.md) — the compressed version: parse → inline → resolve → convert → write back.
-3. [`agent-refs/glossary.md`](agent-refs/glossary.md) → **Trust tiers**, before you touch anything that runs a subprocess.
-
-### "I want to deploy / operate the server"
-
-1. `README.md` (repo root) — install, run, basic commands.
-2. [`deployment/README.md`](deployment/README.md) — platform and generic deployment targets.
-3. [`deployment/backup-restore.md`](deployment/backup-restore.md) — backing up production data.
-
----
-
-## Doc index
-
-### Top-level
-
-| Doc                         | What it covers                                                          |
-|-----------------------------|-------------------------------------------------------------------------|
-| [architecture.md](architecture.md) | System overview: process, folders, request lifecycle, data model, validation, decision tables |
-| [design.md](design.md)      | Visual design system: principles, tokens, surface systems, UI primitives, forbidden patterns |
-| [server.md](server.md)      | Server deep dive: boot sequence, router, handlers, auth, DB adapter, publishing, plugin runtime |
-| [editor.md](editor.md)      | Admin + editor deep dive: routing, workspaces, editor store, canvas, sidebars, spotlight |
-| [CONVENTIONS.md](CONVENTIONS.md) | How docs in this repo are structured and written (read before authoring) |
-
-### Features
-
-| Doc                                                              | What it covers                                                       |
-|------------------------------------------------------------------|----------------------------------------------------------------------|
-| [features/plugin-system.md](features/plugin-system.md)           | The plugin system end-to-end: package shape, lifecycle, sandbox, SDK, permissions, CLI |
-| [features/publisher.md](features/publisher.md)                   | The page-tree-to-HTML/CSS renderer + server-side publishing wrappers |
-| [features/visual-components.md](features/visual-components.md)   | VCs, slots, params, instantiation, recursion guard                   |
-| [features/auth-and-access.md](features/auth-and-access.md)       | Sessions, MFA, step-up, lockout, CSRF, capabilities                  |
-| [features/site-shell.md](features/site-shell.md)                 | The persisted site config (breakpoints, classes, files, deps)        |
-| [features/modules.md](features/modules.md)                       | Module engine, defining first-party blocks                          |
-| [features/spotlight.md](features/spotlight.md)                   | Cmd+K command palette                                                |
-| [features/agent.md](features/agent.md)                           | AI agent integration and provider-agnostic runtime                   |
-| [features/mcp-connectors.md](features/mcp-connectors.md)         | Studio as an MCP server — external AI clients drive the CMS over MCP |
-| [features/site-import.md](features/site-import.md)               | Super Import — static-site files / ZIP → pages, style rules, media |
-| [features/html-import.md](features/html-import.md)               | HTML string → `PageNode` fragment (paste HTML, AI `insertHtml` tool) |
-| [features/prototype-export.md](features/prototype-export.md)     | The runnable preview shell Studio scaffolds into a workspace — boards as tabs in "Download the code" |
-| [features/studio-import.md](features/studio-import.md)           | Studio opens a real React repo as a board — parse, inline, resolve values, import CSS |
-| [features/editor-preferences.md](features/editor-preferences.md) | Catalog-driven local UI preferences for the editor                   |
-| [features/canvas-iframe-per-frame.md](features/canvas-iframe-per-frame.md) | Per-breakpoint iframe rendering in the visual editor canvas |
-| [features/canvas-rulers-and-guides.md](features/canvas-rulers-and-guides.md) | Design-canvas rulers + persisted draggable guides (D1), and the shared `useCanvas()` `transformRef` API |
-| [features/board-annotations.md](features/board-annotations.md) | Sticky notes + rich-text doc cards on the Studio board: selection, resize, stacking, clipboard, the doc editor |
-| [features/studio-comments.md](features/studio-comments.md) | Review threads pinned to the board (`.studio/comments.json`): the anchor-confidence model, the op-based HTTP route, and the agent loop that reads, replies and resolves |
-| [features/studio-git.md](features/studio-git.md) | Version control as Studio's publish verb — status/diff/branch/commit/push against the project's own repository, the guard that stops git finding Studio's OWN repo, and the `studio.git.write`-gated agent commit tool |
-| [features/studio-deploy.md](features/studio-deploy.md) | Preview deploys through the project's own Vercel/Netlify CLI — the Tier-2 gate, provider detection, the check → build → deploy job, and why Studio stores no provider token |
-| [features/studio-share.md](features/studio-share.md) | Share links: a read-only board snapshot at a revocable `/share/<token>` URL — the on-disk registry, the snapshot writer over the headless capture, the stripped viewer payload, and why every failure is the same 404 |
-| [features/studio-prototype.md](features/studio-prototype.md) | Prototype mode: authored links (`.studio/prototype.json`) plus the flow map Studio DERIVES from the project's own navigation code — the four AST rules, what they refuse, and the board-space connector layer |
-| [features/inspector.md](features/inspector.md) | The properties panel's density contract: the five laws, the ten goals (G1–G10) the panel source cites by number, the height budgets, and the Figma controls we refuse to fake |
-
-### Plans (repo root, not `docs/`)
-
-Plans are **intent and status**, not descriptions of the system — never read one
-to learn how something works. Per-plan status lives in
-[`PROJECT-BRIEF.md`](../PROJECT-BRIEF.md) §3; this table is only the map.
-
-| Plan | What it covers |
-|---|---|
-| [STUDIO-FIGMA-FEEL-PLAN.md](../STUDIO-FIGMA-FEEL-PLAN.md) | **The plan currently being executed.** Tracks Z (zero noise — a barrier before everything else), S (snappy), K (keys and hands), P (panels/prototype/preview), A (agent), G (GitHub), V (verification), plus the owner's decisions and the defects the opening audit found |
-| [STUDIO-IMPORT-V2-PLAN.md](../STUDIO-IMPORT-V2-PLAN.md) | The feature roadmap, WS-1…WS-9 |
-| [STUDIO-NEXT-WORKSTREAMS.md](../STUDIO-NEXT-WORKSTREAMS.md) | WS-10…WS-14 — the workstreams past the roadmap, including the residue of the retired wave plans |
-| [STUDIO-FIGMA-PARITY-PLAN.md](../STUDIO-FIGMA-PARITY-PLAN.md) | The defect + parity analysis. **§0a is the granular per-track status ledger** |
-| [STUDIO-LIVE-CANVAS-PLAN.md](../STUDIO-LIVE-CANVAS-PLAN.md) | Tier-2 live runtime frames, refusals-as-choices, the Penpot-measured inspector rebuild |
-| [STUDIO-PROTOTYPE-PLAN.md](../STUDIO-PROTOTYPE-PLAN.md) | Where a prototype link lives, and why it is never written into the user's source |
-| [STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md](../STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md) | The vendored design system, the Assets panel, and Add page |
-| [STUDIO-CMS-REMOVAL-PLAN.md](../STUDIO-CMS-REMOVAL-PLAN.md) | What of the inherited CMS half is dead, what is load-bearing under a CMS-shaped name, and what is blocked on a product decision |
-| [STUDIO-WAVE7-PLAN.md](../STUDIO-WAVE7-PLAN.md) · [STUDIO-WAVE7-STATUS.md](../STUDIO-WAVE7-STATUS.md) | Waves 7–10: the launcher, onboarding, inspector ergonomics, agent fidelity |
-
-### Reference
-
-| Doc                                                              | What it answers                                                  |
-|------------------------------------------------------------------|------------------------------------------------------------------|
-| [reference/page-tree.md](reference/page-tree.md)                 | The `NodeTree<TNode>` primitive — mutations, store routing      |
-| [reference/database-dialects.md](reference/database-dialects.md) | Postgres vs. SQLite — three rules + cookbook                    |
-| [reference/typebox-patterns.md](reference/typebox-patterns.md)   | Validating every untyped boundary with TypeBox                  |
-| [reference/ui-primitives.md](reference/ui-primitives.md)         | Full UI primitive catalog with "when to use"                    |
-| [reference/design-tokens.md](reference/design-tokens.md)         | Complete CSS custom property catalog                            |
-| [reference/module-engine.md](reference/module-engine.md)         | "How do I define a new module?"                                 |
-| [reference/canvas-dnd.md](reference/canvas-dnd.md)               | Drag-and-drop / drop zones / insert location                    |
-| [reference/admin-router.md](reference/admin-router.md)           | In-house router primitives                                      |
-| [reference/css-class-registry.md](reference/css-class-registry.md) | User-defined CSS classes + scoped classes                     |
-| [reference/capabilities.md](reference/capabilities.md)           | Full capability matrix + how to add one                         |
-| [reference/persistence-keys.md](reference/persistence-keys.md)   | All localStorage / sessionStorage / server-prefs keys           |
-| [reference/error-boundaries.md](reference/error-boundaries.md)   | `<ErrorBoundary>` placements + reporting                        |
-| [reference/architecture-tests.md](reference/architecture-tests.md) | Catalog of every architecture gate test                       |
-| [reference/editor-history.md](reference/editor-history.md)       | Patch-based undo/redo history: `HistoryEntry`, `mutate*` helpers, coalescing |
-| [reference/react-compiler.md](reference/react-compiler.md)       | React Compiler memoization rule, three exceptions, enforcement gates |
-| [reference/use-async-resource.md](reference/use-async-resource.md) | `useAsyncResource` — canonical single-resource async load hook; when to use and when not to |
-| [reference/canonical-jsx.md](reference/canonical-jsx.md)         | The authoring subset (WS-13) — ten rules, the `checkCanonicalJsx` validator, the reference fixture |
-
-### Operations
-
-| Folder                              | Contents                                                          |
-|-------------------------------------|-------------------------------------------------------------------|
-| [deployment/](deployment/)          | Platform deploys, VPS/Docker installs, TLS, backup, releases      |
-| [e2e/](e2e/)                        | Browser E2E protocols: agent-run audits and Playwright automation docs |
-| [state-archive/](state-archive/)    | Overflow from `STATE.md`, verbatim, one file per quarter — the historical handoff record |
-| [audits/](audits/)                  | Dated read-only audit reports. **Historical snapshots, not maintained** — their file paths were true on the date in the folder name |
-| [assets/](assets/)                  | Images the pages above reference                                  |
-
----
-
-## Conventions in one paragraph
-
-Every doc has the shape: **one-line scope statement → TL;DR → body sections → Related**. Every claim about code anchors to a real file path. Every invariant links to the gate test (in `src/__tests__/architecture/`) that enforces it. No history, no aspiration, no marketing copy — describe what the system is, not what it could be or what it used to be. If a doc is over ~600 lines, it's doing too much; split it. The full rules are in [CONVENTIONS.md](CONVENTIONS.md).
-
----
-
-## Source-of-truth pointers
-
-Quick map from "where do I look for X?" to the canonical file:
-
-| Concept                          | Source of truth                                          |
-|----------------------------------|----------------------------------------------------------|
-| Agent rules and constraints      | `CLAUDE.md` (repo root)                                  |
-| Design tokens                    | `src/styles/globals.css`                                 |
-| UI primitives                    | `src/ui/components/`                                     |
-| Page tree shape                  | `src/core/page-tree/treeSchema.ts`                       |
-| Editor store                     | `src/admin/pages/site/store/`                            |
-| Server router                    | `server/router.ts`                                       |
-| Studio API handlers              | `server/handlers/studio/` + `server/handlers/studio*.ts`  |
-| Studio parser + codemods         | `src/core/page-parser/`, `src/core/ast-codemods/`, `src/core/css-codemods/` |
-| Per-project trust tier           | `.studio/meta.json` → `server/handlers/studio/trustTier.ts` |
-| CMS API handlers (dormant)       | `server/handlers/cms/`                                   |
-| Repositories                     | `server/repositories/`                                   |
-| DB adapter interface             | `server/db/client.ts`                                    |
-| DB adapters                      | `server/db/postgres.ts`, `server/db/sqlite.ts`            |
-| Migrations                       | `server/db/migrations-pg.ts`, `server/db/migrations-sqlite.ts` |
-| Plugin SDK                       | `src/core/plugin-sdk/`                                   |
-| Plugin permission catalog        | `src/core/plugin-sdk/capabilities.ts`                    |
-| Plugin manifest parser           | `src/core/plugins/manifest.ts`                           |
-| Plugin worker + sandbox host     | `server/plugins/pluginWorker.ts`, `server/plugins/host/workerPool.ts`, `server/plugins/quickjs/vm.ts`, `server/plugins/modulePackVm.ts` |
-| Publisher                        | `src/core/publisher/`                                    |
-| CSS value sanitiser              | `src/core/css-sanitize/sanitiseCssValue.ts`              |
-| TypeBox helpers                  | `src/core/utils/typeboxHelpers.ts`                       |
-| Error message extraction         | `src/core/utils/errorMessage.ts`                         |
-| Architecture gate tests          | `src/__tests__/architecture/*.test.ts`                   |
+- [`CONVENTIONS.md`](CONVENTIONS.md): the header line, trust levels and doc types this map uses
+- [`agent-refs/path-index.md`](agent-refs/path-index.md): the same kind of map, for code
+- Gate tests: `src/__tests__/architecture/doc-headers.test.ts`

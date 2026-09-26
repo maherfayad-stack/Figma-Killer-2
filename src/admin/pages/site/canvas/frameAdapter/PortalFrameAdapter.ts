@@ -25,6 +25,7 @@ import {
   startAnimationFreeze,
   startHoverSuppression,
   startScrollUnroll,
+  isSelectionChromeMutation,
   type AnimationFreezeController,
   type HoverSuppressionController,
   type ScrollUnrollController,
@@ -39,6 +40,7 @@ import type {
   NodeRect,
   NodeRef,
   OptimisticDomOps,
+  ResizeTargetOptions,
   Unsubscribe,
 } from './FrameDocumentAdapter'
 
@@ -114,6 +116,16 @@ class SyntheticEventBus {
 export class PortalFrameAdapter implements FrameDocumentAdapter {
   private readonly doc: Document
   private readonly overlayStyles = new Map<string, HTMLStyleElement>()
+  /**
+   * The CSS text each overlay last received. Assigning a `<style>`'s
+   * `textContent` replaces its text node and makes the browser re-parse the
+   * sheet and invalidate style for the WHOLE document — even when the text is
+   * identical. Every mounted frame's injectors re-apply on inputs that change
+   * nothing they emit (a click re-runs the forced-state preview in every
+   * frame, and it writes the same empty string each time), so an unchanged
+   * write is skipped here, once, for every injector (P6-C).
+   */
+  private readonly overlayCss = new Map<string, string>()
   private readonly selectionRings = new Map<string, HTMLDivElement>()
   private hoverRing: HTMLDivElement | null = null
   private hoverNodeId: string | null = null
@@ -127,6 +139,7 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
   private disposed = false
   private repositionRaf: number | null = null
   private layoutObserver: MutationObserver | null = null
+  private ringTrackingArmed = false
 
   readonly optimistic: OptimisticDomOps = {
     insert: (nodeId, parentNodeId, index, tagName, text) => {
@@ -147,10 +160,6 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
       if (!el || !parent) return
       parent.insertBefore(el, parent.children[index] ?? null)
     },
-    text: (nodeId, text) => {
-      const el = findByNodeId(this.doc, nodeId)
-      if (el) el.textContent = text
-    },
     // `speed-01` — a documented no-op. The store write this call previews/
     // commits already re-renders the portal tree through React on the SAME
     // tick; a second DOM write here would be a redundant paint racing the
@@ -158,6 +167,9 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
     // for skipping portal adapters on insert/delete/move.
     style: () => {},
     clearStyle: () => {},
+    // store-17 — a documented no-op: a portal frame's DOM is React's render of
+    // the tree, and the rollback that calls this already replayed the tree.
+    revert: () => {},
   }
 
   constructor(doc: Document) {
@@ -166,25 +178,42 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
     queueMicrotask(() => {
       if (!this.disposed) this.bus.emit({ type: 'ready' })
     })
+  }
 
-    // Keeps rings glued to their node across resize/layout changes — mirrors
-    // `runtime.ts`'s own `scheduleReposition`/`layoutObserver` pair.
-    const view = doc.defaultView
+  /**
+   * Keeps this adapter's OWN rings glued to their node across resize/layout
+   * changes — mirrors `runtime.ts`'s `scheduleReposition`/`layoutObserver`
+   * pair. Armed on the first `select`/`hover`, never in the constructor
+   * (PERF-10): portal mode's selection chrome is `BreakpointSelectionOverlay`'s
+   * own portal, so on an ordinary board nothing ever calls those two and this
+   * adapter has no rings to reposition. A subtree `attributes` observer armed
+   * anyway allocated records and scheduled a no-op animation frame for every
+   * attribute write in every frame — a ring style write, every frame of an
+   * element resize.
+   */
+  private armRingTracking(): void {
+    if (this.ringTrackingArmed || this.disposed) return
+    this.ringTrackingArmed = true
+    const view = this.doc.defaultView
     const raf = view?.requestAnimationFrame?.bind(view) ?? requestAnimationFrame
-    const scheduleReposition = () => {
+    const scheduleReposition = (records?: MutationRecord[]) => {
+      // This adapter's own ring writes are chrome; repositioning for them
+      // would schedule another frame for nothing.
+      if (records?.every(isSelectionChromeMutation)) return
       if (this.repositionRaf !== null) return
       this.repositionRaf = raf(() => {
         this.repositionRaf = null
         this.repositionAllRings()
       })
     }
-    view?.addEventListener('resize', scheduleReposition)
-    this.domUnsubscribes.push(() => view?.removeEventListener('resize', scheduleReposition))
-    if (doc.body) {
+    const onResize = () => scheduleReposition()
+    view?.addEventListener('resize', onResize)
+    this.domUnsubscribes.push(() => view?.removeEventListener('resize', onResize))
+    if (this.doc.body) {
       const MutationObserverCtor = view?.MutationObserver ?? MutationObserver
       try {
         this.layoutObserver = new MutationObserverCtor(scheduleReposition)
-        this.layoutObserver.observe(doc.body, { childList: true, subtree: true, attributes: true })
+        this.layoutObserver.observe(this.doc.body, { childList: true, subtree: true, attributes: true })
       } catch (_err) {
         // Some browser realms reject observing a cross-realm node. Rings
         // still reposition on the next explicit select/hover/resize.
@@ -207,12 +236,15 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
       this.doc.head?.appendChild(el)
       this.overlayStyles.set(id, el)
     }
+    if (this.overlayCss.get(id) === css) return
+    this.overlayCss.set(id, css)
     el.textContent = css
   }
 
   removeOverlay(id: string): void {
     this.overlayStyles.get(id)?.remove()
     this.overlayStyles.delete(id)
+    this.overlayCss.delete(id)
   }
 
   private ensureOverlayRoot(): HTMLDivElement | null {
@@ -271,6 +303,7 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
   }
 
   select(refs: NodeRef[]): void {
+    this.armRingTracking()
     const next = new Set(refs.map((ref) => ref.nodeId))
     for (const [nodeId, ring] of this.selectionRings) {
       if (!next.has(nodeId)) {
@@ -289,6 +322,7 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
   }
 
   hover(ref: NodeRef | null): void {
+    this.armRingTracking()
     this.hoverNodeId = ref?.nodeId ?? null
     if (!ref) {
       if (this.hoverRing) this.hoverRing.style.display = 'none'
@@ -336,7 +370,7 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
    * in-frame handles this call drives exist for the cross-origin bridge; a
    * second set here would be two sets of handles on one element.
    */
-  setResizeTarget(_ref: NodeRef | null, _options: { proportional: boolean }): void {}
+  setResizeTarget(_ref: NodeRef | null, _options: ResizeTargetOptions): void {}
 
   /**
    * `live-18` — a documented no-op. Nothing in portal mode ever emits
@@ -431,6 +465,7 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
 
     for (const el of this.overlayStyles.values()) el.remove()
     this.overlayStyles.clear()
+    this.overlayCss.clear()
 
     for (const ring of this.selectionRings.values()) ring.remove()
     this.selectionRings.clear()

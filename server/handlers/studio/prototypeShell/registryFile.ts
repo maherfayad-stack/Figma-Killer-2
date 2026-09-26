@@ -26,10 +26,9 @@
  * generation time. Putting that seam in its own tiny generated file is what
  * lets `App.jsx` be written once and then belong to the user.
  */
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { parseBoardsFile, type Board, type BoardsFile } from '@core/studio-board'
-import { boardsFilePath } from '../boardFrames'
+import type { Board, BoardsFile } from '@core/studio-board'
 import { runtimeBridgeShellFile } from './runtimeBridgeShellFile'
 import { PROTOTYPE_SHELL_DIR, type ShellFile } from './shellPaths'
 import { studioRuntimeShellFile } from './studioRuntimeShellFile'
@@ -314,14 +313,12 @@ export function generatedShellFiles(input: ShellRegistryInput): ShellFile[] {
   ]
 }
 
-/** The project's boards, or an empty file when it has none yet. */
-export function readBoardsForShell(dir: string): BoardsFile {
-  const file = boardsFilePath(dir)
-  if (!existsSync(file)) return { version: 1, boards: [] }
-  return parseBoardsFile(readFileSync(file, 'utf8'))
+/** Every place an `i18n/LanguageContext` the shell can mount may live — also what the shell's input stamp watches. */
+export function languageContextPaths(dir: string): string[] {
+  return ['tsx', 'jsx', 'ts', 'js'].map((ext) => join(dir, 'i18n', `LanguageContext.${ext}`))
 }
 
 /** True when the workspace ships an `i18n/LanguageContext` the shell can mount. */
 export function hasLanguageContext(dir: string): boolean {
-  return ['tsx', 'jsx', 'ts', 'js'].some((ext) => existsSync(join(dir, 'i18n', `LanguageContext.${ext}`)))
+  return languageContextPaths(dir).some((file) => existsSync(file))
 }

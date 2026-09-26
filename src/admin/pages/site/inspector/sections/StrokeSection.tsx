@@ -64,7 +64,7 @@
  * trailing `+`, no chevron"). Per `03-operating-behaviors.md`'s own explicit
  * note, clicking Penpot's own Stroke `+` writes a real default stroke
  * immediately — Studio's existing `AddablePropertyField` contract (Law 3,
- * `docs/features/inspector-disclosure.md`) deliberately does NOT copy that:
+ * `docs/features/inspector.md`) deliberately does NOT copy that:
  * writing a value from a bare reveal click would show up as an unexplained
  * diff in the user's real source file. Clicking "+" here only REVEALS the
  * resident Row 2 (position/weight/settings/sides) — exactly the pre-
@@ -253,7 +253,7 @@ export function StrokeSection() {
   const effectiveClassChain = buildClassChain(assignedClassRules, activeContextId)
   const currentStyles = buildCollapsedCurrentStyles(computedValues, effectiveClassChain, inlineStyles, storedStyles)
 
-  // Law 1 (`docs/features/inspector-disclosure.md` §4 G1): whether ANYTHING
+  // Law 1 (`docs/features/inspector.md` §4 G1): whether ANYTHING
   // Stroke claims is set, on the active tab OR any other breakpoint/
   // condition — mirrors every other migrated section's own
   // `crossContextStyles` construction. This drives the SECTION's own empty

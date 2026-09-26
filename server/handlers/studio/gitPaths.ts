@@ -39,7 +39,7 @@
  */
 import { existsSync, realpathSync } from 'node:fs'
 import { dirname, resolve, sep } from 'node:path'
-import { EXCLUDED_WORKSPACE_DIR_NAMES } from '@core/page-parser'
+import { excludedWorkspaceSegment } from '@core/page-parser'
 
 /** Windows drive-letter prefix (`C:` / `c:/…`) — an absolute path that `isAbsolute` misses on POSIX. */
 const DRIVE_LETTER_RE = /^[A-Za-z]:/
@@ -78,7 +78,8 @@ export function normalizeWorkspaceRelativePath(input: string): string | null {
   const segments = input.split(/[/\\]/)
   for (const segment of segments) {
     if (segment === '' || segment === '.' || segment === '..') return null
-    if (EXCLUDED_WORKSPACE_DIR_NAMES.has(segment)) return null
+    // Compared the way the filesystem resolves it: `.GIT` IS `.git` on Windows.
+    if (excludedWorkspaceSegment(segment) !== null) return null
   }
   return segments.join('/')
 }

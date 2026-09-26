@@ -12,10 +12,11 @@ instantaneous, panning is 60fps, and nothing moves that the user didn't move.**
 
 ## Read before you start
 
-1. `STATE.md` → `standing-03` — **two defects are already diagnosed. Do not
+1. `docs/audits/2026-09-23-studio-audit/01-perf.md` — **the current defects are
+   already diagnosed there (PERF-1…PERF-15), with measured costs. Do not
    re-diagnose them.**
 2. `docs/agent-refs/canvas-internals.md` §Perf
-3. `STUDIO-IMPORT-V2-PLAN.md` → **WS-5** — the full perf plan with budgets
+3. `ROADMAP.md` → P2-A, P2-I and P6: the perf bundles, their budgets and exit gates
 
 ## Known causes — check these first, in this order
 

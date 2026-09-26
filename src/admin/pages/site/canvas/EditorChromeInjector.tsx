@@ -485,6 +485,23 @@ const CHROME_RULES = `
   cursor: default;
   opacity: 0.6;
 }
+
+/* ── P5-B (IMG-8) image-drop ghost while its bytes upload ───────────────────
+ * The optimistic <img> an OS file drop paints before the file has landed
+ * (imageDropActions.ts) carries data-studio-uploading, and the drop writes
+ * the upload's progress (0..1) into --studio-upload-progress on the element's
+ * own inline style. The uploaded share of the image shows at full strength,
+ * the rest stays dimmed: a progress bar made of the image itself. A mask, not
+ * a pseudo-element, because an <img> is a replaced element and has none, and
+ * not a wrapper, because the canvas DOM is the DOM React renders. The ghost
+ * only ever exists in the editor's own tree (never in source, never published).
+ */
+
+img[data-studio-uploading] {
+  --studio-upload-progress: 0;
+  -webkit-mask-image: linear-gradient(to right, black calc(var(--studio-upload-progress) * 100%), rgb(0 0 0 / 35%) calc(var(--studio-upload-progress) * 100%));
+  mask-image: linear-gradient(to right, black calc(var(--studio-upload-progress) * 100%), rgb(0 0 0 / 35%) calc(var(--studio-upload-progress) * 100%));
+}
 `.trim()
 
 export function EditorChromeInjector() {

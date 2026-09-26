@@ -13,7 +13,7 @@
  * Deliberately NOT built on the store-level `selectActiveCanvasPage` selector:
  * importing that would trade this cycle for a `slices ↔ store` one.
  */
-import type { BaseNode, NodeTree, PageNode } from '@core/page-tree'
+import { getParent, type BaseNode, type NodeTree, type PageNode } from '@core/page-tree'
 import type { EditorStore } from '@site/store/types'
 import { selectActiveBoard } from './boardSelectors'
 
@@ -61,4 +61,36 @@ export function resolveSelectableNode(
   const tree = getActiveTree(state)
   const node = tree?.nodes[id]
   return tree && node ? { node, tree } : null
+}
+
+/**
+ * Filter ids to only those that may legally participate in a multi-selection.
+ * Rules:
+ * - The page/VC tree root cannot be part of a multi-selection (only solo).
+ * - A `base.slot-instance` whose parent is a `base.visual-component-ref` is
+ *   structural (managed by syncSlotInstances) and may not be multi-selected.
+ * - Every id must resolve via `resolveSelectableNode` — the active
+ *   document's tree normally, or (WS-7.3) any page curated as a frame on the
+ *   active studio board.
+ *
+ * Returned ids preserve input order. Lives here rather than in
+ * `selectionSlice.ts` because ⌘A (`selectionTraversalActions.ts`, P2-B) has
+ * to know what `selectMany` WILL keep before it decides whether to climb —
+ * importing it back out of the slice would be the cycle this module exists
+ * to prevent.
+ */
+export function filterMultiSelectableIds(state: EditorStore, ids: readonly string[]): string[] {
+  const result: string[] = []
+  for (const id of ids) {
+    const resolved = resolveSelectableNode(state, id)
+    if (!resolved) continue
+    const { node, tree } = resolved
+    if (id === tree.rootNodeId) continue
+    if (node.moduleId === 'base.slot-instance') {
+      const parent = getParent(tree, id)
+      if (parent?.moduleId === 'base.visual-component-ref') continue
+    }
+    result.push(id)
+  }
+  return result
 }

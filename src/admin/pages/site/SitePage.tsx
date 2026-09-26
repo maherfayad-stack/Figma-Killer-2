@@ -4,6 +4,7 @@ import { consumePendingAction } from '@admin/spotlight/pendingAction'
 import { useEditorStore } from '@site/store/store'
 import { useMcpWorkspaceBridge } from '@admin/ai/useMcpWorkspaceBridge'
 import { RefusalDialog } from '@site/ui/RefusalDialog'
+import { ChromeBoundary } from '@site/ui/ChromeBoundary'
 import { useEditorKeyDispatcher } from '@site/canvas/useEditorKeyDispatcher'
 import { agentProjectDir, executeAgentTool } from './agent'
 import { flushEditorSave } from './hooks/editorSaveRef'
@@ -76,7 +77,11 @@ export function SitePage() {
   return (
     <>
       <AdminCanvasLayout />
-      <RefusalDialog />
+      {/* ERR-13 — outside every editor boundary but `admin-route`, which
+          would take the whole editor down with it. */}
+      <ChromeBoundary id="refusal-dialog">
+        <RefusalDialog />
+      </ChromeBoundary>
     </>
   )
 }

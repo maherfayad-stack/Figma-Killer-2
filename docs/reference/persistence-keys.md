@@ -1,4 +1,5 @@
 # Persistence Keys
+> **Purpose:** every localStorage, sessionStorage and server preference key · **Read when:** persisting a client preference · **Trust:** current · **Owner:** store-engineer · **Verified:** not yet
 
 Catalog of every `localStorage` / `sessionStorage` key the admin app writes, and the persistent server-side preference rows. One page to answer "where does X live?".
 

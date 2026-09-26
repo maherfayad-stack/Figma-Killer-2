@@ -2,13 +2,13 @@ import { expect, test, type FrameLocator, type Page } from '@playwright/test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
-  CANVAS_FRAME_IFRAME_SELECTOR,
   createAuthoredFixtureProject,
   openFixtureBoard,
   panIntoView,
   removeFixtureProject,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * Adding a design-system component to a studio board, and rendering one with
@@ -106,10 +106,10 @@ async function openStudioBoard(page: Page): Promise<FrameLocator> {
   const frame = page.locator('[data-page-id]').first()
   await panIntoView(page, canvasRoot, frame)
   await expect(
-    frame.locator(CANVAS_FRAME_IFRAME_SELECTOR),
+    visibleCanvasIframe(frame),
     'the fixture frame never mounted a live canvas iframe after being panned into view',
   ).toBeVisible({ timeout: 60_000 })
-  return frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+  return canvasContentFrame(frame)
 }
 
 test.describe('design-system components on a studio board', () => {

@@ -87,7 +87,7 @@ export function buildPageFrame(page: Page): PageFrame {
   }
 }
 
-export function buildSiteFrame(site: SiteDocument): SiteFrame {
+export function buildSiteFrame(site: Pick<SiteDocument, 'id' | 'name'>): SiteFrame {
   return {
     id: site.id,
     name: site.name,

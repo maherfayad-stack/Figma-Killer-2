@@ -17,7 +17,10 @@
  *     without this block the rings position correctly and paint nothing.
  *   - `setResizeTarget` — a single selection whose MODULE can carry an inline
  *     style (`canOfferResizeForModule`, the parent's half of `resizeOffer`);
- *     the runtime applies the geometric half on its side.
+ *     the runtime applies the geometric half on its side. With it go the
+ *     three facts a portal drag reads off the store and a live frame cannot
+ *     (`resizeTargetContext.ts`): the node's stored sizing markers
+ *     (canvas-23), its tree siblings and parent, and the zoom (canvas-26).
  *   - `measure` — once per selection change, pan/zoom commit, frame reflow
  *     or HMR swap, to anchor the selection toolbar and the in-place
  *     inspector, which stay in the PARENT document exactly as they do for a
@@ -42,6 +45,8 @@ import {
 import type { FrameDocumentAdapter, NodeRect } from './frameAdapter/FrameDocumentAdapter'
 import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
 import { findNodeById } from './InPlaceInspector/findNodeById'
+import { resizeSnapPeersKey, resizeTargetOptions, storedSizingMarker } from './resizeTargetContext'
+import type { RecordSelectionChromeAnchor } from './selectionChromeViewportFollow'
 
 /** The `applyOverlay` id the forwarded ring tokens are mounted under inside the frame. */
 export const SELECTION_CHROME_TOKENS_OVERLAY_ID = 'selection-chrome-tokens'
@@ -58,6 +63,8 @@ export interface BridgeSelectionChromeOptions {
   inspectorRef: RefObject<HTMLDivElement | null>
   /** The store's DEBOUNCED zoom/pan — a change here is the "pan/zoom committed" trigger for re-anchoring. */
   committedTransform: readonly [number, number, number]
+  /** Hands each measured placement to the pan/zoom follower (`selectionChromeViewportFollow.ts`, PERF-3). */
+  recordAnchor: RecordSelectionChromeAnchor
 }
 
 /** True when `adapter` is a bridge to a cross-origin frame — the only kind this hook drives. */
@@ -90,6 +97,7 @@ export function useBridgeSelectionChrome(adapter: FrameDocumentAdapter | null, o
     toolbarRef,
     inspectorRef,
     committedTransform,
+    recordAnchor,
   } = options
   const bridge = isBridgeChromeAdapter(adapter) ? adapter : null
   const resizeCandidate = selectedNodeIds.length === 1 ? (selectedNodeIds[0] ?? null) : null
@@ -98,6 +106,12 @@ export function useBridgeSelectionChrome(adapter: FrameDocumentAdapter | null, o
   // `K4` — the scale tool keeps the aspect ratio; the frame captures the flag
   // at pointerdown, so toggling it never changes a drag already in flight.
   const proportional = useEditorStore((s) => s.canvasTool === 'scale')
+  // canvas-23/26 — primitives, so an unrelated store write re-sends nothing.
+  const flexMarker = useEditorStore((s) => storedSizingMarker(s, resizeNodeId, 'flex'))
+  const alignSelfMarker = useEditorStore((s) => storedSizingMarker(s, resizeNodeId, 'alignSelf'))
+  const justifySelfMarker = useEditorStore((s) => storedSizingMarker(s, resizeNodeId, 'justifySelf'))
+  const snapPeers = useEditorStore((s) => resizeSnapPeersKey(s, resizeNodeId))
+  const zoom = committedTransform[0]
 
   // Ring tokens, once per adapter (a reload re-plays every queued post — see
   // `BridgeFrameAdapter`'s `ready` handling).
@@ -116,8 +130,11 @@ export function useBridgeSelectionChrome(adapter: FrameDocumentAdapter | null, o
   }, [bridge, hoverNodeId])
 
   useEffect(() => {
-    bridge?.setResizeTarget(resizeNodeId ? { nodeId: resizeNodeId } : null, { proportional })
-  }, [bridge, resizeNodeId, proportional])
+    bridge?.setResizeTarget(
+      resizeNodeId ? { nodeId: resizeNodeId } : null,
+      resizeTargetOptions({ proportional, markers: [flexMarker, alignSelfMarker, justifySelfMarker], snapPeers, zoom }),
+    )
+  }, [bridge, resizeNodeId, proportional, flexMarker, alignSelfMarker, justifySelfMarker, snapPeers, zoom])
 
   // Toolbar + inspector anchor. Async by nature (a real round trip), so a
   // reply that arrives after a newer request was sent is dropped.
@@ -127,12 +144,13 @@ export function useBridgeSelectionChrome(adapter: FrameDocumentAdapter | null, o
     if (!needsAnchor || selectedNodeIds.length === 0) {
       hideOverlayElement(toolbarRef.current)
       hideOverlayElement(inspectorRef.current)
+      recordAnchor(null)
       return
     }
     let generation = 0
     let disposed = false
     const refresh = () => {
-      const mine = ++generation
+      const mine = (generation += 1)
       bridge
         .measure(selectedNodeIds.map((nodeId) => ({ nodeId })))
         .then((measurements) => {
@@ -149,6 +167,11 @@ export function useBridgeSelectionChrome(adapter: FrameDocumentAdapter | null, o
           publishSelectionAnchor(toolbarRef.current, showToolbar ? toolbarUnion : null)
           positionInspector(inspectorRef.current, inspectorNodeId ? inspectorRect : null, session.canvasRect)
           publishSelectionAnchor(inspectorRef.current, inspectorNodeId ? inspectorRect : null)
+          recordAnchor({
+            toolbar: showToolbar ? toolbarUnion : null,
+            inspector: inspectorNodeId ? inspectorRect : null,
+            canvasRect: session.canvasRect,
+          })
         })
         .catch((err: unknown) => {
           // A frame mid-reload does not answer; the next trigger re-asks.
@@ -165,5 +188,5 @@ export function useBridgeSelectionChrome(adapter: FrameDocumentAdapter | null, o
       for (const unsubscribe of unsubscribes) unsubscribe()
     }
     // `committedTransform` is the pan/zoom-commit trigger, not a value read here.
-  }, [bridge, iframeElement, canvasRoot, selectedNodeIds, showToolbar, inspectorNodeId, committedTransform, toolbarRef, inspectorRef])
+  }, [bridge, iframeElement, canvasRoot, selectedNodeIds, showToolbar, inspectorNodeId, committedTransform, toolbarRef, inspectorRef, recordAnchor])
 }

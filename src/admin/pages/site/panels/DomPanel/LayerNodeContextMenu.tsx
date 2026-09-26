@@ -50,6 +50,17 @@
  * (`ConstraintNotice`, `@site/ui/ConstraintNotice`) — the same component the
  * refusal toast and every other refusal surface share, so the wording and the
  * ways forward cannot drift between them.
+ *
+ * P5-C (DET-5) — "Detach instance" when every target is a component
+ * instance: the store's one `detachInstances` action, the same call as the
+ * Component section's button and ⌘⌥B. A package instance's item is disabled
+ * with the reason. The canvas's menu is this component too.
+ *
+ * P5-E (UX-22, IX-27) — every item with a key shows it, right-aligned, read
+ * from the keybinding registry (`shortcutLabelFor`), and the arrange block
+ * (`LayerArrangeMenuItems`: Group, Ungroup, Lock, front / back, flex layout,
+ * Align, copy / paste style, and the canvas's "Select layer" list) follows
+ * Wrap.
  */
 
 import { useEffect, useRef } from 'react'
@@ -67,7 +78,7 @@ import { resolveInsertLocation } from '@site/store/insertLocation'
 import { ModulePicker } from '@site/panels/AssetsPanel'
 import { canComponentizeNode } from '@site/componentization'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
-import { explainStructuralConstraint, type EditConstraint } from '@core/page-tree'
+import { explainStructuralConstraint, isResolvedByInstanceDetach, type EditConstraint } from '@core/page-tree'
 import type { AnyModuleDefinition } from '@core/module-engine'
 import { PenSquareSolidIcon } from 'pixel-art-icons/icons/pen-square-solid'
 import { CopyPlusSolidIcon } from 'pixel-art-icons/icons/copy-plus-solid'
@@ -81,10 +92,13 @@ import { AppGridPlusGlyphIcon } from 'pixel-art-icons/icons/app-grid-plus-glyph'
 import { BoxStackSolidIcon } from 'pixel-art-icons/icons/box-stack-solid'
 import { CodeIcon } from 'pixel-art-icons/icons/code'
 import { BoxSolidIcon } from 'pixel-art-icons/icons/box-solid'
+import { Copy2SolidIcon } from 'pixel-art-icons/icons/copy-2-solid'
 import { LayoutSolidIcon } from 'pixel-art-icons/icons/layout-solid'
 import { EyeSolidIcon } from 'pixel-art-icons/icons/eye-solid'
 import { isNarrowEditorChromeViewport } from '@site/layout/responsiveChrome'
 import { ConstraintNotice } from '@site/ui/ConstraintNotice'
+import { shortcutLabelFor } from '@admin/spotlight/keybindings'
+import { LayerArrangeMenuItems } from './LayerArrangeMenuItems'
 import styles from './LayerNodeContextMenu.module.css'
 
 interface LayerNodeContextMenuProps {
@@ -113,6 +127,12 @@ interface LayerNodeContextMenuProps {
   onPasteHtml?: (nodeId: string) => void
   /** The node that was right-clicked. When omitted, falls back to selectedNodeId. */
   nodeId?: string
+  /**
+   * P5-E (IX-26) — every layer under the pointer, innermost first, for the
+   * "Select layer" submenu. The canvas passes it (`nodesUnderClientPoint`);
+   * the Layers panel has no pointer over the page and omits it.
+   */
+  layerIdsUnderPointer?: readonly string[]
 }
 
 export function LayerNodeContextMenu({
@@ -128,6 +148,7 @@ export function LayerNodeContextMenu({
   onPaste,
   onPasteHtml,
   nodeId: nodeIdProp,
+  layerIdsUnderPointer,
 }: LayerNodeContextMenuProps) {
   const firstItemRef = useRef<HTMLButtonElement>(null)
 
@@ -205,15 +226,13 @@ export function LayerNodeContextMenu({
   const structuralConstraints = ((): { duplicate: EditConstraint | null; wrap: EditConstraint | null; delete: EditConstraint | null } => {
     if (!activePage || targetIds.length === 0) return { duplicate: null, wrap: null, delete: null }
     const nodes = targetIds.map((id) => activePage.nodes[id]).filter((n) => n !== undefined)
-    // `multi` is what tells the rule a WRAP is being asked of several elements
-    // at once — one wrapper spanning N ranges, which W4-1's `wrapJsxElement`
-    // does not write. Duplicate and delete are safe in bulk (the save batch is
-    // ordered bottom-to-top), so they pass it through unchanged and are
-    // enabled for a multi-selection.
+    // P3-D — a multi-selection wrap is a group (one container around the
+    // run), and a gesture inside a shared component is written to THIS
+    // instance (OD-7): neither greys an item out any more.
     const firstRefusal = (kind: 'duplicate' | 'wrap' | 'delete'): EditConstraint | null => {
       for (const node of nodes) {
-        const constraint = explainStructuralConstraint({ kind, node, multi: nodes.length > 1 })
-        if (constraint) return constraint
+        const constraint = explainStructuralConstraint({ kind, node })
+        if (constraint && !isResolvedByInstanceDetach(constraint.reason)) return constraint
       }
       return null
     }
@@ -262,6 +281,15 @@ export function LayerNodeContextMenu({
   const dispatchSaveAsLayout = () => {
     if (!nodeId) return
     useEditorStore.getState().openLayoutNameDialog({ mode: 'create', nodeId })
+    onClose()
+  }
+
+  // P5-C — offered only when every target is an instance; a package one can't be detached yet.
+  const instanceTargets = targetIds.map((id) => activePage?.nodes[id]).filter((node) => node?.moduleId === 'studio.instance')
+  const canDetach = !lockedSlotInstance && targetIds.length > 0 && instanceTargets.length === targetIds.length
+  const detachBlockedByPackage = instanceTargets.some((node) => (node?.props as { source?: unknown } | undefined)?.source === 'package')
+  const dispatchDetach = () => {
+    void useEditorStore.getState().detachInstances(targetIds)
     onClose()
   }
 
@@ -402,7 +430,7 @@ export function LayerNodeContextMenu({
 
       {canToggleHidden && (
         <>
-          <ContextMenuItem ref={firstItemRef} onClick={dispatchToggleHidden}>
+          <ContextMenuItem ref={firstItemRef} onClick={dispatchToggleHidden} shortcut={shortcutLabelFor('layers.toggleVisibility')}>
             <span aria-hidden="true"><EyeSolidIcon size={13} /></span>
             {hideActionLabel}
           </ContextMenuItem>
@@ -413,7 +441,7 @@ export function LayerNodeContextMenu({
       {/* Rename — hidden for slot-instance lockdown AND for multi-select
           (rename is single-node only). */}
       {!lockedSlotInstance && !isMulti && (
-        <ContextMenuItem ref={canToggleHidden ? undefined : firstItemRef} onClick={onRename}>
+        <ContextMenuItem ref={canToggleHidden ? undefined : firstItemRef} onClick={onRename} shortcut={shortcutLabelFor('layers.rename')}>
           <span aria-hidden="true"><PenSquareSolidIcon size={13} /></span>
           Rename
         </ContextMenuItem>
@@ -424,6 +452,7 @@ export function LayerNodeContextMenu({
           <ContextMenuItem
             ref={!canToggleHidden && isMulti ? firstItemRef : undefined}
             onClick={dispatchDuplicate}
+            shortcut={shortcutLabelFor('layers.duplicate')}
             disabled={structuralConstraints.duplicate !== null}
             tooltip={structuralConstraints.duplicate?.explanation}
           >
@@ -435,6 +464,19 @@ export function LayerNodeContextMenu({
             <ContextMenuItem onClick={dispatchComponentize}>
               <span aria-hidden="true"><BoxSolidIcon size={13} /></span>
               Componentize
+            </ContextMenuItem>
+          )}
+
+          {canDetach && (
+            <ContextMenuItem
+              onClick={dispatchDetach}
+              shortcut={shortcutLabelFor('layers.detachInstance')}
+              disabled={detachBlockedByPackage}
+              tooltip={detachBlockedByPackage ? 'Package components cannot be detached yet' : undefined}
+              data-testid="layer-menu-detach-instance"
+            >
+              <span aria-hidden="true"><Copy2SolidIcon size={13} /></span>
+              {isMulti ? 'Detach instances' : 'Detach instance'}
             </ContextMenuItem>
           )}
 
@@ -451,18 +493,18 @@ export function LayerNodeContextMenu({
 
           <ContextMenuSeparator />
 
-          <ContextMenuItem onClick={dispatchCopy}>
+          <ContextMenuItem onClick={dispatchCopy} shortcut={shortcutLabelFor('layers.copy')}>
             <span aria-hidden="true"><CopySolidIcon size={13} /></span>
             Copy
           </ContextMenuItem>
 
-          <ContextMenuItem onClick={dispatchCut}>
+          <ContextMenuItem onClick={dispatchCut} shortcut={shortcutLabelFor('layers.cut')}>
             <span aria-hidden="true"><CopyXSolidIcon size={13} /></span>
             Cut
           </ContextMenuItem>
 
           {canPaste && (
-            <ContextMenuItem onClick={onPaste}>
+            <ContextMenuItem onClick={onPaste} shortcut={shortcutLabelFor('layers.paste')}>
               <span aria-hidden="true"><FilesStack2SolidIcon size={13} /></span>
               Paste
             </ContextMenuItem>
@@ -509,6 +551,12 @@ export function LayerNodeContextMenu({
               Loop
             </ContextMenuItem>
           </ContextMenuSubmenu>
+
+          <LayerArrangeMenuItems
+            targetIds={targetIds}
+            layerIdsUnderPointer={layerIdsUnderPointer ?? []}
+            onClose={onClose}
+          />
         </>
       )}
 
@@ -545,6 +593,7 @@ export function LayerNodeContextMenu({
           <ContextMenuItem
             danger
             onClick={dispatchDelete}
+            shortcut={shortcutLabelFor('layers.delete')}
             disabled={structuralConstraints.delete !== null}
             tooltip={structuralConstraints.delete?.explanation}
           >

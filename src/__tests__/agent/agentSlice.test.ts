@@ -3,6 +3,8 @@ import { useEditorStore } from '@site/store/store'
 import {
   processStreamEvent,
   executeAgentTool,
+  routedModelLabel,
+  routedModelTitle,
   type AgentBridgeRuntime,
   type AgentTextStreamSink,
   type AgentMessage,
@@ -25,7 +27,6 @@ function freshAgentState() {
     canRedo: false,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     activeClassId: null,
     isAgentOpen: true,
     isAgentStreaming: true,
@@ -1649,5 +1650,47 @@ describe('setAgentProvider', () => {
     } finally {
       intercept.restore()
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// processStreamEvent — a provider retry is a status, never an error (AI-8)
+// ---------------------------------------------------------------------------
+
+describe('processStreamEvent — retrying', () => {
+  it('marks the turn as retrying without an error, and the next output clears it', async () => {
+    const { assistantId } = freshAgentState()
+    const bridge = emptyBridge()
+    const run = (event: Parameters<typeof processStreamEvent>[0]) =>
+      processStreamEvent(event, assistantId, noopTextSink, useEditorStore.setState, bridge, null, executeAgentTool)
+
+    await run({ type: 'retrying', attempt: 1, maxAttempts: 3, delayMs: 1000, reason: 'Anthropic service error (529)' })
+    expect(useEditorStore.getState().agentMessages[0]!.retrying).toEqual({ attempt: 1, maxAttempts: 3 })
+    expect(useEditorStore.getState().agentError).toBeNull()
+
+    await run({ type: 'text', text: 'hello' })
+    expect(useEditorStore.getState().agentMessages[0]!.retrying).toBeUndefined()
+  })
+})
+
+describe('processStreamEvent — modelRouting (AI-25)', () => {
+  it('stores the model the turn ran on, and the chip names it only when the turn was routed', async () => {
+    const { assistantId } = freshAgentState()
+    await processStreamEvent(
+      { type: 'modelRouting', mode: 'routed', modelId: 'claude-sonnet-5', role: 'smallEdit', reason: 'A small edit runs on claude-sonnet-5.' },
+      assistantId,
+      noopTextSink,
+      useEditorStore.setState,
+      emptyBridge(),
+      null,
+      executeAgentTool,
+    )
+    const routed = useEditorStore.getState().agentRoutedModel
+    expect(routed).toEqual({ mode: 'routed', modelId: 'claude-sonnet-5', role: 'smallEdit', reason: 'A small edit runs on claude-sonnet-5.' })
+    expect(routedModelLabel(routed)).toBe('turn · claude-sonnet-5')
+    expect(routedModelTitle(routed)).toBe('A small edit runs on claude-sonnet-5.')
+    // A pinned or default turn ran on the model the picker already shows.
+    expect(routedModelLabel({ ...routed!, mode: 'pinned' })).toBeNull()
+    expect(routedModelLabel({ ...routed!, mode: 'default' })).toBeNull()
   })
 })

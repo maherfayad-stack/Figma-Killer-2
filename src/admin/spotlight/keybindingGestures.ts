@@ -25,10 +25,11 @@ import type { KeybindingDefinition } from './keybindingShape'
 
 export const GESTURE_KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
   // K5 — Alt-hover measurement: the distances between the selection and the
-  // node under the pointer (`MeasureLayer.tsx`).
+  // node under the pointer (`MeasureLayer.tsx`). With nothing under the
+  // pointer it measures against the selection's parent (P2-E / IX-19).
   {
     commandId: 'canvas.measureHover',
-    displayName: 'Measure distance to the hovered element',
+    displayName: 'Measure distance to the hovered element (or the parent)',
     shortcut: { mac: '⌥+Hover', win: 'Alt+Hover' },
     match: () => false,
     scope: 'canvas',

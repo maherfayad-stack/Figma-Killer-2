@@ -1,4 +1,4 @@
-export { setJsxProp } from './setJsxProp'
+export { setJsxProp, JsxPropTargetError } from './setJsxProp'
 export type { SetJsxPropParams } from './setJsxProp'
 export { readJsxProps } from './readJsxProps'
 export type { JsxLiteralProps, ReadJsxPropsParams } from './readJsxProps'
@@ -7,6 +7,8 @@ export type { SetJsxTextParams } from './setJsxText'
 export { setJsxStyle, JsxStyleTargetError } from './setJsxStyle'
 export type { SetJsxStyleParams } from './setJsxStyle'
 export { setJsxClassName } from './setJsxClassName'
+export { createModuleImportPlan } from './cssModuleImportPlan'
+export type { ModuleImportPlan, PendingModuleImports } from './cssModuleImportPlan'
 export type {
   ClassNameRefusal,
   ClassNameRefusalReason,
@@ -28,13 +30,30 @@ export { setImportSpecifier, ImportSpecifierTargetError } from './setImportSpeci
 export type { SetImportSpecifierParams } from './setImportSpecifier'
 export { rewriteImportSpecifier } from './rewriteImportSpecifier'
 export type { RewriteImportSpecifierParams, RewriteImportSpecifierResult } from './rewriteImportSpecifier'
+export { setSvgPartAttributes } from './setSvgPartAttributes'
+export type {
+  SetSvgPartAttributesParams,
+  SetSvgPartAttributesResult,
+  SvgPartAttributesRefusalReason,
+} from './setSvgPartAttributes'
 export { setJsxTagName, JsxTagNameTargetError } from './setJsxTagName'
 export type { SetJsxTagNameParams } from './setJsxTagName'
 export { moveJsxElement } from './moveJsxElement'
 export type { MoveJsxElementParams, MoveJsxElementResult, MoveJsxRefusal, MoveJsxRefusalReason } from './moveJsxElement'
 // D2 G3 — the cross-FILE move `moveJsxElement` deliberately refuses.
-export { transplantJsxElement } from './transplantJsxElement'
+export {
+  transplantJsxElement,
+  // P5-G — the free canvas's two endpoints: a loose layer placed into a frame,
+  // and an element lifted out of one onto the board.
+  placeCanvasLayerRoot,
+  liftJsxElementToCanvasModule,
+  canvasLayerModuleRoot,
+} from './transplantJsxElement'
+export { buildCanvasLayerModule, canvasLayerModuleFromSpec, type CanvasLayerModule } from './canvasLayerModule'
 export type {
+  LiftJsxElementParams,
+  LiftJsxElementResult,
+  PlaceCanvasLayerRootParams,
   TransplantJsxElementParams,
   TransplantJsxElementResult,
   TransplantJsxRefusal,
@@ -72,19 +91,13 @@ export { deleteJsxElement } from './deleteJsxElement'
 export { createImportPruneSession, isPrunableSourceFile } from './pruneOrphanedImports'
 export type { ImportPruneSession, PrunedImportsResult } from './pruneOrphanedImports'
 export type {
-  DeletedJsxText,
   DeleteJsxElementParams,
   DeleteJsxElementResult,
   DeleteJsxRefusal,
   DeleteJsxRefusalReason,
 } from './deleteJsxElement'
-export { reinsertJsxSource } from './reinsertJsxSource'
-export type {
-  ReinsertJsxRefusal,
-  ReinsertJsxRefusalReason,
-  ReinsertJsxSourceParams,
-  ReinsertJsxSourceResult,
-} from './reinsertJsxSource'
+export { editListItems } from './editListItems'
+export type { EditListItemsParams, EditListItemsResult, ListItemRefusal, ListItemRefusalReason } from './editListItems'
 export type { CreatedJsxLocation } from './createdJsxLocation'
 export { insertJsxElement } from './insertJsxElement'
 export type { InsertJsxElementParams, InsertJsxElementResult } from './insertJsxElement'
@@ -95,6 +108,7 @@ export type {
   InsertJsxRefusalReason,
   InsertableJsxPropValue,
 } from './jsxSubtree'
+export { isAssetImportRef, assetImportBindingName, type AssetImportRef } from './jsxAssetImports'
 export { insertJsxIntoSlotProp } from './insertJsxIntoSlotProp'
 export type {
   InsertJsxIntoSlotPropNode,
@@ -154,6 +168,9 @@ export type {
 export { collectSlotChildCandidates, listSlotChildCandidates, suggestSlotNames, SOLE_SLOT_DEFAULT_NAME } from './subtreeSlotChildren'
 export type { ListSlotChildCandidatesParams, ResolvedSlotChildCandidate, SlotChildCandidate, SlotChildCandidateKind } from './subtreeSlotChildren'
 export { addSlotPropToComponent } from './addSlotPropToComponent'
+// P5-C (DET-7) — "Expose as prop": a literal in a component becomes an optional prop whose default is that literal.
+export { exposeLiteralAsProp } from './exposeLiteralAsProp'
+export type { ExposeLiteralAsPropParams, ExposeLiteralAsPropResult, ExposeLiteralRefusalReason, ExposeTarget } from './exposeLiteralAsProp'
 export type {
   AddSlotPropRefusal,
   AddSlotPropRefusalReason,
@@ -171,5 +188,21 @@ export type { ComponentCallSite } from './componentCallSites'
  * has to find the exact same span a write would land on, and a second locator
  * there could drift from this one.
  */
-export { createProject, findJsxElementAtLocation, loadSourceFile, resolveJsxWholeElement } from './locateJsxElement'
+export {
+  createProject,
+  findJsxElementAtLocation,
+  JsxElementNotFoundError,
+  loadSourceFile,
+  resolveJsxWholeElement,
+  syncProjectWithDisk,
+} from './locateJsxElement'
 export type { JsxLocation, JsxOpeningLikeElement } from './locateJsxElement'
+export { readSourceFingerprintAt } from './sourceFingerprintAt'
+/**
+ * The unit a structural codemod acts on at a `line:col` — exported for the
+ * server's edit SEQUENCE (`studioEditSequence.ts`, P3-D), which has to know
+ * exactly which elements a step moved, removed or created to follow every
+ * other element it names through that step.
+ */
+export { resolveJsxChildRange } from './jsxChildRange'
+export type { JsxChildRange, JsxChildUnit } from './jsxChildRange'

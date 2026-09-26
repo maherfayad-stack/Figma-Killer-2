@@ -373,7 +373,7 @@ describe('AgentPanel', () => {
     renderAgentPanel({ agentActiveCredentialId: 'cred_1', agentActiveModelId: 'gpt-4o' })
 
     await waitFor(() => {
-      expect(screen.getByText("Describe what you want to build and I'll do it for you.")).toBeTruthy()
+      expect(screen.getByText('What should we design?')).toBeTruthy()
     })
 
     expect(screen.queryByText('Connect an AI provider')).toBeNull()
@@ -616,7 +616,7 @@ describe('AgentPanel', () => {
     })
 
     await waitFor(() => {
-      expect(screen.getByText("Describe what you want to build and I'll do it for you.")).toBeTruthy()
+      expect(screen.getByText('What should we design?')).toBeTruthy()
     })
 
     // The setup empty state must not appear, and the composer textarea must be

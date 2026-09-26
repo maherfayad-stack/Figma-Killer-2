@@ -126,6 +126,31 @@ describe('apiRequest', () => {
     expect(new Set(seenKeys).size).toBe(1)
   })
 
+  // IMG-1: an image landing is a protected write too. Without the key a lost
+  // response surfaced as an error, and a manual retry wrote `hero-2.png`.
+  it('retries an asset-drop (a FormData body) with one stable idempotency key', async () => {
+    let calls = 0
+    const seenKeys: (string | null)[] = []
+    const form = new FormData()
+    form.append('file', new File([new Uint8Array([1])], 'hero.png'))
+    const result = await apiRequest('/admin/api/studio/asset-drop', {
+      method: 'POST',
+      body: form,
+      schema: Type.Object({ ok: Type.Boolean() }),
+      sleepImpl: noSleep,
+      fetchImpl: async (_input, init) => {
+        calls += 1
+        seenKeys.push((init?.headers as Record<string, string> | undefined)?.['X-Studio-Idempotency-Key'] ?? null)
+        if (calls < 2) return new Response('', { status: 502 })
+        return jsonResponse({ ok: true })
+      },
+    })
+    expect(result.ok).toBe(true)
+    expect(calls).toBe(2)
+    expect(seenKeys[0]).toBeTruthy()
+    expect(new Set(seenKeys).size).toBe(1)
+  })
+
   // The hole this closes: an empty-bodied gateway status collapses TWO
   // failures the client cannot tell apart — "never reached a handler"
   // (ECONNREFUSED, safe to repeat) and "the handler finished its write and

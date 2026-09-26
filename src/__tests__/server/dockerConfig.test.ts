@@ -22,9 +22,10 @@ describe('self-host docker config', () => {
   it('defines a production Docker image that builds assets before runtime startup', () => {
     const dockerfile = readFileSync('Dockerfile', 'utf8')
 
-    expect(dockerfile).toContain('FROM oven/bun:1.3.11 AS build')
+    // The tag itself is gated by architecture/bun-version-pinned.test.ts (it must equal engines.bun).
+    expect(dockerfile).toMatch(/^FROM oven\/bun:\S+ AS build$/m)
     expect(dockerfile).toContain('RUN bun run build')
-    expect(dockerfile).toContain('FROM oven/bun:1.3.11 AS runtime')
+    expect(dockerfile).toMatch(/^FROM oven\/bun:\S+ AS runtime$/m)
     expect(dockerfile).toContain('ARG STUDIO_VERSION=dev')
     expect(dockerfile).toContain('LABEL org.opencontainers.image.version="${STUDIO_VERSION}"')
     expect(dockerfile).toContain('CMD ["bun", "run", "server/index.ts"]')
@@ -34,7 +35,9 @@ describe('self-host docker config', () => {
   it('keeps TypeScript path aliases available in the runtime image', () => {
     const dockerfile = readFileSync('Dockerfile', 'utf8')
 
-    expect(dockerfile).toContain('COPY --chown=bun:bun tsconfig*.json ./')
+    // Root-owned on purpose (P1-H review F3): the runtime user must not own
+    // Studio's code. Ownership itself is gated by workspace-volume-persistence.test.ts.
+    expect(dockerfile).toContain('COPY tsconfig*.json ./')
   })
 
   it('installs the runtime script bundler in production dependencies', () => {

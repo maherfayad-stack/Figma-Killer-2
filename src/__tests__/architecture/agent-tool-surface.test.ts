@@ -63,14 +63,14 @@ describe('agent-tool-surface gate', () => {
   })
 
   it('code asset read tools are not stamped as mutating', () => {
-    expect(stampedToolByName.get('site_list_code_assets')?.mutates).toBe(false)
-    expect(stampedToolByName.get('site_read_code_asset')?.mutates).toBe(false)
-    expect(stampedToolByName.get('site_inspect_code_runtime')?.mutates).toBe(false)
+    expect(stampedToolByName.get('site_list_code_assets')?.requiresWrite).toBe(false)
+    expect(stampedToolByName.get('site_read_code_asset')?.requiresWrite).toBe(false)
+    expect(stampedToolByName.get('site_inspect_code_runtime')?.requiresWrite).toBe(false)
   })
 
   it('code asset write tools are stamped as mutating', () => {
-    expect(stampedToolByName.get('site_write_code_asset')?.mutates).toBe(true)
-    expect(stampedToolByName.get('site_patch_code_asset')?.mutates).toBe(true)
+    expect(stampedToolByName.get('site_write_code_asset')?.requiresWrite).toBe(true)
+    expect(stampedToolByName.get('site_patch_code_asset')?.requiresWrite).toBe(true)
   })
 
   it('retired class-patch tools are absent', () => {

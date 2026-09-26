@@ -81,16 +81,16 @@ export function PreviewAxesControls() {
     if (!locale || locale === currentLocale || isReparsing) return
     setPreviewAxes({ locale })
     setIsReparsing(true)
-    void (async () => {
-      try {
-        if (dir) await savePreviewAxes(dir, { locale })
-      } finally {
-        // Re-parse machinery already exists (`configHash` includes
-        // `preferredKey`) — this reload is what actually asks for it.
-        requestCmsSiteReload()
-        setIsReparsing(false)
-      }
-    })()
+    // Re-parse machinery already exists (`configHash` includes
+    // `preferredKey`) — this reload is what actually asks for it. Settled
+    // however the save ends (a promise's `finally`: the React Compiler cannot
+    // compile a `try … finally`).
+    const settle = () => {
+      requestCmsSiteReload()
+      setIsReparsing(false)
+    }
+    if (dir) void savePreviewAxes(dir, { locale }).finally(settle)
+    else settle()
   }
 
   return (

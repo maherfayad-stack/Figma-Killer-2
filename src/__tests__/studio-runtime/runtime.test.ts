@@ -7,7 +7,13 @@
  * NOT exercised here — see `STATE.md`'s `live-04` handoff, "Pending dogfood".
  */
 import { afterEach, describe, expect, it } from 'bun:test'
-import { createStudioRuntimeBridge, RUNTIME_MESSAGE_SOURCE, type StudioRuntimeBridge } from '@core/studio-runtime'
+import {
+  createStudioRuntimeBridge,
+  DEFAULT_FRAME_FIT_HEIGHT,
+  LIVE_FRAME_FIT_STRUCTURAL_DEBOUNCE_MS,
+  RUNTIME_MESSAGE_SOURCE,
+  type StudioRuntimeBridge,
+} from '@core/studio-runtime'
 
 const PARENT_ORIGIN = 'https://parent.test'
 
@@ -262,17 +268,6 @@ describe('createStudioRuntimeBridge — optimistic DOM ops', () => {
     expect(to?.querySelector('[data-node-id="item"]')).not.toBeNull()
   })
 
-  it('text sets textContent, never innerHTML', () => {
-    document.body.innerHTML = `<div data-node-id="t1">old</div>`
-    const { fakeWindow } = makeFakeParentWindow()
-    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
-
-    bridge.handleMessage({ type: 'optimistic.text', nodeId: 't1', occurrenceIndex: 0, text: '<b>bold</b>' })
-
-    const el = document.querySelector('[data-node-id="t1"]')
-    expect(el?.textContent).toBe('<b>bold</b>')
-    expect(el?.querySelector('b')).toBeNull()
-  })
 })
 
 // `speed-01` — a properties-panel style commit/scrub previewed in-frame
@@ -921,9 +916,14 @@ describe('createStudioRuntimeBridge — resize handles', () => {
   const HANDLE = '[data-canvas-resize-handle]'
   const PREVIEW_ATTR = 'data-studio-resize-preview'
 
+  /**
+   * A move during a drag carries the held button, as a real browser reports
+   * it: a move with `buttons: 0` is how the drag guard (ERR-12) recognises a
+   * release it never heard, and ends the drag.
+   */
   function pointerEvent(type: string, init: MouseEventInit): Event {
     const Ctor = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent
-    return new Ctor(type, { bubbles: true, cancelable: true, ...init })
+    return new Ctor(type, { bubbles: true, cancelable: true, ...(type === 'pointermove' ? { buttons: 1 } : {}), ...init })
   }
   function mountBox(display = 'block'): HTMLElement {
     const box = document.createElement('div')
@@ -1070,7 +1070,7 @@ describe('createStudioRuntimeBridge — inline text edit', () => {
     el.dispatchEvent(dbl)
     expect(dbl.defaultPrevented).toBe(true)
     expect(messages(posted).filter((m) => m.type === 'text:editStart')).toEqual([
-      { type: 'text:editStart', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0 },
+      { type: 'text:editStart', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0, ancestors: [{ nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0 }] },
     ])
     // Not yet contentEditable — the parent hasn't replied.
     expect(el.getAttribute('contenteditable')).toBeNull()
@@ -1233,5 +1233,40 @@ describe('createStudioRuntimeBridge — inline text edit', () => {
     const ring = document.querySelector('[data-canvas-selection-ring]')!
     ring.dispatchEvent(mouseEvent('dblclick'))
     expect(messages(posted).some((m) => m.type === 'text:editStart')).toBe(false)
+  })
+})
+
+describe('createStudioRuntimeBridge — frame fit resets (PERF-9)', () => {
+  const drainMutations = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+  it('attribute writes from an animating app never reset the fit; nodes added and removed reset it once, debounced', async () => {
+    const { fakeWindow } = makeFakeParentWindow()
+    document.body.innerHTML = '<div id="slide" class="a"></div>'
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    await Bun.sleep(LIVE_FRAME_FIT_STRUCTURAL_DEBOUNCE_MS + 50)
+    // A fitted pin the frame settled at. A reset writes it back to the floor.
+    document.body.style.height = '1234px'
+    await drainMutations()
+
+    const slide = document.getElementById('slide')!
+    for (let frame = 0; frame < 30; frame += 1) {
+      slide.setAttribute('class', frame % 2 ? 'a' : 'b')
+      slide.style.transform = `translateX(${frame}px)`
+      await drainMutations()
+    }
+    expect(document.body.style.height).toBe('1234px')
+
+    for (let frame = 0; frame < 10; frame += 1) {
+      const dot = document.createElement('span')
+      document.body.appendChild(dot)
+      await drainMutations()
+      dot.remove()
+      await drainMutations()
+    }
+    // Still inside the trailing debounce: the app is churning nodes every frame.
+    expect(document.body.style.height).toBe('1234px')
+    await Bun.sleep(LIVE_FRAME_FIT_STRUCTURAL_DEBOUNCE_MS + 50)
+    expect(document.body.style.height).toBe(`${DEFAULT_FRAME_FIT_HEIGHT}px`)
   })
 })

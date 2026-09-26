@@ -37,10 +37,10 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { extractStringsToDictionary, relativeSpecifier, type StringExtraction } from '@core/ast-codemods'
 import { Type } from '@core/utils/typeboxHelpers'
-import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { resolveAppRoot } from './appRoot'
-import { findHardcodedStrings, type HardcodedString } from './hardcodedStrings'
+import { countDesignSystemHardcodedStrings, findHardcodedStrings, type HardcodedString } from './hardcodedStrings'
 import { findScaffoldedI18n, scaffoldProjectI18n, SCAFFOLD_HOOK_NAME, SCAFFOLD_LOCALES } from './i18nScaffold'
 import { readTranslationCatalog } from './translationCatalog'
 import { reprobeProjectProfile } from './projectProbe'
@@ -243,6 +243,19 @@ export function setUpProjectI18n(dir: string): I18nSetupReport | { ok: false; me
     if (!result.ok) failures.push({ key, message: result.message })
   }
 
+  // One summary line, not a refusal per string: `findHardcodedStrings` already
+  // excludes the vendored design system entirely, so those strings never got
+  // a key or a rewrite attempt above. Reported here so the panel doesn't read
+  // the silence as "the design system has no copy" — it has copy, Studio just
+  // never touches a library.
+  const designSystemCopyCount = countDesignSystemHardcodedStrings(dir)
+  if (designSystemCopyCount > 0) {
+    failures.push({
+      key: 'design-system',
+      message: `${designSystemCopyCount} ${designSystemCopyCount === 1 ? 'string' : 'strings'} in design-system text is left to the library.`,
+    })
+  }
+
   return {
     ok: true,
     source: scaffold.translationsRel,
@@ -263,7 +276,6 @@ export async function tryServeStudioI18nSetup(req: Request, _url: URL, pathname:
     return jsonResponse(setUpProjectI18n(dir))
   } catch (err) {
     rethrowProjectDirRefusal(err)
-    console.error('[studio:i18nSetup]', err)
-    return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    return internalServerError('[studio:i18nSetup]', err)
   }
 }

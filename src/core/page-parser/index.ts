@@ -1,11 +1,13 @@
+export { parseJsxTree, parsePageFile } from './parsePageFile'
+export { getReturnedJsxRoots } from './branchSelection'
+export type { ReturnedJsx } from './branchSelection'
 export {
   findComponentDeclaration,
+  findNamedComponentDeclaration,
   getFunctionLikeNode,
-  getReturnedJsxRoots,
-  parseJsxTree,
-  parsePageFile,
-} from './parsePageFile'
-export type { ReturnedJsx } from './parsePageFile'
+  readPageComponent,
+} from './componentDeclaration'
+export type { PageComponent } from './componentDeclaration'
 export { IMAGE_SPECIFIER_RE, STUDIO_ASSET_SENTINEL, unresolvedRawTextImports } from './assetImports'
 export type { ImportSpecifierLocation, UnresolvedAssetImport } from './assetImports'
 export type {
@@ -15,11 +17,13 @@ export type {
   CssInJsFinding,
   CssInJsLibrary,
   CssInJsTemplate,
+  ComponentBody,
   FunctionLike,
   NodeLoc,
   ParsedNode,
   ParsedPage,
   ParsedPropValue,
+  UnreadableExport,
 } from './types'
 export { cssInJsStylesheet, extractCssInJs, mergeCssInJs } from './cssInJsExtract'
 export type { CssInJsFile, StyledBinding } from './cssInJsExtract'
@@ -40,10 +44,30 @@ export {
   WORKSPACE_MAX_FILE_BYTES,
   WORKSPACE_MAX_FILES,
   isPrototypeShellPath,
+  listWorkspaceDirectories,
   listWorkspaceFiles,
-  listWorkspaceSourceFiles,
 } from './workspaceFiles'
+export { isWorkspaceSourceFilePath, listWorkspaceSourceFiles } from './workspaceSourceFiles'
+export {
+  UNWRITABLE_WORKSPACE_DIR_NAMES,
+  comparableWorkspaceRel,
+  excludedWorkspaceSegment,
+  hostExecutedWorkspaceFile,
+  isHostConfigFileName,
+  isSecretBearingFileName,
+  isUnlinkedWorkspacePath,
+  resolveWorkspaceReadPath,
+  isWorkspaceWritablePath,
+  pathEntryExists,
+  realWorkspaceRel,
+  realpathAllowingMissing,
+  stripTrailingDotsAndSpaces,
+  studioShellWorkspaceFile,
+  unwritableWorkspaceSegment,
+} from './workspaceWriteScope'
 export { resetParserCaches } from './parserCaches'
+export { fileSyntaxError, sourceFileSyntaxError } from './sourceSyntax'
+export type { SourceSyntaxError } from './sourceSyntax'
 export {
   PROJECT_DESIGN_SYSTEM_DIR,
   designSystemImportSpecifier,
@@ -51,13 +75,17 @@ export {
 } from './designSystemDir'
 export {
   createWorkspaceProject,
+  reexportChainFiles,
   resolveComponentSources,
   resolveExportedDeclaration,
 } from './componentSources'
-export type { ComponentSource } from './componentSources'
+export type { ComponentSource, ExportedDeclaration, WorkspaceProjectWarning } from './componentSources'
 export { EolPreservingFileSystem, eolFileSystemOf, projectLineEnding } from './eolFileSystem'
+export { writeFileAtomic } from './atomicFileWrite'
+export { createSourceFileExclusive, withSourceWriteHook, writeSourceFile, type SourceWriteHook } from './sourceWriteHook'
+export { LITERAL_FINGERPRINT_LABEL, jsxElementFingerprint, literalFingerprint } from './sourceFingerprint'
+export { isLiteralJsxAttribute } from './jsxLiteralAttribute'
 export {
-  findNamedComponentDeclaration,
   inlineLocalComponents,
   resolveCallTarget,
   INLINE_ID_SEPARATOR,
@@ -67,7 +95,8 @@ export { applyAsyncServerComponentFinding, composeAppRouterRoute } from './nextA
 export type { ComposeAppRouterRouteOptions, ComposeAppRouterRouteResult } from './nextAppLayout'
 export { createEvalScope, createPageEvalBudget, evaluateExpression } from './staticEval'
 export type { EvalScope, PageEvalBudget, StaticEvalOptions, StaticValue, ValueOrigin } from './staticEval'
-export { CLASS_NAME_JOIN_BUILTIN_NAMES } from './staticEvalCalls'
+export { CLASS_NAME_JOIN_BUILTIN_NAMES, isContextReaderHook } from './staticEvalCalls'
+export { reactExportNameOf } from './reactImports'
 export { CANONICAL_JSX_RULES, canonicalRuleDef, checkCanonicalJsx, summarizeCanonicalFindings } from './canonicalCheck'
 export type {
   CanonicalCheckInput,

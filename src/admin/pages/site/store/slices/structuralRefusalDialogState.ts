@@ -28,14 +28,6 @@ export interface StructuralRefusalDialogState {
   /** The node the refusal is about, when the plan had one in hand. */
   nodeId?: string
   /**
-   * Re-run the gesture this refusal blocked, against the node that replaces
-   * `nodeId` once a detach/extract's board reload lands. Present only for the
-   * two remedies that invalidate `nodeId` itself (`detach` / `extract`) —
-   * every other runnable remedy (`edit-component`, `jump-to-source`,
-   * `edit-array`) just opens a file and needs no re-issue.
-   */
-  retry?: (newNodeId: string) => void
-  /**
    * D2 G3 — run the refused cross-frame drop again as a COPY.
    *
    * A closure rather than an id because the gesture's destination (which page,

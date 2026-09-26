@@ -20,10 +20,12 @@
  * binds its tag name. That is not a violation of "exactly one honest target" —
  * they are two halves of one indivisible statement (a `<Button/>` with no
  * `Button` in scope is not valid code), and both are computed and spliced in
- * the same pass so the file is never left in the half-written state. What the
- * codemod refuses to do is guess: if the name is ALREADY bound in this file to
- * something that is not this import, it refuses (`binding-conflict`) rather
- * than shadowing the user's own symbol.
+ * the same pass so the file is never left in the half-written state. It never
+ * shadows the user's own symbol: if the name is ALREADY bound in this file to
+ * something that is not this import, the component is imported under an alias
+ * (`{ Button as Button2 }`, P3-C WB-19 — `planImportBindings`) and written
+ * as `<Button2 />`. That used to refuse `binding-conflict`; the name is only a
+ * spelling, and the alias renders the same component.
  *
  * COMPONENTS AND INTRINSIC TAGS
  * -----------------------------
@@ -32,7 +34,7 @@
  * `"div"` and `<Button>` as the in-scope identifier `Button`.
  *
  *   - **With** an `importSpecifier`, `name` is a COMPONENT — the import above
- *     is written, and the binding-conflict check applies.
+ *     is written, under an alias when the name is taken.
  *   - **Without** one, `name` is an INTRINSIC tag (`div`, `span`, `button`).
  *     There is nothing to import and no binding to conflict with, so both of
  *     those steps are skipped.
@@ -60,19 +62,27 @@
  * answers. A reparent lands with exactly the whitespace an insert at the same
  * spot would have produced, because it is the same function.
  */
-import { Project } from 'ts-morph'
+import { Project, type SourceFile } from 'ts-morph'
 import { createProject, findJsxElementAtLocation, loadSourceFile } from './locateJsxElement'
 import { applyTextEdits, verbatimSourceText, writeVerbatimSource } from './jsxChildRange'
-import { createdJsxLocation, offsetAfterEdits, type CreatedJsxLocation } from './createdJsxLocation'
+import {
+  createdJsxLocation,
+  createdJsxLocationsIn,
+  offsetAfterEdits,
+  type CreatedJsxLocation,
+} from './createdJsxLocation'
 import { resolveChildPlacement } from './jsxChildPlacement'
-import { conflictingBinding, resolveImportEdits } from './jsxImportEdits'
+import { planImportBindings, resolveImportEdits, type ImportRequirement } from './jsxImportEdits'
+import { bindAssetImports, collectAssetImports } from './jsxAssetImports'
 import {
   collectSubtreeImports,
   indentBlock,
   refuse,
+  renameSubtreeComponents,
   renderJsxNode,
   validateSubtree,
   type InsertJsxChildren,
+  type InsertJsxNode,
   type InsertJsxRefusal,
   type InsertableJsxPropValue,
 } from './jsxSubtree'
@@ -89,7 +99,12 @@ export interface InsertJsxElementParams {
   position?: 'before' | 'after'
   /** Tag name of the new element — a component (`Button`) with an `importSpecifier`, an intrinsic tag (`div`) without one. */
   name: string
-  /** Props written onto the new element. Entries whose value is `undefined` are skipped. */
+  /**
+   * Props written onto the new element. Entries whose value is `undefined` are
+   * skipped. A direct value `{ __assetImport: './assets/hero.png' }` (IMG-10)
+   * writes `prop={heroPng}` AND `import heroPng from './assets/hero.png'` in
+   * the same splice — see `jsxAssetImports.ts`.
+   */
   props?: Record<string, InsertableJsxPropValue | undefined>
   /**
    * Module the tag name is imported from, e.g. `@alm-design/design-system`.
@@ -116,19 +131,39 @@ export interface InsertJsxElementParams {
    * scope this codemod cannot verify — and text is refused on a void element.
    */
   children?: InsertJsxChildren
+  /**
+   * P5-B (IMG-2) — more NEW elements written immediately after this one, in
+   * order, at the same anchor and in the SAME splice: N siblings, one write.
+   *
+   * ## Why one splice and not N inserts
+   *
+   * Every insert shifts the line of everything below it, so N independent
+   * inserts are N writes, N re-parses and N undo steps for what the user did
+   * as ONE gesture (dropping three images at once). Rendering the whole run
+   * into one placement edit makes it one write whose undo is one step, and
+   * nothing in the run needs an id before the next one is written.
+   *
+   * Validated as a whole before a byte is written, like `children`: one
+   * refused sibling means nothing is written at all. Meant to be shared with
+   * SVG-5's multi-node insert, which is why the shape is the insert's own
+   * {@link InsertJsxNode} rather than anything image-specific.
+   */
+  siblings?: readonly InsertJsxNode[]
   /** Optional pre-existing project to reuse. */
   project?: Project
 }
 
 /**
- * `created` is the NEW element's own tag-name `line:col` in the file this call
- * just wrote — the half of the answer the caller cannot derive, because the
- * element has no node id until the board re-parses. `null` when the write
- * landed but its position could not be confirmed against the re-parsed file;
- * see `createdJsxLocation.ts` for why that is never guessed at.
+ * `created` is every NEW top-level element's own tag-name `line:col` in the
+ * file this call just wrote, in source order — the element itself first, then
+ * each of `siblings` — the half of the answer the caller cannot derive,
+ * because no element has a node id until the board re-parses. EMPTY when the
+ * write landed but the positions could not be confirmed against the re-parsed
+ * file (all of them or none: a partial list would pair an id with the wrong
+ * element); see `createdJsxLocation.ts` for why that is never guessed at.
  */
 export type InsertJsxElementResult =
-  | { ok: true; created: CreatedJsxLocation | null }
+  | { ok: true; created: readonly CreatedJsxLocation[] }
   | { ok: false; refusal: InsertJsxRefusal }
 
 export function insertJsxElement(params: InsertJsxElementParams): InsertJsxElementResult {
@@ -136,10 +171,42 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
   const project = params.project ?? createProject()
   const sourceFile = loadSourceFile(project, file)
 
-  // Validated for the WHOLE subtree before a single byte is written — a
-  // refusal three levels down must leave the file untouched, not half-built.
-  const invalid = validateSubtree({ name, props: params.props, importSpecifier, children })
-  if (invalid) return invalid
+  // The run this call writes: the element itself, then every sibling.
+  const run: InsertJsxNode[] = [
+    {
+      name,
+      props: params.props,
+      ...(importSpecifier === undefined ? {} : { importSpecifier }),
+      ...(children === undefined ? {} : { children }),
+    },
+    ...(params.siblings ?? []),
+  ]
+
+  // IMG-10 — every image import the run's props ask for (`src={__assetImport}`)
+  // joins the component imports below, so ONE binding plan names them all and
+  // nothing the file already declares is shadowed.
+  const assets = collectAssetImports(run)
+  if (!assets.ok) {
+    return refuse('asset-import', `"${assets.specifier}" is not an image path Studio will write as an import.`)
+  }
+
+  // Only a component name can collide: an intrinsic tag is a string to JSX,
+  // never a reference to a binding, so a local `const div = …` is irrelevant
+  // to `<div />`. Every component in the run, not just the root, is bound to
+  // a local name that shadows nothing (WB-19), and written by that name.
+  const required = new Map<string, ImportRequirement>()
+  for (const node of run) for (const [local, requirement] of collectSubtreeImports(node)) required.set(local, requirement)
+  for (const [local, requirement] of assets.required) required.set(local, requirement)
+  const bindings = planImportBindings(sourceFile, required)
+  const bound = run.map((node) => bindAssetImports(node, assets.nameFor, bindings.localName))
+
+  // Validated for the WHOLE run before a single byte is written — a refusal
+  // three levels down, or in the third sibling, must leave the file
+  // untouched, not half-built.
+  for (const node of bound) {
+    const invalid = validateSubtree(node)
+    if (invalid) return invalid
+  }
 
   const parentOpening = findJsxElementAtLocation(sourceFile, line, col)
   if (!parentOpening) {
@@ -149,20 +216,7 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
     )
   }
 
-  // Only a component name can collide: an intrinsic tag is a string to JSX,
-  // never a reference to a binding, so a local `const div = …` is irrelevant
-  // to `<div />` and refusing on it would be a false positive. Checked for
-  // every component in the subtree, not just the root.
-  const imports = collectSubtreeImports({ name, props: params.props, importSpecifier, children })
-  for (const [componentName, requirement] of imports) {
-    const binding = conflictingBinding(sourceFile, componentName, requirement.specifier)
-    if (binding) {
-      return refuse(
-        'binding-conflict',
-        `This file already uses the name "${componentName}" for something else (${binding}), so adding the component here would shadow it. Rename one of them in the file first.`,
-      )
-    }
-  }
+  const renamed = bound.map((node) => renameSubtreeComponents(node, bindings.localName))
 
   const verbatim = verbatimSourceText(sourceFile, file)
   if (verbatim === null) {
@@ -183,17 +237,47 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
           : null,
       ...(params.position ? { position: params.position } : {}),
     },
-    (indent, unit) => indentBlock(renderJsxNode({ name, props: params.props, importSpecifier, children }, unit), indent),
+    (indent, unit) => renderSiblingRun(renamed, indent, unit),
   )
   if (!placement.ok) return placement
 
-  const importEdits = resolveImportEdits(sourceFile, verbatim, imports)
+  const importEdits = resolveImportEdits(sourceFile, verbatim, bindings.required)
 
   writeVerbatimSource(sourceFile, file, applyTextEdits(verbatim, [placement.edit, ...importEdits]))
   // Only the IMPORT edits move the splice point: they sit above the JSX, and
   // the placement edit's own start is the thing being located.
-  return {
-    ok: true,
-    created: createdJsxLocation(sourceFile, offsetAfterEdits(importEdits, placement.edit.start), placement.edit.text),
+  const blockStart = offsetAfterEdits(importEdits, placement.edit.start)
+  return { ok: true, created: createdRunLocations(sourceFile, blockStart, placement.edit.text, run.length) }
+}
+
+/**
+ * A run of sibling elements as the one block a placement writes. Each element
+ * after the first starts on its own line at the placement's indentation — the
+ * shape a hand-written list of siblings has. An INLINE placement (an empty
+ * `indent`: the newcomers join a row the user kept on one line) joins them
+ * with a space instead, so the row stays one line.
+ */
+function renderSiblingRun(nodes: readonly InsertJsxNode[], indent: string, unit: string): string {
+  const separator = indent === '' ? ' ' : `\n${indent}`
+  return nodes.map((node) => indentBlock(renderJsxNode(node, unit), indent)).join(separator)
+}
+
+/**
+ * Where each element of a just-written run landed. One element keeps
+ * `createdJsxLocation`'s first-`<` rule; a run is READ off the re-parsed file
+ * (`createdJsxLocationsIn`), and only a count that matches what was written is
+ * trusted — see {@link InsertJsxElementResult}.
+ */
+function createdRunLocations(
+  sourceFile: SourceFile,
+  blockStart: number,
+  block: string,
+  count: number,
+): CreatedJsxLocation[] {
+  if (count === 1) {
+    const created = createdJsxLocation(sourceFile, blockStart, block)
+    return created ? [created] : []
   }
+  const located = createdJsxLocationsIn(sourceFile, blockStart, blockStart + block.length)
+  return located.length === count ? located : []
 }

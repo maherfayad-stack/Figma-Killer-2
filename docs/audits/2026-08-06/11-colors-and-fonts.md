@@ -1,4 +1,5 @@
 # Audit 11 — Colors & Fonts: the design-token experience
+> **Trust:** historical, dated 2026-08-06. Paths may be wrong. Never act on it.
 
 Read-only audit. Repo: `c:\Users\Admin\Documents\GitHub\Figma Killer 2`, branch `feat/alm-figma-killer-studio-shell`.
 Scope: how easy is it to assign a colour or a font to an element on the Studio canvas.

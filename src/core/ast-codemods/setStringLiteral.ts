@@ -24,6 +24,7 @@
  */
 import { Node, Project } from 'ts-morph'
 import { createProject, loadSourceFile } from './locateJsxElement'
+import { jsStringSpelling, jsxAttributeSpelling, quoteOf } from './stringSpelling'
 
 export interface SetStringLiteralParams {
   file: string
@@ -42,11 +43,19 @@ export interface SetStringLiteralParams {
  */
 export class StringLiteralTargetError extends Error {
   readonly path: string
+  /**
+   * The stable refusal code the writeback batch reports (WB-12):
+   * `element-moved` — nothing is at that position any more (the file changed
+   * since it was read); `not-a-literal` — something is, and it is not a
+   * literal this codemod may rewrite.
+   */
+  readonly reason: 'element-moved' | 'not-a-literal'
 
-  constructor(message: string, path: string) {
+  constructor(message: string, path: string, reason: 'element-moved' | 'not-a-literal' = 'not-a-literal') {
     super(`[ast-codemods/setStringLiteral] ${path}: ${message}`)
     this.name = 'StringLiteralTargetError'
     this.path = path
+    this.reason = reason
   }
 }
 
@@ -60,11 +69,11 @@ export function setStringLiteral(params: SetStringLiteralParams): void {
   try {
     pos = sourceFile.compilerNode.getPositionOfLineAndCharacter(line - 1, col - 1)
   } catch {
-    throw new StringLiteralTargetError('line/column is outside the file', path)
+    throw new StringLiteralTargetError('line/column is outside the file', path, 'element-moved')
   }
 
   const token = sourceFile.getDescendantAtPos(pos)
-  if (!token) throw new StringLiteralTargetError('no node at this position', path)
+  if (!token) throw new StringLiteralTargetError('no node at this position', path, 'element-moved')
 
   // The position addresses the literal's own start. Accept the token itself or
   // its immediate parent (`getDescendantAtPos` can land on the token inside a
@@ -83,15 +92,16 @@ export function setStringLiteral(params: SetStringLiteralParams): void {
     )
   }
 
-  // `JSON.stringify` for the escaping, then normalise to the quote style already
-  // in the file so a copy edit does not show up as a quote-style diff on every
-  // line it touches.
-  const usesSingleQuotes = literal.getText().startsWith("'")
-  const doubleQuoted = JSON.stringify(value)
-  const replacement = usesSingleQuotes
-    ? `'${doubleQuoted.slice(1, -1).replace(/\\"/g, '"').replace(/'/g, "\\'")}'`
-    : doubleQuoted
+  // Spelled in the quote the file already used, so a copy edit does not show
+  // up as a quote-style diff on every line it touches (`stringSpelling.ts`).
+  const quote = quoteOf(literal)
+  const replacement = Node.isJsxAttribute(literal.getParent())
+    ? jsxAttributeSpelling(value, quote)
+    : jsStringSpelling(value, quote)
 
-  literal.replaceWithText(replacement)
+  // A text splice rather than `replaceWithText`: the JSX-attribute spelling may
+  // be an expression container, which is a different node kind than the
+  // literal it replaces.
+  sourceFile.replaceText([literal.getStart(), literal.getEnd()], replacement)
   sourceFile.saveSync()
 }

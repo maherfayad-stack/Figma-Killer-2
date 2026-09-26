@@ -26,9 +26,6 @@ function freshStore() {
     selectedNodeId: null,
     selectedNodeIds: [],
     selectedNodeFrameId: null,
-    hoveredNodeId: null,
-    hoveredBreakpointId: null,
-    hoveredFrameId: null,
     // `useEditorStore` is a module singleton shared by every test file in one
     // `bun test` process (`canvas-10`), so any field this list forgets keeps
     // whatever a previously-run file left in it. These four are why: WS-10

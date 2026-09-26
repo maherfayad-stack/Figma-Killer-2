@@ -144,7 +144,7 @@ export const StyleRuleSchema = Type.Object({
   stylePriorities: Type.Optional(CSSDeclarationPriorityBagSchema),
   /**
    * Per-context overrides — same persistence semantics as `styles`. The unified
-   * "editing context" model (docs/plans/2026-05-30-unified-condition-axis.md):
+   * "editing context" model (docs/reference/css-class-registry.md):
    * one flat map keyed by a context id, where a context id is EITHER
    *   - a viewport context id (from `site.breakpoints`) → that context's
    *     configured `@media` query,

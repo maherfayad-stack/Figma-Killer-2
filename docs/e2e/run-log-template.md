@@ -1,4 +1,5 @@
 # E2E Run Log Template
+> **Purpose:** the template for a browser-audit run log · **Read when:** recording a browser audit · **Trust:** current · **Owner:** test-engineer · **Verified:** not yet
 
 Copy this structure into `docs/e2e/runs/YYYY-MM-DD-<scope>.md` for each run.
 

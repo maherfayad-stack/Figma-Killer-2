@@ -375,8 +375,8 @@ export default function Page() {
   })
 })
 
-describe('insertJsxElement — refusals leave the file byte-identical', () => {
-  it('refuses when the name is already bound to a different import', () => {
+describe('insertJsxElement — refusals leave the file byte-identical (and P3-C WB-19 name clashes that no longer refuse)', () => {
+  it('P3-C (WB-19) — imports under an alias when the name is already bound to a different import', () => {
     const source = `import { Button } from './ui/Button'
 
 export default function Page() {
@@ -391,15 +391,40 @@ export default function Page() {
     const at = locateTag(source, 'div')
 
     const result = insertJsxElement({ file, ...at, name: 'Button', importSpecifier: DS })
-    expect(result.ok).toBe(false)
-    if (!result.ok) {
-      expect(result.refusal.reason).toBe('binding-conflict')
-      expect(result.refusal.message).toContain('./ui/Button')
-    }
-    expect(fs.readFileSync(file, 'utf8')).toBe(source)
+    expect(result.ok).toBe(true)
+    expect(fs.readFileSync(file, 'utf8')).toBe(`import { Button } from './ui/Button'
+import { Button as Button2 } from '${DS}'
+
+export default function Page() {
+  return (
+    <div>
+      <Button />
+      <Button2 />
+    </div>
+  )
+}
+`)
   })
 
-  it('refuses when the name is a locally declared component', () => {
+  it('P3-C (WB-19) — reuses an alias the file already gives that export, adding no import', () => {
+    const source = `import { Button as DSButton } from '${DS}'
+
+export default function Page() {
+  return (
+    <div>
+      <DSButton />
+    </div>
+  )
+}
+`
+    const file = writeFixture(source)
+    const at = locateTag(source, 'div')
+
+    expect(insertJsxElement({ file, ...at, name: 'Button', importSpecifier: DS }).ok).toBe(true)
+    expect(fs.readFileSync(file, 'utf8')).toBe(source.replace('      <DSButton />\n', '      <DSButton />\n      <DSButton />\n'))
+  })
+
+  it('P3-C (WB-19) — a locally declared component of the same name gets an aliased import, never shadowed', () => {
     const source = `function Button() {
   return <button />
 }
@@ -416,9 +441,9 @@ export default function Page() {
     const at = locateTag(source, 'div')
 
     const result = insertJsxElement({ file, ...at, name: 'Button', importSpecifier: DS })
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.refusal.reason).toBe('binding-conflict')
-    expect(fs.readFileSync(file, 'utf8')).toBe(source)
+    expect(result.ok).toBe(true)
+    expect(fs.readFileSync(file, 'utf8')).toBe(`import { Button as Button2 } from '${DS}'
+${source.replace('      <Button />\n', '      <Button />\n      <Button2 />\n')}`)
   })
 
   it('refuses when the parent location does not name a JSX element', () => {

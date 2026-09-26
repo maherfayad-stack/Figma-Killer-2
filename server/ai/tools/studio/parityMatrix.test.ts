@@ -8,7 +8,13 @@ import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { STUDIO_CANVAS_PARITY_MATRIX } from './parityMatrix'
-import { studioAgentTools } from './index'
+import { studioHttpAgentTools } from './index'
+
+/**
+ * The widest agent surface — the HTTP drivers get everything the CLI path
+ * does plus Studio's file tools (P4-C) — so every check below covers both.
+ */
+const studioAgentTools = studioHttpAgentTools
 
 const AGENT_DOC = join(import.meta.dir, '..', '..', '..', '..', 'docs', 'features', 'agent.md')
 
@@ -54,7 +60,7 @@ describe('canvas parity matrix', () => {
     }
   })
 
-  it('every registered mutating tool is referenced by at least one parity row, or declares why it is headless-only', () => {
+  it('every registered write tool is referenced by at least one parity row, or declares why it is headless-only', () => {
     // The inverse direction: a write tool that maps to no editor action at
     // all is either undocumented here or shouldn't exist — this catches a
     // tool added later without updating the matrix. The ONLY way out is
@@ -62,7 +68,7 @@ describe('canvas parity matrix', () => {
     // here on purpose (see `parityMatrix.ts`'s module doc).
     const accounted = new Set(referencedToolNames())
     const unaccountedWriteTools = studioAgentTools.filter(
-      (t) => t.mutates && !accounted.has(t.name) && t.headlessOnly === undefined,
+      (t) => t.sideEffects === 'write' && !accounted.has(t.name) && t.headlessOnly === undefined,
     )
     expect(
       unaccountedWriteTools.map((t) => t.name),

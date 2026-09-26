@@ -1,7 +1,8 @@
 /**
  * studioLoadStreamSchema — the wire shape of `GET /admin/api/studio/load?stream=1`
  * (WS-5.5): a `kind: 'meta'` line (everything except `pages`) first, then one
- * `kind: 'page'` line per page. The non-streamed, single-JSON-envelope shape
+ * `kind: 'page'` line per page, in viewport order, each carrying its `index`
+ * in the page order (P6-B). The non-streamed, single-JSON-envelope shape
  * of this same endpoint (used by tests and any HTTP tooling that just wants
  * one response) is documented server-side by `StudioLoadResult`/`studio.ts`'s
  * load route — this schema only needs to describe the wire shape a CLIENT
@@ -17,7 +18,8 @@
  * cycle even for a schema that never touches the store.
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { ConditionDefSchema, PageSchema, StyleRuleSchema } from '@core/page-tree'
+import { ConditionDefSchema, PageSchema, StyleRuleSchema, type Page } from '@core/page-tree'
+import { CanvasLayerIdSchema } from '@core/studio-board'
 import { TrustTierSchema } from './studioProjectTrust'
 import { StyleRuleSourceSchema } from './styleRuleWriteback'
 import { StyledRuleSourceSchema } from './styledRuleSources'
@@ -45,6 +47,62 @@ export const ComponentSourceSchema = Type.Union([
 ])
 
 export type ComponentSource = Static<typeof ComponentSourceSchema>
+
+/**
+ * WB-23/WB-24 — one thing the load degraded instead of failing. Mirrors
+ * `StudioLoadWarning` in `server/handlers/studio/studioLoadContract.ts`:
+ * `tsconfig-unreadable` (the project loaded without its tsconfig, so path
+ * aliases do not resolve), `syntax-error` (a page's own file does not
+ * parse; it renders from a recovered tree and every write to the file is
+ * refused, naming the line, until it parses) and `unreadable-page-export`
+ * (P3-B WB-5: the page's default export is a shape Studio cannot read a
+ * component out of; its frame names the shape instead of "This page is empty").
+ */
+const StudioLoadWarningSchema = Type.Union([
+  Type.Object({ code: Type.Literal('tsconfig-unreadable'), file: Type.Literal('tsconfig.json'), message: Type.String() }),
+  Type.Object({
+    code: Type.Literal('syntax-error'),
+    pageId: Type.String(),
+    file: Type.String(),
+    line: Type.Number(),
+    col: Type.Number(),
+    message: Type.String(),
+  }),
+  Type.Object({
+    code: Type.Literal('unreadable-page-export'),
+    pageId: Type.String(),
+    file: Type.String(),
+    line: Type.Number(),
+    col: Type.Number(),
+    message: Type.String(),
+  }),
+])
+
+export type StudioLoadWarning = Static<typeof StudioLoadWarningSchema>
+
+/**
+ * P5-G — one loose layer on the free canvas, as `/load` carries it. Mirrors
+ * `CanvasLayerLoad` in `server/handlers/studio/studioLoadContract.ts`. The
+ * layer id is validated against the one id grammar here too, so nothing the
+ * client later builds from it (a page id, a `canvas-layer-*` edit) can carry
+ * a malformed one.
+ */
+export const CanvasLayerLoadSchema = Type.Object({
+  layerId: CanvasLayerIdSchema,
+  pageId: Type.String(),
+  page: PageSchema,
+})
+
+export type CanvasLayerLoad = Static<typeof CanvasLayerLoadSchema>
+
+/** P6-B — one page a load stream announces in its meta line, before the page itself arrives. */
+export const StreamedPageEntrySchema = Type.Object({
+  id: Type.String(),
+  slug: Type.String(),
+  title: Type.String(),
+})
+
+export type StreamedPageEntry = Static<typeof StreamedPageEntrySchema>
 
 export const StudioLoadStreamLineSchema = Type.Union([
   Type.Object({
@@ -74,6 +132,15 @@ export const StudioLoadStreamLineSchema = Type.Union([
      * would render. See `server/handlers/studioCss.ts`'s "CSSOM in Bun" doc.
      */
     authoredCss: Type.String(),
+    /**
+     * WB-23/WB-24 — see `StudioLoadWarningSchema`. `Type.Optional` for the
+     * reason `projectKey` below is: the real route always sends it, but the
+     * hand-written fixture lines across this codebase's tests predate it.
+     * `unreadable-page-export` reaches the frame (`studioLoadWarningsStore.ts`
+     * → `CanvasEmptyPageHint`); the in-frame `syntax-error` badge is canvas
+     * work left for a later pass — the write refusal already names the line.
+     */
+    warnings: Type.Optional(Type.Array(StudioLoadWarningSchema)),
     trust: TrustTierSchema,
     /**
      * L8 Phase A (`perf-06`, STATE.md) — the `/p/<projectKey>` path segment
@@ -90,7 +157,13 @@ export const StudioLoadStreamLineSchema = Type.Union([
      */
     projectKey: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     paletteHiddenModuleIds: Type.Array(Type.String()),
-    pageCount: Type.Number(),
+    /**
+     * P6-B — every page the `page` lines will carry, in page order, sent
+     * before any of them. The client paints each frame as its page arrives
+     * and holds a placeholder for the rest ({@link StreamedPageEntry}); the
+     * `slug` is what tells it which page opens first (the home page).
+     */
+    pageList: Type.Array(StreamedPageEntrySchema),
     /**
      * mcp-tooling (WS-9's live-reload bridge) — present only on a `?pageIds=`
      * filtered load: every requested id that matched no page (deleted/renamed
@@ -100,11 +173,35 @@ export const StudioLoadStreamLineSchema = Type.Union([
      * `meta` rather than as a top-level stream line.
      */
     missingPageIds: Type.Optional(Type.Array(Type.String())),
+    /**
+     * P5-G — the free canvas's loose layers, ALWAYS the full set (a narrowed
+     * load included), each a parsed `.studio/canvas/<id>.tsx`. They ride the
+     * meta line rather than the `page` lines on purpose: the client stores them
+     * apart from `site.pages` (`canvasLayerSlice.ts`), which is what keeps them
+     * out of every page list, publish and preview. `Type.Optional` for the
+     * fixture-lines reason `projectKey` gives.
+     */
+    canvasLayers: Type.Optional(Type.Array(CanvasLayerLoadSchema)),
   }),
   Type.Object({
     kind: Type.Literal('page'),
     page: PageSchema,
+    /**
+     * P6-B — this page's position in the project's page order. Page lines
+     * arrive in VIEWPORT order (the frames a person sees first, first), so a
+     * client places each page by `index`, never by arrival — see
+     * `studioLoadResponse.ts` and {@link orderStreamedPages}.
+     */
+    index: Type.Integer({ minimum: 0 }),
   }),
 ])
 
 export type StudioLoadStreamLine = Static<typeof StudioLoadStreamLineSchema>
+
+/**
+ * The page lines of one load stream, in the project's page order — the order
+ * a load's `pages` array has always had, whatever order the lines arrived in.
+ */
+export function orderStreamedPages(lines: readonly Extract<StudioLoadStreamLine, { kind: 'page' }>[]): Page[] {
+  return [...lines].sort((a, b) => a.index - b.index).map((line) => line.page)
+}

@@ -1,162 +1,84 @@
 /**
  * ComponentSection — styles for the `studio.instance` Properties panel
- * section (`STATE.md` `panel-25`, P3 item 11). Achromatic palette (color as
- * identity/state/canvas affordance only). CSS Modules only. Token-only
- * colors — no hardcoded hex/rgb/hsl.
+ * section. Achromatic palette (color as identity/state/canvas affordance
+ * only). CSS Modules only. Token-only colors.
+ *
+ * P2-G (UX-4): one title row. The filled `--bg-surface-3` name band and the
+ * bordered Detach/Swap row are gone — the title is `SectionStaticHeader`,
+ * which supplies its own 32px height and `--inspector-pad-x` inset, and the
+ * actions sit in its trailing slot. What this file still owns is the
+ * section's edge and its body inset, the two things `Section` would have
+ * drawn had this been a disclosure.
  */
 
-/* ── Header strip — mirrors ComponentRefView's header ────────────────────── */
-
-/* Horizontal padding is 0, not `--inspector-space-l` — this block is a
-   CHILD of `<Section flush>`'s own `.sectionContent`, which already insets
-   every child by `--inspector-pad-x`. Re-adding horizontal padding here
-   double-inset the header/actions/swap blocks to 22px while the prop rows
-   below (plain `PropertyControlRenderer`/`ControlRow` output, zero self-
-   padding) sat at the correct 12px — the reported "prop labels sit further
-   left than the header" bug. */
-.header {
-  display: flex;
-  align-items: center;
-  gap: var(--inspector-space-xs);
-  padding: var(--inspector-space-s) 0;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-surface-3);
+/* The hairline every `Section` draws on its top edge (`Section.module.css`'s
+   `.section`), in the panel's one divider token. */
+.section {
+    border-top: 1px solid var(--inspector-divider);
 }
 
-.headerIcon {
-  flex-shrink: 0;
-  color: var(--text-muted);
+/* `Section`'s `.sectionContent` inset, flush variant: no bottom padding —
+   the panel's `--inspector-section-gap` is the only space below a section. */
+.body {
+    padding-inline: var(--inspector-pad-x);
 }
 
-.headerName {
-  flex: 1;
-  font-size: var(--text-s);
-  font-weight: 600;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* "Button · Local" — the source reads as a qualifier of the name, so the
+   dot joins the two rather than a badge setting the source apart. */
+.source::before {
+    content: '·';
+    margin-inline-end: var(--inspector-space-2xs);
 }
 
-.sourceBadge {
-  flex-shrink: 0;
-  padding: var(--inspector-space-4xs) var(--inspector-space-2xs);
-  border-radius: var(--radius);
-  background: var(--bg-surface-2);
-  color: var(--text-disabled);
-  font-size: var(--text-2xs);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
+/* ── Swap picker (inside its InspectorPopover) ───────────────────────────── */
 
-/* ── Detach / Swap actions ────────────────────────────────────────────────── */
-
-/* Horizontal 0 — see `.header`'s comment above; same `.sectionContent`
-   ancestor already supplies `--inspector-pad-x`. */
-.actionsRow {
-  display: flex;
-  gap: var(--inspector-space-2xs);
-  padding: var(--inspector-space-s) 0;
-  border-bottom: 1px solid var(--border);
-}
-
-/* ── Detach refusal notice — same shape as SharedComponentNotice, danger tone ── */
-
-/* Horizontal margin 0 — same `.sectionContent` ancestor inset applies; a
-   nonzero horizontal margin here pushed this card an extra 10px inside that
-   inset instead of spanning the same content width as the rows around it. */
-.refusalNotice {
-  display: flex;
-  gap: var(--inspector-space-2xs);
-  align-items: flex-start;
-  margin: var(--inspector-space-s) 0;
-  padding: var(--inspector-space-xs) var(--inspector-space-s);
-  border-radius: var(--radius);
-  background: var(--danger-10);
-}
-
-.refusalIcon {
-  flex-shrink: 0;
-  color: var(--danger-light);
-  align-self: baseline;
-}
-
-.refusalBody {
-  display: flex;
-  flex-direction: column;
-  gap: var(--inspector-space-2xs);
-  min-width: 0;
-}
-
-.refusalText {
-  margin: 0;
-  font-size: var(--text-2xs);
-  line-height: 1.4;
-  color: var(--danger-text);
-}
-
-/* ── Swap picker ──────────────────────────────────────────────────────────── */
-
-/* Horizontal 0 — see `.header`'s comment above. */
 .swapPicker {
-  display: flex;
-  flex-direction: column;
-  gap: var(--inspector-space-2xs);
-  padding: var(--inspector-space-s) 0;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-surface-2);
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-space-2xs);
 }
 
 .swapEmpty {
-  margin: var(--inspector-space-2xs) 0 0;
-  padding: var(--inspector-space-m);
-  font-size: var(--text-2xs);
-  color: var(--text-disabled);
-  text-align: center;
-  line-height: 1.5;
+    margin: 0;
+    padding: var(--inspector-space-m) 0;
+    font-size: var(--text-2xs);
+    color: var(--text-subtle);
+    text-align: center;
+    line-height: 1.5;
 }
 
 .swapList {
-  display: flex;
-  flex-direction: column;
-  gap: var(--inspector-space-4xs);
-  margin: var(--inspector-space-2xs) 0 0;
-  padding: 0;
-  list-style: none;
-  max-height: 180px;
-  overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-space-4xs);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    max-height: 180px;
+    overflow-y: auto;
 }
 
 .swapCandidate {
-  width: 100%;
-  justify-content: flex-start;
+    width: 100%;
+    justify-content: flex-start;
 }
 
-/* ── No call-site props placeholder ──────────────────────────────────────── */
+/* ── No props — one quiet row, not a padded empty state (UX-4) ─────────── */
 
-/* Horizontal 0 — see `.header`'s comment above. */
 .noParams {
-  padding: var(--space-4xl) 0;
-  font-size: var(--text-xs);
-  color: var(--text-disabled);
-  text-align: center;
-  line-height: 1.6;
+    display: flex;
+    align-items: center;
+    min-height: var(--inspector-row-h);
+    margin: 0;
+    font-size: var(--text-xs);
+    color: var(--text-subtle);
 }
 
-/* ── Props list — plain flow now that this section is inline content inside
-   `Section`'s own body, not an independently scrolling full-height pane
-   (`STATE.md` `panel-25`'s Section 11 work order). Had NO gap at all — every
-   declared prop is its own group, and they rendered touching, tighter than
-   even a within-group gap elsewhere in the panel. `--inspector-space-m` is
-   the same between-group step every other list of independent rows in this
-   panel uses (`Section.module.css`'s `.sectionBody`, `AttributesSection`'s
-   `.rows`). `margin-top` gives the list itself the same breathing room from
-   the header/actions strip above it, which otherwise sits flush against the
-   first prop row. ───────────────────────────────────────────────────────── */
-
+/* Prop rows are facets of one instance — the within-group 4px (P2-F, UX-3;
+   Penpot `.variant-property-list { gap: var(--sp-xs) }`). The list sits
+   directly under the title row, as every section's first row does. */
 .propsList {
-  display: flex;
-  flex-direction: column;
-  gap: var(--inspector-space-m);
-  margin-top: var(--inspector-space-m);
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-space-2xs);
 }

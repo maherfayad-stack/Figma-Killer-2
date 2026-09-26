@@ -61,9 +61,22 @@
  * still read by the publisher, `htmlImport`, and every base module's own
  * renderer; only its retired editor UI is gone.
  *
- * 16 entries: 12 mount in the Design tab's continuous scroll (one of them,
+ * ## `writes` — the one section that is not a style (P2-G)
+ *
+ * Every entry but one edits CSS — the element's inline layer or a class —
+ * so `StyleSurface` replaces all of them with one notice when neither is
+ * writable (a component instance's styles belong to its own source). The
+ * Component section writes a CALL SITE instead (`writes: 'call-site'`), which
+ * no style lock touches — the same distinction the Module block above the
+ * sections already makes. `designCallSiteSections` is what `StyleSurface`
+ * still mounts beside that notice; before P2-G the notice swallowed it, so an
+ * instance with no writable class showed no props at all.
+ *
+ * 15 entries: 11 mount in the Design tab's continuous scroll (one of them,
  * `selectionColors`, only for a multi-selection), 4 in Design's More
- * disclosure (3 of which also mount, expanded, in Prototype).
+ * disclosure (3 of which also mount, expanded, in Prototype). P2-F merged
+ * Shadow and Blur into one Effects entry, which is why there are no longer
+ * sixteen.
  */
 import type { ComponentType } from 'react'
 import type { SelectionModel } from '../selectionModel'
@@ -75,11 +88,11 @@ import { LayoutSection } from './LayoutSection'
 import { FillSection } from './FillSection'
 import { SelectionColorsSection } from './SelectionColorsSection'
 import { StrokeSection } from './StrokeSection'
-import { ShadowSection } from './ShadowSection'
-import { BlurSection } from './BlurSection'
+import { EffectsSection } from './EffectsSection'
 import { TextSection } from './TextSection'
 import { ExportSection } from './ExportSection'
 import { ComponentSection } from './ComponentSection'
+import { showsComponentSection } from './componentSectionSelection'
 import { TransformSection } from './TransformSection'
 import { AnimationsSection } from './AnimationsSection'
 import { InteractionSection } from './InteractionSection'
@@ -89,6 +102,12 @@ export type InspectorSectionTab = 'design' | 'prototype'
 
 /** Design-tab residency — see this file's own `designGroup` doc. */
 export type InspectorSectionDesignGroup = 'primary' | 'more'
+
+/**
+ * What a section writes — see this file's own `writes` doc. `styles` is the
+ * default: every section but one edits CSS on the element or a class.
+ */
+export type InspectorSectionWrites = 'styles' | 'call-site'
 
 export interface InspectorSectionDefinition {
   id: string
@@ -105,6 +124,8 @@ export interface InspectorSectionDefinition {
   tabs?: ReadonlyArray<InspectorSectionTab>
   /** Where inside the Design tab it mounts. Defaults to `'primary'`. */
   designGroup?: InspectorSectionDesignGroup
+  /** What the section writes. Defaults to `'styles'`. */
+  writes?: InspectorSectionWrites
   appliesTo(selection: SelectionModel): boolean
   Component: ComponentType
 }
@@ -119,17 +140,33 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   // Measures (P3 item 3) — W/H/X/Y, rotation, radius, Hug/Fill, Constraints
   // vs. FLEX ELEMENT face. See MeasuresSection.tsx's own doc header.
   { id: 'measures', label: 'Measures', order: 2, appliesTo: (m) => m.selectedNode != null, Component: MeasuresSection },
+  // Component (P3 item 11; moved here by P2-G, UX-7) — call-site props for
+  // ONE selected `studio.instance` node, directly under Measures: Penpot's
+  // frame order (layer → measures → component → layout …) and Figma's, where
+  // an instance's props sit under the position block. They used to be the
+  // last primary section, after Export — below six headers, for the thing an
+  // instance is most often selected to edit. Hidden under multi-select
+  // (UX-14): `showsComponentSection` is its `appliesTo`. The one section that
+  // writes a call site rather than a style (`writes`).
+  {
+    id: 'component',
+    label: 'Component',
+    order: 3,
+    writes: 'call-site',
+    appliesTo: showsComponentSection,
+    Component: ComponentSection,
+  },
   // Layout (P3 item 4) — the flex/grid CONTAINER's own settings. Rendered
   // for every selected node (Fill/Stroke-style residency, per the P0
   // f1-rectangle screenshot's own collapsed-empty "LAYOUT +" row) — see
   // LayoutSection.tsx's own doc for why this section never fully hides its
   // body once mounted, unlike Penpot's literal empty convention.
-  { id: 'layout', label: 'Layout', order: 3, appliesTo: (m) => m.selectedNode != null, Component: LayoutSection },
+  { id: 'layout', label: 'Layout', order: 4, appliesTo: (m) => m.selectedNode != null, Component: LayoutSection },
   // Fill (P3 item 5) — text colour / solid fill / background-image layers /
   // content fit, in CSS paint order. Any selected node can carry a fill
   // (matches the old `FillSection`'s own unconditional mount inside
   // `StyleSectionsEditor` — no node kind ever excluded it).
-  { id: 'fill', label: 'Fill', order: 4, appliesTo: (m) => m.selectedNode != null, Component: FillSection },
+  { id: 'fill', label: 'Fill', order: 5, appliesTo: (m) => m.selectedNode != null, Component: FillSection },
   // Selection colours (WS-14.4 / G6.4) — the colours a MULTI-selection is
   // made of, across properties, each recolourable everywhere it appears.
   // Directly under Fill, which is the per-property answer to the same
@@ -138,7 +175,7 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   {
     id: 'selectionColors',
     label: 'Selection colours',
-    order: 5,
+    order: 6,
     appliesTo: (m) => m.isMultiSelect && m.selectedNodes.length > 1,
     Component: SelectionColorsSection,
   },
@@ -148,16 +185,14 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   // the old `StrokeSection`'s own unconditional mount inside
   // `StyleSectionsEditor` via the `border` entry — no node kind ever
   // excluded it).
-  { id: 'stroke', label: 'Stroke', order: 6, appliesTo: (m) => m.selectedNode != null, Component: StrokeSection },
-  // Shadow (P3 item 7) — `box-shadow` / `text-shadow` layers, split out of
-  // the old `EffectsSection.tsx`. Any selected node can carry a shadow
-  // (matches the old `effects` entry's own unconditional mount — no node
-  // kind ever excluded it).
-  { id: 'shadow', label: 'Shadow', order: 7, appliesTo: (m) => m.selectedNode != null, Component: ShadowSection },
-  // Blur (P3 item 8) — `filter: blur()` ("Layer blur") / `backdrop-filter:
-  // blur()` ("Background blur"), the other half of the old `EffectsSection.
-  // tsx` split.
-  { id: 'blur', label: 'Blur', order: 8, appliesTo: (m) => m.selectedNode != null, Component: BlurSection },
+  { id: 'stroke', label: 'Stroke', order: 7, appliesTo: (m) => m.selectedNode != null, Component: StrokeSection },
+  // Effects (P2-F, owner decision OD-4) — `box-shadow` / `text-shadow`
+  // layers and `filter: blur()` ("Layer blur") / `backdrop-filter: blur()`
+  // ("Background blur"), in one section with one `+` menu, as Figma draws
+  // them. P3 items 7-8 had split them into Shadow and Blur after Penpot; the
+  // merge is one fewer header and gap on every selection, which is what pays
+  // for the 12px section gap. Any selected node can carry an effect.
+  { id: 'effects', label: 'Effects', order: 8, appliesTo: (m) => m.selectedNode != null, Component: EffectsSection },
   // Text (P3 item 9) — family/weight/size/line-height/letter-spacing/align/
   // vertical-align, split out of the old `typography` entry. The first
   // section in this series gated on more than "a node is selected" —
@@ -169,17 +204,13 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   // wrote to `classStyleSections.ts` in the first place (see
   // `ExportSection.tsx`'s own doc for why).
   { id: 'export', label: 'Export', order: 10, appliesTo: (m) => m.selectedNode != null, Component: ExportSection },
-  // Component (P3 item 11, `STATE.md` `panel-25`, Studio extras) — call-site
-  // props for a selected `studio.instance` node. The only one of the Studio-
-  // extras entries with a node-KIND predicate, not just "a node is selected".
-  { id: 'component', label: 'Component', order: 11, appliesTo: (m) => m.selectedNode?.moduleId === 'studio.instance', Component: ComponentSection },
   // Transform (P3 item 11) — `transform`/`transformOrigin`. Expanded in
   // Prototype, behind Design's More disclosure. See the `tabs`/`designGroup`
   // docs above.
   {
     id: 'transform',
     label: 'Transform',
-    order: 12,
+    order: 11,
     tabs: ['design', 'prototype'],
     designGroup: 'more',
     appliesTo: (m) => m.selectedNode != null,
@@ -189,7 +220,7 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   {
     id: 'animations',
     label: 'Animations',
-    order: 13,
+    order: 12,
     tabs: ['design', 'prototype'],
     designGroup: 'more',
     appliesTo: (m) => m.selectedNode != null,
@@ -200,7 +231,7 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   {
     id: 'interaction',
     label: 'Interaction',
-    order: 14,
+    order: 13,
     tabs: ['design', 'prototype'],
     designGroup: 'more',
     appliesTo: (m) => m.selectedNode != null,
@@ -215,7 +246,7 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   {
     id: 'customProperties',
     label: 'Custom properties',
-    order: 15,
+    order: 14,
     designGroup: 'more',
     appliesTo: (m) => m.selectedNode != null,
     Component: CustomPropertiesSection,
@@ -243,6 +274,14 @@ function designSections(
 /** Design-tab sections in the continuous scroll, in manifest order. */
 export function designPrimarySections(selection: SelectionModel): InspectorSectionDefinition[] {
   return designSections(selection, 'primary')
+}
+
+/**
+ * The Design-tab sections that write a call site, not a style — what still
+ * mounts when no style target is writable. See this file's `writes` doc.
+ */
+export function designCallSiteSections(selection: SelectionModel): InspectorSectionDefinition[] {
+  return designSections(selection, 'primary').filter((section) => section.writes === 'call-site')
 }
 
 /** Design-tab sections inside the collapsed More disclosure, in manifest order. */

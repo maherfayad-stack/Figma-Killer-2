@@ -24,32 +24,41 @@
  * the one whose result is an attacker-chosen page rendered where the user's
  * own design was — going through to the browser's default.
  *
- * The RELAY is still files-only: `useCanvasFileDrop` listens on the parent
- * `window` and only wants the drags it can turn into an `<img>`. Cancelling
- * without relaying is the honest answer for everything else — nothing
- * happens, which is what a design frame should do with a dragged link.
+ * The RELAY carries what `useCanvasFileDrop` can turn into an `<img>`:
+ * files, and — since IMG-5 — a LINK, because an image dragged out of another
+ * browser tab arrives as `text/uri-list`. The link is not trusted here, and
+ * cannot even be read (the drag data store is protected until `drop`); the
+ * board's own intake (`canvasDropIntake.ts`) reads it at drop and refuses a
+ * link that is not an image, or not http(s)/`data:image`, without a single
+ * request. A relayed link therefore never navigates anything: the original
+ * event was cancelled above, and the clone reaches a handler that either
+ * lands an image or says no. Every other drag (plain text, an in-page drag)
+ * is cancelled and not relayed — nothing happens, which is what a design
+ * frame should do with it.
  *
  * Design frames only. A live (Tier 2) frame belongs to the running project:
  * its document is the app's, a drop there is the app's, and Studio does not
  * reach into it. `useIframeEventForwarding` is what makes that call.
  */
+import { carriesLink } from './canvasDropIntake'
 import { iframeLocalPointToParentClientPoint } from './iframeEventCoordinates'
 
-/** True when this drag is carrying files from outside the browser. */
-function carriesFiles(transfer: DataTransfer | null): boolean {
+/** True when this drag carries something the board's drop intake reads: files, or a link (IMG-5). */
+function carriesDroppable(transfer: DataTransfer | null): boolean {
   if (!transfer) return false
-  return Array.from(transfer.types).includes('Files')
+  const types = Array.from(transfer.types)
+  return types.includes('Files') || carriesLink(types)
 }
 
 /**
  * Listen for `dragover`/`drop` in a design frame's document: cancel every one
- * of them, and re-dispatch the file-carrying ones on the iframe ELEMENT in the
+ * of them, and re-dispatch the ones carrying files or a link on the iframe ELEMENT in the
  * parent document so they bubble to the board's own `window` handler.
  *
  * The ORIGINAL `DataTransfer` is carried through on the clone rather than
  * copied: `DataTransferItemList` is read-only outside a drag's own event
- * handlers, so there is nothing to copy it into, and the files are the whole
- * payload.
+ * handlers, so there is nothing to copy it into, and the files (or the link)
+ * are the whole payload.
  *
  * Returns the teardown.
  */
@@ -59,7 +68,7 @@ export function installFrameDragRelay(iframeDoc: Document, iframe: HTMLIFrameEle
     // `dragover` has to be cancelled as well, or `drop` is never delivered at
     // all and the browser performs its default on the document directly.
     event.preventDefault()
-    if (!carriesFiles(event.dataTransfer)) return
+    if (!carriesDroppable(event.dataTransfer)) return
 
     const rect = iframe.getBoundingClientRect()
     const clientPoint = iframeLocalPointToParentClientPoint(
@@ -74,6 +83,15 @@ export function installFrameDragRelay(iframeDoc: Document, iframe: HTMLIFrameEle
         clientX: clientPoint.x,
         clientY: clientPoint.y,
         dataTransfer: event.dataTransfer,
+        // P5-B — the held keys ARE part of what a drop means (⌥ inserts
+        // beside an image instead of replacing it, ⇧ sets a background, ⌘
+        // places at the pointer), and a clone that dropped them would make a
+        // drop inside a frame mean something different from the same drop
+        // over the frame's edge.
+        altKey: event.altKey,
+        shiftKey: event.shiftKey,
+        metaKey: event.metaKey,
+        ctrlKey: event.ctrlKey,
       }),
     )
   }

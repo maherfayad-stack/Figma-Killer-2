@@ -13,11 +13,24 @@
  * before the user commits. `PageNode.fromComponent` carries the component name;
  * `instanceCount` is how many nodes on the board resolve to this same source
  * location.
+ *
+ * P5-C (DET-7) — and it offers the way to change it for ONE instance without
+ * detaching: "Make the text a prop" turns the element's literal text into an
+ * optional prop of the component whose default is that same text
+ * (`exposeLiteralAsProp`), so every other instance renders as before, and
+ * then selects this instance, whose Component section now has the prop to set.
+ * Offered only for an element exactly one call site deep whose text is a
+ * literal in the component's own file; the server refuses anything else by
+ * name.
  */
+import { useState } from 'react'
 import { WarningDiamondSolidIcon } from 'pixel-art-icons/icons/warning-diamond-solid'
 import { useEditorStore } from '@site/store/store'
-import { isInlinedNodeId } from '@core/page-tree'
+import { callSitePosition, decodeSourceNodeId, inlineDepth, isInlinedNodeId, type PageNode } from '@core/page-tree'
 import { inlineTailKey } from '@site/store/slices/site/nodeIndex'
+import { commitStudioExposeProp } from '@site/studio/studioStructuralCommits'
+import { invalidateLocalComponentCatalog } from '@site/studio/componentCatalog'
+import { Button } from '@ui/components/Button'
 import styles from './SharedComponentNotice.module.css'
 
 interface SharedComponentNoticeProps {
@@ -25,9 +38,25 @@ interface SharedComponentNoticeProps {
   componentName: string
   /** The selected node's id — used to count how many instances share its source line. */
   nodeId: string
+  /** The selected node — whether its text is a literal "Make the text a prop" can expose. */
+  node: PageNode
+  /**
+   * P3-C (WB-6) — where this node's TEXT is written, when that is not the
+   * component's file: `<Header title="Where to?"/>` hands its `<h2>{title}</h2>`
+   * the call site's literal, so a text edit changes this instance alone (or a
+   * dictionary entry). Everything else on the element still writes the
+   * component, which is what the rest of the sentence says.
+   */
+  textOrigin?: { rel: string; line: number }
 }
 
-export function SharedComponentNotice({ componentName, nodeId }: SharedComponentNoticeProps) {
+/** The prop name offered for an element's text: `heading` for a heading, else `label`. */
+function suggestedPropName(node: PageNode): string {
+  const tag = (node.props as { tag?: unknown }).tag
+  return typeof tag === 'string' && /^h[1-6]$/.test(tag) ? 'heading' : 'label'
+}
+
+export function SharedComponentNotice({ componentName, nodeId, node, textOrigin }: SharedComponentNoticeProps) {
   // A primitive selector: no object identity to keep stable, reading the O(1)
   // `_inlineTailToCount` index (WS-5.2) instead of scanning every node of
   // every page on every store change. An inlined node's id is
@@ -40,14 +69,65 @@ export function SharedComponentNotice({ componentName, nodeId }: SharedComponent
     if (!tail) return 1
     return s._inlineTailToCount.get(tail) ?? 1
   })
+  const [exposing, setExposing] = useState(false)
+
+  const componentFile = decodeSourceNodeId(nodeId)?.rel
+  const textElsewhere = textOrigin !== undefined && textOrigin.rel !== componentFile ? textOrigin : undefined
+  const text = (node.props as { text?: unknown }).text
+  const canExposeText =
+    inlineDepth(nodeId) === 1 && typeof text === 'string' && text.trim() !== '' && !node.codeProps?.includes('text') && !textElsewhere
+
+  async function exposeText() {
+    setExposing(true)
+    // No `finally`: a try/finally (with or without a catch) is a React
+    // Compiler bailout (`react-compiler-bailouts.test.ts`) — catch + rethrow
+    // reproduces the same "reset state either way, then propagate" behavior.
+    try {
+      await commitStudioExposeProp(
+        { kind: 'expose-prop', nodeId, target: { kind: 'text' }, propName: suggestedPropName(node) },
+        `Make ${componentName}'s text a prop`,
+        () => {
+          invalidateLocalComponentCatalog()
+          useEditorStore.getState().selectNode(callSitePosition(nodeId))
+        },
+      )
+    } catch (err) {
+      setExposing(false)
+      throw err
+    }
+    setExposing(false)
+  }
 
   return (
     <div className={styles.notice} role="note">
       <WarningDiamondSolidIcon size={14} className={styles.icon} />
-      <p className={styles.text}>
-        Part of <strong>{componentName}</strong>. Edits are written to its source file
-        {instanceCount > 1 ? <> and apply to all <strong>{instanceCount}</strong> places it&apos;s used</> : null}.
-      </p>
+      <div className={styles.body}>
+        <p className={styles.text}>
+          Part of <strong>{componentName}</strong>. Edits are written to its source file
+          {instanceCount > 1 ? <> and apply to all <strong>{instanceCount}</strong> places it&apos;s used</> : null}.
+          {textElsewhere ? (
+            <>
+              {' '}Its text is set outside the component, so a text edit is written to{' '}
+              <strong>
+                {textElsewhere.rel}:{textElsewhere.line}
+              </strong>{' '}
+              instead.
+            </>
+          ) : null}
+        </p>
+        {canExposeText ? (
+          <Button
+            variant="secondary"
+            size="xs"
+            onClick={() => void exposeText()}
+            loading={exposing}
+            tooltip={`The text becomes a prop of ${componentName} that defaults to what it says now, so every other instance stays as it is; set it on this instance in its Component section.`}
+            data-testid="shared-component-expose-text"
+          >
+            Make the text a prop
+          </Button>
+        ) : null}
+      </div>
     </div>
   )
 }

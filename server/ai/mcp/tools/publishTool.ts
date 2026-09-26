@@ -25,7 +25,8 @@ export function createPublishMcpTool(runtime?: McpPublishRuntime): AiTool {
       'Publish the saved site draft to the live public site. Call this ONCE after the requested site edits are complete — site_insert_html, site_apply_css, token tools, and other site writes save a draft and deliberately do not publish on their own. This runs the full-site publish pipeline, rebuilding content-hashed HTML/CSS/runtime assets and atomically swapping the public static slot. Requires the connector to have pages.publish.',
     scope: 'site',
     execution: 'server',
-    mutates: true,
+    sideEffects: 'write',
+    requiresWrite: true,
     requiredCapabilities: ['pages.publish'],
     inputSchema: Type.Object({}, { additionalProperties: false }),
     handler: async (_input, ctx: ToolContext) => {

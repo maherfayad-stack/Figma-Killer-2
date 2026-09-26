@@ -103,16 +103,12 @@ export function SlotControl({ propKey, value, label, isOverride, layout, disable
         node,
         mode: pickerMode,
       })
-      if (!result.ok) {
-        pushToast({ kind: 'error', title: `${verb} refused`, body: result.message })
-        return
-      }
-      setPickerMode(null)
+      if (result.ok) setPickerMode(null)
+      else pushToast({ kind: 'error', title: `${verb} refused`, body: result.message })
     } catch (err) {
       pushToast({ kind: 'error', title: `${verb} failed`, body: getErrorMessage(err, 'Unknown error') })
-    } finally {
-      setSubmittingName(null)
     }
+    setSubmittingName(null)
   }
 
   // The call site's own file, needed to resolve a PROJECT component's import

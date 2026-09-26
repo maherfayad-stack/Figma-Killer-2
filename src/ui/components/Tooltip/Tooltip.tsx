@@ -30,6 +30,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '@ui/cn'
+import { ShortcutKeys } from '@ui/components/Kbd'
 import {
   computeFloatingPosition,
   type FloatingAlign,
@@ -46,6 +47,13 @@ type TooltipAlign = FloatingAlign
 interface TooltipProps {
   /** Tooltip content — string or simple JSX. */
   content: ReactNode
+  /**
+   * P5-E (UX-23) — the action's keyboard shortcut, already formatted for the
+   * platform (`formatShortcut(getKeybindingForCommand(id).shortcut)`), shown as
+   * dim keycaps after the label: Figma's "Text  T". A string, not a command
+   * id, because this primitive cannot import the admin registry.
+   */
+  shortcut?: string
   /** Which side to prefer. 'auto' tries top→bottom→right→left. Default: 'auto'. */
   side?: TooltipSide
   /** Alignment along the cross-axis. Default: 'center'. */
@@ -95,13 +103,14 @@ interface TriggerChildProps {
 
 function TooltipInner({
   content,
+  shortcut,
   side,
   align,
   offset,
   size,
   openOnFocus,
   children,
-}: Required<Omit<TooltipProps, 'disabled'>>) {
+}: Required<Omit<TooltipProps, 'disabled' | 'shortcut'>> & Pick<TooltipProps, 'shortcut'>) {
   const id = useId()
   const [hovered, setHovered] = useState(false)
   const [focused, setFocused] = useState(false)
@@ -229,7 +238,14 @@ function TooltipInner({
             data-side={position?.side ?? 'top'}
             style={bubbleStyle}
           >
-            {content}
+            {shortcut ? (
+              <span className={styles.withShortcut}>
+                <span>{content}</span>
+                <ShortcutKeys label={shortcut} className={styles.shortcut} />
+              </span>
+            ) : (
+              content
+            )}
             <div className={styles.arrow} />
           </div>,
           getTooltipRoot(),
@@ -255,6 +271,7 @@ export function Tooltip({
   size = 'default',
   openOnFocus = false,
   content,
+  shortcut,
   children,
 }: TooltipProps) {
   // Return children as-is; no hooks needed in the disabled path.
@@ -263,6 +280,7 @@ export function Tooltip({
   return (
     <TooltipInner
       content={content}
+      shortcut={shortcut}
       side={side}
       align={align}
       offset={offset}

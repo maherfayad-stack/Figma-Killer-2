@@ -14,10 +14,11 @@
  * edit it knows cannot land is the panel's version of the `[object Object]`
  * input: it does not merely fail, it invites the failure.
  *
- * So the predicate moved out of the component and gained a second consumer:
- * `StyleWriteLockContext`, which `StyleSurface` provides around the CLASS
- * block only and every `ClassPropertyRow` beneath it reads to render
- * disabled. Same fact, stated once, used by the tooltip and by the controls.
+ * So the predicate moved out of the component and into the selection model:
+ * `selectionModel.ts` sets each class's `writableClasses[].lockReason` from
+ * it, which drops the class from `resolveWriteTarget`'s candidates and strikes
+ * its pill through. Same fact, stated once, used by the tooltip and by the
+ * write target.
  *
  * ## The predicate is `styleRuleWriteback.ts`'s, not a second opinion
  *
@@ -88,10 +89,11 @@ export function resolveClassCssEditability(cls: StyleRule): ClassCssEditability 
   // (Tailwind's generated utilities, a Sass/PostCSS build, a CSS Modules
   // compile) and must never appear to gain a fabricated write target.
   if (isImportedStyleRuleId(cls.id)) return { kind: 'unmapped' }
+  // P3-C — an editor-authored class always has somewhere to go: a stylesheet
+  // Studio chose (ERR-14) or one it will create (ERR-15). Never `unmapped`.
   const destination = resolveCssInsertDestination(cls)
-  if (!destination.ok) return { kind: 'unmapped', reason: destination.message }
   return destination.kind === 'existing'
-    ? { kind: 'will-create-existing', file: destination.file }
+    ? { kind: 'will-create-existing', file: destination.file, alternatives: destination.alternatives }
     : { kind: 'will-create-new-stylesheet', pageFile: destination.pageFile }
 }
 

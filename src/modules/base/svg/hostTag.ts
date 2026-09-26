@@ -5,9 +5,8 @@
  * the markup is on the `svg` prop, but are NOT the same element:
  *
  *   1. A literal `<svg>` in the user's source. The element the module renders
- *      IS the graphic — there is no wrapper, and any wrapper Studio mounts to
- *      carry selection wiring is Studio's own invention, which must not
- *      generate a box of its own.
+ *      IS the graphic — there is no wrapper, so `SvgEditor` renders the
+ *      `<svg>` itself (`splitSvgRoot.ts`) and puts the editor wiring on it.
  *   2. `<span className={styles.icon} dangerouslySetInnerHTML={{__html: icon}}/>`
  *      — how real repos inline a `?raw` icon. Here the span is REAL: the
  *      author wrote it, and its class is what sizes and colours the icon
@@ -31,7 +30,7 @@ import { isSafeIntrinsicTagName, VOID_HTML_ELEMENTS } from '@core/utils/htmlTags
 
 /**
  * The authored host element wrapping this node's markup, or `undefined` when
- * the node has none and the module should mount its own box-less host.
+ * the node has none and the module renders the `<svg>` itself.
  *
  * `svg` returns `undefined` — that is case 1, where the tag names the graphic
  * itself rather than a wrapper around it. A void element does too: it can

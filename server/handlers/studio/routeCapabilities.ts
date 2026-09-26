@@ -211,6 +211,16 @@ export const STUDIO_ROUTE_CAPABILITIES: readonly StudioRouteDeclaration[] = [
   // pair against a base that had no table, and the two would have been two
   // policies the moment one of them moved.
   { path: '/admin/api/studio/asset-drop', read: null, mutate: 'studio.write' },
+  // `asset-drop-url` (P5-B3, IMG-5) makes the SERVER fetch a URL and write
+  // the bytes into the repository — the SSRF-sensitive one. A write for the
+  // same reason `asset-drop` is, and the gate's CSRF check is what keeps a
+  // page on the internet from asking for a fetch through it.
+  { path: '/admin/api/studio/asset-drop-url', read: null, mutate: 'studio.write' },
+  // IMG-11 — the unused-image report is a read of the project's own files;
+  // the prune DELETES files a drop created, so it is a write, and it only ever
+  // runs behind the Assets panel's confirmation (`assetPrune.ts`).
+  { path: '/admin/api/studio/asset-ledger', read: 'site.read', mutate: null },
+  { path: '/admin/api/studio/asset-prune', read: null, mutate: 'studio.write' },
   { path: '/admin/api/studio/reference-upload', read: 'site.read', mutate: 'studio.write' },
   { path: '/admin/api/studio/extract-component', read: null, mutate: 'studio.write' },
   { path: '/admin/api/studio/i18n-setup', read: null, mutate: 'studio.write' },

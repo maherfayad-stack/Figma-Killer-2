@@ -1,7 +1,7 @@
 /**
  * resolveAlignWrite — the honest single-CSS-write check behind every
  * `AlignSection` align button (originally G10,
- * docs/features/inspector-disclosure.md; the section itself is now
+ * docs/features/inspector.md; the section itself is now
  * Penpot's Align, `STATE.md` `panel-25` item 2 of the P3 mapping table).
  *
  * Moved here from `panels/PropertiesPanel/PositionSection.tsx` unchanged —

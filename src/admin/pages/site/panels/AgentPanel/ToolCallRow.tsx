@@ -3,6 +3,12 @@
  * human title · muted detail, status glyph, plus optional colour-token
  * swatches and an inline error message. Captured images are grouped by the
  * parent turn so they share the conversation gallery and preview window.
+ *
+ * A failed call the agent recovered from (`recovery`, from
+ * `turnPresentation.ts`'s `toolCallRecoveries`) renders MUTED — "Adjusted",
+ * with the refusal as a quiet note — because an agent that reads a refusal and
+ * takes another route is working, not failing (AI-28). Red is reserved for a
+ * failure the turn ended on.
  */
 import type { CSSProperties } from 'react'
 import type { AgentToolCall } from '@site/agent'
@@ -31,21 +37,33 @@ import { LayoutSolidIcon } from 'pixel-art-icons/icons/layout-solid'
 import { UsersSolidIcon } from 'pixel-art-icons/icons/users-solid'
 import { ZapSolidIcon } from 'pixel-art-icons/icons/zap-solid'
 import { getToolCallDisplay, extractColorSwatches, type ToolCallIcon, type ToolCallTone } from './toolCallDisplay'
+import type { ToolCallRecovery } from './turnPresentation'
 import styles from './AgentPanel.module.css'
 
-export function ToolCallRow({ toolCall }: { toolCall: AgentToolCall }) {
+export function ToolCallRow({ toolCall, recovery }: { toolCall: AgentToolCall; recovery?: ToolCallRecovery }) {
   const isPending = toolCall.status === 'pending'
   const isSuccess = toolCall.status === 'success'
   const isError = toolCall.status === 'error'
+  const isMutedFailure = isError && recovery !== undefined
 
   const display = getToolCallDisplay(toolCall.actionType, toolCall.params)
   const swatches = extractColorSwatches(toolCall.actionType, toolCall.params)
-  const accessibleStatus = isPending ? 'Running' : isSuccess ? 'Completed' : 'Failed'
+  const accessibleStatus = isPending
+    ? 'Running'
+    : isSuccess
+    ? 'Completed'
+    : recovery === 'recovered'
+    ? 'Adjusted'
+    : recovery === 'working'
+    ? 'Adjusting'
+    : 'Failed'
   const statusLabel = `${accessibleStatus} ${display.title}${display.detail ? ` — ${display.detail}` : ''}`
   const statusClass = isPending
     ? styles.toolCallStatusPending
     : isSuccess
     ? styles.toolCallStatusSuccess
+    : isMutedFailure
+    ? styles.toolCallStatusRecovered
     : styles.toolCallStatusFailed
 
   // Surface the tool's error message directly in the row stream so the user
@@ -85,7 +103,13 @@ export function ToolCallRow({ toolCall }: { toolCall: AgentToolCall }) {
           ))}
         </div>
       )}
-      {errorMessage && (
+      {errorMessage && isMutedFailure && (
+        <p className={styles.toolCallNote}>
+          {recovery === 'recovered' ? 'Adjusted: ' : 'Adjusting: '}
+          {errorMessage}
+        </p>
+      )}
+      {errorMessage && !isMutedFailure && (
         <p role="alert" className={styles.toolCallError}>
           {errorMessage}
         </p>

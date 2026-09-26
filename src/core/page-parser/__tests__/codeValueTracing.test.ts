@@ -100,7 +100,7 @@ describe('an unresolvable prop leaves a trace instead of vanishing', () => {
     expect(isPropWritableToSource(widget, 'count')).toBe(false)
   })
 
-  it('an unresolvable className interpolation: still no className VALUE, but now traced (closes the static-class-name blind spot)', () => {
+  it('an unresolvable className interpolation: only its COMPLETE static classes, and traced (closes the static-class-name blind spot)', () => {
     write(
       'pages/Badge.jsx',
       [
@@ -111,9 +111,10 @@ describe('an unresolvable prop leaves a trace instead of vanishing', () => {
       ].join('\n'),
     )
     const span = named(loadNodes('pages/Badge.jsx', evalOptions()), 'span')
-    // The VALUE still does not reach the canvas — that half is unchanged and
-    // correct (there is no honest string to render).
-    expect(span.props.className).toBeUndefined()
+    // P3-C (WB-18) — the classes the static head DEFINITELY carries reach the
+    // canvas; the token the interpolation completes (`badge--${tone}`) does
+    // not — there is no honest string for it, and `badge--` is no class.
+    expect(span.props.className).toBe('badge')
     // The NAME is no longer invisible.
     expect(span.codeProps).toContain('className')
     expect(isPropWritableToSource(span, 'className')).toBe(false)

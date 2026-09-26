@@ -13,7 +13,7 @@
  */
 import { describe, it, expect, beforeEach } from 'bun:test'
 import type { StyleRule } from '@core/page-tree'
-import { setStudioStyleRuleSources } from '@site/studio/styleRuleWriteback'
+import { resetCssDestinationMemory, setStudioStyleRuleSources } from '@site/studio/styleRuleWriteback'
 import {
   classCssWriteLockReason,
   resolveClassCssEditability,
@@ -35,8 +35,10 @@ function makeRule(overrides: Partial<StyleRule> & Pick<StyleRule, 'id'>): StyleR
 }
 
 beforeEach(() => {
-  // Clears the module-level `styleRuleSources` map between cases.
+  // Clears the module-level `styleRuleSources` map between cases, and the
+  // per-rule memory of an automatic stylesheet choice (P3-C).
   setStudioStyleRuleSources({}, {})
+  resetCssDestinationMemory()
 })
 
 describe('resolveClassCssEditability', () => {
@@ -72,15 +74,16 @@ describe('resolveClassCssEditability', () => {
       id: 'V1StGXR8IZ5jdHi6B',
       scope: { type: 'node', nodeId: 'src/pages/Home.tsx:12:4', role: 'module-style' },
     })
-    // Two candidate stylesheets exist — without the scope this is the
-    // `ambiguous-stylesheet` refusal ClassPicker's missing scope produced.
+    // Two candidate stylesheets exist; the scope names the page, so the
+    // co-located one is the answer outright — nothing was chosen over.
     expect(resolveClassCssEditability(rule)).toEqual({
       kind: 'will-create-existing',
       file: 'src/pages/Home.module.css',
+      alternatives: [],
     })
   })
 
-  it('refuses an editor-authored rule with no scope and several candidates', () => {
+  it('P3-C (ERR-14) — an editor-authored rule with no scope and several candidates WRITES, to the one Studio chose', () => {
     setStudioStyleRuleSources(
       {
         'sc-existing0001': { file: 'src/pages/Home.module.css', selector: '.hero' },
@@ -88,9 +91,24 @@ describe('resolveClassCssEditability', () => {
       },
       {},
     )
+    // This used to be `unmapped` — every property row greyed out with "Studio
+    // found 2 candidate stylesheets" — for a class that is writable the moment
+    // a file is picked.
     const editability = resolveClassCssEditability(makeRule({ id: 'V1StGXR8IZ5jdHi6B' }))
-    expect(editability.kind).toBe('unmapped')
-    expect(editability.kind === 'unmapped' && editability.reason).toContain('2 candidate stylesheets')
+    expect(editability).toEqual({
+      kind: 'will-create-existing',
+      file: 'src/pages/About.module.css',
+      alternatives: ['src/pages/Home.module.css'],
+    })
+    expect(classCssWriteLockReason(editability, { studioSession: true })).toBeNull()
+  })
+
+  it('P3-C (ERR-15) — with no stylesheet and no page, the first edit creates one at the app entry', () => {
+    setStudioStyleRuleSources({}, {})
+    expect(resolveClassCssEditability(makeRule({ id: 'V1StGXR8IZ5jdHi6B' }))).toEqual({
+      kind: 'will-create-new-stylesheet',
+      pageFile: null,
+    })
   })
 })
 
@@ -98,7 +116,7 @@ describe('classCssWriteLockReason', () => {
   it('does not lock the three tiers that actually write', () => {
     const studio = { studioSession: true }
     expect(classCssWriteLockReason({ kind: 'plain-css', file: 'a.css' }, studio)).toBeNull()
-    expect(classCssWriteLockReason({ kind: 'will-create-existing', file: 'a.css' }, studio)).toBeNull()
+    expect(classCssWriteLockReason({ kind: 'will-create-existing', file: 'a.css', alternatives: [] }, studio)).toBeNull()
     expect(classCssWriteLockReason({ kind: 'will-create-new-stylesheet', pageFile: 'a.tsx' }, studio)).toBeNull()
   })
 

@@ -70,10 +70,18 @@ export {
   OptimisticInsertMessageSchema,
   OptimisticDeleteMessageSchema,
   OptimisticMoveMessageSchema,
-  OptimisticTextMessageSchema,
   OptimisticStyleMessageSchema,
   OptimisticStyleClearMessageSchema,
   OptimisticStylePatchSchema,
+  OptimisticRevertMessageSchema,
+  OPTIMISTIC_REVERT_MAX,
+  RESIZE_SNAP_SIBLINGS_MAX,
+  ResizeCommitMessageSchema,
+  ResizeCommitPatchSchema,
+  ResizeGuidesMessageSchema,
+  ResizeSizingMarkersSchema,
+  ResizeSnapContextSchema,
+  SetResizeTargetMessageSchema,
   OptimisticMessageSchema,
   RuntimeModeSchema,
   ReadyMessageSchema,
@@ -109,6 +117,9 @@ export {
   type NodeMeasurement,
   type TextEditReplyMessage,
   type DropCandidateWire,
+  type ResizeCommitPatch,
+  type ResizeSizingMarkers,
+  type ResizeSnapContext,
 } from './messages'
 
 export { installInlineTextEdit, type InlineTextEditController, type InlineTextEditOptions } from './inlineTextEdit'
@@ -188,6 +199,16 @@ export {
   buildSelectionChromeStylesheet,
 } from './selectionChromeCss'
 
+export { isSelectionChromeMutation, isSelectionChromeNode } from './selectionChromeMutation'
+
+export {
+  FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
+  LIVE_FRAME_FIT_STRUCTURAL_DEBOUNCE_MS,
+  createFrameFitMutationScheduler,
+  type FrameFitMutationScheduler,
+  type FrameFitMutationSchedulerOptions,
+} from './frameFitMutationScheduler'
+
 export {
   MAX_FRAME_FIT_HEIGHT,
   MAX_FRAME_FIT_PASSES,
@@ -204,21 +225,108 @@ export {
   MIN_ELEMENT_SIZE,
   isSizeableDisplay,
   resizeAxes,
-  resizeElementSize,
+  resizeElementBox,
+  resizeModifiersOf,
+  resizeStartStep,
   resizeStylePatch,
   type ResizeHandle,
-  type ElementSize,
-  type ElementSizePatch,
+  type ResizeModifiers,
+  type ResizeBoxStart,
+  type ResizeOffsets,
+  type ResizeStep,
+  type InlineOffsetProperty,
+  type ElementResizePatch,
 } from './elementResizeRules'
 
+export { inlineOffsetProperty, isPositionedFreely, readResizeBoxStart } from './elementResizeMeasure'
+
 export {
+  SIZING_OPTIONS,
+  currentSizingMode,
+  sizingAxisRole,
+  sizingPatch,
+  sizingUnavailableReason,
+  FLEX_MAIN_FIXED_VALUE,
+  type SizingAxis,
+  type SizingAxisRole,
+  type SizingFlexCascade,
+  type SizingMode,
+  type SizingModeOption,
+  type SizingParentLayout,
+  type SizingPatch,
+} from './elementSizingRules'
+
+export {
+  cssPropertyName,
+  planResizeSizing,
+  readClearedValues,
+  readSizingParentLayout,
+  resizeInlinePatch,
+  stylesheetPreviewDeclarations,
+  hugPatchForHandle,
+  type ResizeInlinePatch,
+  type ResizeSizingPlan,
+} from './elementResizeSizing'
+
+export {
+  ALL_SNAP_SOURCES,
+  SNAP_THRESHOLD_SCREEN_PX,
+  computeEdgeSnap,
+  computeSnap,
+  snapGuidesEqual,
+  snapSourcesFor,
+  snapThresholdAtZoom,
+  type EdgeSnap,
+  type SnapGuide,
+  type SnapLine,
+  type SnapOptions,
+  type SnapRect,
+  type SnapResult,
+  type SnapSourceToggles,
+  type SnapSpacing,
+} from './snapRules'
+
+export { findSpacingSnap, formatSpacing, snapSpacingsEqual, spacingSegments } from './snapSpacingRules'
+
+export {
+  guideLinesInSpace,
+  parentSnapRects,
+  readBoxInsets,
+  type BoxInsets,
+  type ScreenSpace,
+  type SideLengths,
+} from './snapPeerRules'
+
+export {
+  flowStartAnchored,
+  readResizeSnapInput,
+  resizeSnapEdges,
+  snapRectOf,
+  snapResizeDelta,
+  type FlowLayoutInput,
+  type RectSource,
+  type ResizeSnapEdges,
+  type ResizeSnapInput,
+  type ResizeSnapStep,
+} from './elementResizeSnapRules'
+
+export { PRIMARY_BUTTON_MASK, guardDragSession, type DragSessionGuardOptions } from './dragSessionGuard'
+
+export {
+  RESIZE_ACTIVE_ATTR,
+  RESIZE_SIZE_BADGE_ATTR,
+  writeSizeBadge,
   RESIZE_FRAME_ATTR,
   RESIZE_HANDLE_ATTR,
   RESIZE_PREVIEW_ATTR,
   RESIZE_PREVIEW_STYLE_ID,
+  ROTATE_ACTIVE_ATTR,
+  ROTATE_CORNERS,
+  ROTATE_HANDLE_ATTR,
   installResizeHandles,
   type ResizeHandlesController,
   type ResizeHandlesOptions,
+  type ResizeTargetContext,
   type ResizeTargetRef,
 } from './resizeHandles'
 

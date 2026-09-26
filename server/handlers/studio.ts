@@ -25,16 +25,18 @@
  *       `?pageIds=<comma-separated ids>` narrows `pages` to that subset (meta
  *       stays full); unmatched ids report via `missingPageIds` — see `studio/studioLoadResponse.ts`.
  *
- *   GET  /admin/api/studio/asset?dir=<abs>&path=<workspace-rel>
- *       Serves one workspace-relative asset file (an imported page's local
- *       images — §5) through the existing static-file pipeline. The
+ *   GET  /admin/api/studio/asset?dir=<abs>&(path=<workspace-rel>|url=<site-root>)
+ *       Serves one project image/font/media file — an imported page's local
+ *       images (§5, `path`), or a literal `src="/x.png"` a design frame
+ *       resolves against the project's `public/` (P5-B2, `url`) — through
+ *       the existing static-file pipeline. The
  *       resolution + adversarial-input guarding (absolute/UNC paths, `..`
- *       traversal on either separator, excluded dir names, symlink escape)
- *       lives in `resolveStudioAssetResponse` — see
+ *       traversal on either separator, excluded dir names, symlink escape,
+ *       media-only MIME) lives in `resolveStudioAssetResponse` — see
  *       `server/handlers/studioAsset.ts`'s module doc for the full rationale.
  *       404 on anything rejected or missing.
  *
- *   POST /admin/api/studio/save   body: { dir, edits: StudioEdit[] }
+ *   POST /admin/api/studio/save   body: { dir, edits: StudioEdit[], expect?: { [nodeId]: fingerprint } }
  *       A batch of typed edits (`kind: 'prop' | 'text' | 'style'`). The edit
  *       model (`StudioEdit`), the bottom-to-top apply ordering, and the
  *       per-edit dir+edit→codemod dispatch (`applyStudioEdit`) live in
@@ -278,10 +280,10 @@
  * `studioProjects.ts`, `studioFramework.ts`, `studioDownload.ts`, and
  * `studioGithubImport.ts`.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join, relative, sep } from 'node:path'
-import { createBoardsFile, parseBoardsFile, serializeBoardsFile, type BoardsFile } from '@core/studio-board'
-import { badRequest, jsonResponse, ndjsonResponse, readValidatedBody } from '../http'
+import { relative, sep } from 'node:path'
+import { parseBoardsFile, type BoardsFile } from '@core/studio-board'
+import { readBoardsFile, writeBoardsFile } from './studio/boardGeometry'
+import { badRequest, jsonResponse, ndjsonResponse, readValidatedBody, internalServerError } from '../http'
 import {
   mergeProjectFrameDefaults,
   projectDisplayName,
@@ -293,11 +295,12 @@ import { readStudioFontsFile, readStudioFrameworkFile, writeStudioFontsFile, wri
 import type { SiteFontsSettings } from '@core/fonts'
 import type { FrameworkSettings } from '@core/framework-schema'
 import { buildStudioDownloadResponse } from './studioDownload'
-import { resolveStudioAssetResponse } from './studioAsset'
-import { loadStudioPages } from './studioPageLoad'
+import { readStudioAssetTarget, resolveStudioAssetResponse } from './studioAsset'
+import { loadStudioPagesShared } from './studioPageLoad'
 import { prewarmCaptureBrowser } from '../ai/mcp/capture/browserPool'
 import { missingStudioLoadPageIds, parseStudioLoadPageIdsParam, studioLoadStreamLines } from './studio/studioLoadResponse'
 import { applyStudioEditBatchLocked } from './studioWriteback'
+import { applyStudioEditSequenceLocked } from './studioEditSequence'
 import { withIdempotentReplay } from './studio/idempotentReplay'
 import { registeredMcpServerProjectKey } from '../ai/drivers/registeredMcpServers'
 import { syncStoryBoardFrames } from './studio/boardFrames'
@@ -318,7 +321,7 @@ import {
  */
 function studioRouteFailure(err: unknown): Response {
   rethrowProjectDirRefusal(err)
-  return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+  return internalServerError('[studio]', err)
 }
 
 export async function tryServeStudio(
@@ -350,11 +353,11 @@ export async function tryServeStudio(
       const projectName = projectDisplayName(dir)
       const pageIdsParam = parseStudioLoadPageIdsParam(url.searchParams.get('pageIds')) // see studioLoadResponse.ts
       if (pageIdsParam === null) return badRequest('invalid pageIds query param')
-      // The filter reaches the compute: `loadStudioPages` skips the per-page
-      // convert for every route not asked for, while the meta below stays a
-      // full, fresh project-wide recompute. See `studioLoadResponse.ts`.
-      const loaded = await loadStudioPages(dir, { pageIds: pageIdsParam })
-      const { pages, componentSources, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss } = loaded
+      // The filter narrows the pages, while the meta below stays the full,
+      // project-wide result. See `studioLoadResponse.ts`. SHARED, not cloned
+      // (P6-B): this route only serialises it — see `loadStudioPagesShared`.
+      const loaded = await loadStudioPagesShared(dir, { pageIds: pageIdsParam })
+      const { pages, canvasLayers, componentSources, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, warnings } = loaded
       // W5-3 — a story that parsed into a page but has no frame is invisible.
       // Placed here rather than inside `loadStudioPages` so the parse pipeline
       // stays a pure read: opening the board is the moment the board may be
@@ -411,7 +414,7 @@ export async function tryServeStudio(
       // does not attempt.
       if (url.searchParams.get('stream') === '1') {
         return ndjsonResponse(studioLoadStreamLines({
-          dir, projectName, componentSources, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, trust, projectKey, paletteHiddenModuleIds, pages, missingPageIds,
+          dir, projectName, canvasLayers, componentSources, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, warnings, trust, projectKey, paletteHiddenModuleIds, pages, missingPageIds,
         }))
       }
 
@@ -419,6 +422,7 @@ export async function tryServeStudio(
         dir,
         projectName,
         pages,
+        canvasLayers,
         componentSources,
         styleRules,
         styleRuleSources,
@@ -426,6 +430,7 @@ export async function tryServeStudio(
         conditions,
         vendorCss,
         authoredCss,
+        warnings,
         trust,
         projectKey,
         paletteHiddenModuleIds,
@@ -439,9 +444,9 @@ export async function tryServeStudio(
   if (pathname === '/admin/api/studio/asset' && req.method === 'GET') {
     try {
       const dir = resolveProjectDir(url.searchParams.get('dir'))
-      const rawPath = url.searchParams.get('path')
-      if (!rawPath) return new Response('Not found', { status: 404 })
-      const response = await resolveStudioAssetResponse(dir, rawPath, req)
+      const target = readStudioAssetTarget(url.searchParams)
+      if (!target) return new Response('Not found', { status: 404 })
+      const response = await resolveStudioAssetResponse(dir, target, req)
       return response ?? new Response('Not found', { status: 404 })
     } catch (err) {
       rethrowProjectDirRefusal(err)
@@ -454,7 +459,7 @@ export async function tryServeStudio(
   // lost response after a `bun --watch` restart must never re-run a
   // `duplicate`/`insert`/`wrap`/`group` edit a second time.
   if (pathname === '/admin/api/studio/save' && req.method === 'POST') {
-    return withIdempotentReplay(req, async () => {
+    return withIdempotentReplay(req, sessionRuntime.user.id, async () => {
     try {
       const body = await readValidatedBody(req, SaveBodySchema)
       if (!body) return badRequest('invalid save body')
@@ -463,7 +468,8 @@ export async function tryServeStudio(
 
       // Ordering, dedup, per-edit try/catch, and shift/shared-component
       // detection all live in `applyStudioEditBatch` — the single engine both
-      // this route and `studio_apply_edits` (MCP) run through.
+      // this route and `studio_apply_edits` (MCP) run through. A `sequence`
+      // (P3-D) runs each edit as its own batch, in order, all or nothing.
       const {
         written,
         skipped,
@@ -471,28 +477,32 @@ export async function tryServeStudio(
         sharedComponents,
         refusals,
         swapDetails,
+        detachDetails,
         createdStylesheets,
-        unexplainedSkips,
         touchedFiles,
         createdNodeIds,
         relocatedNodeIds,
         removed,
-        prunedImports,
-      } = await applyStudioEditBatchLocked(dir, edits)
+        fingerprints,
+        retargeted,
+        listArrays,
+        undoToken,
+      } = await (body.sequence ? applyStudioEditSequenceLocked : applyStudioEditBatchLocked)(dir, edits, body.expect ?? {}, {
+        canvasLayers: 'allow',
+        // P3-F — the editor's own batches are the ones ⌘Z can restore.
+        journal: true,
+      })
 
       if (skipped > 0) console.error(`[studio] save: ${written} written, ${skipped} skipped`)
-      // WS-4.4/4.5 — `refusals` names WHY a `detach`/`swap` edit specifically
-      // didn't write (a typed reason + message), so the client can show that
-      // instead of a generic "skipped" toast — see `StudioEditRefusal`'s doc.
+      // WB-12 — `refusals` names WHY each edit that did not write didn't (a
+      // typed reason + message), and it is complete: an edit the client sent
+      // wrote exactly when no refusal names it — see `StudioEditRefusal`'s doc.
       // `swapDetails` — instance-ui-01 — is the mirror for a SUCCESSFUL swap:
       // which props were dropped / still need a value, per `StudioEditSwapDetail`.
       // `createdStylesheets` — Track B1 — is the mirror for a SUCCESSFUL
       // `css`/`create` edit: the stylesheet the server actually invented, so
       // the client can show WHICH file was created (never silent) and record
       // it writable for the next edit — see `StudioEditBatchResult`'s doc.
-      // `unexplainedSkips` — item 0.7 — names the node(s) behind every skip
-      // that ISN'T covered by `refusals`, so the client can point at them
-      // instead of only reporting a bare count.
       // Track C5 — `touchedFiles`, workspace-ROOT-relative (never the raw
       // absolute path — same posture as every other client-facing field here),
       // so `commitStructural` can ask `/reload-scope` whether a targeted
@@ -505,8 +515,10 @@ export async function tryServeStudio(
         sharedComponents,
         refusals,
         swapDetails,
+        // P5-C (DET-5) — what each `detach` lost or would lose; the editor's
+        // pre-commit confirm reads it. `studioSaveRoute.test.ts` holds it.
+        detachDetails,
         createdStylesheets,
-        unexplainedSkips,
         touchedFiles: touchedFiles.map((file) => relative(dir, file).split(sep).join('/')),
         // `store-13`/`store-14` — the node ids this batch made and moved.
         // `applyStudioEditBatch` has computed these since `store-13`, but the
@@ -517,17 +529,24 @@ export async function tryServeStudio(
         // path to strip.
         createdNodeIds,
         relocatedNodeIds,
-        // `store-15` — what a `delete` took out: the element's own bytes and
-        // the imports its prune pass retired, which are the ONLY material ⌘Z
-        // has to put it back with. The same lesson as the two fields above:
-        // the batch computed them, and a route that lists its fields by hand
-        // forwarded neither, so every undo of a delete resolved to "Studio
-        // could not work out how to take this back" while the code that could
-        // sat one layer down. `studioSaveRoute.test.ts` holds this now.
-        // `removed` is keyed by the edit's own workspace-relative node id and
-        // `prunedImports.file` is already workspace-relative — nothing to strip.
+        // P5-G — what a `canvas-layer-delete` took out, for its own undo.
+        // Keyed by the edit's own node id — nothing to strip.
         removed,
-        prunedImports,
+        // P3-F — the undo-journal token for a delete/detach/swap/extract, the
+        // ONLY thing its ⌘Z has to name. The lesson `store-15` learned here:
+        // this route lists its fields by hand, and a field the batch computed
+        // but the route never forwarded made every undo refuse while every
+        // batch test passed. `studioSaveRoute.test.ts` holds it.
+        ...(undoToken ? { undoToken } : {}),
+        // P1-A — each landed value write's new identity, keyed by its own
+        // workspace-relative node id, so the board's next edit to the same
+        // element is not refused `element-moved` by this one.
+        fingerprints,
+        // P1-D — the edits whose element was re-found after its file changed
+        // on disk, and where each was written. Plain workspace-relative ids.
+        retargeted,
+        // OD-8 — where each `list-item` edit's array is now (⌘Z of a row delete addresses it there).
+        listArrays,
       })
     } catch (err) {
       return studioRouteFailure(err)
@@ -540,8 +559,7 @@ export async function tryServeStudio(
   if (pathname === '/admin/api/studio/boards' && req.method === 'GET') {
     try {
       const dir = resolveProjectDir(url.searchParams.get('dir'))
-      const file = join(dir, '.studio', 'boards.json')
-      const boards = existsSync(file) ? parseBoardsFile(readFileSync(file, 'utf8')) : createBoardsFile()
+      const boards = readBoardsFile(dir)
       return jsonResponse({ dir, boards })
     } catch (err) {
       return studioRouteFailure(err)
@@ -554,16 +572,14 @@ export async function tryServeStudio(
   // consistent with `/save` and `/page` rather than reasoning about safety
   // route-by-route.
   if (pathname === '/admin/api/studio/boards' && req.method === 'POST') {
-    return withIdempotentReplay(req, async () => {
+    return withIdempotentReplay(req, sessionRuntime.user.id, async () => {
     try {
       const body = await readValidatedBody(req, BoardsPostBodySchema)
       if (!body) return badRequest('invalid boards body')
       const dir = resolveProjectDir(body.dir)
-      const file = join(dir, '.studio', 'boards.json')
       // Re-parse the incoming payload so we only ever write a valid, normalized file.
       const boards: BoardsFile = parseBoardsFile(body.boards)
-      mkdirSync(dirname(file), { recursive: true })
-      writeFileSync(file, serializeBoardsFile(boards))
+      writeBoardsFile(dir, boards)
       return jsonResponse({ ok: true, boards })
     } catch (err) {
       return studioRouteFailure(err)
@@ -648,8 +664,7 @@ export async function tryServeStudio(
       return buildStudioDownloadResponse(dir)
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio]', err)
     }
   }
 

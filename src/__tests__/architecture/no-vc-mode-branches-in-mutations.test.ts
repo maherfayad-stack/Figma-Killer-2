@@ -21,7 +21,7 @@
  *        - `src/core/visualComponents/schemas.ts`
  *
  * Failure references:
- *   - Architecture plan: docs/superpowers/plans/2026-05-06-tree-unification.md
+ *   - Architecture plan: docs/reference/page-tree.md
  *   - Code contract: CLAUDE.md §"Mutation API"
  */
 
@@ -49,7 +49,7 @@ describe('Gate 1 — mutations.ts has no VC mode branch', () => {
         "`kind === 'visualComponent'`. Mutations must be tree-agnostic — they take a " +
         '`NodeTree<TNode>` and know nothing about page vs. VC mode. Move any routing ' +
         'logic to `mutateActiveTree` in site/helpers.ts.\n\n' +
-        'Reference: docs/superpowers/plans/2026-05-06-tree-unification.md, ' +
+        'Reference: docs/reference/page-tree.md, ' +
         'CLAUDE.md §"Mutation API"',
       )
     }
@@ -169,7 +169,7 @@ describe('Gate 2 — the 13 named tree-mutation actions have no VC branch', () =
           'This routing must live ONLY in `mutateActiveTree` (site/helpers.ts). ' +
           'Refactor the action to call `mutateActiveTree(fn)` and let the helper ' +
           'route to the correct tree.\n\n' +
-          'Reference: docs/superpowers/plans/2026-05-06-tree-unification.md, ' +
+          'Reference: docs/reference/page-tree.md, ' +
           'CLAUDE.md §"Mutation API"',
         )
       }
@@ -211,7 +211,7 @@ describe('Gate 3 — `childNodes` does not appear in core schema files', () => {
           '(`NodeTree<TNode>`). Remove all references to `childNodes` from this schema file ' +
           '(including comments).\n\n' +
           `Occurrences:\n${matches}\n\n` +
-          'Reference: docs/superpowers/plans/2026-05-06-tree-unification.md, ' +
+          'Reference: docs/reference/page-tree.md, ' +
           'CLAUDE.md §"Mutation API"',
         )
       }

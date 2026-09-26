@@ -656,8 +656,10 @@ describe('inlineLocalComponents — 2d: locking fidelity on variant branching / 
     const { expanded } = load(pageFile)
 
     expect(Object.keys(expanded.nodes).length).toBeGreaterThan(0)
-    const banner = Object.values(expanded.nodes).find((n) => n.name === 'div' && n.props.className === 'banner banner--')
-    expect(banner).toBeDefined() // static prefix of the template literal kept
+    // The template's static prefix, whole classes only (P3-C): `banner--` is
+    // the half of a token `${variant}` completes, not a class the div has.
+    const banner = Object.values(expanded.nodes).find((n) => n.name === 'div' && n.props.className === 'banner')
+    expect(banner).toBeDefined()
     // Editable: its writeback target is EsimStatusBanner's own source line.
     // `fromComponent` is what warns the user that the edit lands on every
     // instance of the component.

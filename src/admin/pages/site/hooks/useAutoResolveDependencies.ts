@@ -42,7 +42,10 @@ export function useAutoResolveDependencies({
   const packageImportmap = useEditorStore((s) => s.siteRuntime.packageImportmap)
   const resolveDependencyLock = useEditorStore((s) => s.resolveDependencyLock)
   const dependencyResolveStatus = useEditorStore((s) => s.dependencyResolveStatus)
-  const site = useEditorStore((s) => s.site)
+  // Whether a document is loaded — never `s.site` itself, which Mutative
+  // replaces on every edit: this effect used to re-run (and re-arm its
+  // debounce) on every keystroke (P2-I, PERF-12).
+  const hasSite = useEditorStore((s) => s.site !== null)
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -50,7 +53,7 @@ export function useAutoResolveDependencies({
     // Skip while the site is hydrating — `packageJson` and `lockedPackages`
     // are seeded to their defaults before the document arrives, which would
     // otherwise fire one no-op resolve on mount.
-    if (!site) return
+    if (!hasSite) return
 
     const status = evaluateDependencyLockStatus(packageJson, lockedPackages)
     const lockHasPackages = Object.keys(lockedPackages).length > 0
@@ -83,5 +86,5 @@ export function useAutoResolveDependencies({
         timerRef.current = null
       }
     }
-  }, [site, packageJson, lockedPackages, packageImportmap, resolveDependencyLock, dependencyResolveStatus, debounceMs])
+  }, [hasSite, packageJson, lockedPackages, packageImportmap, resolveDependencyLock, dependencyResolveStatus, debounceMs])
 }

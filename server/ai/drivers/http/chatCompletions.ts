@@ -22,10 +22,12 @@ import {
   type TurnToolResult,
   type TurnTranslator,
   type TurnUsage,
-} from './toolLoop'
+} from './toolLoopTypes'
 import type { SseFrame } from './sse'
-import { parseToolArguments } from './toolArgs'
+import { parseToolArguments, toolArgumentsParse } from './toolArgs'
+import { openAiReasoningEffort } from '../openAiReasoning'
 import { nanoid } from 'nanoid'
+import { ToolInputProgress } from '../toolInputProgress'
 
 // ---------------------------------------------------------------------------
 // Provider-native chat/completions message shapes (request side)
@@ -229,8 +231,11 @@ export class ChatCompletionsTurnTranslator implements TurnTranslator<ChatTurn> {
   // chunks (id + name on the first, arguments piecemeal after).
   private readonly toolsByIndex = new Map<number, MutableToolCall>()
   private readonly order: number[] = []
+  /** AI-26 — argument progress while a call streams. */
+  private readonly inputProgress = new ToolInputProgress()
   private emitted = false
   private usage: TurnUsage | null = null
+  private truncated = false
 
   translate(frame: SseFrame): AiStreamEvent[] {
     let chunk: Static<typeof ChatChunkSchema>
@@ -269,10 +274,17 @@ export class ChatCompletionsTurnTranslator implements TurnTranslator<ChatTurn> {
           }
           if (tc.id) acc.id = tc.id
           if (tc.function?.name) acc.name = tc.function.name
-          if (typeof tc.function?.arguments === 'string') acc.arguments += tc.function.arguments
+          if (typeof tc.function?.arguments === 'string') {
+            acc.arguments += tc.function.arguments
+            const progress = this.inputProgress.append(acc.id, acc.name, tc.function.arguments)
+            if (progress) events.push(progress)
+          }
         }
       }
     }
+
+    // `length` is the output limit cutting the response off (AI-11).
+    if (choice.finish_reason === 'length') this.truncated = true
 
     // The finish chunk signals all tool-call fragments are in; emit one
     // canonical toolCall event per accumulated call (we don't stream partial
@@ -299,7 +311,11 @@ export class ChatCompletionsTurnTranslator implements TurnTranslator<ChatTurn> {
     const chatToolCalls: ChatToolCall[] = []
     for (const index of this.order) {
       const acc = this.toolsByIndex.get(index)!
-      toolCalls.push({ id: acc.id, name: acc.name || 'tool', input: parseToolArguments(acc.arguments) })
+      const parsed = toolArgumentsParse(acc.arguments)
+      // Unparseable arguments are cut off only when the output limit stopped
+      // the response; otherwise they run and the schema refuses them, as before.
+      const incomplete = this.truncated && !parsed.ok
+      toolCalls.push({ id: acc.id, name: acc.name || 'tool', input: parsed.ok ? parsed.value : {}, ...(incomplete ? { incomplete } : {}) })
       chatToolCalls.push({
         id: acc.id,
         type: 'function',
@@ -313,11 +329,16 @@ export class ChatCompletionsTurnTranslator implements TurnTranslator<ChatTurn> {
         : { role: 'assistant', content: this.text }
 
     return {
-      stop: toolCalls.length === 0,
       toolCalls,
+      truncated: this.truncated,
       assistantMessage: this.text || chatToolCalls.length > 0 ? [assistant] : null,
       usage: this.usage,
     }
+  }
+
+  /** chat/completions gateways report no stream error shape Studio relies on; a failure here is never retried as transient. */
+  isTransientFailure(): boolean {
+    return false
   }
 }
 
@@ -342,27 +363,37 @@ export function makeChatCompletionsAdapter(opts: {
     mapHistory(req) {
       return mapChatHistory(req.systemPrompt, req.messages)
     },
-    buildRequestBody(messages, req) {
+    buildRequestBody(messages, req, _cacheBreakpoints, options) {
       const body: Record<string, unknown> = {
         model: req.modelId,
         messages: messages.flat(),
         stream: true,
         stream_options: { include_usage: true },
       }
+      // `effort` → `reasoning_effort` (AI-11); refused by a model without
+      // reasoning, and the loop re-sends the round without it.
+      if (options.reasoning && req.effort) body.reasoning_effort = openAiReasoningEffort(req.effort)
       if (req.tools.length > 0) {
         body.tools = req.tools.map((t) => ({
           type: 'function',
           function: { name: t.name, description: t.description, parameters: t.inputSchema },
         }))
+        if (options.toolChoice === 'none') body.tool_choice = 'none'
       }
       return body
     },
-    buildToolResultMessage(results: TurnToolResult[]): ChatTurn {
-      return results.map((r) => ({
-        role: 'tool' as const,
-        tool_call_id: r.id,
-        content: toolOutputToString(r.output),
-      }))
+    buildToolResultMessage(results: TurnToolResult[], notes: readonly string[]): ChatTurn {
+      return [
+        ...results.map((r): ChatMessage => ({
+          role: 'tool',
+          tool_call_id: r.id,
+          content: toolOutputToString(r.output),
+        })),
+        ...notes.map((text): ChatMessage => ({ role: 'user', content: text })),
+      ]
+    },
+    buildUserNoteMessage(text: string): ChatTurn {
+      return [{ role: 'user', content: text }]
     },
     createTurnTranslator() {
       return new ChatCompletionsTurnTranslator()

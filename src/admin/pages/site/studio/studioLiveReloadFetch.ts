@@ -69,9 +69,10 @@
 import type { ConditionDef, Page, StyleRule } from '@core/page-tree'
 import { ndjsonRequest } from '@core/http'
 import { getStudioWorkspaceDir } from './studioWorkspaceDir'
-import { StudioLoadStreamLineSchema, type StudioLoadStreamLine } from './studioLoadStreamSchema'
+import { orderStreamedPages, StudioLoadStreamLineSchema, type CanvasLayerLoad, type StudioLoadStreamLine } from './studioLoadStreamSchema'
 import { mergeLoadedValuesBaseline } from './loadedValuesBaseline'
 import { setStudioAuthoredCss, setStudioVendorCss } from './studioRawCssStores'
+import { setStudioLoadWarnings } from './studioLoadWarningsStore'
 import { setStudioStyleRuleSources } from './styleRuleWriteback'
 import { setStudioTrustTier } from './studioProjectTrust'
 
@@ -82,6 +83,8 @@ export interface StudioPagesByIdResult {
   styleRules: Record<string, StyleRule>
   /** The project-wide condition set, same contract as `styleRules`. */
   conditions: ConditionDef[]
+  /** P5-G — every loose layer on the free canvas (always the full set). Hand it to `setCanvasLayers`. */
+  canvasLayers: CanvasLayerLoad[]
 }
 
 export interface StudioPagesByIdOptions {
@@ -101,17 +104,19 @@ export async function fetchStudioPagesById(
 ): Promise<StudioPagesByIdResult> {
   const overrideDir = getStudioWorkspaceDir()
   let meta: (StudioLoadStreamLine & { kind: 'meta' }) | null = null
-  const pages: Page[] = []
+  const pageLines: Array<StudioLoadStreamLine & { kind: 'page' }> = []
   await ndjsonRequest('/admin/api/studio/load', {
     lineSchema: StudioLoadStreamLineSchema,
     query: { ...(overrideDir ? { dir: overrideDir } : {}), stream: 1, pageIds: pageIds.join(',') },
     onLine: (line: StudioLoadStreamLine) => {
       if (line.kind === 'meta') meta = line
-      else pages.push(line.page)
+      else pageLines.push(line)
     },
   })
   if (!meta) throw new Error('Studio load stream produced no metadata line.')
-  const { missingPageIds, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, trust } = meta
+  // P6-B — lines arrive in viewport order; the reloaded pages keep page order.
+  const pages = orderStreamedPages(pageLines)
+  const { missingPageIds, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, warnings, trust, canvasLayers } = meta
 
   // The per-load leaves, in the same order and with the same calls
   // `fsCodemodAdapter.ts`'s `loadSite` makes. Each is its own tiny external
@@ -119,6 +124,7 @@ export async function fetchStudioPagesById(
   // touches the editor store, which is what keeps this module store-agnostic.
   setStudioVendorCss(vendorCss)
   setStudioAuthoredCss(authoredCss)
+  setStudioLoadWarnings(warnings)
   setStudioTrustTier(trust)
   // Ordered AFTER the raw CSS for no reason other than matching `loadSite`;
   // it is the write-back map, so a rule the agent's edit just introduced can
@@ -131,5 +137,5 @@ export async function fetchStudioPagesById(
 
   mergeLoadedValuesBaseline(pages)
 
-  return { pages, missingPageIds: missingPageIds ?? [], styleRules, conditions }
+  return { pages, missingPageIds: missingPageIds ?? [], styleRules, conditions, canvasLayers: canvasLayers ?? [] }
 }

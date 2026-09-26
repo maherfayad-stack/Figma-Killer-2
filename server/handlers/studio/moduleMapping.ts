@@ -17,12 +17,8 @@
  * `inlineTextEdit.prop` — see its doc.
  */
 import type { ComponentSource, ParsedPropValue } from '@core/page-parser'
-import { TEXT_HTML_TAG_SET } from '@modules/base/utils/htmlTag'
+import { isTextHostTag } from '@modules/base/utils/htmlTag'
 import { packageModuleId } from '@core/module-engine'
-
-const CONTAINER_TAGS: ReadonlySet<string> = new Set([
-  'div', 'section', 'main', 'header', 'footer', 'nav', 'article', 'aside',
-])
 
 /**
  * Map a parsed node to an Studio moduleId (design-system → alm.* / pkg.*, host
@@ -66,6 +62,13 @@ const CONTAINER_TAGS: ReadonlySet<string> = new Set([
  * `tag`/`customTag` props (see `parsedPageToSitePage`) and renders children —
  * so an `<h1>` stays an `<h1>`, and an icon-only `<button>` still emits
  * `<button>`, just without a phantom label.
+ *
+ * P3-B (WB-3) — the converse used to be wrong: a text-only `<div>`, `<li>`,
+ * `<label>`, `<td>` or `<section>` went to `base.container` too (it has no text
+ * prop), so its copy was simply gone from the canvas. Any element whose text is
+ * its visible content (`isTextHostTag`) is now `base.text` on its own tag —
+ * through `customTag` when the tag is not one of `base.text`'s named ones —
+ * and its literal text writes back through the ordinary `text` edit.
  *
  * Measured on the eSIM corpus before this rule: 154 nodes rendered the literal
  * word "Text", 21 rendered "Button", and 10 buttons silently dropped their
@@ -112,7 +115,6 @@ export function resolveModuleId(
   // shape is how real repos inline an icon, and the markup is the content.
   if (typeof node.props?.svg === 'string' && node.props.svg.length > 0) return 'base.svg'
   const tag = node.name.toLowerCase()
-  if (CONTAINER_TAGS.has(tag)) return 'base.container'
   // Genuine HTML leaves, plus `base.link` which does accept children.
   if (tag === 'img') return 'base.image'
   if (tag === 'svg') return 'base.svg'
@@ -122,10 +124,11 @@ export function resolveModuleId(
   // placeholder just the same.
   if (node.children.length > 0 || !node.text) return 'base.container'
   if (tag === 'button') return 'base.button'
-  // `base.text` has no custom-tag escape hatch, so a tag it cannot render
-  // (`<label>`, `<figcaption>`, …) would silently come out as its default
-  // `<p>`. Those go to `base.container`, which can represent any tag.
-  return TEXT_HTML_TAG_SET.has(tag) ? 'base.text' : 'base.container'
+  // A text-only element whose text is NOT its visible content (`<textarea>`,
+  // `<option>`, `<title>`), or a tag no text module may emit (`<style>`,
+  // `<script>`), stays a container: rendering that text as content would show
+  // the user something their app never does.
+  return isTextHostTag(tag) ? 'base.text' : 'base.container'
 }
 
 /**

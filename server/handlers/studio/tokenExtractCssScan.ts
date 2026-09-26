@@ -126,6 +126,8 @@ import type { DesignTokenFamily } from '@core/design-tokens'
 interface CssRule {
   selector: string
   body: string
+  /** Offset of `body`'s first character within the text this level scanned — so a declaration can be traced back to its line. */
+  bodyOffset: number
 }
 
 /**
@@ -168,7 +170,7 @@ function scanRulesAtOneLevel(css: string): CssRule[] {
       }
       const body = css.slice(bodyStart, i)
       i++ // consume the matching close brace
-      if (selector.length > 0) rules.push({ selector, body })
+      if (selector.length > 0) rules.push({ selector, body, bodyOffset: bodyStart })
       continue
     }
     if (ch === '}') {
@@ -229,17 +231,29 @@ function isDarkSelector(selector: string): boolean {
 
 const DECLARATION_RE = /(--[a-zA-Z0-9_-]+)\s*:\s*([^;]+);?/g
 
-function collectDeclarations(body: string, into: Map<string, string>): void {
+/** One custom-property declaration: its raw (unresolved) value, and where in the scanned text its name starts. */
+export interface ScopedDeclaration {
+  readonly raw: string
+  readonly offset: number
+}
+
+function collectDeclarations(body: string, bodyOffset: number, into: Map<string, ScopedDeclaration>): void {
   DECLARATION_RE.lastIndex = 0
   let m: RegExpExecArray | null
   while ((m = DECLARATION_RE.exec(body))) {
-    into.set(m[1]!, m[2]!.trim())
+    into.set(m[1]!, { raw: m[2]!.trim(), offset: bodyOffset + m.index })
   }
 }
 
 export interface RootScopeMaps {
   light: Map<string, string>
   dark: Map<string, string>
+}
+
+/** {@link RootScopeMaps} with each winning declaration's position kept — see {@link collectRootScopeDeclarations}. */
+export interface RootScopeDeclarations {
+  light: Map<string, ScopedDeclaration>
+  dark: Map<string, ScopedDeclaration>
 }
 
 /** `prefers-color-scheme` ambient context inherited while descending through at-rules — `null` means no ancestor at-rule declared one (today's top-level behavior applies: classify by the rule's own selector shape). */
@@ -318,28 +332,30 @@ function atRuleDescentContext(selector: string, inherited: ColorSchemeContext): 
  */
 function collectScopedRules(
   css: string,
+  baseOffset: number,
   depth: number,
   colorScheme: ColorSchemeContext,
-  light: Map<string, string>,
-  dark: Map<string, string>,
+  light: Map<string, ScopedDeclaration>,
+  dark: Map<string, ScopedDeclaration>,
 ): void {
   if (depth > MAX_AT_RULE_DEPTH) return
   for (const rule of scanRulesAtOneLevel(css)) {
+    const bodyOffset = baseOffset + rule.bodyOffset
     if (rule.selector.startsWith('@')) {
       if (AT_THEME_RE.test(rule.selector.trim())) {
         // `@theme`'s body IS the declaration list — no nested selector to
         // recurse into (see module doc). Collect straight into whichever map
         // the current ambient colour-scheme context says, exactly as a
         // global host selector's own declarations are collected below.
-        collectDeclarations(rule.body, colorScheme === 'dark' ? dark : light)
+        collectDeclarations(rule.body, bodyOffset, colorScheme === 'dark' ? dark : light)
         continue
       }
       const descendContext = atRuleDescentContext(rule.selector, colorScheme)
-      if (descendContext !== undefined) collectScopedRules(rule.body, depth + 1, descendContext, light, dark)
+      if (descendContext !== undefined) collectScopedRules(rule.body, bodyOffset, depth + 1, descendContext, light, dark)
       continue
     }
     if (colorScheme === 'dark') {
-      if (isGlobalTokenHostSelector(rule.selector) || isDarkSelector(rule.selector)) collectDeclarations(rule.body, dark)
+      if (isGlobalTokenHostSelector(rule.selector) || isDarkSelector(rule.selector)) collectDeclarations(rule.body, bodyOffset, dark)
       continue
     }
     // `colorScheme === 'light'` and `colorScheme === null` (no ambient
@@ -348,16 +364,30 @@ function collectScopedRules(
     // inside a `prefers-color-scheme: light` block (an explicit `.dark`
     // override nested there is not a contradiction — it's a selector, not a
     // media feature).
-    if (isGlobalTokenHostSelector(rule.selector)) collectDeclarations(rule.body, light)
-    else if (isDarkSelector(rule.selector)) collectDeclarations(rule.body, dark)
+    if (isGlobalTokenHostSelector(rule.selector)) collectDeclarations(rule.body, bodyOffset, light)
+    else if (isDarkSelector(rule.selector)) collectDeclarations(rule.body, bodyOffset, dark)
   }
 }
 
 /** Builds the light/dark raw-declaration maps for every global-token-host (light — see `isGlobalTokenHostSelector`) and known dark-selector (dark) rule found in `css`, descending into `@layer` and colour-scheme-only `@media` at-rules (see module doc; `atRuleDescentContext` is the gate). Later declarations win on a name collision, matching cascade order. Exported for `designImport/parseCssTokens.ts`, which needs the raw (unresolved) light map to resolve `var()` chains itself before classifying. */
 export function collectRootScopeMaps(css: string): RootScopeMaps {
-  const light = new Map<string, string>()
-  const dark = new Map<string, string>()
-  collectScopedRules(css, 0, null, light, dark)
+  const { light, dark } = collectRootScopeDeclarations(css)
+  const rawValues = (declarations: Map<string, ScopedDeclaration>): Map<string, string> =>
+    new Map([...declarations].map(([name, declaration]) => [name, declaration.raw]))
+  return { light: rawValues(light), dark: rawValues(dark) }
+}
+
+/**
+ * The same scan as {@link collectRootScopeMaps}, keeping WHERE each winning
+ * declaration sits — a character offset into `css`. One walk, two views: the
+ * map form above is derived from this one, so the two can never disagree about
+ * which declaration won. `projectTokenIndex.ts`'s `listProjectTokens` turns
+ * the offset into the `file:line` that `studio_list_tokens` reports.
+ */
+export function collectRootScopeDeclarations(css: string): RootScopeDeclarations {
+  const light = new Map<string, ScopedDeclaration>()
+  const dark = new Map<string, ScopedDeclaration>()
+  collectScopedRules(css, 0, 0, null, light, dark)
   return { light, dark }
 }
 

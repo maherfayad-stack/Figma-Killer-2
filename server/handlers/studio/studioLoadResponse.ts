@@ -59,7 +59,9 @@
  * as the caller names its id.
  */
 import type { Page } from '@core/page-tree'
+import { isCanvasLayerPageId } from '@core/studio-board'
 import { safeParseValue, Type } from '@core/utils/typeboxHelpers'
+import { viewportPriorityOrder } from './loadPriority'
 import type { StudioLoadResult } from './studioLoadContract'
 
 /** At least one non-empty id — an empty/whitespace-only `pageIds` param is a caller error (400), not "no filter". */
@@ -102,18 +104,39 @@ export function missingStudioLoadPageIds(
 ): string[] | undefined {
   if (!pageIds) return undefined
   const found = new Set(pages.map((page) => page.id))
-  return pageIds.filter((id) => !found.has(id))
+  // P5-G — a narrowed reload after a canvas-layer write names the layer's
+  // `canvas:<id>` page id; a layer is answered by `canvasLayers` (always the
+  // full set), never by `pages`, so it is not missing and must never make the
+  // client drop a page.
+  return pageIds.filter((id) => !found.has(id) && !isCanvasLayerPageId(id))
 }
 
 /**
  * WS-5.5 — the `?stream=1` NDJSON body for `GET /admin/api/studio/load`:
  * one `{ kind: 'meta', ... }` line (everything except `pages`), then one
- * `{ kind: 'page', page }` line per page, in the same order `pages` was in.
+ * `{ kind: 'page', page, index }` line per page.
  * `@core/http`'s `ndjsonRequest` (client) validates each line against a
- * matching discriminated-union TypeBox schema — see `fsCodemodAdapter.ts`'s
- * `StudioLoadStreamLineSchema`, which MUST stay in sync with this shape.
- * `missingPageIds` rides in `meta` (`undefined`, hence dropped by
- * `JSON.stringify`, on every unfiltered call — see this module's own doc).
+ * matching discriminated-union TypeBox schema — see
+ * `studioLoadStreamSchema.ts`'s `StudioLoadStreamLineSchema`, which MUST stay
+ * in sync with this shape. `missingPageIds` rides in `meta` (`undefined`,
+ * hence dropped by `JSON.stringify`, on every unfiltered call — see this
+ * module's own doc).
+ *
+ * P6-B — page lines arrive in VIEWPORT order (`loadPriority.ts`: the first
+ * board's frames top-left first, then the rest), not page order, and each
+ * carries `index`, its position in the project's page order. The client
+ * places a page by its `index`, so the line order is the server's to choose —
+ * and the server chooses the order a person sees frames in. That is the
+ * contract a streaming client needs: the client (`fsCodemodAdapter.ts`) hands
+ * the board each batch of lines as it arrives, so the visible frames paint
+ * first while the rest are still on the wire, and `meta.pageList` names the
+ * ones still to come.
+ *
+ * What this does NOT do is emit a page before every page is parsed: the
+ * compute behind it is whole-project (the style registry's class ids are
+ * last-wins across every page's stylesheets, in page order), so the first
+ * line of a cold load still waits for the whole parse. See `STATE.md`'s
+ * P6-B entry.
  *
  * `StudioLoadResult['stories']` (W5-3) is `Omit`ted deliberately: it is a
  * byproduct the `/load` ROUTE consumes to place board frames, not part of the
@@ -134,14 +157,20 @@ export async function* studioLoadStreamLines(
   },
 ): AsyncGenerator<Record<string, unknown>> {
   const { pages, ...meta } = result
-  yield { kind: 'meta', ...meta, pageCount: pages.length }
-  for (const page of pages) {
+  // P6-B — every page the stream will carry, in page order, BEFORE any of
+  // them: what lets the client paint the frames that have arrived and hold a
+  // placeholder for the rest, and put the pages back in page order at the end.
+  const pageList = pages.map(({ id, slug, title }) => ({ id, slug, title }))
+  yield { kind: 'meta', ...meta, pageList }
+  const indexById = new Map(pages.map((page, index) => [page.id, index]))
+  for (const pageId of viewportPriorityOrder(result.dir, pages.map((page) => page.id))) {
+    const index = indexById.get(pageId)!
     // Yield control back to the event loop between pages so Bun actually
     // flushes each chunk to the socket instead of enqueueing every line
     // inside one synchronous burst (server-side compute for ALL pages is
     // already done by the time this generator starts — see the route's own
     // comment for exactly what this streaming does and does not buy).
     await new Promise((resolve) => setImmediate(resolve))
-    yield { kind: 'page', page }
+    yield { kind: 'page', page: pages[index]!, index }
   }
 }

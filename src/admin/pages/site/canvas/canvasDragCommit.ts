@@ -20,8 +20,11 @@
  *  2. **A cross-frame drop (D2 G3)** — the pointer was over a frame showing a
  *     DIFFERENT page. One `transplantNodes` call; the element leaves one file
  *     and lands in another, or the store refuses and says why.
- *  3. **An Alt-drop (K2)** — a copy into the resolved position, same page.
- *  4. **An ordinary reorder** — the move the drag has always been.
+ *  3. **A lift onto the free canvas (P5-G)** — released over the empty board
+ *     of a Studio board: the element leaves its page and becomes a loose
+ *     layer (Alt: a copy of it does).
+ *  4. **An Alt-drop (K2)** — a copy into the resolved position, same page.
+ *  5. **An ordinary reorder** — the move the drag has always been.
  *
  * Nothing here decides ANYTHING about whether a write is allowed. Every branch
  * hands the question straight to the store action that owns it, which is the
@@ -30,9 +33,10 @@
  * same rules and are deliberately not re-read here.
  */
 import { useEditorStore } from '@site/store/store'
+import type { CanvasLiftDrop } from './BoardCanvasLayer/canvasLayerLift'
 import type { CanvasDropResolution, CanvasTransplantTarget } from './canvasDnd'
 import {
-  freeMoveStylePatch,
+  freeMoveStylePatches,
   presentFreeMoveRefusal,
   type FreeMoveResolution,
   type FreeMoveStep,
@@ -63,6 +67,8 @@ export interface CanvasDragCommitInput {
   duplicating: boolean
   /** D2 G3 — set when the pointer was over another page's frame at release. */
   foreign: CanvasDragForeignDrop | null
+  /** P5-G — set when the release was over the empty board of a Studio board. */
+  lift: CanvasLiftDrop | null
 }
 
 /**
@@ -81,7 +87,11 @@ export function commitCanvasDrag(input: CanvasDragCommitInput): void {
   if (input.free) {
     if (!input.free.ok) presentFreeMoveRefusal(input.free.refusal)
     else if (input.freeStep) {
-      store.setNodeInlineStyles(input.draggedId, freeMoveStylePatch(input.free.plan, input.freeStep))
+      // IX-22 — every moved layer's own patch, in ONE transaction: one undo
+      // entry however many layers moved together.
+      const patches = freeMoveStylePatches(input.free.plan, input.freeStep)
+      if (patches.length === 1) store.setNodeInlineStyles(patches[0]!.nodeId, patches[0]!.patch)
+      else if (patches.length > 1) store.setNodesInlineStylesPerNode(patches)
     }
     return
   }
@@ -98,6 +108,11 @@ export function commitCanvasDrag(input: CanvasDragCommitInput): void {
       index: foreign.target.index,
       ...(input.duplicating ? { copy: true } : {}),
     })
+    return
+  }
+
+  if (input.lift) {
+    store.liftNodeToCanvas(input.draggedId, input.lift.originPageId, input.lift.at, input.duplicating)
     return
   }
 

@@ -148,9 +148,7 @@ export function Widget({
   loading = false,
   children,
 }: WidgetProps) {
-  const style: CSSProperties = {
-    ['--tint' as string]: TINT_TOKEN[tint],
-  }
+  const style = { '--tint': TINT_TOKEN[tint] } as CSSProperties
 
   return (
     <section

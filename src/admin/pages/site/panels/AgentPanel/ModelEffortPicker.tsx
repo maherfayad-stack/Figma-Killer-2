@@ -27,6 +27,8 @@ import type { CredentialView } from '@admin/ai/api'
 import {
   fetchStudioAgentEffort,
   persistStudioAgentEffort,
+  routedModelLabel,
+  routedModelTitle,
   routedTurnLabel,
   routedTurnTitle,
   type AgentSlice,
@@ -69,6 +71,7 @@ export function ModelEffortPicker({
   const agentEffort = useAgentStore((s) => s.agentEffort)
   const setAgentEffort = useAgentStore((s) => s.setAgentEffort)
   const agentRoutedTurn = useAgentStore((s) => s.agentRoutedTurn)
+  const agentRoutedModel = useAgentStore((s) => s.agentRoutedModel)
 
   const studioProjectDir = useAdminUi((s) => s.studioProject?.dir ?? null)
 
@@ -94,6 +97,15 @@ export function ModelEffortPicker({
 
   const currentEffort = agentEffort ?? ''
   const currentEffortLabel = EFFORT_OPTIONS.find((opt) => opt.value === currentEffort)?.label ?? 'Default'
+
+  // One read-only slot, two halves: the effort (pinned, else the last routed
+  // value) and — only when the last turn ran on a cheaper model than the
+  // picker's (AI-25) — that model. Either half may be absent; neither is ever
+  // fabricated.
+  const effortLabel = agentEffort ? currentEffortLabel : routedTurnLabel(agentRoutedTurn)
+  const effortTitle = agentEffort ? null : routedTurnTitle(agentRoutedTurn)
+  const trailingLabel = [effortLabel, routedModelLabel(agentRoutedModel)].filter(Boolean).join(' · ') || undefined
+  const trailingLabelTitle = [effortTitle, routedModelTitle(agentRoutedModel)].filter(Boolean).join(' ') || undefined
 
   function changeEffort(next: NonNullable<AgentEffort> | ''): void {
     const resolved = next === '' ? null : next
@@ -122,8 +134,8 @@ export function ModelEffortPicker({
       // have. `routedTurnTitle` carries the router's own reason on hover,
       // which is what makes an automatic decision reviewable instead of
       // silent.
-      trailingLabel={agentEffort ? currentEffortLabel : (routedTurnLabel(agentRoutedTurn) ?? undefined)}
-      trailingLabelTitle={agentEffort ? undefined : (routedTurnTitle(agentRoutedTurn) ?? undefined)}
+      trailingLabel={trailingLabel}
+      trailingLabelTitle={trailingLabelTitle}
       trailingLabelKind="effort"
       menuFooter={(closeMenu) => (
         <>

@@ -1,4 +1,5 @@
 # Audit: Building a page from scratch with the project's design system
+> **Trust:** historical, dated 2026-08-06. Paths may be wrong. Never act on it.
 
 Scope: `src/core/ast-codemods/`, `server/handlers/studioStructuralWriteback.ts`,
 `server/handlers/studioWriteback.ts`, `src/core/page-tree/{sourceStructure,

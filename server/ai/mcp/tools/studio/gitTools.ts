@@ -45,8 +45,8 @@
  * may push to a team. Same reasoning that keeps `studio.run.project` separate
  * from `studio.write`, and — like it — this capability is not granted to the
  * built-in Admin role: it has to be granted deliberately, per connector or per
- * custom role. `mutates: true` additionally requires `ai.tools.write`, so both
- * axes must be held.
+ * custom role. `requiresWrite: true` additionally requires `ai.tools.write`, so
+ * both axes must be held.
  *
  * **`studio_git_status` is the exception, and deliberately so.** It is a read:
  * it runs `git status`, mutates nothing, and reports paths the caller can
@@ -115,7 +115,8 @@ const studioGitCommitTool: AiTool = {
   name: 'studio_git_commit',
   scope: 'shared',
   execution: 'server',
-  mutates: true,
+  sideEffects: 'write',
+  requiresWrite: true,
   requiredCapabilities: ['studio.git.write'],
   description:
     'Commit an explicit list of files in the open Studio project, with a message. Stages EXACTLY the files you name (never `git add -A`), so a commit contains only what you meant. Returns { ok:true, sha, shortSha, files }, or a structured, non-throwing failure: not-a-repository (the project has no git repository — ask the user to create one, you cannot), or git-failed with git\'s own message (a missing git identity and an empty commit both land here). Requires studio.git.write, which is granted deliberately and is NOT implied by studio.write. There is no push, branch, or init tool: committing is local and undoable, publishing is the user\'s decision.',
@@ -238,7 +239,7 @@ const studioGitStatusTool: AiTool = {
   name: 'studio_git_status',
   scope: 'shared',
   execution: 'server',
-  mutates: false,
+  sideEffects: 'none',
   description:
     'Read the open Studio project\'s git status: the current branch, its upstream and how far ahead/behind it is, and every changed path with its staged/unstaged/untracked/unmerged state. Returns { ok:true, isRepo, branch, entries, excludedCount, hasOrigin }. `isRepo:false` is a normal answer for a project nobody has put under version control, not an error. Paths under node_modules/dist/.next/.turbo/.git/.studio are never listed (excludedCount says how many were withheld). This is the tool to call BEFORE studio_git_commit so you commit the files you actually changed and nothing else — and after, to confirm what landed. A read: it needs no capability beyond the ones you already hold.',
   inputSchema: DirOnlyInputSchema,
@@ -286,7 +287,8 @@ const studioGitBranchTool: AiTool = {
   name: 'studio_git_branch',
   scope: 'shared',
   execution: 'server',
-  mutates: true,
+  sideEffects: 'write',
+  requiresWrite: true,
   requiredCapabilities: ['studio.git.write'],
   description:
     'List, create, or switch branches in the open Studio project. action:"list" returns { branches:[{ name, remote, current, upstream, ahead, behind, upstreamGone }], current, defaultBranch } — divergence is as current as the last fetch. action:"create" branches at HEAD and switches to it; this is ALLOWED with uncommitted work, because moving the branch pointer cannot change a byte in the working tree, and it is the right first step before committing a feature. action:"switch" checks out an existing branch and REFUSES with code:"dirty-tree" and the offending paths when anything is uncommitted — Studio never stashes, so commit first (studio_git_commit) and switch after. Switching changes the files under the user\'s canvas, so prefer doing it when they asked for it. Requires studio.git.write.',
@@ -324,7 +326,8 @@ const studioGitPushTool: AiTool = {
   name: 'studio_git_push',
   scope: 'shared',
   execution: 'server',
-  mutates: true,
+  sideEffects: 'write',
+  requiresWrite: true,
   requiredCapabilities: ['studio.git.write'],
   description:
     'Push the open Studio project\'s current branch to origin with --set-upstream. Never a force push — there is no parameter that could make it one, and no route behind this that could either. Returns { ok:true, branch, output } with git\'s own output, or a structured refusal: no-origin-remote (the project has no remote; ask the user to connect one), detached-head, busy (somebody else is writing to this project right now — try again), or git-failed carrying git\'s real message (an authentication failure lands here and its wording is the useful part). Authentication is the GitHub account the user signed in with, resolved server-side from their session, or the host\'s own credential helper — you never supply a credential. Push what you committed; do not push a branch you did not build. Requires studio.git.write.',
@@ -363,7 +366,8 @@ const studioGitOpenPrTool: AiTool = {
   name: 'studio_git_open_pr',
   scope: 'shared',
   execution: 'server',
-  mutates: true,
+  sideEffects: 'write',
+  requiresWrite: true,
   requiredCapabilities: ['studio.git.write'],
   description:
     'Open a GitHub pull request for the open Studio project\'s current branch. Push it first (studio_git_push) — GitHub cannot propose commits it does not have. Every field is optional: base defaults to origin/HEAD, title to the last commit subject, body to the commit list. Returns { ok:true, url, number, compareUrl }, or a structured refusal: not-a-github-remote (origin is not a GitHub repository), same-branch (you are standing on the base branch — create one first), no-github-token (nobody has connected a GitHub account; hand the user the compareUrl instead, it is a working link), github-rejected carrying GitHub\'s own message ("A pull request already exists", "No commits between main and feat/x" — that message IS the answer), or github-unreachable (retry). A pull request is a PROPOSAL a human reviews, which is where delegated work should end. Requires studio.git.write.',

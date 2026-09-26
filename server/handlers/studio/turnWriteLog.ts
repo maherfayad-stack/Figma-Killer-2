@@ -44,11 +44,10 @@
  * array back is one `readFileSync` no fancier than every other `.studio/`
  * sidecar in this codebase.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join, relative, sep } from 'node:path'
+import { relative, sep } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { parseJsonWithFallback } from '@core/utils/jsonValidate'
-import { agentCacheDir, listAgentCacheUserKeys } from './agentUserScope'
+import { agentCacheStoreDir, listAgentCacheUserKeys } from './agentUserScope'
+import { readStudioStoreJson, writeStudioStoreJson } from './studioStore'
 
 const TurnWriteEntrySchema = Type.Object({
   /** Workspace-relative, POSIX-separated — the same convention `resolvePageSourceFile` returns. */
@@ -61,16 +60,14 @@ export type TurnWriteEntry = Static<typeof TurnWriteEntrySchema>
 /** A single turn writes at most a few dozen files in the observed failure case (58 writes across 4 screens); capped generously above that so a pathological loop can't grow this file unbounded before the Stop hook ever gets a chance to intervene. */
 const MAX_ENTRIES = 500
 
-function logFile(dir: string, userKey: string): string {
-  return join(agentCacheDir(dir, userKey), 'turnWrites.json')
+function logFile(userKey: string): string {
+  return `${agentCacheStoreDir(userKey)}/turnWrites.json`
 }
 
 /** Clears the log for a fresh turn. Never throws — a failure here just means the upcoming turn's write tracking degrades to "nothing recorded", the same as a project with no writes at all. */
 export function resetTurnWriteLog(dir: string, userKey: string): void {
   try {
-    const file = logFile(dir, userKey)
-    mkdirSync(dirname(file), { recursive: true })
-    writeFileSync(file, '[]')
+    writeStudioStoreJson(dir, logFile(userKey), [])
   } catch (err) {
     console.error('[turnWriteLog] failed to reset — continuing without turn-write tracking:', err)
   }
@@ -79,9 +76,7 @@ export function resetTurnWriteLog(dir: string, userKey: string): void {
 /** Every file this ACCOUNT wrote so far in the current turn (or the last-completed one, once `resetTurnWriteLog` has not yet run for the next). `[]` on any read failure — never throws. */
 export function readTurnWriteLog(dir: string, userKey: string): TurnWriteEntry[] {
   try {
-    const file = logFile(dir, userKey)
-    if (!existsSync(file)) return []
-    return parseJsonWithFallback(readFileSync(file, 'utf8'), TurnWriteLogSchema, [])
+    return readStudioStoreJson(dir, logFile(userKey), TurnWriteLogSchema, [])
   } catch (err) {
     console.error('[turnWriteLog] failed to read — treating as empty:', err)
     return []
@@ -128,9 +123,7 @@ export function appendTurnWrite(
     entries.push({ file: normalized, atMs })
     const capped = entries.length > MAX_ENTRIES ? entries.slice(entries.length - MAX_ENTRIES) : entries
 
-    const file = logFile(dir, userKey)
-    mkdirSync(dirname(file), { recursive: true })
-    writeFileSync(file, JSON.stringify(capped))
+    writeStudioStoreJson(dir, logFile(userKey), capped)
   } catch (err) {
     console.error('[turnWriteLog] failed to record a write — continuing:', err)
   }

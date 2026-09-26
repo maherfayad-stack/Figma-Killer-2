@@ -12,7 +12,7 @@
  * anything that consumes the page as a generic `NodeTree<BaseNode>` still
  * works.
  *
- * Architecture source: docs/superpowers/plans/2026-05-06-tree-unification.md
+ * Architecture source: docs/reference/page-tree.md
  *
  * Constraint #269: no imports from editor / editor-store here.
  */

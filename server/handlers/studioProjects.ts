@@ -33,6 +33,7 @@ import {
 import { PROJECTS_TRASH_DIR_NAME } from './studio/projectDirGuard'
 import { readProjectThumbnailStat } from './studio/projectThumbnailFile'
 import { isRealpathContainedAllowingMissing } from './studio/workspacePackageResolve'
+import { readAbsoluteDirSetting, WORKSPACE_DIR_ENV } from '../runtimeDirs'
 
 /**
  * Root that holds every studio project. Each immediate subfolder of
@@ -41,18 +42,35 @@ import { isRealpathContainedAllowingMissing } from './studio/workspacePackageRes
  * the container itself is never a project.
  *
  * `STUDIO_WORKSPACE_DIR` relocates that root, read per call so it can be set
- * for the duration of one test file. It exists because this directory is the
- * anchor of every containment guard in the feature (`assertWithinWorkspace`,
+ * for the duration of one test file. This directory is the anchor of every
+ * containment guard in the feature (`assertWithinWorkspace`,
  * `isRealpathContained`, git's `GIT_CEILING_DIRECTORIES`), so a test that
  * needs a project the guards accept would otherwise have to create it inside
  * the developer's OWN workspace — where a killed run leaves the fixture
  * behind and the launcher lists it as a real project. Tests point it at an OS
- * temp dir instead; unset (every normal run, dev or deployed) it is
- * `<cwd>/studio-workspace` exactly as before.
+ * temp dir instead.
+ *
+ * Deployments set it too: the Docker image sets `/app/studio-workspace`
+ * (mounted as the `workspace` volume by `compose.prod.yml`), and the
+ * Railway/Render templates set `/app/storage/studio-workspace` on their app
+ * disk, because this directory holds every user's projects with no other copy
+ * and must outlive the container (P1-H, gated by
+ * `workspace-volume-persistence.test.ts`). Unset (a dev checkout, a direct Bun
+ * install) it is `<cwd>/studio-workspace`.
+ *
+ * Every path Studio derives for a project (a new project, a GitHub import, a
+ * clone, an upload) must be built from THIS function, never from
+ * `process.cwd()`: a second root would put projects outside the volume.
+ *
+ * The value must be absolute (`readAbsoluteDirSetting`: a blank or relative
+ * value throws), and `studio/workspaceRootGuard.ts` refuses to boot on a root
+ * that overlaps the database, uploads, Studio's own code or its private data.
  */
-export function projectsRootDir(): string {
-  const override = process.env.STUDIO_WORKSPACE_DIR
-  return override ? resolve(override) : join(process.cwd(), 'studio-workspace')
+export function projectsRootDir(
+  env: Record<string, string | undefined> = process.env,
+  cwd: string = process.cwd(),
+): string {
+  return readAbsoluteDirSetting(WORKSPACE_DIR_ENV, env) ?? join(cwd, 'studio-workspace')
 }
 
 /**
@@ -579,6 +597,9 @@ export function listStudioProjects(projectsRoot: string): StudioProjectSummary[]
  * Unsorted on purpose: the display-name sort belongs to the listing, which is
  * the only caller that has display names to sort by.
  */
+/** ext2/3/4's recovery directory at the root of every such filesystem. */
+const LOST_AND_FOUND_DIR_NAME = 'lost+found'
+
 export function listStudioProjectDirs(projectsRoot: string): string[] {
   if (!existsSync(projectsRoot) || !statSync(projectsRoot).isDirectory()) return []
   return readdirSync(projectsRoot, { withFileTypes: true })
@@ -590,6 +611,11 @@ export function listStudioProjectDirs(projectsRoot: string): string[] {
         // would point Studio at a directory whose children are deleted
         // projects. See `./studio/projectTrash.ts`.
         entry.name !== PROJECTS_TRASH_DIR_NAME &&
+        // A block-device filesystem mounted AT the root (a bind-mounted disk,
+        // a Kubernetes volume) carries a root-owned, mode-0700 `lost+found`.
+        // It is filesystem bookkeeping, never a project, and every operation
+        // on it would fail with EACCES.
+        entry.name !== LOST_AND_FOUND_DIR_NAME &&
         !EXCLUDED_WORKSPACE_DIR_NAMES.has(entry.name),
     )
     .map((entry) => join(projectsRoot, entry.name))

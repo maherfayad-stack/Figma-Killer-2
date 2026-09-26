@@ -53,6 +53,18 @@
  * panel into an error state for two minutes. A read that catches a tree
  * mid-save reports a file as changed a moment early, which is exactly what it
  * is.
+ *
+ * ## The lock is also how Studio recognises its own writes (P1-D)
+ *
+ * Every hold of the lock is a WRITE SESSION, and the last minute of them is
+ * kept per project ({@link studioWriteSessionCovers}). `projectWatch.ts`'s
+ * file watcher asks whether a changed file's `mtime` falls inside one: if it
+ * does, Studio wrote that file and the board already knows; if not, someone
+ * else did (VS Code, `git pull`, the agent's own Edit tool) and the board has
+ * to re-read it. A file's `mtime` is stamped when the bytes land, so the
+ * answer does not depend on when the OS delivers the watch event — which is
+ * always AFTER a synchronous save has released the lock, so "is it locked
+ * right now?" could never answer the question.
  */
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { existsSync, realpathSync } from 'node:fs'
@@ -90,6 +102,27 @@ interface LockEntry {
 }
 
 const locks = new Map<string, LockEntry>()
+
+/** One hold of the lock; `end` is `null` while it is still held. Wall-clock ms — the clock file `mtime`s are stamped with. */
+interface WriteSession {
+  start: number
+  end: number | null
+}
+
+/** How long a finished write session is remembered. A watch event arrives in milliseconds; a minute is generous, and bounds the list. */
+const WRITE_SESSION_MEMORY_MS = 60_000
+
+/** Recent and open write sessions, per lock key — see this module's doc. */
+const writeSessions = new Map<string, WriteSession[]>()
+
+function openWriteSession(key: string): WriteSession {
+  const now = Date.now()
+  const kept = (writeSessions.get(key) ?? []).filter((s) => s.end === null || now - s.end <= WRITE_SESSION_MEMORY_MS)
+  const session: WriteSession = { start: now, end: null }
+  kept.push(session)
+  writeSessions.set(key, kept)
+  return session
+}
 
 /**
  * Keys held by the CURRENT async context. Reentrancy is the difference
@@ -176,11 +209,55 @@ export async function withProjectWriteLock<T>(
   await acquire(key, options.waitMs)
   const nested = new Set(held ?? [])
   nested.add(key)
+  const session = openWriteSession(key)
   try {
     return await heldKeys.run(nested, fn)
   } finally {
+    session.end = Date.now()
     release(key)
   }
+}
+
+/**
+ * Whether Studio was writing to `dir` at wall-clock time `atMs`: inside one of
+ * its lock holds, widened by `slackMs` on both sides. `projectWatch.ts` asks
+ * this with a changed file's `mtime` (or, for a file that is gone, the moment
+ * its event arrived) to tell Studio's own writes from everyone else's — see
+ * this module's doc.
+ *
+ * The slack absorbs clock granularity: on Windows a file's `mtime` reads a
+ * millisecond EARLIER than a `Date.now()` taken just before the write. Being
+ * wrong is cheap in both directions — a Studio write read as an outside one
+ * costs one redundant re-read of the board, and an outside write that lands
+ * inside the slack of a Studio write is left to the element identity guard,
+ * which still refuses or re-finds any edit aimed at what it moved.
+ */
+export function studioWriteSessionCovers(dir: string, atMs: number, slackMs: number): boolean {
+  const now = Date.now()
+  for (const session of writeSessions.get(lockKey(dir)) ?? []) {
+    if (atMs >= session.start - slackMs && atMs <= (session.end ?? now) + slackMs) return true
+  }
+  return false
+}
+
+/**
+ * Whether Studio has held (or still holds) a write session on the project at
+ * `realRoot` that ended at or after wall-clock `sinceMs` — i.e. whether Studio
+ * may have written something a scan taken at `sinceMs` did not see.
+ * `projectWatch.ts`'s `settleProjectChanges` asks this before a load trusts
+ * the watcher's snapshot: a Studio write is followed straight away by the
+ * board's own resync, faster than the watcher's debounce would report it
+ * (P6-B).
+ *
+ * `realRoot` must already be the project's real path (the watcher's root —
+ * what {@link lockKey} would return). This runs before every load, and the
+ * `realpathSync` inside `lockKey` was a quarter of a warm load's memo check.
+ */
+export function studioWroteSince(realRoot: string, sinceMs: number): boolean {
+  for (const session of writeSessions.get(realRoot) ?? []) {
+    if (session.end === null || session.end >= sinceMs) return true
+  }
+  return false
 }
 
 /** `true` when someone is currently writing to this project. Test/diagnostic only — never a precondition, because the answer is stale the instant it is read. */

@@ -22,6 +22,7 @@ import {
   runGithubImport,
 } from '../studioGithubImport'
 import { parseGithubRemoteUrl } from '../studio/gitPaths'
+import { projectsRootDir } from '../studioProjects'
 
 describe('parseGithubRepoUrl', () => {
   it('parses a plain repo URL', () => {
@@ -155,11 +156,36 @@ describe('buildGithubZipballUrl', () => {
 })
 
 describe('defaultGithubImportDir', () => {
-  it('is scoped to its own repo folder under studio-workspace/, never the root', () => {
+  let previousRoot: string | undefined
+  let root: string
+
+  beforeEach(() => {
+    previousRoot = process.env.STUDIO_WORKSPACE_DIR
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-gh-import-root-'))
+    process.env.STUDIO_WORKSPACE_DIR = root
+  })
+
+  afterEach(() => {
+    if (previousRoot === undefined) delete process.env.STUDIO_WORKSPACE_DIR
+    else process.env.STUDIO_WORKSPACE_DIR = previousRoot
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  it('is scoped to its own repo folder directly under the workspace root, never the root itself', () => {
     const dir = defaultGithubImportDir('acme', 'widgets')
-    const posix = dir.split(path.sep).join('/')
-    expect(posix).toContain('studio-workspace/acme-widgets')
-    expect(posix.endsWith('/studio-workspace')).toBe(false)
+    expect(dir).toBe(path.join(projectsRootDir(), 'acme-widgets'))
+    expect(dir).not.toBe(projectsRootDir())
+  })
+
+  // P1-H regression: the import target was `<cwd>/studio-workspace/<owner>-<repo>`
+  // no matter what `STUDIO_WORKSPACE_DIR` said. A deployed image points that
+  // variable at its persistent volume, so every GitHub import landed OUTSIDE
+  // the volume (lost on the next container recreate) and outside the root the
+  // launcher lists (so the imported project never even appeared).
+  it('follows STUDIO_WORKSPACE_DIR, so an import lands on the relocated (persistent) root', () => {
+    const dir = defaultGithubImportDir('acme', 'widgets')
+    expect(path.dirname(dir)).toBe(path.resolve(root))
+    expect(dir.startsWith(path.join(process.cwd(), 'studio-workspace'))).toBe(false)
   })
 })
 

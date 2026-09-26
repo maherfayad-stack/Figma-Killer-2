@@ -1,8 +1,11 @@
-/* LayoutSection — visual editor for the layout-position CSS section.
+/* PropertyControlChrome — shared chrome for the layout-family controls.
  *
- * Hosts the DisplaySwitcher, FlexDirection / FlexWrap controls, alignment
- * controls, and the leftover ClassPropertyRow rows. Reuses the same
- * vertical rhythm as Section.module.css's .sectionBody (8px gap).
+ * Not one section's stylesheet: `LayoutSection`'s own pieces
+ * (`ClipContentRow`, `GridTrackControl`, `LabeledControl`),
+ * `MeasuresSection` and `DropdownSwitcher` all import it. It owns the
+ * display-value chip group, the grid-track edit row, the TRBL offset grid
+ * and the hover-reveal clear buttons, on the same vertical rhythm as
+ * Section.module.css's `.sectionBody`.
  */
 
 /* `min-width: 0` on the grid AND its items, for the reason spelled out on
@@ -42,7 +45,7 @@
     align-items: stretch;
     gap: var(--inspector-space-4xs);
     padding: var(--inspector-space-4xs);
-    border-radius: 10px;
+    border-radius: var(--inspector-field-radius);
     background: var(--bg-surface-2);
 }
 
@@ -53,7 +56,8 @@
     flex: 1 1 auto;
     min-width: 0;
     padding: 0 var(--inspector-space-s);
-    border-radius: 8px;
+    /* Concentric with the group: its radius less the 2px it is inset by. */
+    border-radius: var(--radius);
     background: var(--bg-surface);
     color: var(--text);
     text-align: left;
@@ -86,7 +90,7 @@
 .displayChipGroup .displayChipClear.displayChipClear {
     flex: 0 0 26px;
     width: 26px;
-    border-radius: 6px;
+    border-radius: var(--radius);
     background: transparent;
     color: var(--text-muted);
 }
@@ -224,7 +228,7 @@
     right: 4px;
     width: 18px;
     height: 18px;
-    border-radius: 6px;
+    border-radius: var(--radius);
     background: var(--bg-surface-2);
     border: 1px solid var(--border-muted);
     color: var(--text-muted);
@@ -260,5 +264,5 @@
     display: flex;
     width: 100%;
     align-items: stretch;
-    min-height: 30px;
+    min-height: var(--inspector-row-h);
 }

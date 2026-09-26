@@ -111,6 +111,12 @@ let snapshot: AssetFavoritesSnapshot = initialSnapshot()
 let loadPromise: Promise<void> | null = null
 let mutationVersion = 0
 
+/** A new write's version; only the newest write's answer may land. */
+function nextMutationVersion(): number {
+  mutationVersion += 1
+  return mutationVersion
+}
+
 export function useAssetFavorites(): AssetFavoritesApi {
   const current = useSyncExternalStore(
     subscribeAssetFavorites,
@@ -124,7 +130,7 @@ export function useAssetFavorites(): AssetFavoritesApi {
 
   function saveFavorites(nextFavorites: readonly AssetItemRef[]) {
     const next = dedupeAssetRefs(nextFavorites)
-    const saveVersion = ++mutationVersion
+    const saveVersion = nextMutationVersion()
     setSnapshot({ favorites: next, loading: false, error: null })
 
     void setUserPreference('module-inserter', { favorites: next })

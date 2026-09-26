@@ -29,7 +29,7 @@ import {
   AGENT_CAPTURE_ROUTE,
 } from '@core/studio-capture'
 import { jsonResponse } from '../../../http'
-import { resolveStudioAssetResponse } from '../../../handlers/studioAsset'
+import { readStudioAssetTarget, resolveStudioAssetResponse } from '../../../handlers/studioAsset'
 import { buildCapturePayload } from './capturePayload'
 import { resolveCaptureToken } from './captureToken'
 
@@ -87,13 +87,14 @@ export async function tryServeAgentCapture(
     }
   }
 
-  // Asset. `grant.dir` is the authority — the query only names a path WITHIN
-  // it, and `resolveStudioAssetResponse` applies the same containment check
-  // the session-gated studio asset route applies.
-  const rawPath = url.searchParams.get('path')
-  if (!rawPath) return notFound()
+  // Asset. `grant.dir` is the authority — the query only names a file WITHIN
+  // it (a workspace `path`, or a site-root `url` a literal `src="/x.png"`
+  // carries), and `resolveStudioAssetResponse` applies the same guard and
+  // media-only gate the session-gated studio asset route applies.
+  const target = readStudioAssetTarget(url.searchParams)
+  if (!target) return notFound()
   try {
-    const response = await resolveStudioAssetResponse(grant.dir, rawPath, req)
+    const response = await resolveStudioAssetResponse(grant.dir, target, req)
     return response ?? notFound()
   } catch (err) {
     console.error('[agent-capture]', err)

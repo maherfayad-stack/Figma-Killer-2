@@ -9,14 +9,14 @@
  *
  * Every individual flag's reasoning lives with the field that controls it
  * below; `claudeCli.ts`'s module doc covers the ones that need whole
- * paragraphs (`--strict-mcp-config`, `--tools`, the system-prompt split).
+ * paragraphs (`--strict-mcp-config`, `--tools`); `claudeCliSystemPrompt.ts` covers
+ * `--append-system-prompt-file`.
  */
 
 import { MCP_ENDPOINT_PATH } from '../mcp/endpointPath'
 import { PERMISSION_REQUEST_TOOL_NAME } from '../mcp/permissionGate'
 import type { ClaudeCliSessionConnector } from '../mcp/sessionConnector'
 import { readServerConfig } from '../../config'
-import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '../runtime/types'
 
 export interface ClaudeCliArgvOptions {
   readonly modelId: string
@@ -28,8 +28,12 @@ export interface ClaudeCliArgvOptions {
   readonly addDirs: readonly string[]
   /** Path to the private 0600 MCP config file, or `null` when none could be written (the turn runs without tools). */
   readonly mcpConfigPath: string | null
-  /** The dynamic half of Studio's system prompt, already extracted. `null` when there is none to send. */
-  readonly systemPromptSuffix: string | null
+  /**
+   * Path to the file holding Studio's system prompt (`claudeCliSystemPrompt.ts`),
+   * or `null` when there is none to send. Always a file, never inline text:
+   * the prompt is larger than Windows' whole command-line limit.
+   */
+  readonly appendSystemPromptFile: string | null
   /** `--session-id` to establish a new CLI session, `--resume` to continue one. */
   readonly sessionFlag: '--session-id' | '--resume'
   readonly sessionId: string
@@ -96,7 +100,7 @@ export function buildClaudeCliArgv(options: ClaudeCliArgvOptions): string[] {
     // project's .mcp.json and connects to whatever it finds there. Studio
     // ships exactly the toolset it intends and no more.
     '--strict-mcp-config',
-    ...(options.systemPromptSuffix ? ['--append-system-prompt', options.systemPromptSuffix] : []),
+    ...(options.appendSystemPromptFile ? ['--append-system-prompt-file', options.appendSystemPromptFile] : []),
     options.sessionFlag,
     options.sessionId,
   ]
@@ -144,26 +148,4 @@ export function buildMcpConfig(
       },
     },
   }
-}
-
-/**
- * The dynamic half of `systemPrompt`, or `null` when there is none worth
- * sending (no boundary marker found, or the suffix is empty/whitespace — the
- * "project profile unavailable" degrade in `buildStudioAgentSystemPrompt` is
- * still real text, so this only skips a GENUINELY empty suffix, never that
- * fallback message).
- *
- * `systemPrompt` is `[staticPrefix, SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
- * dynamicSuffix]` for every REAL Studio-project turn
- * (`buildStudioAgentSystemPrompt`'s own contract) — this driver only asks for
- * the suffix when `workspaceCwd` is set, which is exactly when the caller
- * (`chat.ts` via `buildStudioProjectSystemPrompt`) built it that way, so the
- * boundary marker is always expected to be present in practice; a missing
- * marker degrades to `null` rather than guessing.
- */
-export function dynamicSystemPromptSuffix(systemPrompt: readonly string[]): string | null {
-  const boundaryIndex = systemPrompt.indexOf(SYSTEM_PROMPT_DYNAMIC_BOUNDARY)
-  if (boundaryIndex === -1) return null
-  const suffix = systemPrompt.slice(boundaryIndex + 1).join('\n\n').trim()
-  return suffix.length > 0 ? suffix : null
 }

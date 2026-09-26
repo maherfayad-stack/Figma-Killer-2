@@ -14,6 +14,7 @@ import { tryServeStudioTrustTier } from '../studio/trustTier'
 import { ProjectDirOutsideWorkspaceError } from '../studioProjects'
 import { withOutsideWorkspaceDir } from './outsideWorkspaceDir'
 import type { SpawnedProcessLike } from '../studio/subprocessRunner'
+import { writeViteProject } from '../studio/viteLaunch.testHelpers'
 
 /**
  * A dev-server process that never exits on its own — the shape a real one has
@@ -126,7 +127,7 @@ describe('tryServeStudioTrustTier', () => {
    * running — otherwise the pill's "Back to static" is cosmetic.
    */
   it('POST stops a running dev server when it demotes the project below run-project', async () => {
-    fs.writeFileSync(path.join(wsDir, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { dev: 'vite' } }))
+    writeViteProject(wsDir, { dev: 'vite' })
     const fake = fakeDevServerProcess()
     const overrides: DevServerOverrides = { spawn: () => fake.proc }
     startDevServer(wsDir, overrides)
@@ -142,7 +143,7 @@ describe('tryServeStudioTrustTier', () => {
   })
 
   it('POST leaves a running dev server alone when the write keeps the project at run-project', async () => {
-    fs.writeFileSync(path.join(wsDir, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { dev: 'vite' } }))
+    writeViteProject(wsDir, { dev: 'vite' })
     const fake = fakeDevServerProcess()
     startDevServer(wsDir, { spawn: () => fake.proc })
 

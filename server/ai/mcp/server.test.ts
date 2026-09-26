@@ -10,6 +10,11 @@ import { buildMcpServer } from './server'
 import { createEditorBridgeStream, editorBridgeScope } from './editorBridge'
 import { CMS_SITE_WRITE_TOOLS_WITHHELD } from './registry'
 import { registerPermissionGate } from './permissionGate'
+import { registerConnectorWorkspace } from './connectorWorkspace'
+import { registerConnectorUserUrls } from './connectorUserUrls'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const decoder = new TextDecoder()
 
@@ -73,7 +78,7 @@ describe('mcp server', () => {
     const { tools } = await client.listTools()
     const names = tools.map((t) => t.name)
     expect(names).toContain('site_read_styles') // headless design-system read
-    // Write tools are gated out (MCP Tool exposes no `mutates` flag, so assert by name).
+    // Write tools are gated out (MCP Tool exposes no `requiresWrite` flag, so assert by name).
     expect(names).not.toContain('site_insert_html')
     expect(names).not.toContain('site_delete_node')
     expect(names).not.toContain('site_apply_css')
@@ -210,6 +215,46 @@ describe('mcp server — permission gate exposure', () => {
         updatedInput: { file_path: '/outside/x.txt' },
       })
       expect(asked).not.toBeNull()
+    } finally {
+      release()
+    }
+  })
+})
+
+/**
+ * P4-E (security review of #233, F8): on the `claude` CLI path the user's
+ * pasted URLs reach `studio_fetch_remote_asset` only through the connector
+ * binding. The URL here is the cloud-metadata address — a literal IP, so no
+ * DNS and no request ever leaves: the host policy refuses it unless the user
+ * pasted it, and the transport's SSRF guard refuses it either way, with a
+ * different code. Which code comes back proves which gate answered.
+ */
+describe('mcp server — the user\'s URLs reach a bound connector\'s tool calls', () => {
+  const URL_PASTED = 'https://169.254.169.254/latest/x.png'
+
+  async function fetchCode(): Promise<string> {
+    const dir = mkdtempSync(join(tmpdir(), 'mcp-user-urls-'))
+    const releaseWorkspace = registerConnectorWorkspace('c1', dir)
+    try {
+      const client = await connectClient(db, ['ai.chat', 'ai.tools.write', 'studio.write'])
+      const result = await client.callTool({ name: 'studio_fetch_remote_asset', arguments: { url: URL_PASTED } })
+      await client.close()
+      const text = (result.content as Array<{ text: string }>)[0]!.text
+      return /\[code=([a-z-]+)/.exec(text)?.[1] ?? text
+    } finally {
+      releaseWorkspace()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
+  it('without a binding, the host policy refuses before any request', async () => {
+    expect(await fetchCode()).toBe('host-not-allowed')
+  })
+
+  it('with the URL bound to the connector, the policy lets it through to the transport', async () => {
+    const release = registerConnectorUserUrls('c1', [URL_PASTED])
+    try {
+      expect(await fetchCode()).toBe('remote-fetch-failed')
     } finally {
       release()
     }

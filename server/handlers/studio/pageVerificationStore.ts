@@ -35,11 +35,9 @@
  * not satisfy user B's Stop gate for a page B just rewrote. See
  * `agentUserScope.ts`.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { parseJsonWithFallback } from '@core/utils/jsonValidate'
-import { agentCacheDir } from './agentUserScope'
+import { agentCacheStoreDir } from './agentUserScope'
+import { readStudioStoreJson, writeStudioStoreJson } from './studioStore'
 import { FIDELITY_MODES, type FidelityMode } from './fidelityMode'
 import { DESIGN_POLICIES, type DesignPolicy } from './designPolicy'
 
@@ -148,21 +146,16 @@ function emptyStore(): PageVerificationStore {
  */
 export const PAGE_VERIFICATION_FILE_NAME = 'pageVerification.json'
 
-function storeFile(dir: string, userKey: string): string {
-  return join(agentCacheDir(dir, userKey), PAGE_VERIFICATION_FILE_NAME)
+function storeFile(userKey: string): string {
+  return `${agentCacheStoreDir(userKey)}/${PAGE_VERIFICATION_FILE_NAME}`
 }
 
 function readStore(dir: string, userKey: string): PageVerificationStore {
-  const file = storeFile(dir, userKey)
-  if (!existsSync(file)) return emptyStore()
-  const raw = readFileSync(file, 'utf8')
-  return parseJsonWithFallback(raw, PageVerificationStoreSchema, emptyStore())
+  return readStudioStoreJson(dir, storeFile(userKey), PageVerificationStoreSchema, emptyStore())
 }
 
 function writeStore(dir: string, userKey: string, store: PageVerificationStore): void {
-  const file = storeFile(dir, userKey)
-  mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, JSON.stringify(store, null, 2))
+  writeStudioStoreJson(dir, storeFile(userKey), store, { pretty: true })
 }
 
 /** Records `pageId` as passing right now — called by `studio_compare`'s handler for every result that came back `pass: true`, cache hit or fresh capture alike (a cache hit still means the page's CURRENT on-disk bytes pass, since the cache is itself mtime-gated). Never throws; a write failure is logged and dropped — a missed record just means the next Stop-hook check treats the page as unverified, which is the safe direction to fail in. */

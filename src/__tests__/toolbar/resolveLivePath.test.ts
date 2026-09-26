@@ -18,6 +18,9 @@ const postsTemplate = (id: string, slug: string): Page => ({
   template: { enabled: true, target: { kind: 'postTypes', tableSlugs: ['posts'] }, priority: 0 },
 } as Page)
 
+/** The page-list entry the hook actually reads (`selectPageDirectory`). */
+const entry = (p: Page) => ({ id: p.id, slug: p.slug, isTemplate: p.template?.enabled === true })
+
 const row = (id: string, permalink: unknown): LoopItem => ({ id, fields: { permalink } })
 
 describe('resolveLivePath', () => {
@@ -49,12 +52,12 @@ describe('resolveLivePath', () => {
     // No explicit selection → defaults to the first non-template page (home).
     expect(resolveLivePath({
       activePage: tpl, isTemplate: true, targetKind: 'everywhere',
-      selection: null, sitePages: [tpl, home, about], rows: [],
+      selection: null, sitePages: [tpl, home, about].map(entry), rows: [],
     })).toBe('/')
     // Explicit selection wins.
     expect(resolveLivePath({
       activePage: tpl, isTemplate: true, targetKind: 'everywhere',
-      selection: 'about', sitePages: [tpl, home, about], rows: [],
+      selection: 'about', sitePages: [tpl, home, about].map(entry), rows: [],
     })).toBe('/about')
   })
 
@@ -62,7 +65,7 @@ describe('resolveLivePath', () => {
     const tpl = everywhereTemplate('layout', 'global-layout')
     expect(resolveLivePath({
       activePage: tpl, isTemplate: true, targetKind: 'everywhere',
-      selection: null, sitePages: [tpl], rows: [],
+      selection: null, sitePages: [tpl].map(entry), rows: [],
     })).toBeNull()
   })
 

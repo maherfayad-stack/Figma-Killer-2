@@ -147,8 +147,8 @@ export function MultiSelectTargetBar({ model }: { model: SelectionModel }) {
 // ---------------------------------------------------------------------------
 
 function PartialWriteNotices({ model }: { model: SelectionModel }) {
-  const { inlineUnwritableNodes, blockedPropertyCounts, selectedNodes } = model
-  const blocked = [...blockedPropertyCounts.entries()]
+  const { inlineUnwritableNodes, inlineWriteReach, selectedNodes } = model
+  const blocked = inlineWriteReach ? [...inlineWriteReach.blockedByProperty.entries()] : []
 
   return (
     <>
@@ -178,7 +178,7 @@ function PartialWriteNotices({ model }: { model: SelectionModel }) {
           <LockSolidIcon size={14} className={noticeStyles.icon} />
           <p className={noticeStyles.text}>
             <strong>{blocked.map(([property]) => cssPropertyLabel(property)).join(', ')}</strong>{' '}
-            {blocked.length === 1 ? 'is' : 'are'} set from an expression in code on{' '}
+            {blocked.length === 1 ? 'is' : 'are'} {inlineWriteReach?.reason} on{' '}
             {describeBlockedSpread(blocked, selectedNodes.length)}. Those layers keep their current
             value; the rest of the selection still updates.
           </p>

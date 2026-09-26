@@ -2,7 +2,6 @@ import { expect, test, type FrameLocator, type Locator, type Page } from '@playw
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
-  CANVAS_FRAME_IFRAME_SELECTOR,
   clickInFrame,
   createAuthoredFixtureProject,
   openFixtureBoard,
@@ -10,6 +9,7 @@ import {
   removeFixtureProject,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * `panel-02` (WS-6.3) — real-browser proof that changing a value in the Figma
@@ -130,10 +130,10 @@ async function openStudioBoard(page: Page): Promise<{ canvasRoot: Locator; conte
   const frame = page.locator('[data-page-id]').first()
   await panIntoView(page, canvasRoot, frame)
   await expect(
-    frame.locator(CANVAS_FRAME_IFRAME_SELECTOR),
+    visibleCanvasIframe(frame),
     'the fixture frame never mounted a live canvas iframe after being panned into view',
   ).toBeVisible({ timeout: 60_000 })
-  return { canvasRoot, contentFrame: frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR) }
+  return { canvasRoot, contentFrame: canvasContentFrame(frame) }
 }
 
 /** Select an element on the canvas and wait for the Style panel to bind to its class. */

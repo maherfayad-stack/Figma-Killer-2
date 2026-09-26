@@ -21,8 +21,16 @@
  *
  * | `FrameMountCost` | A mounted frame is | Budget |
  * |---|---|---|
- * | `'portal'` (Tier 0/1) | one same-origin `srcDoc` iframe — ~12 ms to create, cheap and plentiful | `max(8, onScreen + 4)` |
- * | `'live'` (Tier 2) | `LiveBoardFrame`: a Tier-0 fallback frame AND a cross-origin bridge iframe against a real dev-server process — **two** documents until it reports ready | `max(onScreen, 8)` |
+ * | `'portal'` (Tier 0/1, and Tier 2 until its dev server is ready) | one same-origin `srcDoc` iframe — ~12 ms to create, cheap and plentiful | `max(8, onScreen + 4)` |
+ * | `'live'` (Tier 2, dev server ready) | `LiveBoardFrame`: a cross-origin document against a real dev-server process (plus its fallback until that frame reports ready) | `max(onScreen, 8)` |
+ *
+ * A Tier-2 board is `'portal'` until its dev server is READY (P6-C): before
+ * that each frame is its same-origin fallback plus a bridge iframe with no
+ * document to load, so it costs what a portal frame costs — and it needs the
+ * portal headroom, because that headroom is the only window in which a
+ * departed frame can be rasterized into its poster. Measured on a booted
+ * board (`live-frame-budgets.e2e.ts`): one live frame is ~0.8 MB of heap,
+ * one document and ~110 DOM nodes on a small screen.
  *
  * The portal budget is a FLOOR with headroom: a board showing two frames
  * still keeps eight, so panning back to where you just were costs nothing;
@@ -51,9 +59,10 @@
  */
 
 /**
- * What one mounted frame costs on this board. Derived from the project's
- * trust tier by `BoardFramesLayer`, and nothing else — a Tier-2 board's
- * frames are live frames, every other board's are portal frames.
+ * What one mounted frame costs on this board. Derived by `BoardFramesLayer`
+ * from the project's trust tier and its dev server's readiness — a Tier-2
+ * board's frames are live frames once its dev server is ready; every other
+ * frame is a portal frame.
  */
 export type FrameMountCost = 'portal' | 'live'
 

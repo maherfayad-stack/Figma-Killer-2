@@ -50,6 +50,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { dirname as posixDirname, join as posixJoin } from 'node:path/posix'
+import { isWorkspaceWritablePath, pathEntryExists } from '@core/page-parser'
 import { resolveAppRoot } from './appRoot'
 import { detectLocales } from './localeProbe'
 import type { TranslationCatalog } from './translationCatalog'
@@ -174,13 +175,19 @@ export function scaffoldProjectI18n(dir: string): ScaffoldResult {
     const { abs, rel } = defaultScaffoldDir(appRootAbs)
     const translationsAbs = join(abs, 'translations.ts')
     const contextAbs = join(abs, 'LanguageContext.tsx')
-    if (existsSync(translationsAbs) || existsSync(contextAbs)) {
+    // `lstat`, not `existsSync`: a dangling symlink reads as absent to
+    // `existsSync`, and a write would follow it out of the project.
+    if (pathEntryExists(translationsAbs) || pathEntryExists(contextAbs)) {
       return { ok: false, message: `${rel}/ already exists but Studio could not read a dictionary from it.` }
+    }
+    if (!isWorkspaceWritablePath(dir, translationsAbs) || !isWorkspaceWritablePath(dir, contextAbs)) {
+      return { ok: false, message: `${rel}/ resolves outside the project or through a link that points nowhere, so Studio did not write there.` }
     }
 
     mkdirSync(abs, { recursive: true })
-    writeFileSync(translationsAbs, translationsModule(), 'utf8')
-    writeFileSync(contextAbs, contextModule(), 'utf8')
+    // `wx`: created, never overwritten.
+    writeFileSync(translationsAbs, translationsModule(), { encoding: 'utf8', flag: 'wx' })
+    writeFileSync(contextAbs, contextModule(), { encoding: 'utf8', flag: 'wx' })
 
     return {
       ok: true,

@@ -2,7 +2,7 @@
  * Architecture gates for the cms.content plugin API surface.
  *
  * Replaces the deleted `plugin-cms-pages-surface.test.ts` — see
- * `docs/plans/2026-05-30-plugin-cms-content-access.md` for the rollout.
+ * `docs/features/plugin-system.md` → "CMS content" for the permission model.
  *
  * Verifies that all sync-points for the five new permissions are present
  * (PLUGIN_PERMISSION_VALUES, capability matrix, permission alias builder),

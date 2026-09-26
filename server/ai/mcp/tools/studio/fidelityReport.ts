@@ -108,6 +108,7 @@ export const studioFidelityReportTool: AiTool = {
   name: 'studio_fidelity_report',
   scope: 'shared',
   execution: 'server',
+  sideEffects: 'none',
   description:
     'The machine-readable "what will not import faithfully" report, for one or more screens (or the whole project). Per page: a score (nodes/resolved/locked/codeValued) and a findings[] list, each { code, nodeId, file, line, message, fix, impact } — every documented studio-import limitation as a stable, actionable code (see docs/features/studio-import.md "What still does not import"). Also returns projectFindings from the project probe (missing Tailwind config, dependencies not installed, guessed pages dir, …) using the SAME codes studio_project_profile exposes. Name screens the way you named the files ("Checkout"), pass several at once, or omit `pages` entirely for a project-wide report. Call this before doing a visual audit — it tells you WHY a screen looks wrong and what source change would fix it, which a pixel diff alone cannot.',
   inputSchema: DirInputSchema,

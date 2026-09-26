@@ -39,7 +39,7 @@
 import { useState } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSelectors'
-import type { Page } from '@core/page-tree'
+import { selectPageDirectory, type PageDirectoryEntry } from '@site/store/slices/pageDirectory'
 import { DomPanel, PageLayerSubtree } from '@site/panels/DomPanel'
 import { AddPagePicker } from '@site/canvas/BoardFramesLayer'
 import { Input } from '@ui/components/Input'
@@ -48,18 +48,15 @@ import { FileTextSolidIcon } from 'pixel-art-icons/icons/file-text-solid'
 import { useInlineRename } from '@site/hooks/useInlineRename'
 import styles from './StudioPagesTree.module.css'
 
-// Stable fallback reference — `?? []` inline would hand back a NEW array every
-// render, which a Zustand selector must never do (breaks useSyncExternalStore's
-// "did this change" check and can spiral into a "Maximum update depth
-// exceeded" render loop once anything downstream reacts to the selected value).
-const EMPTY_PAGES: Page[] = []
-
 interface StudioPagesTreeProps {
   editable?: boolean
 }
 
 export function StudioPagesTree({ editable = true }: StudioPagesTreeProps) {
-  const allPages = useEditorStore((s) => s.site?.pages ?? EMPTY_PAGES)
+  // The page LIST (id, title, root id) — not `site.pages`, which Mutative
+  // replaces on every edit and re-rendered this always-mounted panel on every
+  // keystroke (P2-I, PERF-12).
+  const allPages = useEditorStore(selectPageDirectory)
   const board = useEditorStore(selectActiveBoard)
   const boardsLoaded = useEditorStore((s) => s.boardsLoaded)
   const activePageId = useEditorStore((s) => s.activePageId)
@@ -133,7 +130,7 @@ export function StudioPagesTree({ editable = true }: StudioPagesTreeProps) {
 }
 
 interface PageRowProps {
-  page: Page
+  page: PageDirectoryEntry
   isActive: boolean
   expanded: boolean
   editable: boolean

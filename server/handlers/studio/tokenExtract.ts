@@ -120,7 +120,7 @@
 import { join } from 'node:path'
 import type { FrameworkSettings } from '@core/framework-schema'
 import { Type } from '@core/utils/typeboxHelpers'
-import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { readStudioFrameworkFile, writeStudioFrameworkFile } from '../studioFramework'
 import { readCappedFile } from './styleCompileFileRead'
@@ -134,6 +134,7 @@ import { extractJsThemeTokens, findJsThemeFileCandidates } from './tokenExtractJ
 import { readBuiltinDesignSystemCss, readInstalledPackageCss } from './tokenExtractPackageCss'
 import { isDesignSystemBacked } from './builtinDesignSystem'
 import { resolveAppRoot } from './appRoot'
+import { clearTokenExtractMemoFor, memoizedTokenExtraction } from './tokenExtractMemo'
 import { buildFrameworkSettings, type ExtractedColorOrigin } from './tokenExtractBuild'
 
 export type { ClassifiedTokens } from './tokenExtractCssScan'
@@ -337,6 +338,8 @@ export function mergeExtractedFramework(
 
 const TokensBodySchema = Type.Object({
   dir: Type.Optional(Type.String()),
+  /** Extract even when nothing it reads has changed — the panel's "Re-scan tokens". */
+  rescan: Type.Optional(Type.Boolean()),
 })
 
 function resolveProfile(dir: string): ProjectProfile {
@@ -355,7 +358,13 @@ function resolveProfile(dir: string): ProjectProfile {
  * validation applies. Called on every `loadSite()` (so a fresh import gets
  * populated the first time it's opened, and a project whose tokens only
  * became reachable later — e.g. after "Install dependencies" — picks them up
- * on the next load) and from the panel's explicit "Re-scan tokens" action.
+ * on the next load) and from the panel's explicit "Re-scan tokens" action
+ * (`rescan: true`).
+ *
+ * perf-17: the extraction is memoized (`tokenExtractMemo.ts`) and re-runs only
+ * when something it reads has changed, or on `rescan`; and the sidecar is not
+ * rewritten when the merged result is what it already holds
+ * (`writeStudioFrameworkFile`).
  */
 export async function tryServeStudioTokens(req: Request, url: URL, pathname: string): Promise<Response | null> {
   if (pathname !== '/admin/api/studio/tokens') return null
@@ -367,8 +376,7 @@ export async function tryServeStudioTokens(req: Request, url: URL, pathname: str
       return jsonResponse({ source: result.source, counts: result.counts, warnings: result.warnings })
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio/tokenExtract]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio/tokenExtract]', err)
     }
   }
 
@@ -377,7 +385,9 @@ export async function tryServeStudioTokens(req: Request, url: URL, pathname: str
       const body = await readValidatedBody(req, TokensBodySchema)
       if (!body) return badRequest('invalid tokens body')
       const dir = resolveProjectDir(body.dir)
-      const result = await extractProjectTokens(dir, resolveProfile(dir))
+      const extract = () => extractProjectTokens(dir, resolveProfile(dir))
+      if (body.rescan) clearTokenExtractMemoFor(dir)
+      const result = await memoizedTokenExtraction(dir, () => resolveAppRoot(dir), extract)
       const merged = mergeExtractedFramework(readStudioFrameworkFile(dir), result.framework)
       const write = writeStudioFrameworkFile(dir, merged)
       if (!write.ok) return badRequest(write.message)
@@ -390,8 +400,7 @@ export async function tryServeStudioTokens(req: Request, url: URL, pathname: str
       })
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio/tokenExtract]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio/tokenExtract]', err)
     }
   }
 

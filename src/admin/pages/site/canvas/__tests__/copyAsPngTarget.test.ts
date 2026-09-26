@@ -74,7 +74,7 @@ describe('resolveCopyAsPngTarget', () => {
     expect(target).toEqual({ ok: true, pageId: 'onboarding', nodeId: null, label: 'Onboarding' })
   })
 
-  it('refuses a multi-frame selection by name rather than picking one', () => {
+  it('ERR-24 — copies the ANCHOR (last-selected) frame of a multi-frame selection instead of refusing', () => {
     const target = resolveCopyAsPngTarget({
       ...EMPTY,
       selectedFramePageIds: ['a', 'b', 'c'],
@@ -82,9 +82,7 @@ describe('resolveCopyAsPngTarget', () => {
       activePageTitle: 'A',
     })
 
-    expect(target.ok).toBe(false)
-    if (target.ok) return
-    expect(target.reason).toContain('3 frames are selected')
+    expect(target).toEqual({ ok: true, pageId: 'c', nodeId: null, label: 'frame' })
   })
 
   it('refuses while a Visual Component is open — a VC has no frame to photograph', () => {

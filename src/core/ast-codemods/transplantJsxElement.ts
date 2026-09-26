@@ -62,7 +62,7 @@
  */
 import { realpathSync } from 'node:fs'
 import * as path from 'node:path'
-import { Project, type Node, type SourceFile } from 'ts-morph'
+import { Node, Project, SyntaxKind, type CallExpression, type SourceFile } from 'ts-morph'
 import { createProject, findJsxElementAtLocation, loadSourceFile } from './locateJsxElement'
 import {
   applyTextEdits,
@@ -72,11 +72,14 @@ import {
   type TextEdit,
 } from './jsxChildRange'
 import { lineIndentAt, reindentBlock, resolveChildPlacement } from './jsxChildPlacement'
-import { conflictingBinding, resolveImportEdits, type ImportRequirement } from './jsxImportEdits'
+import { planImportBindings, resolveImportEdits, type ImportRequirement } from './jsxImportEdits'
 import { createdJsxLocation, offsetAfterEdits, type CreatedJsxLocation } from './createdJsxLocation'
 import type { InsertJsxRefusalReason } from './jsxSubtree'
 import { relativeSpecifier } from './importReconcile'
 import { analyzeFreeVariables } from './subtreeFreeVariables'
+import { buildCanvasLayerModule } from './canvasLayerModule'
+import { enclosingFunctionComponent, findHookBindingForName } from './detachHooks'
+import { applySubtreeRenames, materializeHookGroup, moduleDerivedAlias, type HookCarryGroup } from './transplantCarry'
 
 export interface TransplantJsxElementParams {
   /** Absolute path to the file the element is written in today. */
@@ -137,7 +140,7 @@ export type TransplantJsxElementResult =
 function refuseTransplant(
   reason: TransplantJsxRefusalReason,
   message: string,
-): TransplantJsxElementResult {
+): { ok: false; refusal: TransplantJsxRefusal } {
   return { ok: false, refusal: { reason, message } }
 }
 
@@ -159,7 +162,7 @@ function fileIdentity(file: string): string {
 }
 
 export function transplantJsxElement(params: TransplantJsxElementParams): TransplantJsxElementResult {
-  const { file, line, col, destinationFile, destinationLine, destinationCol } = params
+  const { file, line, col, destinationFile } = params
 
   // Compared on the REAL path, never on the two strings. A same-file gesture
   // that slips through here is not a no-op: both ends load as SEPARATE ts-morph
@@ -181,7 +184,9 @@ export function transplantJsxElement(params: TransplantJsxElementParams): Transp
   const originSource = loadSourceFile(project, file)
   const destinationSource = loadSourceFile(project, destinationFile)
 
-  const target = resolveJsxChildRange(originSource, line, col)
+  // WB-20 — a MOVE of `{cond && <X/>}` carries the condition with it, exactly
+  // as a same-file move does. A copy stays element-only, like ⌘D.
+  const target = resolveJsxChildRange(originSource, line, col, params.copy ? 'element' : 'conditional')
   if (!target.ok) return refuseTransplant(target.reason, target.message)
 
   const originText = verbatimSourceText(originSource, file)
@@ -193,40 +198,11 @@ export function transplantJsxElement(params: TransplantJsxElementParams): Transp
     )
   }
 
-  const destination = findJsxElementAtLocation(destinationSource, destinationLine, destinationCol)
-  if (!destination) {
-    return refuseTransplant(
-      'not-found',
-      `No JSX element is written at line ${destinationLine}, column ${destinationCol} of the destination file any more — it changed since the canvas last read it. Reload and try again.`,
-    )
-  }
-
-  // ── The scope question, and the only one that makes a cross-file move
-  //    different from a same-file one ────────────────────────────────────
-  const carried = resolveCarriedBindings(target.range.element, originSource, destinationSource, destinationFile)
-  if (!carried.ok) return carried
-
-  // ── Every byte both files will contain, computed before either is written ──
-  const subtree = originText.slice(target.range.element.getStart(), target.range.element.getEnd())
-  const fromIndent = lineIndentAt(originText, target.range.element.getStart())
-
-  const placement = resolveChildPlacement(
-    destinationSource,
-    destinationText,
-    destination,
-    {
-      anchor:
-        params.anchorLine !== undefined && params.anchorCol !== undefined
-          ? { line: params.anchorLine, col: params.anchorCol }
-          : null,
-      ...(params.position ? { position: params.position } : {}),
-    },
-    (indent) => reindentBlock(subtree, fromIndent, indent),
+  const landed = landInDestination(
+    { element: target.range.element, source: originSource, text: originText },
+    { ...params, source: destinationSource, text: destinationText },
   )
-  if (!placement.ok) return refuseTransplant(placement.refusal.reason, placement.refusal.message)
-
-  const importEdits = resolveImportEdits(destinationSource, destinationText, carried.requirements)
-  const nextDestination = applyTextEdits(destinationText, [placement.edit, ...importEdits])
+  if (!landed.ok) return landed
   const nextOrigin = params.copy
     ? null
     : applyTextEdits(originText, [{ start: target.range.start, end: target.range.end, text: '' } satisfies TextEdit])
@@ -236,55 +212,340 @@ export function transplantJsxElement(params: TransplantJsxElementParams): Transp
   // to have produced anything at all. A move whose second write is lost by
   // the OS leaves the element in both files — visible, recoverable, and
   // reported by the parse — where the reverse order would lose it entirely.
-  writeVerbatimSource(destinationSource, destinationFile, nextDestination)
+  const created = landed.write()
   if (nextOrigin !== null) writeVerbatimSource(originSource, file, nextOrigin)
+
+  return { ok: true, carriedImports: landed.carriedImports, created }
+}
+
+/** The element being carried, and the file it is written in. */
+interface TransplantOrigin {
+  element: Node
+  source: SourceFile
+  text: string
+}
+
+/** Where it lands: a container (and optionally a sibling) in another, already-read file. */
+interface TransplantDestination {
+  destinationFile: string
+  destinationLine: number
+  destinationCol: number
+  anchorLine?: number
+  anchorCol?: number
+  position?: 'before' | 'after'
+  source: SourceFile
+  text: string
+}
+
+/**
+ * The DESTINATION half every cross-file write shares — a frame-to-frame move
+ * (`transplantJsxElement`) and a loose layer placed into a frame
+ * (`placeCanvasLayerRoot`): the scope question, the placement and the import
+ * carry, all decided before anything is written. `write` then puts the
+ * destination on disk and reports where the element landed.
+ */
+function landInDestination(
+  origin: TransplantOrigin,
+  destination: TransplantDestination,
+):
+  | { ok: true; carriedImports: string[]; write: () => CreatedJsxLocation | null }
+  | { ok: false; refusal: TransplantJsxRefusal } {
+  const container = findJsxElementAtLocation(destination.source, destination.destinationLine, destination.destinationCol)
+  if (!container) {
+    return refuseTransplant(
+      'not-found',
+      `No JSX element is written at line ${destination.destinationLine}, column ${destination.destinationCol} of the destination file any more — it changed since the canvas last read it. Reload and try again.`,
+    )
+  }
+
+  // ── The scope question, and the only one that makes a cross-file move
+  //    different from a same-file one ────────────────────────────────────
+  const carried = resolveCarriedBindings(
+    origin.element,
+    origin.source,
+    destination.source,
+    destination.destinationFile,
+    container,
+  )
+  if (!carried.ok) return carried
+
+  const rawSubtree = origin.text.slice(origin.element.getStart(), origin.element.getEnd())
+  const subtree = applySubtreeRenames(rawSubtree, origin.element.getStart(), origin.element, carried.renames)
+  const fromIndent = lineIndentAt(origin.text, origin.element.getStart())
+
+  const placement = resolveChildPlacement(
+    destination.source,
+    destination.text,
+    container,
+    {
+      anchor:
+        destination.anchorLine !== undefined && destination.anchorCol !== undefined
+          ? { line: destination.anchorLine, col: destination.anchorCol }
+          : null,
+      ...(destination.position ? { position: destination.position } : {}),
+    },
+    (indent) => reindentBlock(subtree, fromIndent, indent),
+  )
+  if (!placement.ok) {
+    return refuseTransplant(placement.refusal.reason, placement.refusal.message)
+  }
+
+  const importEdits = resolveImportEdits(destination.source, destination.text, carried.requirements)
+  const priorEdits = [...importEdits, ...carried.hookEdits]
+  const nextDestination = applyTextEdits(destination.text, [placement.edit, ...priorEdits])
 
   return {
     ok: true,
     carriedImports: [...carried.requirements.keys()],
-    // Measured against the DESTINATION, which `writeVerbatimSource` has just
-    // re-read, and shifted past the import lines this write added above the
-    // JSX — the same arithmetic `insertJsxElement` performs for its own copy.
-    created: createdJsxLocation(
-      destinationSource,
-      offsetAfterEdits(importEdits, placement.edit.start),
-      placement.edit.text,
-    ),
+    write: () => {
+      writeVerbatimSource(destination.source, destination.destinationFile, nextDestination)
+      // Measured against the DESTINATION, which `writeVerbatimSource` has just
+      // re-read, and shifted past the import lines and re-established hook
+      // call this write added above the JSX — the same arithmetic
+      // `insertJsxElement` performs for its own copy.
+      return createdJsxLocation(destination.source, offsetAfterEdits(priorEdits, placement.edit.start), placement.edit.text)
+    },
   }
 }
 
+// ---------------------------------------------------------------------------
+// The free canvas's two endpoints (P5-G, FC-2)
+// ---------------------------------------------------------------------------
+
+/**
+ * The element a free-canvas layer module returns — the loose layer's root.
+ *
+ * Found STRUCTURALLY (the default export's returned JSX), never from a caller's
+ * `line:col`: the layer's identity is its file, and this is the one element a
+ * layer module is allowed to contain at the top. `undefined` when the module
+ * is not in that shape (edited outside Studio into something else).
+ */
+export function canvasLayerModuleRoot(source: SourceFile): Node | undefined {
+  const declaration = source.getDefaultExportSymbol()?.getDeclarations()[0]
+  if (!declaration) return undefined
+  const body = Node.isFunctionDeclaration(declaration) || Node.isArrowFunction(declaration) || Node.isFunctionExpression(declaration)
+    ? declaration.getBody()
+    : undefined
+  if (!body) return undefined
+  const expression = Node.isBlock(body)
+    ? body.getStatements().find((statement) => Node.isReturnStatement(statement))?.asKind(SyntaxKind.ReturnStatement)?.getExpression()
+    : body
+  let root = expression
+  while (root && Node.isParenthesizedExpression(root)) root = root.getExpression()
+  if (!root) return undefined
+  return Node.isJsxElement(root) || Node.isJsxSelfClosingElement(root) || Node.isJsxFragment(root) ? root : undefined
+}
+
+export interface PlaceCanvasLayerRootParams {
+  /** Absolute path of the layer module (`.studio/canvas/<id>.tsx`). */
+  moduleFile: string
+  destinationFile: string
+  destinationLine: number
+  destinationCol: number
+  anchorLine?: number
+  anchorCol?: number
+  position?: 'before' | 'after'
+  project?: Project
+}
+
+/**
+ * PLACE — a loose layer dropped into a frame: the module's root element is
+ * written into a container in the page, carrying its imports, exactly as a
+ * frame-to-frame move writes its destination half.
+ *
+ * The module itself is left untouched here. It is the caller's to delete once
+ * this has written (a move) or to keep (Alt: a copy) — the module is Studio's
+ * own file under `.studio/canvas/`, and removing it is `canvasLayerFiles.ts`'s
+ * job, the one place allowed to touch that directory.
+ */
+export function placeCanvasLayerRoot(params: PlaceCanvasLayerRootParams): TransplantJsxElementResult {
+  if (fileIdentity(params.moduleFile) === fileIdentity(params.destinationFile)) {
+    return refuseTransplant('same-file', 'A canvas layer cannot be placed into its own module.')
+  }
+  const project = params.project ?? createProject()
+  const moduleSource = loadSourceFile(project, params.moduleFile)
+  const destinationSource = loadSourceFile(project, params.destinationFile)
+  const moduleText = verbatimSourceText(moduleSource, params.moduleFile)
+  const destinationText = verbatimSourceText(destinationSource, params.destinationFile)
+  if (moduleText === null || destinationText === null) {
+    return refuseTransplant(
+      'stale-source',
+      'The canvas layer or the page changed on disk since the canvas last read it. Reload the project and try again.',
+    )
+  }
+  const root = canvasLayerModuleRoot(moduleSource)
+  if (!root) {
+    return refuseTransplant(
+      'not-found',
+      'This canvas layer no longer returns a single element, so there is nothing Studio can place. Open the file and give it one root element.',
+    )
+  }
+  const landed = landInDestination(
+    { element: root, source: moduleSource, text: moduleText },
+    { ...params, source: destinationSource, text: destinationText },
+  )
+  if (!landed.ok) return landed
+  const created = landed.write()
+  return { ok: true, carriedImports: landed.carriedImports, created }
+}
+
+export interface LiftJsxElementParams {
+  /** Absolute path of the page file the element is written in. */
+  file: string
+  line: number
+  col: number
+  /** Absolute path of the NEW layer module (it must not exist yet). */
+  moduleFile: string
+  /** Alt: leave the element in the page and put a copy on the canvas. */
+  copy?: boolean
+  /**
+   * Writes the new module's text — exclusively, refusing if the name exists.
+   * The caller's, because it is `.studio/canvas/` and only
+   * `canvasLayerFiles.ts` writes there. Called BEFORE the page is touched: if
+   * it throws, nothing has been written anywhere.
+   */
+  writeModule: (text: string) => void
+  project?: Project
+}
+
+export type LiftJsxElementResult =
+  | { ok: true; carriedImports: string[]; root: CreatedJsxLocation }
+  | { ok: false; refusal: TransplantJsxRefusal }
+
+/**
+ * LIFT — an element dragged out of a frame onto the empty board becomes a new
+ * loose layer: its bytes, verbatim and re-indented to column 0, become the
+ * root of a new layer module, with every binding it reads carried as an
+ * import resolved from the module's own location. A move then cuts it out of
+ * the page; a copy leaves the page alone.
+ *
+ * The same scope rule as a frame-to-frame move, for the same reason: markup
+ * that reads a prop, a hook result or a `.map` row's parameter cannot resolve
+ * anywhere else, so it refuses `captured-scope` by name. (Design §7 turns that
+ * refusal into an automatic copy with the values baked in; that needs the
+ * substitution engine P1-E/P5-C build and is not in this change.)
+ */
+export function liftJsxElementToCanvasModule(params: LiftJsxElementParams): LiftJsxElementResult {
+  const project = params.project ?? createProject()
+  const originSource = loadSourceFile(project, params.file)
+  const originText = verbatimSourceText(originSource, params.file)
+  if (originText === null) {
+    return refuseTransplant('stale-source', 'This page changed on disk since the canvas last read it. Reload the project and try again.')
+  }
+
+  const target = resolveJsxChildRange(originSource, params.line, params.col)
+  let element: Node
+  let removal: TextEdit | null = null
+  if (target.ok) {
+    element = target.range.element
+    if (!params.copy) removal = { start: target.range.start, end: target.range.end, text: '' }
+  } else {
+    // A COPY reads the element and writes nothing back, so the outermost
+    // element of a page is as copyable as any other; a MOVE of it would leave
+    // the component returning nothing.
+    const opening = params.copy && target.reason === 'no-jsx-parent'
+      ? findJsxElementAtLocation(originSource, params.line, params.col)
+      : undefined
+    if (!opening) return refuseTransplant(target.reason, target.message)
+    element = Node.isJsxSelfClosingElement(opening) ? opening : opening.getParentOrThrow()
+  }
+
+  // The module does not exist yet, so nothing in it can conflict; an empty
+  // in-memory file answers `conflictingBinding` honestly.
+  const emptyModule = new Project({ useInMemoryFileSystem: true }).createSourceFile('/layer.tsx', '')
+  const carried = resolveCarriedBindings(element, originSource, emptyModule, params.moduleFile)
+  if (!carried.ok) return carried
+
+  const subtree = originText.slice(element.getStart(), element.getEnd())
+  const built = buildCanvasLayerModule(
+    reindentBlock(subtree, lineIndentAt(originText, element.getStart()), ''),
+    carried.requirements,
+  )
+
+  params.writeModule(built.text)
+  if (removal) writeVerbatimSource(originSource, params.file, applyTextEdits(originText, [removal]))
+
+  return { ok: true, carriedImports: [...carried.requirements.keys()], root: built.root }
+}
+
+/**
+ * One distinct hook call the moved subtree needs re-established at the
+ * destination, and which captured names read from it (`undefined` key means
+ * "the whole value", not one field of it).
+ */
 /**
  * Which of the subtree's free names travel with it, and whether any of them
  * cannot.
  *
- * Three buckets, and the partition is `analyzeFreeVariables`'s:
+ * Four buckets, and the partition is `analyzeFreeVariables`'s plus one this
+ * codemod draws inside its own `'prop'` bucket:
  *
- *  - **`kind: 'prop'`** — body-local to the origin's component (a destructured
- *    prop, a hook's binding, a `.map` row's parameter, a `const` in the
- *    component body). It has no module to be imported from, so the markup
- *    cannot resolve it anywhere else. Refused, by name — "some binding" is not
- *    something a person can act on.
+ *  - **`kind: 'prop'`, bound by a movable context-hook read** (`const { t } =
+ *    useLanguage()`, DET-3's shape) — not body-local in the way that matters:
+ *    under one provider every component reads the same value, so the CALL
+ *    re-establishes at the destination (reusing one it already makes, else
+ *    written as its first statement) and the name resolves to whatever local
+ *    that call gives it. `destinationContainer` names where "the
+ *    destination" is; with none given (a canvas-layer lift has no enclosing
+ *    component to call into) this bucket is skipped entirely.
+ *  - **`kind: 'prop'`, anything else** — a destructured prop, a `.map` row's
+ *    parameter, a plain body `const`, or a hook binding that is not a
+ *    context read. Genuinely body-local: no module the other file could
+ *    import it from. Refused, by name — "some binding" is not something a
+ *    person can act on.
  *  - **`kind: 'import'`, already bound at the destination's top level** —
- *    nothing to write. Left alone rather than re-imported, the same posture
- *    `addReconciledImports` takes: a real collision against a DIFFERENT source
- *    is caught below by `conflictingBinding`.
- *  - **`kind: 'import'`, not bound at the destination** — carried, either by
- *    mirroring the origin's own import declaration (following a relative
- *    specifier to the file it actually names and re-resolving it against the
- *    destination's location) or, for a helper the origin file declares itself,
- *    by importing it FROM the origin file.
+ *    nothing to write; reused as-is (`planImportBindings`).
+ *  - **`kind: 'import'`, not bound at the destination, and the plain name is
+ *    free** — carried under its own name, either by mirroring the origin's
+ *    own import declaration or, for a helper the origin file declares
+ *    itself, by importing it FROM the origin file.
+ *  - **`kind: 'import'`, the plain name is already something else at the
+ *    destination** — carried under a fresh alias instead of refusing
+ *    (`planImportBindings`, `moduleDerivedAlias`), and every reference to it
+ *    inside the moved subtree renamed to match.
  */
 function resolveCarriedBindings(
   subtree: Node,
   originSource: SourceFile,
   destinationSource: SourceFile,
   destinationFile: string,
+  destinationContainer?: Node,
 ):
-  | { ok: true; requirements: Map<string, ImportRequirement> }
+  | { ok: true; requirements: Map<string, ImportRequirement>; renames: Map<string, string>; hookEdits: TextEdit[] }
   | { ok: false; refusal: TransplantJsxRefusal } {
   const free = analyzeFreeVariables(subtree, originSource)
+  const originComponent = enclosingFunctionComponent(subtree)
+  const destinationComponent = destinationContainer ? enclosingFunctionComponent(destinationContainer) : undefined
+  const destinationBody = destinationComponent?.getBody()
+  const canCarryHooks = !!destinationComponent && !!destinationBody && Node.isBlock(destinationBody)
 
-  const captured = free.filter((variable) => variable.kind === 'prop').map((variable) => variable.name)
+  const requirements = new Map<string, ImportRequirement>()
+  const renames = new Map<string, string>()
+  const captured: string[] = []
+  const hookGroups = new Map<CallExpression, HookCarryGroup>()
+
+  for (const variable of free) {
+    if (variable.kind !== 'prop') continue
+    const hook = originComponent && canCarryHooks ? findHookBindingForName(originComponent, variable.name) : undefined
+    if (!hook || hook === 'unmovable') {
+      captured.push(variable.name)
+      continue
+    }
+    const calleeRequirement = resolveCarriedBinding(hook.label, originSource, destinationFile)
+    if (calleeRequirement === UNEXPORTED) {
+      captured.push(variable.name)
+      continue
+    }
+    let group = hookGroups.get(hook.call)
+    if (!group) {
+      group = { hook, names: new Map() }
+      hookGroups.set(hook.call, group)
+    }
+    const key = hook.binding.kind === 'keys' ? hook.binding.keys.find((k) => k.local === variable.name)?.key : undefined
+    group.names.set(variable.name, key)
+    if (calleeRequirement) requirements.set(hook.label, calleeRequirement)
+  }
+
   if (captured.length > 0) {
     const names = captured.map((name) => `\`${name}\``).join(', ')
     const isOne = captured.length === 1
@@ -299,8 +560,8 @@ function resolveCarriedBindings(
     }
   }
 
-  const requirements = new Map<string, ImportRequirement>()
   for (const variable of free) {
+    if (variable.kind !== 'import') continue
     const requirement = resolveCarriedBinding(variable.name, originSource, destinationFile)
     if (requirement === UNEXPORTED) {
       return {
@@ -314,20 +575,49 @@ function resolveCarriedBindings(
       }
     }
     if (!requirement) continue // a global, or a name nothing here can trace — left to the compiler to report
-    const binding = conflictingBinding(destinationSource, variable.name, requirement.specifier)
-    if (binding) {
-      return {
-        ok: false,
-        refusal: {
-          reason: 'binding-conflict',
-          message: `The file this element would move into already uses the name "${variable.name}" for something else (${binding}), so carrying its import would shadow that. Rename one of them in the file first.`,
-        },
-      }
-    }
     requirements.set(variable.name, requirement)
   }
 
-  return { ok: true, requirements }
+  // Every requirement — the free names AND each hook's own callee — planned
+  // together, so a callee that happens to collide gets exactly the same
+  // aliasing treatment as anything else (`planImportBindings`).
+  const bindings = planImportBindings(destinationSource, requirements, { preferredAlias: moduleDerivedAlias })
+  for (const name of requirements.keys()) {
+    const local = bindings.localName(name)
+    if (local !== name) renames.set(name, local)
+  }
+
+  const hookEdits: TextEdit[] = []
+  if (destinationBody && Node.isBlock(destinationBody)) {
+    for (const group of hookGroups.values()) {
+      const calleeLocal = bindings.localName(group.hook.label)
+      const materialized = materializeHookGroup(destinationSource, destinationBody, calleeLocal, group)
+      for (const [name, text] of materialized.reads) renames.set(name, text)
+      hookEdits.push(...materialized.edits)
+    }
+  }
+
+  // A hook's own binding shape (whole vs. destructured) can disagree with an
+  // EXISTING call the destination already makes to the same hook — reading a
+  // whole value against a call the destination only ever destructures has no
+  // field to reuse, and `materializeHookGroup` leaves that one name
+  // unresolved rather than guess. Caught here, once, for every group: a
+  // partial rename is worse than a refusal, because it would write the
+  // moved subtree referencing a name nothing in the destination binds.
+  for (const group of hookGroups.values()) {
+    for (const name of group.names.keys()) {
+      if (renames.has(name)) continue
+      return {
+        ok: false,
+        refusal: {
+          reason: 'captured-scope',
+          message: `This element reads \`${name}\` from ${group.hook.label}(), and the destination component already calls ${group.hook.label}() in a shape that has no "${name}" to reuse. Give it a matching binding first, then drag again.`,
+        },
+      }
+    }
+  }
+
+  return { ok: true, requirements: bindings.required, renames, hookEdits }
 }
 
 /**

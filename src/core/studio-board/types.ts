@@ -1,5 +1,6 @@
 import { Type, type Static } from '@sinclair/typebox'
 import type { PreviewAxes } from './previewAxes'
+import { CanvasLayerIdSchema } from './canvasLayers'
 
 export type NoteColor = 'yellow' | 'green' | 'blue' | 'pink' | 'gray'
 
@@ -89,7 +90,7 @@ export interface DocBlock extends BoardStacked {
 
 /**
  * D1 — a PERSISTED ruler guide (dragged out from `CanvasRulers`, saved to
- * `boards.json`). NOT the same thing as `SnapGuide` (`canvas/boardSnapping.ts`)
+ * `boards.json`). NOT the same thing as `SnapGuide` (`@core/studio-runtime`'s `snapRules.ts`)
  * / `boardSnapGuides` (`boardSlice.ts`) — those are transient, computed-on-
  * every-drag alignment lines that never persist. Schema-first (TypeBox) per
  * this field's own contract, unlike its `BoardFrame`/`StickyNote`/`DocBlock`
@@ -105,6 +106,30 @@ export const BoardGuideSchema = Type.Object({
 })
 
 export type BoardGuide = Static<typeof BoardGuideSchema>
+
+/**
+ * P5-G — where one loose layer sits on the free canvas (`canvasLayers.ts`).
+ * The layer's CONTENT is its module file; this is only its board furniture.
+ *
+ * `x`/`y` are the board-space top-left of the layer's host box. `w` is the
+ * host's width when the layer's root fills its container (absent = the host
+ * hugs its content). `z` orders loose layers among themselves only — frames
+ * always paint above the free canvas (OD-FC-2). Position is never written
+ * into the JSX: a drag into a frame would otherwise carry board coordinates
+ * into the page.
+ */
+export const CanvasLayerPlacementSchema = Type.Object({
+  id: CanvasLayerIdSchema,
+  x: Type.Number(),
+  y: Type.Number(),
+  w: Type.Optional(Type.Number({ minimum: 1 })),
+  z: Type.Optional(Type.Number()),
+  name: Type.Optional(Type.String({ maxLength: 120 })),
+  locked: Type.Optional(Type.Boolean()),
+  hidden: Type.Optional(Type.Boolean()),
+})
+
+export type CanvasLayerPlacement = Static<typeof CanvasLayerPlacementSchema>
 
 export interface Board {
   id: string
@@ -123,6 +148,13 @@ export interface Board {
    * omits the key) for anything this codebase itself reads back from disk.
    */
   guides?: BoardGuide[]
+  /**
+   * P5-G — loose layers on this board's free canvas. OPTIONAL for the same
+   * reason `guides` is, and read as `board.layers ?? []`. `serialize.ts`
+   * omits the key when the list is empty, so a board with no loose layers
+   * round-trips byte-for-byte.
+   */
+  layers?: CanvasLayerPlacement[]
 }
 
 export interface BoardsFile {

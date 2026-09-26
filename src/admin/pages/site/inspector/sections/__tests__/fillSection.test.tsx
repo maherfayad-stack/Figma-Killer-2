@@ -119,7 +119,11 @@ function addBridgeFrame(breakpointId: string) {
   const channel: BridgeFrameChannel = {
     postMessage: (message) => posted.push(message as InboundEnvelope),
     addEventListener: (type, h) => {
-      if (type === 'message') handler = h
+      if (type !== 'message') return
+      handler = h
+      // A booted runtime reports `ready` first; `BridgeFrameAdapter` queues
+      // every post (including `measure`) until it does.
+      h({ origin: BRIDGE_ORIGIN, source: undefined, data: toOutboundEnvelope({ type: 'ready' }) } as MessageEvent)
     },
     removeEventListener: (type, h) => {
       if (type === 'message' && handler === h) handler = null

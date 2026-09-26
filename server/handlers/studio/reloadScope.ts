@@ -96,7 +96,7 @@
  */
 import { join } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import { canonicalSourceRel } from '../studioWriteback'
 import { discoverAppRouterRoutes, discoverPageFiles, projectPagesDir, resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { assignAppRouterPageIds, assignPageIds } from '../studioPageIds'
@@ -104,6 +104,8 @@ import { readStudioMeta, type StudioMeta } from './studioMeta'
 import { storyFilesIn } from './storyDiscovery'
 import { storyPageIdFromRoutePath } from './storyPages'
 import { cachedRouteDependencies } from './pageParseCache'
+import { canvasLayerIdFromRel, canvasLayerPageId } from '@core/studio-board'
+import { canvasLayerIdFromCacheRoute } from './canvasLayerLoad'
 
 const ROUTE_PATH = '/admin/api/studio/reload-scope'
 
@@ -157,6 +159,15 @@ function resolveNarrowReloadPageIds(dir: string, filesRelToDir: readonly string[
   const storyRoutePaths = new Set<string>()
   const idByRoutePath = pageIdByRoutePath(meta, pagesDir)
   for (const routePath of depsByRoutePath.keys()) {
+    // P5-G — a free-canvas layer module is parsed and cached like a route
+    // (`canvasLayerLoad.ts`), under its own key shape. It maps to its
+    // `canvas:<id>` page id, so an edit to a component a layer renders narrows
+    // to that layer (and every page that renders it) instead of widening.
+    const layerId = canvasLayerIdFromCacheRoute(routePath)
+    if (layerId) {
+      idByRoutePath.set(routePath, canvasLayerPageId(layerId))
+      continue
+    }
     const storyPageId = storyPageIdFromRoutePath(routePath)
     if (storyPageId === null) continue
     storyRoutePaths.add(routePath)
@@ -193,11 +204,23 @@ function resolveNarrowReloadPageIds(dir: string, filesRelToDir: readonly string[
   const pageIds = new Set<string>()
   for (const relToDir of filesRelToDir) {
     // Never trust an unvalidated path into `join` — see this module's doc.
-    const rel = canonicalSourceRel(dir, relToDir)
+    // FC-1 — a layer module is admitted HERE only to be named (it maps to its
+    // `canvas:<id>` page id below and is never read or written), so the narrow
+    // resync a `/save` of a layer asks for stays narrow.
+    const rel = canonicalSourceRel(dir, relToDir, { canvasLayers: 'allow' })
     if (rel === null) return null
     const absFile = join(dir, ...rel.split('/'))
     // Rule 2b — editing a story file can remove its frame entirely.
     if (storyAbsFiles.has(absFile)) return null
+    // P5-G — a layer module IS its own route, whether it was just created,
+    // edited or deleted (a create has no cache entry yet; a place deletes the
+    // file). Its page id is derived from the path alone. A load returns every
+    // layer in `canvasLayers`, so naming it is enough to re-read it.
+    const layerId = canvasLayerIdFromRel(rel)
+    if (layerId) {
+      pageIds.add(canvasLayerPageId(layerId))
+      continue
+    }
     let dependents = 0
     for (const [routePath, deps] of depsByRoutePath) {
       if (!deps.has(absFile)) continue
@@ -229,7 +252,6 @@ export async function tryServeStudioReloadScope(req: Request, _url: URL, pathnam
     return jsonResponse(pageIds ? { ok: true, narrow: true, pageIds } : { ok: true, narrow: false })
   } catch (err) {
     rethrowProjectDirRefusal(err)
-    console.error('[studio:reloadScope]', err)
-    return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    return internalServerError('[studio:reloadScope]', err)
   }
 }

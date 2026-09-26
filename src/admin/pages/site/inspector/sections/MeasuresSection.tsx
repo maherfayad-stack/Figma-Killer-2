@@ -26,7 +26,7 @@
  *
  * `width`, `height`, `minWidth`, `maxWidth`, `minHeight`, `maxHeight`,
  * `aspectRatio`, `boxSizing` (ported from `SizeSection.tsx`, reused
- * UNCHANGED — its Fixed/Hug/Fill picker already reuses `elementSizing.ts`'s
+ * UNCHANGED — its Fixed/Hug/Fill picker already reuses `elementSizingRules.ts`'s
  * resolution and already disables Hug/Fill with a reason when there's no
  * real parent layout, which is the honest substance behind Penpot's FLEX
  * ELEMENT hug/fill buttons; this design does not duplicate that control into

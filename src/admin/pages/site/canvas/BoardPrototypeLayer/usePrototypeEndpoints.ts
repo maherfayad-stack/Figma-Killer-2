@@ -90,7 +90,7 @@ export function useNodeFrameRects(nodeIds: readonly string[]): ReadonlyMap<strin
     let generation = 0
 
     const measure = () => {
-      const pass = ++generation
+      const pass = (generation += 1)
       const adapters = [...listFrameAdapters().values()]
       void Promise.all(adapters.map((adapter) => measureQuietly(adapter, refs))).then((perFrame) => {
         if (disposed || pass !== generation) return

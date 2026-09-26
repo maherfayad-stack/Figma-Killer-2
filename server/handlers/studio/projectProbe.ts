@@ -68,7 +68,7 @@ import { EXCLUDED_WORKSPACE_DIR_NAMES, PROTOTYPE_SHELL_DIR, listWorkspaceFiles }
 import { findEntryFile } from '@core/studio-sync/collectPageStylesheets'
 import { Type } from '@core/utils/typeboxHelpers'
 import { compiledCheck } from '@core/utils/typeboxCompiler'
-import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { readTextCapped } from './cappedFileRead'
 import { DEPENDENCIES_NOT_INSTALLED, detectComponentPackages } from './componentPackageDetect'
@@ -78,7 +78,7 @@ import { findConfigFile, hasDependency, readPackageJson, type PackageJsonShape }
 import { detectStyleToolchain } from './styleToolchainDetect'
 import { mergeStudioMeta, readStudioMeta } from './studioMeta'
 import { detectColorScheme } from './colorSchemeDetect'
-import { detectLocales } from './localeProbe'
+import { detectLocales, reconcileLocales } from './localeProbe'
 import { PROBE_VERSION } from './projectProfileSchema'
 import type { ProbeWarning, ProjectProfile } from './projectProfileSchema'
 
@@ -626,7 +626,11 @@ export function resolveProjectProfilePersisting(dir: string): ProjectProfile {
  * the install-dependent profile become knowable.
  */
 export function reprobeProjectProfile(dir: string): ProjectProfile {
-  const profile = probeProject(dir)
+  const previous = readStudioMeta(dir).profile
+  const probed = probeProject(dir)
+  const locales = reconcileLocales(previous?.locales, probed.locales)
+  const { locales: _probedLocales, ...rest } = probed
+  const profile: ProjectProfile = locales ? { ...rest, locales } : rest
   mergeStudioMeta(dir, { profile })
   return profile
 }
@@ -661,8 +665,7 @@ export async function tryServeStudioProbe(req: Request, url: URL, pathname: stri
       return jsonResponse({ profile: resolveProjectProfile(dir) })
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio/projectProbe]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio/projectProbe]', err)
     }
   }
 
@@ -674,8 +677,7 @@ export async function tryServeStudioProbe(req: Request, url: URL, pathname: stri
       return jsonResponse({ profile: reprobeProjectProfile(dir) })
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio/projectProbe]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio/projectProbe]', err)
     }
   }
 

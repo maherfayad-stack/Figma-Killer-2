@@ -159,11 +159,9 @@ describe('studio_codemod', () => {
     )) as { ok: boolean; shifted?: boolean }
     expect(result.ok).toBe(true)
     expect(result.shifted).toBe(true)
-    // Substituted as a JSX expression container holding the call site's own
-    // string-literal text (`{"Hi"}`), not a bare text child — every
-    // substitution `buildInlinedJsxText` makes is wrapped in `{…}` uniformly
-    // (see its doc comment); React renders the two identically.
-    expect(fs.readFileSync(path.join(tmpDir, 'pages', 'Home.tsx'), 'utf8')).toContain('<div className="card">{"Hi"}</div>')
+    // A substituted string lands as JSX text, not `{"Hi"}` — audit 07 DET-1:
+    // the form Studio's own text editing handles natively.
+    expect(fs.readFileSync(path.join(tmpDir, 'pages', 'Home.tsx'), 'utf8')).toContain('<div className="card">Hi</div>')
   })
 
   it('detach refuses a component that uses a hook, with a specific reason', async () => {
@@ -262,7 +260,7 @@ describe('studio_codemod', () => {
     expect(text).toContain("import { Tile } from '../components/Tile'")
   })
 
-  it('swap refuses when the new name would shadow an existing binding', async () => {
+  it('P3-C (WB-19) — swap imports under an alias when the new name is already bound, instead of refusing', async () => {
     write(tmpDir, 'components/Card.tsx', [
       'export function Card() {',
       '  return <div>Card</div>',
@@ -294,9 +292,11 @@ describe('studio_codemod', () => {
         newComponentFile: 'components/Tile.tsx',
       },
       {} as never,
-    )) as { ok: boolean; code: string; reason: string }
-    expect(result.ok).toBe(false)
-    expect(result.code).toBe('codemod-refused')
-    expect(result.reason).toBe('name-shadow')
+    )) as { ok: boolean }
+    expect(result.ok).toBe(true)
+    const text = fs.readFileSync(path.join(tmpDir, 'pages', 'Home.tsx'), 'utf8')
+    expect(text).toContain("import { Tile as Tile2 } from '../components/Tile'")
+    expect(text).toContain('<Tile2 />')
+    expect(text).toContain("const Tile = 'not a component'")
   })
 })

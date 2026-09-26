@@ -70,7 +70,7 @@ function mountStubFrame(rects: Record<string, BoardRect> = {}): StubFrame {
       measureDropCandidates: async () => [],
       setAxes: () => {},
       setInteractionMode: () => {},
-      optimistic: { insert: () => {}, delete: () => {}, move: () => {}, text: () => {} },
+      optimistic: { insert: () => {}, delete: () => {}, move: () => {} },
       on: (event, handler): Unsubscribe => {
         const set = handlers.get(event) ?? new Set<Handler>()
         handlers.set(event, set)

@@ -34,7 +34,7 @@
  * frame is mounted, so with no board this tool has no answer at all — which is
  * exactly what the prompt's live-tab sentence is generated from.
  *
- * It is a pure READ: no `mutates`, no `requiredCapabilities`, same posture as
+ * It is a pure READ: no `requiresWrite`, no `requiredCapabilities`, same posture as
  * every other Studio read tool. It deliberately does NOT sync board frames from
  * disk the way `studio_screenshot` does — placing a frame would be a mutation,
  * and a page with no frame is a genuinely different answer this tool reports
@@ -122,6 +122,7 @@ export const studioPageDiagnosticsTool: AiTool = {
   name: 'studio_page_diagnostics',
   scope: 'shared',
   execution: 'bridge',
+  sideEffects: 'none',
   description:
     'Read what a screen\'s RUNTIME reported since it loaded: uncaught exceptions, unhandled promise rejections, console.error output (this is how React reports a failed render, an invalid hook call and a hydration mismatch), assets that failed to load, module specifiers that did not resolve, and fetches that failed. Call this the moment a screenshot looks blank, half-empty, or unchanged after a write — a frame whose component threw photographs as an empty rectangle, and no amount of CSS editing fixes a page that never executed. Batch: name several screens in one call. Each finding carries a stable code, a count of how many times it happened, a suggested fix, and — for a failure on a real element — the file:line its node id decodes to. A screen with NO live board frame is reported as such (status "no-frame"), never as clean.',
   inputSchema: PageDiagnosticsInputSchema,
@@ -155,7 +156,7 @@ export const studioPageDiagnosticsTool: AiTool = {
             remedy: `This project has: ${known}.`,
           })
         : toolRefusal('no-such-page', 'This project has no screens to read diagnostics for yet.', {
-            remedy: 'Create one with studio_create_page first.',
+            remedy: 'Write the page file first.',
           })
     }
 

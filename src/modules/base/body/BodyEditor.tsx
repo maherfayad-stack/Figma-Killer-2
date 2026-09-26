@@ -81,7 +81,6 @@ function applyEditorAttrsToBody(
     'data-module-id',
     'tabindex',
     'data-canvas-selected',
-    'data-hovered',
   ])
 
   if (nodeWrapperProps?.['data-node-id']) {
@@ -95,11 +94,6 @@ function applyEditorAttrsToBody(
     body.setAttribute('data-canvas-selected', nodeWrapperProps['data-canvas-selected'])
   } else {
     body.removeAttribute('data-canvas-selected')
-  }
-  if (nodeWrapperProps?.['data-hovered']) {
-    body.setAttribute('data-hovered', nodeWrapperProps['data-hovered'])
-  } else {
-    body.removeAttribute('data-hovered')
   }
   const handlers: Array<[string, EventListener]> = []
   const addListener = <K extends keyof HTMLElementEventMap>(
@@ -123,7 +117,7 @@ function applyEditorAttrsToBody(
   }
   const onMouseLeave = nodeWrapperProps?.onMouseLeave
   if (onMouseLeave) {
-    const wrapped = () => onMouseLeave()
+    const wrapped = (e: MouseEvent) => onMouseLeave(e)
     body.addEventListener('mouseleave', wrapped)
     handlers.push(['mouseleave', wrapped as EventListener])
   }

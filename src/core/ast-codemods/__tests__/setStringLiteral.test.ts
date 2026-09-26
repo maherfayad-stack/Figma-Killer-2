@@ -172,3 +172,46 @@ describe('setStringLiteral', () => {
     expect(fs.readFileSync(file, 'utf8')).toBe(source)
   })
 })
+
+/**
+ * P3-C (WB-6) — a component's CALL SITE literal is now a write target: the copy
+ * `<SectionHeading title="Weeknight dinners"/>` hands its `<h2>{title}</h2>`.
+ * A JSX attribute string is not a JS string: it has no backslash escapes, and
+ * the compiler decodes HTML entities in it. JSON-escaping one (as a dictionary
+ * value is) doubled every backslash in a Windows path and ended the attribute at
+ * the first `"` of `Say "hi"`.
+ */
+describe('setStringLiteral — a JSX attribute literal', () => {
+  const PAGE = 'export const Page = () => <SectionHeading title="Weeknight dinners" />\n'
+
+  function rewrite(value: string, source = PAGE, needle = '"Weeknight dinners"'): string {
+    const file = writeFixture('Page.tsx', source)
+    setStringLiteral({ file, ...locate(source, needle), value })
+    return fs.readFileSync(file, 'utf8')
+  }
+
+  it('writes the value raw, in the attribute quote already there', () => {
+    expect(rewrite('Quick dinners')).toBe('export const Page = () => <SectionHeading title="Quick dinners" />\n')
+    expect(rewrite(String.raw`C:\path`)).toBe(String.raw`export const Page = () => <SectionHeading title="C:\path" />` + '\n')
+  })
+
+  it('switches to the other quote when the value contains the first one', () => {
+    expect(rewrite('Say "hi"')).toBe('export const Page = () => <SectionHeading title=\'Say "hi"\' />\n')
+    const single = "export const Page = () => <SectionHeading title='Old' />\n"
+    expect(rewrite("It's here", single, "'Old'")).toBe('export const Page = () => <SectionHeading title="It\'s here" />\n')
+  })
+
+  it('writes an expression container when no raw spelling means the same string', () => {
+    expect(rewrite('Say "hi", it\'s')).toBe(
+      'export const Page = () => <SectionHeading title={"Say \\"hi\\", it\'s"} />\n',
+    )
+    // An entity the compiler would decode, and a line break, are not raw-safe either.
+    expect(rewrite('Fish &amp; chips')).toBe('export const Page = () => <SectionHeading title={"Fish &amp; chips"} />\n')
+    expect(rewrite('Two\nlines')).toBe(String.raw`export const Page = () => <SectionHeading title={"Two\nlines"} />` + '\n')
+  })
+
+  it('a string inside an attribute expression is an ordinary JS string', () => {
+    const source = 'export const Page = () => <SectionHeading title={"Old"} />\n'
+    expect(rewrite('Say "hi"', source, '"Old"')).toBe('export const Page = () => <SectionHeading title={"Say \\"hi\\""} />\n')
+  })
+})

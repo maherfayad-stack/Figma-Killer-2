@@ -32,6 +32,7 @@ import {
 } from '@core/page-tree'
 import { TreeContainer } from '@site/ui/Tree'
 import { useEditorPreference } from '@site/preferences/editorPreferences'
+import { isNarrowEditorChromeViewport } from '@site/layout/responsiveChrome'
 import { TreeNode } from './TreeNode'
 import { useDomTreePageId, useExpansionStore } from './DomTreeContext'
 import {
@@ -242,6 +243,36 @@ export function LayerRowList({
 
   const visibleRows = rows.slice(rowWindow.start, rowWindow.end)
 
+  // ── Keyboard navigation between rows (OD-15) ──────────────────────────────
+  // ↑ / ↓ on a focused row select the previous / next visible row and move
+  // focus with it (⇧ extends the range) — the WAI-ARIA tree pattern, with
+  // selection following focus as in Figma's layer list. This is the KEYBOARD
+  // path into the tree: a pointer pick hands the keyboard to the canvas
+  // instead (`TreeNode`'s click, `returnKeyboardToCanvas`), where the same
+  // arrows move the layer. Claimed here, so the canvas dispatcher never sees
+  // them; a rename field's own arrows (its target is not a row) pass through.
+  const handleTreeKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+    if (e.altKey || e.metaKey || e.ctrlKey) return
+    const rowId = (e.target as HTMLElement).getAttribute?.('data-studio-node-id')
+    if (!rowId) return
+    const index = findLayerRowIndex(rows, rowId)
+    const next = index < 0 ? undefined : rows[index + (e.key === 'ArrowDown' ? 1 : -1)]
+    if (!next) return
+    e.preventDefault()
+    e.stopPropagation()
+    useEditorStore.getState().selectNode(next.nodeId, e.shiftKey ? 'range' : 'replace', {
+      preservePropertiesPanelCollapse: isNarrowEditorChromeViewport(),
+    })
+    setFocusedNodeId(next.nodeId)
+    // A row outside the mounted window parks focus on the container; the
+    // focus-follow effect above hands it to the row once scroll-to-selected
+    // has mounted it.
+    const rowElement = rowRegistry.elements.get(next.nodeId)
+    if (rowElement) rowElement.focus({ preventScroll: true })
+    else containerRef.current?.focus({ preventScroll: true })
+  }
+
   return (
     <DomPanelRowRegistryContext.Provider value={rowRegistry}>
       <TreeContainer
@@ -260,6 +291,7 @@ export function LayerRowList({
           const rowId = (e.target as HTMLElement).getAttribute?.('data-studio-node-id')
           if (rowId) setFocusedNodeId(rowId)
         }}
+        onKeyDown={handleTreeKeyDown}
       >
         {rowWindow.padTopPx > 0 && (
           <div

@@ -1,4 +1,5 @@
 # Conventions quick-reference
+> **Purpose:** every gated rule, compressed, plus the test traps · **Read when:** always, before writing code · **Trust:** rule · **Owner:** studio-scribe · **Verified:** not yet
 
 The rules that have **gate tests**. Breaking one fails `bun test`. Read before
 writing code. Full rationale is in `CLAUDE.md`; this page is the checklist.
@@ -88,10 +89,20 @@ Icons: `import { FooIcon } from 'pixel-art-icons/icons/foo'` then `bun run icons
 ## 5. Errors
 
 - Async UI handlers wrap in `try/catch`; log `console.error('[<Component>] <desc>:', err)`.
-- **User-triggered failures go to the toast bus:**
-  `pushToast({ kind: 'error', title, body: getErrorMessage(err, '…') })`.
-  The only exception is field-local validation inside a form.
+- **A red toast is for an operation the user asked for that genuinely failed**
+  (after any retry): `pushToast({ kind: 'error', title, body: getErrorMessage(err, '…') })`.
+  Everything else is quieter: a request with no answer retries first
+  (`@core/http`'s `retryWhileUnreachable`, only where running it twice is harmless);
+  a refusal is a `warning` with its remedy; a read nobody clicked for fails in
+  place; a no-op is silent or `info`; a canvas gesture's success is the canvas
+  changing. Field-local validation stays inline. The policy is in
+  [`error-boundaries.md`](../reference/error-boundaries.md) → "Async error inside a component".
+  **Gate:** `error-toast-sites.test.ts` (a reviewed per-file count of `kind: 'error'` sites).
 - Server failures return `{ error: string }`; logs use `console.error('[<module>]', err)`.
+- **An unexpected server failure never sends its exception text.** Answer it with
+  `server/http.ts`'s `internalServerError(label, err)`: the error is logged, the client
+  gets one plain sentence. A typed, user-facing failure keeps its own 4xx envelope.
+  **Gate:** `server-500-hides-exception-text.test.ts`.
 - **Never** `catch (err) {}`. Name it `catch (_err)` + one-line comment if truly safe.
 - **Never** `console.log` in production code.
 - Re-throw with cause: `new Error(msg, { cause: err })`.
@@ -146,6 +157,15 @@ Studio reads and writes the user's repo. Every path is untrusted.
 - Reject: absolute paths, UNC paths, `..` on **either** separator, empty
   segments, anything under `EXCLUDED_WORKSPACE_DIR_NAMES`
   (`.studio`, `.git`, `node_modules`, `dist`, `.next`, `.turbo`).
+- **A WRITE asks one predicate: `@core/page-parser`'s `workspaceWriteScope.ts`**
+  (P1-G). `UNWRITABLE_WORKSPACE_DIR_NAMES` is the walk exclusions plus
+  `.claude`; `unwritableWorkspaceSegment(rel)` is the pure check (case-folded,
+  trailing dots/spaces and NTFS stream suffixes dropped);
+  `isWorkspaceWritablePath(root, abs)` adds containment and the same check on
+  the REAL path, and refuses a path through a dangling link. The writeback
+  decoder, CSS writeback, asset landing, the component-copy codemods and the
+  agent's native-write hook all use it — never write a new
+  `segments.some(EXCLUDED_WORKSPACE_DIR_NAMES.has)` for a write.
 - **Containment is checked on the real path, after resolving symlinks.** A repo
   can arrive from GitHub and git stores symlinks — a textual check is bypassable.
   That includes the WRITEBACK decoder: `studioEditLocation(dir, nodeId)` and
@@ -153,6 +173,40 @@ Studio reads and writes the user's repo. Every path is untrusted.
   two spellings of one file (`pages/Home.tsx` vs `pages/home.tsx`, or a
   junctioned directory) can never be two write targets, and a `.tsx` symlink
   pointing out of the project is refused even though it is lexically clean.
+- **Studio's OWN records (`.studio/`) go through one door: `studioStore.ts`.**
+  A store names its file relative to `.studio` (`'boards.json'`,
+  `'cache/agent/<key>/turnWrites.json'`) and reads it with
+  `readStudioStoreJson` (TypeBox) / `readStudioStoreDocument` (a `@core`
+  parser), writes it with `writeStudioStoreFile`/`writeStudioStoreJson`
+  (atomic). The door refuses a link ANYWHERE from `.studio` down, in or out
+  of the project: a read through one is "absent", a write throws
+  `StudioStoreLinkError`. Never `join(dir, '.studio', …)` + `readFileSync` —
+  `studio-store-single-door.test.ts` fails the build on a `.studio` literal
+  outside the door. A clone strips links from the repo's `.studio/` before
+  Studio writes a record (`gitClone.ts`, `stripStudioStoreLinks`).
+- **Replacing a file's contents is `writeFileAtomic`** (`@core/page-parser`):
+  temp file, then rename. A new file that must not race is still an
+  exclusive create (`wx`).
+- **The edit engine writes the user's source through `writeSourceFile` /
+  `createSourceFileExclusive`** (`@core/page-parser`'s `sourceWriteHook.ts`),
+  never `fs` directly: the disk-backed `EolPreservingFileSystem` (every
+  codemod's `saveSync`), CSS writeback and the component copy. An AGENT's
+  batch (`studio_apply_edits`) or codemod (`studio_codemod`, under the project
+  write lock, its call site gated before any verb runs) runs inside
+  `runAgentSourceEdits`
+  (`agentWriteSupport.ts`), which shows each write to the same steps the file
+  tools take, BEFORE it lands: the agent write gate, `currentText`,
+  `checkContent` (no added Tailwind `@plugin`/`@config`), the checkpoint
+  pre-image; then the turn log. A refused write is a named per-edit refusal
+  (`needs-user`, `protected-path`, …). Never add a second check beside it.
+- **A repository never supplies a grant.** Share records, the trust tier and
+  MCP approvals/registered servers are `.studio` state a pull, a branch switch
+  or a conflict resolved to "theirs" can bring. Every Studio git verb runs in
+  `withGitWriteLock`, which pins them (`studioGrants.ts`): afterwards each
+  grant is the lesser of before and after, share state the verb touched is
+  dropped, and `.studio/` is made link-free. A new grant field goes in
+  `STUDIO_META_GRANT_FIELDS`; a new tree-changing git verb goes through
+  `withGitWriteLock`.
 - **A secret file on disk goes through `privateTempDir.ts`**, never
   `mkdirSync({ mode })` + `chmodSync` — `chmod` decides nothing on Windows.
   `createPrivateTempDir` / `ensurePrivateDirectory` for the directory,
@@ -232,8 +286,40 @@ Parallel sessions exist. A failure outside your `git diff` is **not yours** —
 note it in the handoff and move on. Do not "fix" it, do not comment out a
 failing test, do not revert someone else's work.
 
-**Do not run browser/e2e tests to validate UI work.** The human dogfoods UI.
-Static gates + a "needs human dogfood" note in `STATE.md`.
+**Browser or not** is decided by `CLAUDE.md` → "Verification": a change to the
+canvas, a frame, an overlay, geometry or a panel's height also runs
+`bun run test:e2e` for the specs it touches, asserting on computed layout.
+Panels, forms, server, parser and store work stop at the static gates, and the
+handoff ends with a dogfood checklist for the owner.
+
+### Test traps
+
+- **`mock.module` is process-wide and permanent.** `mock.restore()` restores
+  spies, not module mocks, so one unrestored module mock breaks every later
+  file in the same process. Read the header of
+  `src/__tests__/architecture/mock-module-must-restore.test.ts` before writing
+  one.
+- **The editor store is a module singleton.** `src/__tests__/setup.ts` resets
+  `useEditorStore` after every test through the hook `store.ts` publishes on
+  `globalThis` (`__resetEditorStoreForTests`). A new singleton store needs the
+  same treatment.
+- **CRLF.** Windows checkouts run with `core.autocrlf=true`, and JavaScript's
+  `.` does not match `\r`. A regex over file text must allow `\r\n`, or it
+  silently matches nothing on Windows.
+- **happy-dom's CSSOM drops every rule inside an `@layer` block**, with no
+  warning. Never round-trip a whole stylesheet through it:
+  `src/core/siteImport/cssToStyleRules.ts` runs `unwrapCssLayers` first for
+  exactly this reason.
+- **happy-dom has no layout engine.** A unit test cannot fail on `scrollHeight`,
+  measured rects or overflow; that is why those changes run the e2e gate.
+
+---
+
+### Commits
+
+One commit per work order, so a bad one can be reverted alone instead of
+unpicked from a blob. The branch, PR and staging rules are `CLAUDE.md` →
+"Repository workflow and PR conventions".
 
 ---
 

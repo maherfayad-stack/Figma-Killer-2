@@ -31,7 +31,8 @@ describe('Responses SSE translate', () => {
     )
 
     const result = t.finish()
-    expect(result.stop).toBe(true)
+    expect(result.toolCalls).toHaveLength(0)
+    expect(result.truncated).toBe(false)
     expect(result.toolCalls).toEqual([])
     expect(result.assistantMessage).toEqual([
       { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Hello world' }] },
@@ -58,7 +59,7 @@ describe('Responses SSE translate', () => {
     t.translate(frame({ type: 'response.completed', response: { usage: { input_tokens: 5, output_tokens: 3 } } }))
 
     const result = t.finish()
-    expect(result.stop).toBe(false)
+    expect(result.toolCalls.length).toBeGreaterThan(0)
     expect(result.toolCalls).toEqual([{ id: 'call_1', name: 'site_insert_html', input: { parentId: 'root' } }])
     // The assistant turn carries the function_call item so the next request can
     // pair the function_call_output by call_id.
@@ -205,6 +206,7 @@ describe('runToolLoop via openaiDriver (Responses)', () => {
       description: 'echoes its input',
       scope: 'site',
       execution: 'server',
+      sideEffects: 'none',
       inputSchema: Type.Object({ v: Type.Optional(Type.Number()) }),
       async handler(input) {
         serverCalls.push(input)

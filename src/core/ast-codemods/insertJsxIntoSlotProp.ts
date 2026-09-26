@@ -47,7 +47,7 @@
  * The subtree shape (`InsertJsxNode`), its renderer (`renderJsxNode`), its
  * validation (`validateSubtree` — unsafe tag names, a void element asked to
  * hold children), its import bookkeeping (`collectSubtreeImports`), and its
- * binding-conflict check (`conflictingBinding`) are ALL `insertJsxElement`'s
+ * alias planning (`planImportBindings`, P3-C WB-19) are ALL `insertJsxElement`'s
  * own exports, imported here rather than re-implemented. Only the PLACEMENT
  * differs between the two codemods — a child position vs. an attribute value
  * — so only placement gets its own code.
@@ -78,9 +78,10 @@ import { Node, QuoteKind, SyntaxKind, type JsxAttribute, type JsxFragment, type 
 import { createProject, findJsxElementAtLocation, loadSourceFile } from './locateJsxElement'
 import { insertJsxElement } from './insertJsxElement'
 import { indentUnit } from './jsxChildPlacement'
-import { conflictingBinding, type ImportRequirement } from './jsxImportEdits'
+import { planImportBindings, type ImportRequirement } from './jsxImportEdits'
 import {
   collectSubtreeImports,
+  renameSubtreeComponents,
   renderJsxNode,
   validateSubtree,
   type InsertJsxChildren,
@@ -202,19 +203,13 @@ export function insertJsxIntoSlotProp(params: InsertJsxIntoSlotPropParams): Inse
     )
   }
 
-  const imports = collectSubtreeImports(node)
-  for (const [componentName, requirement] of imports) {
-    const binding = conflictingBinding(sourceFile, componentName, requirement.specifier)
-    if (binding) {
-      return refuse(
-        'binding-conflict',
-        `This file already uses the name "${componentName}" for something else (${binding}), so filling this slot would shadow it. Rename one of them in the file first.`,
-      )
-    }
-  }
+  // WB-19 — a component whose name the file already uses for something else
+  // is imported under an alias and written by it, never refused.
+  const bindings = planImportBindings(sourceFile, collectSubtreeImports(node))
+  const imports = bindings.required
 
   const unit = indentUnit(sourceFile.getFullText())
-  const newNodeText = renderJsxNode(node, unit)
+  const newNodeText = renderJsxNode(renameSubtreeComponents(node, bindings.localName), unit)
 
   const existingAttribute = element.getAttribute(propName)
 
@@ -406,13 +401,15 @@ function lineIndent(text: string, pos: number): string {
  * is a NAMED import for the same reason (`collectSubtreeImports`).
  */
 function addRequiredImports(sourceFile: SourceFile, required: ReadonlyMap<string, ImportRequirement>): void {
-  for (const [name, { specifier }] of required) {
+  for (const [name, { specifier, imported }] of required) {
+    // `{ Button as Button2 }` when `planImportBindings` chose an alias (WB-19).
+    const named = imported !== undefined && imported !== name ? { name: imported, alias: name } : { name }
     const existing = sourceFile.getImportDeclarations().find((d) => d.getModuleSpecifierValue() === specifier)
     if (existing) {
       const already = existing.getNamedImports().some((n) => (n.getAliasNode() ?? n.getNameNode()).getText() === name)
-      if (!already) existing.addNamedImport(name)
+      if (!already) existing.addNamedImport(named)
       continue
     }
-    sourceFile.addImportDeclaration({ moduleSpecifier: specifier, namedImports: [name] })
+    sourceFile.addImportDeclaration({ moduleSpecifier: specifier, namedImports: [named] })
   }
 }

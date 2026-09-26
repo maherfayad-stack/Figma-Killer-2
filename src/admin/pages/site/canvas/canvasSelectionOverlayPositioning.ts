@@ -1,4 +1,5 @@
 import { registry } from '@core/module-engine'
+import { RESIZE_ACTIVE_ATTR, RESIZE_SIZE_BADGE_ATTR, writeSizeBadge } from '@core/studio-runtime'
 import { getNodeDisplayName, getNodeHtmlTag, type Page } from '@core/page-tree'
 import type { VisualComponent } from '@core/visualComponents'
 import type {
@@ -88,6 +89,45 @@ export function positionOverlayElement(
     height: `${rect.height}px`,
   })
   appliedOverlayPlacements.set(element, rect)
+}
+
+/**
+ * Place the resize-handle frame on the selection ring's rect — and, while a
+ * drag marks it (`RESIZE_ACTIVE_ATTR`), keep its W×H badge (IX-18) reading
+ * that SAME rect. One measurement feeds the ring, the handles and the number,
+ * in the write phase of the overlay's pass, so the three can never disagree
+ * and the badge costs no read of its own. The rect is iframe-local, so the
+ * number is in frame px at every zoom.
+ */
+/**
+ * Where the resize handles sit: the one selected layer's ring rect, or — for
+ * a multi-selection (P5-F, IX-6g) — the union of every ring, the box a group
+ * resize scales. `null` (no handles placed) when any selected layer has no
+ * rect in this frame: a group box that silently left a member out would
+ * resize a box the user cannot see.
+ */
+export function resizeFrameRect(rects: ReadonlyArray<CanvasOverlayRect | null>): CanvasOverlayRect | null {
+  if (rects.length === 0) return null
+  if (rects.length === 1) return rects[0] ?? null
+  let left = Infinity
+  let top = Infinity
+  let right = -Infinity
+  let bottom = -Infinity
+  for (const rect of rects) {
+    if (!rect) return null
+    left = Math.min(left, rect.x)
+    top = Math.min(top, rect.y)
+    right = Math.max(right, rect.x + rect.width)
+    bottom = Math.max(bottom, rect.y + rect.height)
+  }
+  return { x: left, y: top, width: right - left, height: bottom - top }
+}
+
+export function positionResizeFrame(frame: HTMLElement | null, rect: CanvasOverlayRect | null): void {
+  positionOverlayElement(frame, rect)
+  if (!frame || !rect || !frame.hasAttribute(RESIZE_ACTIVE_ATTR)) return
+  const badge = frame.querySelector<HTMLElement>(`[${RESIZE_SIZE_BADGE_ATTR}]`)
+  if (badge) writeSizeBadge(badge, rect.width, rect.height)
 }
 
 export function hideOverlayElement(element: HTMLElement | null): void {
@@ -218,11 +258,16 @@ export function hideSurplusRings(container: HTMLDivElement, keep: number): void 
  * is measured in, because the root cannot scroll (`overflow: clip`). Fixed path
  * (fallback, `canvasRect === null`): toolbar lives in document.body
  * (position: fixed) and the same values are viewport (client) coordinates.
+ *
+ * `knownWidth` is the toolbar's width when the caller already has it — the
+ * pan/zoom follow path (`selectionChromeViewportFollow.ts`) repositions on
+ * every transform write and must not force a layout read to clamp.
  */
 export function positionToolbar(
   toolbar: HTMLDivElement | null,
   union: CanvasOverlayRect | null,
   canvasRect: DOMRect | null,
+  knownWidth?: number,
 ): void {
   if (!toolbar) return
   if (!union) {
@@ -242,7 +287,7 @@ export function positionToolbar(
   if (canvasRect && toolbar.style.display === 'none') toolbar.style.display = ''
   let x = union.x
   if (canvasRect) {
-    const maxX = Math.max(GUTTER, canvasRect.width - toolbar.offsetWidth - GUTTER)
+    const maxX = Math.max(GUTTER, canvasRect.width - (knownWidth ?? toolbar.offsetWidth) - GUTTER)
     x = Math.min(Math.max(x, GUTTER), maxX)
   }
 
@@ -283,11 +328,14 @@ export function positionToolbar(
  * against the canvas edge, hundreds of pixels from the element it edits, with
  * no visible relationship to it. Intersecting first keeps the panel beside the
  * part of the element the user can actually see.
+ *
+ * `knownWidth`: see `positionToolbar`.
  */
 export function positionInspector(
   inspector: HTMLDivElement | null,
   rect: CanvasOverlayRect | null,
   canvasRect: DOMRect | null,
+  knownWidth?: number,
 ): void {
   if (!inspector) return
   if (!rect) {
@@ -305,7 +353,7 @@ export function positionInspector(
   let anchorBottom = rect.y + rect.height
   if (canvasRect) {
     const visible = intersectWithView(rect, canvasRect)
-    const maxX = Math.max(GUTTER, canvasRect.width - inspector.offsetWidth - GUTTER)
+    const maxX = Math.max(GUTTER, canvasRect.width - (knownWidth ?? inspector.offsetWidth) - GUTTER)
     x = Math.min(Math.max(visible.x, GUTTER), maxX)
     anchorBottom = visible.y + visible.height
   }

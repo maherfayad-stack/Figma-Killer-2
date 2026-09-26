@@ -47,15 +47,14 @@
  * is the only stated intent available, and it is the convention every
  * scaffolded project follows (`/create` writes `pages/Home.tsx`).
  */
-import { mkdirSync, statSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
 import sharp from 'sharp'
 import { captureFrames, type CaptureFramesOverrides } from '../../ai/mcp/capture/captureFrames'
-import { readBoardsFileOrEmpty } from './boardGeometry'
+import { readBoardsFile } from './boardGeometry'
 import {
   PROJECT_THUMBNAIL_HEIGHT,
   PROJECT_THUMBNAIL_WIDTH,
   projectThumbnailFile,
+  writeProjectThumbnail,
 } from './projectThumbnailFile'
 
 /**
@@ -85,7 +84,7 @@ export type CaptureProjectThumbnailResult =
  * read is one small JSON file and it short-circuits before any browser work.
  */
 export function thumbnailPageId(dir: string): string | null {
-  const board = readBoardsFileOrEmpty(dir).boards.find((candidate) => candidate.frames.length > 0)
+  const board = readBoardsFile(dir).boards.find((candidate) => candidate.frames.length > 0)
   if (!board) return null
   const frames = [...board.frames].sort((a, b) => a.y - b.y || a.x - b.x)
   const home = frames.find((frame) => isHomePageId(frame.pageId))
@@ -172,10 +171,8 @@ export async function captureProjectThumbnail(
   }
 
   try {
-    const file = projectThumbnailFile(dir)
-    mkdirSync(dirname(file), { recursive: true })
-    writeFileSync(file, await fitToTile(Buffer.from(image.data, 'base64')))
-    return { ok: true, file, updatedAt: statSync(file).mtimeMs }
+    const stat = writeProjectThumbnail(dir, await fitToTile(Buffer.from(image.data, 'base64')))
+    return { ok: true, file: projectThumbnailFile(dir), updatedAt: stat.mtimeMs }
   } catch (err) {
     return {
       ok: false,

@@ -3,7 +3,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
 /**
  * Real-browser coverage for `board-02`: `board-01` (WS-7.1) shipped
  * `selectedFrameIds`, `framesInMarquee`, `FrameBulkInspector`, and the
- * `board.selectAllFrames` keybinding — all unit-tested against the store
+ * `board.selectAllFrames` keybinding (now `canvas.selectAll`) — all unit-tested against the store
  * directly, none of it reachable from real input. Dogfooding found three
  * concrete breaks:
  *   - "no bulk selection in the canvas"

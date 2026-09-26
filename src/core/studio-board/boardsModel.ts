@@ -283,7 +283,7 @@ export function setFrameAxes(board: Board, frameId: string, axes: Partial<Previe
 // ---------------------------------------------------------------------------
 // Guides (D1) — persisted ruler guides, `board.guides`. Mirrors the
 // note/doc shape above exactly (upsert / move / remove), keyed by `id`.
-// Distinct from `SnapGuide` (`canvas/boardSnapping.ts`) — see `BoardGuide`'s
+// Distinct from `SnapGuide` (`@core/studio-runtime`'s `snapRules.ts`) — see `BoardGuide`'s
 // doc in `types.ts` for the name collision this avoids.
 // ---------------------------------------------------------------------------
 

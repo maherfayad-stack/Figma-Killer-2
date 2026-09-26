@@ -1,4 +1,5 @@
 import { expect, test, type FrameLocator, type Locator, type Page } from '@playwright/test'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * Real-browser coverage for `select-01`: **you must be able to get back to
@@ -36,7 +37,6 @@ import { expect, test, type FrameLocator, type Locator, type Page } from '@playw
 
 const PROJECT_FOLDER_NAME = 'maherfayad-stack-eSIM'
 const TARGET_PAGE_ID = 'booking-confirmation-screen'
-const CANVAS_FRAME_IFRAME_SELECTOR = 'iframe[title^="Canvas frame"]'
 const SELECTION_RING = '[data-canvas-selection-ring="true"]'
 
 interface StudioProjectSummary {
@@ -194,13 +194,13 @@ test.describe('select-01: deselect always gets you back to nothing selected', ()
     // the board mounts; the shell shows its CMS "could not load" state meanwhile
     // — transient, not a failure.
     await expect(page.getByTestId('board-frames-layer')).toBeAttached({ timeout: 90_000 })
-    await expect(page.locator(CANVAS_FRAME_IFRAME_SELECTOR).first()).toBeVisible({ timeout: 30_000 })
+    await expect(visibleCanvasIframe(page).first()).toBeVisible({ timeout: 30_000 })
 
     const targetFrame = page.locator(`[data-page-id="${TARGET_PAGE_ID}"]`)
     await expect(targetFrame, `expected one board frame for page id "${TARGET_PAGE_ID}"`).toHaveCount(1)
     await panIntoView(page, canvasRoot, targetFrame)
 
-    const contentFrame: FrameLocator = targetFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame: FrameLocator = canvasContentFrame(targetFrame)
     const rings = contentFrame.locator(SELECTION_RING)
     const detachButton = page.getByTestId('instance-detach-button')
 

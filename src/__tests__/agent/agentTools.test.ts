@@ -92,7 +92,7 @@ describe('site read tools', () => {
   it('list_post_types is a server-resolved read tool', () => {
     const tool = siteReadTools.find((t) => t.name === 'site_list_post_types')!
     expect(tool.execution).toBe('server')
-    expect(tool.mutates).toBeFalsy()
+    expect(tool.requiresWrite).toBeFalsy()
     expect(typeof tool.handler).toBe('function')
   })
 

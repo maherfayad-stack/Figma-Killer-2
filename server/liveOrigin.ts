@@ -315,7 +315,7 @@ export function enqueuePendingMessage(
 
 /** Minimal shape `handleLiveOriginFetch` needs from `Bun.Server` — just enough to upgrade a socket, and a test seam. */
 export interface LiveOriginUpgradeServer {
-  upgrade(req: Request, options: { data: LiveOriginSocketData; headers?: Record<string, string> }): boolean
+  upgrade(req: Request, options: { data: LiveOriginSocketData }): boolean
 }
 
 /**
@@ -370,9 +370,16 @@ export async function handleLiveOriginFetch(
     // header but no response was received"), which is the same reload loop
     // from the other side. Vite offers exactly one, so first-offered is the
     // one the upstream will accept too.
+    //
+    // Bun's `upgrade` already answers with the first offered subprotocol on
+    // its own (verified on 1.3.6 and 1.3.13), so no `headers` are passed.
+    // Passing `sec-websocket-protocol` explicitly as well made Bun 1.3.6 send
+    // the header TWICE, and a client that checks the handshake rejects that
+    // (Bun's own client closes with 1002 "Mismatch client protocol"; RFC 6455
+    // §4.1 allows one). 1.3.13 de-duplicates it, which is why only a local
+    // run on the older Bun showed it.
     const ok = server.upgrade(req, {
       data: { upstreamWsUrl: upstream.toString(), protocols },
-      headers: protocols.length > 0 ? { 'sec-websocket-protocol': protocols[0] } : undefined,
     })
     return ok ? undefined : new Response('Upgrade failed', { status: 400 })
   }

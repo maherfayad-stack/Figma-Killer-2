@@ -1,4 +1,5 @@
 # useAsyncResource
+> **Purpose:** the canonical single-resource async load hook · **Read when:** loading data in an admin screen · **Trust:** current · **Owner:** panel-designer · **Verified:** not yet
 
 Canonical hook for single-resource async loads in admin screens.
 

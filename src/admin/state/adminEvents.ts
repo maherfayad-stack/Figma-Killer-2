@@ -15,6 +15,7 @@
  * the concern is VALUE imports of heavy modules like `usePersistence` itself.
  */
 import type { ConditionDef, Page, StyleRule } from '@core/page-tree'
+import type { PendingStructuralOutcome } from '@site/studio/pendingStructuralOutcome'
 
 /**
  * Fired on `window` after the editor reloads the site document (manual
@@ -27,15 +28,114 @@ export const CMS_SITE_RELOAD_EVENT = 'cms-site-reload'
 let cmsSiteReloadPending = false
 
 /**
+ * ERR-10 — a full reload is AWAITABLE, and it carries its own structural
+ * outcome.
+ *
+ * It used to be a bare event: `resyncBoardAfterWrite` dispatched it and
+ * returned, so `commitStructural` released `structuralCommitQueue.ts` before
+ * `loadSite` had run and the next parked gesture planned against the pre-write
+ * ids — the exact race the queue exists to close. And the write's outcome (what
+ * to select, what ⌘Z does) rode a one-slot global box that any OTHER re-read
+ * landing first could claim, against a tree that did not contain the write yet.
+ *
+ * Now every request gets a sequence number and a promise. The editor's reload
+ * handler (`usePersistence.ts`) records the newest number when it STARTS
+ * fetching; when that fetch is the one that lands, it claims every request up
+ * to that number — applies their outcomes, in order, to the document it just
+ * loaded — and settles them. A fetch that started later always covers
+ * everything an earlier one did, which is why a superseded response can simply
+ * be dropped.
+ */
+interface CmsSiteReloadRequest {
+  seq: number
+  structuralOutcome: PendingStructuralOutcome | null
+  settle: () => void
+}
+
+let cmsSiteReloadSeq = 0
+const outstandingReloads: CmsSiteReloadRequest[] = []
+/** How many mounted editors answer reloads. With none, a request resolves at once — see `requestCmsSiteReload`. */
+let cmsSiteReloaders = 0
+
+export interface CmsSiteReloadOptions {
+  /**
+   * What the structural write that asked for this reload means for the board
+   * once it is read back. Applied only by the reload that covers this request
+   * — never by an unrelated one that happens to land first.
+   */
+  structuralOutcome?: PendingStructuralOutcome
+}
+
+/**
  * Request an editor-site reload and retain that request if the Site editor is
  * not mounted yet. Callers that mutate site-backed storage outside the editor
  * should use this helper instead of dispatching `CMS_SITE_RELOAD_EVENT`
  * directly.
+ *
+ * Resolves once a mounted editor has loaded a document fetched AFTER this
+ * request (and applied `options.structuralOutcome` to it), or once that reload
+ * failed — the failure is the reload handler's to report. Resolves at once
+ * when no editor is mounted: the retained flag above replays the reload on
+ * mount, and nobody is waiting on a board that is not there. Never rejects.
  */
-export function requestCmsSiteReload(): void {
+export function requestCmsSiteReload(options: CmsSiteReloadOptions = {}): Promise<void> {
   cmsSiteReloadPending = true
+  const seq = ++cmsSiteReloadSeq
+  const done =
+    cmsSiteReloaders > 0
+      ? new Promise<void>((resolve) => {
+          outstandingReloads.push({ seq, structuralOutcome: options.structuralOutcome ?? null, settle: resolve })
+        })
+      : Promise.resolve()
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new Event(CMS_SITE_RELOAD_EVENT))
+  }
+  return done
+}
+
+/**
+ * The newest request number. A reload records it when it starts fetching: the
+ * document it gets back reflects every write whose request is at or below it.
+ */
+export function latestCmsSiteReloadRequest(): number {
+  return cmsSiteReloadSeq
+}
+
+/** What a landed reload claimed: the outcomes to apply to its document, in request order. */
+export interface ClaimedCmsSiteReloads {
+  structuralOutcomes: PendingStructuralOutcome[]
+  /** Resolve every claimed request's promise. Call after the outcomes are applied. */
+  settle: () => void
+}
+
+/** Claim every outstanding request numbered `upTo` or below. */
+export function claimCmsSiteReloadRequests(upTo: number): ClaimedCmsSiteReloads {
+  const claimed: CmsSiteReloadRequest[] = []
+  for (let i = 0; i < outstandingReloads.length; ) {
+    if (outstandingReloads[i]!.seq <= upTo) claimed.push(...outstandingReloads.splice(i, 1))
+    else i++
+  }
+  return {
+    structuralOutcomes: claimed.flatMap((request) => (request.structuralOutcome ? [request.structuralOutcome] : [])),
+    settle: () => {
+      for (const request of claimed) request.settle()
+    },
+  }
+}
+
+/**
+ * Register a mounted editor that answers reloads. Returns the unregister; when
+ * the last one goes, every request still waiting is settled — nothing is left
+ * to answer it, and a structural commit awaiting it must not hold the queue.
+ */
+export function registerCmsSiteReloader(): () => void {
+  cmsSiteReloaders++
+  let registered = true
+  return () => {
+    if (!registered) return
+    registered = false
+    cmsSiteReloaders--
+    if (cmsSiteReloaders === 0) claimCmsSiteReloadRequests(Number.POSITIVE_INFINITY).settle()
   }
 }
 
@@ -82,6 +182,18 @@ export interface CmsSitePagesPatchDetail {
   styleRules?: Record<string, StyleRule>
   /** The project-wide condition set from the same reload. */
   conditions?: ConditionDef[]
+  /**
+   * What the structural write this patch re-reads means for the board — the
+   * narrow counterpart of `CmsSiteReloadOptions.structuralOutcome`. Travels
+   * WITH the pages it describes, so no other re-read can claim it.
+   */
+  structuralOutcome?: PendingStructuralOutcome
+  /**
+   * P5-G — the free canvas's loose layers from the same re-read (always the
+   * full set). Applied before the pages, apart from them: they never enter
+   * `site.pages` (`canvasLayerSlice.ts`).
+   */
+  canvasLayers?: { layerId: string; pageId: string; page: Page }[]
 }
 
 /** Dispatches `CMS_SITE_PAGES_PATCH_EVENT`. No-op (and nothing retained) outside a browser or when nothing is listening — see this event's own doc for why, unlike `requestCmsSiteReload`, there is no "pending" fallback. */

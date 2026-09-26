@@ -74,6 +74,8 @@ export interface HeadlessCaptureInput {
   dpr?: number
   purpose?: CapturePurpose
   axes?: Partial<PreviewAxes>
+  /** Render every frame at this CSS width instead of its board width (AI-16). Never written to the board. */
+  frameWidth?: number
 }
 
 export type HeadlessCaptureResult = { ok: true; output: AiToolOutput } | HeadlessCaptureFailure
@@ -119,7 +121,7 @@ export async function captureFramesHeadless(
   overrides: HeadlessCaptureOverrides = {},
 ): Promise<HeadlessCaptureResult> {
   const purpose: CapturePurpose = input.purpose ?? 'vision'
-  const geometry = authoredGeometry(input.dir, input.pageIds)
+  const geometry = authoredGeometry(input.dir, input.pageIds, input.frameWidth)
 
   // The density to RENDER at: the requested dpr, pre-clamped by what the
   // authored geometry already proves is allowed. Re-checked against the real
@@ -135,6 +137,7 @@ export async function captureFramesHeadless(
       dir: input.dir,
       pageIds: input.pageIds,
       ...(input.axes ? { axes: input.axes } : {}),
+      ...(input.frameWidth === undefined ? {} : { frameWidth: input.frameWidth }),
       viewport: captureViewport(geometry),
       deviceScaleFactor: renderRatio,
     },

@@ -40,7 +40,6 @@ beforeEach(() => {
     collapsedBreakpointIds: [],
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     previewAxes: DEFAULT_PREVIEW_AXES,
     _historyPast: [],
     _historyFuture: [],

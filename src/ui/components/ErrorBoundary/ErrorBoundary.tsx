@@ -89,6 +89,15 @@ interface ErrorBoundaryProps {
    * `admin-shell` boundary, whose catch means the entire app tree is gone.
    */
   silentToast?: boolean
+  /**
+   * ERR-13 — reset this many times on its own before the fallback is shown.
+   * For a seam whose crash is most often a one-render race (a node id the
+   * board just replaced, a resync landing mid-render): the retry renders
+   * against the settled state and usually just works. The count starts over
+   * whenever `resetKeys` change. Default 0 — most seams show their fallback at
+   * once.
+   */
+  autoRetry?: number
   children: ReactNode
 }
 
@@ -98,6 +107,8 @@ interface ErrorBoundaryState {
   /** Snapshot of `resetKeys` that was active when the boundary entered the
    *  errored state — compared in `getDerivedStateFromProps` to detect resets. */
   resetSnapshot: ReadonlyArray<unknown>
+  /** Automatic resets spent since the last `resetKeys` change — see `autoRetry`. */
+  autoRetries: number
 }
 
 function shallowEqualKeys(
@@ -118,6 +129,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     chain: null,
     componentStack: null,
     resetSnapshot: this.props.resetKeys ?? EMPTY_KEYS,
+    autoRetries: 0,
   }
 
   static getDerivedStateFromError(error: unknown): Partial<ErrorBoundaryState> {
@@ -130,10 +142,12 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   ): Partial<ErrorBoundaryState> | null {
     const next = props.resetKeys ?? EMPTY_KEYS
     if (state.chain && !shallowEqualKeys(state.resetSnapshot, next)) {
-      return { chain: null, componentStack: null, resetSnapshot: next }
+      return { chain: null, componentStack: null, resetSnapshot: next, autoRetries: 0 }
     }
     if (!state.chain && state.resetSnapshot !== next) {
-      return { resetSnapshot: next }
+      return shallowEqualKeys(state.resetSnapshot, next)
+        ? { resetSnapshot: next }
+        : { resetSnapshot: next, autoRetries: 0 }
     }
     return null
   }
@@ -144,6 +158,12 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     const prefix = `error-boundary:${this.props.location}`
 
     logErrorChain(prefix, chain, componentStack)
+
+    // ERR-13 — spend an automatic retry before the fallback is ever read.
+    if (this.state.autoRetries < (this.props.autoRetry ?? 0)) {
+      this.setState((state) => ({ chain: null, componentStack: null, autoRetries: state.autoRetries + 1 }))
+      return
+    }
 
     this.setState({ componentStack })
 
@@ -173,6 +193,9 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   render(): ReactNode {
     if (!this.state.chain) return this.props.children
+    // An automatic retry is about to run (`componentDidCatch`): paint nothing
+    // for that one frame rather than flash a fallback nobody needs to read.
+    if (this.state.autoRetries < (this.props.autoRetry ?? 0)) return null
 
     const fallbackInfo: ErrorBoundaryFallbackInfo = {
       location: this.props.location,

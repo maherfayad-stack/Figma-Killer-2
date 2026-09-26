@@ -20,16 +20,16 @@
  * Wired today:
  *   - anything carrying a `target` (`jump-to-source`, `edit-array`) → opens
  *     that file in the code panel, through the caller's `openSource`
- *   - `detach` / `extract` → the real `studio.instance` codemods the
- *     Properties panel's Component section already dispatches
- *   - `choose-stylesheet` (Z8) → pins the destination the user picked for one
- *     brand-new class and asks for an immediate save, which re-issues the
- *     insert that refused, now against a file they named
+ *   - `detach` → the ONE Detach action, `detachInstances` (P5-C), injected by
+ *     the caller like `openSource`
+ *   - `extract` → the component-copy codemod (`extractInstanceCopy`)
  *
  * Deliberately NOT wired: `select-container` (three different refusals share
  * that kind and only one of them means "select something"), `promote-tier1`
- * (no refusal emits it yet), `style-inline-instead` and `preview-branch` (the
- * surfaces that own those flows are not the ones that render a refusal).
+ * (no refusal emits it yet), and `preview-branch` (the surface that owns that
+ * flow is not the one that renders a refusal). Z8's `choose-stylesheet` is
+ * gone: P3-C made a new class's stylesheet the editor's own choice, so there
+ * is no question left to answer.
  *
  * **Lives beside the store, not beside the component that renders it**, and
  * takes `openSource` as context rather than importing `jumpToSource`: a
@@ -42,10 +42,9 @@
 import type { EditConstraint, EditConstraintAction } from '@core/page-tree'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { pushToast } from '@ui/components/Toast'
-import { requestEditorSave } from '@admin/state/adminEvents'
-import { detachInstance, extractInstanceCopy } from '@site/studio/studioSaveRequests'
-import { pinCssInsertDestination } from '@site/studio/styleRuleWriteback'
+import { extractInstanceCopy } from '@site/studio/studioSaveRequests'
 import type { SourceOrigin } from './openSourceFile'
+import type { DetachInstancesOutcome } from './slices/site/instanceDetachTypes'
 
 /** What a runnable action needs beyond the action itself. */
 export interface ConstraintActionContext {
@@ -60,6 +59,13 @@ export interface ConstraintActionContext {
    * — the same honesty rule as every other unwireable kind.
    */
   openSource?: (origin: SourceOrigin) => void
+  /**
+   * P5-C — the store's `detachInstances`, the one Detach action. Injected for
+   * `openSource`'s reason: this module sits inside the store's own import
+   * graph and may not import the composed store back. Absent, `detach` stays
+   * un-runnable and renders as advice text.
+   */
+  detachInstances?: (nodeIds: readonly string[]) => Promise<DetachInstancesOutcome>
   /**
    * Fired once an action has run to completion — `detach`/`extract` call it
    * `true`/`false` once their codemod actually settles; a target-carrying
@@ -135,30 +141,18 @@ export function resolveConstraintAction(
       onSettled?.(true)
     }
   }
-  if (action.kind === 'detach' && context.nodeId !== undefined) {
+  if (action.kind === 'detach' && context.nodeId !== undefined && context.detachInstances) {
     const nodeId = context.nodeId
+    const detach = context.detachInstances
     const onSettled = context.onSettled
-    return () => void runInstanceCodemod('Detach', () => detachInstance(nodeId), onSettled)
+    // The action presents its own confirm and refusal; this only reports
+    // whether the instance is gone, which is what `RefusalDialog` waits on.
+    return () => void detach([nodeId]).then((outcome) => onSettled?.(outcome === 'detached' || outcome === 'handed-off'))
   }
   if (action.kind === 'extract' && context.nodeId !== undefined) {
     const nodeId = context.nodeId
     const onSettled = context.onSettled
     return () => void runInstanceCodemod('Duplicate', () => extractInstanceCopy(nodeId), onSettled)
-  }
-  // Z8 — the user answering "which stylesheet?". Pinning is all it takes: the
-  // refused rule's diff baseline was never advanced (nothing reached disk), so
-  // the immediate save below re-diffs the very same declarations and
-  // `resolveCssInsertDestination` now returns the file they named. No codemod
-  // runs here and no value is invented — the choice is a destination, and the
-  // write is the one that already refused.
-  if (action.kind === 'choose-stylesheet' && action.stylesheet) {
-    const { ruleId, file } = action.stylesheet
-    const onSettled = context.onSettled
-    return () => {
-      pinCssInsertDestination(ruleId, file)
-      requestEditorSave()
-      onSettled?.(true)
-    }
   }
   // K6 — `context.nodeId` is the CONTAINER here, not the dragged element: the
   // refusal is about the parent, and so is the remedy.
@@ -224,12 +218,11 @@ export function constraintToastBody(
 }
 
 /**
- * Both instance codemods answer the same three ways — threw, refused with its
- * own sentence, or landed — and all three are the user's business, so they
- * share one reporting shape instead of two near-identical try/catch blocks.
+ * The component copy answers three ways — threw, refused with its own
+ * sentence, or landed — and all three are the user's business.
  */
 async function runInstanceCodemod(
-  gesture: 'Detach' | 'Duplicate',
+  gesture: 'Duplicate',
   run: () => Promise<{ ok: boolean; message?: string }>,
   onSettled?: (ok: boolean) => void,
 ): Promise<void> {

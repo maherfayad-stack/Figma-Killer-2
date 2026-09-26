@@ -13,6 +13,7 @@
 
 import type { AiContentViewBlock } from '@core/ai'
 import type { AiContentBlock } from '../runtime/types'
+import type { ModelSource } from '../routing/modelRouting'
 
 // ---------------------------------------------------------------------------
 // Server-side records (DB row shape, normalised)
@@ -57,6 +58,14 @@ export interface ConversationRecord {
    * project rather than silently re-pointing the thread.
    */
   readonly projectKey: string | null
+  /**
+   * Why `modelId` is what it is (migration 024, AI-25): `default` — Studio's
+   * default, never picked; `chosen` — the user picked it. Model routing only
+   * ever moves a `default` conversation's turns (`routing/modelRouting.ts`).
+   * A row from before the column reads as `chosen`, so no existing
+   * conversation starts being routed.
+   */
+  readonly modelSource: ModelSource
   readonly createdAt: string
   readonly updatedAt: string
   readonly deletedAt: string | null
@@ -127,6 +136,8 @@ export interface CreateConversationInput {
   readonly modelId: string
   /** The project this conversation is being started in, already derived from a VALIDATED dir. Omitted/null for a conversation started with no project open. */
   readonly projectKey?: string | null
+  /** Whether the client staged Studio's default model or the user picked one. Omitted reads as `chosen`, the side that is never routed. */
+  readonly modelSource?: ModelSource
 }
 
 export interface UpdateConversationInput {

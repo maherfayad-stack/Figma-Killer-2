@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
 import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
+import { canvasClickSelectionMode } from './canvasSelectionUtils'
 
 const CANVAS_NODE_SELECTOR = '[data-node-id]'
 const CANVAS_EDITOR_CONTROL_SELECTOR = '[data-canvas-interactive="true"]'
@@ -108,12 +109,7 @@ function activateCanvasNodeFromNativeControlEvent(event: Event, breakpointId: st
   if (!nodeId) return
   const state = useEditorStore.getState()
   if (breakpointId !== state.activeBreakpointId) state.setActiveBreakpoint(breakpointId)
-  const pointerEvent = event as MouseEvent
-  const mode = pointerEvent.shiftKey
-    ? 'range'
-    : pointerEvent.metaKey || pointerEvent.ctrlKey
-      ? 'toggle'
-      : 'replace'
-  state.selectNode(nodeId, mode)
+  // The same modifier reading as every other canvas click (OD-3).
+  state.selectNode(nodeId, canvasClickSelectionMode(event as MouseEvent))
   state.setFocusedPanel('canvas')
 }

@@ -108,7 +108,7 @@ bun run build
   inherit it.
 - **Never** delete or clear anything under `studio-workspace/`.
 - If a fix requires executing user code, it is out of scope for this module —
-  say so and point at WS-3 of `STUDIO-IMPORT-V2-PLAN.md`.
+  say so and point at `docs/features/trust-tiers.md` (what may run, and at which tier).
 
 ## Handoff — required
 

@@ -41,7 +41,7 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
-import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { joinAppRoot } from './appRoot'
 import { resolveProjectProfile } from './projectProbe'
@@ -99,8 +99,7 @@ export async function tryServeStudioStyleCompileConsent(req: Request, url: URL, 
       return jsonResponse({ ok: true })
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio:styleCompileConsent]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio:styleCompileConsent]', err)
     }
   }
 

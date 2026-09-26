@@ -100,7 +100,10 @@ describe('TextSettingsPopover — opens on demand', () => {
 
     // textIndent: a plain text/length control — not curated in cssControlTypes.ts,
     // reached through the same generic row machinery via the `as keyof CSSPropertyBag` cast.
-    fireEvent.change(screen.getByLabelText('Text indent'), { target: { value: '2em' } })
+    // It commits on blur, not per keystroke (`TextControl`'s draft, P2-G).
+    const textIndent = screen.getByLabelText('Text indent')
+    fireEvent.change(textIndent, { target: { value: '2em' } })
+    fireEvent.blur(textIndent)
     expect(written).toEqual(['textIndent', '2em'])
   })
 })

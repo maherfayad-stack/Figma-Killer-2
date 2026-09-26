@@ -61,7 +61,6 @@ function resetStore(vcs: VisualComponent[] = []) {
     activePageId: 'page-home',
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     activeDocument: null,
     clipboardEntry: null,
     _historyPast: [],

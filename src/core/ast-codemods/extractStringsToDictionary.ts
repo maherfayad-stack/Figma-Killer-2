@@ -316,7 +316,11 @@ export function extractStringsToDictionary(params: ExtractStringsParams): Extrac
     }
     const body = enclosingComponentBody(node)
     if (!body) {
-      refused.push({ key: extraction.key, reason: 'outside-component', message: `"${extraction.text}" is outside any component, so it cannot read a hook.` })
+      refused.push({
+        key: extraction.key,
+        reason: 'outside-component',
+        message: `"${extraction.text}" sits outside any component (a shared constant, or a list built once at module load), so it stays as plain text for now — move it inside the component that renders it to make it translatable.`,
+      })
       continue
     }
     const bodyStart = body.getStart()

@@ -30,9 +30,8 @@ import { createHash } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { WORKSPACE_ROOT } from './constants'
+import { visibleCanvasIframe } from './canvasIframe'
 
-/** Selector for a design-mode canvas iframe, inside a board frame. */
-export const CANVAS_FRAME_IFRAME_SELECTOR = 'iframe[title^="Canvas frame"]'
 /** The in-frame selection ring the overlay paints around the selected node. */
 export const SELECTION_RING = '[data-canvas-selection-ring="true"]'
 
@@ -43,18 +42,80 @@ export interface FixtureProject {
   readonly ready: boolean
 }
 
+/** How long {@link emptyFixtureDir} waits out a held directory: past `outsideEditReload.ts`'s `LINGER_MS` (15 s), with margin. */
+const HELD_DIR_WAIT_MS = 30_000
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+/** A Windows sharing violation — the only failure worth waiting out. */
+function isHeldByAnotherProcess(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | null)?.code
+  return code === 'EPERM' || code === 'EBUSY' || code === 'EACCES' || code === 'ENOTEMPTY'
+}
+
+/**
+ * Make `dir` an EMPTY directory, reusing it if it exists, never deleting it.
+ *
+ * Why not `rmSync(dir)` + a fresh copy, which is what this used to do: a
+ * fixture is a Tier-2 project by default, so opening it starts its own Vite
+ * dev server with `dir` as its working directory (the fixture grows a
+ * `node_modules/.vite` to prove it), and the server also keeps a recursive
+ * watch on it for 15 s after its last tab closes (`outsideEditReload.ts`'s
+ * `LINGER_MS`). Both outlive the Playwright worker that opened the board. When
+ * Playwright restarts a worker after a failure, the new worker's `beforeAll`
+ * deleted `dir` while they still held it, and Windows refused: `EPERM` on
+ * `dir` itself, measured with `--repeat-each=2` (which re-runs `beforeAll`
+ * right after `afterAll`, the same sequence). The spec then died in setup, not
+ * on anything it measures. Only `dir` itself is held, so its CHILDREN delete
+ * fine: empty it in place (all but the dev server's own `node_modules`, see
+ * below). A delete-pending `dir` (a watcher closing late) is waited out,
+ * bounded by {@link HELD_DIR_WAIT_MS}, rather than failed on.
+ */
+function emptyFixtureDir(dir: string): void {
+  const deadline = Date.now() + HELD_DIR_WAIT_MS
+  for (;;) {
+    try {
+      if (fs.existsSync(dir)) {
+        for (const entry of fs.readdirSync(dir)) {
+          // The fixture's still-running dev server keeps its dependency cache
+          // (`node_modules/.vite`) here. Deleting it under a live Vite leaves
+          // that server serving modules it no longer has, and the next case's
+          // live frame never boots. No fixture source carries `node_modules`,
+          // so keeping it changes nothing the copy below writes.
+          if (entry === 'node_modules') continue
+          fs.rmSync(path.join(dir, entry), { recursive: true, force: true })
+        }
+      } else {
+        fs.mkdirSync(dir, { recursive: true })
+      }
+      return
+    } catch (err) {
+      if (!isHeldByAnotherProcess(err) || Date.now() > deadline) {
+        throw new Error(
+          `[studioFixtureProject] could not prepare ${dir}: another process still holds it after ${HELD_DIR_WAIT_MS} ms. ` +
+            'A leftover dev server or file watcher from an earlier run is the usual cause; stop it and re-run.',
+          { cause: err },
+        )
+      }
+      sleepSync(250)
+    }
+  }
+}
+
 /**
  * Copy `studio-workspace/<sourceName>` to `studio-workspace/<fixtureName>`.
  *
  * The fixture name is FIXED rather than per-PID: a crashed run's leftovers are
  * visibly overwritten by the next run rather than accumulating one abandoned
- * 3 MB copy per crash.
+ * 3 MB copy per crash. Overwritten IN PLACE — see {@link emptyFixtureDir}.
  */
 export function createFixtureProject(sourceName: string, fixtureName: string): FixtureProject {
   const source = path.join(WORKSPACE_ROOT, sourceName)
   const dir = path.join(WORKSPACE_ROOT, fixtureName)
   if (!fs.existsSync(source)) return { dir, ready: false }
-  fs.rmSync(dir, { recursive: true, force: true })
+  emptyFixtureDir(dir)
   fs.cpSync(source, dir, { recursive: true })
   return { dir, ready: true }
 }
@@ -87,7 +148,7 @@ export function createAuthoredFixtureProject(
   files: Readonly<Record<string, string>>,
 ): FixtureProject {
   const dir = path.join(WORKSPACE_ROOT, fixtureName)
-  fs.rmSync(dir, { recursive: true, force: true })
+  emptyFixtureDir(dir)
   for (const [relative, contents] of Object.entries(files)) {
     const target = path.join(dir, ...relative.split('/'))
     fs.mkdirSync(path.dirname(target), { recursive: true })
@@ -111,15 +172,21 @@ export function createAuthoredFixtureProject(
  * green run red. The fixture name is fixed, so the next run overwrites it.
  */
 export function removeFixtureProject(fixture: FixtureProject): void {
+  let lastError: unknown = null
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
       fs.rmSync(fixture.dir, { recursive: true, force: true })
       return
-    } catch {
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500)
+    } catch (err) {
+      lastError = err
+      sleepSync(500)
     }
   }
-  console.warn(`[studioFixtureProject] could not remove ${fixture.dir} — a process still holds it open.`)
+  const detail = lastError as NodeJS.ErrnoException | null
+  console.warn(
+    `[studioFixtureProject] could not remove ${fixture.dir} — a process still holds it open ` +
+      `(${detail?.code ?? 'unknown'} on ${detail?.path ?? 'unknown path'}).`,
+  )
 }
 
 /** The `.studio/meta.json` field the trust-tier contract is written in. */
@@ -240,7 +307,7 @@ export async function frameForPage(page: Page, canvasRoot: Locator, pageId: stri
   })
   await panIntoView(page, canvasRoot, frame)
   await expect(
-    frame.locator(CANVAS_FRAME_IFRAME_SELECTOR),
+    visibleCanvasIframe(frame),
     `the "${pageId}" frame never mounted a live canvas iframe after being panned into view`,
   ).toBeVisible({ timeout: 60_000 })
   return frame
@@ -428,6 +495,29 @@ export function decodeNodeSourceLocation(nodeId: string): SourceNodeLocation | n
   const match = /^(.+):(\d+):(\d+)$/.exec(target)
   if (!match) return null
   return { rel: match[1]!, line: Number(match[2]), col: Number(match[3]) }
+}
+
+/**
+ * The studio node id the parser mints for the Nth `<tag` in `source`:
+ * `rel:line:col`, line 1-based, col 1-based at the character right AFTER `<`.
+ *
+ * Derived from the fixture text rather than hardcoded, so editing a fixture —
+ * or writing a new version of it to disk mid-spec, which is how the P1 specs
+ * shift every id — cannot silently retarget a spec at the wrong element.
+ * Encodes the same grammar `decodeNodeSourceLocation` reads, for the same
+ * reason that one is restated rather than imported.
+ */
+export function sourceNodeId(source: string, rel: string, tag: string, occurrence = 1): string {
+  const re = new RegExp(`<${tag}(?=[\\s/>])`, 'g')
+  let match: RegExpExecArray | null
+  let count = 0
+  while ((match = re.exec(source)) !== null) {
+    count += 1
+    if (count !== occurrence) continue
+    const lines = source.slice(0, match.index + 1).split('\n')
+    return `${rel}:${lines.length}:${lines[lines.length - 1]!.length + 1}`
+  }
+  throw new Error(`sourceNodeId: the source has no <${tag} #${occurrence}`)
 }
 
 /** Read the `.tsx` a node id points at, out of the fixture project on disk. */
@@ -657,4 +747,54 @@ export function changedProjectFiles(
   }
   for (const rel of before.keys()) if (!after.has(rel)) removed.push(rel)
   return { modified: modified.sort(), added: added.sort(), removed: removed.sort() }
+}
+
+/** The zoom percentage `ZoomControls` currently displays (its debounced, committed value). */
+export async function readZoomPercent(page: Page): Promise<number> {
+  const text = await page.getByTestId('toolbar-zoom-controls').locator('button', { hasText: '%' }).textContent()
+  const match = text?.match(/(\d+)%/)
+  if (!match) throw new Error(`readZoomPercent: could not parse a percentage from "${text}"`)
+  return Number(match[1])
+}
+
+/**
+ * Reaches `targetPct` via a REAL ctrl+wheel zoom gesture (`useCanvas.ts`'s
+ * `handleWheel`, `math.ts`'s `zoomFromWheelDelta`: `factor = 0.9985 **
+ * deltaY`), anchored at the canvas root's center so the frame doesn't drift
+ * off-screen mid-zoom. Computes the analytic delta needed from the CURRENT
+ * displayed zoom, then verifies against the debounced (~100ms) committed
+ * value and nudges again if still outside `tolerancePct` — `ZoomControls`
+ * only displays the store's committed `zoom`, never the ref-driven live
+ * value, so every read needs the settle wait.
+ */
+export async function zoomToPercent(
+  page: Page,
+  canvasRoot: Locator,
+  targetPct: number,
+  tolerancePct = 1,
+): Promise<void> {
+  const rootBox = await canvasRoot.boundingBox()
+  if (!rootBox) throw new Error('zoomToPercent: the canvas root has no bounding box')
+  const anchorX = rootBox.x + rootBox.width / 2
+  const anchorY = rootBox.y + rootBox.height / 2
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const currentPct = await readZoomPercent(page)
+    if (Math.abs(currentPct - targetPct) <= tolerancePct) return
+
+    const factor = targetPct / currentPct
+    const deltaY = Math.log(factor) / Math.log(0.9985)
+
+    await page.mouse.move(anchorX, anchorY)
+    await page.keyboard.down('Control')
+    await page.mouse.wheel(0, deltaY)
+    await page.keyboard.up('Control')
+    // Store commit is debounced ~100ms after the last wheel event
+    // (useCanvas.ts's scheduleStoreCommit) — ZoomControls reads the
+    // committed value, not the ref-driven live transform.
+    await page.waitForTimeout(220)
+  }
+  throw new Error(
+    `zoomToPercent: could not reach ${targetPct}% (stuck at ${await readZoomPercent(page)}%) after 8 attempts`,
+  )
 }

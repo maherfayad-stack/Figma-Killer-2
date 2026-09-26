@@ -106,6 +106,13 @@ export interface IframeFrameSurfaceProps {
    * is written out at length for.
    */
   onContentReadyChange?: (ready: boolean) => void
+  /**
+   * P5-G — `'content'` (default): a design frame grows to its content
+   * (`useIframeFrameAutoHeight`). `'fixed'`: the caller sizes the iframe
+   * through `style` and nothing measures it — the free-canvas surface, a
+   * window over the board whose hosts are absolutely positioned.
+   */
+  sizing?: 'content' | 'fixed'
 }
 
 export interface IframeFrameSurfaceHandle {

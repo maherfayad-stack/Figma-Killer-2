@@ -1,6 +1,6 @@
 /**
  * flipValue — pure read/write for Figma's Flip horizontal / Flip vertical
- * (F1, `docs/features/inspector-disclosure.md` §4 G10), backed by the
+ * (F1, `docs/features/inspector.md` §4 G10), backed by the
  * STANDALONE `scale` CSS property.
  *
  * Why `scale` and not `transform: scaleX(-1)`: the same reason `RotationRow`

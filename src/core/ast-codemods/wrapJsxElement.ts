@@ -51,7 +51,7 @@ import {
   writeVerbatimSource,
 } from './jsxChildRange'
 import { indentUnit, lineIndentAt, reindentBlock } from './jsxChildPlacement'
-import { conflictingBinding, resolveImportEdits } from './jsxImportEdits'
+import { planImportBindings, resolveImportEdits } from './jsxImportEdits'
 import { validateSubtree, type InsertJsxRefusalReason } from './jsxSubtree'
 import { ancestorTagNames, intrinsicTagName, resolveWrapperTag } from './wrapperContentModel'
 import { createdJsxLocation, offsetAfterEdits, type CreatedJsxLocation } from './createdJsxLocation'
@@ -123,17 +123,14 @@ export function wrapJsxElement(params: WrapJsxElementParams): WrapJsxElementResu
     memberTags: [intrinsicTagName(target.range.element)],
   })
   if (!wrapper.ok) return refuse(wrapper.refusal.reason, wrapper.refusal.message)
-  const tag = wrapper.name
-
-  if (importSpecifier !== undefined) {
-    const binding = conflictingBinding(sourceFile, name, importSpecifier)
-    if (binding) {
-      return refuse(
-        'binding-conflict',
-        `This file already uses the name "${name}" for something else (${binding}), so wrapping with that component here would shadow it. Rename one of them in the file first.`,
-      )
-    }
-  }
+  // WB-19 — a component whose name the file already uses for something else
+  // is imported under an alias (`{ Card as Card2 }`) and written by it,
+  // never refused: the alias renders the same component and shadows nothing.
+  const bindings = planImportBindings(
+    sourceFile,
+    importSpecifier === undefined ? new Map() : new Map([[wrapper.name, { specifier: importSpecifier }]]),
+  )
+  const tag = bindings.localName(wrapper.name)
 
   const verbatim = verbatimSourceText(sourceFile, file)
   if (verbatim === null) {
@@ -160,11 +157,7 @@ export function wrapJsxElement(params: WrapJsxElementParams): WrapJsxElementResu
       ].join('\n')
     : `<${tag}>${subtree}</${tag}>`
 
-  const importEdits = resolveImportEdits(
-    sourceFile,
-    verbatim,
-    importSpecifier === undefined ? new Map() : new Map([[tag, { specifier: importSpecifier }]]),
-  )
+  const importEdits = resolveImportEdits(sourceFile, verbatim, bindings.required)
 
   writeVerbatimSource(
     sourceFile,

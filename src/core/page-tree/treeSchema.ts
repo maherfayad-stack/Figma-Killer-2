@@ -3,7 +3,7 @@
  * codebase: pages, Visual Components, and (via materialization as locked
  * `base.slot-instance` children) slot fills inside VC refs.
  *
- * Architecture source: docs/superpowers/plans/2026-05-06-tree-unification.md
+ * Architecture source: docs/reference/page-tree.md
  *
  * Shape:
  *

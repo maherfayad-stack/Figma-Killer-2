@@ -7,9 +7,9 @@
  * (`StudioEditBatchResult.refusals` — `detach`/`swap`/`css`/`class`), the
  * client's own class-TOKEN refusals (`classNameWriteback.ts`), the classes
  * whose declarations have no stylesheet to land in ever
- * (`styleRuleWriteback.ts`'s `unmapped`), and Z8's destination refusals — the
- * one family here that is a QUESTION rather than a statement, and therefore
- * the one that opens a `RefusalDialog` instead of a toast. Split out of
+ * (`styleRuleWriteback.ts`'s `unmapped`), and the at-rule contexts Studio
+ * cannot write. (A new class's DESTINATION is not among them since P3-C: the
+ * editor chooses it, or creates the stylesheet.) Split out of
  * `fsCodemodAdapter.ts` for the `module-size-budgets` ceiling and because
  * "what a refusal reads like to a person" is a different reason to change
  * than "which edits to send".
@@ -35,12 +35,22 @@
  * Deliberately a module-level set rather than store state: it is per-session
  * UI noise control with no undo, no persistence, and no renderer — the same
  * shape and the same reason as `studioRawCssStores.ts`'s tiny external stores.
+ *
+ * ## Warnings, each with its remedy (WB-13)
+ *
+ * Every report here is a `warning`, never an `error`. A refusal is the editor
+ * keeping a promise — it would not write something it could not write
+ * honestly — and the file is exactly as it was; nothing broke. Where a refusal
+ * has a place in the code the person can go and fix, the warning carries that
+ * one click ("Open in code"). A red card is for a failure the user did not
+ * cause and cannot act on, and a save-time refusal is neither.
  */
-import { explainCssRuleConstraint } from '@core/page-tree'
+import { decodeSourceNodeId } from '@core/page-tree'
 import { pushToast, type ToastInput } from '@ui/components/Toast'
-import type { StructuralRefusalDialogState } from '@site/store/slices/structuralRefusalDialogState'
+import { jumpToSource } from '@site/panels/PropertiesPanel/jumpToSource'
+import { useEditorStore } from '@site/store/store'
 import type { ClassTokenRefusal } from './classNameWriteback'
-import type { CssDestinationRefusal, StyleRuleEditPlan, UnmappedStyleRule } from './styleRuleWriteback'
+import type { StyleRuleEditPlan, UnmappedStyleRule } from './styleRuleWriteback'
 
 /** One `StudioEditBatchResult.refusals` entry — the server's named per-edit declines. */
 export interface StudioEditRefusalReport {
@@ -51,12 +61,11 @@ export interface StudioEditRefusalReport {
 }
 
 /**
- * A `detach`/`swap`/`css`/`class` refusal is a NAMED, expected outcome (Card
- * uses a hook, the new name would shadow a binding, this stylesheet is a
- * compiled build artefact, …), so it gets a toast carrying the actual reason
- * rather than folding into the generic "no writable location" message, which
- * would be actively misleading — the location WAS writable; the codemod
- * declined on purpose.
+ * Every refusal is a NAMED, expected outcome (Card uses a hook, the new name
+ * would shadow a binding, this stylesheet is a compiled build artefact, this
+ * element holds more than text …), so it gets a warning carrying the actual
+ * reason. WB-12 — every kind refuses by name now, so there is no generic
+ * "no writable location" message left to fall back on.
  */
 const REFUSAL_TITLES: Record<string, string> = {
   detach: 'Detach refused',
@@ -64,10 +73,35 @@ const REFUSAL_TITLES: Record<string, string> = {
   css: 'Style not saved to source',
   class: 'Class change not saved to source',
   style: 'Inline style not saved to source',
+  // WB-11 — `binding-overwrite`: the attribute holds code, and a literal
+  // written over it would delete the binding.
+  prop: 'Property not saved to source',
   // W4-4 Phase B — a declaration edit that could not land inside a
   // styled-component template (an interpolated value, a covering shorthand, a
   // declaration written in a spliced mixin).
   styled: 'Style not saved to source',
+  text: 'Text not saved to source',
+  literal: 'Copy not saved to source',
+  tag: 'Tag not changed in source',
+  asset: 'Image not saved to source',
+}
+
+/** A refusal whose REASON tells the story better than its kind. */
+const REASON_TITLES: Record<string, string> = {
+  // WB-24 — any kind refuses this way, and the file, not the edit, is the story.
+  'syntax-error': 'Not saved: the file has a syntax error',
+  'write-failed': 'Not saved to source',
+}
+
+/**
+ * The one-click remedy for a refusal: open the code it names. `null` when the
+ * refusal names no source position (a `css` edit's synthetic id) — then the
+ * sentence is the whole answer.
+ */
+function openInCodeRemedy(nodeId: string): ToastInput['action'] {
+  const target = decodeSourceNodeId(nodeId)
+  if (!target) return undefined
+  return { label: 'Open in code', onSelect: () => jumpToSource(target) }
 }
 
 let seen = new Set<string>()
@@ -84,27 +118,40 @@ function toastOnce(key: string, toast: ToastInput): void {
   pushToast(toast)
 }
 
-/** Reports every server-side per-edit refusal from one save response. */
+/**
+ * Reports every server-side per-edit refusal from one save response.
+ *
+ * Keyed on the refusal's SOURCE TARGET, not its node id. Every instance of a
+ * shared component writes back to one location, and WB-7's merge reports one
+ * refused write once per instance that contributed to it (so each instance's
+ * baseline is held back) — that is one refusal to the user, not N toasts.
+ */
 export function reportEditRefusals(refusals: readonly StudioEditRefusalReport[]): void {
   for (const refusal of refusals) {
-    toastOnce(`${refusal.kind}::${refusal.nodeId}::${refusal.reason}`, {
-      kind: 'error',
-      title: REFUSAL_TITLES[refusal.kind] ?? 'Edit refused',
+    const target = decodeSourceNodeId(refusal.nodeId)
+    const targetKey = target ? `${target.rel}:${target.line}:${target.col}` : refusal.nodeId
+    const action = openInCodeRemedy(refusal.nodeId)
+    toastOnce(`${refusal.kind}::${targetKey}::${refusal.reason}`, {
+      kind: 'warning',
+      title: REASON_TITLES[refusal.reason] ?? REFUSAL_TITLES[refusal.kind] ?? 'Edit refused',
       body: refusal.message,
+      ...(action ? { action } : {}),
     })
   }
 }
 
 /**
- * `style-02` — a class whose TOKEN could not be resolved honestly (the
- * stylesheet the server is about to create in this same save, a destination
- * Studio refuses to guess). The node's `classIds` baseline is held back by
- * the caller, so the assignment is retried on the next save rather than lost.
+ * `style-02` — a class whose TOKEN could not be resolved honestly (a
+ * styled-component's synthetic class, which has no token at all). The node's
+ * `classIds` baseline is held back by the caller, so the assignment is
+ * retried on the next save rather than lost. A class waiting on a stylesheet
+ * this same save creates is NOT reported here (ERR-15): it attaches on the
+ * save that follows at once.
  */
 export function reportClassTokenRefusals(refusals: readonly ClassTokenRefusal[]): void {
   for (const refusal of refusals) {
     toastOnce(`class-token::${refusal.nodeLabel}::${refusal.className}::${refusal.reason}`, {
-      kind: 'error',
+      kind: 'warning',
       title: 'Class not attached in source',
       body: `${refusal.className} on ${refusal.nodeLabel}: ${refusal.message}`,
     })
@@ -118,97 +165,46 @@ export function reportClassTokenRefusals(refusals: readonly ClassTokenRefusal[])
  * hand-editable CSS file in this project" while the appended reason said
  * "Studio found 4 candidate stylesheets".
  *
- * Z8 — that second sentence no longer arrives here at all. A class refused
- * because its DESTINATION is ambiguous is not unmapped; it is unanswered, and
- * it goes to `presentCssDestinationRefusals` instead. What is left in this
- * list is the genuinely permanent tier: a Tailwind utility, a compiled build
- * artefact, a styled template Studio will not rewrite.
+ * That second sentence no longer arrives here at all — P3-C's ERR-14 made the
+ * destination of a new class something the editor chooses, never a refusal.
+ * What is left in this list is the genuinely permanent tier: a Tailwind
+ * utility, a compiled build artefact, a styled template Studio will not
+ * rewrite.
  */
 function reportUnmappedStyleRules(unmapped: readonly UnmappedStyleRule[]): void {
   for (const entry of unmapped) {
     toastOnce(`css-unmapped::${entry.label}::${entry.reason ?? ''}`, {
-      kind: 'error',
+      kind: 'warning',
       title: 'Style not saved to source',
       body: entry.reason
         ? `${entry.label}: ${entry.reason}`
         : `${entry.label} has no hand-editable CSS file in this project (a generated utility class, a compiled ` +
           'build artefact, or a stylesheet syntax Studio does not write), so this change stays on the canvas ' +
           'only and will be lost on reload. Style the element instead to write it to source.',
+      // WB-30 (P3-C, partial) — the remedy the sentence names, one click away:
+      // the same inline-style target `ClassCssLockedNotice`'s button and the
+      // Element chip switch to. It does not MOVE the declarations already typed
+      // into the class; that is still the user's next edit.
+      action: { label: 'Style the element instead', onSelect: () => useEditorStore.getState().setInlineStyleEditing(true) },
     })
   }
 }
 
-/**
- * The title `RefusalDialog` shows for a destination the user has to choose.
- * Phrased as the question it is — the dialog's body carries the reason, and
- * its buttons are the answers.
- */
-const CSS_DESTINATION_DIALOG_TITLE = 'Which stylesheet should this class live in?'
 
 /**
- * Z8 — a brand-new class whose first declarations had no single honest
- * stylesheet to land in.
- *
- * **`ambiguous-stylesheet` is a CHOICE, not a toast.** N hand-editable
- * stylesheets exist and every one of them is a real write target; the refusal
- * carries all of them, so this opens `RefusalDialog` with one remedy per file
- * (`choose-stylesheet`, dispatched by `constraintActions.ts`). Picking one
- * pins the destination and re-issues the save — the declarations the user
- * already typed are still in the diff, because the caller holds this rule's
- * baseline back. Reporting that as a red toast, as this used to, threw a
- * question the user could answer in one click into a sentence they could only
- * read.
- *
- * `no-editable-stylesheet` keeps a toast, and that is not an oversight: it
- * means there were ZERO candidates and neither the class nor the page on
- * screen names a file to co-locate a new one with. There is nothing to choose
- * between, so a dialog would be a modal with no answer in it — exactly the
- * split `presentStructuralRefusal` already makes between a refusal with
- * remedies and a terminal one.
- *
- * De-duped through the same per-session `toastOnce` key as every other
- * refusal here, for a reason specific to this one: the held-back baseline
- * means the refusal RECURS on every autosave tick until it is answered. An
- * un-deduped dialog would reopen itself every two seconds, including over the
- * top of the user answering it.
- */
-function presentCssDestinationRefusals(
-  refusals: readonly CssDestinationRefusal[],
-  openDialog: (dialog: StructuralRefusalDialogState) => void,
-): void {
-  for (const refusal of refusals) {
-    const key = `css-destination::${refusal.ruleId}::${refusal.reason}::${refusal.candidates.join(',')}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    const constraint = explainCssRuleConstraint(refusal.reason, `${refusal.label}: ${refusal.message}`, {
-      ruleId: refusal.ruleId,
-      candidates: refusal.candidates,
-    })
-    if (refusal.candidates.length > 0) {
-      openDialog({ title: CSS_DESTINATION_DIALOG_TITLE, constraint })
-      continue
-    }
-    pushToast({
-      kind: 'error',
-      title: 'Style not saved to source',
-      body: constraint.explanation,
-    })
-  }
-}
-
-/**
- * Every way one save's CSS plan declined, each told in the shape it deserves:
- * a permanently unmapped class and an unwritable at-rule context toast, a
- * destination question opens a dialog. The single entry point `saveSite`
+ * Every way one save's CSS plan declined: a permanently unmapped class and an
+ * unwritable at-rule context, each a warning. The single entry point `saveSite`
  * calls, because "which surface does this refusal belong on" is this module's
  * decision to make and the adapter's only job is to hand over the plan.
+ *
+ * P3-C — there used to be a third family, a new class's DESTINATION, which
+ * opened a "Which stylesheet should this class live in?" `RefusalDialog`
+ * ~2 s after the first keystroke (ERR-14) or toasted "Style not saved to
+ * source" for a project with no stylesheet yet (ERR-15). The planner now
+ * chooses, or creates the first stylesheet, so nothing is asked.
  */
-export function reportStyleRulePlanRefusals(
-  plan: StyleRuleEditPlan,
-  openDialog: (dialog: StructuralRefusalDialogState) => void,
-): void {
+export function reportStyleRulePlanRefusals(plan: StyleRuleEditPlan): void {
   reportUnmappedStyleRules(plan.unmapped)
-  presentCssDestinationRefusals(plan.destinationRefusals, openDialog)
   reportUnwritableContexts(plan.unwritableContexts)
 }
 
@@ -223,27 +219,26 @@ export function styleRulePlanTouchedSomething(plan: StyleRuleEditPlan): boolean 
   return (
     plan.edits.length > 0 ||
     plan.unmapped.length > 0 ||
-    plan.destinationRefusals.length > 0 ||
     plan.unwritableContexts.length > 0
   )
 }
 
 /**
- * `style-03` — a context Studio genuinely cannot write. A breakpoint or a
- * `kind: 'media'` condition now goes to disk through `setDeclarationAtMedia`;
- * what is left is `@container` / `@supports`, which are a different at-rule
- * entirely. Writing one as `@media` would put the declaration under a
+ * `style-03` — a context Studio genuinely cannot write. Every breakpoint and
+ * every `media`/`container`/`supports` condition goes to disk inside its own
+ * block (P3-C, WB-31 — `@container`/`@supports` used to land here). What is
+ * left is an override under a context the document no longer defines: there
+ * is no block to name, and guessing one would put the declaration under a
  * condition the user did not ask for — worse than saying so.
  */
 function reportUnwritableContexts(labels: readonly string[]): void {
   for (const label of labels) {
     toastOnce(`css-context::${label}`, {
-      kind: 'error',
+      kind: 'warning',
       title: 'Override not saved to source',
       body:
-        `${label} changed under a container or feature query. Studio writes breakpoint overrides as @media ` +
-        'blocks, and cannot yet write @container or @supports, so this override stays on the canvas only and ' +
-        'will be lost on reload.',
+        `${label} changed under a breakpoint or condition this project no longer defines, so there is no block ` +
+        'to write it into and it stays on the canvas only.',
     })
   }
 }

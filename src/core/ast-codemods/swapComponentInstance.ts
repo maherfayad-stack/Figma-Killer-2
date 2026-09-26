@@ -16,7 +16,8 @@ import { Node, Project, QuoteKind, type SourceFile } from 'ts-morph'
 import { createWorkspaceProject, getFunctionLikeNode, resolveExportedDeclaration } from '@core/page-parser'
 import { findJsxElementAtLocationOrThrow, loadSourceFile } from './locateJsxElement'
 import { buildParamBindings } from './detachComponent'
-import { relativeSpecifier, removeImportIfLastUsage, topLevelBindingNames } from './importReconcile'
+import { relativeSpecifier, removeImportIfLastUsage } from './importReconcile'
+import { planImportBindings } from './jsxImportEdits'
 
 export interface SwapComponentInstanceParams {
   /** Absolute path to the page file holding the call site. */
@@ -32,7 +33,7 @@ export interface SwapComponentInstanceParams {
   project?: Project
 }
 
-export type SwapRefusalReason = 'not-a-component' | 'unresolvable' | 'name-shadow' | 'same-component'
+export type SwapRefusalReason = 'not-a-component' | 'unresolvable' | 'same-component'
 
 export interface SwapRefusal {
   reason: SwapRefusalReason
@@ -109,17 +110,18 @@ function tryAddSourceFile(project: Project, abs: string): SourceFile | undefined
 function findNamedOrDefaultDeclaration(sourceFile: SourceFile, name: string) {
   const direct = sourceFile.getFunction(name) ?? sourceFile.getVariableDeclaration(name)
   if (direct) return direct
-  const declaring = resolveExportedDeclaration(sourceFile, name)
-  if (declaring) {
-    return declaring.sourceFile.getFunction(declaring.name) ?? declaring.sourceFile.getVariableDeclaration(declaring.name)
-  }
-  return undefined
+  // The declaration node itself, not a second lookup by name: a re-exported
+  // default (`export { default as Card } from './Card'`) has no name to find.
+  return resolveExportedDeclaration(sourceFile, name)?.node
 }
 
 /**
  * Swaps the component instance at (file, line, col) for `newComponentName`.
- * Refuses (never guesses) when the new name would shadow an existing
- * binding, or when the target location isn't a component call site at all.
+ * Refuses (never guesses) when the target location isn't a component call
+ * site at all. When the new name is already bound in this file to something
+ * else, the component is imported under an alias and the tag written by it
+ * (P3-C, WB-19 — this used to refuse `name-shadow`); when the file already
+ * imports it, under any local name, that import is reused.
  */
 export function swapComponentInstance(params: SwapComponentInstanceParams): SwapResult {
   const { file, line, col, workspaceRoot, newComponentName, newComponentSource, newComponentFile } = params
@@ -138,16 +140,14 @@ export function swapComponentInstance(params: SwapComponentInstanceParams): Swap
     return refuse('same-component', `Already an instance of ${newComponentName}.`)
   }
 
-  const existingNames = topLevelBindingNames(sourceFile)
-  // Shadowing is only a real conflict against a DIFFERENT binding — the
-  // identifier being swapped OUT is about to be removed (if unused
-  // elsewhere), so it doesn't count against itself.
-  if (existingNames.has(newComponentName) && newComponentName !== identifier) {
-    return refuse(
-      'name-shadow',
-      `"${newComponentName}" is already used by another import/declaration in this file — rename it first, or pick a different component.`,
-    )
-  }
+  const specifier = newComponentSource === 'local'
+    ? relativeSpecifier(file, path.resolve(workspaceRoot, newComponentFile))
+    : newComponentFile
+  // WB-19 — the local name the new component is written by: its own, an
+  // existing import's, or an alias that shadows nothing.
+  const bindings = planImportBindings(sourceFile, new Map([[newComponentName, { specifier }]]))
+  const localName = bindings.localName(newComponentName)
+  const requirement = bindings.required.get(localName)!
 
   // Prop diff — computed BEFORE any edits, against the ORIGINAL call site's
   // own attribute set.
@@ -174,11 +174,11 @@ export function swapComponentInstance(params: SwapComponentInstanceParams): Swap
   // check `.getParent()` when `opening` is a `JsxOpeningElement`. Get this
   // wrong and a swapped instance nested inside another element renames the
   // CONTAINING element's closing tag instead (mismatched tags, broken JSX).
-  opening.getTagNameNode().replaceWithText(newComponentName)
+  opening.getTagNameNode().replaceWithText(localName)
   if (Node.isJsxOpeningElement(opening)) {
     const parent = opening.getParent()
     if (Node.isJsxElement(parent)) {
-      parent.getClosingElement().getTagNameNode().replaceWithText(newComponentName)
+      parent.getClosingElement().getTagNameNode().replaceWithText(localName)
     }
   }
 
@@ -189,12 +189,22 @@ export function swapComponentInstance(params: SwapComponentInstanceParams): Swap
     if (removedProps.includes(name)) attr.remove()
   }
 
-  // Add/repoint the import.
-  const specifier = newComponentSource === 'local'
-    ? relativeSpecifier(file, path.resolve(workspaceRoot, newComponentFile))
-    : newComponentFile
-  sourceFile.addImportDeclaration({ moduleSpecifier: specifier, namedImports: [newComponentName] })
-  if (identifier !== newComponentName) removeImportIfLastUsage(sourceFile, identifier)
+  // Add the import — unless the file already binds this export to `localName`.
+  const alreadyImported = sourceFile
+    .getImportDeclarations()
+    .some(
+      (declaration) =>
+        declaration.getModuleSpecifierValue() === specifier &&
+        declaration.getNamedImports().some((named) => (named.getAliasNode() ?? named.getNameNode()).getText() === localName),
+    )
+  if (!alreadyImported) {
+    const imported = requirement.imported ?? localName
+    sourceFile.addImportDeclaration({
+      moduleSpecifier: specifier,
+      namedImports: [imported === localName ? localName : { name: imported, alias: localName }],
+    })
+  }
+  if (identifier !== localName) removeImportIfLastUsage(sourceFile, identifier)
 
   sourceFile.saveSync()
 

@@ -19,6 +19,9 @@
  *     the rest, because there is no JSX Studio could write for them.
  *   - **Layouts** — saved layouts, then one group per plugin pack.
  *   - **Saved components** — the project's Visual Components.
+ *   - **Images** — the project's own image files (`ImagesSection`, IMG-6):
+ *     drag one onto a frame, or click to add it beside the selection. Nothing
+ *     is uploaded; the insert references the file where it already is.
  *   - **Icons** — the design system's own icon set (`IconsSection`).
  *   - **Colors** — the built-in design system's palette (`ColorsSection`).
  *     Copy a variable, or apply one to the selected layer's fill or text.
@@ -58,6 +61,7 @@ import { AssetGrid, AssetGroupLabel, AssetSection } from './AssetSection'
 import { buildColorAssetItems } from './colorTokens'
 import { ColorsSection } from './ColorsSection'
 import { IconsSection } from './IconsSection'
+import { ImagesSection } from './ImagesSection'
 import { PackageBundleNotice } from './PackageBundleNotice'
 import { SavedLayoutManageMenu, type SavedLayoutMenuState } from './SavedLayoutManageMenu'
 import { subscribeAssetsSearchFocus } from './assetsPanelFocus'
@@ -98,6 +102,7 @@ type SectionId =
   | 'elements'
   | 'layouts'
   | 'components'
+  | 'images'
   | 'icons'
   | 'colors'
 
@@ -171,11 +176,11 @@ export function AssetsPanel() {
   // preview overlay is drawn once for the whole panel (`CanvasInsertionDragOverlay`
   // below), exactly the shape the notch's own primitives already use.
   const canvasDrag = useCanvasInsertionDrag<AssetItem>({
-    onDrop: (item, location) => handleInsert(item, location, 'drop'),
+    onDrop: (item, location) => handleInsert(item, location),
   })
 
-  function handleInsert(item: AssetItem, target?: InsertLocation, mode: 'click' | 'drop' = 'click') {
-    if (!insertItem(item, target, mode)) return false
+  function handleInsert(item: AssetItem, target?: InsertLocation) {
+    if (!insertItem(item, target)) return false
     trackAssetInsert(refForAssetItem(item))
     setRecentRefs(readAssetPrefs().recent)
     return true
@@ -231,7 +236,7 @@ export function AssetsPanel() {
           ref={searchRef}
           value={query}
           onValueChange={setQuery}
-          placeholder="Search components, icons & colors…"
+          placeholder="Search components, images, icons & colors…"
           aria-label="Search assets"
         />
       </div>
@@ -318,6 +323,12 @@ export function AssetsPanel() {
             <AssetGrid>{renderCards(rankedComponents)}</AssetGrid>
           )}
         </AssetSection>
+
+        <ImagesSection
+          query={query}
+          collapsed={collapsed.has('images')}
+          onToggle={() => toggleSection('images')}
+        />
 
         <IconsSection
           query={query}

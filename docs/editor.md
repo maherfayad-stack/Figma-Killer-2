@@ -1,4 +1,5 @@
 # Editor
+> **Purpose:** the admin shell and visual editor in depth: routing, store, canvas, sidebars, panels · **Read when:** changing the editor UI or its store wiring · **Trust:** current · **Owner:** store-engineer · **Verified:** not yet
 
 Deep dive on the admin app and the visual editor — how the SPA boots, how routing works, how the editor store mutates pages, how the canvas renders.
 
@@ -324,7 +325,7 @@ The store is composed of **12 slices**, each created by a factory in `store/slic
 | Slice                  | Owns                                                                       |
 |------------------------|----------------------------------------------------------------------------|
 | `siteSlice`            | `SiteDocument` (pages, nodes, breakpoints, settings, classes, files). The page tree itself. |
-| `selectionSlice`       | `selectedNodeId`, `hoveredNodeId`                                          |
+| `selectionSlice`       | `selectedNodeIds`, `selectedNodeId` (hover is off the store: `canvas/canvasHover.ts`) |
 | `canvasSlice`          | Zoom, pan, `activeBreakpointId`, `activeConditionId`, `canvasMode` ('select'|'pan'|'insert'), `canvasView` ('design'|'live'), `runScripts` |
 | `uiSlice`              | Site editor panel visibility, unsaved-changes flag, insert picker, `componentizeEditorRequest` |
 | `classSlice`           | Style-rule CRUD, node ↔ class assignment, ambient selector creation         |
@@ -825,6 +826,7 @@ control, a Spotlight command, or a link from the Overview launcher).
   - `src/admin/pages/site/store/slices/site/explorerActions.ts` — 6 explorer store actions wired to `mutateSite`
   - `src/admin/pages/site/hooks/useInsertInserterItem.ts` — the shared handler every insert surface routes a picked item through (the Assets panel's cards, the canvas selection toolbar)
   - `src/admin/pages/site/property-controls/SlotPicker.tsx` — the `node`-kind prop picker: package icon FILES, `*Icon` React exports, the project's own components, and SVG upload. Every source leaves as one `SlotJsxNode`; an SVG is written INLINE (`svgToJsxNode.ts`), never as an import
+  - `src/admin/pages/site/studio/svgToJsxNode.ts` + `svgImportStyles.ts` — the ONE SVG markup → JSX converter; both SVG writers (the slot picker, and `store/slices/site/insertablePropValues.ts` for a module default's `{ svg }` icon) go through it. It sanitises, then rewrites what would make React throw or paint wrong: a `style="…"` string becomes presentation attributes (`fill`, `strokeWidth`, `opacity`, … — React's own alias list) plus a `style={{…}}` object for the rest, never a string; `<style>` blocks have their single-class rules (`.cls-1`, Illustrator's only kind) resolved onto the matching elements by the real cascade (rule < inline `style` < `!important`) and are dropped, and any other selector or `@`-rule refuses with a sentence telling the user to re-export with presentation attributes; every `id` gets a per-insert random suffix with `url(#…)`, `href="#…"` and `aria-labelledby`/`-describedby` rewritten to match, so two inserts of one gradient icon never share ids. Paint that arrived as SVG-internal CSS becomes the weakest cascade source, so the user's page CSS can now recolour it — deliberate (it is how a hand-written icon behaves). Every reference stays inside the graphic (P5-D SVG-2): `href`/`xlink:href` survive only as a same-document `#fragment` and are written as `href` (the sanitiser's `keepSvgFragmentHref` hook keeps them, and adds `<use>` back to DOMPurify's svg profile), and a `url(…)` that is neither a `#fragment` nor an inline `data:image/…` — in an attribute, a `style` string or a `<style>` rule, CSS escapes resolved — refuses the import with a sentence naming it, because DOMPurify does not vet CSS and it used to land in the user's `.tsx` as a remote fetch
   - `src/admin/pages/site/property-controls/TokenAwareInput.tsx` — shared token-autocomplete input primitive (suggestion filtering, commit, live preview, Suggested/All dropdown)
   - `src/admin/pages/site/property-controls/tokenUtils.ts` — `Token` shape, `useSpacingTokens`, `useTypographyTokens` hooks, and pure helpers (`resolveTokenValue`, `displayTokenValue`, `looksLikeDirectValue`, `isLivePreviewable`)
 - Gate tests:

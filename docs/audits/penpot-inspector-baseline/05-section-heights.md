@@ -1,4 +1,8 @@
 # 05 — Studio's own per-section heights, and the 900px Design-tab budget
+> **Trust:** historical, dated 2026-09-09; the tables were re-measured on
+> 2026-09-23 by P2-F (the design pane's spacing), which is what the "P2-F"
+> columns and sections below record, and again the same day by P2-G (the
+> Component section, which added F5). Paths may still be wrong elsewhere.
 
 Unlike `00`–`04`, this file measures **Studio**, not Penpot. It exists because
 `docs/features/inspector.md` §6's oldest claim — *a text node's entire
@@ -11,11 +15,14 @@ WS-14.5 turns it into a gate; this file is the number that gate moves.
 > viewport against **960 / 1190 / 1013 / 1043px** for F1–F4 — 334–564px over.
 > panel-39's density pass: **718px** of room against **690 / 916 / 909 /
 > 773px** — 0 / 198 / 191 / 55 over. panel-41's second: **746px** of room
-> against **608 / 782 / 725 / 603px** — **0 / 36 / 0 / 0**. Three of the four
-> fixtures fit outright, with 138 / 21 / 143px of headroom, and the gate is
-> asserted strictly against the room for those three. The one that does not
-> is F2, a text layer, and all 36px of it is populated section content named
-> with numbers under "What is left" below.
+> against **608 / 782 / 725 / 603px** — **0 / 36 / 0 / 0**. P2-F then
+> SPENT height on segregation (a 12px section gap, a real header and a
+> hairline on the props block) and paid for it with the Shadow + Blur merge
+> and 4px rows inside a group: **598 / 772 / 715 / 601px** — **0 / 26 / 0 /
+> 0**. Three of the four fixtures fit outright, with 148 / 31 / 145px of
+> headroom, and the gate is asserted strictly against the room for those
+> three. The one that does not is F2, a text layer, and all 26px of it is
+> populated section content named with numbers under "What is left" below.
 
 ## Two tables, and why neither replaces the other
 
@@ -34,7 +41,8 @@ measured one catches the panel *chrome* that no static sum can see.
 ## The computed Design-tab table — F2 (text)
 
 Rest state, `--inspector-header-h` / `--inspector-row-h` = 32px,
-within-group gap 4px, between-section gap `--inspector-space-m` = 8px.
+within-group gap 4px, between-section gap `--inspector-section-gap` = 12px
+(P2-F; it was `--inspector-space-m`, 8px).
 
 | Section | Header | Rest rows | Height |
 |---|---|---:|---:|
@@ -44,17 +52,17 @@ within-group gap 4px, between-section gap `--inspector-space-m` = 8px.
 | `layout` | ✓ | 0 (collapsed until a layout exists) | 32 |
 | `fill` | ✓ | 0 (empty state) | 32 |
 | `stroke` | ✓ | 0 | 32 |
-| `shadow` | ✓ | 0 | 32 |
-| `blur` | ✓ | 0 | 32 |
+| `effects` | ✓ | 0 | 32 |
 | `text` | ✓ | 4 | 172 |
 | `export` | ✓ | 0 | 32 |
 | **`more`** (collapsed) | ✓ | 0 | **32** |
-| between-section gaps | | 10 × 8 | 80 |
-| **Design-tab sections total** | | | **612** |
+| between-section gaps | | 8 × 12 | 96 |
+| **Design-tab sections total** | | | **596** |
 
-`align` renders `null` for this fixture (no flex/grid parent) but still
-occupies a grid item, so it contributes 0px of height and one full gap. That
-is counted, not skipped.
+`align` renders `null` for this fixture (no flex/grid parent), and its empty
+`[data-section-id]` wrapper is `display: none` (`StyleSurface.module.css`'s
+`[data-section-id]:empty`), so it is not a grid item and costs no gap. This
+table used to count one for it, which the measured table never agreed with.
 
 ### How 756 became 612
 
@@ -64,14 +72,18 @@ is counted, not skipped.
 | section gap 12 → 8 (Figma's and Penpot's own measured step), ten gaps | −40 |
 | Layout's rest state: 3 rows + header → header only | −104 |
 | **panel-39** | **612** |
+| P2-F: section gap 8 → 12 (`--inspector-section-gap`), eight gaps | +32 |
+| P2-F: Shadow + Blur → one Effects section (a header and a gap) | −40 |
+| P2-F: `align`'s phantom gap no longer counted | −8 |
+| **P2-F** | **596** |
 
 ### What the More disclosure buys
 
 Before S5 the four Studio-extras sections mounted inline in the same scroll:
 `transform` 32, `animations` 32, `interaction` 32, `customProperties` 64,
 each with its own between-section gap. Folding all four behind one collapsed
-`More` header removes **152px** of always-mounted Design-tab height at the
-8px gap (it was 164 at 12px — three fewer gaps × 4px) without deleting a
+`More` header removes **164px** of always-mounted Design-tab height at the
+12px section gap (152 while panel-39 held it at 8px) without deleting a
 single control. Expanding `More` renders all four exactly as before, in
 manifest order. Three of them (`transform`, `animations`, `interaction`) also
 mount **expanded** on the Prototype tab, which is their real home.
@@ -97,15 +109,15 @@ Shape:
   // blanket `populatedSectionOverflowAllowancePx: 210` is gone — three of the
   // four fixtures fit outright now, so a uniform slack would hide a 200px
   // regression on any of them.
-  "overflowException": { "fixture": "f2-text", "allowancePx": 60 },
+  "overflowException": { "fixture": "f2-text", "allowancePx": 50 },
   "fixtures": {
     "f1-rectangle": {
-      "contentHeight": 608,       // what the tab renders
+      "contentHeight": 598,       // what the tab renders
       "clientHeight": 746,        // THE BUDGET — the room it has at this viewport
       "scrollHeight": 746,        // clamps to the room; recorded, never asserted
       "overflowPx": 0,
-      "headroomPx": 138,
-      "sections": { "module": 26 } // per [data-section-id], rendered px
+      "headroomPx": 148,
+      "sections": { "module": 33 } // per [data-section-id], rendered px
     }
     // f2-text, f3-flex-board, f4-image
   }
@@ -131,14 +143,42 @@ designed. That was the panel-37 defect.
 
 ### Measured, at 1400×900 — the whole panel
 
-| Fixture | Design tab `contentHeight` | Room | Over by | panel-39 | panel-37 |
-|---|---:|---:|---:|---:|---:|
-| F1 rectangle | 608 | 746 | **0** (138 spare) | 0 (28 spare) | 334 over |
-| F2 text | 782 | 746 | **36** | 198 over | 564 over |
-| F3 flex board | 725 | 746 | **0** (21 spare) | 191 over | 387 over |
-| F4 image | 603 | 746 | **0** (143 spare) | 55 over | 417 over |
+| Fixture | P2-F `contentHeight` | Room | Over by | panel-41 | panel-39 | panel-37 |
+|---|---:|---:|---:|---:|---:|---:|
+| F1 rectangle | 598 | 746 | **0** (148 spare) | 608, 0 (138 spare) | 0 (28 spare) | 334 over |
+| F2 text | 772 | 746 | **26** | 782, 36 over | 198 over | 564 over |
+| F3 flex board | 715 | 746 | **0** (31 spare) | 725, 0 (21 spare) | 191 over | 387 over |
+| F4 image | 601 | 746 | **0** (145 spare) | 603, 0 (143 spare) | 55 over | 417 over |
 
-Total overflow across the four: **1702 → 444 → 36**.
+Total overflow across the four: **1702 → 444 → 36 → 26 → 23**.
+
+**P2-G (the Component section)** re-measured all four and added **F5, a local
+component instance** (`<FixtureButton label variant />`, three declared
+props). Before P2-G F5 had no Component section to measure: an instance with
+no writable class drew the "no writable style" notice in place of every
+section, its props included.
+
+| Fixture | P2-G `contentHeight` | Room | Over by | P2-F |
+|---|---:|---:|---:|---:|
+| F1 rectangle | 598 | 746 | **0** (148 spare) | 598 |
+| F2 text | 769 | 746 | **23** | 772 |
+| F3 flex board | 715 | 746 | **0** (31 spare) | 715 |
+| F4 image | 595 | 746 | **0** (151 spare) | 601 |
+| F5 instance | 276 | 746 | **0** (470 spare) | notice only |
+
+F5's Component section is **137px**: the hairline, one 32px title row
+("FixtureButton · Local" with Detach and Swap), and three 32px prop rows 4px
+apart. The old three-bar drawing computes to about 213px for the same props.
+F2's and F4's Module blocks lost 3px per stacked prop row (95 → 92,
+145 → 139): `ControlRow`'s gaps read the frozen inspector scale inside the
+panel now.
+
+**P2-H (panel polish)** re-measured all five. F1–F4 are unchanged (598 / 769 /
+715 / 595). **F5 is 276 → 256**: the "Inline styles come from this
+component's own source." notice under the Component section used fluid
+`--space-4xl`/`--space-5xl` padding (about 20 + 24px at 1400px) and now uses
+the frozen `--inspector-space-xl` (12 + 12px, UX-27). The Component section
+itself is still 137px.
 
 ### Where the room comes from
 
@@ -182,25 +222,42 @@ cannot see (`WriteTargetRow`, the Module block) are visible here. The Module
 block now carries `data-section-id="module"`, so it is in the measured table
 proper rather than invisible to both gates.
 
-| Child | panel-37 | panel-39 | panel-41 |
-|---|---:|---:|---:|
-| `WriteTargetRow` | 32 | 32 | **gone** |
-| Module block (`base.text` props) | 158 | 158 | **80** |
-| `layer` | 32 | 32 | 32 |
-| `align` | 0 | 0 | 0 |
-| `measures` | 122 | 122 | 122 |
-| `layout` | 199 | **33** | 33 |
-| `fill` | 73 | 73 | **65** |
-| `stroke` | 33 | 33 | 33 |
-| `shadow` | 33 | 33 | 33 |
-| `blur` | 33 | 33 | 33 |
-| `text` | 197 | 197 | **189** |
-| `export` | 33 | 33 | 33 |
-| `more` (collapsed) | 33 | 33 | 33 |
-| **sum of children** | **978** | **812** | **686** |
-| grid gaps (11 × 12 → 11 × 8 → 10 × 8) | 132 | 88 | 80 |
-| `.surface` + `.surfaceContent` padding | 80 | **16** | 16 |
-| **total** | **1190** | **916** | **782** |
+| Child | panel-37 | panel-39 | panel-41 | P2-F |
+|---|---:|---:|---:|---:|
+| `WriteTargetRow` | 32 | 32 | **gone** | – |
+| Module block (`base.text` props) | 158 | 158 | **80** | **95** |
+| `layer` | 32 | 32 | 32 | 32 |
+| `align` | 0 | 0 | 0 | 0 |
+| `measures` | 122 | 122 | 122 | **114** |
+| `layout` | 199 | **33** | 33 | 33 |
+| `fill` | 73 | 73 | **65** | 65 |
+| `stroke` | 33 | 33 | 33 | 33 |
+| `shadow` | 33 | 33 | 33 | – |
+| `blur` | 33 | 33 | 33 | – |
+| `effects` | – | – | – | **33** |
+| `text` | 197 | 197 | **189** | **177** |
+| `export` | 33 | 33 | 33 | 33 |
+| `more` (collapsed) | 33 | 33 | 33 | 33 |
+| **sum of children** | **978** | **812** | **686** | **648** |
+| grid gaps (11 × 12 → 11 × 8 → 10 × 8 → 9 × 12) | 132 | 88 | 80 | **108** |
+| `.surface` + `.surfaceContent` padding | 80 | **16** | 16 | 16 |
+| **total** | **1190** | **916** | **782** | **772** |
+
+P2-F's F2 lines, each with its cause (the owner's ask: *"add spacing to
+segregate a bit, specially in between props and the element below"*):
+
+- **The Module block 80 → 95** (+15). Its title is now `SectionStaticHeader`
+  — the 32px recipe every section title uses (+6 over the old 26px label
+  row) — its body ends in 8px of padding, and the block closes on a 1px
+  hairline. Props → 8px → hairline → 12px gap → Layer, where it was props →
+  8px → Layer with nothing between.
+- **Grid gaps 80 → 108** (+28). `--inspector-section-gap` is 12px, one step
+  above the 8px between-group step, so a section boundary finally reads as
+  wider than a group boundary; one gap fewer because of the merge below.
+- **`shadow` + `blur` → `effects`** (−33, and a gap). Figma's one Effects
+  section.
+- **`text` 189 → 177, `measures` 122 → 114** (−20). Rows inside one group sit
+  4px apart, Penpot's `menus/text.scss` and `menus/measures.scss` step.
 
 panel-41's three F2 lines, each with its cause:
 
@@ -218,7 +275,9 @@ panel-41's three F2 lines, each with its cause:
   `.sectionContent` carried 8px of bottom padding *on top of* the parent grid
   gap, so an open section sat 16px from the next divider while a collapsed one
   sat 8px from it — two boundaries, two sizes, for no stated reason. 8px is
-  also the between-section step `02-measurements.md` measures.
+  was then (wrongly) held to be the between-section step `02-measurements.md`
+  measures — its Δ16 is Penpot's 8px flex gap plus each menu's 8px
+  `margin-block-end`, which is why P2-F moved the section gap to 12.
 
 The three contributors panel-37 named, and what happened to each:
 
@@ -256,40 +315,34 @@ The three contributors panel-37 named, and what happened to each:
 
 One fixture, and every pixel of it is a **populated** section — a value the
 user's own source sets, drawn once, at the 32px row height `04-token-gaps.md`
-measures off Penpot.
+measures off Penpot — or the section gap the owner asked for.
 
-**F2 (text), 36 over — 782 against 746:**
+**F2 (text), 23 over — 769 against 746:**
 
 | Block | px |
 |---|---:|
-| `text` — family; weight+size; line-height+letter-spacing; align (Figma's own four rows) | 189 |
-| `measures` — W/H, CSS position mode, rotation+radius | 122 |
-| Module block — the node's own `text` content, sized to the text | 80 |
+| `text` — family; weight+size; line-height+letter-spacing; align (Figma's own four rows) | 177 |
+| `measures` — W/H, CSS position mode, rotation+radius | 114 |
+| Module block — header, the node's own `text` content, padding, hairline | 92 |
 | `fill` — the text colour the class sets | 65 |
 | `layer` — opacity, blend, visibility | 32 |
-| six collapsed one-row sections (layout, stroke, shadow, blur, export, more) | 198 |
-| gaps (10 × 8) + container padding (2 × 8) | 96 |
+| five collapsed one-row sections (layout, stroke, effects, export, more) | 165 |
+| gaps (9 × 12) + container padding (2 × 8) | 124 |
 
-Nothing there is pre-drawn. **One lever would close it**, and it is a parity
-change rather than a density one:
+Nothing there is pre-drawn. The Shadow + Blur merge this section used to name
+as "the one lever" is done (P2-F, −45px on every fixture), and it paid for the
+segregation rather than closing the gap: closing the last 23px now means
+collapsing a section that has values in it, or giving back spacing the owner
+asked for. `TEXT_LAYER_OVERFLOW_PX` is 47 — the measured 23 plus the same 24px
+of machine-to-machine slack it carried before.
 
-- **Shadow and Blur are one section in Figma**, and in `STUDIO-IMPORT-V2-PLAN.md`
-  WS-6.1's own diagram (`Effects  shadow / blur  + −`). Studio draws two
-  collapsed one-row sections: 33px of header plus an 8px gap, a measured
-  **41px on every selection**. Merging them puts F2 at **741 against 746** and
-  every fixture strictly inside the budget. Not taken here: it is a
-  section-manifest change plus a restructure of `ShadowSection.tsx` (636
-  lines) and `BlurSection.tsx` (416), both rewritten by `panel-38` for the
-  Mixed contract, and it needs a merged add-menu over five items with their
-  own disabled rules.
-
-Two smaller observations from the same measurement:
+Two smaller observations, still open:
 
 - F4's `fill` renders `forceOpen` with a body of zero rows — 33px of header
   and nothing behind it. That is Law 1's "an empty section is not a
-  disclosure" case; fixing it is worth 8px on that fixture.
-- `measures` is 122px everywhere except F1, where `position: relative` adds
-  the TRBL grid and it becomes 199px. F1 has 138px of headroom, so it is not
+  disclosure" case; panel-41 measured fixing it as worth 8px on that fixture.
+- `measures` is 114px everywhere except F1, where `position: relative` adds
+  the TRBL grid and it becomes 191px. F1 has 148px of headroom, so it is not
   a problem today — but it is the largest single block in the panel.
 
 ### The fixtures

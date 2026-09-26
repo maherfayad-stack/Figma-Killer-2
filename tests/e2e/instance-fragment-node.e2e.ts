@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * Real-browser coverage for WS-4.2: the `studio.instance` fragment node
@@ -19,7 +20,6 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
  */
 
 const TARGET_ID = 'booking-confirmation-screen'
-const CANVAS_FRAME_IFRAME_SELECTOR = 'iframe[title^="Canvas frame"]'
 
 interface StudioProjectSummary {
   dir: string
@@ -74,15 +74,15 @@ test.describe('WS-4.2 regression: a local-component call site is a zero-DOM inst
     const targetFrame = page.locator(`[data-page-id="${TARGET_ID}"]`)
     await expect(targetFrame).toHaveCount(1)
 
-    await expect(page.locator(CANVAS_FRAME_IFRAME_SELECTOR).first()).toBeVisible({ timeout: 20_000 })
+    await expect(visibleCanvasIframe(page).first()).toBeVisible({ timeout: 20_000 })
 
     const canvasRoot = page.getByTestId('canvas-root')
     await panIntoView(page, canvasRoot, targetFrame)
 
-    const iframeEl = targetFrame.locator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const iframeEl = visibleCanvasIframe(targetFrame)
     await expect(iframeEl).toBeVisible({ timeout: 15_000 })
 
-    const contentFrame = targetFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame = canvasContentFrame(targetFrame)
     const sheetShell = contentFrame.locator('.sheet-shell').first()
     await expect(sheetShell).toBeVisible({ timeout: 15_000 })
 

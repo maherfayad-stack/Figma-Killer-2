@@ -22,7 +22,7 @@ function writeFixture(name: string, source: string): string {
 }
 
 describe('setJsxText', () => {
-  it('replaces a plain-text child with a JSON-stringified expression container', () => {
+  it('WB-9 — replaces a plain-text child with plain text, not an expression container', () => {
     const source = [
       'export function App() {',
       '  return <p>Hello</p>',
@@ -35,7 +35,7 @@ describe('setJsxText', () => {
     setJsxText({ file, line, col, text: 'Bye' })
 
     const written = fs.readFileSync(file, 'utf8')
-    expect(written).toContain('<p>{"Bye"}</p>')
+    expect(written).toBe(source.replace('<p>Hello</p>', '<p>Bye</p>'))
   })
 
   it('replaces a component element\'s text child', () => {
@@ -51,7 +51,7 @@ describe('setJsxText', () => {
     setJsxText({ file, line, col, text: 'Go' })
 
     const written = fs.readFileSync(file, 'utf8')
-    expect(written).toContain('<Button>{"Go"}</Button>')
+    expect(written).toContain('<Button>Go</Button>')
   })
 
   it('fills an empty element with no prior children', () => {
@@ -67,7 +67,7 @@ describe('setJsxText', () => {
     setJsxText({ file, line, col, text: 'New' })
 
     const written = fs.readFileSync(file, 'utf8')
-    expect(written).toContain('<p>{"New"}</p>')
+    expect(written).toContain('<p>New</p>')
   })
 
   it('expands a self-closing element, preserving attributes verbatim', () => {
@@ -84,7 +84,7 @@ describe('setJsxText', () => {
 
     const written = fs.readFileSync(file, 'utf8')
     expect(written).toContain(
-      '<Label htmlFor="email" className="field-label">{"Email"}</Label>',
+      '<Label htmlFor="email" className="field-label">Email</Label>',
     )
   })
 
@@ -148,7 +148,7 @@ describe('setJsxText', () => {
     expect(() => setJsxText({ file, line, col, text: 'Bye' })).toThrow(JsxTextTargetError)
   })
 
-  it('escapes quotes and special characters via JSON.stringify', () => {
+  it('writes text raw JSX cannot say as an escaped string container', () => {
     const source = [
       'export function App() {',
       '  return <p>Hello</p>',
@@ -191,5 +191,102 @@ describe('setJsxText', () => {
     expect(() => setJsxText({ file, line: 1, col: 1, text: 'Bye' })).toThrow(
       /No JSX element found/,
     )
+  })
+describe('WB-9 — the file keeps its formatting', () => {
+    it('keeps a multi-line text on the same lines, so nothing below it moves', () => {
+      const source = [
+        'export function App() {',
+        '  return (',
+        '    <p>',
+        '      Multi line',
+        '      copy here',
+        '    </p>',
+        '  )',
+        '}',
+        '',
+      ].join('\n')
+      const file = writeFixture('multi-line.tsx', source)
+      const { line, col } = locateTag(source, 'p')
+
+      setJsxText({ file, line, col, text: 'Multi line copy here!' })
+
+      const written = fs.readFileSync(file, 'utf8')
+      expect(written).toBe(source.replace('copy here', 'copy here!'))
+      expect(written.split('\n').length).toBe(source.split('\n').length)
+    })
+
+    it('re-wraps a longer value over the original lines, each with its own indentation', () => {
+      const source = ['export const A = () => (', '  <p>', '    One two', '    three', '  </p>', ')', ''].join('\n')
+      const file = writeFixture('rewrap.tsx', source)
+      const { line, col } = locateTag(source, 'p')
+
+      setJsxText({ file, line, col, text: 'Alpha beta gamma delta' })
+
+      const written = fs.readFileSync(file, 'utf8')
+      const body = written.split('\n').slice(2, 4)
+      expect(body.every((row) => row.startsWith('    ') && row.trim().length > 0)).toBe(true)
+      expect(body.map((row) => row.trim()).join(' ')).toBe('Alpha beta gamma delta')
+      expect(written.split('\n').length).toBe(source.split('\n').length)
+    })
+
+    it('writes a value that carries its own line breaks exactly as given', () => {
+      const source = ['export const A = () => (', '  <p>', '    One', '    two', '  </p>', ')', ''].join('\n')
+      const file = writeFixture('own-breaks.tsx', source)
+      const { line, col } = locateTag(source, 'p')
+
+      setJsxText({ file, line, col, text: 'One\n    two\n    three' })
+
+      expect(fs.readFileSync(file, 'utf8')).toBe(source.replace('    two\n', '    two\n    three\n'))
+    })
+
+    it('keeps the whitespace around single-line text byte-for-byte', () => {
+      const source = 'export const A = () => <p> Hello </p>\n'
+      const file = writeFixture('padded.tsx', source)
+      const { line, col } = locateTag(source, 'p')
+
+      setJsxText({ file, line, col, text: 'Bye' })
+
+      expect(fs.readFileSync(file, 'utf8')).toBe('export const A = () => <p> Bye </p>\n')
+    })
+
+    it('keeps an existing single-quoted container, in single quotes', () => {
+      const source = "export const A = () => <p>{'Old'}</p>\n"
+      const file = writeFixture('single-container.tsx', source)
+      const { line, col } = locateTag(source, 'p')
+
+      setJsxText({ file, line, col, text: "It's new" })
+
+      expect(fs.readFileSync(file, 'utf8')).toBe("export const A = () => <p>{'It\\'s new'}</p>\n")
+    })
+
+    it("falls back to a container in the file's own quote for text raw JSX cannot say", () => {
+      const source = ["import { x } from './x'", 'export const A = () => <p>Hello</p>', ''].join('\n')
+      const file = writeFixture('single-file.tsx', source)
+      const { line, col } = locateTag(source, 'p')
+
+      setJsxText({ file, line, col, text: 'a < b' })
+
+      expect(fs.readFileSync(file, 'utf8')).toContain("<p>{'a < b'}</p>")
+    })
+
+    it('does not write raw text the compiler would decode as an entity', () => {
+      const source = 'export const A = () => <p>Hello</p>\n'
+      const file = writeFixture('entity.tsx', source)
+      const { line, col } = locateTag(source, 'p')
+
+      setJsxText({ file, line, col, text: 'Fish &amp; chips' })
+
+      expect(fs.readFileSync(file, 'utf8')).toContain('<p>{"Fish &amp; chips"}</p>')
+    })
+
+    it('writes an ampersand that is not an entity raw', () => {
+      const source = 'export const A = () => <p>Hello</p>\n'
+      const file = writeFixture('ampersand.tsx', source)
+      const { line, col } = locateTag(source, 'p')
+
+      setJsxText({ file, line, col, text: 'Terms & conditions' })
+
+      expect(fs.readFileSync(file, 'utf8')).toContain('<p>Terms & conditions</p>')
+    })
   })
 })

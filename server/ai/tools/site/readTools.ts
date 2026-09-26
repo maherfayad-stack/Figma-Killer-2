@@ -15,7 +15,7 @@ import { buildDataMeta } from '@core/data/fields'
 import type { DataMetaField } from '@core/data/schemas'
 import { loopSourceRegistry } from '@core/loops/registry'
 import type { LoopSourceField } from '@core/loops/types'
-import type { AiTool } from '../types'
+import type { SiteToolDefinition } from '../types'
 import type { SiteAgentSnapshot } from './snapshot'
 import { listDataTablesWithCounts } from '../../../repositories/data'
 import {
@@ -35,7 +35,7 @@ function asSnap(snapshot: unknown): SiteAgentSnapshot {
 
 const ListDocumentsInput = Type.Object({})
 
-const listDocumentsTool: AiTool = {
+const listDocumentsTool: SiteToolDefinition = {
   name: 'site_list_documents',
   scope: 'site',
   execution: 'server',
@@ -60,7 +60,7 @@ const ListModulesInput = Type.Object({
   category: Type.Optional(Type.String()),
 })
 
-const listModulesTool: AiTool = {
+const listModulesTool: SiteToolDefinition = {
   name: 'site_list_modules',
   scope: 'site',
   execution: 'server',
@@ -94,7 +94,7 @@ const ListTokensInput = Type.Object({
   ),
 })
 
-const listTokensTool: AiTool = {
+const listTokensTool: SiteToolDefinition = {
   name: 'site_list_tokens',
   scope: 'site',
   execution: 'server',
@@ -115,7 +115,7 @@ const listTokensTool: AiTool = {
 
 const ListPostTypesInput = Type.Object({})
 
-const listPostTypesTool: AiTool = {
+const listPostTypesTool: SiteToolDefinition = {
   name: 'site_list_post_types',
   scope: 'site',
   execution: 'server',
@@ -196,7 +196,7 @@ function mergeBindingFields(fields: AgentBindingField[]): AgentBindingField[] {
   return Array.from(byId.values())
 }
 
-const listLoopSourcesTool: AiTool = {
+const listLoopSourcesTool: SiteToolDefinition = {
   name: 'site_list_loop_sources',
   scope: 'site',
   execution: 'server',
@@ -252,7 +252,7 @@ const listLoopSourcesTool: AiTool = {
 
 const ListBreakpointsInput = Type.Object({})
 
-const listBreakpointsTool: AiTool = {
+const listBreakpointsTool: SiteToolDefinition = {
   name: 'site_list_breakpoints',
   scope: 'site',
   execution: 'server',
@@ -273,7 +273,7 @@ const listBreakpointsTool: AiTool = {
 // All read tools — convenient barrel for the registry
 // ---------------------------------------------------------------------------
 
-export const siteReadTools: AiTool[] = [
+export const siteReadTools: SiteToolDefinition[] = [
   listDocumentsTool,
   listModulesTool,
   listTokensTool,

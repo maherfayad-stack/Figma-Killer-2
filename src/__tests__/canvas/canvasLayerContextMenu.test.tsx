@@ -29,7 +29,6 @@ function resetStore() {
     activeDocument: null,
     selectedNodeId: 'container-node',
     selectedNodeIds: ['container-node'],
-    hoveredNodeId: null,
     propertiesPanel: { collapsed: true, x: 0, y: 0, width: 360 },
     propertiesPanelMode: 'docked',
     _historyPast: [],
@@ -49,7 +48,7 @@ function CanvasContextMenuHarness() {
     >
       {open && (
         <CanvasLayerContextMenu
-          position={{ x: 100, y: 200, nodeId: 'container-node' }}
+          position={{ x: 100, y: 200, nodeId: 'container-node', layerIdsUnderPointer: [] }}
           onClose={() => setOpen(false)}
           actions={{
             requestDeleteNode: noop,

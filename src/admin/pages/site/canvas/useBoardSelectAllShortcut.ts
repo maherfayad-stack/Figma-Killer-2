@@ -11,9 +11,11 @@
  * focus-independent `document` listener that fix needs
  * (`useEditorKeyDispatcher.ts`).
  *
- * It stands down for an editable field, and for a node already being selected:
- * node selection has no "select all" of its own (WS-7.1), so this only ever
- * competes with the browser's native select-all.
+ * It stands down for an editable field, and whenever a node is selected: then
+ * ⌘A means "the node's siblings" (P2-B, IX-4), which the `node` rung
+ * (`useCanvasSelectionKeyboard`) answers first — and hands back to
+ * `selectAllFrames` itself once the climb reaches the tree root. One binding,
+ * `canvas.selectAll`, for the whole ladder.
  */
 import { useEditorStore } from '@site/store/store'
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
@@ -25,7 +27,7 @@ export function useBoardSelectAllShortcut(editable: boolean, isLive: boolean): v
     'board',
     () => !isLive && editable && !useEditorStore.getState().selectedNodeId,
     (event) => {
-      if (!getKeybindingForCommand('board.selectAllFrames')?.match(event)) return false
+      if (!getKeybindingForCommand('canvas.selectAll')?.match(event)) return false
       if (isTextInputTarget(event.target)) return false
 
       event.preventDefault()

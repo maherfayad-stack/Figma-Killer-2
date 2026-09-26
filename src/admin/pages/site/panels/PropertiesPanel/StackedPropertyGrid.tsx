@@ -14,6 +14,7 @@
  */
 
 import type { CSSPropertyBag } from '@core/page-tree'
+import { cn } from '@ui/cn'
 import { ClassPropertyRow } from './ClassPropertyRow'
 import { resolveStylePlaceholder } from './stylePlaceholder'
 import { hasStyleValue, isMixedStyleValue } from './styleValueUtils'
@@ -58,6 +59,14 @@ interface StackedPropertyGridProps {
    * user's own declaration instead of the browser's resolution of it.
    */
   provenanceByProperty?: ReadonlyMap<string, PropertyProvenance>
+  /**
+   * The vertical step between rows, named by the panel's spacing hierarchy
+   * (`globals.css`'s inspector block). `'between-groups'` (8px, the default)
+   * is right when each row is its own concern (Stroke's weight vs. style,
+   * Interaction's cursor vs. pointer events); `'within-group'` (4px) when the
+   * rows are facets of one thing — Text's typography rows (P2-F, UX-3).
+   */
+  rhythm?: 'within-group' | 'between-groups'
 }
 
 // ---------------------------------------------------------------------------
@@ -75,6 +84,7 @@ export function StackedPropertyGrid({
   onPreview,
   onClearPreview,
   provenanceByProperty,
+  rhythm = 'between-groups',
 }: StackedPropertyGridProps) {
   const visible = new Set(visibleProperties)
 
@@ -119,7 +129,7 @@ export function StackedPropertyGrid({
   }
 
   return (
-    <div className={styles.grid}>
+    <div className={cn(styles.grid, rhythm === 'within-group' && styles.gridWithinGroup)}>
       {spec.map((entry) => {
         if (!Array.isArray(entry)) {
           const prop = entry as keyof CSSPropertyBag

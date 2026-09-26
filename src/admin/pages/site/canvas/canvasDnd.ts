@@ -3,6 +3,7 @@ import type { NodeTree } from '@core/page-tree'
 import {
   explainGestureConstraint,
   getParent,
+  isResolvedByInstanceDetach,
   previewStructuralMove,
   previewStructuralTransplant,
   resolvePageTreeDropTarget,
@@ -264,7 +265,9 @@ export function resolveCanvasDropTarget({
   // remains the sole COMMIT-time authority; this is a preview, never a
   // replacement — see `previewStructuralMove`'s own doc.
   const preview = previewStructuralMove(tree, target.draggedIds, target.parentId, target.index)
-  if (!preview.ok) {
+  // OD-7 — a move inside a shared component is written to THIS instance
+  // (detach, then move) — a drop line, not a refusal.
+  if (!preview.ok && !isResolvedByInstanceDetach(preview.refusal.reason)) {
     // The refusal is about the DRAGGED element, not the candidate under the
     // pointer — that is whose source position the explanation names and whose
     // `rel:line:col` a jump would open.

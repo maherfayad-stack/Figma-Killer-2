@@ -2,6 +2,7 @@ import { extname, resolve, sep } from 'node:path'
 import { brotliCompressSync, constants as zlibConstants } from 'node:zlib'
 import { readdirSync } from 'node:fs'
 import { SESSION_COOKIE_NAME } from './auth/tokens'
+import { appendContentSecurityPolicy } from './securityHeaders'
 
 const MIME_TYPES: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
@@ -21,6 +22,15 @@ const MIME_TYPES: Record<string, string> = {
   '.woff2': 'font/woff2',
   '.ttf': 'font/ttf',
   '.otf': 'font/otf',
+  '.avif': 'image/avif',
+  '.bmp': 'image/bmp',
+  '.ico': 'image/x-icon',
+  '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.ogg': 'audio/ogg',
+  '.wav': 'audio/wav',
+  '.ogv': 'video/ogg',
+  '.mov': 'video/quicktime',
 }
 
 // Mime types worth compressing. Already-compressed binary formats (woff2, png,
@@ -50,6 +60,18 @@ const compressionCache = new Map<string, CachedCompression>()
 
 function contentType(path: string): string {
   return MIME_TYPES[extname(path).toLowerCase()] ?? 'application/octet-stream'
+}
+
+/**
+ * Whether `path` names a file a page EMBEDS rather than runs or reads: an
+ * image, a font, audio or video, by the same extension table
+ * `serveStaticFile` types its response with. The project asset route
+ * (`studioAsset.ts`) serves nothing else, so it can never hand the admin
+ * origin a project's source, config or HTML — only the kinds of file an
+ * `<img>`, a CSS `url()`, an `@font-face` or a `<video>` loads.
+ */
+export function isEmbeddableMediaPath(path: string): boolean {
+  return /^(?:image|font|audio|video)\//.test(contentType(path))
 }
 
 function resolveStaticPath(root: string, pathname: string): string | null {
@@ -554,6 +576,43 @@ const INERT_UPLOAD_MIMES = new Set([
 ])
 
 /**
+ * The Content-Security-Policy for a USER or PROJECT file served on Studio's
+ * own origin — an upload, an image a Studio project imports, an asset an
+ * agent landed. `default-src 'none'` blocks every script, style, fetch and
+ * plugin the file could name; `sandbox` (no tokens) additionally gives a
+ * document an opaque origin with scripts, forms and top navigation off.
+ *
+ * It matters for SVG and HTML, the two types that are documents when
+ * navigated to directly ("open image in new tab"): an SVG is XML with a
+ * script surface, and on this origin a script runs with the admin session.
+ * Embedding is unaffected — an `<img>`, a CSS `url()` or a module `<script>`
+ * ignores the policy of the resource it loads.
+ *
+ * This is the BOUNDARY. `svgSanitize.ts` is defence in depth on top of it:
+ * a regex sanitizer cannot promise to see every way XML can spell a script
+ * (security review of #248, finding 1).
+ */
+export const INERT_FILE_CSP = "default-src 'none'; sandbox"
+
+/**
+ * Stamp {@link INERT_FILE_CSP} and `nosniff` onto a user/project file
+ * response's headers. The one copy of that rule. The policy is ADDED, never
+ * set: a policy already on the response stays enforced beside it
+ * (`appendContentSecurityPolicy`).
+ */
+export function setInertFileHeaders(headers: Headers): void {
+  headers.set('x-content-type-options', 'nosniff')
+  appendContentSecurityPolicy(headers, INERT_FILE_CSP)
+}
+
+/** {@link setInertFileHeaders} on a copy of `response`. */
+export function inertFileResponse(response: Response): Response {
+  const headers = new Headers(response.headers)
+  setInertFileHeaders(headers)
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+}
+
+/**
  * Defense-in-depth headers for `/uploads/*` responses:
  *
  *  - `X-Content-Type-Options: nosniff` — prevents the browser from
@@ -570,14 +629,11 @@ const INERT_UPLOAD_MIMES = new Set([
  */
 export function hardenUploadResponse(response: Response): Response {
   const headers = new Headers(response.headers)
-  headers.set('x-content-type-options', 'nosniff')
-  // Belt-and-suspenders: upload files are inert data. A zero-permission CSP
-  // ensures the browser treats them as such even if a stale cached response
-  // reaches a navigation context where a Referer header or MIME check was
-  // bypassed. The global security-header layer in server/index.ts does not
-  // set a CSP for non-admin paths, so this is the only CSP these responses
-  // ever carry.
-  headers.set('content-security-policy', "default-src 'none'")
+  // Belt-and-suspenders: upload files are inert data. The zero-permission,
+  // sandboxed CSP makes the browser treat them as such even if a stale cached
+  // response reaches a navigation context where a Referer header or MIME
+  // check was bypassed.
+  setInertFileHeaders(headers)
   const contentType = headers.get('content-type') ?? ''
   const baseMime = contentType.split(';', 1)[0].trim().toLowerCase()
   if (!INERT_UPLOAD_MIMES.has(baseMime)) {

@@ -38,7 +38,7 @@
  * refused rather than shipped.
  */
 import { Type } from '@core/utils/typeboxHelpers'
-import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import type { StudioSessionRuntime } from './routeGate'
 import { projectsRootDir, resolveProjectDir } from '../studioProjects'
 import { isRealpathContained } from './workspacePackageResolve'
@@ -126,7 +126,6 @@ export async function tryServeStudioNodeExport(
     if (!result.ok) return jsonResponse({ error: result.error }, { status: 422 })
     return jsonResponse({ jsx: result.jsx, rel: result.rel })
   } catch (err) {
-    console.error('[studio:nodeExport]', err)
-    return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    return internalServerError('[studio:nodeExport]', err)
   }
 }

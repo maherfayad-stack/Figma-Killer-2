@@ -1,4 +1,5 @@
 # Design Tokens
+> **Purpose:** the complete catalogue of CSS tokens in globals.css · **Read when:** picking or adding a token · **Trust:** current · **Owner:** panel-designer · **Verified:** not yet
 
 The complete catalog of design tokens declared in `src/styles/globals.css`. Every color, radius, shadow, font, font size, spacing value, and z-index used by the admin / editor / UI primitives is here. CSS Modules in `src/admin/`, `src/admin/pages/site/`, and `src/ui/` MUST reference these via `var(--*)` — hardcoded hex / rgb / hsl is gated by `css-token-policy.test.ts`, hardcoded font-size pixels are gated by `admin-typography-token-policy.test.ts`, and hardcoded margin / padding / gap pixels are gated by `admin-spacing-token-policy.test.ts`.
 
@@ -125,8 +126,8 @@ Five tones, each a different meaning level.
 | `--text-bright`      | `#f4f4f5` | Titles, headings, KPIs         |
 | `--text`             | `#ededed` | Primary body text              |
 | `--text-muted`   | `#a1a1aa` | Labels, secondary UI           |
-| `--text-subtle`       | `#787878` | Muted / placeholder            |
-| `--text-disabled`      | `#52525b` | Disabled / very subtle         |
+| `--text-subtle`       | `#888888` | Captions, units, counts, empty states — the quietest INFORMATIVE text |
+| `--text-disabled`      | `#52525b` | Disabled controls and placeholders only — never text the user must read |
 
 Add a new text tone only by adding a new token here.
 
@@ -232,6 +233,7 @@ creating a second tag-specific tint scale.
 | Token                  | Value         | Use                                            |
 |------------------------|---------------|------------------------------------------------|
 | `--info-text`   | `#c4b5fd`     | Violet-tinted info text                        |
+| `--info-10`     | `rgba(196, 181, 253, 0.1)` | Info surface — a fact card that blocks nothing (light: `rgba(67, 56, 202, 0.1)`) |
 
 ## Canvas (selection / hover affordances)
 

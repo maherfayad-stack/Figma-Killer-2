@@ -111,6 +111,24 @@ export function decodeSourceNodeId(nodeId: string): SourceNodeLocation | null {
 }
 
 /**
+ * `nodeId` with the location it writes to — the LAST segment, see
+ * {@link decodeSourceNodeId} — moved to `line:col` of the same file. A
+ * composite id keeps its call-site prefix: only where the markup is has moved.
+ * `null` for an id with no writable location.
+ *
+ * P1-D: an edit re-found after its file changed on disk is re-addressed with
+ * this, so every codemod downstream reads the new position through the one
+ * grammar.
+ */
+export function withSourceLocation(nodeId: string, line: number, col: number): string | null {
+  const segments = nodeId.split(INLINE_ID_SEPARATOR)
+  const location = decodeSourceNodeId(segments[segments.length - 1]!)
+  if (!location) return null
+  segments[segments.length - 1] = buildSourceNodeId(location.rel, line, col)
+  return segments.join(INLINE_ID_SEPARATOR)
+}
+
+/**
  * True when an edit to this node has one source location to land on.
  *
  * `false` for a `.map` iteration (`…:70:21#2`) — the suffix is deliberately
@@ -121,9 +139,43 @@ export function hasWritableSourceLocation(nodeId: string): boolean {
   return decodeSourceNodeId(nodeId) !== null
 }
 
+/**
+ * The row TEMPLATE a `.map` row was rendered from — the row id with its
+ * iteration suffixes removed (`…:14:9#2` → `…:14:9`, `…:14:9#0#3` → `…:14:9`),
+ * keeping any call-site prefix — or `null` when `nodeId` is not a row.
+ *
+ * The template is one JSX site that renders EVERY row, which is exactly why a
+ * row has no writable location of its own. OD-8 (P3-C) makes it the target of
+ * a row's STYLE and CLASS edits anyway, on the owner's call — changing every
+ * row is what a designer means by restyling a list item, and the editor says
+ * so before and after the write. Nothing else may use this to reach a row's
+ * source: a row's TEXT and props are per-row values with their own origins,
+ * and a structural edit on a row is the array literal's business.
+ */
+export function loopTemplateNodeId(nodeId: string): string | null {
+  const segments = nodeId.split(INLINE_ID_SEPARATOR)
+  const tail = segments[segments.length - 1]!
+  const match = /^(.+:\d+:\d+)(?:#\d+)+$/.exec(tail)
+  if (!match) return null
+  segments[segments.length - 1] = match[1]!
+  const template = segments.join(INLINE_ID_SEPARATOR)
+  return hasWritableSourceLocation(template) ? template : null
+}
+
 /** True when this id came from a component inlined at a call site — one edit here rewrites every instance. */
 export function isInlinedNodeId(nodeId: string): boolean {
   return nodeId.includes(INLINE_ID_SEPARATOR)
+}
+
+/**
+ * How many call sites deep an id is: `0` for a page's own element, `1` for an
+ * element of a component inlined at a page call site (`page~Card`), `2` for
+ * one inside a component that component renders (`page~Card~Icon`) — whose
+ * nearest call site then sits in `Card`'s own, shared, file. P5-C's "Expose
+ * as prop" writes the call site, so it takes depth 1 only.
+ */
+export function inlineDepth(nodeId: string): number {
+  return nodeId.split(INLINE_ID_SEPARATOR).length - 1
 }
 
 /**
@@ -160,16 +212,6 @@ export function isSourceDerivedNodeId(nodeId: string): boolean {
  */
 export function callSitePosition(nodeId: string): string {
   return nodeId.split(INLINE_ID_SEPARATOR)[0]!
-}
-
-/**
- * True when `nodeId` is the same call site as `position` — either literally
- * (a plain, non-inlined node) or as the head of a composite id (inlined from
- * that call site). Used to find whatever node NOW occupies a call site whose
- * old id was invalidated by a detach/extract reload.
- */
-export function matchesCallSitePosition(nodeId: string, position: string): boolean {
-  return nodeId === position || nodeId.startsWith(position + INLINE_ID_SEPARATOR)
 }
 
 /**

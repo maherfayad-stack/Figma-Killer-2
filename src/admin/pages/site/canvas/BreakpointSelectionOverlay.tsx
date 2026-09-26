@@ -35,7 +35,9 @@
  * The resulting rect is also published as the `--selection-anchor-{x,y,w,h}`
  * custom-property channel (`publishSelectionAnchor` — the sanctioned
  * inline-style exception in CLAUDE.md) on both the toolbar and the inspector
- * wrapper.
+ * wrapper. BETWEEN those measurements a pan/zoom moves them arithmetically:
+ * each measured pass records a board-space anchor, re-projected on every
+ * transform write (`selectionChromeViewportFollow.ts`, PERF-3).
  *
  * When it measures (S4)
  * ──────────────────────
@@ -64,7 +66,7 @@
  * interactive and clipped by the canvas root.
  */
 
-import { use, useEffect, useEffectEvent, useRef, useState } from 'react'
+import { use, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useEditorStore } from '@site/store/store'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
@@ -78,7 +80,7 @@ import { CanvasNodeElementCache } from './canvasNodeLookup'
 import { isCanvasGestureActive } from './canvasGesture'
 import { useCanvasAnimationScrub } from './animationScrubStore'
 import { createOverlayMeasureScheduler, type OverlayMeasureScheduler } from './overlayMeasureScheduler'
-import { InPlaceInspector } from './InPlaceInspector'
+import { InPlaceInspectorAnchor } from './InPlaceInspectorAnchor'
 import { CanvasDropIndicators } from './CanvasDropIndicators'
 import { useCanvasDropSurfaceRegistration } from './useCanvasDropSurfaceRegistration'
 import { isBridgeChromeAdapter, useBridgeSelectionChrome } from './useBridgeSelectionChrome'
@@ -99,6 +101,8 @@ import {
   positionInspector,
   positionNodeBadge,
   positionOverlayElement,
+  positionResizeFrame,
+  resizeFrameRect,
   positionToolbar,
   publishSelectionAnchor,
   resolveNodeBadgeLabel,
@@ -107,6 +111,7 @@ import {
 import styles from './BreakpointSelectionOverlay.module.css'
 import { CanvasSelectionChrome } from './CanvasSelectionChrome'
 import { useBreakpointOverlaySelectionState } from './useBreakpointOverlaySelectionState'
+import { useSelectionChromeViewportFollow } from './selectionChromeViewportFollow'
 
 /** Stable empty fallback for the frame-scoped selection read below (Guideline #239 — no inline `?? []`). */
 const EMPTY_SELECTED_NODE_IDS: readonly string[] = []
@@ -228,6 +233,14 @@ export function BreakpointSelectionOverlay({
   // bridge hook placed.
   const adapter = use(CanvasFrameAdapterContext)
   const bridgeChrome = isBridgeChromeAdapter(adapter)
+  // PERF-3 — the toolbar/inspector follow every pan/zoom transform write from
+  // the anchor each measured pass records, instead of freezing until the
+  // debounced commit. See `selectionChromeViewportFollow.ts`.
+  const recordChromeAnchor = useSelectionChromeViewportFollow({
+    transformRef: viewportActions?.transformRef,
+    toolbarRef,
+    inspectorRef,
+  })
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -307,6 +320,9 @@ export function BreakpointSelectionOverlay({
   // highlight becomes the hover ring target so keyboard navigation is visible.
   const hoverRingNodeId = treeLadder.hoverNodeId ?? hoveredNodeId
   const showHover = Boolean(hoverRingNodeId) && !selectedNodeIds.includes(hoverRingNodeId ?? '')
+  // A hover TARGET change is a measure trigger — see `overlayMeasureScheduler`.
+  const hoverTargetId = showHover ? hoverRingNodeId : null
+  useEffect(() => schedulerRef.current?.schedule(), [hoverTargetId])
   const reorderDrag = useCanvasReorderDrag({
     viewportRef,
     iframeElement,
@@ -324,8 +340,11 @@ export function BreakpointSelectionOverlay({
   })
 
   // D2 G3 — publish this frame as a place a drag from ANOTHER frame can land.
+  // P5-B: on the permission alone, not on being the active frame — an OS file
+  // drop has no pointerdown, so its frame is usually inactive, and it
+  // activates its own page when it lands (`imageDropActions.ts`).
   useCanvasDropSurfaceRegistration({
-    enabled: canEditStructureHere,
+    enabled: permissions.canEditStructure,
     frameId,
     pageId: framePageId,
     viewportRef,
@@ -373,6 +392,7 @@ export function BreakpointSelectionOverlay({
       // toolbar/inspector need an explicit hide.
       hideOverlayElement(toolbarRef.current)
       hideOverlayElement(inspectorRef.current)
+      recordChromeAnchor(null)
       return
     }
 
@@ -387,7 +407,7 @@ export function BreakpointSelectionOverlay({
     let fallbackSession: ReturnType<typeof createCanvasOverlayMeasureSession> | null = null
     const measureRing = (target: CanvasRectSource | null): CanvasOverlayRect | null => {
       if (overlayRoot) return measureIframeLocalRect(target)
-      fallbackSession ??= createCanvasOverlayMeasureSession(iframe, canvasRoot)
+      fallbackSession = fallbackSession ?? createCanvasOverlayMeasureSession(iframe, canvasRoot)
       return fallbackSession.measure(target)
     }
 
@@ -426,14 +446,12 @@ export function BreakpointSelectionOverlay({
 
     // ── Ring/badge WRITE phase ────────────────────────────────────────────
     for (const { ring, rect } of ringPlacements) positionOverlayElement(ring, rect)
-    // Resize handles ride the SAME measured rect as the ring, so they cannot
-    // drift off the box they belong to. WHETHER they exist at all is
-    // `canOfferResize`'s decision, made in `CanvasResizeHandles` against the
-    // node's module and its presented element — so there is no second gate
-    // here: a frame that should not be offered was never rendered, and
-    // re-deriving the rule in this tick is how the two get to disagree.
-    const soleRing = ringPlacements.length === 1 ? ringPlacements[0] : undefined
-    positionOverlayElement(resizeFrameRef.current, soleRing ? soleRing.rect : null)
+    // Resize handles (and, mid-drag, their W×H badge) ride the SAME measured
+    // rect as the ring, so they cannot drift off the box they belong to.
+    // WHETHER they exist is `canOfferResize`'s call, in `CanvasResizeHandles`
+    // — no second gate here: re-deriving it is how the two would disagree.
+    // P5-F / IX-6g — a multi-selection's handles sit on the union of its rings.
+    positionResizeFrame(resizeFrameRef.current, resizeFrameRect(ringPlacements.map((placement) => placement.rect)))
     positionOverlayElement(hoverRef.current, hoverRect)
     syncSelectorHighlightRings(
       selectorHighlightRef.current,
@@ -475,6 +493,7 @@ export function BreakpointSelectionOverlay({
     if (!needsAnchor) {
       hideOverlayElement(toolbarRef.current)
       hideOverlayElement(inspectorRef.current)
+      recordChromeAnchor(null)
       return
     }
     if (!anchorDirtyRef.current) return
@@ -498,6 +517,7 @@ export function BreakpointSelectionOverlay({
     if (!ownsAnySelectedNode) {
       hideOverlayElement(toolbarRef.current)
       hideOverlayElement(inspectorRef.current)
+      recordChromeAnchor(null)
       anchorDirtyRef.current = false
       return
     }
@@ -521,6 +541,11 @@ export function BreakpointSelectionOverlay({
     publishSelectionAnchor(toolbarRef.current, showToolbar ? toolbarUnion : null)
     positionInspector(inspectorRef.current, inspectorNodeId ? inspectorRect : null, session.canvasRect)
     publishSelectionAnchor(inspectorRef.current, inspectorNodeId ? inspectorRect : null)
+    recordChromeAnchor({
+      toolbar: showToolbar ? toolbarUnion : null,
+      inspector: inspectorNodeId ? inspectorRect : null,
+      canvasRect: session.canvasRect,
+    })
     // Only commit "clean" when both rects came out finite (or legitimately
     // null — the frame doesn't own the node). A layout read taken mid-reflow
     // can occasionally come back non-finite (e.g. an iframe measured the
@@ -560,7 +585,9 @@ export function BreakpointSelectionOverlay({
 
     const scheduler = createOverlayMeasureScheduler({
       iframeElement,
-      overlayRoot,
+      // In-frame rings (portal overlay root, or a bridge runtime's own) move
+      // with the frame's transform — a pan needs no per-frame pass (PERF-3).
+      ringsFollowViewport: Boolean(overlayRoot) || bridgeChrome,
       measure: () => tickOnce(iframeElement),
       // A parent-window resize moves the canvas root's own rect, which the
       // in-iframe rect comparison inside the tick structurally cannot see.
@@ -575,7 +602,7 @@ export function BreakpointSelectionOverlay({
       if (schedulerRef.current === scheduler) schedulerRef.current = null
       scheduler.dispose()
     }
-  }, [hasOverlayWork, iframeElement, overlayRoot, continuousGesture])
+  }, [hasOverlayWork, iframeElement, overlayRoot, bridgeChrome, continuousGesture])
 
   const toolbar = showToolbar ? (
     <SelectionToolbar
@@ -601,18 +628,17 @@ export function BreakpointSelectionOverlay({
   // inside `CanvasTransformLayer`, so it was never subject to the
   // zoom-multiplied drift this work order fixes.
   const usingIframeOverlay = Boolean(overlayRoot)
-  // A SINGLE selection only: the drag writes an inline style to one element,
-  // so three selected elements would mean three edits behind one set of
-  // handles — a different feature, not a loop over this one. In-iframe only:
-  // the parent-document fallback positions from zoom-converted math
-  // (`standing-03`), and handles are far less forgiving of drift than a ring.
-  const resizeNodeId = usingIframeOverlay && showRings && selectedNodeIds.length === 1
-    ? (selectedNodeIds[0] ?? null)
-    : null
+  // One selected layer gets its own handles; several get ONE set on their
+  // union (P5-F, IX-6g — `CanvasGroupResizeHandles`), which scales them as a
+  // group in one write. In-iframe only: the parent-document fallback
+  // positions from zoom-converted math (`standing-03`), and handles are far
+  // less forgiving of drift than a ring.
+  const resizeNodeIds = usingIframeOverlay && showRings ? selectedNodeIds : EMPTY_SELECTED_NODE_IDS
   // `live-13` — the same rings, hover, handles and anchor for a bridge frame, through its adapter.
   useBridgeSelectionChrome(bridgeChrome ? adapter : null, {
     iframeElement, canvasRoot: portalCanvasRoot, selectedNodeIds: showRings ? selectedNodeIds : EMPTY_SELECTED_NODE_IDS,
     hoverNodeId: showHover ? hoverRingNodeId : null, showToolbar, inspectorNodeId, toolbarRef, inspectorRef, committedTransform,
+    recordAnchor: recordChromeAnchor,
   })
   // This component owns `resizeFrameRef`, so this component writes it —
   // the chrome below is handed a setter, never the ref.
@@ -620,17 +646,26 @@ export function BreakpointSelectionOverlay({
     resizeFrameRef.current = element
   }
 
+  // PERF-2 — the hover ring is hidden by a style write, never unmounted, so a
+  // hover crossing is an attribute change, not a `childList` one under the
+  // frame's observed `<body>`. Layout effect: hidden before the first paint of
+  // a freshly mounted chrome too.
+  useLayoutEffect(() => {
+    if (!showHover) hideOverlayElement(hoverRef.current)
+  }, [showHover, chromeTarget])
+
   // The rings/badges/handles themselves — see `CanvasSelectionChrome`. It is
   // elements only; this component keeps every measurement and every ref.
-  const canvasChrome = showRings && (selectedNodeIds.length > 0 || (showHover && hoverRingNodeId) || showSelectorHighlight) ? (
+  // Mounted whenever rings are shown at all (PERF-2): starting or ending a
+  // hover must not mount or unmount anything.
+  const canvasChrome = showRings ? (
     <CanvasSelectionChrome
       selectedNodeIds={selectedNodeIds}
-      showHover={showHover}
-      hoverRingNodeId={hoverRingNodeId}
+      hoverRingNodeId={showHover ? hoverRingNodeId : null}
       showSelectorHighlight={showSelectorHighlight}
       usingIframeOverlay={usingIframeOverlay}
       toolbarMode={toolbarMode}
-      resizeNodeId={resizeNodeId}
+      resizeNodeIds={resizeNodeIds}
       overlayRoot={overlayRoot}
       selectorHighlightRef={selectorHighlightRef}
       hoverRef={hoverRef}
@@ -640,31 +675,10 @@ export function BreakpointSelectionOverlay({
     />
   ) : null
 
-  // Studio-only mini-inspector (Phase 2): anchored just below the selection
-  // ring by the RAF tick's `positionInspector` call above, using the same
-  // measured rect the ring already used. `InPlaceInspector` independently
-  // bails to null for a non-`alm.*` node, so this wrapper mounts for any
-  // single studio selection and the component itself decides whether to
-  // render anything.
+  // Studio-only mini-inspector (Phase 2), anchored just below the selection
+  // ring by the measure pass and the pan/zoom follower — see its own doc.
   const inspector = inspectorNodeId ? (
-    <div
-      ref={inspectorRef}
-      className={styles.inspectorAnchor}
-      data-canvas-in-place-inspector="true"
-      data-canvas-inspector-mode={toolbarMode}
-      // Debugging aid: every studio board frame mounts its OWN wrapper (see
-      // `showInspector`'s comment above), so several of these can exist in
-      // the DOM at once with only one actually positioned/visible — this
-      // makes it possible to tell them apart without walking React internals.
-      data-canvas-inspector-breakpoint={breakpointId}
-      // Same rationale as the toolbar's onClick guard: the inspector is
-      // portaled into the canvas root, whose background click clears the
-      // selection — without this guard, clicking a control inside it would
-      // bubble up and clear the selection mid-edit.
-      onClick={(event) => event.stopPropagation()}
-    >
-      <InPlaceInspector nodeId={inspectorNodeId} />
-    </div>
+    <InPlaceInspectorAnchor anchorRef={inspectorRef} nodeId={inspectorNodeId} mode={toolbarMode} breakpointId={breakpointId} />
   ) : null
 
   return (

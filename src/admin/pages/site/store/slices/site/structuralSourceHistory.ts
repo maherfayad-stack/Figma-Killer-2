@@ -27,17 +27,29 @@
  * forward direction rode, resolves against the files as they are now, and
  * ends in the same resync. It is one write, one toast, one step.
  *
- * Before posting, every node id the inverse names is checked against the live
- * tree. That check is what stands between "undo" and "delete whatever happens
+ * Before posting, every node id the inverse names is checked against the
+ * board. That check is what stands between "undo" and "delete whatever happens
  * to sit at that line now": the ids were minted against the file as the
  * gesture left it, and anything that changed the file outside the undo stack
- * (an external editor, a value edit that collapsed a `style={{…}}` onto one
- * line) invalidates them. A failed check refuses out loud, naming the file.
+ * (an agent's edit, an external editor, a value edit that collapsed a
+ * `style={{…}}` onto one line) invalidates them.
+ *
+ * ERR-3 — the check asks the WHOLE board (`_nodeIdToPageIds`, O(1) per id),
+ * not the active page: clicking another frame activates its page, and the
+ * old active-tree check then called every id "missing" and blamed the file.
+ *
+ * ERR-2/ERR-28 — a step that cannot happen as recorded is SKIPPED: the entry
+ * is dropped with a one-line notice and the stack moves on
+ * (`undoRedoActions.ts`). It used to stay on top behind a modal, so every
+ * later ⌘Z hit the same refusal and nothing before it could be undone.
  */
 import type { NodeTree, PageNode } from '@core/page-tree'
-import { describeStructuralRefusal } from '@core/page-tree'
+import { canvasLayerIdFromRel, canvasLayerPageId, isCanvasLayerEditNodeId } from '@core/studio-board'
+import type { EditorStore } from '@site/store/types'
 import { commitStudioStructuralReissue } from '@site/studio/studioStructuralCommits'
 import {
+  addressesJournalEntry,
+  addressesSourceLiteral,
   anchorTransplantBack,
   fileOfNodeId,
   structuralEditNodeIds,
@@ -46,16 +58,16 @@ import {
 import type { PendingStructuralHistory } from '@site/studio/pendingStructuralOutcome'
 import { resolveStructuralInverse } from '@site/studio/structuralUndoPlan'
 import { commitHistoryEntry } from './historyStack'
-import { STRUCTURAL_REFUSAL_TITLE, presentStructuralRefusal } from './structuralSourceEdits'
-import { resolveActiveTreeTarget } from './helpers'
+import type { StructuralCommitRollback } from './structuralCommitRollback'
+import type { StructuralStepOutcome } from './structuralHistory'
 import type { HistoryEntry, SiteSlice, SiteSliceHelpers, StructuralSourceHistory } from './types'
 
 type StructuralSourceHistoryActions = Pick<SiteSlice, 'recordStructuralSourceWrite'>
 
 /**
  * Apply what a landed structural write means for the undo stack — called by
- * `usePersistence.ts` once the board has read the write back, draining
- * `pendingStructuralOutcome.ts`.
+ * `siteReloadApply.ts` once the board has read the write back, applying the
+ * `pendingStructuralOutcome.ts` value that rode that re-read.
  *
  * `push` is an ordinary gesture: one new entry, one ⌘Z. `fill` (`store-15`) is
  * `delete`'s own forward commit filling in the `inverse` of the entry its own
@@ -126,130 +138,131 @@ export function createStructuralSourceHistoryActions({
 }
 
 /**
- * Re-issue one direction of a stored source-writing gesture. Returns whether
- * the write was actually posted — `false` means the stacks must be left
- * exactly as they were, because nothing happened.
- *
- * Three ways it declines, all of them out loud:
+ * Re-issue one direction of a stored source-writing gesture. `posted` means
+ * the write is on its way, answering to `rollback` if it does not land;
+ * `skipped` means it never can, for one of two reasons:
  *  - the direction has no edits at all (an `unsupported` inverse — an ungroup
  *    whose container carried styling a plain re-wrap would not restore);
- *  - the tree the ids belong to is not open;
- *  - an id no longer resolves, which means the file is not what this entry was
- *    recorded against. That refusal names the file, because the remedy is in
- *    the file: look at what changed there.
+ *  - an id no longer resolves anywhere on the board, which means the file is
+ *    not what this entry was recorded against. The notice names the file,
+ *    because that is where the change that got in the way lives.
  */
 export function reissueStructuralSourceEdits(
   get: SiteSliceHelpers['get'],
-  set: SiteSliceHelpers['set'],
   entry: StructuralSourceHistory,
   direction: 'undo' | 'redo',
-): boolean {
+  rollback: StructuralCommitRollback,
+): StructuralStepOutcome {
   const { label, forward, inverse, inverseTemplate } = entry.source
   const state = get()
-  const target = resolveActiveTreeTarget(state)
-  if (!target) {
-    refuseReissue(get, set, direction, 'That change was made on a document that is no longer open. Open it again to undo it.')
-    return false
-  }
 
   const planned = direction === 'undo' ? inverse : forward
   if (planned === null || planned.length === 0) {
-    refuseReissue(
-      get,
-      set,
-      direction,
-      inverseTemplate.kind === 'unsupported'
-        ? inverseTemplate.message
-        : `Studio could not work out how to take “${label}” back out of your project source, so it has left the files alone. Use your editor’s undo or \`git\`.`,
-      // The gesture's own target: the one thing the user can usefully be
-      // pointed at when the editor cannot reverse what it did there.
-      forward[0]?.nodeId,
-    )
-    return false
+    return {
+      kind: 'skipped',
+      notice:
+        direction === 'redo'
+          ? `“${label}” can’t be redone from here — make the change again.`
+          : inverseTemplate.kind === 'unsupported'
+            ? inverseTemplate.message
+            : `Studio could not work out how to take “${label}” back out of your project source, so it left the files alone.`,
+    }
   }
 
   const edits =
     direction === 'undo'
-      ? anchorTransplantBack(planned, inverseTemplate, parentChildIds(target.tree, inverseTemplate))
+      ? anchorTransplantBack(planned, inverseTemplate, parentChildIds(state, inverseTemplate))
       : [...planned]
 
-  const missing = unresolvedNodeIds(edits, target.tree)
+  const missing = unresolvedNodeIds(edits, state)
   if (missing.length > 0) {
-    refuseReissue(
-      get,
-      set,
-      direction,
-      `${fileOfNodeId(missing[0]!)} has changed since “${label}” was written, so ${
+    return {
+      kind: 'skipped',
+      notice: `${fileOfNodeId(missing[0]!)} has changed since, so ${
         direction === 'undo' ? 'undoing' : 'redoing'
-      } it would edit code Studio can no longer account for. Nothing was written — check what changed in that file.`,
-      missing[0]!,
-    )
-    return false
+      } it would edit code Studio can no longer account for. Nothing was written.`,
+    }
   }
 
-  void commitStudioStructuralReissue(edits, direction, label)
-  return true
+  // P5-G — a canvas-layer gesture's placement half moves with its write, and
+  // comes back if the write does not land.
+  const placements = entry.source.placements
+  const side = direction === 'undo' ? 'before' : 'after'
+  const posted = placements && placements.length > 0 ? withPlacements(get, placements, side, rollback) : rollback
+  void commitStudioStructuralReissue(edits, direction, label, posted, direction === 'redo' ? entry.source.sequence : undefined)
+  return { kind: 'posted', pendingCommitId: rollback.id }
 }
 
 /**
  * The destination parent's current child list, for a `transplant-back` whose
- * anchor has to be resolved against the tree as it is now. Empty for every
- * other template, which `anchorTransplantBack` ignores.
+ * anchor has to be resolved against the tree as it is now — read off the page
+ * that owns the parent, which need not be the active one (ERR-3). Empty for
+ * every other template, which `anchorTransplantBack` ignores.
  */
 function parentChildIds(
-  tree: NodeTree<PageNode>,
+  state: Pick<EditorStore, 'site' | '_nodeIdToPageIds'>,
   template: StructuralSourceHistory['source']['inverseTemplate'],
 ): readonly string[] {
-  if (template.kind !== 'transplant-back') return []
-  return tree.nodes[template.parentNodeId]?.children ?? []
+  if (template.kind !== 'transplant-back' && template.kind !== 'canvas-layer-lift-back') return []
+  const pageId = state._nodeIdToPageIds.get(template.parentNodeId)?.[0]
+  const page: NodeTree<PageNode> | undefined = state.site?.pages.find((candidate) => candidate.id === pageId)
+  return page?.nodes[template.parentNodeId]?.children ?? []
 }
 
 /**
- * The node ids these edits name that the live tree does not have.
+ * P5-G — put a canvas-layer gesture's placements on `side` now, and return a
+ * rollback that puts them back on the other side if the re-issued write does
+ * not land, before handing on to the stack's own.
+ */
+function withPlacements(
+  get: SiteSliceHelpers['get'],
+  placements: NonNullable<StructuralSourceHistory['source']['placements']>,
+  side: 'before' | 'after',
+  rollback: StructuralCommitRollback,
+): StructuralCommitRollback {
+  get().applyCanvasLayerPlacements(placements, side)
+  return {
+    id: rollback.id,
+    settle: rollback.settle,
+    rollback: (failure) => {
+      get().applyCanvasLayerPlacements(placements, side === 'before' ? 'after' : 'before')
+      rollback.rollback(failure)
+    },
+  }
+}
+
+/**
+ * The node ids these edits name that the board does not have.
  *
  * Every id a structural edit carries — the target, the anchor, the
  * destination, a group's siblings — has to still be a node the board can see,
  * because the board was read from the same files the write is about to edit.
- * A cross-FILE transplant is the one exception the tree cannot answer for: its
- * destination lives in another page, which may not be the active tree, so only
- * ids belonging to the active tree's own file are checked.
+ * "The board" is every page (`_nodeIdToPageIds`), so a cross-FILE transplant's
+ * far end is checked too, and an undo pressed from another frame asks the
+ * right tree (ERR-3).
  */
 function unresolvedNodeIds(
   edits: readonly StructuralEditPayload[],
-  tree: NodeTree<PageNode>,
+  state: Pick<EditorStore, '_nodeIdToPageIds' | 'canvasLayerPages'>,
 ): string[] {
   const missing: string[] = []
   for (const edit of edits) {
+    if (addressesSourceLiteral(edit) || addressesJournalEntry(edit)) continue
     for (const id of structuralEditNodeIds(edit)) {
-      if (!tree.nodes[id] && fileOfNodeId(id) === fileOfNodeId(edit.nodeId) && !missing.includes(id)) missing.push(id)
+      if (!state._nodeIdToPageIds.has(id) && !onFreeCanvas(state, id) && !missing.includes(id)) missing.push(id)
     }
   }
   return missing
 }
 
-
 /**
- * Say why the step did not happen — through the refusal DIALOG, not a toast.
- *
- * A refused undo is the one case in this family where the editor has to
- * interrupt: the user pressed ⌘Z expecting their last change to be gone, and
- * it is still there. A toast that auto-dismisses leaves them believing the
- * undo worked. Everything else about this family stays quiet.
+ * P5-G — an id a canvas-layer edit names that the board still has, outside
+ * `site.pages`: the synthetic `canvas-layer:<id>` a create/delete/restore
+ * addresses (it names a layer, never a position), or a node inside a loose
+ * layer's own module, looked up in that layer's tree.
  */
-function refuseReissue(
-  get: SiteSliceHelpers['get'],
-  set: SiteSliceHelpers['set'],
-  direction: 'undo' | 'redo',
-  message: string,
-  /** The element the refusal is about, when one is nameable — supplies `origin` and the jump-to-source remedy. */
-  nodeId?: string,
-): void {
-  presentStructuralRefusal(
-    direction === 'undo' ? STRUCTURAL_REFUSAL_TITLE.undo : STRUCTURAL_REFUSAL_TITLE.redo,
-    describeStructuralRefusal({
-      refusal: { reason: 'stale-undo', message },
-      ...(nodeId ? { node: { id: nodeId } } : {}),
-    }),
-    { getState: get, set, ...(nodeId ? { nodeId } : {}) },
-  )
+function onFreeCanvas(state: Pick<EditorStore, 'canvasLayerPages'>, id: string): boolean {
+  if (isCanvasLayerEditNodeId(id)) return true
+  const layerId = canvasLayerIdFromRel(fileOfNodeId(id))
+  return layerId !== null && Boolean(state.canvasLayerPages[canvasLayerPageId(layerId)]?.nodes[id])
 }

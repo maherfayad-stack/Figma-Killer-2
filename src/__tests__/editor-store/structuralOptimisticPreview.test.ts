@@ -20,7 +20,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { useEditorStore } from '@site/store/store'
 import { isStructuralCommitInFlight, resetStructuralCommitQueue } from '@site/studio/structuralCommitQueue'
-import { clearPendingStructuralOutcome } from '@site/studio/pendingStructuralOutcome'
 import { isPendingOptimisticNodeId, resetOptimisticPreviewTracking } from '@site/store/slices/site/structuralOptimism'
 import type { PageNode } from '@core/page-tree'
 import { makePage, makeSite } from '../fixtures'
@@ -113,7 +112,6 @@ function stubRefusingSaveFetch() {
 
 beforeEach(() => {
   resetStructuralCommitQueue()
-  clearPendingStructuralOutcome()
   resetOptimisticPreviewTracking()
   realFetch = globalThis.fetch
   useEditorStore.setState({
@@ -138,7 +136,6 @@ afterEach(async () => {
   await waitFor(() => !isStructuralCommitInFlight()).catch(() => {})
   globalThis.fetch = realFetch
   resetStructuralCommitQueue()
-  clearPendingStructuralOutcome()
   resetOptimisticPreviewTracking()
 })
 

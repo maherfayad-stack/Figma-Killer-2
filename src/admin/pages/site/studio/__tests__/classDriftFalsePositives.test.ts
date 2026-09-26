@@ -18,9 +18,10 @@
  *      id the studio importer never minted (a `nanoid()` clone) — so the
  *      second kind landed in the honesty toast that exists for the first.
  *
- * The honest refusals stay: a `.map` row and an imported page's synthetic
- * `<pageId>:body` root still report, and an ordinary class assignment still
- * becomes a `kind: 'class'` edit.
+ * The honest refusal stays: an imported page's synthetic `<pageId>:body` root
+ * still reports, and an ordinary class assignment still becomes a
+ * `kind: 'class'` edit. A `.map` row's is written to its row template since
+ * P3-C (OD-8).
  */
 import { describe, it, expect, beforeEach } from 'bun:test'
 import type { Page, StyleRule } from '@core/page-tree'
@@ -139,14 +140,28 @@ describe('the honest cases are unchanged', () => {
     expect(result.edits[0]!.nodeId).toBe(inlinedId)
   })
 
-  it('a `.map` row keeps the honest refusal', () => {
-    resetLoadedValues([pageWith([{ id: 'pages/Onboarding.tsx:70:21#2', classIds: [] }])])
+  it('P3-C (OD-8) — a `.map` row writes its row TEMPLATE, and names every row it restyles', () => {
+    const rows = [
+      { id: 'pages/Onboarding.tsx:70:21#0', classIds: [] },
+      { id: 'pages/Onboarding.tsx:70:21#1', classIds: [] },
+      { id: 'pages/Onboarding.tsx:70:21#2', classIds: [] },
+    ]
+    resetLoadedValues([pageWith(rows)])
 
-    const result = plan([pageWith([{ id: 'pages/Onboarding.tsx:70:21#2', classIds: [CARD.id] }])])
+    const result = plan([pageWith(rows.map((row) => (row.id.endsWith('#2') ? { ...row, classIds: [CARD.id] } : row)))])
 
-    expect(result.edits).toEqual([])
-    expect(result.unwritable).toHaveLength(1)
-    expect(result.unwritable[0]!.addedClassNames).toEqual(['card'])
+    expect(result.unwritable).toEqual([])
+    expect(result.edits).toEqual([
+      { kind: 'class', nodeId: 'pages/Onboarding.tsx:70:21', add: [{ kind: 'literal', token: 'card' }], remove: [] },
+    ])
+    expect(result.rowTemplateWrites).toEqual([
+      {
+        editKey: 'class|pages/Onboarding.tsx:70:21|',
+        nodeId: 'pages/Onboarding.tsx:70:21#2',
+        templateId: 'pages/Onboarding.tsx:70:21',
+        rowCount: 3,
+      },
+    ])
   })
 
   it("an imported page's synthetic `<pageId>:body` root keeps the honest refusal", () => {

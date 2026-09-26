@@ -20,7 +20,7 @@
  * signal and a release function, release on abort."
  */
 import { describe, expect, it, mock } from 'bun:test'
-import { abandonTurn, armAbortedReleaseGuard } from './chat'
+import { abandonTurn, armAbortedReleaseGuard } from '../chatTurnGuards'
 
 function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0))

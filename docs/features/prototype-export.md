@@ -1,4 +1,5 @@
 # Prototype export — the runnable shell in the workspace
+> **Purpose:** the runnable preview shell Studio scaffolds into a project, and "Download the code" · **Read when:** touching the generated prototype shell or the download · **Trust:** current · **Owner:** server-engineer · **Verified:** not yet
 
 **Owner modules:** `server/handlers/studio/prototypeShell/` ·
 `server/handlers/studioDownload.ts`
@@ -172,10 +173,32 @@ unreadable directory, an escaping `pagesDir`, a corrupt `boards.json`) must
 still open and must still download — the shell is an addition to a workspace,
 never a precondition for reading one.
 
-It is also cheap on the common path: static files are `existsSync` checks, and
-the generated ones are only written when their content actually differs — a
+It runs **once per project per process**, and again only when one of its
+inputs changes (`prototypeShell/shellInputStamp.ts`). A real run reads and
+compares every shell file — the 2 MB runtime bundle among them — re-reads
+`.studio/` and walks the pages dir, which was about 20 ms of every `/load` on
+the canonical fixture, nearly always to conclude that nothing changed. After a
+run, every input is stamped by `lstat` (size, mtime in ns, inode): each shell
+file, `.studio/shell.json`, `package.json`, `.studio/meta.json`, the boards
+file, `.studio/prototype.json`, the `i18n/LanguageContext` candidates, the
+design-system entry, and the pages dir plus every directory under it (a
+directory's mtime moves when a page is added, removed or renamed). The next
+call stats those and, if none moved, returns `inputsUnchanged: true` without
+reading anything. A stamp in which any input is newer than two seconds before
+the run started is never kept (git's "racily clean" rule: a same-size rewrite
+inside a coarse filesystem's timestamp tick would otherwise be invisible).
+Gated by `prototypeShellOnce.test.ts`.
+
+A real run only writes a generated file when its content actually differs — a
 needless rewrite would move `package.json`'s mtime and invalidate caches keyed
 on it.
+
+The shell never enters the parse. `prototype/` is skipped by every "is this the
+user's source?" rule, and `vite.config.js` — like every build-tool config
+(`isHostConfigFileName`) — is left out of `listWorkspaceSourceFiles`: as a root
+of the workspace ts-morph program it pulled `vite`, `rolldown`, `postcss`,
+`@types/node` and the runtime bundle in behind it (86 → 288 program files on
+the canonical fixture). Gated by `shellStaysOutOfTheParse.test.ts`.
 
 ## 6. Why `prototype/` is invisible to the parse
 

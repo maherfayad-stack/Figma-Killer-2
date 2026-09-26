@@ -7,6 +7,10 @@ dist
 uploads
 data
 backups
+# User data and private runtime state from a local Studio run: the users'
+# projects, and .data/ (MCP secrets, Claude CLI logins). Never build context.
+studio-workspace
+.data
 *.sqlite
 *.sqlite-*
 .env

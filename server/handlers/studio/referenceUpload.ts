@@ -42,7 +42,7 @@
  *     `removeDesignReference`).
  */
 import { Type, safeParseValue } from '@core/utils/typeboxHelpers'
-import { badRequest, jsonResponse } from '../../http'
+import { badRequest, jsonResponse, internalServerError } from '../../http'
 import { DESIGN_REFERENCE_MAX_BYTES } from '@core/ai'
 import { ArchiveIngestError, readFormDataWithLimit } from './archiveIngest'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
@@ -148,7 +148,7 @@ export async function tryServeStudioReferenceUpload(req: Request, url: URL, path
       if (err instanceof ArchiveIngestError) {
         return jsonResponse({ error: err.message }, { status: err.status })
       }
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio]', err)
     }
   }
 
@@ -173,8 +173,7 @@ export async function tryServeStudioReferenceUpload(req: Request, url: URL, path
       return jsonResponse({ ok: true })
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio:referenceUpload]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio:referenceUpload]', err)
     }
   }
 

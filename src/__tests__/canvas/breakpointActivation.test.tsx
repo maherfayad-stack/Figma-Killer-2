@@ -21,8 +21,6 @@ beforeEach(() => {
     activeBreakpointId: 'desktop',
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
-    hoveredBreakpointId: null,
     propertiesPanel: { collapsed: false, x: 0, y: 0, width: 360 },
     packageJson: {},
     _historyPast: [],

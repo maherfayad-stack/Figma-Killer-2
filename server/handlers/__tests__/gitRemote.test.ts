@@ -34,6 +34,7 @@ import {
 import { githubProjectFolderName, parseGithubRemoteUrl, redactRemoteUrlCredentials } from '../studio/gitPaths'
 import { isGitFailure, originAcceptsStoredGithubToken, pushCurrentBranch } from '../studio/gitOperations'
 import { withOutsideWorkspaceDir } from './outsideWorkspaceDir'
+import type { SubprocessSpawnFn } from '../studio/subprocessRunner'
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -569,6 +570,95 @@ describe('git clone', () => {
     expect(finished.phase).toBe('failed')
     expect(finished.error).toBeTruthy()
     expect(fs.existsSync(target)).toBe(false)
+  })
+
+  // A repository that commits `.studio/shares.json` hands its author a share
+  // token that resolves on THIS server's public route, and "Update" would
+  // photograph the user's board into it. The clone keeps the board, drops shares.
+  it('drops a cloned repository’s share records and snapshots, and keeps its board', async () => {
+    const source = makeProjectDir()
+    await makeRepo(source)
+    const token = `shr_${'A'.repeat(43)}`
+    fs.mkdirSync(path.join(source, '.studio', 'shares', token), { recursive: true })
+    fs.writeFileSync(
+      path.join(source, '.studio', 'shares.json'),
+      JSON.stringify({ version: 1, shares: [{ token, boardId: 'b1', boardName: 'B', createdAt: 'x', snapshotAt: 'x', frameCount: 0 }] }),
+    )
+    fs.writeFileSync(path.join(source, '.studio', 'shares', token, 'board.json'), '{}')
+    fs.writeFileSync(path.join(source, '.studio', 'boards.json'), '{"version":1,"boards":[]}')
+    await git(source, ['add', '-A'])
+    await git(source, ['commit', '-m', 'studio state'])
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-clone-origin-shares-'))
+    created.push(bare)
+    await git(bare, ['init', '--bare', '--initial-branch=main'])
+    await git(source, ['remote', 'add', 'origin', bare])
+    await git(source, ['push', '--set-upstream', 'origin', 'main'])
+
+    const remote = { owner: 'studio-test', repo: 'shared-state', url: bare, protocol: 'https' as const }
+    const target = cloneTargetDir(remote)
+    created.push(target)
+    const job = startGitCloneJob(remote, undefined)
+    const deadline = Date.now() + 60_000
+    while (Date.now() < deadline) {
+      const current = readGitCloneJob(job.id)
+      if (current && (current.phase === 'done' || current.phase === 'failed')) break
+      await Bun.sleep(50)
+    }
+
+    expect(readGitCloneJob(job.id)!.phase).toBe('done')
+    expect(fs.existsSync(path.join(target, '.studio', 'shares.json'))).toBe(false)
+    expect(fs.existsSync(path.join(target, '.studio', 'shares'))).toBe(false)
+    expect(fs.readFileSync(path.join(target, '.studio', 'boards.json'), 'utf8')).toBe('{"version":1,"boards":[]}')
+  })
+
+  // A hostile repository ships `.studio` as a link (git stores symlinks). The
+  // clone's own meta write — its first `.studio` write — used to land wherever
+  // it pointed. Windows git checks a link out as text unless `core.symlinks`
+  // is on, so the link is planted by the spawn seam the moment git exits:
+  // exactly the tree a POSIX clone of that repository produces.
+  it('removes a cloned .studio that is a link before writing a record, and touches nothing it pointed at', async () => {
+    const source = makeProjectDir()
+    await makeRepo(source)
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-clone-origin-linked-'))
+    created.push(bare)
+    await git(bare, ['init', '--bare', '--initial-branch=main'])
+    await git(source, ['remote', 'add', 'origin', bare])
+    await git(source, ['push', '--set-upstream', 'origin', 'main'])
+
+    const victim = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-clone-victim-'))
+    created.push(victim)
+    const planted = JSON.stringify({ trust: 'run-project' })
+    fs.writeFileSync(path.join(victim, 'meta.json'), planted)
+
+    const remote = { owner: 'studio-test', repo: 'linked-studio', url: bare, protocol: 'https' as const }
+    const target = cloneTargetDir(remote)
+    created.push(target)
+    const spawn: SubprocessSpawnFn = (argv, options) => {
+      const proc = Bun.spawn(argv, options)
+      const exited = proc.exited.then((code) => {
+        if (code === 0 && argv.includes('clone')) fs.symlinkSync(victim, path.join(target, '.studio'), 'junction')
+        return code
+      })
+      return { stdout: proc.stdout, stderr: proc.stderr, exited, pid: proc.pid }
+    }
+
+    const job = startGitCloneJob(remote, undefined, { spawn })
+    const deadline = Date.now() + 60_000
+    while (Date.now() < deadline) {
+      const current = readGitCloneJob(job.id)
+      if (current && (current.phase === 'done' || current.phase === 'failed')) break
+      await Bun.sleep(50)
+    }
+
+    const finished = readGitCloneJob(job.id)!
+    expect(finished.error).toBeNull()
+    expect(finished.phase).toBe('done')
+    // Studio's own record is a real folder in the project now…
+    expect(fs.lstatSync(path.join(target, '.studio')).isSymbolicLink()).toBe(false)
+    expect(JSON.parse(fs.readFileSync(path.join(target, '.studio', 'meta.json'), 'utf8')).displayName).toBe('linked-studio')
+    // …and what the link pointed at was never written.
+    expect(fs.readFileSync(path.join(victim, 'meta.json'), 'utf8')).toBe(planted)
+    expect(fs.readdirSync(victim)).toEqual(['meta.json'])
   })
 })
 

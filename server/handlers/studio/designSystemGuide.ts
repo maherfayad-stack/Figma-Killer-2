@@ -436,24 +436,32 @@ export function renderIconReference(guide: DesignSystemGuide): string | undefine
     )
   }
 
-  // The BUILT-IN design system's raw SVG catalog is Studio's, not the
-  // project's: the project's folder carries only the handful of files the
-  // components themselves import, so printing hundreds of names as importable
-  // paths would be an instruction that fails on almost every one of them. The
-  // markup is reachable — through the icon picker, which INLINES it — so this
-  // says that instead of a path.
+  // The BUILT-IN design system's raw SVG catalog is Studio's. The project's
+  // folder holds only the icons something imports, but that set is
+  // demand-driven: `ensureDesignSystemFiles` runs on every load and copies in
+  // any icon a project file imports (`collectProjectIconDemand`), so every name
+  // below IS importable from the folder — the file just may not be on disk
+  // until the next load. Same `?raw` form as a package catalog.
   if (guide.importStyle.kind === 'folder') {
+    const dirName = guide.importStyle.dirName
     const total = icons.catalogs.reduce((sum, catalog) => sum + catalog.names.length, 0)
-    if (total > 0) {
+    const example = icons.catalogs.find((catalog) => catalog.names.length > 0)
+    if (total > 0 && example) {
+      // Vendored `src/icons/…` is the project's `<dirName>/icons/…`.
+      const folderPath = (catalog: IconCatalog) => `${dirName}/${catalog.path.replace(/^src\//, '')}`
       lines.push(
-        `## Icon files (${total}) — inline them, do not import them`,
+        `## Icon files (${total}) — import with \`?raw\` from \`${dirName}/\``,
         '',
-        `Studio ships ${total} SVGs with this design system, but the project's own \`${guide.importStyle.dirName}/\` folder carries only the few the components themselves use — so there is no file path to import for the rest.`,
+        `Any of the ${total} SVGs below can be imported from the project's own \`${dirName}/\` folder, relative to your file. The folder holds only the icons something imports; write the import and Studio copies the file in on the next load.`,
         '',
-        'Use the icon picker (a slot whose prop name reads as an icon offers it) or GET /admin/api/studio/icons, both of which INLINE the markup into your JSX as a real `<svg>`. An inline `<svg>` inherits `currentColor`, which is what you want anyway.',
+        '```jsx',
+        `import ${RAW_IMPORT_EXAMPLE_BINDING} from '../${folderPath(example)}/${example.names[0]}.svg?raw'`,
+        `// …then render it: <span className={styles.icon} dangerouslySetInnerHTML={{ __html: ${RAW_IMPORT_EXAMPLE_BINDING} }} />`,
+        '```',
         '',
-        `Names, for searching: ${icons.catalogs.map((catalog) => catalog.names.join(', ')).join(', ')}`,
+        '`studio_find_icon` returns the exact import line for your file. Keep the `?raw`: the inline `<svg>` inherits `currentColor`.',
         '',
+        ...icons.catalogs.flatMap((catalog) => [`${folderPath(catalog)}/: ${catalog.names.join(', ')}`, '']),
       )
     }
     return lines.join('\n')
@@ -493,7 +501,7 @@ export function renderComponentReference(guide: DesignSystemGuide): string {
     '',
     'Generated from the package\'s own docs on every chat turn. Do not hand-edit.',
     '',
-    `Every component below is a real named export of ${guide.importStyle.kind === 'folder' ? `this project's \`${guide.importStyle.dirName}/\` folder` : `\`${guide.packageName}\``}. Import it — do not re-implement it, and do not substitute a raw HTML element, an emoji, or a text glyph for one.`,
+    `Every component below is a real named export of ${guide.importStyle.kind === 'folder' ? `this project's \`${guide.importStyle.dirName}/\` folder` : `\`${guide.packageName}\``}, imported by name. Whether a screen must use it is this session's design policy, stated in Studio's system prompt, not here.`,
     '',
   ]
   if (guide.importContract) {
