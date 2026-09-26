@@ -36,16 +36,8 @@
  * ## Revert is the user's, and it is compare-and-swap
  *
  * {@link revertAgentCheckpoint} restores a file only while it still holds
- * EXACTLY what the agent left (its hash equals the post-image's). A file the
- * user edited afterwards — on the canvas, in an editor, or by a later turn —
- * is refused by name, never overwritten: the one-honest-target invariant,
- * applied to undo. "Revert turn" is all-or-nothing: if any file of the turn
- * moved on, nothing is restored, and the panel offers the per-file reverts that
- * still apply. The write goes through the ONE agent write gate
- * (`resolveAgentFilePath(…, 'write')` → `agentWriteRefusal`) and holds
- * `withProjectWriteLock`, so a revert can land nowhere an agent write could not:
- * never outside the project, never into `.studio/`, `.claude/`, `.git/`,
- * `prototype/`, a host-executed config, or through a link or a hard link.
+ * EXACTLY what the agent left, all-or-nothing, through the ONE agent write
+ * gate and under `withProjectWriteLock` — see `agentCheckpointRevert.ts`.
  *
  * ## Where it lives
  *
@@ -61,23 +53,10 @@
  *
  * ## The store does not trust its own files (review of #251, F1)
  *
- * `.studio/` is out of every agent's reach, but not out of `git pull`'s or
- * another local process's. So nothing here follows a link, and nothing read
- * back is believed on its word:
- *
- *   - every store directory, from `.studio/` down, must be a real directory —
- *     never a symlink or a junction — or the store is treated as absent
- *     (`storeDir`), so no copy is ever written, read or pruned outside it;
- *   - every store file is read with `lstat` + no-follow, must be a regular
- *     single-link file, and is capped (64 KB for a record, the checkpoint cap
- *     for a blob) — `readStoreFile`;
- *   - a stored image counts only if its bytes hash to the hash its record
- *     states — a pre-image that is a link, or was swapped, is simply "not
- *     checkpointed", never restored and never diffed;
- *   - a turn belongs to ONE conversation (`turn.json`), and a revert or a diff
- *     naming another conversation is `not-found`;
- *   - store files are written through a fresh temp name and a rename, so a
- *     link planted at a record's name is replaced, never written through.
+ * Nothing in the store follows a link, and nothing read back is believed on
+ * its word: real directories only, no-follow single-link capped reads, images
+ * that must hash to their record, turns bound to one conversation, and
+ * temp-and-rename writes — see `agentCheckpointStore.ts`.
  *
  * Credential files (`isSecretBearingFileName`) never have their bytes kept at
  * all: they are listed as changed and are not revertable. The agent write gate
@@ -88,215 +67,61 @@
  * could not be taken must never block the write it describes — the file then
  * shows as "not revertable") and honest on the REVERT side (every refusal has
  * a code and a sentence).
+ *
+ * ## Module layout
+ *
+ * This file is the checkpoint module's public entry: turn start, capture,
+ * listing and diff. `agentCheckpointStore.ts` owns the on-disk store and
+ * `agentCheckpointRevert.ts` the revert; both are internal, and everything
+ * outside the module imports from here.
  */
-import { createHash, randomBytes } from 'node:crypto'
-import {
-  closeSync,
-  constants as fsConstants,
-  fstatSync,
-  lstatSync,
-  mkdirSync,
-  openSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  renameSync,
-  rmSync,
-  unlinkSync,
-  writeFileSync,
-  type Stats,
-} from 'node:fs'
-import { isAbsolute, join, resolve } from 'node:path'
-import { isSecretBearingFileName, realWorkspaceRel } from '@core/page-parser'
-import { Type, type Static, type TSchema } from '@core/utils/typeboxHelpers'
-import { safeParseJson } from '@core/utils/jsonValidate'
-import { contentHash, hasOtherHardLinks, nonTextReason, resolveAgentFilePath, statIfPresent } from './agentFileAccess'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { isSecretBearingFileName } from '@core/page-parser'
+import { contentHash, nonTextReason } from './agentFileAccess'
 import { unifiedLineDiff } from './agentCheckpointDiff'
-import { withProjectWriteLock } from './projectWriteLock'
+import { revertBlocker } from './agentCheckpointRevert'
+import {
+  CONVERSATION_KEY_RE,
+  MAX_FILES_PER_TURN,
+  PreRecordSchema,
+  RECORD_FILE_RE,
+  conversationCheckpointKey,
+  conversationTurnFilesDir,
+  currentTurnId,
+  isCheckpointTurnId,
+  listTurnRecords,
+  lstatOrNull,
+  pathKey,
+  projectRel,
+  pruneOldTurns,
+  readFileBytes,
+  readFileEntries,
+  readRecord,
+  storeDir,
+  turnFilesDir,
+  verifiedBlob,
+  writeStoreFile,
+  type PostRecord,
+  type PreRecord,
+  type TurnRecord,
+} from './agentCheckpointStore'
+
+export {
+  MAX_CHECKPOINT_FILE_BYTES,
+  MAX_TURNS_KEPT,
+  conversationCheckpointKey,
+  isCheckpointTurnId,
+} from './agentCheckpointStore'
+export { revertAgentCheckpoint, type RevertOutcome, type RevertRefusalCode } from './agentCheckpointRevert'
 
 /** The environment variable `claudeCli.ts` sets on the CLI subprocess and the hooks read back. */
 export const STUDIO_AGENT_CONVERSATION_KEY_ENV = 'STUDIO_AGENT_CONVERSATION_KEY'
-
-/** Largest file whose bytes a checkpoint keeps. Above it the file is listed, not revertable. */
-export const MAX_CHECKPOINT_FILE_BYTES = 4 * 1024 * 1024
-/** Newest turns kept per account per project. */
-export const MAX_TURNS_KEPT = 50
-/** Files one turn records. A turn that writes more is not something to undo file by file. */
-const MAX_FILES_PER_TURN = 200
-/** Largest JSON record the store reads back. Every real one is a few hundred bytes. */
-const MAX_RECORD_BYTES = 64 * 1024
-
-/** A turn id is a persisted message id (`nanoid`). It becomes a path segment, so it is validated wherever it enters. */
-const TURN_ID_RE = /^[A-Za-z0-9_-]{1,64}$/
-const CONVERSATION_KEY_RE = /^[a-f0-9]{16}$/
-/** One file's pre-image record: `<pathKey>.json`. */
-const RECORD_FILE_RE = /^([a-f0-9]{24})\.json$/
-
-export function isCheckpointTurnId(value: string): boolean {
-  return TURN_ID_RE.test(value)
-}
-
-/** Stable, path-safe key for one conversation — what the hooks carry instead of the id itself. */
-export function conversationCheckpointKey(conversationId: string): string {
-  return createHash('sha256').update(conversationId).digest('hex').slice(0, 16)
-}
 
 /** The conversation key a hook subprocess should use, or `null` when the CLI did not set one (a hook spawned by an older server). */
 export function conversationCheckpointKeyFromEnv(env: NodeJS.ProcessEnv = process.env): string | null {
   const raw = env[STUDIO_AGENT_CONVERSATION_KEY_ENV]
   return raw && CONVERSATION_KEY_RE.test(raw) ? raw : null
-}
-
-// ---------------------------------------------------------------------------
-// On-disk shapes
-// ---------------------------------------------------------------------------
-
-const TurnRecordSchema = Type.Object({
-  turnId: Type.String(),
-  conversationId: Type.String(),
-  startedAtMs: Type.Number(),
-})
-type TurnRecord = Static<typeof TurnRecordSchema>
-
-const PreRecordSchema = Type.Object({
-  /** Project-relative POSIX path, real casing. */
-  path: Type.String(),
-  /** `false`: the turn created the file. `null`: the write was seen but its pre-image could not be taken. */
-  existed: Type.Union([Type.Boolean(), Type.Null()]),
-  hash: Type.Union([Type.String(), Type.Null()]),
-  bytes: Type.Number(),
-  /** The bytes were over {@link MAX_CHECKPOINT_FILE_BYTES} and not kept. */
-  tooLarge: Type.Boolean(),
-  /** A credential file: its bytes are never kept, so it is never revertable. */
-  withheld: Type.Optional(Type.Boolean()),
-  atMs: Type.Number(),
-})
-type PreRecord = Static<typeof PreRecordSchema>
-
-const PostRecordSchema = Type.Object({
-  hash: Type.String(),
-  bytes: Type.Number(),
-  tooLarge: Type.Boolean(),
-  /** Line counts of the turn's change, computed ONCE when the post-image is recorded (listing never re-diffs). */
-  added: Type.Union([Type.Number(), Type.Null()]),
-  removed: Type.Union([Type.Number(), Type.Null()]),
-  atMs: Type.Number(),
-})
-type PostRecord = Static<typeof PostRecordSchema>
-
-const RevertedRecordSchema = Type.Object({ atMs: Type.Number() })
-
-const CurrentTurnSchema = Type.Object({ turnId: Type.String(), startedAtMs: Type.Number() })
-
-const STORE_SEGMENTS = ['.studio', 'agent-checkpoints'] as const
-
-function pathKey(rel: string): string {
-  return createHash('sha256').update(rel).digest('hex').slice(0, 24)
-}
-
-function samePath(a: string, b: string): boolean {
-  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b
-}
-
-/**
- * `<dir>/.studio/agent-checkpoints/<…segments>` when EVERY directory on the
- * way is a real directory inside the project — no symlink, no junction —
- * creating the missing ones when `create`; else `null`. The one way this
- * module reaches a store directory, so nothing is ever read, written or
- * pruned through a link out of the project.
- */
-function storeDir(dir: string, segments: readonly string[], create: boolean): string | null {
-  let current: string
-  try {
-    current = realpathSync.native(resolve(dir))
-  } catch {
-    return null
-  }
-  for (const segment of [...STORE_SEGMENTS, ...segments]) {
-    const next = join(current, segment)
-    let stat = lstatOrNull(next)
-    if (stat === null) {
-      if (!create) return null
-      try {
-        mkdirSync(next)
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'EEXIST') return null
-      }
-      stat = lstatOrNull(next)
-    }
-    if (stat === null || stat.isSymbolicLink() || !stat.isDirectory()) return null
-    // A junction can read as a plain directory to lstat on some runtimes; its real path cannot.
-    try {
-      if (!samePath(realpathSync.native(next), next)) return null
-    } catch {
-      return null
-    }
-    current = next
-  }
-  return current
-}
-
-function lstatOrNull(path: string): Stats | null {
-  try {
-    return lstatSync(path)
-  } catch {
-    return null
-  }
-}
-
-/**
- * A store file's bytes: a regular, single-link file of at most `maxBytes`,
- * opened without following a link. `null` for anything else — absent, a
- * link, a directory, a hard link, oversized.
- */
-function readStoreFile(file: string, maxBytes: number): Buffer | null {
-  const stat = lstatOrNull(file)
-  if (stat === null || stat.isSymbolicLink() || !stat.isFile() || stat.nlink > 1 || stat.size > maxBytes) return null
-  let fd: number
-  try {
-    fd = openSync(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0))
-  } catch {
-    return null
-  }
-  try {
-    const opened = fstatSync(fd)
-    if (!opened.isFile() || opened.size > maxBytes || opened.nlink > 1) return null
-    if (opened.ino !== 0 && stat.ino !== 0 && opened.ino !== stat.ino) return null
-    return readFileSync(fd)
-  } catch {
-    return null
-  } finally {
-    closeSync(fd)
-  }
-}
-
-/** Write a store file through a fresh temp name and a rename: a link planted at `file` is replaced, never written through. */
-function writeStoreFile(file: string, data: string | Buffer): void {
-  const temp = `${file}.${randomBytes(6).toString('hex')}.tmp`
-  writeFileSync(temp, data, { flag: 'wx' })
-  try {
-    renameSync(temp, file)
-  } catch (err) {
-    rmSync(temp, { force: true })
-    throw err
-  }
-}
-
-/** A checkpoint record, or `null` when it is absent, not a plain small file, or not the right shape. */
-function readRecord<T extends TSchema>(file: string, schema: T): Static<T> | null {
-  const bytes = readStoreFile(file, MAX_RECORD_BYTES)
-  if (bytes === null) return null
-  const result = safeParseJson(bytes.toString('utf8'), schema)
-  return result.ok ? result.value : null
-}
-
-/**
- * `abs` as the project-relative POSIX path it REALLY is (links resolved,
- * on-disk casing), or `null` when it is not inside the project. One spelling
- * per file, so `Pages/home.tsx` and `pages/Home.tsx` are one checkpoint entry.
- */
-function projectRel(dir: string, abs: string): string | null {
-  return realWorkspaceRel(dir, isAbsolute(abs) ? abs : resolve(dir, abs))
 }
 
 // ---------------------------------------------------------------------------
@@ -333,75 +158,6 @@ export function beginAgentCheckpointTurn(dir: string, userKey: string, turn: Che
   } catch (err) {
     console.error('[agentCheckpoints] could not open a checkpoint for this turn — its writes will not be revertable:', err)
   }
-}
-
-function listTurnRecords(dir: string, userKey: string): TurnRecord[] {
-  const root = storeDir(dir, [userKey], false)
-  if (root === null) return []
-  let names: string[]
-  try {
-    names = readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory() && isCheckpointTurnId(e.name)).map((e) => e.name)
-  } catch {
-    return []
-  }
-  const records: TurnRecord[] = []
-  for (const name of names) {
-    const record = readRecord(join(root, name, 'turn.json'), TurnRecordSchema)
-    if (record && record.turnId === name) records.push(record)
-  }
-  return records.sort((a, b) => a.startedAtMs - b.startedAtMs)
-}
-
-function pruneOldTurns(dir: string, userKey: string): void {
-  const records = listTurnRecords(dir, userKey)
-  for (const record of records.slice(0, Math.max(0, records.length - MAX_TURNS_KEPT))) {
-    // Only a real directory inside the store; `rmSync` removes links it meets, never their targets.
-    const doomed = storeDir(dir, [userKey, record.turnId], false)
-    if (doomed !== null) rmSync(doomed, { recursive: true, force: true })
-  }
-}
-
-/** The conversation's current turn id, or `null`. */
-function currentTurnId(dir: string, userKey: string, conversationKey: string): string | null {
-  if (!CONVERSATION_KEY_RE.test(conversationKey)) return null
-  const root = storeDir(dir, [userKey], false)
-  if (root === null) return null
-  const current = readRecord(join(root, `current-${conversationKey}.json`), CurrentTurnSchema)
-  if (!current || !isCheckpointTurnId(current.turnId)) return null
-  return turnFilesDir(dir, userKey, current.turnId) !== null ? current.turnId : null
-}
-
-/** The turn's `files/` directory, when the turn exists and its whole path is real. */
-function turnFilesDir(dir: string, userKey: string, turnId: string): string | null {
-  if (!isCheckpointTurnId(turnId)) return null
-  const files = storeDir(dir, [userKey, turnId, 'files'], false)
-  if (files === null || readRecord(join(files, '..', 'turn.json'), TurnRecordSchema) === null) return null
-  return files
-}
-
-/** The turn's `files/` directory when the turn belongs to `conversationId` — a turn is bound to one conversation. */
-function conversationTurnFilesDir(dir: string, userKey: string, conversationId: string, turnId: string): string | null {
-  const files = turnFilesDir(dir, userKey, turnId)
-  if (files === null) return null
-  const record = readRecord(join(files, '..', 'turn.json'), TurnRecordSchema)
-  return record !== null && record.turnId === turnId && record.conversationId === conversationId ? files : null
-}
-
-interface FileBytes {
-  readonly existed: boolean
-  readonly bytes: Buffer | null
-  readonly size: number
-  readonly hash: string | null
-}
-
-/** What `abs` holds right now; `null` for something that is not a regular file. */
-function readFileBytes(abs: string): FileBytes | null {
-  const stat = statIfPresent(abs)
-  if (!stat) return { existed: false, bytes: null, size: 0, hash: null }
-  if (!stat.isFile()) return null
-  if (stat.size > MAX_CHECKPOINT_FILE_BYTES) return { existed: true, bytes: null, size: stat.size, hash: null }
-  const bytes = readFileSync(abs)
-  return { existed: true, bytes, size: bytes.length, hash: contentHash(bytes) }
 }
 
 export interface CaptureOptions {
@@ -506,13 +262,6 @@ function changeCounts(filesDir: string, key: string, pre: PreRecord, after: Buff
   return diff === null ? { added: null, removed: null } : { added: diff.added, removed: diff.removed }
 }
 
-/** A stored image, only when its bytes hash to what its record says they are. */
-function verifiedBlob(filesDir: string, key: string, side: 'pre' | 'post', expectedHash: string | null): Buffer | null {
-  if (expectedHash === null) return null
-  const bytes = readStoreFile(join(filesDir, `${key}.${side}`), MAX_CHECKPOINT_FILE_BYTES)
-  return bytes !== null && contentHash(bytes) === expectedHash ? bytes : null
-}
-
 // ---------------------------------------------------------------------------
 // Read — what the panel lists
 // ---------------------------------------------------------------------------
@@ -542,68 +291,6 @@ export interface CheckpointTurnSummary {
   readonly turnId: string
   readonly startedAtMs: number
   readonly files: CheckpointFileSummary[]
-}
-
-interface FileEntry {
-  readonly key: string
-  readonly pre: PreRecord
-  readonly post: PostRecord
-  readonly reverted: boolean
-}
-
-function readFileEntries(filesDir: string | null): FileEntry[] {
-  if (filesDir === null) return []
-  let names: string[]
-  try {
-    names = readdirSync(filesDir)
-  } catch {
-    return []
-  }
-  const entries: FileEntry[] = []
-  for (const name of names) {
-    const match = RECORD_FILE_RE.exec(name)
-    if (!match) continue
-    const key = match[1]!
-    const pre = readRecord(join(filesDir, name), PreRecordSchema)
-    const post = readRecord(join(filesDir, `${key}.post.json`), PostRecordSchema)
-    // A pre-image with no post-image is a write the gate or the tool refused.
-    if (!pre || !post || pathKey(pre.path) !== key) continue
-    if (pre.existed === true && pre.hash !== null && pre.hash === post.hash) continue
-    const reverted = readRecord(join(filesDir, `${key}.reverted.json`), RevertedRecordSchema) !== null
-    entries.push({ key, pre, post, reverted })
-  }
-  return entries.sort((a, b) => a.pre.path.localeCompare(b.pre.path))
-}
-
-function currentHashOf(dir: string, rel: string): string | null {
-  const abs = join(dir, ...rel.split('/'))
-  const now = readFileBytes(abs)
-  if (now === null || !now.existed) return null
-  return now.hash ?? contentHash(readFileSync(abs))
-}
-
-/** Why `entry` cannot be reverted right now, or `null` when it can. */
-function revertBlocker(dir: string, filesDir: string, entry: FileEntry): { code: RevertRefusalCode; message: string } | null {
-  if (entry.reverted) return { code: 'already-reverted', message: `"${entry.pre.path}" was already reverted.` }
-  if (entry.pre.withheld) {
-    return { code: 'not-checkpointed', message: `"${entry.pre.path}" is a credential file, so Studio keeps no copy of it and cannot put it back.` }
-  }
-  if (entry.pre.existed === null) {
-    return { code: 'not-checkpointed', message: `Studio could not record what "${entry.pre.path}" held before this turn, so it cannot put it back.` }
-  }
-  if (entry.pre.existed && entry.pre.tooLarge) {
-    return { code: 'not-checkpointed', message: `"${entry.pre.path}" was too large to checkpoint (over ${MAX_CHECKPOINT_FILE_BYTES / 1024 / 1024} MB), so it cannot be reverted here.` }
-  }
-  if (entry.pre.existed && verifiedBlob(filesDir, entry.key, 'pre', entry.pre.hash) === null) {
-    return { code: 'not-checkpointed', message: `The stored copy of "${entry.pre.path}" is missing or does not match its record, so Studio will not restore it.` }
-  }
-  if (currentHashOf(dir, entry.pre.path) !== entry.post.hash) {
-    return {
-      code: 'changed-since',
-      message: `"${entry.pre.path}" changed after this turn wrote it — by you, or by a later turn. Reverting would throw that change away, so it was left alone.`,
-    }
-  }
-  return null
 }
 
 /** Every checkpointed turn of this account in `conversationId`, oldest first, with the files each changed. */
@@ -659,131 +346,4 @@ export function readAgentCheckpointDiff(dir: string, userKey: string, conversati
   const diff = unifiedLineDiff(path, entry.pre.existed === false ? null : before.toString('utf8'), after.toString('utf8'))
   if (diff === null) return { ok: false, code: 'too-large', message: `The change to "${path}" is too large to show as a diff.` }
   return { ok: true, path, ...diff }
-}
-
-// ---------------------------------------------------------------------------
-// Revert — the user's action; compare-and-swap, through the agent write gate
-// ---------------------------------------------------------------------------
-
-export type RevertRefusalCode =
-  | 'not-found'
-  | 'changed-since'
-  | 'already-reverted'
-  | 'not-checkpointed'
-  | 'protected-path'
-  | 'needs-user'
-  | 'path-outside-project'
-  | 'io-error'
-
-export type RevertOutcome =
-  | { readonly ok: true; readonly reverted: string[] }
-  | { readonly ok: false; readonly code: RevertRefusalCode; readonly message: string; readonly files: Array<{ path: string; code: RevertRefusalCode; message: string }> }
-
-/**
- * Put back what `turnId` changed: every file of the turn (`paths` omitted —
- * all-or-nothing), or just `paths`. Each file must still hold exactly the
- * agent's post-image; see the module doc. Holds the project write lock across
- * every check and write, and restores anything already written when a later
- * write fails.
- */
-export async function revertAgentCheckpoint(
-  dir: string,
-  userKey: string,
-  conversationId: string,
-  turnId: string,
-  paths?: readonly string[],
-  /** Test seam: runs right before each file's write — the moment an editor outside Studio could still save. */
-  options: { beforeWrite?: (abs: string) => void } = {},
-): Promise<RevertOutcome> {
-  if (!isCheckpointTurnId(turnId)) return refused('not-found', 'No such turn.', [])
-  return withProjectWriteLock(dir, () => {
-    // A turn is bound to its conversation: one named from another is not found
-    // (and so cannot slip past that conversation's "still streaming" 409).
-    const filesDir = conversationTurnFilesDir(dir, userKey, conversationId, turnId)
-    if (filesDir === null) return refused('not-found', 'No such turn in this conversation.', [])
-    const all = readFileEntries(filesDir)
-    const selected = paths === undefined ? all : all.filter((entry) => paths.includes(entry.pre.path))
-    const missing = paths === undefined ? [] : paths.filter((path) => !all.some((entry) => entry.pre.path === path))
-    if (selected.length === 0 || missing.length > 0) {
-      return refused('not-found', missing.length > 0 ? `This turn did not change ${missing.map((p) => `"${p}"`).join(', ')}.` : 'This turn changed no files.', [])
-    }
-
-    // Every check first — nothing is written unless every selected file passes.
-    const plans: Array<{ entry: FileEntry; abs: string; restore: Buffer | null }> = []
-    const problems: Array<{ path: string; code: RevertRefusalCode; message: string }> = []
-    for (const entry of selected) {
-      const target = resolveAgentFilePath(dir, entry.pre.path, 'write')
-      if (!target.ok) {
-        problems.push({ path: entry.pre.path, code: target.code, message: target.message })
-        continue
-      }
-      const stat = statIfPresent(target.abs)
-      if (stat && hasOtherHardLinks(stat)) {
-        problems.push({ path: entry.pre.path, code: 'protected-path', message: `"${entry.pre.path}" has other hard-linked names on disk, so restoring it would change them too.` })
-        continue
-      }
-      const blocker = revertBlocker(dir, filesDir, entry)
-      if (blocker) {
-        problems.push({ path: entry.pre.path, ...blocker })
-        continue
-      }
-      // Verified by `revertBlocker` just above: these bytes hash to the record's pre-image.
-      plans.push({ entry, abs: target.abs, restore: entry.pre.existed ? verifiedBlob(filesDir, entry.key, 'pre', entry.pre.hash) : null })
-    }
-    if (problems.length > 0) {
-      const first = problems[0]!
-      const message = problems.length === 1
-        ? `Nothing was reverted. ${first.message}`
-        : `Nothing was reverted: ${problems.length} files cannot be put back (${problems.map((p) => `"${p.path}"`).join(', ')}). ${first.message}`
-      return refused(first.code, message, problems)
-    }
-
-    const done: Array<{ abs: string; agentBytes: Buffer }> = []
-    try {
-      for (const plan of plans) {
-        options.beforeWrite?.(plan.abs)
-        const agentBytes = readFileSync(plan.abs)
-        // Compare-and-swap, again, right before the write: an editor outside
-        // Studio does not take the project lock (review of #251, F3).
-        if (contentHash(agentBytes) !== plan.entry.post.hash) throw new ChangedSinceError(plan.entry.pre.path)
-        if (plan.restore === null) unlinkSync(plan.abs)
-        else writeFileSync(plan.abs, plan.restore)
-        done.push({ abs: plan.abs, agentBytes })
-      }
-    } catch (err) {
-      for (const { abs, agentBytes } of done) {
-        try {
-          writeFileSync(abs, agentBytes)
-        } catch (restoreErr) {
-          console.error('[agentCheckpoints] could not undo a partial revert:', restoreErr)
-        }
-      }
-      if (err instanceof ChangedSinceError) {
-        const message = `Nothing was reverted. "${err.path}" changed after this turn wrote it — by you, or by a later turn — so it was left alone.`
-        return refused('changed-since', message, [{ path: err.path, code: 'changed-since', message }])
-      }
-      const detail = err instanceof Error ? err.message : String(err)
-      return refused('io-error', `Reverting failed (${detail}); every file already restored was put back to the agent's version.`, [])
-    }
-    const atMs = Date.now()
-    for (const plan of plans) {
-      writeStoreFile(join(filesDir, `${plan.entry.key}.reverted.json`), JSON.stringify({ atMs }))
-    }
-    return { ok: true, reverted: plans.map((plan) => plan.entry.pre.path) }
-  })
-}
-
-/** A file that changed between the checks and its write. */
-class ChangedSinceError extends Error {
-  readonly path: string
-
-  constructor(path: string) {
-    super(`"${path}" changed since the revert was checked.`)
-    this.name = 'ChangedSinceError'
-    this.path = path
-  }
-}
-
-function refused(code: RevertRefusalCode, message: string, files: Array<{ path: string; code: RevertRefusalCode; message: string }>): RevertOutcome {
-  return { ok: false, code, message, files }
 }
