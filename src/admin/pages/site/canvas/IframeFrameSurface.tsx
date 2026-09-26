@@ -378,8 +378,10 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
         // Never portal the canvas tree into the short-lived initial about:blank
         // document. Module effects, media reads, and authored runtime scripts
         // must run once against the final srcDoc document only.
-        setFrameDocument((current) => (current?.doc === doc && current.iframe === iframe ? current : { iframe, doc }))
+        // Marked before the element is handed to state (the React Compiler
+        // treats a value in state as frozen); nothing renders in between.
         iframe.dataset.studioCanvasDocumentLoaded = 'true'
+        setFrameDocument((current) => (current?.doc === doc && current.iframe === iframe ? current : { iframe, doc }))
       }
       // srcDoc often parses before the ref commits; otherwise its load event
       // retries. The bootstrap sentinel, not event timing or URL heuristics,

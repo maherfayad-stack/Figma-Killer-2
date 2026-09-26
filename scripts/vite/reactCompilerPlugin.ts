@@ -1,4 +1,3 @@
-/// <reference path="./babel-core-7.d.ts" />
 /**
  * The React Compiler, run on the Babel it was built for.
  *
