@@ -45,8 +45,8 @@ import { writeTranslationEntry } from '../../handlers/studio/translationWrite'
 import { resolveDriver } from '../drivers'
 import { readCredentialForUser, resolveCredentialForDriver } from '../credentials/store'
 import { getDefault } from '../defaults/store'
-import { runOneShotCompletion } from '../oneShot'
-import { parseTranslationReply } from '../translationReply'
+import { AiOneShotError, runOneShotCompletion } from '../oneShot'
+import { parseTranslationReply, type TranslationReply } from '../translationReply'
 
 const ROUTE_PATH = '/admin/api/ai/translate-content'
 
@@ -169,44 +169,99 @@ async function handle(req: Request, db: DbClient): Promise<Response> {
     return jsonResponse({ error: err instanceof Error ? err.message : 'Credential resolution failed.' }, { status: 409 })
   }
 
-  const source: Record<string, string> = {}
-  for (const entry of batch) source[entry.key] = entry.values[sourceLocale]!
+  /** One model call for `entries`, translated and parsed — or the Response to hand straight back. */
+  async function callModel(
+    entries: readonly { key: string; values: Record<string, string> }[],
+  ): Promise<{ ok: true; reply: TranslationReply } | { ok: false; response: Response }> {
+    const source: Record<string, string> = {}
+    for (const entry of entries) source[entry.key] = entry.values[sourceLocale]!
 
-  let raw: string
-  try {
-    raw = await runOneShotCompletion({
-      driver: resolveDriver(record.providerId),
-      credentials: resolved,
-      modelId: fallback.modelId,
-      instructions: instructionsFor(body.targetLocale, sourceLocale),
-      userMessage: JSON.stringify(source, null, 2),
-      signal: req.signal,
-      toolContextBase: {
-        db,
-        userId: user.id,
-        capabilities: user.capabilities,
-        conversationId: 'translate-content',
-        snapshot: null,
-      },
-    })
-  } catch (err) {
-    rethrowProjectDirRefusal(err)
-    console.error('[ai:translateContent]', err)
-    return jsonResponse({ error: err instanceof Error ? err.message : 'The model call failed.' }, { status: 502 })
+    let raw: string
+    try {
+      raw = await runOneShotCompletion({
+        driver: resolveDriver(record.providerId),
+        credentials: resolved,
+        modelId: fallback.modelId,
+        instructions: instructionsFor(body.targetLocale, sourceLocale),
+        userMessage: JSON.stringify(source, null, 2),
+        signal: req.signal,
+        toolContextBase: {
+          db,
+          userId: user.id,
+          capabilities: user.capabilities,
+          conversationId: 'translate-content',
+          snapshot: null,
+        },
+      })
+    } catch (err) {
+      rethrowProjectDirRefusal(err)
+      console.error('[ai:translateContent]', err)
+      // The credential itself was rejected (a Claude CLI setup-token revoked
+      // or expired since it was saved) — not a translation problem, and the
+      // raw CLI text ("Claude CLI error: Failed to authenticate. API Error:
+      // 401 OAuth access token has been revoked.") names a wire protocol
+      // nobody asked about. Same reconnect action `Settings → AI →
+      // Providers` offers.
+      if (err instanceof AiOneShotError && err.authFailure) {
+        return {
+          ok: false,
+          response: jsonResponse(
+            { error: 'Claude needs to be reconnected. Open Settings → AI → Providers and sign in again.' },
+            { status: 401 },
+          ),
+        }
+      }
+      return {
+        ok: false,
+        response: jsonResponse({ error: err instanceof Error ? err.message : 'The model call failed.' }, { status: 502 }),
+      }
+    }
+
+    // Presentational deviations in the reply are absorbed; only an answer
+    // with no JSON object in it at all — not even a salvageable truncated
+    // one — is unusable. See `translationReply.ts`.
+    const reply = parseTranslationReply(raw, entries.map((entry) => entry.key))
+    if (!reply) {
+      console.error('[ai:translateContent] unparsable reply:', raw.slice(0, 400))
+      return {
+        ok: false,
+        response: jsonResponse(
+          { error: 'The model replied with no JSON object, so nothing was written. Try again.' },
+          { status: 502 },
+        ),
+      }
+    }
+    return { ok: true, reply }
   }
 
-  // Presentational deviations in the reply are absorbed; only an answer with
-  // no JSON object in it at all is unusable — see `translationReply.ts`.
-  const reply = parseTranslationReply(raw, batch.map((entry) => entry.key))
-  if (!reply) {
-    console.error('[ai:translateContent] unparsable reply:', raw.slice(0, 400))
-    return jsonResponse(
-      { error: 'The model replied with no JSON object, so nothing was written. Try again.' },
-      { status: 502 },
-    )
+  const first = await callModel(batch)
+  if (!first.ok) return first.response
+  let reply = first.reply
+
+  // A reply cut off mid-object (the driver's own output-token ceiling, for a
+  // big batch of long strings) is worth exactly ONE automatic, smaller retry
+  // for the keys the cut actually cost — retrying the SAME `MAX_BATCH`-sized
+  // request would just get cut at the same spot again, and "click try
+  // again" is not a fix a user should have to reach for. A retry that fails
+  // outright is not fatal: the first reply's salvaged translations still
+  // write below; whatever is still missing reports as `skipped`, same as a
+  // model that omitted a key on its own.
+  if (reply.truncated) {
+    const stillMissing = batch.filter((entry) => reply.translations[entry.key] === undefined)
+    if (stillMissing.length > 0) {
+      const retried = await callModel(stillMissing)
+      if (retried.ok) {
+        reply = {
+          translations: { ...reply.translations, ...retried.reply.translations },
+          unexpected: [...reply.unexpected, ...retried.reply.unexpected],
+          truncated: retried.reply.truncated,
+        }
+      }
+    }
   }
+
   if (Object.keys(reply.translations).length === 0) {
-    console.error('[ai:translateContent] no requested keys in reply:', raw.slice(0, 400))
+    console.error('[ai:translateContent] no requested keys in reply:', reply.unexpected.join(', ').slice(0, 400))
     return jsonResponse(
       {
         error: `The model returned ${reply.unexpected.length} keys, none of them the ones asked for, so nothing was written.`,

@@ -39,6 +39,13 @@ function stubApi(
       writes.push({ setup: true })
       return new Response(JSON.stringify(setupResponse), { status: 200, headers: { 'content-type': 'application/json' } })
     }
+    if (url.includes('/admin/api/ai/translate-content')) {
+      writes.push({ ...(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>), translateContent: true })
+      return new Response(JSON.stringify({ ok: true, translated: 0, skipped: [], failures: [], remaining: 0 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
     if (url.includes('/admin/api/studio/translations')) {
       if (init?.method === 'POST') {
         writes.push(JSON.parse(String(init.body)) as Record<string, unknown>)
@@ -132,6 +139,37 @@ describe('ContentPanel', () => {
     await waitFor(() => expect(calls.some((call) => call.setup === true)).toBe(true))
   })
 
+  it('reports a string left outside any component as information, not a warning', async () => {
+    // "42 strings now translatable … 54 left in place: … cannot read a hook"
+    // used to render as a warning toast for something the user did nothing
+    // wrong to cause — a shared constant sitting outside a component is
+    // ordinary code shape, not a failure.
+    stubApi(
+      null,
+      [{ file: 'pages/Page.tsx', line: 28, col: 11, prop: 'title', text: 'Profile verified' }],
+      { ok: true },
+      {
+        ok: true,
+        source: 'i18n/translations.ts',
+        locales: ['en', 'ar'],
+        extracted: 1,
+        filesChanged: 1,
+        failures: [{ key: 'page.welcomeAboard', message: '"Welcome aboard" sits outside any component (a shared constant, or a list built once at module load), so it stays as plain text for now — move it inside the component that renders it to make it translatable.' }],
+      },
+    )
+    render(
+      <>
+        <ContentPanel />
+        <ToastProvider />
+      </>,
+    )
+
+    await waitFor(() => expect(screen.getByText(/stays as plain text/)).toBeTruthy())
+    const toast = screen.getByText(/stays as plain text/).closest('[data-toast-kind]')
+    expect(toast?.getAttribute('data-toast-kind')).toBe('success')
+    expect(screen.queryByText(/cannot read a hook/)).toBeNull()
+  })
+
   it('does not run setup again after it was refused once', async () => {
     const calls = stubApi(null, [{ file: 'pages/Page.tsx', line: 1, col: 1, prop: 'title', text: 'Profile verified' }], { ok: true }, {
       ok: false,
@@ -173,6 +211,47 @@ describe('ContentPanel', () => {
     expect(screen.getByText(/1 string still in the code/i)).toBeTruthy()
     // The table is still there — this section must not replace it.
     expect(screen.getByTestId('content-panel-rows')).toBeTruthy()
+  })
+
+  it('never offers to translate into a locale this project does not declare', async () => {
+    // A hand-written, English-only dictionary that predates Studio: the panel
+    // used to show "Translate → ar" regardless, and clicking it hit the
+    // server's 409 ("ar is not a locale this project declares") — a red
+    // toast for something the user did nothing to cause. With only one
+    // locale, there is nothing honest to translate INTO.
+    const ENGLISH_ONLY = {
+      capability: { keys: ['en'], defaultKey: 'en', source: 'src/i18n/translations.js' },
+      perLocaleFiles: false,
+      entries: [{ key: 'greeting', values: { en: 'Hello' } }],
+    }
+    const calls = stubApi(ENGLISH_ONLY)
+    const user = userEvent.setup()
+    render(<ContentPanel />)
+
+    await waitFor(() => expect(screen.getByTestId('content-panel-translate')).toBeTruthy())
+    const button = screen.getByTestId('content-panel-translate') as HTMLButtonElement
+    // Rendered with a tooltip explaining why, so it converts to
+    // `aria-disabled` rather than the native attribute (Button.tsx) — the
+    // tooltip still needs to show on hover.
+    expect(button.getAttribute('aria-disabled')).toBe('true')
+
+    await user.click(button)
+    expect(calls.some((call) => call.translateContent === true)).toBe(false)
+  })
+
+  it('translates into the OTHER declared locale when the project does not declare "ar"', async () => {
+    // Two declared locales, neither of them Arabic — the target is still
+    // whichever ISN'T the source, never the hardcoded preference.
+    const FR_ONLY = {
+      capability: { keys: ['en', 'fr'], defaultKey: 'en', source: 'src/i18n/translations.js' },
+      perLocaleFiles: false,
+      entries: [{ key: 'greeting', values: { en: 'Hello' } }],
+    }
+    stubApi(FR_ONLY, [], { ok: true }, undefined)
+    render(<ContentPanel />)
+
+    await waitFor(() => expect(screen.getByTestId('content-panel-translate')).toBeTruthy())
+    expect(screen.getByTestId('content-panel-translate').textContent).toContain('fr')
   })
 
   it('offers to move those strings into the dictionary that already exists', async () => {
