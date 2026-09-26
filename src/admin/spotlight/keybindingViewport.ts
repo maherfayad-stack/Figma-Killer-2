@@ -1,6 +1,8 @@
 /**
  * keybindingViewport — the keys that move the VIEW, not the document: zoom in,
- * zoom out, zoom to 100%, fit, fit the selection, and Space-to-pan.
+ * zoom out, zoom to 100%, fit, fit the selection, and Space-to-pan — plus the
+ * two snap toggles (P5-F, IX-5e), which change how the view helps a drag and
+ * never touch the document either.
  *
  * Their own module for the same reason `keybindingGestures.ts` is one: the
  * registry file sits under the 700-line ceiling, and "keys that change what the
@@ -34,6 +36,14 @@ function isDigit(e: KeyEventLike, digit: string): boolean {
 
 function hasModifierOtherThanShift(e: KeyEventLike): boolean {
   return e.metaKey || e.ctrlKey || e.altKey
+}
+
+/**
+ * The apostrophe key, matched on the PHYSICAL key as well: with Shift held a
+ * US layout reports `"`, and other layouts put the character elsewhere.
+ */
+function isQuoteKey(e: KeyEventLike): boolean {
+  return e.key === "'" || e.key === '"' || e.code === 'Quote'
 }
 
 export const VIEWPORT_KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
@@ -99,6 +109,30 @@ export const VIEWPORT_KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     shortcut: { mac: '⇧2', win: 'Shift+2' },
     ariaKeyshortcuts: 'Shift+2',
     match: (e) => e.shiftKey && !hasModifierOtherThanShift(e) && isDigit(e, '2'),
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
+  // P5-F / IX-5e — the snap toggles. Penpot's pair (`shortcuts.cljs`,
+  // `:toggle-guides` / `:toggle-snap-guides`) sits on the same key; see the
+  // conflict register in `keybindings.ts` for what each half means here. Also
+  // in the zoom menu, where the current state is visible.
+  {
+    commandId: 'canvas.toggleSnapToGuides',
+    displayName: 'Snap to ruler guides (on / off)',
+    shortcut: { mac: "⌘'", win: "Ctrl+'" },
+    ariaKeyshortcuts: isPlatformMac() ? "Meta+'" : "Control+'",
+    match: (e) => (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && isQuoteKey(e),
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
+  {
+    commandId: 'canvas.toggleSnapToObjects',
+    displayName: 'Snap to objects and equal spacing (on / off)',
+    shortcut: { mac: "⌘⇧'", win: "Ctrl+Shift+'" },
+    ariaKeyshortcuts: isPlatformMac() ? "Meta+Shift+'" : "Control+Shift+'",
+    match: (e) => (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && isQuoteKey(e),
     scope: 'canvas',
     ignoreInEditableField: true,
   },

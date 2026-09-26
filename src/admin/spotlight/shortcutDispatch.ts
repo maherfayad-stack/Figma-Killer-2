@@ -26,6 +26,14 @@ const COMPONENT_OWNED_SHORTCUTS = new Set([
   // reason it can't auto-dispatch is a property of the command, and a future
   // argless rename command must not silently start double-firing.
   'layers.rename',
+  // P5-A — ⌘C / ⌘X / ⌘V are the `node` rung's (`useCanvasNodeShortcuts`),
+  // which lets the keystroke through so the browser raises the `copy` /
+  // `paste` EVENT the clipboard bridge reads (`canvasClipboardBridge.ts`).
+  // Run from here they were `preventDefault`ed in the capture phase, before
+  // the rung, and that cancels the event: no image or SVG paste, no marker.
+  'layers.copy',
+  'layers.cut',
+  'layers.paste',
   // P5-E — align, front / back, flex and copy / paste style are handled on
   // the `node` rung (`useCanvasLayerCommandKeys`), scoped by intent like
   // Delete, so they also work after a click into the inspector. Their palette

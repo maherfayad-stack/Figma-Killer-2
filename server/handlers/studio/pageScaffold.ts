@@ -35,7 +35,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { designSystemImportSpecifier, isWorkspaceWritablePath, parsePageFile, pathEntryExists } from '@core/page-parser'
-import { DEFAULT_PAGE_KIND, type PageKind } from '@core/studio-board'
+import { DEFAULT_PAGE_KIND, type BoardFramePlacement, type PageKind } from '@core/studio-board'
 import {
   discoverPageFiles,
   nextPageName,
@@ -68,6 +68,7 @@ export function createScaffoldedPage(
   nameInput: string,
   kind: PageKind = DEFAULT_PAGE_KIND,
   boardId?: string,
+  placement?: BoardFramePlacement,
 ): ScaffoldPageResult {
   const pagesDir = projectPagesDir(dir)
   const ext = detectPageFileExtension(pagesDir)
@@ -121,7 +122,9 @@ export function createScaffoldedPage(
   // D5 §11.3 — a scaffolded screen the user cannot see is not a screen.
   // `boardId` is which board the author was LOOKING AT when they asked; absent
   // for a headless caller, which has no board open to mean.
-  autoPlaceBoardFrame(dir, pageId, boardId)
+  // `placement` is where the author DREW it (the B tool, IX-13); absent, the
+  // frame takes the next grid slot.
+  autoPlaceBoardFrame(dir, pageId, boardId, placement)
   // Node ids are source locations (trap #2) — read the root by parsing the
   // file just written, never constructed from the name/path.
   return { ok: true, relPath, pageId, title: componentName, rootNodeId: scaffoldedPageRootNodeId(dir, file) }
@@ -144,8 +147,9 @@ export function scaffoldPageLocked(
   nameInput: string,
   kind: PageKind = DEFAULT_PAGE_KIND,
   boardId?: string,
+  placement?: BoardFramePlacement,
 ): Promise<ScaffoldPageResult> {
-  return withProjectWriteLock(dir, () => createScaffoldedPage(dir, nameInput, kind, boardId))
+  return withProjectWriteLock(dir, () => createScaffoldedPage(dir, nameInput, kind, boardId, placement))
 }
 
 /**

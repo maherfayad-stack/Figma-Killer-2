@@ -188,7 +188,16 @@ const BUDGETS: ChunkBudget[] = [
     // `canvasDomGeometry` and `CanvasInsertionDragOverlay` .js/.css, minus
     // `Kbd` .js/.css), and +264 B is `ZoomControls`' new
     // `tooltipShortcut` slots (UX-23). No editor-body code entered the chunk.
-    maxBytes: 41_300,
+    //
+    // Raised 41.3 KB -> 41.7 KB for P5-F: the zoom menu (`ZoomControls`, in
+    // this eager toolbar) is the view menu, and it gained the two snap
+    // toggles (IX-5e) — two checkbox rows, their store reads and keycap
+    // labels. Audited against the built chunk: "Snap to objects" / "Snap to
+    // ruler guides" occur once each, and NONE of P5-F's new modules
+    // (`snapSpacing`, `handleDragSession`, `groupResize`, `copyAsPng`,
+    // `EmptySelectionPanel`, ...) appears in its `__vite__mapDeps` table.
+    // Measured 41,629 B (+329 B over the old cap).
+    maxBytes: 41_700,
     rationale:
       'site route shell (current ~34 KB raw / ~12 KB gzipped). Must not ' +
       'pull the visual editor body, DnD, canvas, first-party modules, or ' +

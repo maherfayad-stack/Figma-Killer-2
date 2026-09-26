@@ -263,23 +263,39 @@ export {
   readSizingParentLayout,
   resizeInlinePatch,
   stylesheetPreviewDeclarations,
+  hugPatchForHandle,
   type ResizeInlinePatch,
   type ResizeSizingPlan,
 } from './elementResizeSizing'
 
 export {
+  ALL_SNAP_SOURCES,
   SNAP_THRESHOLD_SCREEN_PX,
   computeEdgeSnap,
   computeSnap,
   snapGuidesEqual,
+  snapSourcesFor,
   snapThresholdAtZoom,
   type EdgeSnap,
   type SnapGuide,
+  type SnapLine,
+  type SnapOptions,
   type SnapRect,
   type SnapResult,
+  type SnapSourceToggles,
+  type SnapSpacing,
 } from './snapRules'
 
-export { parentSnapRects, readBoxInsets, type BoxInsets, type SideLengths } from './snapPeerRules'
+export { findSpacingSnap, formatSpacing, snapSpacingsEqual, spacingSegments } from './snapSpacingRules'
+
+export {
+  guideLinesInSpace,
+  parentSnapRects,
+  readBoxInsets,
+  type BoxInsets,
+  type ScreenSpace,
+  type SideLengths,
+} from './snapPeerRules'
 
 export {
   flowStartAnchored,
@@ -304,6 +320,9 @@ export {
   RESIZE_HANDLE_ATTR,
   RESIZE_PREVIEW_ATTR,
   RESIZE_PREVIEW_STYLE_ID,
+  ROTATE_ACTIVE_ATTR,
+  ROTATE_CORNERS,
+  ROTATE_HANDLE_ATTR,
   installResizeHandles,
   type ResizeHandlesController,
   type ResizeHandlesOptions,

@@ -55,7 +55,7 @@ const ALLOWED_ERROR_TOAST_SITES: ReadonlyMap<string, number> = new Map([
   ['admin/pages/site/canvas/PackageComponentPlaceholder.tsx', 1],
   ['admin/pages/site/canvas/StyleCompileConsentBanner/StyleCompileConsentBanner.tsx', 2],
   // A PNG the clipboard refused.
-  ['admin/pages/site/canvas/useCopyAsPngShortcut.ts', 1],
+  ['admin/pages/site/canvas/copyAsPng.ts', 1],
   // P5-B: the image drop's own actions — a drop where NO image could land.
   ['admin/pages/site/store/slices/site/imageDropActions.ts', 1],
   // Inspector: explicit detach/swap/export/copy actions.

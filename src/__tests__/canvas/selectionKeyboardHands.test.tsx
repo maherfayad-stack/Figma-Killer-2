@@ -227,7 +227,7 @@ describe('ERR-11 — a held Space never outlives the key', () => {
   it('a Space released inside a frame lowers the flag its forwarded press raised in the parent', () => {
     mount()
     const space: FrameKeyInit = { key: ' ', code: 'Space', location: 0, repeat: false, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false }
-    relayFrameKeyDown(document, space)
+    relayFrameKeyDown(document, space, { userGesture: true })
     expect(isCanvasSpacePanActive(document)).toBe(true)
 
     relayFrameKeyUp(document, space)
@@ -237,7 +237,7 @@ describe('ERR-11 — a held Space never outlives the key', () => {
   it('a frame losing focus to another application releases the pan', async () => {
     mount()
     const space: FrameKeyInit = { key: ' ', code: 'Space', location: 0, repeat: false, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false }
-    relayFrameKeyDown(document, space)
+    relayFrameKeyDown(document, space, { userGesture: true })
 
     document.hasFocus = () => false
     relayFrameBlur(document)
@@ -329,7 +329,7 @@ describe('IX-3 — Tab / ⇧Tab cycle siblings, on the canvas only', () => {
     iframe.focus()
     state().selectNode('a')
 
-    const claimed = relayFrameKeyDown(document, { key: 'Tab', code: 'Tab', location: 0, repeat: false, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false })
+    const claimed = relayFrameKeyDown(document, { key: 'Tab', code: 'Tab', location: 0, repeat: false, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false }, { userGesture: true })
     expect(claimed).toBe(true)
     expect(state().selectedNodeIds).toEqual(['b'])
   })

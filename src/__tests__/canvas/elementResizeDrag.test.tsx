@@ -438,3 +438,67 @@ describe('IX-6e — a resize handle snaps its moving edge', () => {
     expect(commits).toEqual([{ width: '98px' }])
   })
 })
+
+// ---------------------------------------------------------------------------
+// P5-F / IX-6f — double-click a handle: Hug on the axes it owns
+// ---------------------------------------------------------------------------
+
+/** Two presses on the handle, each released where it went down — what a real double-click is to a handle. */
+function doubleClick(handle: string) {
+  press(handle, 10, 10)
+  release(10, 10)
+  press(handle, 10, 10)
+  release(10, 10)
+}
+
+describe('IX-6f — double-clicking a handle sets Hug', () => {
+  it('an edge handle hugs its one axis, through the inspector resolver', () => {
+    seed()
+    harness = mount('width: 200px; height: 100px')
+    render()
+    doubleClick('e')
+    expect(commits).toEqual([{ width: 'fit-content' }])
+  })
+
+  it('a corner hugs both axes; a flex main axis also stops growing and shrinking', () => {
+    seed({ flex: '1' })
+    harness = mount('width: 200px; height: 100px', 'display: flex')
+    render()
+    doubleClick('se')
+    expect(commits).toEqual([{ width: 'fit-content', flex: '0 0 auto', height: 'fit-content' }])
+  })
+
+  it('two presses too far apart in time are two clicks, not a double-click', () => {
+    seed()
+    harness = mount('width: 200px; height: 100px')
+    render()
+    let now = 1_000
+    spyOn(performance, 'now').mockImplementation(() => now)
+    press('e', 10, 10)
+    release(10, 10)
+    now += 1_000
+    press('e', 10, 10)
+    release(10, 10)
+    expect(commits).toEqual([])
+  })
+
+  it('a first press that resized is not half of a double-click', () => {
+    seed()
+    harness = mount('box-sizing: border-box; width: 200px; height: 100px')
+    render()
+    press('e', 10, 10)
+    moveTo(40, 10)
+    release(40, 10)
+    press('e', 10, 10)
+    release(10, 10)
+    expect(commits).toEqual([{ width: '230px' }])
+  })
+
+  it('a cross-axis Fill marker is dropped with the hug', () => {
+    seed({ alignSelf: 'stretch' })
+    harness = mount('width: 200px; height: 100px', 'display: flex')
+    render()
+    doubleClick('s')
+    expect(commits).toEqual([{ height: 'fit-content', alignSelf: null }])
+  })
+})

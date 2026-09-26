@@ -29,8 +29,7 @@
 import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSelectors'
-import { collectPeerRects } from '../boardSnapping'
-import { computeSnap, snapThresholdAtZoom } from '@core/studio-runtime'
+import { snapBoardFurniture } from '../boardSnapping'
 
 interface DragState {
   pointerId: number
@@ -144,15 +143,17 @@ export function useBoardFrameMoveDrag({
     const dy = (e.clientY - drag.startClientY) / zoom
 
     // Snap to the OTHER furniture on the board (Phase 6B) — every other
-    // frame, note, and doc, excluding this frame's own page.
-    const board = selectActiveBoard(useEditorStore.getState())
-    const peers = board ? collectPeerRects(board, { kind: 'frame', pageId }) : []
-    const snapped = computeSnap(
-      { x: drag.frameX + dx, y: drag.frameY + dy, width, height },
-      peers,
-      // IX-5a — the same screen-px pull at every zoom.
-      snapThresholdAtZoom(zoom),
-    )
+    // frame, note, and doc, excluding this frame's own page — and to the
+    // ruler guides (IX-5c), with equal spacing (IX-5d), as the snap toggles
+    // allow (IX-5e). The threshold is screen px (IX-5a).
+    const state = useEditorStore.getState()
+    const snapped = snapBoardFurniture({
+      board: selectActiveBoard(state),
+      dragged: { kind: 'frame', pageId },
+      rect: { x: drag.frameX + dx, y: drag.frameY + dy, width, height },
+      preferences: state.snapPreferences,
+      zoom,
+    })
 
     // K2 — an Alt+drag spawns its copy on the FIRST move, not at
     // `pointerdown`: a plain Alt+click that never travels must not leave a
@@ -169,7 +170,7 @@ export function useBoardFrameMoveDrag({
       drag.movingFrameId = copyId
     }
 
-    useEditorStore.getState().setBoardSnapGuides(snapped.guides)
+    useEditorStore.getState().setBoardSnapGuides(snapped.guides, snapped.spacings)
     useEditorStore.getState().setFramePosition(drag.movingFrameId, snapped.x, snapped.y)
   }
 
