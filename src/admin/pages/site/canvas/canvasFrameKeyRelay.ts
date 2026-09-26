@@ -71,16 +71,41 @@ function isSpace(init: FrameKeyInit): boolean {
 }
 
 /**
+ * The relayed clones whose ORIGINAL keystroke was the user's — a trusted
+ * native event in a portal frame. A clone is never `isTrusted` itself, so this
+ * is the only way the editor can tell "the user pressed ⌘V in a frame" from
+ * "code posted/dispatched something shaped like ⌘V". It matters where a key
+ * unlocks a capability, and one does: ⌘V may read the OS clipboard through the
+ * async API (`canvasClipboardBridge.ts`), and a Tier 2 frame's project code
+ * can post any `key` message it likes (review #270, N1).
+ */
+const userGestureRelays = new WeakSet<Event>()
+
+/**
+ * Whether a keydown the editor heard is a real user gesture: trusted itself,
+ * or a relay of a trusted native event. A key a BRIDGE frame posted never is.
+ */
+export function isUserGestureKeyEvent(event: Event): boolean {
+  return event.isTrusted || userGestureRelays.has(event)
+}
+
+/**
  * Relays a frame keydown. Returns true when the editor claimed it (the clone
  * was `preventDefault`ed), so the caller can suppress the frame's own default.
+ *
+ * `userGesture` is the ORIGINAL event's trust: `event.isTrusted` for a portal
+ * frame's native keydown, and always `false` for a bridge frame's `key`
+ * message, which the project's own code can forge. See
+ * {@link isUserGestureKeyEvent}.
  *
  * Space re-asserts the `iframe` source on EVERY keydown, auto-repeats
  * included — that is what heals an over-eager release (see
  * `releaseCanvasKeyboardPan`).
  */
-export function relayFrameKeyDown(parentDocument: Document, init: FrameKeyInit): boolean {
+export function relayFrameKeyDown(parentDocument: Document, init: FrameKeyInit, origin: { userGesture: boolean }): boolean {
   if (isSpace(init)) setCanvasSpacePanActive(parentDocument, 'iframe', true)
   const forwarded = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init })
+  if (origin.userGesture) userGestureRelays.add(forwarded)
   parentDocument.dispatchEvent(forwarded)
   return forwarded.defaultPrevented
 }

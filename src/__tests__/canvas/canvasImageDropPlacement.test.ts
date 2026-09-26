@@ -13,7 +13,7 @@ import {
   absolutePlacementStyle,
   clampImageSize,
 } from '@site/store/slices/site/imageDropShapes'
-import { resolvePickedImageTarget } from '@site/canvas/canvasImagePicker'
+import { resolveSelectionInsertTarget } from '@site/canvas/canvasSelectionInsert'
 import { makeNode, makePage } from '../fixtures'
 
 describe('clampImageSize', () => {
@@ -80,7 +80,7 @@ describe('resolveAbsolutePlacement — K6', () => {
   })
 })
 
-describe('resolvePickedImageTarget — IX-img, beside the selection', () => {
+describe('resolveSelectionInsertTarget — IX-img and P5-A paste, beside the selection', () => {
   const ROOT = 'home:body'
   const MAIN = 'pages/Home.tsx:4:5'
   const A = 'pages/Home.tsx:5:7'
@@ -97,15 +97,15 @@ describe('resolvePickedImageTarget — IX-img, beside the selection', () => {
   })
 
   it('lands right after the selected layer, in its parent', () => {
-    expect(resolvePickedImageTarget('home', tree, A)).toEqual({ ok: true, pageId: 'home', parentId: MAIN, index: 1 })
+    expect(resolveSelectionInsertTarget('home', tree, A)).toEqual({ ok: true, pageId: 'home', parentId: MAIN, index: 1 })
   })
 
   it('appends to the page root when nothing in this frame is selected', () => {
-    expect(resolvePickedImageTarget('home', tree, null)).toEqual({ ok: true, pageId: 'home', parentId: ROOT, index: 1 })
-    expect(resolvePickedImageTarget('home', tree, 'other.tsx:1:1')).toEqual({ ok: true, pageId: 'home', parentId: ROOT, index: 1 })
+    expect(resolveSelectionInsertTarget('home', tree, null)).toEqual({ ok: true, pageId: 'home', parentId: ROOT, index: 1 })
+    expect(resolveSelectionInsertTarget('home', tree, 'other.tsx:1:1')).toEqual({ ok: true, pageId: 'home', parentId: ROOT, index: 1 })
   })
 
   it('refuses with no active frame, before any dialog opens', () => {
-    expect(resolvePickedImageTarget(null, null, null).ok).toBe(false)
+    expect(resolveSelectionInsertTarget(null, null, null).ok).toBe(false)
   })
 })

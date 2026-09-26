@@ -47,6 +47,7 @@ import { createDeleteNodesAction } from './deleteNodesAction'
 import { createGroupActions } from './groupActions'
 import { createTransplantActions } from './transplantActions'
 import { createImageDropActions } from './imageDropActions'
+import { createSubtreeInsertActions } from './subtreeInsertActions'
 import { createInlineStyleActions } from './inlineStyleActions'
 import { createVisibilityActions } from './visibilityActions'
 import { createMoveSequenceActions } from './moveSequenceActions'
@@ -97,6 +98,7 @@ type NodeActions = Pick<
   | 'dropImagesIntoPage'
   | 'replaceImageInPage'
   | 'setBackgroundImageInPage'
+  | 'insertJsxSubtreeIntoPage'
 >
 
 function recordPatchChanges(
@@ -653,6 +655,8 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
     // GESTURE rather than into the active tree, so none of this module's
     // `mutateActiveTree` machinery applies. See `imageDropActions.ts`.
     ...createImageDropActions(helpers),
+    // P5-A — a pasted SVG, for the same reason. See `subtreeInsertActions.ts`.
+    ...createSubtreeInsertActions(helpers),
   }
 
   return actions
