@@ -357,6 +357,8 @@ export type InsertPropValue =
   | boolean
   | null
   | { __jsx: SlotJsxNode }
+  /** P5-B3 (IMG-10) — an image import by workspace path; the server writes `import x from '…'` and `prop={x}`. */
+  | { __assetImport: string }
   | InsertPropValue[]
   | { [key: string]: InsertPropValue }
 

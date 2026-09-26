@@ -319,7 +319,12 @@ export function revokeShareRecord(dir: string, token: string, now: string): Shar
   return existing
 }
 
-/** Remove a share's snapshot directory. Idempotent; never throws on a missing directory. */
+/**
+ * Remove a share's snapshot directory. Idempotent: a missing directory is not
+ * an error. Throws `StudioStoreLinkError` when the share folder, or anything
+ * above it in `.studio`, is a link — nothing is removed then, and the revoke
+ * route answers its generic failure rather than delete through the link.
+ */
 export function deleteShareSnapshot(dir: string, token: string): void {
   const rel = snapshotStoreDir(token)
   if (rel === null) return
@@ -330,15 +335,17 @@ export function deleteShareSnapshot(dir: string, token: string): void {
 // Share state that did not come from this server
 // ---------------------------------------------------------------------------
 
-
 /**
- * Remove ALL of a project's share state — the registry and every snapshot —
- * so no link minted anywhere else resolves here. `studioGrants.ts` calls it
- * for share state that arrived from a repository (a clone, or a git verb that
- * changed it): a share is a public URL serving the project, and it must have
- * been created by this server.
+ * Drop every share record and snapshot a project carries — the registry and
+ * every snapshot, so no token minted anywhere else resolves here. Used both
+ * for a project that just arrived from somewhere else (`gitClone.ts`) and for
+ * share state a git verb changed in place (`studioGrants.ts`'s
+ * `withStudioGrantsPinned`): a share token is a bearer capability THIS server
+ * minted, and one that came with a repository is a token its author already
+ * knows. Never follows a link (`removeStudioStoreEntry`); a clone's links are
+ * stripped before this runs.
  */
-export function dropAllShareState(dir: string): void {
+export function dropShareState(dir: string): void {
   removeStudioStoreEntry(dir, SHARES_FILE)
   removeStudioStoreEntry(dir, SNAPSHOTS_STORE_DIR, { recursive: true })
 }

@@ -65,12 +65,10 @@
  * problem: it drops every `.studio/` entry (`archiveIngest.ts`), and an
  * archive entry lands as bytes, never as a link.
  *
- * A cloned `.studio/shares.json` (and its `.studio/shares/` snapshots) is
- * dropped outright, same call after — `dropAllShareState`, also the rule for
- * a pull or branch switch (`studioGrants.ts`). It is not a "link" problem: a
- * plain, honestly-committed share record still names a token the
- * repository's author already knows, and keeping it would let that token
- * serve THIS clone at `/share/<token>` the moment it lands.
+ * Share state is the one committed record that is dropped outright:
+ * `shares.json` and `shares/` hold bearer tokens this server minted, so a
+ * cloned one is a token its author knows (`dropShareState`) — the same rule
+ * a pull or branch switch enforces after the fact (`studioGrants.ts`).
  *
  * ## Job shape
  *
@@ -91,7 +89,7 @@ import { githubProjectFolderName, type GithubRemote } from './gitPaths'
 import { assertWithinWorkspace, clientSafeGitError, runGit, GIT_NETWORK_TIMEOUT_MS } from './gitRunner'
 import { probeProject } from './projectProbe'
 import { mergeStudioMeta } from './studioMeta'
-import { dropAllShareState } from './shareStore'
+import { dropShareState } from './shareStore'
 import { stripStudioStoreLinks } from './studioStore'
 import type { SubprocessSpawnFn } from './subprocessRunner'
 import { isRealpathStrictlyInsideAllowingMissing } from './workspacePackageResolve'
@@ -236,15 +234,11 @@ async function runCloneJob(
         `[studio/gitClone] removed links from the cloned repository's .studio folder (${stripped.rootReplaced ? 'the folder itself' : `${stripped.removed.length} entr${stripped.removed.length === 1 ? 'y' : 'ies'}`})`,
       )
     }
-
-    // A cloned `.studio/shares.json` (and any `.studio/shares/<token>/`
-    // snapshot next to it) is someone else's share registry, minted with
-    // tokens the repository's author already knows. Left in place, `/share/
-    // <token>` would serve THIS project under those tokens the moment the
-    // clone lands — see `studioGrants.ts`'s module doc for the same rule
-    // applied to a pull or branch switch. A share is only ever legitimate
-    // when this server minted it, so a clone gets none.
-    dropAllShareState(target)
+    // Share tokens are capabilities THIS server mints. One that arrived in a
+    // repository is a token the repository's author knows: kept, it would
+    // resolve on the public share route at once, and "Update" would photograph
+    // this user's board into it.
+    dropShareState(target)
 
     job.phase = 'probing'
 

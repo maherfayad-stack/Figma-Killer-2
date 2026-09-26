@@ -102,7 +102,7 @@ afterEach(() => {
 
 describe('replaceImageInPage — a literal src (IMG-3)', () => {
   it('lands the file in public/ and writes its served URL over the literal, undoably', async () => {
-    useEditorStore.getState().replaceImageInPage('about', LITERAL_IMG, png('new.png'))
+    useEditorStore.getState().replaceImageInPage('about', LITERAL_IMG, { kind: 'file', file: png('new.png') })
     await settle()
 
     expect(xhr.requests.map((request) => request.url.split('?')[0])).toEqual(['/admin/api/studio/asset-drop'])
@@ -115,7 +115,7 @@ describe('replaceImageInPage — a literal src (IMG-3)', () => {
 
 describe('replaceImageInPage — an import-bound src (IMG-3)', () => {
   it('lands the file beside the old one and repoints the IMPORT, never the JSX', async () => {
-    useEditorStore.getState().replaceImageInPage('about', IMPORTED_IMG, png('new.png'))
+    useEditorStore.getState().replaceImageInPage('about', IMPORTED_IMG, { kind: 'file', file: png('new.png') })
     await settle()
 
     const [upload] = xhr.requests
@@ -138,7 +138,7 @@ describe('replaceImageInPage — an import-bound src (IMG-3)', () => {
 
 describe('setBackgroundImageInPage — shift-drop (IMG-7)', () => {
   it('writes the image as the top background layer of the element’s own inline style', async () => {
-    useEditorStore.getState().setBackgroundImageInPage('about', MAIN, png('bg.png'))
+    useEditorStore.getState().setBackgroundImageInPage('about', MAIN, { kind: 'file', file: png('bg.png') })
     await settle()
 
     expect(node(MAIN).inlineStyles?.backgroundImage).toBe("url('/bg.png')")

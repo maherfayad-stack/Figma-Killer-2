@@ -108,6 +108,7 @@ export type {
   InsertJsxRefusalReason,
   InsertableJsxPropValue,
 } from './jsxSubtree'
+export { isAssetImportRef, assetImportBindingName, type AssetImportRef } from './jsxAssetImports'
 export { insertJsxIntoSlotProp } from './insertJsxIntoSlotProp'
 export type {
   InsertJsxIntoSlotPropNode,

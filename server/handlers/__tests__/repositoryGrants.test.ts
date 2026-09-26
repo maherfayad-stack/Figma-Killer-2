@@ -115,7 +115,7 @@ describe('a clone brings no grants', () => {
 
   // A regression guard, not a fail-first test: `gitClone.ts` already replaced
   // the cloned `meta.json` outright, and now also drops any share state the
-  // repository shipped (`dropAllShareState`) — a hostile `.studio/shares.json`
+  // repository shipped (`dropShareState`) — a hostile `.studio/shares.json`
   // would otherwise serve this project at `/share/<token>` for tokens the
   // repository's author already knows, the moment the clone lands.
   it("keeps none of the repository's trust tier, MCP approvals, or share links", async () => {

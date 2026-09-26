@@ -30,8 +30,11 @@ import { readProjectThumbnailBytes, readProjectThumbnailStat, writeProjectThumbn
 import { serveProjectThumbnail } from '../projectThumbnailRoute'
 import { appendAgentTurnSummary, readAgentTurnSummaries } from '../agentTurnLog'
 import {
+  STUDIO_STORE_DEFAULT_MAX_BYTES,
   StudioStoreLinkError,
+  appendStudioStoreText,
   readStudioStoreJson,
+  readStudioStoreText,
   removeStudioStoreEntry,
   stripStudioStoreLinks,
   studioStorePath,
@@ -134,6 +137,33 @@ describe('a file link inside .studio', () => {
 
     expect(fs.readFileSync(victim, 'utf8')).toBe('export PATH=/usr/bin\n')
     expect(readAgentTurnSummaries(dir)).toEqual([])
+  })
+})
+
+describe('a hard link inside .studio', () => {
+  it('thumbnail.png hard-linked to a key: never read, never appended through', () => {
+    const key = path.join(outside, 'id_rsa')
+    fs.writeFileSync(key, SECRET)
+    try {
+      fs.linkSync(key, path.join(studioDir(), 'thumbnail.png'))
+    } catch {
+      return // another volume, or no hard links on this filesystem
+    }
+    expect(readProjectThumbnailBytes(dir)).toBeNull()
+    expect(readProjectThumbnailStat(dir)).toBeNull()
+
+    fs.linkSync(key, path.join(studioDir(), 'agent-turns.jsonl'))
+    expect(() => appendStudioStoreText(dir, 'agent-turns.jsonl', 'x\n')).toThrow(StudioStoreLinkError)
+    expect(fs.readFileSync(key, 'utf8')).toBe(SECRET)
+  })
+})
+
+describe('reads are size-bounded', () => {
+  it('a store file over the bound reads as absent, never loaded', () => {
+    fs.writeFileSync(path.join(studioDir(), 'boards.json'), `{"version":1,"boards":[]}${' '.repeat(64)}`)
+    expect(readStudioStoreText(dir, 'boards.json', { maxBytes: 32 })).toBeNull()
+    expect(readStudioStoreText(dir, 'boards.json')).not.toBeNull()
+    expect(STUDIO_STORE_DEFAULT_MAX_BYTES).toBeLessThanOrEqual(64 * 1024 * 1024)
   })
 })
 

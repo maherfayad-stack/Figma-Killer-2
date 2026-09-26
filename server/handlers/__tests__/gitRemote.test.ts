@@ -572,6 +572,45 @@ describe('git clone', () => {
     expect(fs.existsSync(target)).toBe(false)
   })
 
+  // A repository that commits `.studio/shares.json` hands its author a share
+  // token that resolves on THIS server's public route, and "Update" would
+  // photograph the user's board into it. The clone keeps the board, drops shares.
+  it('drops a cloned repository’s share records and snapshots, and keeps its board', async () => {
+    const source = makeProjectDir()
+    await makeRepo(source)
+    const token = `shr_${'A'.repeat(43)}`
+    fs.mkdirSync(path.join(source, '.studio', 'shares', token), { recursive: true })
+    fs.writeFileSync(
+      path.join(source, '.studio', 'shares.json'),
+      JSON.stringify({ version: 1, shares: [{ token, boardId: 'b1', boardName: 'B', createdAt: 'x', snapshotAt: 'x', frameCount: 0 }] }),
+    )
+    fs.writeFileSync(path.join(source, '.studio', 'shares', token, 'board.json'), '{}')
+    fs.writeFileSync(path.join(source, '.studio', 'boards.json'), '{"version":1,"boards":[]}')
+    await git(source, ['add', '-A'])
+    await git(source, ['commit', '-m', 'studio state'])
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-clone-origin-shares-'))
+    created.push(bare)
+    await git(bare, ['init', '--bare', '--initial-branch=main'])
+    await git(source, ['remote', 'add', 'origin', bare])
+    await git(source, ['push', '--set-upstream', 'origin', 'main'])
+
+    const remote = { owner: 'studio-test', repo: 'shared-state', url: bare, protocol: 'https' as const }
+    const target = cloneTargetDir(remote)
+    created.push(target)
+    const job = startGitCloneJob(remote, undefined)
+    const deadline = Date.now() + 60_000
+    while (Date.now() < deadline) {
+      const current = readGitCloneJob(job.id)
+      if (current && (current.phase === 'done' || current.phase === 'failed')) break
+      await Bun.sleep(50)
+    }
+
+    expect(readGitCloneJob(job.id)!.phase).toBe('done')
+    expect(fs.existsSync(path.join(target, '.studio', 'shares.json'))).toBe(false)
+    expect(fs.existsSync(path.join(target, '.studio', 'shares'))).toBe(false)
+    expect(fs.readFileSync(path.join(target, '.studio', 'boards.json'), 'utf8')).toBe('{"version":1,"boards":[]}')
+  })
+
   // A hostile repository ships `.studio` as a link (git stores symlinks). The
   // clone's own meta write — its first `.studio` write — used to land wherever
   // it pointed. Windows git checks a link out as text unless `core.symlinks`

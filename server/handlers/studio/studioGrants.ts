@@ -48,7 +48,7 @@
  * lowered grants and whatever else of it Studio could not read is lost — the
  * conflict is still in git's index, and resolving it re-runs this rule.
  */
-import { dropAllShareState, shareStateFingerprint } from './shareStore'
+import { dropShareState, shareStateFingerprint } from './shareStore'
 import { DEFAULT_TRUST_TIER, readStudioMeta, writeStudioMeta, type StudioMeta, type TrustTier } from './studioMeta'
 import { stripStudioStoreLinks } from './studioStore'
 
@@ -138,7 +138,7 @@ export function reassertStudioGrants(dir: string, pin: StudioGrantPin): Reassert
   const linksRemoved = stripped.rootReplaced || stripped.removed.length > 0
 
   const sharesDropped = shareStateFingerprint(dir) !== pin.shares
-  if (sharesDropped) dropAllShareState(dir)
+  if (sharesDropped) dropShareState(dir)
 
   const meta = readStudioMeta(dir)
   const now = metaGrants(meta)
