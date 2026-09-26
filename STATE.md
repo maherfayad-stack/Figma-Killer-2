@@ -26,6 +26,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - A restore is compare-and-swap: all files or none, else `restore-stale`, naming the file.
   - `/extract-component` journals too, and now takes the project write lock.
   - The `reinsert-source` kind and `reinsertJsxSource.ts` are deleted.
+  - Merged trunk `00fb0680`: a `.map` row delete (P3-D2, `list-item` remove) is journaled too, so its ⌘Z is a `restore`. The `list-item` `insert` op, the `list-item-restore` template and the `not-data`/`invalid-import` checks that existed only for that undo are retired.
 - **Decisions:**
   - One token per batch, not per edit.
   - The OD-7 copy fallback keeps its swap-back undo: a restore would refuse whenever the linked replay's undo is not byte-exact.
