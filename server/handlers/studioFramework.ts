@@ -43,7 +43,13 @@
 import { FrameworkSettingsSchema, type FrameworkSettings } from '@core/framework-schema'
 import { SiteFontsSettingsSchema, parseSiteFontsSettings, type SiteFontsSettings } from '@core/fonts'
 import { safeParseValue } from '@core/utils/typeboxHelpers'
-import { readStudioStoreDocument, readStudioStoreJson, studioStorePath, writeStudioStoreJson } from './studio/studioStore'
+import {
+  readStudioStoreDocument,
+  readStudioStoreJson,
+  readStudioStoreText,
+  studioStorePath,
+  writeStudioStoreJson,
+} from './studio/studioStore'
 
 const FRAMEWORK_FILE = 'framework.json'
 const FONTS_FILE = 'fonts.json'
@@ -51,6 +57,21 @@ const FONTS_FILE = 'fonts.json'
 /** Absolute path of `.studio/framework.json` — for a caller that must NAME it (a cache key), never to read or write it. */
 export function studioFrameworkFilePath(dir: string): string {
   return studioStorePath(dir, FRAMEWORK_FILE)
+}
+
+/**
+ * {@link writeStudioStoreJson}, skipped when the file already holds exactly
+ * `value`'s serialization (perf-17). Every project open posts the token
+ * extraction, whose merge is a no-op once the framework is populated, and it
+ * rewrote `framework.json` every time anyway: a disk write, a new mtime for
+ * anything watching `.studio/`, for nothing. The comparison goes through
+ * {@link readStudioStoreText} (not a raw `fs.readFileSync`) so it inherits the
+ * same link-safety checks the write path does.
+ */
+function writeStudioStoreJsonIfChanged(dir: string, rel: string, value: unknown): void {
+  const text = JSON.stringify(value)
+  if (readStudioStoreText(dir, rel) === text) return
+  writeStudioStoreJson(dir, rel, value)
 }
 
 /**
@@ -72,7 +93,7 @@ export function writeStudioFrameworkFile(
   if (!result.ok) {
     return { ok: false, message: result.errors.map((e) => `${e.path}: ${e.message}`).join('; ') }
   }
-  writeStudioStoreJson(dir, FRAMEWORK_FILE, result.value)
+  writeStudioStoreJsonIfChanged(dir, FRAMEWORK_FILE, result.value)
   return { ok: true, value: result.value }
 }
 
@@ -107,6 +128,6 @@ export function writeStudioFontsFile(
   if (!result.ok) {
     return { ok: false, message: result.errors.map((e) => `${e.path}: ${e.message}`).join('; ') }
   }
-  writeStudioStoreJson(dir, FONTS_FILE, result.value)
+  writeStudioStoreJsonIfChanged(dir, FONTS_FILE, result.value)
   return { ok: true, value: result.value }
 }

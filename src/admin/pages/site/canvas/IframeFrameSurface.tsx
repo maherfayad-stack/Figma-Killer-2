@@ -52,7 +52,10 @@
  *   1. the `<iframe srcDoc>` element alone (this component's own return),
  *   2. the injector chain, once `load`/`contentDocument` gives us a document,
  *   3. the node tree + runtime scripts, in a `startTransition` scheduled from
- *      the effect that runs right after (2) commits.
+ *      the effect that runs right after (2) commits — once it is this frame's
+ *      turn in `frameTreeMountQueue.ts`: ONE frame's tree at a time, closest
+ *      to the viewport centre first, so each frame commits and paints on its
+ *      own instead of every frame of a board landing in one commit.
  *
  * Stage 3 is a `startTransition`, NOT an `rAF`/`setTimeout`/`requestIdleCallback`
  * chain. That distinction is the whole reason this is safe to ship: the
@@ -121,6 +124,7 @@ import { BridgeFrameAdapter, isBridgeFrameAdapter, type BridgeFrameChannel } fro
 import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
 import { registerFrameAdapter, unregisterFrameAdapter } from './frameAdapter/canvasFrameAdapterRegistry'
 import { resolveLiveFrameSrc } from './resolveLiveFrameSrc'
+import { requestFrameTreeMount, type FrameTreeMountTicket } from './frameTreeMountQueue'
 
 /** Stable empty list so a script-less frame doesn't churn the injector's deps. */
 const EMPTY_RUNTIME_SCRIPTS: InjectableRuntimeScript[] = []
@@ -179,6 +183,10 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       // Mount stage 3 — see this module's header. `false` until the injector
       // commit has landed and the transition scheduled below has run.
       const [treeMounted, setTreeMounted] = useState(false)
+      // This frame's place in `frameTreeMountQueue.ts`, and the committed
+      // value of `treeMounted` as the effects last saw it.
+      const mountTicketRef = useRef<FrameTreeMountTicket | null>(null)
+      const treeMountedRef = useRef(false)
 
     // `live-07` (STATE.md) — the freshest `liveFrame`, readable from inside
     // the construct effect below WITHOUT being a dependency of it.
@@ -298,6 +306,12 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
     // Measured: the transient frame's body held 0 children for the WHOLE 5 s
     // `waitForAgentRenderFrame` window, so the capture timed out with
     // "did not become ready" — `agentBreakpointCapture.test.tsx` is the gate.
+    //
+    // The transition waits for this frame's turn in `frameTreeMountQueue.ts`:
+    // one frame's tree at a time, closest to the viewport centre first. Every
+    // frame starting its own transition in one burst put them all in ONE
+    // render and ONE commit (React renders pending transition lanes together),
+    // so the first frame of a board could not paint before the last.
     useEffect(() => {
       if (!iframeDoc) {
         setTreeMounted(false)
@@ -307,8 +321,27 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
         setTreeMounted(true)
         return
       }
-      startTransition(() => setTreeMounted(true))
+      // Already mounted (the document was re-attached without going through
+      // `null`): a grant would be a no-op update, so the release effect below
+      // would never run and the queue would stall behind this frame.
+      if (treeMountedRef.current) return
+      const ticket = requestFrameTreeMount(
+        () => iframeRef.current,
+        () => startTransition(() => setTreeMounted(true)),
+      )
+      mountTicketRef.current = ticket
+      return () => {
+        ticket.release()
+        if (mountTicketRef.current === ticket) mountTicketRef.current = null
+      }
     }, [iframeDoc, isCapture])
+
+    // This frame's tree has committed: hand the grant to the next frame. A
+    // passive effect, so the next tree starts rendering after this commit.
+    useEffect(() => {
+      treeMountedRef.current = treeMounted
+      if (treeMounted) mountTicketRef.current?.release()
+    }, [treeMounted])
 
     // Publish stage 3. ONE readiness notion, two transports:
     //  - `onContentReadyChange` for the board frame, which keeps its frozen

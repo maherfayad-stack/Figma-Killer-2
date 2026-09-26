@@ -34,12 +34,27 @@ import { removeFixtureProject, type FixtureProject } from './helpers/studioFixtu
 /**
  * Warm open → first frame painted. Before P6-B (trunk `ef23f78a`) this was
  * 5315 / 5602 ms on the calibration machine (Windows, eight agents' load);
- * with it, 4296 / 4669 / 5053 ms. Set about 20 % over the worst "after". On a
- * machine this loaded it does NOT separate before from after on its own — the
- * noise is as wide as the gain — which is what the ORDER budget below is for;
- * this one fails a new second-long wait on top of today's open.
+ * with it, 4296 / 4669 / 5053 ms.
+ *
+ * `frames-mount-one-by-one` (perf-17) re-measured on top of that trunk, same
+ * corpus, same machine, on the SAME shared machine other agents' e2e runs were
+ * also loading: trunk (all ten visible frames committing together) 2695 /
+ * 2906 ms; this branch (frames mounting one at a time, centre first) 2161 /
+ * 2216 / 2908 ms. The improvement (~500 ms on a quiet sample) is real but on a
+ * busy sample the noise erases it — matches the note below about a machine
+ * this loaded not separating before from after on its own; the ORDER budget
+ * is what actually pins the mechanism. Tightened from 6000 to 20 % over the
+ * worst "after" sample (2908 → ~3490), rounded up for headroom.
  */
-const BUDGET_WARM_FIRST_FRAME_MS = 6_000
+const BUDGET_WARM_FIRST_FRAME_MS = 4_000
+
+/**
+ * perf-17 — an ORDER budget, like the one below: when the first frame paints,
+ * the others must not have painted in the same animation frame. Every frame's
+ * tree used to commit in ONE commit (`frameTreeMountQueue.ts`), so all ten
+ * painted together (10 of 10); one by one, the first paints alone. Asserted
+ * on both opens, inline in the test.
+ */
 
 /**
  * Warm open: the first frame's box (its header and body, painted or not)
@@ -70,6 +85,10 @@ interface OpenProbe {
   firstFramePaintedMs: number | null
   /** How many canvas iframes were displayed when the first one painted. */
   mountedAtFirstPaint: number | null
+  /** How many had painted in that same animation frame (perf-17: one by one, so 1 — it was all of them). */
+  paintedAtFirstPaint: number | null
+  /** How many frames had painted when every mounted frame had. */
+  paintedAtEnd: number | null
   allFramesShownMs: number | null
   allMountedPaintedMs: number | null
   loadStartMs: number | null
@@ -103,6 +122,8 @@ async function installOpenProbe(page: Page, fixtureDir: string, expectedFrames: 
         firstFrameShellMs: null,
         firstFramePaintedMs: null,
         mountedAtFirstPaint: null,
+        paintedAtFirstPaint: null,
+        paintedAtEnd: null,
         allFramesShownMs: null,
         allMountedPaintedMs: null,
         loadStartMs: null,
@@ -157,6 +178,7 @@ async function installOpenProbe(page: Page, fixtureDir: string, expectedFrames: 
         if (probe.firstFramePaintedMs === null && paintedCount > 0) {
           probe.firstFramePaintedMs = now
           probe.mountedAtFirstPaint = iframes.length
+          probe.paintedAtFirstPaint = paintedCount
         }
         // A frame is SHOWN once its page is in: `data-page-id`, and not a
         // pending placeholder (`PendingBoardFrame`).
@@ -164,6 +186,7 @@ async function installOpenProbe(page: Page, fixtureDir: string, expectedFrames: 
         if (probe.allFramesShownMs === null && shown >= frames) probe.allFramesShownMs = now
         if (probe.allFramesShownMs !== null && probe.allMountedPaintedMs === null && iframes.length > 0 && paintedCount === iframes.length) {
           probe.allMountedPaintedMs = now
+          probe.paintedAtEnd = paintedCount
         }
         if (probe.allMountedPaintedMs !== null) finish()
         else requestAnimationFrame(tick)
@@ -190,8 +213,8 @@ async function measureOpen(page: Page, label: string): Promise<OpenProbe> {
     `${label} (ms from navigation): /load ${ms(probe.loadStartMs)}→first byte ${ms(probe.loadFirstByteMs)}→end ${ms(probe.loadEndMs)}; ` +
     `first page line ${ms(probe.firstPageLineMs)}; store open ${ms(probe.storeOpenMs)}, complete ${ms(probe.storeCompleteMs)}; ` +
     `canvas root ${ms(probe.canvasRootMs)}; first frame shell ${ms(probe.firstFrameShellMs)}, ` +
-    `FIRST FRAME PAINTED ${ms(probe.firstFramePaintedMs)} (${probe.mountedAtFirstPaint ?? 'n/a'} iframes up); ` +
-    `all ${LARGE_BOARD_FRAME_COUNT} frames shown ${ms(probe.allFramesShownMs)}, mounted frames painted ${ms(probe.allMountedPaintedMs)}`
+    `FIRST FRAME PAINTED ${ms(probe.firstFramePaintedMs)} (${probe.paintedAtFirstPaint ?? 'n/a'} painted of ${probe.mountedAtFirstPaint ?? 'n/a'} iframes up); ` +
+    `all ${LARGE_BOARD_FRAME_COUNT} frames shown ${ms(probe.allFramesShownMs)}, mounted frames painted ${ms(probe.allMountedPaintedMs)} (${probe.paintedAtEnd ?? 'n/a'})`
   test.info().annotations.push({ type: 'perf', description: summary })
   console.log(`[p6-b] ${summary}`)
   console.log(`[p6-b] ${label} api: ${probe.api.join(', ')}`)
@@ -222,5 +245,11 @@ test.describe('P6-B project open on the 40 x 300 corpus', () => {
       warm.firstFrameShellMs! - warm.canvasRootMs!,
       'warm open: board frames appeared this long after the canvas — the board chunk is being fetched after the canvas renders again',
     ).toBeLessThan(BUDGET_WARM_FRAME_AFTER_CANVAS_MS)
+    for (const [label, open] of [['cold', cold], ['warm', warm]] as const) {
+      expect(
+        open.paintedAtFirstPaint!,
+        `${label} open: ${open.paintedAtFirstPaint} of ${open.paintedAtEnd} frames painted in the same animation frame as the first — the board's trees are committing together again`,
+      ).toBeLessThan(open.paintedAtEnd!)
+    }
   })
 })

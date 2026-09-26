@@ -14,7 +14,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadStudioPages, loadStudioPagesShared } from '../studioPageLoad'
 import { clearLoadedProjects } from './loadedProjects'
-import { clearStudioLoadMemo, workspaceLoadFingerprint } from './studioLoadMemo'
+import { fileStamp } from './loadDigest'
+import { clearStudioLoadMemo, memoizedStudioLoad, workspaceLoadFingerprint, type StudioLoadComputation } from './studioLoadMemo'
+import type { StudioLoadResult } from './studioLoadContract'
 
 function page(heading: string): string {
   return `export default function Page() {\n  return <div><h1>${heading}</h1></div>\n}\n`
@@ -191,5 +193,74 @@ describe('loadStudioPages memo — invalidation', () => {
     const narrowed = await loadStudioPages(dir, { pageIds: ['about'] })
     expect(narrowed.pages.map((p) => p.id)).toEqual(['about'])
     expect((await loadStudioPages(dir)).pages.map((p) => p.id).sort()).toEqual(['about', 'home'])
+  })
+})
+
+describe('memoizedStudioLoad — one compute per project at a time', () => {
+  let dir: string
+
+  beforeEach(() => {
+    clearStudioLoadMemo()
+    dir = mkdtempSync(join(tmpdir(), 'studio-load-inflight-'))
+    mkdirSync(join(dir, 'pages'), { recursive: true })
+    writeFileSync(join(dir, 'pages', 'Home.tsx'), page('One'))
+  })
+
+  afterEach(() => {
+    clearLoadedProjects()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  /** A computation whose compute runs only when the test says so, stamped on `pages/Home.tsx` as read at compute START. */
+  function gatedComputation() {
+    const releases: Array<() => void> = []
+    let computes = 0
+    const homeFile = join(dir, 'pages', 'Home.tsx')
+    const computation: StudioLoadComputation = {
+      routeListing: () => 'pages/Home.tsx',
+      compute: async () => {
+        computes += 1
+        const label = `compute-${computes}`
+        const stamp = fileStamp(homeFile)
+        await new Promise<void>((resolve) => releases.push(resolve))
+        return { result: { label } as unknown as StudioLoadResult, dependencies: new Map([[homeFile, stamp]]) }
+      },
+    }
+    const releaseNext = async () => {
+      while (releases.length === 0) await new Promise((resolve) => setTimeout(resolve, 1))
+      releases.shift()!()
+    }
+    /** Lets every compute started so far run — on the old code, the duplicate one too. */
+    const releaseAll = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      for (const release of releases.splice(0)) release()
+    }
+    return { computation, releaseNext, releaseAll, computes: () => computes, homeFile }
+  }
+
+  const labelOf = (result: StudioLoadResult) => (result as unknown as { label: string }).label
+
+  it('two loads at once share ONE compute and get the same result', async () => {
+    const gated = gatedComputation()
+    const first = memoizedStudioLoad(dir, gated.computation)
+    const second = memoizedStudioLoad(dir, gated.computation)
+    await gated.releaseAll()
+    await gated.releaseAll()
+    const [a, b] = await Promise.all([first, second])
+    expect(gated.computes()).toBe(1)
+    expect(b).toBe(a)
+  })
+
+  it('a load that joined a compute whose input changed meanwhile computes again — never the stale result', async () => {
+    const gated = gatedComputation()
+    const first = memoizedStudioLoad(dir, gated.computation)
+    const second = memoizedStudioLoad(dir, gated.computation)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    writeFileSync(gated.homeFile, page('Two, and longer'))
+    await gated.releaseNext()
+    expect(labelOf(await first)).toBe('compute-1')
+    await gated.releaseNext()
+    expect(labelOf(await second)).toBe('compute-2')
+    expect(gated.computes()).toBe(2)
   })
 })
