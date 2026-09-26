@@ -114,6 +114,12 @@ const BUDGET_PAN_LAYER_MUTATIONS = 10
  * Re-calibrate on a quiet runner (CI) and tighten toward 100ms once a clean
  * number is available there — do not loosen it further to chase noise here.
  */
+/**
+ * P6-C: 253–363 ms (dev, this loaded box; 356 / 363 ms failed this budget on
+ * P6-A's runs) -> 215–223 ms; the production bundle 109 -> 69–80 ms. Same
+ * causes as the warm click (`canvas-feel-budgets.e2e.ts`). The production
+ * budget is ~1.9× the worst production run.
+ */
 const BUDGET_CLICK_TO_RING_COLD_MS = E2E_VITE_MODE === 'preview' ? 150 : 350
 
 /**

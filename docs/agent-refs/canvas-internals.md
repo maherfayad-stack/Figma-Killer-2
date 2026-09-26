@@ -1530,10 +1530,12 @@ What it found, and the rule each finding became:
   `BreakpointFrame`, `IframeFrameSurface` and `BreakpointSelectionOverlay`
   still do not compile (see that test's header).
 
-Measured (medians; dev build / production bundle, `E2E_VITE_MODE=preview`):
-warm click → ring 144 → P6C_WARM_DEV ms / 61.6 → P6C_WARM_PROD ms; inspector
-keystroke → canvas paint 115 → 80 ms / 32 → P6C_KEY_PROD ms. WS-5.6's 32 ms
-click target is P6C_TARGET_STATUS.
+Measured on the 40 × 300 board (dev build / production bundle,
+`E2E_VITE_MODE=preview`): warm click → ring (mean) 144 → 75 ms / 61.6 → 47.1 ms;
+inspector keystroke → canvas paint (median) 115 → 42 ms / 32 → 26 ms; cold
+click → ring 253 → 216 ms / 109 → 69 ms. WS-5.6's 32 ms click target is **not
+met** in production; `canvas-feel-budgets.e2e.ts`'s warm-click docblock lists
+what is left in a click.
 
 ### Mounting a frame (S1) — what a mount actually costs, measured
 

@@ -40,10 +40,11 @@ import { fmtMs, summarize } from '../lib/stats'
 import { log } from '../lib/log'
 
 /**
- * Calibrated on this Windows box under the usual multi-agent load, median of
- * the medians over three runs (numbers in P6-C's PR). Each is ~2x the worst
- * run: loose enough for machine noise, tight enough that the walk-and-stat
- * warm path P6-B removed (117.6 ms route median before it) fails.
+ * Calibrated on this Windows box under the usual multi-agent load, three runs:
+ * warm median 31.5 / 46.6 / 31.3 ms, longest block (median) 31.1 / 31.2 /
+ * 31.1 ms (worst single load 58-61 ms). Set at ~1.7x the worst median: loose
+ * enough for machine noise, tight enough that the walk-and-stat warm path P6-B
+ * removed (117.6 ms route median before it) fails.
  */
 export const STUDIO_LOAD_BUDGETS_MS = {
   warmMedian: 80,

@@ -43,14 +43,15 @@ const PRODUCTION = E2E_VITE_MODE === 'preview'
 
 /**
  * **Keystroke in the inspector's Text field -> the canvas painted it**, median
- * of 12. before -> after P6-C: dev 115 -> 80 ms (spread 75-101), production
- * 32 -> 28-33 ms (26-49). The cut was the Assets panel, which re-rendered 46
- * cards and ~130 buttons on every keystroke through insert hooks that
- * subscribed to the page they only read on insert.
+ * of 12. before -> after P6-C: dev 115 -> 42 ms (spread 28-50), production
+ * 32 -> 26 ms (24-45). Two cuts: the Assets panel re-rendered 46 cards and
+ * ~130 buttons on every keystroke (insert hooks subscribed to the page they
+ * only read on insert), and every mounted frame's selection chrome re-rendered
+ * too (an uncompiled `CanvasRoot` rebuilt its context value every render).
  */
-const BUDGET_INSPECTOR_KEYSTROKE_TO_PAINT_MEDIAN_MS = PRODUCTION ? 50 : 120
-/** **Inline edit on the canvas** — keydown to the frame after its `input`. Dev 112 -> 86 ms (81-159), production 36 -> 29 ms (26-50). */
-const BUDGET_INLINE_KEYSTROKE_TO_PAINT_MEDIAN_MS = PRODUCTION ? 50 : 130
+const BUDGET_INSPECTOR_KEYSTROKE_TO_PAINT_MEDIAN_MS = PRODUCTION ? 50 : 90
+/** **Inline edit on the canvas** — keydown to the frame after its `input`. Dev 112 -> 38 ms (25-65), production 36 -> 25 ms (21-48). */
+const BUDGET_INLINE_KEYSTROKE_TO_PAINT_MEDIAN_MS = PRODUCTION ? 50 : 90
 /**
  * **⌘D: `NodeRenderer` renders + mounts until the write has landed and been
  * reconciled.** A node id IS its source position, so duplicating an element
@@ -61,8 +62,14 @@ const BUDGET_INLINE_KEYSTROKE_TO_PAINT_MEDIAN_MS = PRODUCTION ? 50 : 130
  * regression that re-renders the other frames reads ~2,490.
  */
 const BUDGET_DUPLICATE_NODE_RENDERS = 450
-/** **⌘D -> the copy painted on the canvas.** Dev ~190-230 ms, production 111-136 ms. */
-const BUDGET_DUPLICATE_TO_PAINT_MS = PRODUCTION ? 250 : 400
+/**
+ * **⌘D -> the copy painted on the canvas** (keydown to the first frame after
+ * the frame's DOM holds the copy — P3-E's optimistic insert, before the write
+ * lands). After P6-C: dev 83 ms, production 96 ms. (The first runs timed it
+ * from the test side at 186-228 / 111-136 ms, which includes Playwright's
+ * polling.)
+ */
+const BUDGET_DUPLICATE_TO_PAINT_MS = PRODUCTION ? 200 : 250
 /**
  * **A click 700 ms after an edit: no long task other than the click's own.**
  * PERF-5's shape — a poster rasterized ~600 ms into the pause, landing on the
@@ -76,17 +83,17 @@ const BUDGET_LONG_TASK_AFTER_THE_CLICK_MS = 50
  * **Memory after 20 pan cycles and 50 edits.** Detached documents (the
  * page's `Documents` minus its `Frames`, after two forced GCs): 1 in every
  * run, before and after — one constant document, not a leak. Heap growth
- * +27-30 MB, most of it the pool holding more frames at the end (9 -> 17
- * frames) plus their posters.
+ * +27-30 MB (84.7 -> 112.4 MB in the last run), most of it the pool holding
+ * more frames at the end (9 -> 13-17 frames) plus their posters.
  */
 const BUDGET_DETACHED_DOCUMENTS = 2
 const BUDGET_HEAP_GROWTH_MB = 60
 /**
  * **First frame interactive, warm** (WS-5.5: < 2 s for a 40-page repo on a
- * warm cache). Production 1.29-1.68 s. The dev server serves the editor as
- * ~2,000 separate modules and loads the canvas's lazy chunks only after
- * `/load`, so the dev number (3.96-4.55 s) is a ratchet on the product's own
- * work, not the target.
+ * warm cache). Production 1.29-1.68 s over four runs. The dev server serves
+ * the editor as ~2,000 separate modules and loads the canvas's lazy chunks
+ * only after `/load`, so the dev number (3.06-4.55 s) is a ratchet on the
+ * product's own work, not the target.
  */
 const BUDGET_FIRST_FRAME_INTERACTIVE_WARM_MS = PRODUCTION ? 2000 : 7000
 

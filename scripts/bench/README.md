@@ -158,13 +158,15 @@ Audit `01-perf.md` §3 item 12 (PERF-8), ROADMAP P6-C. Generates a 1,000-file re
 
 Two rows are **gates** (`STUDIO_LOAD_BUDGETS_MS`; a row reading `OVER` fails the bench): the **warm load median** (nothing changed since the last load) and the **longest event-loop block** during a warm load (measured by a 1 ms interval probe — a warm load is mostly synchronous `stat`s, so this is what a request queued behind it waits). Recorded, not gated: the cold load, the longest block in the 3 s after it (the deferred program prewarm and parse-store writes), and a load after one page edit.
 
-| row | P6-C calibration (this Windows box, loaded) | budget |
+| row | P6-C calibration, three runs (this Windows box, loaded) | budget |
 |---|---|---|
-| warm load, median | 31.5 ms (p95 47 ms) | 80 ms |
-| warm load, longest block (median) | 31.1 ms (worst 61 ms) | 80 ms |
-| cold load | 3.57 s | — |
-| longest block in the 3 s after a cold load | 380 ms | — |
-| load after one page edit | 934 ms | — |
+| warm load, median | 31.5 / 46.6 / 31.3 ms | 80 ms |
+| warm load, longest block (median) | 31.1 / 31.2 / 31.1 ms (worst single load 58–61 ms) | 80 ms |
+| cold load | 3.57 / 4.39 / 4.15 s | — |
+| longest block in the 3 s after a cold load | 380 / 688 / 404 ms | — |
+| load after one page edit | 934 / 997 / 959 ms | — |
+
+The block after a cold load is the deferred program prewarm (P6-B's landmine 1): up to ~0.7 s during which a request waits. It is recorded, not gated — it happens once per project per server start, off the load's own response.
 
 `bun run bench:studio-load`.
 

@@ -80,10 +80,28 @@ const BUDGET_IDLE_RAF_PER_SECOND = 0
 
 /**
  * **Warm click -> selection ring painted, mean over the samples.** WS-5.6's
- * target is 32 ms in a production build; this runs the dev build. Measured
- * (P2-I): trunk 292–440 ms, because every click re-rendered all ~2,800
- * mounted `NodeRenderer`s through an unstable `CanvasSelectionContext` value;
- * after P2-I 78–85 ms. Set at ~1.4× the worst P2-I mean.
+ * target is 32 ms in a production build.
+ *
+ * Dev build: trunk 292–440 ms before P2-I (every click re-rendered all ~2,800
+ * mounted `NodeRenderer`s through an unstable `CanvasSelectionContext`), 78–85
+ * ms after it on a quiet box; 144–152 ms on this loaded box at the start of
+ * P6-C, 74.9 ms (61–88) after it. 120 is ~1.4× the worst P2-I mean.
+ *
+ * Production bundle (`E2E_VITE_MODE=preview`, the `@production-bundle` pass):
+ * 61.6 ms (55–67) at the start of P6-C, **47.1 ms (41–55)** after it. P6-C's
+ * cuts, in order of size: a canvas click made two store writes that changed
+ * nothing, each sweeping every mounted node's selectors
+ * (`skipUnchangedSets`); `CanvasRoot` was silently skipped by the React
+ * Compiler, so all nine mounted frames re-rendered their selection chrome on
+ * every click; the Assets panel re-rendered 46 cards per click.
+ *
+ * **WS-5.6's 32 ms is NOT met.** 75 is a ratchet at ~1.35× the worst
+ * production run, not the target. What remains in a click, from the
+ * production profile: the one real store write's selector sweep over ~2,800
+ * `NodeRenderer`s (~8 ms), the inspector's re-render for the new node (~45
+ * buttons and tooltips — `Button` and `Tooltip` are among the ~170 files the
+ * compiler skips, P6-C's "Found, not fixed"), the owning frame's uncompiled
+ * `BreakpointSelectionOverlay`, and style/layout of the frame.
  */
 const WARM_CLICK_SAMPLES = 8
 const BUDGET_WARM_CLICK_TO_RING_MEAN_MS = E2E_VITE_MODE === 'preview' ? 75 : 120
