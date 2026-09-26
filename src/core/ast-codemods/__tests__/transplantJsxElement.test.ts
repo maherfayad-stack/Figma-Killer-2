@@ -231,6 +231,267 @@ export default function Home() {
     expect(fs.readFileSync(about, 'utf8')).toContain("import { label } from './Home'")
   })
 
+  /**
+   * WB-19-style aliasing, generalized to the cross-file carry: a name
+   * collision used to refuse this whole move (`binding-conflict`) even
+   * though the fix is one honest write — import the carried binding under a
+   * fresh name and rename every reference to it inside the moved subtree.
+   * A component name is the simplest case to assert byte-for-byte.
+   */
+  it('aliases a carried component instead of refusing when the destination already means something else by that name', () => {
+    const home = writeFixture('Home.tsx', HOME)
+    const aboutText = `function Badge() {
+  return <span>local</span>
+}
+
+export default function About() {
+  return (
+    <main className="about">
+      <h1>About</h1>
+    </main>
+  )
+}
+`
+    const about = writeFixture('About.tsx', aboutText)
+    const badge = locateTag(HOME, 'Badge')
+    const container = locateTag(aboutText, 'main')
+
+    const result = transplantJsxElement({
+      file: home,
+      line: badge.line,
+      col: badge.col,
+      destinationFile: about,
+      destinationLine: container.line,
+      destinationCol: container.col,
+    })
+
+    expect(result).toMatchObject({ ok: true, carriedImports: ['Badge2'] })
+    const written = fs.readFileSync(about, 'utf8')
+    expect(written).toContain("import { Badge as Badge2 } from './ui/Badge'")
+    expect(written).toContain('<Badge2 tone="quiet">New</Badge2>')
+    // The destination's own local `Badge` is untouched — only the carried
+    // reference was renamed.
+    expect(written).toContain('function Badge() {')
+  })
+
+  /**
+   * The reported dogfood case: two frames each import their OWN CSS module
+   * as `styles`. Aliased from the MODULE's own name, not a bare `styles2` —
+   * `sheetStyles` reads honestly next to the destination's own `styles`.
+   */
+  it('aliases a carried default import from its module name when the destination already binds the plain name to a DIFFERENT module', () => {
+    const home = writeFixture('Sheet.tsx', `import styles from './Sheet.module.css'
+
+export default function Sheet() {
+  return (
+    <main>
+      <div className={styles.sheet}>Sheet</div>
+    </main>
+  )
+}
+`)
+    const homeText = fs.readFileSync(home, 'utf8')
+    const about = writeFixture('SMS.tsx', `import styles from './SMS.module.css'
+
+export default function SMS() {
+  return (
+    <main className={styles.page}>
+      <h1>SMS</h1>
+    </main>
+  )
+}
+`)
+    const aboutText = fs.readFileSync(about, 'utf8')
+    const div = locateTag(homeText, 'div')
+    const container = locateTag(aboutText, 'main')
+
+    const result = transplantJsxElement({
+      file: home,
+      line: div.line,
+      col: div.col,
+      destinationFile: about,
+      destinationLine: container.line,
+      destinationCol: container.col,
+    })
+
+    expect(result.ok).toBe(true)
+    const written = fs.readFileSync(about, 'utf8')
+    expect(written).toContain("import sheetStyles from './Sheet.module.css'")
+    expect(written).toContain('<div className={sheetStyles.sheet}>Sheet</div>')
+    // The destination's own `styles.page` reference is untouched.
+    expect(written).toContain('className={styles.page}')
+  })
+
+  it('reuses an existing import of the SAME module instead of adding a second one', () => {
+    const home = writeFixture('Sheet.tsx', `import styles from './Shared.module.css'
+
+export default function Sheet() {
+  return (
+    <main>
+      <div className={styles.sheet}>Sheet</div>
+    </main>
+  )
+}
+`)
+    const homeText = fs.readFileSync(home, 'utf8')
+    const about = writeFixture('SMS.tsx', `import shared from './Shared.module.css'
+
+export default function SMS() {
+  return (
+    <main className={shared.page}>
+      <h1>SMS</h1>
+    </main>
+  )
+}
+`)
+    const aboutText = fs.readFileSync(about, 'utf8')
+    const div = locateTag(homeText, 'div')
+    const container = locateTag(aboutText, 'main')
+
+    const result = transplantJsxElement({
+      file: home,
+      line: div.line,
+      col: div.col,
+      destinationFile: about,
+      destinationLine: container.line,
+      destinationCol: container.col,
+    })
+
+    expect(result.ok).toBe(true)
+    const written = fs.readFileSync(about, 'utf8')
+    // Only ONE import of `./Shared.module.css` — the destination's own.
+    expect(written.match(/from '\.\/Shared\.module\.css'/g)).toHaveLength(1)
+    expect(written).toContain('<div className={shared.sheet}>Sheet</div>')
+  })
+
+  describe('carrying a context-hook read (DET-3 for a cross-file move)', () => {
+    const LANG_CONTEXT = `import { createContext, useContext } from 'react'
+export const LanguageContext = createContext({ t: { hi: 'Hi' } })
+export function useLanguage() {
+  return useContext(LanguageContext)
+}
+`
+
+    it('writes a new call as the destination component\'s first statement when it makes none yet', () => {
+      writeFixture('i18n/LanguageContext.tsx', LANG_CONTEXT)
+      const home = writeFixture('Home.tsx', `import { useLanguage } from './i18n/LanguageContext'
+
+export default function Home() {
+  const { t } = useLanguage()
+  return (
+    <main>
+      <p>{t.hi}</p>
+    </main>
+  )
+}
+`)
+      const homeText = fs.readFileSync(home, 'utf8')
+      const about = writeFixture('About.tsx', `export default function About() {
+  return (
+    <main className="about">
+      <h1>About</h1>
+    </main>
+  )
+}
+`)
+      const aboutText = fs.readFileSync(about, 'utf8')
+      const paragraph = locateTag(homeText, 'p')
+      const container = locateTag(aboutText, 'main')
+
+      const result = transplantJsxElement({
+        file: home,
+        line: paragraph.line,
+        col: paragraph.col,
+        destinationFile: about,
+        destinationLine: container.line,
+        destinationCol: container.col,
+      })
+
+      expect(result.ok).toBe(true)
+      const written = fs.readFileSync(about, 'utf8')
+      expect(written).toContain("import { useLanguage } from './i18n/LanguageContext'")
+      expect(written).toContain('const { t } = useLanguage()')
+      expect(written).toContain('<p>{t.hi}</p>')
+    })
+
+    it('reuses an existing call to the same hook instead of writing a second one', () => {
+      writeFixture('i18n/LanguageContext.tsx', LANG_CONTEXT)
+      const home = writeFixture('Home.tsx', `import { useLanguage } from './i18n/LanguageContext'
+
+export default function Home() {
+  const { t } = useLanguage()
+  return (
+    <main>
+      <p>{t.hi}</p>
+    </main>
+  )
+}
+`)
+      const homeText = fs.readFileSync(home, 'utf8')
+      const about = writeFixture('About.tsx', `import { useLanguage } from './i18n/LanguageContext'
+
+export default function About() {
+  const { t } = useLanguage()
+  return (
+    <main className="about">
+      <h1>{t.hi}</h1>
+    </main>
+  )
+}
+`)
+      const aboutText = fs.readFileSync(about, 'utf8')
+      const paragraph = locateTag(homeText, 'p')
+      const container = locateTag(aboutText, 'main')
+
+      const result = transplantJsxElement({
+        file: home,
+        line: paragraph.line,
+        col: paragraph.col,
+        destinationFile: about,
+        destinationLine: container.line,
+        destinationCol: container.col,
+      })
+
+      expect(result.ok).toBe(true)
+      const written = fs.readFileSync(about, 'utf8')
+      // Only ONE call to useLanguage() — the destination's own, reused.
+      expect(written.match(/useLanguage\(\)/g)).toHaveLength(1)
+      expect(written).toContain('<p>{t.hi}</p>')
+    })
+
+    it('still refuses a captured binding that is NOT a context-reader hook (useState)', () => {
+      const home = writeFixture('Home.tsx', `import { useState } from 'react'
+
+export default function Home() {
+  const [count] = useState(0)
+  return (
+    <main>
+      <p>{count}</p>
+    </main>
+  )
+}
+`)
+      const homeText = fs.readFileSync(home, 'utf8')
+      const about = writeFixture('About.tsx', ABOUT)
+      const paragraph = locateTag(homeText, 'p')
+      const container = locateTag(ABOUT, 'main')
+
+      const result = transplantJsxElement({
+        file: home,
+        line: paragraph.line,
+        col: paragraph.col,
+        destinationFile: about,
+        destinationLine: container.line,
+        destinationCol: container.col,
+      })
+
+      expect(result.ok).toBe(false)
+      if (result.ok) throw new Error('unreachable')
+      expect(result.refusal.reason).toBe('captured-scope')
+      expect(fs.readFileSync(home, 'utf8')).toBe(homeText)
+      expect(fs.readFileSync(about, 'utf8')).toBe(ABOUT)
+    })
+  })
 })
 
 describe('transplantJsxElement — refusals leave BOTH files untouched', () => {
@@ -374,39 +635,6 @@ export default function Home() {
     if (result.ok) throw new Error('unreachable')
     expect(result.refusal.reason).toBe('expression-child')
     expectUntouched(home, homeText, about, ABOUT)
-  })
-
-  it('refuses binding-conflict when the destination already means something else by that name', () => {
-    const home = writeFixture('Home.tsx', HOME)
-    const aboutText = `function Badge() {
-  return <span>local</span>
-}
-
-export default function About() {
-  return (
-    <main className="about">
-      <h1>About</h1>
-    </main>
-  )
-}
-`
-    const about = writeFixture('About.tsx', aboutText)
-    const badge = locateTag(HOME, 'Badge')
-    const container = locateTag(aboutText, 'main')
-
-    const result = transplantJsxElement({
-      file: home,
-      line: badge.line,
-      col: badge.col,
-      destinationFile: about,
-      destinationLine: container.line,
-      destinationCol: container.col,
-    })
-
-    expect(result.ok).toBe(false)
-    if (result.ok) throw new Error('unreachable')
-    expect(result.refusal.reason).toBe('binding-conflict')
-    expectUntouched(home, HOME, about, aboutText)
   })
 
   it('refuses same-file — that is an ordinary reparent', () => {

@@ -62,7 +62,7 @@
  */
 import { realpathSync } from 'node:fs'
 import * as path from 'node:path'
-import { Node, Project, SyntaxKind, type SourceFile } from 'ts-morph'
+import { Node, Project, SyntaxKind, type Block, type CallExpression, type ObjectBindingPattern, type SourceFile } from 'ts-morph'
 import { createProject, findJsxElementAtLocation, loadSourceFile } from './locateJsxElement'
 import {
   applyTextEdits,
@@ -72,12 +72,13 @@ import {
   type TextEdit,
 } from './jsxChildRange'
 import { lineIndentAt, reindentBlock, resolveChildPlacement } from './jsxChildPlacement'
-import { conflictingBinding, resolveImportEdits, type ImportRequirement } from './jsxImportEdits'
+import { planImportBindings, resolveImportEdits, type ImportRequirement } from './jsxImportEdits'
 import { createdJsxLocation, offsetAfterEdits, type CreatedJsxLocation } from './createdJsxLocation'
 import type { InsertJsxRefusalReason } from './jsxSubtree'
 import { relativeSpecifier } from './importReconcile'
-import { analyzeFreeVariables } from './subtreeFreeVariables'
+import { analyzeFreeVariables, freeVariableReferenceRanges } from './subtreeFreeVariables'
 import { buildCanvasLayerModule } from './canvasLayerModule'
+import { enclosingFunctionComponent, findHookBindingForName, type ComponentHook } from './detachHooks'
 
 export interface TransplantJsxElementParams {
   /** Absolute path to the file the element is written in today. */
@@ -258,10 +259,17 @@ function landInDestination(
 
   // ── The scope question, and the only one that makes a cross-file move
   //    different from a same-file one ────────────────────────────────────
-  const carried = resolveCarriedBindings(origin.element, origin.source, destination.source, destination.destinationFile)
+  const carried = resolveCarriedBindings(
+    origin.element,
+    origin.source,
+    destination.source,
+    destination.destinationFile,
+    container,
+  )
   if (!carried.ok) return carried
 
-  const subtree = origin.text.slice(origin.element.getStart(), origin.element.getEnd())
+  const rawSubtree = origin.text.slice(origin.element.getStart(), origin.element.getEnd())
+  const subtree = applySubtreeRenames(rawSubtree, origin.element.getStart(), origin.element, carried.renames)
   const fromIndent = lineIndentAt(origin.text, origin.element.getStart())
 
   const placement = resolveChildPlacement(
@@ -282,7 +290,8 @@ function landInDestination(
   }
 
   const importEdits = resolveImportEdits(destination.source, destination.text, carried.requirements)
-  const nextDestination = applyTextEdits(destination.text, [placement.edit, ...importEdits])
+  const priorEdits = [...importEdits, ...carried.hookEdits]
+  const nextDestination = applyTextEdits(destination.text, [placement.edit, ...priorEdits])
 
   return {
     ok: true,
@@ -290,15 +299,49 @@ function landInDestination(
     write: () => {
       writeVerbatimSource(destination.source, destination.destinationFile, nextDestination)
       // Measured against the DESTINATION, which `writeVerbatimSource` has just
-      // re-read, and shifted past the import lines this write added above the
-      // JSX — the same arithmetic `insertJsxElement` performs for its own copy.
-      return createdJsxLocation(
-        destination.source,
-        offsetAfterEdits(importEdits, placement.edit.start),
-        placement.edit.text,
-      )
+      // re-read, and shifted past the import lines and re-established hook
+      // call this write added above the JSX — the same arithmetic
+      // `insertJsxElement` performs for its own copy.
+      return createdJsxLocation(destination.source, offsetAfterEdits(priorEdits, placement.edit.start), placement.edit.text)
     },
   }
+}
+
+/**
+ * `renames` re-points every occurrence of a name the subtree can no longer
+ * carry unchanged — a hook-bound local resolved to whatever the destination's
+ * re-established call gives it, or an import aliased away from a collision
+ * (`planImportBindings`) — onto its new spelling. Everything else in the
+ * subtree's own bytes is untouched, exactly as this module's own doc
+ * describes for the un-renamed case.
+ */
+function applySubtreeRenames(text: string, elementStart: number, root: Node, renames: ReadonlyMap<string, string>): string {
+  if (renames.size === 0) return text
+  const edits: TextEdit[] = []
+  for (const [name, replacement] of renames) {
+    for (const range of freeVariableReferenceRanges(root, name)) {
+      edits.push({ start: range.start - elementStart, end: range.end - elementStart, text: replacement })
+    }
+  }
+  return edits.length > 0 ? applyTextEdits(text, edits) : text
+}
+
+/**
+ * A local name derived from the module a default/namespace import comes
+ * from — tried before the plain `${name}2`, `${name}3`… sequence
+ * `planImportBindings` otherwise reaches for. Two CSS modules both locally
+ * called `styles` read a lot better as `sheetStyles` than `styles2`; falls
+ * through to the numbered sequence when the specifier's basename isn't a
+ * usable identifier fragment.
+ */
+function moduleDerivedAlias(name: string, requirement: ImportRequirement): string | undefined {
+  if (requirement.style !== 'default' && requirement.style !== 'namespace') return undefined
+  const base = path
+    .basename(requirement.specifier)
+    .replace(/\.[^./]+$/, '')
+    .replace(/\.module$/i, '')
+  if (!/^[A-Za-z_$][\w$]*$/.test(base)) return undefined
+  return `${base.charAt(0).toLowerCase()}${base.slice(1)}${name.charAt(0).toUpperCase()}${name.slice(1)}`
 }
 
 // ---------------------------------------------------------------------------
@@ -462,37 +505,88 @@ export function liftJsxElementToCanvasModule(params: LiftJsxElementParams): Lift
 }
 
 /**
+ * One distinct hook call the moved subtree needs re-established at the
+ * destination, and which captured names read from it (`undefined` key means
+ * "the whole value", not one field of it).
+ */
+interface HookCarryGroup {
+  hook: ComponentHook
+  names: Map<string, string | undefined>
+}
+
+/**
  * Which of the subtree's free names travel with it, and whether any of them
  * cannot.
  *
- * Three buckets, and the partition is `analyzeFreeVariables`'s:
+ * Four buckets, and the partition is `analyzeFreeVariables`'s plus one this
+ * codemod draws inside its own `'prop'` bucket:
  *
- *  - **`kind: 'prop'`** — body-local to the origin's component (a destructured
- *    prop, a hook's binding, a `.map` row's parameter, a `const` in the
- *    component body). It has no module to be imported from, so the markup
- *    cannot resolve it anywhere else. Refused, by name — "some binding" is not
- *    something a person can act on.
+ *  - **`kind: 'prop'`, bound by a movable context-hook read** (`const { t } =
+ *    useLanguage()`, DET-3's shape) — not body-local in the way that matters:
+ *    under one provider every component reads the same value, so the CALL
+ *    re-establishes at the destination (reusing one it already makes, else
+ *    written as its first statement) and the name resolves to whatever local
+ *    that call gives it. `destinationContainer` names where "the
+ *    destination" is; with none given (a canvas-layer lift has no enclosing
+ *    component to call into) this bucket is skipped entirely.
+ *  - **`kind: 'prop'`, anything else** — a destructured prop, a `.map` row's
+ *    parameter, a plain body `const`, or a hook binding that is not a
+ *    context read. Genuinely body-local: no module the other file could
+ *    import it from. Refused, by name — "some binding" is not something a
+ *    person can act on.
  *  - **`kind: 'import'`, already bound at the destination's top level** —
- *    nothing to write. Left alone rather than re-imported, the same posture
- *    `addReconciledImports` takes: a real collision against a DIFFERENT source
- *    is caught below by `conflictingBinding`.
- *  - **`kind: 'import'`, not bound at the destination** — carried, either by
- *    mirroring the origin's own import declaration (following a relative
- *    specifier to the file it actually names and re-resolving it against the
- *    destination's location) or, for a helper the origin file declares itself,
- *    by importing it FROM the origin file.
+ *    nothing to write; reused as-is (`planImportBindings`).
+ *  - **`kind: 'import'`, not bound at the destination, and the plain name is
+ *    free** — carried under its own name, either by mirroring the origin's
+ *    own import declaration or, for a helper the origin file declares
+ *    itself, by importing it FROM the origin file.
+ *  - **`kind: 'import'`, the plain name is already something else at the
+ *    destination** — carried under a fresh alias instead of refusing
+ *    (`planImportBindings`, `moduleDerivedAlias`), and every reference to it
+ *    inside the moved subtree renamed to match.
  */
 function resolveCarriedBindings(
   subtree: Node,
   originSource: SourceFile,
   destinationSource: SourceFile,
   destinationFile: string,
+  destinationContainer?: Node,
 ):
-  | { ok: true; requirements: Map<string, ImportRequirement> }
+  | { ok: true; requirements: Map<string, ImportRequirement>; renames: Map<string, string>; hookEdits: TextEdit[] }
   | { ok: false; refusal: TransplantJsxRefusal } {
   const free = analyzeFreeVariables(subtree, originSource)
+  const originComponent = enclosingFunctionComponent(subtree)
+  const destinationComponent = destinationContainer ? enclosingFunctionComponent(destinationContainer) : undefined
+  const destinationBody = destinationComponent?.getBody()
+  const canCarryHooks = !!destinationComponent && !!destinationBody && Node.isBlock(destinationBody)
 
-  const captured = free.filter((variable) => variable.kind === 'prop').map((variable) => variable.name)
+  const requirements = new Map<string, ImportRequirement>()
+  const renames = new Map<string, string>()
+  const captured: string[] = []
+  const hookGroups = new Map<CallExpression, HookCarryGroup>()
+
+  for (const variable of free) {
+    if (variable.kind !== 'prop') continue
+    const hook = originComponent && canCarryHooks ? findHookBindingForName(originComponent, variable.name) : undefined
+    if (!hook || hook === 'unmovable') {
+      captured.push(variable.name)
+      continue
+    }
+    const calleeRequirement = resolveCarriedBinding(hook.label, originSource, destinationFile)
+    if (calleeRequirement === UNEXPORTED) {
+      captured.push(variable.name)
+      continue
+    }
+    let group = hookGroups.get(hook.call)
+    if (!group) {
+      group = { hook, names: new Map() }
+      hookGroups.set(hook.call, group)
+    }
+    const key = hook.binding.kind === 'keys' ? hook.binding.keys.find((k) => k.local === variable.name)?.key : undefined
+    group.names.set(variable.name, key)
+    if (calleeRequirement) requirements.set(hook.label, calleeRequirement)
+  }
+
   if (captured.length > 0) {
     const names = captured.map((name) => `\`${name}\``).join(', ')
     const isOne = captured.length === 1
@@ -507,8 +601,8 @@ function resolveCarriedBindings(
     }
   }
 
-  const requirements = new Map<string, ImportRequirement>()
   for (const variable of free) {
+    if (variable.kind !== 'import') continue
     const requirement = resolveCarriedBinding(variable.name, originSource, destinationFile)
     if (requirement === UNEXPORTED) {
       return {
@@ -522,20 +616,177 @@ function resolveCarriedBindings(
       }
     }
     if (!requirement) continue // a global, or a name nothing here can trace — left to the compiler to report
-    const binding = conflictingBinding(destinationSource, variable.name, requirement.specifier)
-    if (binding) {
-      return {
-        ok: false,
-        refusal: {
-          reason: 'binding-conflict',
-          message: `The file this element would move into already uses the name "${variable.name}" for something else (${binding}), so carrying its import would shadow that. Rename one of them in the file first.`,
-        },
-      }
-    }
     requirements.set(variable.name, requirement)
   }
 
-  return { ok: true, requirements }
+  // Every requirement — the free names AND each hook's own callee — planned
+  // together, so a callee that happens to collide gets exactly the same
+  // aliasing treatment as anything else (`planImportBindings`).
+  const bindings = planImportBindings(destinationSource, requirements, { preferredAlias: moduleDerivedAlias })
+  for (const name of requirements.keys()) {
+    const local = bindings.localName(name)
+    if (local !== name) renames.set(name, local)
+  }
+
+  const hookEdits: TextEdit[] = []
+  if (destinationBody && Node.isBlock(destinationBody)) {
+    for (const group of hookGroups.values()) {
+      const calleeLocal = bindings.localName(group.hook.label)
+      const materialized = materializeHookGroup(destinationSource, destinationBody, calleeLocal, group)
+      for (const [name, text] of materialized.reads) renames.set(name, text)
+      hookEdits.push(...materialized.edits)
+    }
+  }
+
+  // A hook's own binding shape (whole vs. destructured) can disagree with an
+  // EXISTING call the destination already makes to the same hook — reading a
+  // whole value against a call the destination only ever destructures has no
+  // field to reuse, and `materializeHookGroup` leaves that one name
+  // unresolved rather than guess. Caught here, once, for every group: a
+  // partial rename is worse than a refusal, because it would write the
+  // moved subtree referencing a name nothing in the destination binds.
+  for (const group of hookGroups.values()) {
+    for (const name of group.names.keys()) {
+      if (renames.has(name)) continue
+      return {
+        ok: false,
+        refusal: {
+          reason: 'captured-scope',
+          message: `This element reads \`${name}\` from ${group.hook.label}(), and the destination component already calls ${group.hook.label}() in a shape that has no "${name}" to reuse. Give it a matching binding first, then drag again.`,
+        },
+      }
+    }
+  }
+
+  return { ok: true, requirements: bindings.required, renames, hookEdits }
+}
+
+interface MaterializedHookGroup {
+  /** Free-variable name -> the text it now reads instead of its own bare name. */
+  reads: Map<string, string>
+  edits: TextEdit[]
+}
+
+/** How an already-written top-level `const` reads, when it calls the same hook this group needs. */
+type ExistingHookBinding =
+  | { kind: 'whole'; local: string }
+  | { kind: 'keys'; keys: Map<string, string>; pattern: ObjectBindingPattern }
+
+/** An existing top-level `const <pattern> = calleeLocal(sameArgs)` in the destination's own component body, when there is one. */
+function findExistingHookCall(body: Block, calleeLocal: string, argsText: string): ExistingHookBinding | undefined {
+  for (const statement of body.getStatements()) {
+    if (!Node.isVariableStatement(statement)) continue
+    for (const decl of statement.getDeclarations()) {
+      const init = decl.getInitializer()
+      if (!init || !Node.isCallExpression(init)) continue
+      const callee = init.getExpression()
+      if (!Node.isIdentifier(callee) || callee.getText() !== calleeLocal) continue
+      if (init.getArguments().map((a) => a.getText()).join(', ') !== argsText) continue
+      const nameNode = decl.getNameNode()
+      if (Node.isIdentifier(nameNode)) return { kind: 'whole', local: nameNode.getText() }
+      if (
+        Node.isObjectBindingPattern(nameNode) &&
+        nameNode.getElements().every((e) => !e.getDotDotDotToken() && !e.getInitializer() && Node.isIdentifier(e.getNameNode()))
+      ) {
+        const keys = new Map<string, string>()
+        for (const element of nameNode.getElements()) {
+          const property = element.getPropertyNameNode()
+          keys.set(property ? property.getText() : element.getName(), element.getName())
+        }
+        return { kind: 'keys', keys, pattern: nameNode }
+      }
+    }
+  }
+  return undefined
+}
+
+function spellKey(key: string): string {
+  return /^[A-Za-z_$][\w$]*$/.test(key) ? key : JSON.stringify(key)
+}
+
+/** The first name in `used` (a source file's own identifiers) that `preferred` doesn't already mean — `preferred` itself when it's free. */
+function freshLocalName(preferred: string, used: ReadonlySet<string>): string {
+  if (!used.has(preferred)) return preferred
+  for (let n = 2; ; n += 1) {
+    const candidate = `${preferred}${n}`
+    if (!used.has(candidate)) return candidate
+  }
+}
+
+/**
+ * Re-establishes ONE hook call at the destination — reusing an identical
+ * existing call if the destination's own component already makes one,
+ * otherwise writing a new top-level `const` as the component's first
+ * statement — and reports how each captured name now reads.
+ */
+function materializeHookGroup(
+  destinationSource: SourceFile,
+  destinationBody: Block,
+  calleeLocal: string,
+  group: HookCarryGroup,
+): MaterializedHookGroup {
+  const argsText = group.hook.call.getArguments().map((a) => a.getText()).join(', ')
+  const existing = findExistingHookCall(destinationBody, calleeLocal, argsText)
+  const used = new Set(destinationSource.getDescendantsOfKind(SyntaxKind.Identifier).map((id) => id.getText()))
+
+  if (existing) {
+    const reads = new Map<string, string>()
+    const edits: TextEdit[] = []
+    for (const [name, key] of group.names) {
+      if (existing.kind === 'whole') {
+        if (key === undefined) reads.set(name, existing.local)
+        else reads.set(name, /^[A-Za-z_$][\w$]*$/.test(key) ? `${existing.local}.${key}` : `${existing.local}[${JSON.stringify(key)}]`)
+        continue
+      }
+      if (key === undefined) continue // a whole-value read against a destructuring call has no field to reuse — falls through unresolved, caught below
+      let local = existing.keys.get(key)
+      if (local === undefined) {
+        local = freshLocalName(key, used)
+        used.add(local)
+        existing.keys.set(key, local)
+        const elements = existing.pattern.getElements()
+        const last = elements.at(-1)
+        const element = local === key ? local : `${spellKey(key)}: ${local}`
+        edits.push(
+          last
+            ? { start: last.getEnd(), end: last.getEnd(), text: `, ${element}` }
+            : { start: existing.pattern.getStart() + 1, end: existing.pattern.getStart() + 1, text: ` ${element} ` },
+        )
+      }
+      reads.set(name, local)
+    }
+    return { reads, edits }
+  }
+
+  const reads = new Map<string, string>()
+  let pattern: string
+  if (group.hook.binding.kind === 'whole') {
+    const [[name]] = group.names
+    const local = freshLocalName(group.hook.binding.local, used)
+    reads.set(name, local)
+    pattern = local
+  } else {
+    const parts: string[] = []
+    for (const key of group.hook.binding.keys) {
+      const capturedName = [...group.names.entries()].find(([, k]) => k === key.key)?.[0]
+      if (!capturedName) continue
+      const local = freshLocalName(key.local, used)
+      used.add(local)
+      reads.set(capturedName, local)
+      parts.push(local === key.key ? local : `${spellKey(key.key)}: ${local}`)
+    }
+    pattern = `{ ${parts.join(', ')} }`
+  }
+
+  const body = destinationSource.getFullText()
+  const first = destinationBody.getStatements()[0]
+  const insertAt = first ? first.getStart() : destinationBody.getEnd() - 1
+  const indent = first
+    ? lineIndentAt(body, first.getStart())
+    : `${lineIndentAt(body, destinationBody.getStart())}  `
+  const statement = `const ${pattern} = ${calleeLocal}(${argsText})`
+  const text = first ? `${statement}\n${indent}` : `${indent}${statement}\n`
+  return { reads, edits: [{ start: insertAt, end: insertAt, text }] }
 }
 
 /**

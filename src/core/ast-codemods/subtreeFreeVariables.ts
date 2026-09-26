@@ -371,6 +371,48 @@ function freeReferenceIdentifiers(root: Node): Node[] {
 }
 
 /**
+ * Every occurrence of `name` as a free reference within `root`'s subtree — a
+ * JSX tag's own root identifier, or a plain reference — as absolute offsets
+ * into `root`'s source file. What a cross-file carry renames when the
+ * original spelling can't travel unchanged: `transplantJsxElement.ts` aliases
+ * an import that would otherwise shadow something at the destination, or
+ * re-points a hook-bound name at the local a re-established call gives it,
+ * and either way needs every occurrence inside the moved text, not just the
+ * declaration.
+ */
+export function freeVariableReferenceRanges(root: Node, name: string): { start: number; end: number }[] {
+  // Keyed by offset to dedupe: `collectTagNameOpenings` deliberately visits a
+  // paired element's own opening tag TWICE when `root` IS that element (once
+  // explicitly, once because a `JsxOpeningElement` is syntactically a child
+  // of its `JsxElement` and so also a "descendant") — harmless for that
+  // function's actual callers, which only ever collect a SET of names, but
+  // fatal here: two edits at the identical offset corrupt the splice.
+  const ranges = new Map<string, { start: number; end: number }>()
+  const record = (start: number, end: number): void => {
+    ranges.set(`${start}:${end}`, { start, end })
+  }
+  const tagNameNodes: Node[] = collectTagNameOpenings(root).map((opening) => opening.getTagNameNode())
+  // Pass 1 only ever looks at OPENING tags — right for its own job (naming a
+  // component once), wrong for a rename, which must fix a paired element's
+  // CLOSING tag too.
+  if (Node.isJsxElement(root)) tagNameNodes.push(root.getClosingElement().getTagNameNode())
+  for (const el of root.getDescendantsOfKind(SyntaxKind.JsxClosingElement)) tagNameNodes.push(el.getTagNameNode())
+
+  for (const tagNameNode of tagNameNodes) {
+    const rootSegment = tagReferenceRoot(tagNameNode)
+    if (rootSegment !== name) continue
+    if (isLocallyBound(tagNameNode, rootSegment, root)) continue
+    let leaf: Node = tagNameNode
+    while (Node.isPropertyAccessExpression(leaf)) leaf = leaf.getExpression()
+    record(leaf.getStart(), leaf.getEnd())
+  }
+  for (const id of freeReferenceIdentifiers(root)) {
+    if (id.getText() === name) record(id.getStart(), id.getEnd())
+  }
+  return [...ranges.values()].sort((a, b) => a.start - b.start)
+}
+
+/**
  * The distinct names `root` reads from outside itself — JSX tag roots and
  * every other reference, in first-reference order, unclassified. What a
  * caller needs when it only asks "could any of these be captured or
