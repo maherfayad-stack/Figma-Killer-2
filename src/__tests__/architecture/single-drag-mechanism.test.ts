@@ -121,7 +121,10 @@ const NATIVE_HTML5_DND_ALLOWLIST: ReadonlySet<string> = new Set([
   // could be driven directly: cancel every drag's default inside a design
   // frame, because the browser's default is to navigate the portal's document
   // away and a dropped LINK is as destructive there as a dropped file; relay
-  // only the file-carrying ones.
+  // the file- and link-carrying ones (P5-B3: an image dragged out of another
+  // tab is a link, which the board's intake reads at drop and refuses unless
+  // it is an image — `canvasDropIntake.ts`, which reads a transfer the hook
+  // hands it and wires no DnD listener, so it is not on this list).
   'admin/pages/site/canvas/canvasFrameDragRelay.ts',
 ])
 

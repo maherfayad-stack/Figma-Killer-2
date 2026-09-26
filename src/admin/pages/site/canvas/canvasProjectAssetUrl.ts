@@ -61,7 +61,10 @@
  * written and 404s: the server resolves site-root URLs only, and a relative
  * one resolved against the admin page means nothing in the project.
  * Left alone: another origin, and every non-http(s) scheme: `data:`, `blob:`
- * (a drop's optimistic ghost, whose origin IS this one), `about:`.
+ * (a drop's optimistic ghost, whose origin IS this one), `about:` — except
+ * the one scheme the server itself writes, `studio-asset:` (a project
+ * stylesheet's relative `url()`, pinned to its file), which becomes the
+ * asset route's `path=` lookup.
  */
 import { AGENT_CAPTURE_ASSET_PATH } from '@core/studio-capture'
 import { STUDIO_ASSET_ROUTE } from '@site/studio/projectAssets'
@@ -122,6 +125,16 @@ export function canvasProjectAssetScope(): ProjectAssetUrlScope {
  */
 const ADMIN_MEDIA_PREFIX = '/uploads/'
 
+/**
+ * The prefix a project stylesheet's RELATIVE `url(./bg.png)` arrives with,
+ * already pinned to the file it names (`studio-asset:src/styles/bg.png`, the
+ * server's `relativeCssUrlsToAssetSentinels`, P5-B3). The same string as
+ * `@core/page-parser`'s `STUDIO_ASSET_SENTINEL`, which cannot be imported
+ * here (that barrel is Node-only); `canvasProjectAssetUrl.test.ts` pins the
+ * two to each other.
+ */
+export const CSS_ASSET_SENTINEL = 'studio-asset:'
+
 /** A value with a scheme (`https:`, `data:`) or a leading `/`; anything else is relative to the page. */
 const NOT_RELATIVE = /^(?:[a-zA-Z][a-zA-Z0-9+.-]*:|\/)/
 
@@ -129,6 +142,12 @@ const NOT_RELATIVE = /^(?:[a-zA-Z][a-zA-Z0-9+.-]*:|\/)/
 export function projectAssetUrl(value: string, scope: ProjectAssetUrlScope): string {
   const url = value.trim()
   if (url === '' || url.startsWith('#')) return value
+  if (url.startsWith(CSS_ASSET_SENTINEL)) {
+    // A workspace path the server already contained-checks on request
+    // (`resolveWorkspaceReadPath`); forwarded, never interpreted here.
+    const query = scope.query ? `${scope.query}&` : ''
+    return `${scope.route}?${query}path=${encodeURIComponent(url.slice(CSS_ASSET_SENTINEL.length))}`
+  }
   let base: URL
   let resolved: URL
   try {

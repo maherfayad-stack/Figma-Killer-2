@@ -67,7 +67,7 @@ describe('installFrameDragRelay — the frame must never navigate', () => {
     teardown()
   })
 
-  it('does NOT relay a non-file drag to the board — cancelling is the whole answer', () => {
+  it('does NOT relay a drag carrying neither files nor a link — cancelling is the whole answer', () => {
     const doc = frameDoc()
     const iframe = iframeElement()
     let relayed = 0
@@ -76,10 +76,35 @@ describe('installFrameDragRelay — the frame must never navigate', () => {
     })
     const teardown = installFrameDragRelay(doc, iframe)
 
-    doc.body.dispatchEvent(drag('drop', ['text/uri-list']))
+    // Selected text dragged into a frame: plain text, no link.
+    const event = drag('drop', ['text/plain', 'text/html'])
+    doc.body.dispatchEvent(event)
     expect(relayed).toBe(0)
+    expect(event.defaultPrevented).toBe(true)
 
     teardown()
+  })
+
+  it('P5-B3 (IMG-5) — relays a LINK drop to the board, still cancelled in the frame', () => {
+    // The board's intake reads the link at drop and refuses anything that is
+    // not an http(s) or data:image image, without a request
+    // (`canvasDropIntake.ts`); the frame itself never navigates either way.
+    withFakeDragEvent(() => {
+      const doc = frameDoc()
+      const iframe = iframeElement()
+      let relayed = 0
+      iframe.addEventListener('drop', () => {
+        relayed += 1
+      })
+      const teardown = installFrameDragRelay(doc, iframe)
+
+      const event = drag('drop', ['text/uri-list', 'text/html'])
+      doc.body.dispatchEvent(event)
+      expect(event.defaultPrevented).toBe(true)
+      expect(relayed).toBe(1)
+
+      teardown()
+    })
   })
 
   it('stops cancelling once torn down', () => {
@@ -92,19 +117,27 @@ describe('installFrameDragRelay — the frame must never navigate', () => {
   })
 })
 
+/** happy-dom has no DragEvent; a MouseEvent carrying the transfer is the shape the relay builds. */
+function withFakeDragEvent(run: () => void): void {
+  const saved = (globalThis as { DragEvent?: unknown }).DragEvent
+  class FakeDragEvent extends MouseEvent {
+    readonly dataTransfer: unknown
+    constructor(type: string, init: MouseEventInit & { dataTransfer?: unknown }) {
+      super(type, init)
+      this.dataTransfer = init.dataTransfer ?? null
+    }
+  }
+  ;(globalThis as { DragEvent?: unknown }).DragEvent = FakeDragEvent
+  try {
+    run()
+  } finally {
+    ;(globalThis as { DragEvent?: unknown }).DragEvent = saved
+  }
+}
+
 describe('installFrameDragRelay — the relayed file drag keeps its keys (P5-B)', () => {
   it('carries alt/shift/meta/ctrl across the iframe boundary, because they change what the drop means', () => {
-    const saved = (globalThis as { DragEvent?: unknown }).DragEvent
-    // happy-dom has no DragEvent; a MouseEvent carrying the transfer is the shape the relay builds.
-    class FakeDragEvent extends MouseEvent {
-      readonly dataTransfer: unknown
-      constructor(type: string, init: MouseEventInit & { dataTransfer?: unknown }) {
-        super(type, init)
-        this.dataTransfer = init.dataTransfer ?? null
-      }
-    }
-    ;(globalThis as { DragEvent?: unknown }).DragEvent = FakeDragEvent
-    try {
+    withFakeDragEvent(() => {
       const doc = frameDoc()
       const iframe = iframeElement()
       const seen: { alt: boolean; shift: boolean; meta: boolean; ctrl: boolean }[] = []
@@ -123,8 +156,6 @@ describe('installFrameDragRelay — the relayed file drag keeps its keys (P5-B)'
 
       expect(seen).toEqual([{ alt: true, shift: false, meta: true, ctrl: false }])
       teardown()
-    } finally {
-      ;(globalThis as { DragEvent?: unknown }).DragEvent = saved
-    }
+    })
   })
 })

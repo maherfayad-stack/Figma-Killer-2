@@ -31,8 +31,7 @@
  * and no unrelated line is reformatted.
  */
 import { Node, type JsxElement, type JsxFragment, type JsxSelfClosingElement, type SourceFile } from 'ts-morph'
-import { resolveJsxChildRange, type TextEdit } from './jsxChildRange'
-import { refuse, type InsertJsxRefusal } from './jsxSubtree'
+import { resolveJsxChildRange, type JsxChildRangeReason, type TextEdit } from './jsxChildRange'
 import type { JsxOpeningLikeElement } from './locateJsxElement'
 
 /**
@@ -57,7 +56,20 @@ export interface ChildPlacementRequest {
   exclude?: { start: number; end: number } | null
 }
 
-export type ChildPlacementResult = { ok: true; edit: TextEdit } | { ok: false; refusal: InsertJsxRefusal }
+/**
+ * The only ways a PLACEMENT can fail — narrower than any one codemod's own
+ * union, so a move, a duplicate and an insert each accept it without having to
+ * list the others' reasons (an insert's `asset-import`, say) as their own.
+ */
+export type ChildPlacementRefusalReason = JsxChildRangeReason | 'not-a-container' | 'not-siblings'
+
+export type ChildPlacementResult =
+  | { ok: true; edit: TextEdit }
+  | { ok: false; refusal: { reason: ChildPlacementRefusalReason; message: string } }
+
+function refuse(reason: ChildPlacementRefusalReason, message: string): ChildPlacementResult {
+  return { ok: false, refusal: { reason, message } }
+}
 
 /** The single edit that puts a rendered child inside `parentOpening`'s element. */
 export function resolveChildPlacement(

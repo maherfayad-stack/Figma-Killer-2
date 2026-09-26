@@ -3,7 +3,8 @@
  * what it adds, and the image insert it then makes. Two callers, one rule:
  *
  *   - ⇧K "Insert image…" (`canvasImagePicker.ts`, IX-img);
- *   - ⌘V of an image or an SVG from the OS clipboard (`canvasPaste.ts`, P5-A).
+ *   - ⌘V of an image or an SVG from the OS clipboard (`canvasPaste.ts`, P5-A);
+ *   - a click on an Assets panel image card (`ImagesSection.tsx`, P5-B3).
  *
  * A drop has a pointer, so it has a position. These do not, so the SELECTION
  * is the position, the way ⌘V already places pasted layers (`K7`): right AFTER
@@ -20,6 +21,7 @@
 import type { NodeTree, PageNode } from '@core/page-tree'
 import { resolveSourceContainer } from '@core/page-tree'
 import { useEditorStore } from '@site/store/store'
+import type { ImageDropSource } from '@site/store/slices/site/imageDropShapes'
 import { findRenderedCanvasElements } from './canvasNodeLookup'
 import { measureDropContainer } from './canvasImageDropPlacement'
 import { paintCanvasUploadProgress } from './canvasUploadProgress'
@@ -59,9 +61,17 @@ export function readSelectionInsertTarget(): SelectionInsertTarget {
   return resolveSelectionInsertTarget(pageId, tree, state.selectedNodeId)
 }
 
-/** Insert `files` at `target` through the drop's own write (see this module's doc). */
-export function insertImagesAtTarget(target: Extract<SelectionInsertTarget, { ok: true }>, files: readonly File[]): void {
-  if (files.length === 0) return
+/**
+ * Insert images at `target` through the drop's own write (see this module's
+ * doc). Takes `ImageDropSource`s, so a pasted or picked FILE and a project
+ * image from the Assets panel's Images section (P5-B3, IMG-6 — whose card drag
+ * supplies its own drop-line `target`) land the same way.
+ */
+export function insertImagesAtTarget(
+  target: { pageId: string; parentId: string; index: number | undefined },
+  sources: readonly ImageDropSource[],
+): void {
+  if (sources.length === 0) return
   const tree = useEditorStore.getState().site?.pages.find((page) => page.id === target.pageId) ?? null
   // The same width clamp a drop gets: the container's content box, read once.
   const container = tree ? resolveSourceContainer(tree, target.parentId) : null
@@ -71,7 +81,7 @@ export function insertImagesAtTarget(target: Extract<SelectionInsertTarget, { ok
     pageId: target.pageId,
     parentId: target.parentId,
     index: target.index,
-    files,
+    sources,
     maxWidth: box ? box.contentWidth : null,
     absolute: null,
     paintProgress: paintCanvasUploadProgress,

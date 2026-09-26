@@ -58,6 +58,9 @@ const ALLOWED_ERROR_TOAST_SITES: ReadonlyMap<string, number> = new Map([
   ['admin/pages/site/canvas/copyAsPng.ts', 1],
   // P5-B: the image drop's own actions — a drop where NO image could land.
   ['admin/pages/site/store/slices/site/imageDropActions.ts', 1],
+  // P5-B3 (IMG-11): the user confirmed "Delete unused…" and the server did
+  // not delete — an operation they asked for that failed.
+  ['admin/pages/site/panels/AssetsPanel/UnusedImagesFooter.tsx', 1],
   // Inspector: explicit detach/swap/export/copy actions.
   ['admin/pages/site/inspector/sections/ComponentSection.tsx', 5],
   ['admin/pages/site/inspector/sections/ExportSection.tsx', 4],

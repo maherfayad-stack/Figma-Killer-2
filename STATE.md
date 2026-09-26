@@ -46,6 +46,26 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Landmines:** two different entries are both `perf-10` (#195 and #196); cite them by title. `04f92846` commits Studio's generated prototype shell into `__board-perf-fixture` and edits `test4`: owner to decide whether to revert it.
 - **Next:** once #217 merges, close #192, #195 and #198–#210 as included.
 
+### canvas-41 — P5-B3: the remaining image items (IMG-5, IMG-6, IMG-10, IMG-11)
+- **Agent:** canvas-engineer · **Updated:** 2026-09-26 · **Branch:** `feat/images-remaining` → draft PR against `feat/canvas-excellence`
+- **Stage:** done, awaiting security-guard review of IMG-5 (`asset-drop-url`) and IMG-11 (`asset-prune`) — the attack surface is in the PR body.
+- **Goal:** ROADMAP P5-B items 8–11, plus two found-not-fixed items from #262.
+- **Done:**
+  - One intake: `ImageDropSource` (`file` | `url` | `project`, `imageDropShapes.ts`), landed ONLY through `studio/landImageSource.ts`; every image action and the free canvas take sources, never `File`s.
+  - IMG-5 (OD-13): `canvasDropIntake.ts` reads a drop — files first, else one link that SAYS image (dragged `<img src>`, or an image path); `data:image` is decoded client-side; a page link / `javascript:` / `file:` refuses with no request. `POST /admin/api/studio/asset-drop-url` fetches through `fetchRemoteBytes` (loopback forced off, 25 MB, MIME + sniff) and lands via the same home as `asset-drop`.
+  - IMG-6: Assets → Images (`ImagesSection.tsx`): pointer drag through `useCanvasInsertionDrag` (no HTML5 DnD), click = beside the selection; a `project` source is referenced, never uploaded.
+  - IMG-10 (OD-12): `assetImportConvention.ts` (strict majority, Next always public); `{ __assetImport: <workspace path> }` → `studioInsertAssetImports.ts` spells the specifier → `insertJsxElement` writes `import heroPng from …` + `src={heroPng}` in one splice (`jsxAssetImports.ts`; the bound form is a class so JSON cannot forge an identifier).
+  - IMG-11: `.studio/assets.json` ledger (`assetLedger.ts`, written by `landAssetBytes` on every file it CREATES); `GET asset-ledger` / `POST asset-prune` (`assetPrune.ts`) re-check everything at delete time; "Delete unused…" is always behind `alwaysConfirm`.
+  - Cheap: authored `alt` renders on the canvas `<img>` (`ImageEditor`); relative `url(./a.png)` in project CSS resolves in design frames (`studio-asset:` sentinel in `authoredCss`, `projectAssetUrl` → `path=`).
+- **Canvas files touched:** `canvas/canvasDropIntake.ts` (new), `canvasFileDrop.ts`, `canvasFileDragPreview.ts`, `canvasFrameDragRelay.ts`, `useCanvasFileDrop.ts`, `canvasImagePicker.ts`, `canvasProjectAssetUrl.ts`; `modules/base/image/ImageEditor.tsx`.
+- **Landmines:**
+  - The frame relay now RELAYS link drags (still cancels every drop in the frame first). Its dragover cannot read the URL (protected mode), so the chip shows "1 image" for any link; the drop is where a page link refuses. Do not make the relay read `getData` in `dragover` — it returns `''` there.
+  - `CSS_ASSET_SENTINEL` (browser) duplicates `@core/page-parser`'s `STUDIO_ASSET_SENTINEL` because that barrel is Node-only; `canvasCssRelativeUrl.test.ts` pins them equal. Only `authoredCss` is rewritten — a session-edited overlay rule (`mc-classes`) still carries the raw relative URL.
+  - `useProjectImageAssets` now REFETCHES on `invalidateProjectImageAssets()` (listener set); a landing that wrote a new file invalidates.
+  - The upload-progress painter sets `data-studio-uploading` IMPERATIVELY; an insert drop now clears it on every ghost once the landings settle (the P5-B multi-drop e2e caught real images still marked uploading after the trunk's reconcile work). Any new painter caller must clear too.
+  - `insertImagesAtTarget` (`canvasSelectionInsert.ts`, P5-A's) takes `ImageDropSource`s now; paste and ⇧K wrap their files.
+- **Next:** security-guard review; owner dogfood `canvas-41` (Pending dogfood).
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
@@ -68,6 +88,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `canvas-28` · `/admin/site` on `test4`, Design view, 100% · drop 3 images on a frame (ghosts fill, one ⌘Z removes all), onto an `<img>` (replace), with ⇧ (background) and ⌘ (at the pointer); ⌘K → Insert image…. Script: the `canvas-28` entry
 - `canvas-29` · `/admin/site` on `test4`, SMS, 100% · R-drag draws a box of the drawn size; T-click types; padding/gap bands (⇧ pair, ⌥ all four); ⌥A/⌥D/⌥W align; ⇧A; ⌘⌥C/⌘⌥V; ⌘⇧]; right-click "Select layer"; ⇧K opens the picker. Script: the PR body
 - `canvas-40` · `/admin/site` on `test4`, one frame, 100% · equal-spacing pills on an absolute drag; ⌘' / ⌘⇧' (zoom menu shows them); ⇧-select two → one handle box, drag scales both; double-click an edge → Hug; rotate from outside a corner with ⇧; 5 / 0 / ⇧H; B-drag on the empty board → page picker, frame at the drawn rect. Script: the PR body
+- `canvas-41` · `/admin/site` on `test4`, one frame, 100% · Assets → Images: drag a card onto the frame (drop line, then an `<img>`; nothing new in `public/`); drag an image out of another browser tab onto the frame (lands in `public/`), a link to a page refuses with a toast; in a page that imports its images a drop writes an import; "Delete unused…" asks first and deletes only images Studio added. Script: PR body
 
 **Assistant (P4)**
 - `mcp-28` · the Agent panel with an Anthropic API key (not the CLI) · ask it to build a screen: it reads, writes and edits files; asking it to edit `vite.config.js` or `package.json` is refused as needs-you. Script: the PR #233 body

@@ -48,9 +48,11 @@ import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
  *      `assetDrop.ts` will write to) **of the throwaway workspace copy**, and
  *      an `<img src="/…">` appears in the page's real `.tsx`;
  *   2. a `text/uri-list` drop does NOT navigate the frame. That is the
- *      security half: it must be cancelled and NOT relayed, so nothing at all
- *      happens — no navigation, no upload, no source write. A build that
- *      narrowed the cancel back to "files only" passes (1) and fails (2).
+ *      security half: it must be cancelled in the frame. Since P5-B3 (IMG-5)
+ *      a link IS relayed to the board, whose intake (`canvasDropIntake.ts`)
+ *      refuses a link to a PAGE without a request — so still no navigation,
+ *      no upload, no source write. A build that narrowed the cancel back to
+ *      "files only" passes (1) and fails (2).
  */
 
 /** A 1x1 opaque PNG. Small enough to inline, real enough for the server's sniffer. */
@@ -277,8 +279,9 @@ test.describe('dragging an image file onto a design frame', () => {
     ).toBeVisible()
     await expect(canvasRoot, 'the board itself navigated').toBeVisible()
 
-    // Cancelled AND not relayed: a link is not a file, so nothing should have
-    // been uploaded and nothing should have been written.
+    // Cancelled in the frame; relayed to the board, which refuses a link to a
+    // page (no image path, no dragged <img>) before any request — so nothing
+    // should have been fetched, uploaded or written.
     expect(fs.readdirSync(publicDir()).filter((name) => name.endsWith('.png'))).toEqual([])
     expect(readPage(), 'a dropped link changed the user\'s source').toBe(before)
   })
