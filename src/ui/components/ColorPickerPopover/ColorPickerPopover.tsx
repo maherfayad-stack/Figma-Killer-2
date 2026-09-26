@@ -1,6 +1,6 @@
 /**
  * ColorPickerPopover — Figma's floating colour picker (F14 in
- * `docs/features/inspector-disclosure.md`), built on `InspectorPopover` so it
+ * `docs/features/inspector.md`), built on `InspectorPopover` so it
  * opens to the LEFT of the inspector by default and never covers the field
  * being edited.
  *
@@ -65,9 +65,7 @@ import { Input } from '@ui/components/Input'
 import { InspectorPopover, type InspectorPopoverProps } from '@ui/components/InspectorPopover'
 import { SegmentedControl } from '@ui/components/SegmentedControl'
 import { Tab, TabList, TabPanel, Tabs } from '@ui/components/Tabs'
-import { pushToast } from '@ui/components/Toast'
 import { cn } from '@ui/cn'
-import { getErrorMessage } from '@core/utils/errorMessage'
 import { CheckIcon } from 'pixel-art-icons/icons/check'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
 import { TargetSolidIcon } from 'pixel-art-icons/icons/target-solid'
@@ -405,14 +403,11 @@ export function ColorPickerPopover({
       onChange(nextValue)
     } catch (err) {
       // The user closing the eyedropper overlay without picking anything is
-      // not a failure — it's the documented cancel path for this API.
+      // not a failure — it's the documented cancel path for this API. P3-A —
+      // nor is any other eyedropper failure worth a card: the colour simply
+      // stays as it was, which is what the person sees.
       if (err instanceof DOMException && err.name === 'AbortError') return
       console.error('[ColorPickerPopover] eyedropper failed:', err)
-      pushToast({
-        kind: 'error',
-        title: 'Could not pick a colour',
-        body: getErrorMessage(err, 'Unknown eyedropper error'),
-      })
     }
   }
 

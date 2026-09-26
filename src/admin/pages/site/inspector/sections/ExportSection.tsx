@@ -1,7 +1,7 @@
 /**
  * ExportSection — Penpot's Export section (`STATE.md` `panel-25`, item 10 of
  * the P3 mapping table — `STUDIO-LIVE-CANVAS-PLAN.md` §P3;
- * `docs/features/inspector-disclosure.md` §4 G11). Migrated onto its own
+ * `docs/features/inspector.md` §4 G11). Migrated onto its own
  * `INSPECTOR_SECTIONS` manifest entry, mirroring items 1-9's own posture:
  * takes no props, renders `null` on no selection. It was already the
  * closest section to P3-shaped before this pass (node-level, single mount,
@@ -201,8 +201,9 @@ function ExportSectionBody({ nodeId, pageId, node, classSelectors, provenanceByP
   async function copyCss() {
     const declarations = collectNodeCssDeclarations(ALL_CURATED_CSS_PROPERTIES, provenanceByProperty)
     if (declarations.length === 0) {
+      // P3-A — a no-op, not a failure: an `info` note, never a red card.
       pushToast({
-        kind: 'error',
+        kind: 'info',
         title: 'Nothing to copy',
         body: 'No CSS is declared on this element yet — style it, or copy from an element that carries a class or an inline style.',
       })
@@ -247,9 +248,8 @@ function ExportSectionBody({ nodeId, pageId, node, classSelectors, provenanceByP
         title: `${exportFormatLabel(row.format)} export failed`,
         body: getErrorMessage(err, 'Unknown export error'),
       })
-    } finally {
-      setRunningRowId(null)
     }
+    setRunningRowId(null)
   }
 
   const addButton = (
@@ -342,7 +342,7 @@ function ExportSectionBody({ nodeId, pageId, node, classSelectors, provenanceByP
       flush
       indicator
       indicatorTestId="export-section-dot"
-      meta={`${rows.length} ready`}
+      status={`${rows.length} ready`}
       actions={addButton}
     >
       <div className={sectionStyles.sectionBody}>

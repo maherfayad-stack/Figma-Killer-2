@@ -172,7 +172,7 @@ describe('PropertyControlRenderer — type dispatch', () => {
     expect(html).toContain('id="ctrl-title"')
   })
 
-  it('text → can normalize identifier values while typing', () => {
+  it('text → normalizes identifier values while typing, and commits the normalized value on blur', () => {
     const changes: Array<[string, unknown]> = []
 
     render(
@@ -184,10 +184,16 @@ describe('PropertyControlRenderer — type dispatch', () => {
       />,
     )
 
-    fireEvent.change(screen.getByLabelText('Form ID'), {
+    const input = screen.getByLabelText('Form ID') as HTMLInputElement
+    fireEvent.change(input, {
       target: { value: 'Contact Form "Main"' },
     })
 
+    // Draft, then commit (P2-G, UX-16): the field shows the normalized text
+    // as it is typed, and writes it once, when the user leaves the field.
+    expect(input.value).toBe('Contact-Form-Main')
+    expect(changes).toEqual([])
+    fireEvent.blur(input)
     expect(changes).toEqual([['formId', 'Contact-Form-Main']])
   })
 
@@ -223,7 +229,7 @@ describe('PropertyControlRenderer — type dispatch', () => {
     )
 
     const wrapper = screen.getByTestId('property-control-bgColor')
-    // G6.2 (`docs/features/inspector-disclosure.md`): the swatch is a `Button`
+    // G6.2 (`docs/features/inspector.md`): the swatch is a `Button`
     // that opens `ColorPickerPopover` — there is no native
     // `<input type="color">` in this component's DOM any more (see
     // `ColorPickerPopover.test.tsx` for the picker itself).

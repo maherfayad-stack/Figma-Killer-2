@@ -87,7 +87,7 @@
 }
 
 .labelUnit {
-    color: var(--text-disabled);
+    color: var(--text-subtle);
     font-size: var(--text-2xs);
 }
 
@@ -100,6 +100,32 @@
 .description {
     grid-column: 1 / -1;
     font-size: var(--text-xs);
-    color: var(--text-disabled);
+    color: var(--text-subtle);
     line-height: 1.3;
+}
+
+/* ── Inspector skin (P2-G, UX-10) ────────────────────────────────────────── */
+/*
+ * The gaps above are the admin's fluid `--space-*` steps, right for a form and
+ * wrong inside the Properties panel, whose geometry is frozen (a gutter that
+ * grows ~1px per viewport step compounds over every row). Under the panel's
+ * `data-field-skin="inspector"` root the same gaps read the frozen scale. The
+ * variants are restated because this block's `[attr] .class` selectors
+ * out-specify the plain variant classes above, including the caption gap.
+ */
+[data-field-skin='inspector'] .controlWrapper {
+    gap: var(--inspector-space-2xs);
+}
+
+[data-field-skin='inspector'] .controlWrapperStacked,
+[data-field-skin='inspector'] .controlWrapperCaption {
+    gap: var(--inspector-caption-gap);
+}
+
+[data-field-skin='inspector'] .controlWrapperNoLabel {
+    gap: 0;
+}
+
+[data-field-skin='inspector'] .labelRow {
+    gap: var(--inspector-space-m);
 }

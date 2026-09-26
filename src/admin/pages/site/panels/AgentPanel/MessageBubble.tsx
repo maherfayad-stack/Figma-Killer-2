@@ -20,6 +20,8 @@ import type { AgentPreviewImage, OpenAgentImageMenu } from './agentImageTypes'
 import { groupRenderItems, type ConversationGroup } from './conversationGroups'
 import { ToolCallRow } from './ToolCallRow'
 import { ReasoningRow } from './ReasoningRow'
+import { VariantsCard } from './VariantsCard'
+import { toolCallRecoveries, variantTiles } from './turnPresentation'
 import { formatRelativeTime } from './relativeTime'
 import styles from './AgentPanel.module.css'
 
@@ -29,14 +31,19 @@ import styles from './AgentPanel.module.css'
 
 export function MessageBubble({
   group,
+  turnActive,
   onOpenImage,
   onOpenImageMenu,
 }: {
   group: ConversationGroup
+  /** This is the assistant turn still streaming — a failure in it may yet be recovered from. */
+  turnActive: boolean
   onOpenImage(image: AgentPreviewImage): void
   onOpenImageMenu: OpenAgentImageMenu
 }) {
   const isUser = group.role === 'user'
+  const recoveries = isUser ? new Map() : toolCallRecoveries(group.messages, turnActive)
+  const variants = isUser ? [] : variantTiles(group.messages)
   const user = useAuthenticatedAdminUser()
   const startedAt = group.messages[0]?.timestamp
   const relativeTime = startedAt ? formatRelativeTime(startedAt) : ''
@@ -80,7 +87,7 @@ export function MessageBubble({
           // stack tightly; text blocks around them stay separate bubbles.
           <div key={item.key} className={styles.toolCallsContainer}>
             {item.toolCalls.map((toolCall) => (
-              <ToolCallRow key={toolCall.id} toolCall={toolCall} />
+              <ToolCallRow key={toolCall.id} toolCall={toolCall} recovery={recoveries.get(toolCall.id)} />
             ))}
             <ToolPreviewGallery
               toolCalls={item.toolCalls}
@@ -90,6 +97,7 @@ export function MessageBubble({
           </div>
         ),
       )}
+      {variants.length > 0 && <VariantsCard tiles={variants} onOpenImage={onOpenImage} />}
     </div>
   )
 }

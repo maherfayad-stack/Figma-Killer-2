@@ -1,5 +1,5 @@
 /**
- * SizeSection — G2 (docs/features/inspector-disclosure.md, F30/F31).
+ * SizeSection — G2 (docs/features/inspector.md, F30/F31).
  *
  * Covers:
  *   1. Law 3 at rest — an element with only `width` set renders exactly one
@@ -26,7 +26,7 @@ import { useState } from 'react'
 import { render, screen, cleanup, within, fireEvent, waitFor } from '@testing-library/react'
 import { SizeSection } from '@site/panels/PropertiesPanel/SizeSection'
 import type { CSSPropertyBag } from '@core/page-tree'
-import type { SizingParentLayout } from '@site/panels/PropertiesPanel/elementSizing'
+import type { SizingParentLayout } from '@core/studio-runtime'
 
 /** Default harness parent — a plain block container, the one layout where
  *  `fit-content` / `100%` really are the honest Hug/Fill values. */

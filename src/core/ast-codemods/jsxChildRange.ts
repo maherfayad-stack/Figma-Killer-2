@@ -19,10 +19,9 @@
  * An element that sits alone on its own line(s) owns its indentation and its
  * trailing newline; moving it means moving those too, or the file gains a
  * ragged blank line where it used to be. An element sharing a line with a
- * sibling owns only itself. The two cases are distinguished here and never
- * mixed: an element that is whole-line cannot be written against an anchor
- * that is not (there is no correct answer for where the newline goes), which
- * `moveJsxElement` refuses as `mixed-indentation`.
+ * sibling owns only itself. The two cases are distinguished here; when a move
+ * crosses them (WB-21), the moved element takes the anchor's shape — see
+ * `moveJsxElement`'s `reorderAcrossLineShapes`.
  *
  * Whitespace between JSX children is a `JsxText` node, not trivia, so an
  * element child's `getStart()`/`getEnd()` are exactly its own bytes — there is
@@ -35,9 +34,13 @@ import { findJsxElementAtLocation, type JsxOpeningLikeElement } from './locateJs
 export interface JsxChildRange {
   /** The opening (or self-closing) tag the location pointed at. */
   opening: JsxOpeningLikeElement
-  /** The whole element node — the `JsxElement` for a paired tag, the tag itself when self-closing. */
+  /**
+   * The child node this range is about — the `JsxElement` for a paired tag,
+   * the tag itself when self-closing, or (WB-20/WB-22) the `{…}` expression
+   * container around it when the caller asked for the expression as the unit.
+   */
   element: Node
-  /** The `JsxElement`/`JsxFragment` this element is a child of. */
+  /** The `JsxElement`/`JsxFragment` this child sits in. */
   parent: Node
   /** First byte of the range this element owns. */
   start: number
@@ -45,6 +48,14 @@ export interface JsxChildRange {
   end: number
   /** True when the element sits alone on its own line(s), so the range includes its indentation and trailing newline. */
   wholeLine: boolean
+  /**
+   * WB-20 — set when the element is one BRANCH of a ternary the range's
+   * `element` (the `{…}` container) holds: the bytes of that branch
+   * expression, parentheses included. A delete writes `null` over exactly
+   * these bytes rather than removing the whole ternary, which would take the
+   * other state with it.
+   */
+  ternaryBranch?: { start: number; end: number }
 }
 
 /** Why a location could not be resolved to an ordinary, relocatable JSX child. */
@@ -53,6 +64,27 @@ export type JsxChildRangeReason = 'not-found' | 'no-jsx-parent' | 'expression-ch
 export type JsxChildRangeResult =
   | { ok: true; range: JsxChildRange }
   | { ok: false; reason: JsxChildRangeReason; message: string }
+
+/**
+ * What a caller may accept in place of an element that is not written
+ * directly as a child — the `{…}` expression container it sits in.
+ *
+ *  - `'element'` (the default) — nothing: the element itself or a refusal.
+ *    Duplicate, wrap and group keep this, because each would change what the
+ *    condition means (`<div>{cond && <X/>}</div>` renders an empty `<div>`
+ *    when `cond` is false).
+ *  - `'conditional'` (WB-20) — a move or a delete TARGET. `{cond && <X/>}` and
+ *    `{cond ? <X/> : <Y/>}` are acted on as the whole container: moving `<X/>`
+ *    moves the condition with it, and deleting it removes the container (a
+ *    ternary branch is replaced with `null` instead — see `ternaryBranch`).
+ *    A `.map` or a helper call is still `expression-child`: its element is
+ *    one of N rows, not the container's only content.
+ *  - `'container'` (WB-22) — an ANCHOR. Anything written beside an element the
+ *    code produces is written beside the container that produces it: "after
+ *    the last row of `{items.map(…)}`" is "after `{items.map(…)}`". The store
+ *    only sends such an anchor when the drop really is at the list's edge.
+ */
+export type JsxChildUnit = 'element' | 'conditional' | 'container'
 
 /**
  * Resolve the JSX element whose tag name starts at `line:col` and the bytes it
@@ -66,12 +98,17 @@ export type JsxChildRangeResult =
  *  - **`expression-child`** — the element is produced by an expression the code
  *    evaluates (`{cond && <X/>}`, a `.map`, a helper call). The canvas shows it
  *    as an ordinary child because the parser chose that branch, but the source
- *    has no fixed child position for it: moving the JSX would move the
- *    condition's result, not the element. `parser-06`'s branch selection makes
+ *    has no fixed child position for it. `parser-06`'s branch selection makes
  *    these nodes UNLOCKED — correctly, since their values are editable — so
- *    this is the check that keeps their POSITION honest.
+ *    this is the check that keeps their POSITION honest, unless `unit` says
+ *    the caller acts on the container instead (see {@link JsxChildUnit}).
  */
-export function resolveJsxChildRange(sourceFile: SourceFile, line: number, col: number): JsxChildRangeResult {
+export function resolveJsxChildRange(
+  sourceFile: SourceFile,
+  line: number,
+  col: number,
+  unit: JsxChildUnit = 'element',
+): JsxChildRangeResult {
   const opening = findJsxElementAtLocation(sourceFile, line, col)
   if (!opening) {
     return {
@@ -84,6 +121,20 @@ export function resolveJsxChildRange(sourceFile: SourceFile, line: number, col: 
   const element = Node.isJsxSelfClosingElement(opening) ? opening : opening.getParentOrThrow()
   const parent = element.getParent()
   if (!parent || !(Node.isJsxElement(parent) || Node.isJsxFragment(parent))) {
+    const container = unit === 'element' ? null : expressionUnit(element, unit)
+    if (container) {
+      const owned = ownedTextRange(sourceFile.getFullText(), container.expression.getStart(), container.expression.getEnd())
+      return {
+        ok: true,
+        range: {
+          opening,
+          element: container.expression,
+          parent: container.parent,
+          ...owned,
+          ...(container.ternaryBranch ? { ternaryBranch: container.ternaryBranch } : {}),
+        },
+      }
+    }
     return element.getFirstAncestorByKind(SyntaxKind.JsxExpression)
       ? {
           ok: false,
@@ -102,6 +153,47 @@ export function resolveJsxChildRange(sourceFile: SourceFile, line: number, col: 
   const owned = ownedTextRange(sourceFile.getFullText(), element.getStart(), element.getEnd())
 
   return { ok: true, range: { opening, element, parent, ...owned } }
+}
+
+/**
+ * The `{…}` container `element` sits in, when `unit` accepts it — see
+ * {@link JsxChildUnit}. `null` means "refuse as before".
+ */
+function expressionUnit(
+  element: Node,
+  unit: Exclude<JsxChildUnit, 'element'>,
+): { expression: Node; parent: Node; ternaryBranch?: { start: number; end: number } } | null {
+  const container = element.getFirstAncestorByKind(SyntaxKind.JsxExpression)
+  const parent = container?.getParent()
+  if (!container || !parent || !(Node.isJsxElement(parent) || Node.isJsxFragment(parent))) return null
+  if (unit === 'container') return { expression: container, parent }
+
+  // `'conditional'`: climb from the element through parentheses and `&&` /
+  // ternary operands ONLY. Anything else on the way (a call, an arrow function,
+  // an object literal) means the element is not the condition's own result.
+  let ternaryBranch: { start: number; end: number } | undefined
+  for (let node: Node = element; ; ) {
+    const up = node.getParent()
+    if (!up) return null
+    if (up === container) break
+    if (Node.isParenthesizedExpression(up)) {
+      node = up
+      continue
+    }
+    if (Node.isBinaryExpression(up) && up.getOperatorToken().getKind() === SyntaxKind.AmpersandAmpersandToken && up.getRight() === node) {
+      node = up
+      continue
+    }
+    if (Node.isConditionalExpression(up) && (up.getWhenTrue() === node || up.getWhenFalse() === node)) {
+      // The innermost ternary decides which state `element` is; that branch is
+      // what a delete replaces with `null`.
+      ternaryBranch ??= { start: node.getStart(), end: node.getEnd() }
+      node = up
+      continue
+    }
+    return null
+  }
+  return { expression: container, parent, ...(ternaryBranch ? { ternaryBranch } : {}) }
 }
 
 /**

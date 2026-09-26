@@ -1,4 +1,5 @@
 # Benchmark suite
+> **Purpose:** the benchmark harness: what each bench measures and its budgets · **Read when:** measuring or gating performance · **Trust:** current · **Owner:** perf-hunter · **Verified:** not yet
 
 A reusable performance suite for the studio. Spans both ends of the stack: bundle composition, publisher render speed, the full publish pipeline + public serving, the editor store under class/tree stress, HTTP latency + throughput, SQLite performance, plugin sandbox cost, repo footprint, and code-health snapshot.
 
@@ -27,8 +28,10 @@ bun run bench:plugin        # QuickJS sandbox boot / hostCall / dispose
 bun run bench:footprint     # repo / node_modules / SLOC stats
 bun run bench:health        # fallow + jscpd + madge snapshot
 bun run bench:agent-turn    # chat-turn server cost: guide, first stream line, MCP, capture, compare
+bun run bench:agent-models  # REAL billed agent turns per candidate model — needs ANTHROPIC_API_KEY + STUDIO_BENCH_SPEND=1
 bun run bench:browser       # real Chromium via Playwright — opt-in
 bun run bench:studio-board  # canvas perf gate — runs the Playwright spec, opt-in
+bun run bench:studio-load   # /load warm path on a generated 1,000-file repo (gated)
 bun run bench:browser:install   # one-time Chromium download (~92 MiB)
 ```
 
@@ -92,9 +95,11 @@ Drives the live Zustand store. **This is the "is the builder laggy at scale?" be
 - **Node-class assignment with huge catalogues:** `addNodeClass` when there are 100k classes defined.
 - **Multi-delete:** ONE `deleteNodes(ids)` call removing 500 ids (quick 100) spread across all depths of a 10k-node tree (quick 2k), repeated on 3 fresh trees. The canvas multi-select → Delete path.
 - **VC-mode keystroke sweep:** per-keystroke `updateNodeProps` on a text node inside a Visual Component while the site holds 20 pages × 500 nodes (quick 5 × 200). Every VC-mode mutation re-syncs slot instances across all consumer trees, so this answers "does typing inside a VC scale with total site size?".
+- **Canvas subscriber sweep (a GATE, audit `01-perf.md` budget 1):** the cost of ONE store `set()` with `NodeRenderer`'s eleven per-node selectors subscribed for every node of 12 mounted frames on a 40-page × 300-node board (39,600 subscribers) — the selector work every hover crossing, click, keystroke and pan commit pays before React starts, which the zero-subscriber scenarios above cannot see. Scenarios: `hoverEdge`, `hoverNoop`, `selectNode`, `keystroke`, `panCommit`, `annotationMarqueeNoop`. Each median is asserted against `SUBSCRIBER_SWEEP_BUDGETS_MS` in `lib/canvasSubscriberSweep.ts`; a breach fails the bench (exit 1) through `BenchResult.budgetFailures`, after the rows are recorded. `--quick` keeps the full board shape and only lowers the iteration count, so the budgets apply to both. The selector list is a mirror of `NodeRenderer.tsx` — when that component's subscriptions change, change the mirror in the same PR.
+- **Post-write re-sync (a GATE, audit `01-perf.md` PERF-6 / budget 8):** what ONE `patchPages` re-read of a written page makes the canvas do on the same 40 × 300 × 12 board with a selection held — `NodeRenderer` re-renders, remounts (a node whose React key did not survive) and frame restyles (a new style-registry object). `propEdit` changes one text prop; `move` moves a subtree to the front, renumbering every `rel:line:col` id it passes. The counts are deterministic and asserted against `POST_WRITE_RESYNC_BUDGETS` in `lib/postWriteResync.ts` (propEdit: 1 re-render, 0 remounts, 0 restyles; move: 0 remounts, 0 restyles); the row also reports the `patchPages` median. The before/after table is in that file's doc.
 - **Undo coalescing burst:** a 2,000-keystroke (quick 300) single-prop typing burst on one text node — the Properties-panel path, which folds the whole burst into one undo entry. Reports per-op p95 plus the JSON size of the retained `_historyPast` stack after the burst.
 
-If the numbers stay reasonable here, any actual UI lag is a rendering problem, not a state problem.
+If the numbers stay reasonable here (the subscriber sweep included), any actual UI lag is a rendering problem, not a state problem.
 
 ### http
 Starts a production-mode server on a free port (or uses `--base-url=...`) and benchmarks:
@@ -145,6 +150,33 @@ Everything a Studio chat turn costs **on the server** — the guide it regenerat
 Groups 1–3 are offline and deterministic: no network, no browser, no database, no real `claude` binary. Group 4 needs a built `dist/` (for the capture entry) and a Chromium Playwright can launch, and the capture routes are served **in-process** (`lib/captureHost.ts`) because a capture grant lives in the memory of the process that minted it. Without either, group 4 reports `skipped` with the reason instead of failing the suite — `bun run build` provides the `dist/`, `bun run bench:browser:install` the browser.
 
 Fixture: a fresh copy of `studio-workspace/__canonical-fixture` into `.tmp/benchmarks/` — **never** mutates anything under `studio-workspace/`. Self-skips with an `unavailable` row if it does not exist.
+
+The telemetry group also prints the **per-(role, model)** table from the `kind: "turn"` lines every real turn writes (AI-25) — the numbers model routing is judged by.
+
+### studio-load (gated)
+Audit `01-perf.md` §3 item 12 (PERF-8), ROADMAP P6-C. Generates a 1,000-file repository into `.tmp/benchmarks/studio-load/` (40 pages, 200 components, 600 utility modules, 100 JSON files, 60 stylesheets — P6-B's `thousand` corpus) and calls `loadStudioPagesShared` + `JSON.stringify`, which is all `GET /admin/api/studio/load` does, in process.
+
+Two rows are **gates** (`STUDIO_LOAD_BUDGETS_MS`; a row reading `OVER` fails the bench): the **warm load median** (nothing changed since the last load) and the **longest event-loop block** during a warm load (measured by a 1 ms interval probe — a warm load is mostly synchronous `stat`s, so this is what a request queued behind it waits). Recorded, not gated: the cold load, the longest block in the 3 s after it (the deferred program prewarm and parse-store writes), and a load after one page edit.
+
+| row | P6-C calibration, three runs (this Windows box, loaded) | budget |
+|---|---|---|
+| warm load, median | 31.5 / 46.6 / 31.3 ms | 80 ms |
+| warm load, longest block (median) | 31.1 / 31.2 / 31.1 ms (worst single load 58–61 ms) | 80 ms |
+| cold load | 3.57 / 4.39 / 4.15 s | — |
+| longest block in the 3 s after a cold load | 380 / 688 / 404 ms | — |
+| load after one page edit | 934 / 997 / 959 ms | — |
+
+The block after a cold load is the deferred program prewarm (P6-B's landmine 1): up to ~0.7 s during which a request waits. It is recorded, not gated — it happens once per project per server start, off the load's own response.
+
+`bun run bench:studio-load`.
+
+### agent-models (opt-in, spends API credit)
+The measurement behind model routing (AI-25, `server/ai/routing/modelRouting.ts`). Runs **real** API-key agent turns — the production system prompt, the HTTP tool surface including `studio_delegate`, the Anthropic driver and the shared tool loop — once per model in `MODEL_BENCH_CANDIDATES` (`claude-opus-5-5`, `claude-sonnet-5`, `claude-haiku-4-5-20251001`, `claude-fable-5-1`) per brief, each against a fresh copy of the canonical fixture:
+
+- **creative** — a from-scratch checkout screen, graded by `studio_quality_check`'s finding count and a grey-fill scan of its stylesheet (a labelled heuristic for placeholder boxes — read the files before trusting it);
+- **match** — only when `STUDIO_BENCH_MATCH_REFERENCE=<path to a PNG>` is set: the image is attached and registered as the page's reference, and the turn is graded by `studio_compare`.
+
+It reports `skipped` unless **both** `ANTHROPIC_API_KEY` and `STUDIO_BENCH_SPEND=1` are set, and it is never in the default suite. Output: the report rows, `.tmp/benchmarks/agent-models.json`, and the per-(role, model) table from the turn telemetry the runs wrote. Nothing is changed automatically — a person reads the numbers and edits `MODEL_ROUTING_TABLE`.
 
 ### browser (opt-in)
 Boots the production server, spawns Chromium via Playwright (uses Playwright's pinned chromium-headless-shell — install once with `bun run bench:browser:install`), then runs a battery of cold-load and interactive scenarios. Authenticated admin scenarios run only when `STUDIO_BENCH_ADMIN_EMAIL` and `STUDIO_BENCH_ADMIN_PASSWORD` are set; without them the bench records the login-screen load and unauthenticated idle frame stability.

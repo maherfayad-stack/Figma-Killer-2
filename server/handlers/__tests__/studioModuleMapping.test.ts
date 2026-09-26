@@ -122,10 +122,49 @@ describe('resolveModuleId — the real host tag survives the module default', ()
       .toBeUndefined()
   })
 
-  it('routes a tag base.text cannot render to base.container rather than defaulting it to <p>', async () => {
-    // base.text has no custom-tag escape hatch; `<label>` is not in its options.
+  it('keeps a text-only tag outside the base.text named list on base.text, through customTag (WB-3)', async () => {
+    // Before P3-B this was `label:base.container` — a container has no text
+    // prop, so "Name" was simply gone from the canvas.
     const page = await loadPageWith('<label>Name</label>')
-    expect(mapping(page)).toEqual(['label:base.container'])
+    expect(mapping(page)).toEqual(['label:base.text'])
+    const label = Object.values(page.nodes).find((n) => n.moduleId === 'base.text')!
+    expect(label.props).toMatchObject({ tag: 'custom', customTag: 'label', text: 'Name' })
+  })
+})
+
+describe('resolveModuleId — WB-3 text inside a container tag is a text node', () => {
+  it('maps every text-only element whose text is its content to base.text on its own tag', async () => {
+    const page = await loadPageWith(
+      '<main><div>d</div><section>s</section><li>l</li><td>t</td><dt>term</dt><figcaption>f</figcaption><code>c</code><b>b</b></main>',
+    )
+    expect(mapping(page)).toEqual([
+      'div:base.text',
+      'section:base.text',
+      'li:base.text',
+      'td:base.text',
+      'dt:base.text',
+      'figcaption:base.text',
+      'code:base.text',
+      'b:base.text',
+      'main:base.container',
+    ])
+  })
+
+  it('keeps a text-only element whose text is NOT its visible content a container', async () => {
+    // A form value, an option label inside a select, document metadata and a
+    // tag no text module may emit: rendering their text as content would show
+    // something the app never does.
+    const page = await loadPageWith(
+      '<form><textarea>draft</textarea><select><option>one</option></select><title>t</title><style>{"a{}"}</style></form>',
+    )
+    expect(mapping(page)).toEqual([
+      'textarea:base.container',
+      'option:base.container',
+      'select:base.container',
+      'title:base.container',
+      'style:base.container',
+      'form:base.container',
+    ])
   })
 })
 

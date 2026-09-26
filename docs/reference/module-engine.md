@@ -1,4 +1,5 @@
 # Module Engine
+> **Purpose:** adding a first-party module · **Read when:** defining a new module · **Trust:** current · **Owner:** store-engineer · **Verified:** not yet
 
 Cookbook for adding a new first-party module — the building block used on the visual canvas. For the broader concept of what a module is and how the registry works, see [docs/features/modules.md](../features/modules.md). This page answers "how do I implement one?"
 
@@ -266,13 +267,13 @@ Name the leaf after what it owns, not generically:
 | `base.link`      | `content.ts`    | `linkUsesChildren()` — children/text fallback rule    |
 | `base.list`      | `items.ts`      | `parseItems()` — textarea → trimmed non-empty array   |
 | `base.video`     | `youtube.ts`    | `parseYoutubeId()`, `youtubeEmbedUrl()` — embed URL  |
-| `base.text`      | `tags.ts`       | `normalizeTag()`, `TextTag` — semantic tag coercion   |
 
 **Cross-module shared vocabulary** goes in `src/modules/base/shared/` rather than inside a single module folder:
 
 | File                       | Exports                                                      | Used by            |
 |----------------------------|--------------------------------------------------------------|--------------------|
 | `shared/anchorTarget.ts`   | `AnchorTargetSchema`, `AnchorTarget`, `ANCHOR_TARGET_OPTIONS`, `anchorRel()` | button, link |
+| `utils/htmlTag.ts`         | `resolveHtmlTag()` / `resolveTextTag()` — the element a module renders for its `tag` (+ `customTag`) props; `isTextHostTag()` — may `base.text` render text inside this tag (P3-B: the Studio import's `moduleMapping.ts` asks the same rule) | container, loop, text, Studio import |
 
 ```ts
 // anchor.ts — leaf file for base.button

@@ -2,14 +2,15 @@ import { expect, test, type FrameLocator, type Locator, type Page } from '@playw
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
-  CANVAS_FRAME_IFRAME_SELECTOR,
   clickInFrame,
   createAuthoredFixtureProject,
   openFixtureBoard,
   panIntoView,
   removeFixtureProject,
+  sourceNodeId,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * `struct-01` — real-browser proof that a structural edit on the board either
@@ -79,28 +80,11 @@ function readPage(): string {
 }
 
 /**
- * The studio node id of the Nth `<tag` in the fixture — `relFile:line:col`,
- * where col is 1-based at the character right after `<`. Derived rather than
+ * The studio node id of the Nth `<tag` in the fixture. Derived rather than
  * hardcoded so editing the fixture above cannot silently retarget the spec.
  */
 function nodeId(tag: string, occurrence = 1): string {
-  const re = new RegExp(`<${tag}(?=[\\s/>])`, 'g')
-  let match: RegExpExecArray | null
-  let count = 0
-  let index = -1
-  while ((match = re.exec(FIXTURE_PAGE)) !== null) {
-    count += 1
-    if (count === occurrence) {
-      index = match.index
-      break
-    }
-  }
-  if (index < 0) throw new Error(`fixture has no <${tag} #${occurrence}`)
-  const before = FIXTURE_PAGE.slice(0, index + 1)
-  const lines = before.split('\n')
-  // `+ 1`: the column convention is 1-based at the character right AFTER `<`,
-  // and `before` ends with the `<` itself.
-  return `pages/Home.tsx:${lines.length}:${lines[lines.length - 1]!.length + 1}`
+  return sourceNodeId(FIXTURE_PAGE, 'pages/Home.tsx', tag, occurrence)
 }
 
 test.beforeAll(() => {
@@ -131,10 +115,10 @@ async function openStudioBoard(page: Page): Promise<{ canvasRoot: Locator; conte
   const frame = page.locator('[data-page-id]').first()
   await panIntoView(page, canvasRoot, frame)
   await expect(
-    frame.locator(CANVAS_FRAME_IFRAME_SELECTOR),
+    visibleCanvasIframe(frame),
     'the fixture frame never mounted a live canvas iframe after being panned into view',
   ).toBeVisible({ timeout: 60_000 })
-  return { canvasRoot, contentFrame: frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR) }
+  return { canvasRoot, contentFrame: canvasContentFrame(frame) }
 }
 
 /**
@@ -258,7 +242,7 @@ test.describe('struct-01 — a structural edit reaches the .tsx, or says why it 
     // `freeVariablesOutOfScopeAt` refuses markup lifted out of a `.map`
     // callback (and `refuseStructuralEdit`'s `cross-file` answers a move
     // between files, which `transplantJsxElement.ts` then writes when it is
-    // honest). Neither has a case here yet - see `docs/e2e/COLD-SUITE-TRIAGE.md`.
+    // honest). Neither has a case here yet - see `docs/archive/e2e/COLD-SUITE-TRIAGE.md`.
     const { canvasRoot, contentFrame } = await openStudioBoard(page)
     const before = readPage()
 

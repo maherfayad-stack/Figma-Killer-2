@@ -40,18 +40,21 @@
  * `Section.module.css` at all) alike — so this grid `gap` is where the
  * panel's BETWEEN-SECTION spacing belongs, not in `Section.module.css`
  * itself (`Section` is also used by GitPanel/FrameworkScalePanel, outside
- * this panel's rhythm). Used to be `var(--space-px)` (1px) — sections read
- * as one continuous wall with only a 1px hairline between them, no
- * breathing room a scanning eye could use as a landmark. Now
- * `--inspector-space-m`, the panel's between-section step.
+ * this panel's rhythm).
  *
- * It was `--inspector-space-xl` (12px) until panel-39 measured what twelve
- * of those cost a text node: 132px, against the 8px section gap Figma and
- * Penpot both draw (`docs/audits/penpot-inspector-baseline/02-measurements.
- * md`). 8px is still twice the 4px within-group step, so the hierarchy that
- * `fix/inspector-spacing-audit` established — within-group < between-group
- * < between-section — survives intact; only the top step moved onto the
- * measured reference. Saving: 44px on the F2 text fixture.
+ * It is its own named role, `--inspector-section-gap` (12px — owner decision
+ * OD-4, P2-F / UX-2), and the value is the TOP of a three-step hierarchy the
+ * eye can chunk by: 4px within a group, 8px between groups inside a
+ * section, 12px between sections. panel-39 had moved this to 8px on the
+ * claim that 8px was the section gap Figma and Penpot measure. It was not: Penpot's flex `gap` is 8px (`sidebar/options.scss`
+ * `.element-options`), but every menu also ends in `margin-block-end: 8px`
+ * (`menus/layer.scss`, `menus/measures.scss`), so its real boundary is 16px
+ * — the very Δ16 `02-measurements.md` records between the Layer row and the
+ * W/H row. At 8px a section boundary was the same distance as a boundary
+ * between two groups inside one section, so nothing read as a boundary.
+ * Studio takes 12, not 16, because the Design tab is held to the room a
+ * 900px window leaves (`tests/e2e/inspector-height.e2e.ts`); the Effects
+ * merge (Shadow + Blur, one fewer section) is what pays for it.
  *
  * This is also what makes each section's header sit closer to ITS OWN
  * content than to the section above it: `Section.module.css`'s
@@ -63,7 +66,7 @@
 .surfaceContent {
     display: grid;
     align-content: start;
-    gap: var(--inspector-space-m);
+    gap: var(--inspector-section-gap);
     min-width: 0;
     /*
      * The rail is a sibling grid column, not an overlay, but the scroll
@@ -163,7 +166,7 @@
     flex-direction: column;
     align-items: center;
     gap: var(--inspector-space-m);
-    padding: var(--space-4xl) var(--space-5xl) var(--space-5xl);
+    padding: var(--inspector-space-xl) var(--inspector-pad-x);
     text-align: center;
 }
 
@@ -189,7 +192,7 @@
     gap: var(--inspector-space-s);
     margin: var(--inspector-space-s) var(--inspector-pad-x) var(--inspector-space-xl);
     padding: var(--inspector-space-l);
-    border-radius: 12px;
+    border-radius: var(--panel-radius);
     background: var(--bg-surface);
 }
 
@@ -231,7 +234,7 @@
 }
 
 .generatedUtilityMeta span {
-    border-radius: 999px;
+    border-radius: var(--input-radius);
     background: var(--overlay-5);
     color: var(--text-subtle);
     font-size: var(--text-2xs);

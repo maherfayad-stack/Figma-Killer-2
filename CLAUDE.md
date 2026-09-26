@@ -1,4 +1,5 @@
 # Studio
+> **Purpose:** the rule book: every constraint a change must satisfy, each with its gate · **Read when:** always, before any change · **Trust:** rule · **Owner:** studio-scribe · **Verified:** not yet
 
 This file is the **agent rule book** — the constraints every change must satisfy.
 
@@ -7,10 +8,10 @@ This file is the **agent rule book** — the constraints every change must satis
 | File | What it gives you |
 |---|---|
 | **[`PROJECT-BRIEF.md`](PROJECT-BRIEF.md)** | **Start here.** What this product actually is, what already works, the traps that catch every new agent, and which specialist + docs your task needs. It exists so you never have to re-scan the repo. |
-| **[`STATE.md`](STATE.md)** | Live coordination. What is in flight, what is blocked, and durable facts previous agents learned the hard way. **Read before working; write a handoff before stopping.** |
-| [`docs/agent-refs/`](docs/agent-refs/) | Compressed, agent-facing references: `path-index.md` (where everything lives), `conventions-quickref.md` (the gated rules), `studio-pipeline.md`, `canvas-internals.md`, `editor-store.md`, `handoff-protocol.md`, `glossary.md`. |
-| [`STUDIO-IMPORT-V2-PLAN.md`](STUDIO-IMPORT-V2-PLAN.md) | The roadmap. Most feature requests are already specced here — find the workstream before designing. |
-| [`docs/README.md`](docs/README.md) | Full documentation index, for depth. |
+| **[`STATE.md`](STATE.md)** | Live coordination. What is in flight, what is blocked, what a human still owes, and durable operational facts. **Read before working; write a handoff before stopping.** |
+| [`ROADMAP.md`](ROADMAP.md) | The one living plan. Most feature requests are already a bundle here: find it, and the audit IDs it closes, before designing. Settled owner decisions are in [`docs/decisions.md`](docs/decisions.md). |
+| [`docs/README.md`](docs/README.md) | The doc map: every doc, one row, with when to read it and how far to trust it. |
+| [`docs/agent-refs/`](docs/agent-refs/) | The compressed, agent-facing reference the BRIEF's routing table names for your task: `path-index.md`, `conventions-quickref.md`, `studio-pipeline.md`, `canvas-internals.md`, `editor-store.md`, `handoff-protocol.md`, `glossary.md`. |
 
 **If a doc conflicts with `PROJECT-BRIEF.md`, the brief wins** — parts of `docs/`
 still describe the dormant CMS half of this fork.
@@ -64,7 +65,7 @@ A user opens a React project (hand-written, uploaded, or pulled from GitHub) as 
 
 Two invariants explain most of the codebase:
 
-1. **Parse, never execute.** Everything on the canvas was read out of the AST by a bounded evaluator with explicit tiers — no component is rendered server-side, no hook is called. *(The per-project trust tier has shipped, and it is narrow. `.studio/meta.json`'s `trust` field has three values — `static` (Tier 0), `render-packages` (Tier 1), `run-project` (Tier 2) — read and written by `server/handlers/studio/trustTier.ts`. **Every project is `run-project` (Tier 2) by default — `DEFAULT_TRUST_TIER`** (owner decision, 2026-09-20, superseding the narrower 2026-09-17 override below). **The parse itself never executes anything at any tier.** The tier is a per-project fact the owner can lower (the Live pill's "Back to static") and raise again; nothing promotes automatically any more because nothing needs to. Promoting to Tier 1 buys exactly two things: the workspace's own style toolchain compiles in a capped subprocess (`styleCompileTier1.ts`), and its package components are bundled and rendered in the canvas (`componentBundle.ts`) — reachable now only for a project explicitly demoted below Tier 2, since Tier 2 already implies it (`trust !== 'static'`). **Tier 2 is a PRODUCT DEFAULT, not a consent boundary** (`sec-12`) — every project ships both of `studio_render_reference`'s gates satisfied by default, and no human answers a question to get there. Anything that needs a human to have agreed must ask at the point of use, and the single-operator posture is what makes the default acceptable at all. Every Tier-2 entry point still checks BOTH gates through `trustGate.ts`: the connector capability (`studio.run.project`) AND `trust === 'run-project'` exactly — a preview deploy (`deploy.ts`) and the dev-server process manager (`server/handlers/studio/devServer.ts`, Track L's `live-01`) both refuse with 409 unless a project explicitly set to `static` is excepted, via the shared `requireTrustTier` helper in `server/handlers/studio/trustGate.ts`. (Superseded: before 2026-09-20, `STUDIO-FIGMA-FEEL-PLAN.md` §6 decision 2 auto-promoted only a Vite project with a lockfile, once, via a board notice with an Undo — that mechanism is gone; there is no lower default left to promote FROM.))*
+1. **Parse, never execute.** Everything on the canvas was read out of the AST by a bounded evaluator with explicit tiers — no component is rendered server-side, no hook is called. The per-project trust tier (`.studio/meta.json` `trust`: `static`, `render-packages`, `run-project`; default `run-project`) only decides whether Studio may run the workspace's own toolchain on top of the parse. **Tier 2 is a product default, not a consent:** anything that needs a human to have agreed must ask at the point of use. Every Tier-2 entry point checks both the `studio.run.project` capability and `trust === 'run-project'` through `server/handlers/studio/trustGate.ts` (gated by `studio-tier2-two-gates.test.ts`). The model and the default: [`docs/features/trust-tiers.md`](docs/features/trust-tiers.md).
 2. **A write must have exactly one honest target.** If an edit cannot land in exactly one place in the user's source without destroying a binding or silently changing N call sites, the editor refuses it and says why.
 
 ### The dormant CMS half
@@ -81,7 +82,7 @@ Read [`PROJECT-BRIEF.md`](PROJECT-BRIEF.md) for orientation, [`docs/features/stu
 
 - **Runtime:** Bun (server + tooling). Use Bun, not Node.
 - **Language:** TypeScript everywhere.
-- **Frontend:** React 19 with the **React Compiler enabled** (Babel preset in `vite.config.ts`) + Vite, Zustand + Mutative for state (via `zustand-mutative`; patch-based undo history uses Mutative `create({ enablePatches })` — `immer` is banned), CodeMirror for code-editing UI, `@dnd-kit/core` for drag-and-drop. The compiler auto-memoizes — do not hand-write `useMemo`/`useCallback`/`memo`. See "React Compiler and memoization". Store mutations use draft-mutation style (`set((s) => { s.x = … })`); a recipe that returns a partial must wrap it in `rawReturn(...)` or Mutative emits a perf warning.
+- **Frontend:** React 19 with the **React Compiler enabled** (`reactCompiler()` in `vite.config.ts`, on its own Babel 7) + Vite, Zustand + Mutative for state (via `zustand-mutative`; patch-based undo history uses Mutative `create({ enablePatches })` — `immer` is banned), CodeMirror for code-editing UI, `@dnd-kit/core` for drag-and-drop. The compiler auto-memoizes — do not hand-write `useMemo`/`useCallback`/`memo`. See "React Compiler and memoization". Store mutations use draft-mutation style (`set((s) => { s.x = … })`); a recipe that returns a partial must wrap it in `rawReturn(...)` or Mutative emits a perf warning.
 - **Parsing + writeback (the product's core):** `ts-morph` for the static JSX parse (`src/core/page-parser/`) and every AST codemod that rewrites the user's source (`src/core/ast-codemods/`); `postcss` CST edits for their stylesheets (`src/core/css-codemods/`). Both are formatting-preserving. Nothing here executes the user's code.
 - **Server:** `Bun.serve` with a hand-written router (`server/router.ts`). Studio's own handlers live at `server/handlers/studio/` (plus the `server/handlers/studio*.ts` writeback entries); the inherited CMS modules are at `server/{repositories,handlers/cms,auth,plugins,publish}/`. Deep dive: [`docs/server.md`](docs/server.md).
 - **Database:** Postgres (`Bun.sql`) OR SQLite (`bun:sqlite`), selected by `DATABASE_URL`. One `DbClient` interface, two adapters, two migration files with identical IDs. Rules: [`docs/reference/database-dialects.md`](docs/reference/database-dialects.md).
@@ -211,7 +212,7 @@ Shared primitives at `src/ui/components/`. **Every interactive control in `src/a
 
 ## React Compiler and memoization
 
-The **React Compiler is enabled** for the whole app (`babel({ presets: [reactCompilerPreset()] })` in `vite.config.ts`, linted by `eslint-plugin-react-compiler`). It auto-memoizes every component and hook. Manual memoization is therefore **noise** — it adds clutter without improving performance and must not be written.
+The **React Compiler is enabled** for the whole app (`reactCompiler()` in `vite.config.ts` — `scripts/vite/reactCompilerPlugin.ts`, the compiler on its own Babel 7, because on the root Babel 8 it skips every destructured default — linted by `eslint-plugin-react-compiler`). It auto-memoizes every component and hook it can compile; one it cannot is emitted unmemoized, silently, so `react-compiler-bailouts.test.ts` requires every function in the canvas, `src/ui/components` and the inspector to compile (`bun run compiler:bailouts` lists the rest). Manual memoization is therefore **noise** — it adds clutter without improving performance and must not be written.
 
 - **Default: no `useMemo`, no `useCallback`, no `memo()`.** Write the plain value, the plain function, the plain component. The compiler memoizes them for you. New code MUST NOT introduce manual memoization, and existing manual memoization is being removed.
 - **`useState(() => …)` lazy initializers and `useRef(…)` are NOT memoization** — they are always fine and unaffected by this rule.
@@ -262,8 +263,9 @@ Every untyped boundary uses TypeBox. Inside the boundary, code trusts the parsed
 ### UI error handling
 
 - Async UI handlers wrap in `try/catch`. Logged errors use the prefix `console.error('[<component>] <description>:', err)`.
-- **Operation failures surface through the global toast bus** — `pushToast({ kind: 'error', title, body })` from `@ui/components/Toast` — for anything a user triggered that then failed (save / import / delete / publish / apply / network call). This is the default for user-visible errors. The single mounted `<ToastProvider />` renders them with `role="alert"`, so you don't hand-roll the a11y. Use `getErrorMessage(err, …)` for the `body`.
-- The **only** exception is **field-local, non-blocking validation** that belongs next to a specific control inside a form (e.g. an invalid token name in a dialog) — that may stay inline with `role="alert"` / `role="status"`. Operation results (a request that failed) are NOT field-local; toast them. Never `alert()` / `confirm()` / `prompt()` — gated by `no-native-browser-dialogs.test.ts`.
+- **A red toast is for an operation the user asked for that genuinely failed, after any retry** — `pushToast({ kind: 'error', title, body })` from `@ui/components/Toast` (a Git push, an upload the server rejected, a clipboard write the browser refused). The single mounted `<ToastProvider />` renders it with `role="alert"`, so you don't hand-roll the a11y. Use `getErrorMessage(err, …)` for the `body`.
+- **Everything else is quieter — never a red toast for something the editor could have done itself.** A request with no answer retries first (`@core/http`'s `retryWhileUnreachable`, only where running it twice is harmless). A refusal is a `warning` with its one-click remedy. A read nobody clicked for fails in place, where the data would have been. A no-op is silent or `info`. A canvas gesture's success is the canvas changing, not a toast. Policy: [`docs/reference/error-boundaries.md`](docs/reference/error-boundaries.md) → "Async error inside a component". Gated by `error-toast-sites.test.ts`, a reviewed per-file count of `kind: 'error'` sites that may only go down on purpose.
+- **Field-local, non-blocking validation** that belongs next to a specific control inside a form (e.g. an invalid token name in a dialog) stays inline with `role="alert"` / `role="status"`. Never `alert()` / `confirm()` / `prompt()` — gated by `no-native-browser-dialogs.test.ts`.
 - Error message extraction: `getErrorMessage(err, 'Unknown <thing> error')` from `src/core/utils/errorMessage.ts` — handles the `instanceof Error` check and the empty-message fallback in one place.
 - Soft fallbacks (corrupted localStorage, missing optional config): `parseJsonWithFallback` + continue with defaults.
 - Hard fallbacks (corrupted required document, broken HTTP envelope): let the error bubble to the nearest error boundary. Do not silently mask.
@@ -331,6 +333,7 @@ Deep imports into these engine modules are enforced by `src/__tests__/architectu
 - `@core/studio-anchor` — the comment anchor model. `resolve.ts` is the one place that decides whether a comment still points at anything
 - `@core/studio-prototype` — authored links plus the flow map derived from the project's own navigation code; `codeFlow.ts`'s AST rules are what the connector layer and the panel both read
 - `@core/studio-runtime` — the live-frame runtime bridge. `runtime.ts` is built to one standalone ESM file served to a real browser, and the four rule modules it shares with the portal-mode canvas injectors (`hoverSuppressionRules` / `scrollUnrollRules` / `animationFreezeRules` / `selectionChromeCss`) must stay ONE implementation each
+- `@core/vector` — the pure vector engine behind SVG on the canvas (path data, curve geometry, and the ONE markup ⇄ JSX attribute-name table and same-document-fragment reference policy that the parser, the SVG importer, the sanitizer and the canvas renderer share). A deep import is how a second, drifted copy of either gets made
 
 Note: `@core/framework-schema` is a dependency of both `@core/page-tree` (for `FrameworkSettingsSchema` and `GeneratedClassMetadataSchema`) and `@core/framework` (for the persisted data shapes). This arrangement keeps the module graph one-directional — the engine depends on the schema leaf, not on the page tree. Any other module barrel is still a convention without a gate; treat deep imports in those as drift and migrate them to the barrel as part of whatever change you're making.
 
@@ -368,7 +371,7 @@ bun test
 bun run lint
 ```
 
-**Touched the canvas, a frame, an overlay, geometry, or a panel's height? Run `bun run test:e2e` too — it is the fourth gate, not an optional extra.** `standing-02` says why: happy-dom has no layout engine, so a unit test on those surfaces structurally cannot fail on the thing it is named after (WS-8.2 shipped a real frame-height bug behind a green one). Assert on *computed* layout — measured rects, `scrollHeight`, computed styles after layout. The budget slice (`studio-board-perf`, `inspector-panel-measurement`, `inspector-height`, `studio-feel`) also runs in CI as the `e2e-budgets` job; locally it is cheaper to run those four by path than the whole suite.
+**Touched the canvas, a frame, an overlay, geometry, or a panel's height? Run `bun run test:e2e` too — it is the fourth gate, not an optional extra.** The reason: happy-dom has no layout engine, so a unit test on those surfaces structurally cannot fail on the thing it is named after (WS-8.2 shipped a real frame-height bug behind a green one). Assert on *computed* layout — measured rects, `scrollHeight`, computed styles after layout. The budget slice (`studio-board-perf`, `canvas-feel-budgets`, `canvas-edit-budgets`, `live-frame-budgets`, `inspector-panel-measurement`, `inspector-height`, `studio-feel`, `studio-board-load`, `studio-vector`) also runs in CI as the `e2e-budgets` job, and its `@production-bundle` tests run a second time against the production build (`E2E_VITE_MODE=preview`); locally it is cheaper to run those specs by path than the whole suite.
 
 ### When to run
 
@@ -392,7 +395,7 @@ The bar is: **your work is clean.**
 
 ## TL;DR
 
-0. **Read [`PROJECT-BRIEF.md`](PROJECT-BRIEF.md) and [`STATE.md`](STATE.md) first, and write a `STATE.md` handoff before you stop.** This is Studio — a design tool over a real React repo — not the CMS half of the fork that parts of `docs/` still describe.
+0. **Read [`PROJECT-BRIEF.md`](PROJECT-BRIEF.md), [`STATE.md`](STATE.md) and [`ROADMAP.md`](ROADMAP.md) first, and write a `STATE.md` handoff before you stop.** This is Studio — a design tool over a real React repo — not the CMS half of the fork that parts of `docs/` still describe.
 1. Live installations exist with real user data. Refactor **code** freely — no compat shims needed. **DB schema is the exception: every change ships as an additive, non-destructive migration; never rewrite a committed migration or require a DB drop.**
 2. Never preserve backward compatibility in code, never leave band-aids, never duplicate "old vs new" code paths.
 3. If the architecture would be cleaner with a multi-file refactor — do the refactor, in this change.

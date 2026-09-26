@@ -50,15 +50,17 @@ import { selectActiveBoard } from '@site/store/slices/boardSelectors'
 import { shouldSeedDefaultBoard } from './studioDefaultBoardSeed'
 import { collectFrameIds, shouldRefuseBoardsSave } from './boardsSaveGuard'
 import { pushToast } from '@ui/components/Toast'
-import { getErrorMessage } from '@core/utils/errorMessage'
+import { retryWhileUnreachable } from '@core/http'
 import { useAdminUi } from '@admin/state/adminUi'
-import { CMS_SITE_RELOAD_EVENT } from '@admin/state/adminEvents'
+import { CMS_SITE_RELOAD_EVENT, requestCmsSiteReload } from '@admin/state/adminEvents'
 import {
   CanvasFrameSkeletonFrame,
   DEFAULT_CANVAS_FRAME_SKELETON_BREAKPOINTS,
 } from '@admin/shared/CanvasFrameSkeleton'
 import { LazyChunkBoundary } from '@admin/lib/LazyChunkBoundary'
+import { ChromeBoundary } from '@site/ui/ChromeBoundary'
 import { prewarmedLazy } from '@admin/lib/prewarmedLazy'
+import { StudioBoardLayers } from '@site/canvas/studioBoardLayersChunk'
 import styles from './AdminCanvasLayout.module.css'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useCurrentAdminUser } from '@admin/sessionContext'
@@ -73,12 +75,9 @@ import {
 import { EditorPermissionsProvider } from '@site/EditorPermissionsProvider'
 import type { EditorPermissions } from '@site/editorPermissionsContext'
 
-interface AdminCanvasEditorBodyProps {
-  canEditDraftSite: boolean
-  canSaveSite: boolean
-  canUseAiChat: boolean
-  loadError: string | null
-}
+// A type-only import: the body's props, declared once beside the component,
+// without pulling its chunk into this route shell.
+import type { AdminCanvasEditorBodyProps } from './AdminCanvasEditorBody'
 
 const AdminCanvasEditorBody = prewarmedLazy<AdminCanvasEditorBodyProps>(
   () =>
@@ -122,7 +121,10 @@ const PluginRuntimeBridge = lazy(() =>
  * through `AdminPageLayout`.
  */
 export function AdminCanvasLayout() {
-  const site = useEditorStore((s) => s.site)
+  // The document's identity only — never `s.site` itself, which Mutative
+  // replaces on every edit and would re-render the whole editor shell on every
+  // keystroke (P2-I, PERF-12; gated by `no-full-site-scan-in-selectors.test.ts`).
+  const siteId = useEditorStore((s) => s.site?.id ?? null)
   // Toolbar branding — pulled from the editor store here (we already have
   // it loaded) and forwarded to the prop-driven Toolbar below. Keeps the
   // Toolbar component itself free of editor-store imports.
@@ -205,16 +207,28 @@ export function AdminCanvasLayout() {
   // admin theme. Reading the preferences here keeps the attributes in sync
   // with Settings without per-component subscriptions.
   //
-  // Read BEFORE the `!site` early return so the hook order stays stable across
+  // Read BEFORE the `siteId === null` early return so the hook order stays stable across
   // the hydration gate (React rules-of-hooks: hooks must run in the same order
   // on every render).
   const appearance = useEditorAppearancePreferences()
 
-  const loadError = !site && persistence.saveStatus.state === 'error'
-    ? persistence.saveStatus.message ?? 'Reload the admin page and try again.'
+  const loadError = siteId === null && persistence.saveStatus.state === 'error'
+    ? persistence.saveStatus.message ?? 'Studio could not read this project.'
     : null
+  // ERR-18 — while the load ladder still has a rung left, the load-error state
+  // says "trying again" instead of declaring the project unopenable.
+  const loadRetrying = loadError !== null && persistence.saveStatus.retrying === true
 
   const loadEditorBody = usePostPaintEditorBodyGate()
+  // P6-B — every project opens on a board, so the board's own chunk is fetched
+  // WITH the body rather than after it (`studioBoardLayersChunk.ts`).
+  useEffect(() => {
+    if (!loadEditorBody) return
+    StudioBoardLayers.preload().catch((err: unknown) => {
+      // The canvas's own render retries it through its Suspense boundary.
+      console.error('[AdminCanvasLayout] board layers preload failed:', err)
+    })
+  }, [loadEditorBody])
 
   return (
     <EditorPermissionsProvider value={permissions}>
@@ -228,34 +242,43 @@ export function AdminCanvasLayout() {
         {/* Toolbar is a prop-driven shell — this layout supplies the site
             brand and the editor-specific right slot (zoom / publish /
             settings). */}
-        <Toolbar
-          siteName={siteName}
-          faviconUrl={faviconUrl}
-          section="site"
-          rightSlot={(
-            <>
-              {/* Z6 — the save path is silent on failure by design (it
-                  restores the dirty snapshot and retries three times). The
-                  chip is the only thing that says so; no toast on this path. */}
-              <SaveStatusChip status={persistence.saveStatus} onRetry={persistence.saveSite} />
-              <ZoomControls />
-              {/* Studio's source of truth is the on-disk .tsx — there is no
-                  CMS publish pipeline to target. Studio's own commit-on-idle
-                  autosave (STUDIO_AUTOSAVE_DELAY_MS) keeps source in sync
-                  without a manual save button; its export story is
-                  DownloadCodeButton (Phase 6D). */}
-              <Suspense fallback={null}>
-                <StudioToolbarActions />
-              </Suspense>
-            </>
-          )}
-        />
+        {/* ERR-13 — the toolbar sits outside the editor-body boundary, so a
+            crash in it used to reach `admin-route` and take the whole editor
+            down. It is its own silent seam now. */}
+        <ChromeBoundary id="toolbar">
+          <Toolbar
+            siteName={siteName}
+            faviconUrl={faviconUrl}
+            section="site"
+            rightSlot={(
+              <>
+                {/* Z6 — the save path is silent on failure by design (it
+                    restores the dirty snapshot and retries three times). The
+                    chip is the only thing that says so; no toast on this path. */}
+                <SaveStatusChip
+                  status={persistence.saveStatus}
+                  onRetry={persistence.saveSite}
+                  boardStale={persistence.boardStale}
+                />
+                <ZoomControls />
+                {/* Studio's source of truth is the on-disk .tsx — there is no
+                    CMS publish pipeline to target. Studio's own commit-on-idle
+                    autosave (STUDIO_AUTOSAVE_DELAY_MS) keeps source in sync
+                    without a manual save button; its export story is
+                    DownloadCodeButton (Phase 6D). */}
+                <Suspense fallback={null}>
+                  <StudioToolbarActions />
+                </Suspense>
+              </>
+            )}
+          />
+        </ChromeBoundary>
 
         {loadEditorBody ? (
           <LazyChunkBoundary
             location="site-editor-body"
             fallback={<AdminCanvasEditorBodyLoading />}
-            resetKeys={[site?.id ?? null]}
+            resetKeys={[siteId]}
             onReset={AdminCanvasEditorBody.reset}
           >
             <AdminCanvasEditorBody
@@ -263,6 +286,8 @@ export function AdminCanvasLayout() {
               canSaveSite={canSaveSite}
               canUseAiChat={canUseAgent}
               loadError={loadError}
+              loadRetrying={loadRetrying}
+              onRetryLoad={persistence.retryLoad}
             />
           </LazyChunkBoundary>
         ) : (
@@ -345,9 +370,13 @@ function useStudioBoardsPersistence(): void {
       const isStale = () => cancelled || thisLoadToken !== loadToken
 
       // Dynamic import: keeps `boardsApi`'s client out of the eager SitePage
-      // route chunk until this effect actually needs it.
+      // route chunk until this effect actually needs it. P3-A — a read that
+      // got no answer is tried again quietly before anything is said.
       import('@site/studio/boardsApi')
-        .then(({ fetchBoards }) => fetchBoards(getStudioWorkspaceDir()))
+        .then(({ fetchBoards }) => {
+          const dir = getStudioWorkspaceDir()
+          return retryWhileUnreachable(() => fetchBoards(dir))
+        })
         .then((file) => {
           if (isStale()) return
           useEditorStore.getState().loadBoards(file)
@@ -370,11 +399,18 @@ function useStudioBoardsPersistence(): void {
           // boards.json with that reduced set. `markBoardsLoadFailed` keeps
           // this placeholder out of both the seed effect and the autosave
           // until a real load succeeds.
+          //
+          // P3-A — a warning with its remedy, after the quiet retries above:
+          // the pages are fine and nothing was lost; only the frame layout
+          // could not be read, and one click reads it again.
+          console.error('[AdminCanvasLayout] boards load failed:', err)
           useEditorStore.getState().markBoardsLoadFailed()
           pushToast({
-            kind: 'error',
-            title: 'Failed to load boards',
-            body: getErrorMessage(err, 'Unknown error loading studio boards'),
+            kind: 'warning',
+            title: 'Board layout not loaded',
+            body: 'Studio could not read where your frames sit on the board, so they are shown in a default layout. Nothing was changed on disk.',
+            action: { label: 'Try again', onSelect: load },
+            dedupeKey: 'boards-load-failed',
           })
         })
 
@@ -445,7 +481,9 @@ function useStudioBoardsPersistence(): void {
           pushToast({
             kind: 'warning',
             title: 'Boards not saved',
-            body: 'The in-memory board layout looks like it lost frames unexpectedly, so the save was skipped to avoid overwriting your boards.json. Reload the project to resync.',
+            body: 'The in-memory board layout looks like it lost frames unexpectedly, so the save was skipped to avoid overwriting your boards.json.',
+            // ERR-29 — the remedy is one click, not an instruction.
+            action: { label: 'Re-read the board', onSelect: () => void requestCmsSiteReload() },
           })
         }
         clearTimeout(timer)
@@ -453,8 +491,13 @@ function useStudioBoardsPersistence(): void {
         return
       }
 
+      // P3-A — the whole board document, so saving it twice is harmless:
+      // a save that got no answer is tried again quietly.
       import('@site/studio/boardsApi')
-        .then(({ saveBoards }) => saveBoards(snapshot, getStudioWorkspaceDir()))
+        .then(({ saveBoards }) => {
+          const dir = getStudioWorkspaceDir()
+          return retryWhileUnreachable(() => saveBoards(snapshot, dir))
+        })
         .then(() => {
           const st = useEditorStore.getState()
           if (st.boards === snapshot) {
@@ -474,10 +517,15 @@ function useStudioBoardsPersistence(): void {
           }
         })
         .catch((err) => {
+          // `boardsDirty` stays set, so the layout is still pending; the
+          // warning carries the one-click retry.
+          console.error('[AdminCanvasLayout] boards save failed:', err)
           pushToast({
-            kind: 'error',
-            title: 'Failed to save boards',
-            body: getErrorMessage(err, 'Unknown error saving studio boards'),
+            kind: 'warning',
+            title: 'Board layout not saved yet',
+            body: 'Studio could not write where your frames sit on the board. Your pages are saved; only the layout is pending.',
+            action: { label: 'Try again', onSelect: runSave },
+            dedupeKey: 'boards-save-failed',
           })
         })
         .finally(() => {
@@ -537,15 +585,16 @@ function useStudioDefaultBoardSeed(): void {
   const activeBoardFrameCount = activeBoard?.frames.length ?? null
   const pageCount = useEditorStore((s) => s.site?.pages.length ?? 0)
   const frameDefaultsSettled = useEditorStore((s) => s.frameDefaultsSettled)
+  const pagesArriving = useEditorStore((s) => s.pendingPages.length > 0)
 
   useEffect(() => {
-    if (!shouldSeedDefaultBoard({ boardsLoaded, boardsLoadFailed, boardCount, activeBoardFrameCount, pageCount, frameDefaultsSettled })) return
+    if (!shouldSeedDefaultBoard({ boardsLoaded, boardsLoadFailed, boardCount, activeBoardFrameCount, pageCount, frameDefaultsSettled, pagesArriving })) return
 
     const sitePages = useEditorStore.getState().site?.pages
     const pageIds = sitePages ? sitePages.map((p) => p.id) : []
     if (pageIds.length === 0) return
     useEditorStore.getState().seedFramesForActiveBoard(pageIds)
-  }, [boardsLoaded, boardsLoadFailed, boardCount, activeBoardFrameCount, pageCount, frameDefaultsSettled])
+  }, [boardsLoaded, boardsLoadFailed, boardCount, activeBoardFrameCount, pageCount, frameDefaultsSettled, pagesArriving])
 }
 
 function usePostPaintEditorBodyGate(): boolean {

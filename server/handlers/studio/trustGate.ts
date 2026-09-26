@@ -67,9 +67,11 @@ export type TrustTierGateResult = TrustTierGateOk | TrustTierGateRefusal
 export const TRUST_TIER_REQUIRED_CODE = 'trust-tier-required'
 
 /**
- * Reads `.studio/meta.json`'s `trust` field (defaulting to Tier 0, same as
- * every other `readStudioMeta(...).trust` reader) and reports whether it
- * equals `required` exactly.
+ * Reads `.studio/meta.json`'s `trust` field (defaulting to
+ * `DEFAULT_TRUST_TIER`, which is `run-project` (Tier 2) per the owner's
+ * decision recorded in `studioMeta.ts`, the same default every other
+ * `readStudioMeta(...).trust` reader applies) and reports whether it equals
+ * `required` exactly. A project whose meta says `static` is refused.
  *
  * ## `projectDir`, never an app root — this is the whole contract
  *
@@ -80,7 +82,14 @@ export const TRUST_TIER_REQUIRED_CODE = 'trust-tier-required'
  * directory. A monorepo import whose real `package.json` sits at
  * `<project>/apps/web` has an app root (`resolveAppRoot`) that is NOT the
  * project directory — and `<project>/apps/web/.studio/meta.json` does not
- * exist, so reading the tier there silently answers Tier 0 forever.
+ * exist, so reading the tier there silently answers `DEFAULT_TRUST_TIER`
+ * forever, whatever tier the owner actually chose for the project.
+ *
+ * **Since the default became `run-project`, that misread FAILS OPEN.** A
+ * project whose owner lowered it to `static` would be granted Tier 2 (its own
+ * dev server, a preview deploy) because the lookup missed the file that says
+ * `static`. Under the old Tier 0 default the same misread failed closed. So
+ * a wrong `projectDir` here is now a privilege grant, not a harmless refusal.
  *
  * That was a real, shipped defect, not a hypothetical: `deploy.ts` read the
  * tier off `resolveAppRoot(dir)` while `devServer.ts` and `referenceRender.ts`

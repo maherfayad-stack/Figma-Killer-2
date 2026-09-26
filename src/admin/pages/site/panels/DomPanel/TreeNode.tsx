@@ -11,11 +11,13 @@
  * root, class names, VC names, prefs, drop state) as a prop. What is left here
  * is the one fact that is genuinely per-row and changes independently:
  *
- *     const isHovered = useEditorStore((s) => s.hoveredNodeId === nodeId)
+ *     const isHovered = useIsNodeHovered(nodeId)
  *
- * Everything else reaches the store through `getState()` inside an event
- * handler, which costs no subscription at all (the pattern `BoardFrameView`
- * adopted in `perf-02`).
+ * — a KEYED read of `canvas/canvasHover.ts`, not a store subscription (P2-I):
+ * a crossing wakes exactly the two rows involved, and no row pays anything on
+ * an unrelated store change. Everything else reaches the store through
+ * `getState()` inside an event handler, which costs no subscription at all
+ * (the pattern `BoardFrameView` adopted in `perf-02`).
  *
  * Drag-and-drop:
  * - Each row is a @dnd-kit draggable item with DOMPanel-owned targets.
@@ -28,13 +30,15 @@
  * - A windowed tree has no nested `role="group"` DOM to convey depth, so each
  *   row states its own position: `aria-level` / `aria-posinset` /
  *   `aria-setsize`, the flat-DOM form the WAI-ARIA tree pattern defines.
- * - onFocus/onBlur focus ring (WCAG SC 2.4.7).
+ * - A `:focus-visible` ring drawn by `TreeRow.module.css` (WCAG SC 2.4.7) —
+ *   CSS, not a focus state here, so a mouse click draws no ring.
  * - height: 28px (Guideline #357 — compact density; WCAG 2.5.5 touch target
  *   NOT required for editor chrome per user directive / Guideline #357).
  */
 import { memo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
+import { setCanvasHover, useIsNodeHovered } from '@site/canvas/canvasHover'
 import type { PageNode } from '@core/page-tree'
 import { useDraggable } from '@dnd-kit/core'
 import { useExpansionStore } from './DomTreeContext'
@@ -50,6 +54,7 @@ import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
 import { LayerTreeNodeContent } from './LayerTreeNodeContent'
 import { isNarrowEditorChromeViewport } from '@site/layout/responsiveChrome'
+import { returnKeyboardToCanvas } from '@site/canvas/canvasKeyboardFocus'
 import type { LayerRowSpanPosition } from './layerRows'
 import styles from './TreeNode.module.css'
 
@@ -125,10 +130,10 @@ export const TreeNode = memo(function TreeNode({
 }: TreeNodeProps) {
   const nodeId = node.id
 
-  // The ONLY per-row store subscription. Hover flips on every pointer move
-  // across the tree and affects exactly two rows, so it stays per-row rather
+  // The ONLY per-row reactive read. Hover flips on every pointer move across
+  // the tree and affects exactly two rows, so it stays per-row (keyed) rather
   // than becoming a prop that would re-render the whole mounted window.
-  const isHovered = useEditorStore((s) => s.hoveredNodeId === nodeId)
+  const isHovered = useIsNodeHovered(nodeId)
 
   // Delete confirmation — gated by `confirmBeforeDelete` preference. The
   // hook returns a function that either runs `commit` immediately (pref off)
@@ -139,7 +144,6 @@ export const TreeNode = memo(function TreeNode({
   const { registerRow } = useDomPanelRowRegistry()
 
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
-  const [isFocused, setIsFocused] = useState(false)
   const [isRenaming, setIsRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState('')
 
@@ -310,7 +314,6 @@ export const TreeNode = memo(function TreeNode({
         depth={depth}
         selected={selected}
         hovered={isHovered}
-        focused={isFocused}
         locked={node.locked}
         hidden={node.hidden}
         dragging={isDragging}
@@ -357,6 +360,11 @@ export const TreeNode = memo(function TreeNode({
         tabIndex={0}
         onClick={(e) => {
           e.stopPropagation()
+          // OD-15 — a POINTER pick hands the keyboard back to the canvas, as a
+          // canvas click would, so the arrows move the layer just picked.
+          // `detail` is 0 for a click synthesised from the keyboard, which
+          // keeps the tree's own keys (the a11y path).
+          if (e.detail > 0) returnKeyboardToCanvas()
           // Modifier-aware selection (multi-select): Cmd/Ctrl-click toggles,
           // Shift-click extends a range from the anchor. Modifier-clicks do
           // NOT toggle expansion — that's reserved for plain clicks so users
@@ -390,10 +398,8 @@ export const TreeNode = memo(function TreeNode({
           }
           setContextMenu({ x: e.clientX, y: e.clientY })
         }}
-        onMouseEnter={() => useEditorStore.getState().hoverNode(nodeId)}
-        onMouseLeave={() => useEditorStore.getState().hoverNode(null)}
-        onFocus={() => setIsFocused(true)}
-        onBlur={() => setIsFocused(false)}
+        onMouseEnter={() => setCanvasHover(nodeId)}
+        onMouseLeave={() => setCanvasHover(null)}
       >
         <LayerTreeNodeContent
           moduleId={node.moduleId}

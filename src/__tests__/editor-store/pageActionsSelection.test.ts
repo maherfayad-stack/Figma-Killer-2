@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'bun:test'
 import { selectRightSidebarExpanded, useEditorStore } from '@site/store/store'
+import { getCanvasHover, setCanvasHover } from '@site/canvas/canvasHover'
 import '@modules/base/index'
 
 function freshStore() {
@@ -10,8 +11,6 @@ function freshStore() {
     activeDocument: null,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
-    hoveredBreakpointId: null,
     activeInlineEdit: null,
     activeClassId: null,
     propertiesPanel: { collapsed: false, x: 0, y: 0, width: 360 },
@@ -34,9 +33,8 @@ describe('page actions selection state', () => {
       .getState()
       .insertNode('base.text', { text: 'Old page node' }, sourcePage.rootNodeId)
     useEditorStore.getState().selectNode(selectedNodeId)
+    setCanvasHover(selectedNodeId, 'desktop')
     useEditorStore.setState({
-      hoveredNodeId: selectedNodeId,
-      hoveredBreakpointId: 'desktop',
       activeInlineEdit: { nodeId: selectedNodeId, prop: 'text' },
       activeClassId: 'stale-class-id',
     } as Parameters<typeof useEditorStore.setState>[0])
@@ -49,8 +47,7 @@ describe('page actions selection state', () => {
     expect(state.activePageId).toBe(nextPage.id)
     expect(state.selectedNodeId).toBeNull()
     expect(state.selectedNodeIds).toEqual([])
-    expect(state.hoveredNodeId).toBeNull()
-    expect(state.hoveredBreakpointId).toBeNull()
+    expect(getCanvasHover()).toBeNull()
     expect(state.activeInlineEdit).toBeNull()
     expect(state.activeClassId).toBeNull()
     expect(selectRightSidebarExpanded(state)).toBe(false)

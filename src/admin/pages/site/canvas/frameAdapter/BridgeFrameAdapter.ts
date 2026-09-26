@@ -53,6 +53,7 @@ import { Value } from '@sinclair/typebox/value'
 import {
   buildStampIndex,
   OutboundEnvelopeSchema,
+  RESIZE_SNAP_SIBLINGS_MAX,
   RUNTIME_MESSAGE_SOURCE,
   toInboundEnvelope,
   toStampId,
@@ -67,6 +68,7 @@ import type {
   NodeMeasurement,
   NodeRef,
   OptimisticDomOps,
+  ResizeTargetOptions,
   Unsubscribe,
 } from './FrameDocumentAdapter'
 
@@ -176,10 +178,6 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
         index,
       })
     },
-    text: (nodeId, text) => {
-      const ref = this.toWireRef(nodeId)
-      this.post({ type: 'optimistic.text', nodeId: ref.nodeId, occurrenceIndex: ref.occurrenceIndex, text })
-    },
     style: (nodeId, patch, className) => {
       const ref = this.toWireRef(nodeId)
       this.post({ type: 'optimistic.style', ref, patch, ...(className === undefined ? {} : { className }) })
@@ -187,6 +185,10 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
     clearStyle: (nodeId) => {
       const ref = this.toWireRef(nodeId)
       this.post({ type: 'optimistic.style:clear', ref })
+    },
+    revert: (nodeIds) => {
+      if (nodeIds.length === 0) return
+      this.post({ type: 'optimistic.revert', refs: nodeIds.map((nodeId) => this.toWireRef(nodeId)) })
     },
   }
 
@@ -312,8 +314,22 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
     this.post({ type: 'setMode', mode })
   }
 
-  setResizeTarget(ref: NodeRef | null, { proportional }: { proportional: boolean }): void {
-    this.post({ type: 'setResizeTarget', ref: ref ? this.toWireRef(ref.nodeId) : null, proportional })
+  setResizeTarget(ref: NodeRef | null, { proportional, sizing, snap }: ResizeTargetOptions): void {
+    this.post({
+      type: 'setResizeTarget',
+      ref: ref ? this.toWireRef(ref.nodeId) : null,
+      proportional,
+      ...(sizing === undefined ? {} : { sizing }),
+      ...(snap === undefined
+        ? {}
+        : {
+            snap: {
+              siblings: snap.siblings.slice(0, RESIZE_SNAP_SIBLINGS_MAX).map((sibling) => this.toWireRef(sibling.nodeId)),
+              parent: snap.parent ? this.toWireRef(snap.parent.nodeId) : null,
+              zoom: snap.zoom,
+            },
+          }),
+    })
   }
 
   startTextEdit(nodeId: string, allowed: boolean, text?: string): void {
@@ -411,6 +427,26 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
           patch: message.patch,
         })
         return
+      // canvas-26 — guides name no node, so they pass through like `error`.
+      case 'resize:guides':
+        this.emit({ type: 'resize:guides', guides: message.guides })
+        return
+      // P2-B — keyboard carries no node id, so, like `error`, it passes
+      // through with no wire -> canonical translation.
+      case 'key':
+        this.emit({
+          type: 'key',
+          phase: message.phase,
+          key: message.key,
+          code: message.code,
+          location: message.location,
+          repeat: message.repeat,
+          modifiers: message.modifiers,
+        })
+        return
+      case 'blur':
+        this.emit({ type: 'blur' })
+        return
       case 'wheel':
         this.emit({
           type: 'wheel',
@@ -422,11 +458,10 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
           modifiers: message.modifiers,
         })
         return
+      // canvas-24 — the same ancestor walk a click gets: the innermost stamp
+      // of a double-click inside a package component is one the tree never saw.
       case 'text:editStart':
-        this.emit({
-          type: 'text:editStart',
-          nodeId: this.toCanonicalNodeId(message.nodeId, message.occurrenceIndex),
-        })
+        this.emit({ type: 'text:editStart', nodeId: this.nearestKnownNodeId(message) ?? message.nodeId })
         return
       case 'text:commit':
         this.emit({

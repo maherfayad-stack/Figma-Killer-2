@@ -26,7 +26,7 @@
  * so this handler never sees one.
  */
 import { Type } from '@core/utils/typeboxHelpers'
-import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { readTranslationCatalog } from './translationCatalog'
 import { findHardcodedStrings } from './hardcodedStrings'
@@ -72,7 +72,6 @@ export async function tryServeStudioTranslations(req: Request, url: URL, pathnam
     return null
   } catch (err) {
     rethrowProjectDirRefusal(err)
-    console.error('[studio:translations]', err)
-    return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    return internalServerError('[studio:translations]', err)
   }
 }

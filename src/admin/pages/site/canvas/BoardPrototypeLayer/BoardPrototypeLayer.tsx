@@ -68,6 +68,7 @@ import { resolvedLinkSourceIds } from '@site/store/slices/prototypeSelectors'
 import { actionTakesTarget, type PrototypeLink } from '@core/studio-prototype'
 import { CanvasViewportActionsContext } from '../CanvasContexts'
 import { clearCanvasPointerRelay, markCanvasPointerRelay } from '../canvasPointerRelay'
+import { guardDragSession } from '@core/studio-runtime'
 import { screenToBoard } from '../CanvasRulers/rulerGeometry'
 import {
   frameAtBoardPoint,
@@ -102,7 +103,11 @@ export function BoardPrototypeLayer() {
   // selector that builds a fresh array is an infinite render loop, because
   // zustand compares with `Object.is` and a new array is never equal to the
   // last one. See `prototypeSelectors`' module doc.
-  const pages = useEditorStore((s) => s.site?.pages)
+  //
+  // The pages only while connectors are drawn: Mutative replaces `site.pages`
+  // on every edit, and in design mode this layer reads nothing from it, so a
+  // design-mode keystroke must not re-render it (P2-I, PERF-12).
+  const pages = useEditorStore((s) => (boardMode === 'prototype' ? s.site?.pages : undefined))
 
   // Resolve each link's source element against the live tree BEFORE measuring:
   // a stored node id is a guess about a line number, and the id that actually
@@ -326,7 +331,9 @@ function PrototypeHandle({ localRects }: { localRects: ReadonlyMap<string, Board
       mode: 'drag',
     })
 
+    let lastMove: PointerEvent | null = null
     const onMove = (e: PointerEvent) => {
+      lastMove = e
       const point = toBoard(e)
       if (!point) return
       const hovered = frameAtBoardPoint(frameRects, point)
@@ -340,6 +347,7 @@ function PrototypeHandle({ localRects }: { localRects: ReadonlyMap<string, Board
     }
 
     const finish = (e: PointerEvent) => {
+      disposeGuard()
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', finish)
       window.removeEventListener('pointercancel', onCancel)
@@ -359,6 +367,7 @@ function PrototypeHandle({ localRects }: { localRects: ReadonlyMap<string, Board
     }
 
     const onCancel = () => {
+      disposeGuard()
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', finish)
       window.removeEventListener('pointercancel', onCancel)
@@ -367,6 +376,14 @@ function PrototypeHandle({ localRects }: { localRects: ReadonlyMap<string, Board
       cancelLinkDraft()
     }
 
+    // ERR-12 — a move with the button up ends the link where the rubber band
+    // last was; a window blur drops the draft.
+    const disposeGuard = guardDragSession({
+      documents: [document],
+      focusWindow: window,
+      onReleaseLost: (e) => finish(lastMove ?? e),
+      onAbandon: onCancel,
+    })
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', finish)
     window.addEventListener('pointercancel', onCancel)

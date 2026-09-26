@@ -23,6 +23,8 @@ afterEach(() => {
 // so the tail bytes don't need to form a decodable image.
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])
 const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0])
+/** Same length as `PNG_BYTES`, different content. */
+const OTHER_PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 1])
 const NOT_AN_IMAGE = new TextEncoder().encode('<html><body>not an image</body></html>')
 
 function uploadRequest(fields: Record<string, string>, file?: { name: string; bytes: Uint8Array }): Request {
@@ -81,13 +83,34 @@ describe('tryServeStudioAssetUpload — happy path', () => {
     const req1 = uploadRequest({ dir: tmpDir }, { name: 'logo.png', bytes: PNG_BYTES })
     await tryServeStudioAssetUpload(req1, new URL(req1.url), '/admin/api/studio/asset-upload')
 
-    const req2 = uploadRequest({ dir: tmpDir }, { name: 'logo.png', bytes: PNG_BYTES })
+    const req2 = uploadRequest({ dir: tmpDir }, { name: 'logo.png', bytes: OTHER_PNG_BYTES })
     const res2 = await tryServeStudioAssetUpload(req2, new URL(req2.url), '/admin/api/studio/asset-upload')
     const body2 = (await res2!.json()) as { relPath: string }
 
     expect(body2.relPath).toBe('src/assets/logo-2.png')
-    expect(fs.existsSync(path.join(tmpDir, 'src/assets/logo.png'))).toBe(true)
+    expect(fs.readFileSync(path.join(tmpDir, 'src/assets/logo.png'))).toEqual(Buffer.from(PNG_BYTES))
     expect(fs.existsSync(path.join(tmpDir, 'src/assets/logo-2.png'))).toBe(true)
+  })
+
+  it('reuses a byte-identical file in the target dir instead of writing logo-2 (IMG-1)', async () => {
+    const req1 = uploadRequest({ dir: tmpDir }, { name: 'logo.png', bytes: PNG_BYTES })
+    await tryServeStudioAssetUpload(req1, new URL(req1.url), '/admin/api/studio/asset-upload')
+    const req2 = uploadRequest({ dir: tmpDir }, { name: 'logo.png', bytes: PNG_BYTES })
+    const res2 = await tryServeStudioAssetUpload(req2, new URL(req2.url), '/admin/api/studio/asset-upload')
+
+    expect(await res2!.json()).toMatchObject({ relPath: 'src/assets/logo.png', deduped: true })
+    expect(fs.readdirSync(path.join(tmpDir, 'src/assets'))).toEqual(['logo.png'])
+  })
+
+  it('returns no src for a file only an import can reach, and the site-root src for one under public/ (IMG-1)', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 'app' }), 'utf8')
+    const bundled = uploadRequest({ dir: tmpDir }, { name: 'hero.png', bytes: PNG_BYTES })
+    const bundledRes = await tryServeStudioAssetUpload(bundled, new URL(bundled.url), '/admin/api/studio/asset-upload')
+    expect(await bundledRes!.json()).toMatchObject({ relPath: 'src/assets/hero.png', src: null })
+
+    const served = uploadRequest({ dir: tmpDir, targetDir: 'public/img' }, { name: 'hero.png', bytes: PNG_BYTES })
+    const servedRes = await tryServeStudioAssetUpload(served, new URL(served.url), '/admin/api/studio/asset-upload')
+    expect(await servedRes!.json()).toMatchObject({ relPath: 'public/img/hero.png', src: '/img/hero.png' })
   })
 
   it('sanitizes an uploaded SVG before writing it — landAssetBytes closes the same gap studio_fetch_remote_asset needs closed', async () => {

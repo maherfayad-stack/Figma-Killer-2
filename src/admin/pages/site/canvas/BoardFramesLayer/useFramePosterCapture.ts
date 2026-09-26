@@ -14,11 +14,13 @@
  * concurrently for a different purpose (frame export/diff) — this hook does
  * not touch that component.
  *
- * Fires once per settled `(page, width)` pair: the effect re-runs whenever
+ * WHETHER it fires is {@link framePosterNeeded} (P2-I, PERF-5): only once
+ * the frame has left the screen and is still held by the pool — never for a
+ * frame the user is looking at (and editing). The effect re-runs whenever
  * `page` (a new object reference on any edit — see `frameSnapshotCache.ts`),
- * `width`, or `isOnScreen` changes, and skips scheduling work when a fresh
- * poster is already cached or a capture for the exact same pair is already in
- * flight.
+ * `width`, `isOnScreen` or `isMounted` changes, and skips scheduling work when
+ * a fresh poster is already cached or a capture for the exact same pair is
+ * already in flight.
  *
  * WHEN it fires is `framePosterQueue`'s decision, not this hook's (S1). Each
  * frame used to arm its own settle timer, so a zoom-out that admitted a dozen
@@ -56,6 +58,9 @@ import { resolvePortalDocument } from '../frameAdapter/resolvePortalDocument'
 import { getFramePoster, setFramePoster } from './frameSnapshotCache'
 import { cancelFramePoster, requestFramePoster } from './framePosterQueue'
 
+/** The User Timing entry every poster capture records (name of a `performance.measure`). */
+const POSTER_CAPTURE_MEASURE = 'studio:poster-capture'
+
 /** Longest edge of a captured poster, in device pixels — a placeholder is shown small while panned/zoomed out, so it never needs full frame resolution. */
 const POSTER_MAX_EDGE = 480
 
@@ -75,11 +80,44 @@ function findVisibleIframe(containerEl: HTMLElement): HTMLIFrameElement | null {
   return null
 }
 
+interface PosterNeed {
+  /** A poster for exactly this page revision and width is already cached. */
+  hasFreshPoster: boolean
+  isOnScreen: boolean
+  /** The frame holds a live iframe (on screen, or kept warm by the pool). */
+  isMounted: boolean
+}
+
+/**
+ * P2-I (PERF-5) — whether this frame should ask for a poster now: only while
+ * it is OFF screen and still holds a live iframe, and never for a frame the
+ * user is looking at.
+ *
+ * A poster is only ever LOOKED AT once a frame has left the screen, and a
+ * capture is not cheap: `html-to-image` clones the document and copies every
+ * element's computed style, measured at 880–1,160 ms of main thread per
+ * 310-element frame on the large corpus (`canvas-feel-budgets.e2e.ts`). The
+ * effect used to request one whenever an ON-SCREEN frame had no poster for its
+ * current `Page` object — at load, every visible frame (nine ~1 s stalls on
+ * the corpus the first time the board went quiet), and after every edit, since
+ * an edit makes a new `Page` (a ~1.1 s stall 600 ms into the pause after
+ * typing, right where the next click lands).
+ *
+ * Now the picture is taken on the transition to off screen while the pool
+ * still holds the frame (`framePool.ts`), or when a pooled off-screen frame's
+ * page changes. A frame evicted before the board went quiet shows the plain
+ * title placeholder, never an out-of-date picture.
+ */
+export function framePosterNeeded({ hasFreshPoster, isOnScreen, isMounted }: PosterNeed): boolean {
+  return isMounted && !isOnScreen && !hasFreshPoster
+}
+
 export function useFramePosterCapture(
   frameBodyRef: RefObject<HTMLElement | null>,
   page: Page,
   width: number,
   isOnScreen: boolean,
+  isMounted: boolean,
 ): void {
   const inFlightRef = useRef<{ page: Page; width: number } | null>(null)
   // This frame's identity in the shared queue, so a re-request replaces its
@@ -87,8 +125,7 @@ export function useFramePosterCapture(
   const tokenRef = useRef<object>({})
 
   useEffect(() => {
-    if (!isOnScreen) return
-    if (getFramePoster(page, width)) return
+    if (!framePosterNeeded({ hasFreshPoster: getFramePoster(page, width) !== undefined, isOnScreen, isMounted })) return
     if (inFlightRef.current?.page === page && inFlightRef.current.width === width) return
 
     const token = tokenRef.current
@@ -105,7 +142,7 @@ export function useFramePosterCapture(
     })
 
     return () => cancelFramePoster(token)
-  }, [frameBodyRef, page, width, isOnScreen])
+  }, [frameBodyRef, page, width, isOnScreen, isMounted])
 }
 
 async function capturePoster(iframe: HTMLIFrameElement, page: Page, width: number): Promise<void> {
@@ -122,6 +159,7 @@ async function capturePoster(iframe: HTMLIFrameElement, page: Page, width: numbe
       POSTER_MAX_EDGE / Math.max(1, captureHeight),
     )
 
+    const startedAt = performance.now()
     const { toCanvas } = await import('html-to-image')
     const canvas = await toCanvas(documentElement, {
       cacheBust: false,
@@ -131,6 +169,9 @@ async function capturePoster(iframe: HTMLIFrameElement, page: Page, width: numbe
       height: captureHeight,
     })
     setFramePoster(page, width, canvas.toDataURL('image/png'))
+    // Visible in a DevTools profile, and how `canvas-feel-budgets.e2e.ts`
+    // proves the frame being edited is never rasterized under the user.
+    performance.measure(POSTER_CAPTURE_MEASURE, { start: startedAt, detail: { pageId: page.id } })
   } catch (err) {
     // Best-effort — a failed rasterization just leaves the plain title
     // placeholder standing; it is never the only content a user can see.

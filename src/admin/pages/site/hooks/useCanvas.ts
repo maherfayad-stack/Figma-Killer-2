@@ -13,16 +13,14 @@
  * - Plain wheel → pan vertically (and horizontally with shift)
  * - Space + left-drag → pan
  * - Pinch (touch) → zoom+pan
- * - +/- keys → zoom in/out (committed immediately)
- * - Ctrl/Cmd+0 → reset to 100% zoom
- * - Shift+1 → zoom to fit (every visible frame, centered) — `canvas.zoomToFit`
- * - Shift+2 → zoom to selection (the selected node(s), centered) — `canvas.zoomToSelection`
+ * - The viewport KEYS (+ / − / ⌘0 / ⇧0 / ⇧1 / ⇧2 / Space) are a scope on the
+ *   editor key ladder, registered through `useCanvasViewportKeys` — this hook
+ *   owns no key listener of its own (P2-B, IX-15).
  */
 
 import { useRef, useEffect, useCallback, type RefObject } from 'react'
 import { useGesture } from '@use-gesture/react'
 import { useEditorStore, type EditorStore } from '@site/store/store'
-import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
 import {
   applyZoom,
   applyPan,
@@ -41,8 +39,8 @@ import {
   isCanvasSpacePanActive,
   isMiddleMousePointerPan,
   panDeltaFromWheel,
-  setCanvasSpacePanActive,
 } from '@site/canvas/canvasPanInput'
+import { useCanvasViewportKeys } from './useCanvasViewportKeys'
 
 /**
  * The live canvas transform — `{ zoom, panX, panY }`.
@@ -137,8 +135,6 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
 
   // Actions — Zustand actions are stable references, subscribing to them is fine.
   const setCanvasTransform = useEditorStore((s) => s.setCanvasTransform)
-  const zoomIn = useEditorStore((s) => s.zoomIn)
-  const zoomOut = useEditorStore((s) => s.zoomOut)
   const resetView = useEditorStore((s) => s.resetView)
 
   // ─── DOM write helper ─────────────────────────────────────────────────────
@@ -183,15 +179,6 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
       el.removeAttribute('data-animating')
     }
 
-    // S4 — publish "the viewport is moving" to the consumers that cannot poll
-    // `transformRef` (it never changes identity) and cannot wait for the 100 ms
-    // debounced store commit: today the selection overlay's measurement pump,
-    // which is otherwise event-driven and idle. This is the ONE funnel every
-    // transform write goes through, gesture and animated alike. An animated
-    // write keeps painting for `ANIMATED_TRANSFORM_MS` after this call returns,
-    // so it holds the flag for that long instead of the default idle window.
-    markCanvasViewportActivity(animated ? ANIMATED_TRANSFORM_MS : 0)
-
     // setProperty avoids the same property-assignment lint trip as above.
     el.style.setProperty('transform', `translate(${t.panX}px, ${t.panY}px) scale(${t.zoom})`)
 
@@ -204,6 +191,17 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
     // pinch and then snap. The default lives in `CanvasTransformLayer.module.css`,
     // not in a `var()` fallback (CLAUDE.md's no-fallback rule).
     el.style.setProperty('--canvas-zoom', String(t.zoom))
+
+    // S4 — publish "the viewport is moving" to the consumers that cannot poll
+    // `transformRef` (it never changes identity) and cannot wait for the 100 ms
+    // debounced store commit: the selection overlay's measurement pump, the
+    // rulers, and the toolbar/inspector that follow the board (PERF-3/PERF-4).
+    // This is the ONE funnel every transform write goes through, gesture and
+    // animated alike, and it runs AFTER the write so a per-write listener sees
+    // the transform it is following. An animated write keeps painting for
+    // `ANIMATED_TRANSFORM_MS` after this call returns, so it holds the flag
+    // for that long instead of the default idle window.
+    markCanvasViewportActivity(animated ? ANIMATED_TRANSFORM_MS : 0)
 
     // WS-5.4 — promote to a GPU-composited layer for the duration of the
     // gesture, then release. `el.style.willChange` reads back the resolved
@@ -273,12 +271,11 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
     updateTransform({ zoom: t.zoom, ...next })
   }
 
-  // Exception #1: referenced in the Cmd/Ctrl+0 reset shortcut's useEffect dep array.
-  const resetCanvasView = useCallback(() => {
+  const resetCanvasView = () => {
     resetView()
     transformRef.current = { zoom: 1, panX: 0, panY: 0 }
     applyTransformToDOM(transformRef.current, true)
-  }, [resetView, applyTransformToDOM])
+  }
 
   /**
    * Pan the canvas so the given breakpoint's frame is horizontally centered and
@@ -353,114 +350,13 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
     commitTransform,
   })
 
-  // ─── Spacebar tracking (for Space+drag pan) ───────────────────────────────
-
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.code === 'Space' && !e.repeat) {
-        const target = e.target as HTMLElement
-        // Don't intercept space in inputs/textareas. Inline-edit keystrokes
-        // never reach here: IframeFrameSurface's key forwarding stands down
-        // during a session, so no space clone is dispatched on this document.
-        if (
-          target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.isContentEditable
-        ) return
-        e.preventDefault()
-        setCanvasSpacePanActive(document, 'parentDocument', true)
-      }
-    }
-    function onKeyUp(e: KeyboardEvent) {
-      if (e.code === 'Space') {
-        setCanvasSpacePanActive(document, 'parentDocument', false)
-      }
-    }
-    document.addEventListener('keydown', onKeyDown)
-    document.addEventListener('keyup', onKeyUp)
-    return () => {
-      setCanvasSpacePanActive(document, 'parentDocument', false)
-      document.removeEventListener('keydown', onKeyDown)
-      document.removeEventListener('keyup', onKeyUp)
-    }
-  }, [])
-
-  // ─── Browser-style reset shortcut ─────────────────────────────────────────
-
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if (!getKeybindingForCommand('canvas.zoomReset')?.match(e)) return
-
-      const target = e.target as HTMLElement
-      if (
-        target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
-        target.isContentEditable
-      ) return
-
-      e.preventDefault()
-      resetCanvasView()
-    }
-
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('keydown', onKeyDown)
-    }
-  }, [resetCanvasView])
-
-  // ─── Keyboard shortcuts ───────────────────────────────────────────────────
-
-  /**
-   * Resolve the current canvas viewport center, in canvas-local coords.
-   * Used as the zoom origin for keyboard +/− shortcuts so the zoom is
-   * anchored to the middle of the visible area, not the document top-left.
-   */
-  const getViewportCenter = (): { x: number; y: number } | null => {
-    const el = canvasRootRef.current
-    if (!el) return null
-    const rect = el.getBoundingClientRect()
-    return { x: rect.width / 2, y: rect.height / 2 }
-  }
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    // `K1` — load-bearing: a React synthetic event crosses the iframe boundary
-    // through the fiber tree even though a native one does not, and the target
-    // check below can't see it (the event is retargeted at the iframe element,
-    // whose `isContentEditable` is false). `-` typed mid-edit would zoom out.
-    if (useEditorStore.getState().activeInlineEdit) return
-
-    // Don't intercept typing — let inputs and contenteditables consume keys.
-    const target = e.target as HTMLElement | null
-    if (
-      target &&
-      (target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
-        target.isContentEditable)
-    ) return
-
-    // Zoom in/out with +/- keys — zoom around the canvas viewport center
-    if (e.key === '=' || e.key === '+') {
-      e.preventDefault()
-      const c = getViewportCenter()
-      if (c) zoomIn(c.x, c.y)
-      else zoomIn()
-    } else if (e.key === '-') {
-      e.preventDefault()
-      const c = getViewportCenter()
-      if (c) zoomOut(c.x, c.y)
-      else zoomOut()
-    } else if (getKeybindingForCommand('canvas.zoomToFit')?.match(e)) {
-      // `Shift+1` → zoom to fit every visible frame (D3 — was a "reset to
-      // 100%" alias before; see this function's own module doc).
-      e.preventDefault()
-      zoomToFit()
-    } else if (getKeybindingForCommand('canvas.zoomToSelection')?.match(e)) {
-      // `Shift+2` → zoom to the current selection (D3 — did not exist before).
-      e.preventDefault()
-      zoomToSelection()
-    }
-    // Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z handled by App-level listener
-  }
+  // ─── Keyboard: one scope on the editor key ladder ─────────────────────────
+  //
+  // + / − / ⌘0 / ⇧0 / ⇧1 / ⇧2 and Space-to-pan. No listener here: the scope
+  // registers with the ONE dispatcher `SitePage` mounts, so the keys work
+  // with focus anywhere in the editor and stand down during an inline edit
+  // (P2-B, IX-15). See `useCanvasViewportKeys`.
+  useCanvasViewportKeys({ enabled, canvasRootRef, resetCanvasView, zoomToFit, zoomToSelection })
 
   // ─── External zoom/pan sync ───────────────────────────────────────────────
   //
@@ -597,6 +493,10 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
       drag: {
         filterTaps: true,
         pointer: { buttons: [...CANVAS_DRAG_PAN_BUTTONS] },
+        // No arrow-key "accessible drag": the library would bind its own
+        // `onKeyDown` to the canvas div, a second key path beside the one
+        // dispatcher. Arrow keys on the canvas mean what `keybindings.ts` says.
+        keys: false,
       },
       pinch: {
         eventOptions: { passive: false },
@@ -646,7 +546,6 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
 
   return {
     bind,
-    handleKeyDown,
     panBy,
     centerOnBreakpointFrame,
     // viewport-01 — `CanvasRoot` publishes these three to the store as

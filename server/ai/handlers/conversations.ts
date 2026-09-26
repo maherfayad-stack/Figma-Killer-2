@@ -37,7 +37,7 @@ import {
   updateConversationForUser,
 } from '../conversations/store'
 import { conversationProjectKey } from '../conversations/projectScope'
-import { isConversationStreaming } from './chat'
+import { isConversationStreaming } from '../conversations/activeStreams'
 import { endClaudeCliConversation } from '../drivers/claudeCliWarmTurn'
 
 const CreateBodySchema = Type.Object({
@@ -46,6 +46,8 @@ const CreateBodySchema = Type.Object({
   modelId: Type.String({ minLength: 1 }),
   /** The open project's absolute dir. Validated, never trusted — a dir outside `studio-workspace/` keys as "no project", not as itself. */
   dir: Type.Optional(Type.String({ minLength: 1 })),
+  /** `default` when the client staged Studio's default model, `chosen` when the user picked it. Omitted is `chosen` — never routed (AI-25). */
+  modelSource: Type.Optional(Type.Union([Type.Literal('default'), Type.Literal('chosen')])),
 })
 
 const UpdateBodySchema = Type.Object({

@@ -26,7 +26,13 @@
  *     because both are render-visible state the overlay already holds),
  *   - a pan/zoom (`canvasViewportActivity.ts` — the live transform is a ref
  *     that never changes identity and the store commit is 100 ms late, so the
- *     gesture publishes itself),
+ *     gesture publishes itself) — but ONLY when the rings are painted in the
+ *     parent document (`ringsFollowViewport: false`: the brief startup window
+ *     before the in-frame overlay root exists, and a live frame's fallback).
+ *     Rings inside the frame move with its CSS transform for free, and the
+ *     toolbar/inspector follow every transform write arithmetically
+ *     (`selectionChromeViewportFollow.ts`, PERF-3), so a pan over an in-frame
+ *     overlay arms NO loop — it only takes one settle pass when it ends,
  *   - the window between a bridge frame's `hmr:before` and `hmr:after`, where
  *     the frame's whole DOM is being swapped out from under us and the
  *     same-origin observers below cannot see into it at all.
@@ -48,7 +54,12 @@
  *   - a parent-window resize, which also invalidates the cached parent-document
  *     anchor because the canvas root's own rect moved,
  *   - and the overlay's own React effects (selection change, committed
- *     pan/zoom), which call `schedule()` directly.
+ *     pan/zoom, hover target change), which call `schedule()` directly.
+ *     The hover one is easy to forget and nothing else covers it: hover
+ *     moving straight from one node to another (body → main → an icon)
+ *     mutates nothing but the ring itself, which the mutation observer
+ *     filters as chrome, so without it the ring kept the FIRST node's box
+ *     under the new node's id.
  *
  * ## Why the mutation observer skips `overlayRoot`
  *
@@ -61,6 +72,7 @@
  * got written in the first place. Filtering is exact and costs one `contains`.
  */
 
+import { isSelectionChromeMutation } from '@core/studio-runtime'
 import type { CanvasRectSource } from './canvasDomGeometry'
 import { isCanvasGestureActive, onCanvasGestureChange } from './canvasGesture'
 import { isCanvasViewportActive, onCanvasViewportActivityChange } from './canvasViewportActivity'
@@ -95,11 +107,13 @@ export interface OverlayMeasureSchedulerOptions {
   /** The frame's iframe element — both the measurement subject and the event source. */
   iframeElement: HTMLIFrameElement | null
   /**
-   * The in-iframe overlay root the overlay writes its rings into, so the
-   * mutation observer can ignore the overlay's own writes. `null` in live mode
-   * and during the brief startup window before the injector's effect has run.
+   * True when a pan/zoom moves every ring this overlay paints without a
+   * measurement: the rings live inside the frame document (the in-iframe
+   * overlay root exists), or a bridge frame's runtime draws them there. False
+   * only for rings painted in the PARENT document from zoom-converted math —
+   * those need a per-frame pass for the whole gesture.
    */
-  overlayRoot: HTMLElement | null
+  ringsFollowViewport: boolean
   /**
    * Run one measurement pass. Called from the rAF pump — never synchronously
    * from `createOverlayMeasureScheduler` itself, so the caller may close over
@@ -135,14 +149,14 @@ export interface OverlayMeasureScheduler {
 export function createOverlayMeasureScheduler(
   options: OverlayMeasureSchedulerOptions,
 ): OverlayMeasureScheduler {
-  const { iframeElement, overlayRoot, measure, invalidateAnchor } = options
+  const { iframeElement, ringsFollowViewport, measure, invalidateAnchor } = options
 
   let disposed = false
   let frame = 0
   const holds = new Set<string>()
   if (options.continuous) holds.add('render')
   if (isCanvasGestureActive()) holds.add('gesture')
-  if (isCanvasViewportActive()) holds.add('viewport')
+  if (!ringsFollowViewport && isCanvasViewportActive()) holds.add('viewport')
 
   const pump = () => {
     frame = 0
@@ -169,7 +183,17 @@ export function createOverlayMeasureScheduler(
 
   const cleanups: Array<() => void> = []
   cleanups.push(onCanvasGestureChange((active) => setHold('gesture', active)))
-  cleanups.push(onCanvasViewportActivityChange((active) => setHold('viewport', active)))
+  cleanups.push(
+    onCanvasViewportActivityChange((active) => {
+      if (!ringsFollowViewport) {
+        setHold('viewport', active)
+        return
+      }
+      // Nothing to track mid-gesture (see the module doc); one settle pass
+      // when it ends, against the transform the board came to rest at.
+      if (!active) schedule()
+    }),
+  )
 
   const handleWindowResize = () => {
     invalidateAnchor()
@@ -225,12 +249,11 @@ export function createOverlayMeasureScheduler(
 
     if (typeof MutationObserver !== 'undefined') {
       const observer = new MutationObserver((records) => {
-        for (const record of records) {
-          // The overlay's own ring writes — see this module's docblock.
-          if (overlayRoot?.contains(record.target)) continue
-          schedule()
-          return
-        }
+        // The overlay's own ring writes — see this module's docblock. The
+        // same predicate the frame-fit and scroll-unroll observers use, so
+        // the four observers agree on what "chrome" is.
+        if (records.every(isSelectionChromeMutation)) return
+        schedule()
       })
       observer.observe(next.documentElement, {
         subtree: true,

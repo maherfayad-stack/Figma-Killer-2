@@ -19,6 +19,19 @@ import '@modules/base/index'
 
 const originalFetch = globalThis.fetch
 
+/**
+ * The Images section (P5-B3) reads two routes on mount; answer them as an
+ * empty project would, and hand every other request to `rest`.
+ */
+function withImageRoutes(rest: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>) {
+  return async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+    if (url.includes('/admin/api/studio/project-assets')) return jsonResponse({ assets: [] })
+    if (url.includes('/admin/api/studio/asset-ledger')) return jsonResponse({ unused: [], incomplete: false })
+    return rest(input, init)
+  }
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -77,13 +90,12 @@ function loadSite(vcs: VisualComponent[] = []) {
 beforeEach(() => {
   localStorage.clear()
   __resetAssetFavoritesForTests()
-  globalThis.fetch = mock(async () => jsonResponse({ value: null })) as typeof fetch
+  globalThis.fetch = mock(withImageRoutes(async () => jsonResponse({ value: null }))) as typeof fetch
   useEditorStore.setState({
     site: null,
     activePageId: null,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     activeDocument: null,
     _historyPast: [],
     _historyFuture: [],
@@ -182,11 +194,11 @@ describe('AssetsPanel', () => {
 
   it('pins a card to the notch without inserting it', async () => {
     const calls: Array<{ init?: RequestInit }> = []
-    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = mock(withImageRoutes(async (_input: RequestInfo | URL, init?: RequestInit) => {
       calls.push({ init })
       if (init?.method === 'PUT') return jsonResponse({ value: JSON.parse(String(init.body)).value })
       return jsonResponse({ value: { favorites: [] } })
-    }) as typeof fetch
+    })) as typeof fetch
 
     loadSite()
     render(<AssetsPanel />)

@@ -35,7 +35,7 @@ import { MIXED, isMixed, type Mixed } from '@ui/components/MixedValue'
 import { AlignBar } from '@ui/components/AlignBar'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
 import { pushToast } from '@ui/components/Toast'
-import { getErrorMessage } from '@core/utils/errorMessage'
+import { retryWhileUnreachable } from '@core/http'
 import { TrashSolidIcon } from 'pixel-art-icons/icons/trash-solid'
 import styles from './FrameBulkInspector.module.css'
 
@@ -50,6 +50,11 @@ function groupPresets(presets: DevicePreset[]): Map<string, DevicePreset[]> {
   return groups
 }
 const PRESET_GROUPS = groupPresets(DEVICE_PRESETS)
+
+// Loaded on first use (only "apply to all pages" saves a default). A module
+// function, because the React Compiler cannot compile a component that holds
+// an `import()` expression.
+const loadFrameDefaultsApi = () => import('@site/studio/frameDefaultsApi')
 function presetOptionValue(preset: DevicePreset): string {
   return `${preset.group}::${preset.name}`
 }
@@ -113,17 +118,23 @@ export function FrameBulkInspector() {
     applyWidthToAllFrames(width)
     setApplyingToAll(true)
     try {
-      const { saveFrameDefaults } = await import('@site/studio/frameDefaultsApi')
-      await saveFrameDefaults({ width }, getStudioWorkspaceDir())
+      const { saveFrameDefaults } = await loadFrameDefaultsApi()
+      // P3-A — the whole default, so writing it twice is harmless: a save that
+      // got no answer is tried again quietly first.
+      const dir = getStudioWorkspaceDir()
+      await retryWhileUnreachable(() => saveFrameDefaults({ width }, dir))
     } catch (err) {
+      // The frames on the board already changed; only the project default for
+      // pages added LATER is pending — a warning with its one-click retry.
+      console.error('[FrameBulkInspector] saving the frame default failed:', err)
       pushToast({
-        kind: 'error',
-        title: 'Failed to save frame default',
-        body: getErrorMessage(err, 'Unknown error saving the project frame default'),
+        kind: 'warning',
+        title: 'Frame default not saved',
+        body: 'Every frame on the board now has this width, but new pages will not start at it yet.',
+        action: { label: 'Try again', onSelect: () => void handleApplyToAllPages() },
       })
-    } finally {
-      setApplyingToAll(false)
     }
+    setApplyingToAll(false)
   }
 
   const handleFitHeight = () => {

@@ -36,6 +36,7 @@ import {
   runPermissionRequest,
 } from './permissionGate'
 import { getConnectorWorkspace } from './connectorWorkspace'
+import { getConnectorUserUrls } from './connectorUserUrls'
 
 export interface McpServerContext {
   db: DbClient
@@ -179,6 +180,10 @@ export function buildMcpServer(ctx: McpServerContext): Server {
         // reaches it and the tools would otherwise default to the wrong
         // project entirely.
         workspaceDir: getConnectorWorkspace(ctx.connectorId),
+        // The URLs the user pasted into the chat turn this connector serves
+        // (`connectorUserUrls.ts`); `undefined` for an external client, which
+        // then fetches from the fixed list only (`remoteFetchPolicy.ts`).
+        userSuppliedUrls: getConnectorUserUrls(ctx.connectorId),
         snapshot: null,
       })
     } catch (err) {

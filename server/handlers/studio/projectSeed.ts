@@ -44,6 +44,8 @@
  */
 import { cpSync, existsSync, readdirSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { pathEntryExists } from '@core/page-parser'
+import { resolveStudioDataRoot } from '../../runtimeDirs'
 import { PROJECT_DESIGN_SYSTEM_DIR } from './builtinDesignSystem'
 import { ensureDesignSystemFiles } from './designSystemFiles'
 import { mergeShellPackageJson } from './prototypeShell'
@@ -58,7 +60,7 @@ import { mergeStudioMeta } from './studioMeta'
  */
 export function resolveProjectSeedDir(env: Record<string, string | undefined> = process.env): string {
   const configured = env.STUDIO_PROJECT_SEED_DIR
-  return configured ? resolve(configured) : resolve(process.cwd(), '.data', 'studio-seed')
+  return configured ? resolve(configured) : join(resolveStudioDataRoot(env), 'studio-seed')
 }
 
 export interface ProjectSeedResult {
@@ -96,7 +98,9 @@ export function applyProjectSeed(
   if (existsSync(seedDir) && statSync(seedDir).isDirectory()) {
     for (const entry of readdirSync(seedDir)) {
       const target = join(projectDir, entry)
-      if (existsSync(target)) {
+      // `lstat`, not `existsSync`: a dangling symlink at the name reads as absent
+      // to `existsSync`, and the copy would follow it out of the project.
+      if (pathEntryExists(target)) {
         result.skipped.push(entry)
         continue
       }

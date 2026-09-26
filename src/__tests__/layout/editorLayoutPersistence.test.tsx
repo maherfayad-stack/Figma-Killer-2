@@ -92,7 +92,6 @@ function resetStore() {
     activePageId: null,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     activeBreakpointId: 'desktop',
     propertiesPanel: { collapsed: false, x: 0, y: 0, width: 360 },
     propertiesPanelMode: 'docked',
@@ -249,9 +248,9 @@ describe('AdminCanvasLayout — Studio site hydration gate', () => {
           authoredCss: '',
           trust: 'static',
           paletteHiddenModuleIds: [],
-          pageCount: 1,
+          pageList: [{ id: page.id, slug: page.slug, title: page.title }],
         })
-        const pageLine = JSON.stringify({ kind: 'page', page })
+        const pageLine = JSON.stringify({ kind: 'page', page, index: 0 })
         return new Response(`${metaLine}\n${pageLine}\n`, {
           status: 200,
           headers: { 'content-type': 'application/x-ndjson' },

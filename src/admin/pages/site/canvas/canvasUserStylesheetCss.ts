@@ -36,6 +36,7 @@
  */
 import type { SiteDocument } from '@core/page-tree'
 import { collectUserStylesheetCss } from '@core/publisher'
+import { canvasProjectAssetScope, projectAssetCssUrls } from './canvasProjectAssetUrl'
 import { rewritePrefersColorScheme } from './darkSchemeCssTransform'
 import { resolveViewportUnitsForCanvas, type CanvasViewport } from './resolveViewportUnits'
 
@@ -60,12 +61,15 @@ export type UserStylesheetCssBuilder = (
 
 interface Transforms {
   collect: typeof collectUserStylesheetCss
+  /** Site-root `url()`s → the project asset route (`canvasFrameCss.ts`'s first transform). Frame-invariant, so stage A. */
+  resolveAssets: (css: string) => string
   rewriteScheme: (css: string) => string
   resolveViewport: typeof resolveViewportUnitsForCanvas
 }
 
 const DEFAULT_TRANSFORMS: Transforms = {
   collect: collectUserStylesheetCss,
+  resolveAssets: (css) => projectAssetCssUrls(css, canvasProjectAssetScope()),
   rewriteScheme: rewritePrefersColorScheme,
   resolveViewport: resolveViewportUnitsForCanvas,
 }
@@ -101,7 +105,7 @@ export function createUserStylesheetCssMemo(
     const scopeTemplate = scope ? scope.template : false
     if (site !== lastSite || scopeId !== lastScopeId || scopeTemplate !== lastScopeTemplate) {
       const collected = site && scope ? transforms.collect(site, scope) : ''
-      schemeRewritten = transforms.rewriteScheme(collected)
+      schemeRewritten = transforms.rewriteScheme(transforms.resolveAssets(collected))
       lastSite = site
       lastScopeId = scopeId
       lastScopeTemplate = scopeTemplate

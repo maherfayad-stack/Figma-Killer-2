@@ -26,6 +26,7 @@ const BASE: StudioDefaultBoardSeedInputs = {
   activeBoardFrameCount: 0,
   pageCount: 5,
   frameDefaultsSettled: true,
+  pagesArriving: false,
 }
 
 describe('shouldSeedDefaultBoard', () => {
@@ -39,6 +40,13 @@ describe('shouldSeedDefaultBoard', () => {
     // hardcoded FRAME_WIDTH/FRAME_HEIGHT — which is what would make a project
     // created as Mobile open its first screen at 1024x800.
     expect(shouldSeedDefaultBoard({ ...BASE, frameDefaultsSettled: false })).toBe(false)
+  })
+
+  it('refuses while a streamed load still has pages on their way (P6-B)', () => {
+    // Seeding from the pages that happen to have arrived would give the board a
+    // frame for them and none for the rest, and the board autosave would write
+    // that partial board to .studio/boards.json.
+    expect(shouldSeedDefaultBoard({ ...BASE, pagesArriving: true })).toBe(false)
   })
 
   it('refuses when boardsLoadFailed is true — the boards-fetch-race-01 regression', () => {

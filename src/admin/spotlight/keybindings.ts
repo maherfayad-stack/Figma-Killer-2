@@ -26,9 +26,91 @@
  *   2. Wire the match predicate in the appropriate handler (PanelRail, CanvasRoot, etc.).
  *   3. If the commandId doesn't exist yet, add it to the spotlight commands registry.
  *   4. Re-run the architecture test: bun test src/__tests__/architecture/keybindings-registry-single-source.test.ts
+ *   5. Check the conflict register below. A key that Figma or Penpot gives a
+ *      different meaning gets a row there BEFORE it gets a binding here.
+ *
+ * ## Conflict register (OD-3, `docs/decisions.md`)
+ *
+ * Studio follows Figma's shortcut meanings. Penpot (the reference clone the
+ * audit compared against: `docs/audits/2026-09-23-studio-audit/04-interactions.md`
+ * §1) disagrees on a handful of keys. Each row is decided ONCE, here, so no
+ * bundle re-litigates it. P2-B owned this file for Phase 2, P5-E for its wave;
+ * P5-C and P5-D append a row when they bind a contested key.
+ *
+ *   Key        | Penpot meaning              | Studio meaning                  | Why
+ *   -----------|-----------------------------|---------------------------------|-------------------------------------
+ *   ⌘K         | create component            | Spotlight                       | The palette is the editor's hub
+ *   F          | focus mode                  | container inside the selection  | Figma's F = frame
+ *   ⌘⇧C        | toggle comments             | copy the selection as PNG       | Figma's
+ *   ⌘⇧G        | toggle snap to ruler guides | ungroup                         | Figma's
+ *   ⌘I         | italic                      | AI panel (outside a text edit)  | Inside an edit the element owns keys
+ *   ⌘-drag     | marquee over shapes         | free move (feel plan, dec. 6)   | In-frame marquee gets another trigger (OD-6)
+ *   ⇧-click    | toggle                      | TOGGLE on the canvas (P2-B)     | Was a tree RANGE; range stays in Layers
+ *   ⌘-click    | deep select                 | toggle, an alias of ⇧-click     | Innermost-wins already is deep select
+ *   Tab / ⇧Tab | next / previous sibling     | the same, canvas-scoped (P2-B)  | Never in a panel: Tab keeps its a11y role
+ *   ⌘A         | select all in the parent    | siblings; again climbs a level; | Penpot's set + Figma's climb
+ *              |                             | frames when nothing is selected |
+ *   V          | move tool                   | move tool, disarms every tool   | P2-B
+ *   ⇧0         | reset zoom                  | zoom to 100%, alias of ⌘0       | P2-B
+ *   ⌘[ / ⌘]    | (unbound)                   | reorder ±1 in flow order        | "Up" = earlier in the DOM (IX-9)
+ *   H          | toggle history              | hand tool (latched)             | Figma's
+ *   ⇧H / ⇧V    | flip                        | flip (P5-F): the standalone     | Figma's too. `flipValue.ts`
+ *              |                             | `scale`, one axis's sign        |
+ *   0 – 9      | opacity 100 % / 10–90 %     | the same (P5-F); 0 clears the   | Canvas-scoped: a digit in a field
+ *              |                             | layer's own opacity             | is the field's
+ *   ← ↑ → ↓    | nudge / move a flex child   | the same, by what is selected:  | P2-C (IX-1). Canvas-scoped like Tab:
+ *              |                             | a frame or note nudges; an      | in a panel the arrows stay the
+ *              |                             | absolute layer nudges its       | panel's (a tree, a field)
+ *              |                             | offsets; a layout child         |
+ *              |                             | reorders ±1 along its axis      |
+ *   held arrow | repeats the step            | a nudge repeats, and writes     | A structural write per repeat
+ *              |                             | ONCE on keyup; a reorder is     | would queue 30 writes a second
+ *              |                             | one step per press              |
+ *   arrows     | (Layers keeps focus)        | OD-15: a POINTER pick in Layers | Figma's. `returnKeyboardToCanvas`;
+ *   after a    |                             | hands focus to the canvas, so   | Tab-ing into the tree keeps ↑/↓
+ *   Layers     |                             | the arrows move the layer; a    | as row navigation (the a11y
+ *   click      |                             | keyboard entry keeps the tree's | path), and a rename field keeps
+ *              |                             | ↑/↓ (select the next row)       | its caret (P2-B's input guard)
+ *   ⌥ held     | measure; nothing hovered →  | the same (P2-E, IX-19): hovered | The tree ladder keeps ⌥ over the
+ *              | measure to the parent frame | layer, else the selection's     | selection; once a node was hovered
+ *              |                             | parent                          | in the hold, no parent fallback
+ *   arrows,    | every shape moves; flex     | OD-16 (P2-C2): absolute layers  | One entry, one write per gesture
+ *   ⌥↑/⌥↓,     | children reorder together   | nudge together; a mixed         | (`planSiblingSteps`). A grid-row
+ *   ⌘[ / ⌘]    |                             | selection leaves its flow       | step of 2+ layers and a nested
+ *   with 2+    |                             | layers put; flow children step  | pair refuse by name: they are not
+ *   layers     |                             | along their own parent, order   | independent writes (P3-D)
+ *              |                             | kept                            |
+ *   ↑ / ↓ on a | swap with the cell above /  | OD-16: move by the resolved     | ← / → still step one cell; the
+ *   grid child | below                       | column count (one row); none    | last row does not wrap
+ *              |                             | past the last row               |
+ *   R O E T F  | draw tools (armed)          | the same (P5-E, OD-5): armed;   | E is Penpot's ellipse key, an alias
+ *              |                             | a click or drag INSIDE a frame  | of Figma's O. ⏎ while armed still
+ *              |                             | inserts; one draw disarms       | inserts at the selection
+ *   ↵          | text → edit; group → all    | the same (P5-E, IX-7); was      | Tab walks siblings, ⏎ goes down,
+ *              | children                    | "select the first child"        | ⇧⏎ up (every selected layer)
+ *   ⌥A ⌥D ⌥W   | align left / right / top /  | the same (P5-E, IX-20). ⌥H / ⌥V | ⇧H / ⇧V stay reserved for flip.
+ *   ⌥S ⌥H ⌥V   | bottom / h-centre / v-centre| are the centres, not flip       | Matched on `code` (⌥A is 'å' on Mac)
+ *   ⌘⇧] ⌘⇧[    | bring to front / send back  | the same: LAST / FIRST child    | Front follows PAINT order; ⌘] / ⌘[
+ *   ⌘⇧↑ ⌘⇧↓    | (Penpot aliases)            | (P5-E, IX-9)                    | follow the Layers list (earlier =
+ *              |                             |                                 | up). Opposite ends on purpose
+ *   ⇧A         | toggle flex layout          | the same (P5-E, IX-10); 2+      | Figma's "add auto layout"
+ *              |                             | layers are grouped first        |
+ *   ⌘⌥C ⌘⌥V    | copy / paste properties     | copy / paste style (P5-E)       | ⌘C / ⌘V now reject ⌥
+ *   ⇧K         | (unbound)                   | place an image (P5-B's picker)  | Figma's; K alone is the scale tool
+ *   ⇧-drag on  | axis pair of paddings;      | the same (P5-E, IX-17)          | Pointer modifiers, on the `?` sheet
+ *   a padding  | ⌥-drag all four             |                                 | as `canvas.spacingHandles`
+ *   ⌘'         | show / hide guides          | snap to ruler guides on / off   | P5-F (IX-5e). Guides stay visible;
+ *              |                             |                                 | what the user toggles is the pull
+ *   ⌘⇧'        | snap to guides              | snap to objects + equal spacing | P5-F. The ruler-guide half of
+ *              |                             | on / off                        | Penpot's ⌘⇧G is ⌘' here (⌘⇧G ungroups)
+ *   ⌘⌥B        | (unbound; Penpot's detach   | detach instance (P5-C, DET-5)   | Figma's. Penpot's ⌘⇧K is not
+ *              | component is ⌘⇧K)           |                                 | bound: one key per verb
  */
 
 import { GESTURE_KEYBINDINGS } from './keybindingGestures'
+import { LAYER_COMMAND_KEYBINDINGS } from './keybindingLayerCommands'
+import { TOOL_KEYBINDINGS } from './keybindingTools'
+import { VIEWPORT_KEYBINDINGS } from './keybindingViewport'
 
 // The binding SHAPE lives one module over so the gesture rows can name it
 // without importing this file — see `keybindingShape.ts`. Re-exported here
@@ -37,7 +119,7 @@ export type { KeyEventLike, KeybindingDefinition } from './keybindingShape'
 export { isPlatformMac, formatShortcut } from './keybindingShape'
 import type { KeyEventLike, KeybindingDefinition } from './keybindingShape'
 import type { CommandId } from './types'
-import { isPlatformMac } from './keybindingShape'
+import { formatShortcut, isPlatformMac } from './keybindingShape'
 
 export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
   // ── Global ──────────────────────────────────────────────────────────────────
@@ -144,7 +226,8 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     // below, and without this guard the same keystroke ALSO copied the node to
     // the layer clipboard — two commands, one press, in an order decided by
     // whichever listener happened to be registered first.
-    match: (e) => (e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'c',
+    // `!e.altKey` since P5-E: ⌘⌥C is `layers.copyStyle` (`keybindingLayerCommands.ts`).
+    match: (e) => (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'c',
     scope: 'canvas',
     ignoreInEditableField: true,
   },
@@ -160,7 +243,9 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
   {
     commandId: 'layers.paste',
     shortcut: { mac: '⌘V', win: 'Ctrl+V' },
-    match: (e) => (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v',
+    // `!e.altKey` since P5-E: ⌘⌥V is `layers.pasteStyle`, and without the
+    // guard one press pasted the layer AND its style.
+    match: (e) => (e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'v',
     scope: 'canvas',
     ignoreInEditableField: true,
   },
@@ -177,49 +262,10 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     ignoreInEditableField: true,
   },
 
-  // ── Canvas viewport (zoom reset / fit / selection — D3) ─────────────────
-  // Virtual ids: no matching spotlight Command yet (a discrete viewport
-  // action, not a palette-run gesture) — `displayName` is the help-screen
-  // fallback title, same pattern as `spotlight.open`/`board.selectAllFrames`.
-  //
-  // NOT bound: ⌘1 / ⌘2 as fit/selection aliases. `viewport-01` checked and
-  // they are free in this registry — but Cmd/Ctrl+1…8 is reserved by every
-  // major browser for tab switching and is NOT cancellable from page script
-  // (unlike ⌘0 and ⌘R below, which are). Registering them would put two rows
-  // in the help sheet for keystrokes that never reach the app — the same
-  // "an affordance that silently does nothing" failure the toolbar's
-  // disabled-with-a-reason zoom controls exist to avoid. ⇧1 / ⇧2 stay the
-  // canonical keys (they are also what Figma itself binds), and the toolbar
-  // zoom menu is now the discoverable, clickable path to both.
-  {
-    commandId: 'canvas.zoomReset',
-    displayName: 'Zoom to 100%',
-    shortcut: { mac: '⌘0', win: 'Ctrl+0' },
-    ariaKeyshortcuts: isPlatformMac() ? 'Meta+0' : 'Control+0',
-    match: (e) => (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === '0',
-    scope: 'canvas',
-    ignoreInEditableField: true,
-  },
-
-  {
-    commandId: 'canvas.zoomToFit',
-    displayName: 'Zoom to fit',
-    shortcut: { mac: '⇧1', win: 'Shift+1' },
-    ariaKeyshortcuts: 'Shift+1',
-    match: (e) => e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && e.key === '1',
-    scope: 'canvas',
-    ignoreInEditableField: true,
-  },
-
-  {
-    commandId: 'canvas.zoomToSelection',
-    displayName: 'Zoom to selection',
-    shortcut: { mac: '⇧2', win: 'Shift+2' },
-    ariaKeyshortcuts: 'Shift+2',
-    match: (e) => e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && e.key === '2',
-    scope: 'canvas',
-    ignoreInEditableField: true,
-  },
+  // ── Canvas viewport (zoom, fit, Space-pan — D3, IX-15) ──────────────────
+  // In `keybindingViewport.ts`, handled by one `global`-rung scope
+  // (`hooks/useCanvasViewportKeys.ts`).
+  ...VIEWPORT_KEYBINDINGS,
 
   // ── Layers (keyboard reorder — G12) ──────────────────────────────────────
   // `layers.moveUp`/`layers.moveDown` already exist as spotlight Commands
@@ -227,12 +273,12 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
   // a node required a mouse. Alt+↑/↓ rather than a plain arrow key, for two
   // reasons that both still hold:
   //
-  //  1. Plain arrows are no longer free. `viewport-01` gave them to
-  //     `board.nudgeFrames` below — but ONLY while board frames are selected
-  //     (Figma's own "arrows move the selected frame"). With a NODE selected
-  //     the arrows stay unclaimed, so a future "select previous/next sibling"
-  //     can still take them in that context. That is the whole rule: arrows
-  //     are scoped by WHAT IS SELECTED, never globally grabbed.
+  //  1. Plain arrows are not free. `canvas.moveSelection` below owns them,
+  //     scoped by WHAT IS SELECTED, never globally grabbed: selected frames
+  //     and notes nudge (`viewport-01`), and a selected node moves (P2-C,
+  //     IX-1) — an absolute one nudges its offsets, a layout child reorders
+  //     along its parent's axis. Sibling SELECTION went to Tab / ⇧Tab
+  //     (P2-B, IX-3), not to the arrows.
   //  2. Alt+↑/↓ doesn't collide with `CanvasTreeLadderOverlay`'s Alt-HOLD
   //     hover-ladder gesture (that overlay only intercepts Arrow keys while
   //     its ladder is actively showing, i.e. Alt held AND hovering a valid
@@ -291,8 +337,12 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
   // capture phase), and both must fire from ANYWHERE — the generic dispatcher
   // requires focus to still be inside the canvas / layer tree, which one
   // click into the Properties panel ends for the session.
+  //
+  // P5-E (IX-7) — Penpot's and Figma's meaning: ↵ on a text layer starts
+  // typing; on a container it selects ALL its children (was: the first one).
+  // ⇧↵ selects the parent of EVERY selected layer.
   {
-    commandId: 'layers.selectFirstChild',
+    commandId: 'layers.selectChildren',
     shortcut: { mac: '↵', win: 'Enter' },
     ariaKeyshortcuts: 'Enter',
     match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key === 'Enter',
@@ -305,6 +355,35 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     shortcut: { mac: '⇧↵', win: 'Shift+Enter' },
     ariaKeyshortcuts: 'Shift+Enter',
     match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && e.shiftKey && e.key === 'Enter',
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
+  // Tab / ⇧Tab — the next / previous SIBLING, in source order, wrapping
+  // (Penpot `select-next`/`select-prev`, IX-3). Virtual ids, component-owned by
+  // `useCanvasSelectionKeyboard`.
+  //
+  // CANVAS-SCOPED, unlike every other `node`-rung key: Tab is how a keyboard
+  // user walks the inspector's fields, so it acts only while focus is on the
+  // canvas, a frame, or nowhere (`isCanvasKeyboardSurface`) — never inside a
+  // panel. A frame's own Tab is cancelled inside the iframe and forwarded as a
+  // clone, so it can neither walk the authored page's links nor go missing.
+  {
+    commandId: 'layers.selectNextSibling',
+    displayName: 'Select the next sibling',
+    shortcut: { mac: 'Tab', win: 'Tab' },
+    ariaKeyshortcuts: 'Tab',
+    match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key === 'Tab',
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
+  {
+    commandId: 'layers.selectPreviousSibling',
+    displayName: 'Select the previous sibling',
+    shortcut: { mac: '⇧Tab', win: 'Shift+Tab' },
+    ariaKeyshortcuts: 'Shift+Tab',
+    match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && e.shiftKey && e.key === 'Tab',
     scope: 'canvas',
     ignoreInEditableField: true,
   },
@@ -355,99 +434,10 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     ignoreInEditableField: true,
   },
 
-  // ── Tools (bare-letter tool switches — Figma's own T / F / C) ───────────
-  // Bare letters, no modifier: these are the muscle-memory keys every design
-  // tool binds, and the cost of getting them wrong is high (a stray `c` while
-  // typing must never arm a canvas tool). Two guards, both enforced by
-  // `useCanvasToolShortcuts`: `ignoreInEditableField` stands them down inside
-  // any input/textarea/contenteditable — which covers the reply box, every
-  // inspector field, the agent prompt, and canvas inline text editing — and
-  // each `match` rejects every modifier, so ⌘C stays copy and ⌘T stays "new
-  // browser tab". Virtual ids: inserting at the selection is a canvas gesture,
-  // not a palette action, so `displayName` is the help-screen label.
-  {
-    commandId: 'tools.text',
-    displayName: 'Insert text',
-    shortcut: { mac: 'T', win: 'T' },
-    ariaKeyshortcuts: 'T',
-    match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 't',
-    scope: 'canvas',
-    ignoreInEditableField: true,
-  },
-
-  {
-    commandId: 'tools.frame',
-    displayName: 'Insert container',
-    shortcut: { mac: 'F', win: 'F' },
-    ariaKeyshortcuts: 'F',
-    match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'f',
-    scope: 'canvas',
-    ignoreInEditableField: true,
-  },
-
-  {
-    commandId: 'tools.comment',
-    displayName: 'Comment',
-    shortcut: { mac: 'C', win: 'C' },
-    ariaKeyshortcuts: 'C',
-    match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'c',
-    scope: 'canvas',
-    ignoreInEditableField: true,
-  },
-
-  // `K4` — the four Figma tool letters Studio was missing. Same two guards as
-  // T / F / C above: `ignoreInEditableField` plus a `match` that rejects every
-  // modifier, so ⌘K stays the palette, ⌘R stays rename and ⌘H/⌘O stay the
-  // browser's. All four are LATCHED TOGGLES on their own key — pressing H
-  // again puts the hand tool away. A latched tool with no way back out from
-  // the keyboard is how a canvas ends up feeling stuck, and Escape is not
-  // reliably available here (the selection ladder claims it first whenever
-  // anything is selected — see `editorKeyDispatcher.ts`).
-  {
-    commandId: 'tools.hand',
-    displayName: 'Hand tool (drag to pan)',
-    shortcut: { mac: 'H', win: 'H' },
-    ariaKeyshortcuts: 'H',
-    match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'h',
-    scope: 'canvas',
-    ignoreInEditableField: true,
-  },
-
-  {
-    commandId: 'tools.scale',
-    displayName: 'Scale tool (resize proportionally)',
-    shortcut: { mac: 'K', win: 'K' },
-    ariaKeyshortcuts: 'K',
-    match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k',
-    scope: 'canvas',
-    ignoreInEditableField: true,
-  },
-
-  // R and O are Figma's rectangle and ellipse. Studio's document is a React
-  // tree, not a shape canvas, so both insert a `base.container` — the box every
-  // layout is built from — as the NEXT SIBLING of the selection rather than
-  // arming a draw gesture. `O` adds `border-radius: 50%` inline, which is what
-  // an ellipse IS in CSS. `F` stays "container inside the selection", so the
-  // pair is genuinely distinct: F nests, R/O extend the row you are in.
-  {
-    commandId: 'tools.rectangle',
-    displayName: 'Insert a box beside the selection',
-    shortcut: { mac: 'R', win: 'R' },
-    ariaKeyshortcuts: 'R',
-    match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'r',
-    scope: 'canvas',
-    ignoreInEditableField: true,
-  },
-
-  {
-    commandId: 'tools.ellipse',
-    displayName: 'Insert a round box beside the selection',
-    shortcut: { mac: 'O', win: 'O' },
-    ariaKeyshortcuts: 'O',
-    match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'o',
-    scope: 'canvas',
-    ignoreInEditableField: true,
-  },
+  // ── Tools (V T F C H K R O/E — `keybindingTools.ts`) ─────────────────
+  // Bare letters that pick what a drag means; R / O / T / F arm the draw
+  // tools (P5-E, IX-12). Moved to their own module in P5-E.
+  ...TOOL_KEYBINDINGS,
 
   // ── Export (copy the selection as an image) ──────────────────────
   // ⌘⇧C / Ctrl+Shift+C — Figma's own "copy as PNG". Virtual id: exporting the
@@ -469,13 +459,17 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     ignoreInEditableField: true,
   },
 
-  // ── Board (studio frame multi-select — WS-7.1) ──────────────────────────
-  // Virtual id: no matching spotlight Command (frame selection isn't a
-  // palette action) — `displayName` is the help-screen fallback title, same
-  // pattern as `spotlight.open`.
+  // ── Select all (WS-7.1 frames, P2-B nodes) ──────────────────────────────
+  // ONE chord, one row, a ladder of meanings decided by what is selected:
+  //   - a node → its siblings (Penpot `select-all`: not hidden, not locked);
+  //   - all of those already → climb one level (Figma), up to the frame root;
+  //   - the root, or nothing → every frame on the board (WS-7.1).
+  // The `node` rung (`useCanvasSelectionKeyboard`) takes the first two and the
+  // `board` rung (`useBoardSelectAllShortcut`) the last. With a node selected
+  // the keystroke used to reach the BROWSER, which highlighted admin text.
   {
-    commandId: 'board.selectAllFrames',
-    displayName: 'Select all frames',
+    commandId: 'canvas.selectAll',
+    displayName: 'Select all (siblings; again climbs a level; frames when nothing is selected)',
     shortcut: { mac: '⌘A', win: 'Ctrl+A' },
     ariaKeyshortcuts: isPlatformMac() ? 'Meta+A' : 'Control+A',
     match: (e) => (e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'a',
@@ -483,24 +477,31 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     ignoreInEditableField: true,
   },
 
-  // Arrow-key frame nudge (viewport-01). Virtual id — moving a board frame is
-  // a canvas gesture, not a palette action.
+  // Arrow keys move the selection (viewport-01 for frames, P2-C / IX-1 for
+  // nodes). Virtual id — moving a selection is a canvas gesture, not a
+  // palette action.
   //
   // This is the ONE binding in the registry that claims a bare arrow key, and
-  // it is deliberately scoped by SELECTION rather than by key: `useBoardFrameNudge`
-  // stands down unless `selectedFrameIds` is non-empty, so with a node
-  // selected (or nothing selected) the arrows stay free — see the
-  // `layers.moveUp` note above for why that matters. `ignoreInEditableField`
-  // plus the hook's own text-input / overlay guards keep arrows working
-  // normally in every input, inspector field, and inline text edit.
+  // it is scoped by SELECTION rather than by key. Three handlers read it, one
+  // per kind of selection, and the editor key ladder decides between them:
+  //   - `useBoardAnnotationKeyboard` (annotation rung): selected notes / docs;
+  //   - `useCanvasNodeArrowKeys` (node rung): the selected layers (all of
+  //     them since P2-C2, OD-16) — an
+  //     absolute one nudges its offsets, a layout child reorders ±1 along its
+  //     parent's axis (`canvasNodeArrowMove.ts`). Canvas-scoped like Tab: in
+  //     a panel the arrows stay the panel's;
+  //   - `useBoardFrameNudge` (board rung): selected board frames.
+  // With nothing selected nobody claims them. `ignoreInEditableField` plus
+  // each hook's own text-input / overlay guards keep arrows working normally
+  // in every input, inspector field, and inline text edit.
   //
-  // Direction and step are decoded by the handler from `event.key` /
-  // `event.shiftKey` (1 board unit, 10 with Shift) — one binding for the
-  // whole gesture, the same shape `layers.delete` uses to match both Delete
-  // and Backspace. Alt is excluded so `layers.moveUp/moveDown` keep ⌥↑/⌥↓.
+  // Direction and step are decoded by `nudgeDelta` below from `event.key` /
+  // `event.shiftKey` (1 unit, 10 with Shift) — one binding for the whole
+  // gesture, the same shape `layers.delete` uses to match both Delete and
+  // Backspace. Alt is excluded so `layers.moveUp/moveDown` keep ⌥↑/⌥↓.
   {
-    commandId: 'board.nudgeFrames',
-    displayName: 'Nudge selected frames (Shift for 10)',
+    commandId: 'canvas.moveSelection',
+    displayName: 'Move the selection: nudge, or reorder a layout child (Shift for 10)',
     shortcut: { mac: '← ↑ → ↓', win: '← ↑ → ↓' },
     match: (e) =>
       !e.metaKey && !e.ctrlKey && !e.altKey &&
@@ -537,22 +538,29 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     ignoreInEditableField: true,
   },
 
+  // ── Layer commands (P5-E) — align, front / back, flex, copy / paste style ─
+  ...LAYER_COMMAND_KEYBINDINGS,
+
   ...GESTURE_KEYBINDINGS,
 ]
 
-/** Board units one arrow press moves a selected frame, and the Shift step. */
-export const FRAME_NUDGE_STEP = 1
-export const FRAME_NUDGE_STEP_LARGE = 10
+/**
+ * Units one arrow press moves the selection, and the Shift step: board units
+ * for a frame or a note, CSS px for an absolute layer.
+ */
+export const NUDGE_STEP = 1
+export const NUDGE_STEP_LARGE = 10
 
 /**
- * Decode a `board.nudgeFrames` keystroke into a board-space delta.
- * Returns `null` for any event the binding doesn't cover, so the caller can
- * fall through. Lives here (not in the handler) so the registry entry above
- * and its meaning stay in one file — the same reason `layers.redo`'s Ctrl+Y
- * alias lives in its `match` rather than in `UndoRedoButtons.tsx`.
+ * Decode a `canvas.moveSelection` keystroke into a delta, in the units of
+ * whatever is being moved. Returns `null` for any event the binding doesn't
+ * cover, so the caller can fall through. Lives here (not in a handler) so the
+ * registry entry above and its meaning stay in one file — the same reason
+ * `layers.redo`'s Ctrl+Y alias lives in its `match` rather than in
+ * `UndoRedoButtons.tsx`. A reorder reads only the delta's direction.
  */
-export function frameNudgeDelta(e: KeyEventLike): { dx: number; dy: number } | null {
-  const step = e.shiftKey ? FRAME_NUDGE_STEP_LARGE : FRAME_NUDGE_STEP
+export function nudgeDelta(e: KeyEventLike): { dx: number; dy: number } | null {
+  const step = e.shiftKey ? NUDGE_STEP_LARGE : NUDGE_STEP
   switch (e.key) {
     case 'ArrowLeft': return { dx: -step, dy: 0 }
     case 'ArrowRight': return { dx: step, dy: 0 }
@@ -575,4 +583,15 @@ const KEYBINDINGS_MAP = new Map<string, KeybindingDefinition>(
  */
 export function getKeybindingForCommand(commandId: CommandId): KeybindingDefinition | undefined {
   return KEYBINDINGS_MAP.get(commandId)
+}
+
+/**
+ * P5-E (UX-22, UX-23) — the platform label for a command's shortcut, for a
+ * tooltip or a menu item's keycaps; `undefined` when the command has no key.
+ * The one way chrome spells a shortcut, so a label can never drift from the
+ * key that actually fires.
+ */
+export function shortcutLabelFor(commandId: CommandId): string | undefined {
+  const binding = KEYBINDINGS_MAP.get(commandId)
+  return binding ? formatShortcut(binding.shortcut) : undefined
 }

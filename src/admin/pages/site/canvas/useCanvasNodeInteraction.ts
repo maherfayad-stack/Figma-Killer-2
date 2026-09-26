@@ -14,19 +14,35 @@
  * Phase 2: scope this to the originating BoardFrame so a "duplicate as variant"
  * sibling of the same page does not also light up).
  *
- * The options are read fresh on every render and closed over, so nothing here
- * needs a dependency array: the returned object is rebuilt each render and the
- * React Compiler memoizes it. `CanvasSelectionContext` deliberately carries
- * only these callbacks and never the selected/hovered ids — each `NodeRenderer`
- * subscribes to its own boolean, so a selection change re-renders two nodes
- * rather than the whole canvas tree (Contribution #495).
+ * `CanvasSelectionContext` deliberately carries only these callbacks and never
+ * the selected/hovered ids — each `NodeRenderer` reads its own keyed boolean,
+ * so a selection change re-renders two nodes rather than the whole canvas tree
+ * (Contribution #495).
+ *
+ * ## The returned object never changes identity (P2-I)
+ *
+ * That only holds if the context VALUE is stable, and it was not. The handlers
+ * close over `options`, `CanvasRoot` re-renders on every selection (it reads
+ * `selectedNodeId` for its keyboard scopes), and the object was rebuilt with
+ * it. Measured on the 40 × 300 corpus: EVERY click re-rendered all 2,799
+ * mounted `NodeRenderer`s through this one context — the bulk of the
+ * click-to-ring time (`canvas-feel-budgets.e2e.ts`'s warm click). The React
+ * Compiler did not save it, because the closures legitimately change.
+ *
+ * So the handlers are still rebuilt each render, published to a ref after
+ * commit, and the context gets a facade created once that calls through that
+ * ref. Every caller is an event handler, which only runs after a commit, so it
+ * always reaches the latest options.
  */
-import { useRef, type MouseEvent as ReactMouseEvent } from 'react'
+import { useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import type { Page } from '@core/page-tree'
 import type { PrototypeLink, PrototypeTriggerKind } from '@core/studio-prototype'
 import { useEditorStore } from '@site/store/store'
 import { followPrototypeLinkAt, releasePrototypePress } from '@site/studio/playNavigation'
 import { clientPointToEditorDoc } from './canvasDomGeometry'
+import { setCanvasHover } from './canvasHover'
+import { tryEnterVectorEdit } from './BoardVectorLayer/vectorEditEntry'
+import { canvasClickSelectionMode } from './canvasSelectionUtils'
 
 export interface CanvasNodeInteractionOptions {
   /** False on a read-only canvas: right-click and double-click stand down. */
@@ -96,7 +112,6 @@ interface PlayGesture {
 
 export function useCanvasNodeInteraction(options: CanvasNodeInteractionOptions): CanvasNodeInteraction {
   const selectNode = useEditorStore((s) => s.selectNode)
-  const hoverNode = useEditorStore((s) => s.hoverNode)
   const setActiveBreakpoint = useEditorStore((s) => s.setActiveBreakpoint)
   const setFocusedPanel = useEditorStore((s) => s.setFocusedPanel)
   const startInlineEdit = useEditorStore((s) => s.startInlineEdit)
@@ -210,10 +225,10 @@ export function useCanvasNodeInteraction(options: CanvasNodeInteractionOptions):
         return
       }
     }
-    // Modifier-aware selection (multi-select): Cmd/Ctrl-click toggles, Shift-
-    // click extends a range from the anchor. Plain clicks replace the
-    // selection (default mode in `selectNode`).
-    const mode = e.shiftKey ? 'range' : e.metaKey || e.ctrlKey ? 'toggle' : 'replace'
+    // Modifier-aware selection (OD-3): ⇧-click and ⌘/Ctrl-click TOGGLE, as on
+    // Figma's canvas; a plain click replaces. Range stays a Layers-panel
+    // gesture — see `canvasClickSelectionMode`.
+    const mode = canvasClickSelectionMode(e)
     // WS-10 Phase 2 — `frameId` scopes this selection to the originating
     // BoardFrame so a sibling "duplicate as variant" frame of the same page
     // doesn't also light up. See `selectedNodeFrameId`'s doc.
@@ -225,7 +240,7 @@ export function useCanvasNodeInteraction(options: CanvasNodeInteractionOptions):
     // The hover ring is editing chrome, and an armed player is not an editing
     // surface — a visitor clicking through a prototype should see the
     // component's OWN hover state and nothing of ours. Standing it down also
-    // takes a store commit off every pointer arrival mid-playback.
+    // takes a hover write off every pointer arrival mid-playback.
     // `setPlayMode` clears the ring that was showing when Play was armed.
     if (options.playMode) {
       // The one thing the player DOES do with a hover: follow a `hover` link.
@@ -234,7 +249,8 @@ export function useCanvasNodeInteraction(options: CanvasNodeInteractionOptions):
       if (nodeId !== null) followLinkAt(nodeId, 'hover')
       return
     }
-    hoverNode(nodeId, breakpointId, frameId)
+    // NOT a store write (P2-I, PERF-1): see `canvasHover.ts`.
+    setCanvasHover(nodeId, breakpointId ?? null, frameId ?? null)
   }
 
   const onNodeContextMenu = (
@@ -286,6 +302,8 @@ export function useCanvasNodeInteraction(options: CanvasNodeInteractionOptions):
   ) => {
     e.stopPropagation()
     if (options.isLive || !options.editable || !options.canEditContent) return
+    // P5-D — an inline <svg> opens vector edit mode (its points), not a text edit.
+    if (tryEnterVectorEdit(nodeId, frameId ?? null)) return
     // WS-10 §4.4 (Phase 4) — `frameId` lets the session resolve/mutate the
     // RIGHT tree when it belongs to a locale-variant board frame (a "duplicate
     // as variant" sibling shares this node id — trap #2). See
@@ -293,5 +311,27 @@ export function useCanvasNodeInteraction(options: CanvasNodeInteractionOptions):
     startInlineEdit(nodeId, breakpointId ?? options.activeBreakpointId, frameId ?? null)
   }
 
-  return { onNodeClick, onFrameNodeClick, onNodeHover, onNodeContextMenu, onNodeDoubleClick, onNodePointerDown, onNodePointerUp }
+  const handlers: CanvasNodeInteraction = {
+    onNodeClick,
+    onFrameNodeClick,
+    onNodeHover,
+    onNodeContextMenu,
+    onNodeDoubleClick,
+    onNodePointerDown,
+    onNodePointerUp,
+  }
+  const latest = useRef(handlers)
+  useLayoutEffect(() => {
+    latest.current = handlers
+  })
+  const [stable] = useState<CanvasNodeInteraction>(() => ({
+    onNodeClick: (...args) => latest.current.onNodeClick(...args),
+    onFrameNodeClick: (...args) => latest.current.onFrameNodeClick(...args),
+    onNodeHover: (...args) => latest.current.onNodeHover(...args),
+    onNodeContextMenu: (...args) => latest.current.onNodeContextMenu(...args),
+    onNodeDoubleClick: (...args) => latest.current.onNodeDoubleClick(...args),
+    onNodePointerDown: (...args) => latest.current.onNodePointerDown(...args),
+    onNodePointerUp: (...args) => latest.current.onNodePointerUp(...args),
+  }))
+  return stable
 }

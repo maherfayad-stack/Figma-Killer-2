@@ -121,6 +121,25 @@ describe('addSlotPropToComponent — success, by type surface', () => {
     expect(text).not.toContain('ReactNode')
   })
 
+  it('puts the new binding in front of a `...rest` element — a rest element must be last (P5-C, shared `componentPropSignature`)', () => {
+    const file = write('components/Card.jsx', [
+      'export default function Card({ title, ...rest }) {',
+      '  return (',
+      '    <section {...rest}>',
+      '      <h1>{title}</h1>',
+      '      <footer>Static</footer>',
+      '    </section>',
+      '  )',
+      '}',
+      '',
+    ].join('\n'))
+    const loc = locateTag(read('components/Card.jsx'), 'footer')
+
+    const result = addSlotAt(file, 'default', loc.line, loc.col, 'footer')
+    expect(result.ok).toBe(true)
+    expect(read('components/Card.jsx')).toContain('{ title, footer, ...rest }')
+  })
+
   it('adds a brand-new destructured parameter (and interface, in TS) when the component takes none today', () => {
     const file = write('components/Static.tsx', [
       'export default function Static() {',

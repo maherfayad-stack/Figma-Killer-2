@@ -1,4 +1,5 @@
 # Canvas rulers and guides (D1)
+> **Purpose:** canvas rulers, persisted guides and the useCanvas() transform API · **Read when:** touching rulers, guides or canvas transforms · **Trust:** current · **Owner:** canvas-engineer · **Verified:** not yet
 
 Top/left rulers and persisted, draggable ruler guides for the design canvas —
 Figma-parity tracking item D1. Two independent halves: rulers (chrome, never
@@ -37,7 +38,7 @@ CanvasRulers.tsx              composition: corner square + RulerH + RulerV + gui
 RulerH.tsx / RulerV.tsx       <canvas>-painted tick rulers (NOT per-tick DOM)
 rulerGeometry.ts              PURE: niceTickStep, boardToScreen/screenToBoard, computeRulerTicks, resolveRulerOriginBoard
 rulerPaint.ts                 2D canvas paint step (not pure, not unit-tested — see its own doc)
-useRulerCanvasPaint.ts        persistent rAF repaint loop, polls transformRef
+useRulerCanvasPaint.ts        paints on change: every transform write, a resize, an origin change — no loop
 useRulerGuideCreation.ts      drag-from-ruler → new persisted guide
 ```
 
@@ -70,10 +71,19 @@ origin is always `(0, 0)`.
 
 **Paint, don't mount DOM nodes.** `rulerPaint.ts` draws directly to a
 `CanvasRenderingContext2D` — a 4000px ruler at fine tick spacing would be
-thousands of DOM nodes otherwise. `useRulerCanvasPaint` runs a persistent
-`requestAnimationFrame` loop (required, not optional — `transformRef` mutates
-with no change event) but only actually repaints when zoom/pan/length/origin
-changed since the last tick.
+thousands of DOM nodes otherwise. `useRulerCanvasPaint` paints only when
+something the ruler shows can have changed, and at no other time (audit
+PERF-4, P2-A): every pan/zoom transform write (`onCanvasViewportTransform`
+from `canvasViewportActivity.ts`, called synchronously by `useCanvas`'s
+`applyTransformToDOM`, so a ruler never lags the board by a frame), a
+`ResizeObserver` on the length source (which also caches the length, so a
+paint never forces a layout read), an origin change (the effect re-runs) and
+a window `resize` (a device-pixel-ratio change). It used to be a permanent
+`requestAnimationFrame` loop per ruler — "required, `transformRef` mutates
+with no change event" — which stopped being true once S4 made every
+transform write an event; the two loops kept an idle board at ~121 rAF calls
+per second, each forcing a layout read. `canvas-feel-budgets.e2e.ts`'s idle
+test now asserts zero.
 
 **Landmine: canvas `font` can't read CSS custom properties.** `ctx.font =
 '10px var(--font-mono)'` is invalid canvas font syntax and silently falls

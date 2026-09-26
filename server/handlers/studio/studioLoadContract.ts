@@ -19,6 +19,14 @@ import type { StyledStyleRuleSource } from './styledStyleRuleSources'
 /** Result of the load pipeline: every parsed page, the merged component classification (keyed by node id), and the merged imported-CSS registry. */
 export interface StudioLoadResult {
   pages: Page[]
+  /**
+   * P5-G — the free canvas's loose layers: one parsed `.studio/canvas/<id>.tsx`
+   * each, keyed `canvas:<id>`. NEVER merged into `pages` — that separation is
+   * what keeps them out of every page list, publish, preview and share by
+   * construction (`studio/canvasLayerLoad.ts`). Always the full set, even for
+   * a narrowed load: the list is small and the canvas replaces it wholesale.
+   */
+  canvasLayers: CanvasLayerLoad[]
   componentSources: Record<string, ComponentSource>
   /**
    * §6 — imported `.css` parsed into style rules, keyed by rule id. Edits in
@@ -79,7 +87,44 @@ export interface StudioLoadResult {
    * every story as an ordinary page).
    */
   stories: StorySummary[]
+  /**
+   * WB-23/WB-24 — what this load had to give up, per project or per page,
+   * instead of failing. Empty on a healthy project. Rides the `/load` meta
+   * line (`studioLoadStreamSchema.ts`'s `StudioLoadWarningSchema` is the wire
+   * mirror of `StudioLoadWarning`).
+   */
+  warnings: StudioLoadWarning[]
 }
+
+/** One loose layer as a load returns it (P5-G). */
+export interface CanvasLayerLoad {
+  layerId: string
+  /** `canvas:<layerId>` — never a route-derived page id. */
+  pageId: string
+  page: Page
+}
+
+/**
+ * One thing a load degraded instead of failing. `code` is stable — the client
+ * keys off it.
+ *
+ * - `tsconfig-unreadable` — `tsconfig.json` does not parse, so the project was
+ *   built without it: its path aliases do not resolve, everything else loads
+ *   (`createWorkspaceProject`).
+ * - `syntax-error` — a page's own file does not parse. TypeScript recovers a
+ *   tree anyway, so the page still renders, but that tree is a guess: every
+ *   write to the file is refused, naming this line, until it parses again
+ *   (`studioSyntaxGuard.ts`).
+ * - `unreadable-page-export` — P3-B (WB-5): a page's default export is a shape
+ *   the parser cannot read a component out of without running it (`lazy(…)`,
+ *   a component imported from another file, a class with no JSX `render()`).
+ *   The page has no nodes for THAT reason, not because it is empty; the frame
+ *   shows `message` instead of "This page is empty".
+ */
+export type StudioLoadWarning =
+  | { code: 'tsconfig-unreadable'; file: 'tsconfig.json'; message: string }
+  | { code: 'syntax-error'; pageId: string; file: string; line: number; col: number; message: string }
+  | { code: 'unreadable-page-export'; pageId: string; file: string; line: number; col: number; message: string }
 
 /** `loadStudioPages` options — today only the targeted-reload page filter. */
 export interface StudioLoadOptions {

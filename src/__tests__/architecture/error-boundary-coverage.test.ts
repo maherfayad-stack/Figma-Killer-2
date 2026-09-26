@@ -223,6 +223,60 @@ describe('Error boundary coverage gate', () => {
   })
 })
 
+// ── ERR-13 (P3-A): every piece of editor chrome is its own SILENT seam ─────
+//
+// Chrome outside a panel used to fall back to `LazyChunkBoundary
+// location="site-editor-body"` (the whole editor body, captioned "Editor chunk
+// failed to load") or, for the toolbar and `RefusalDialog`, to `admin-route`
+// (the whole editor). `ChromeBoundary` renders nothing, logs once, and brings
+// the chrome back on the next store change.
+
+const CHROME_BOUNDARY_PATH = 'admin/pages/site/ui/ChromeBoundary/ChromeBoundary.tsx'
+
+/** Every chrome seam, by mount site and `id`. */
+const CHROME_BOUNDARY_MOUNTS: Array<{ file: string; ids: string[] }> = [
+  { file: 'admin/layouts/AdminCanvasLayout/AdminCanvasLayout.tsx', ids: ['toolbar'] },
+  { file: 'admin/pages/site/SitePage.tsx', ids: ['refusal-dialog'] },
+  {
+    file: 'admin/layouts/AdminCanvasLayout/AdminCanvasEditorBody.tsx',
+    ids: ['left-sidebar', 'right-sidebar', 'code-editor', 'layout-name-dialog', 'detach-confirm-dialog', 'import-html'],
+  },
+  {
+    file: 'admin/pages/site/canvas/CanvasRoot.tsx',
+    ids: ['canvas-context-selector', 'canvas-rulers', 'studio-canvas-chrome', 'canvas-context-menu'],
+  },
+]
+
+describe('ERR-13 — chrome seams', () => {
+  it('every chrome seam mounts a ChromeBoundary with its own id', () => {
+    const failures: string[] = []
+    for (const { file, ids } of CHROME_BOUNDARY_MOUNTS) {
+      const source = read(file)
+      if (!/from\s+['"][^'"]*ui\/ChromeBoundary['"]/.test(source)) failures.push(`${file} — does not import ChromeBoundary`)
+      for (const id of ids) {
+        if (!new RegExp(`<ChromeBoundary\\s+id="${id}"`).test(source)) failures.push(`${file} — no <ChromeBoundary id="${id}">`)
+      }
+    }
+    expect(failures).toEqual([])
+  })
+
+  it('ChromeBoundary builds on the shared primitive, never toasts, and recovers by itself', () => {
+    const source = read(CHROME_BOUNDARY_PATH)
+    expect(source).toMatch(/from\s+['"]@ui\/components\/ErrorBoundary['"]/)
+    expect(source).not.toMatch(/silentToast/)
+    expect(source).toMatch(/useEditorStore\.subscribe/)
+  })
+
+  it('the canvas boundary retries once before its fallback', () => {
+    expect(read('admin/pages/site/canvas/CanvasRoot.tsx')).toMatch(/location="canvas"[\s\S]{0,200}autoRetry=\{1\}/)
+  })
+
+  it('"Editor chunk failed to load" is only said for a real chunk failure', () => {
+    const source = read('admin/lib/LazyChunkBoundary.tsx')
+    expect(source).toMatch(/isChunkLoadError\(chain\)\s*\?/)
+  })
+})
+
 // ── panel-40: every editor panel and every inspector section is its own seam ─
 //
 // `PanelBoundary` is the single mount point. Its `location` is composed at

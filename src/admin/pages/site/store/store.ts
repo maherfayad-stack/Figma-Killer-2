@@ -4,6 +4,7 @@ import { subscribeWithSelector } from 'zustand/middleware'
 import type { Page, SiteDocument } from '@core/page-tree'
 import { flattenVCToVirtualPage } from '@core/visualComponents'
 import type { EditorStore } from './types'
+import { skipUnchangedSets } from './skipUnchangedSets'
 import { createSiteSlice } from './slices/siteSlice'
 import { createSelectionSlice } from './slices/selectionSlice'
 import { createCanvasSlice } from './slices/canvasSlice'
@@ -21,19 +22,22 @@ import { createSaveTrackingSlice } from './slices/saveTrackingSlice'
 import { createBoardSlice } from './slices/boardSlice'
 import { createCommentsSlice } from './slices/commentsSlice'
 import { createPrototypeSlice } from './slices/prototypeSlice'
+import { createCanvasLayerSlice } from './slices/canvasLayerSlice'
+import { createStreamedLoadSlice } from './slices/streamedLoadSlice'
 import { selectActiveBoard } from './slices/boardSelectors'
 import { createLocalizedPageSlice, localizedPageKey } from './slices/localizedPageSlice'
 import { bindPluginRuntimeStoreApi } from '@core/plugins/runtime'
 import { useAdminUi } from '@admin/state/adminUi'
 import { readWorkspaceLayout, workspaceFromPathname } from '@admin/state/workspaceLayoutStorage'
 import { restoreStoredSiteEditorLayout } from '@site/layout/siteEditorLayoutPersistence'
+import { clearCanvasHover } from '@site/canvas/canvasHover'
 
 /**
  * EditorStore — the central Zustand store for the visual editor.
  *
  * Composed of 14 slices (6 canonical Phase 0 + agentSlice + sitePanelSlice + filesSlice + visualComponentsSlice + clipboardSlice + inlineEditSlice + layoutsSlice + saveTrackingSlice):
  *   - siteSlice:        owns SiteDocument (pages, nodes, breakpoints, settings, classes, files)
- *   - selectionSlice:      selectedNodeId, hoveredNodeId
+ *   - selectionSlice:      selectedNodeIds, selectedNodeId (hover is NOT store state — `canvas/canvasHover.ts`)
  *   - canvasSlice:         zoom, pan, activeBreakpointId, canvasMode (Constraint #317)
  *   - uiSlice:             panel visibility, unsaved-changes flag, insert picker
  *   - styleRuleSlice:      style-rule (class + ambient) CRUD + node↔class assignment
@@ -66,33 +70,40 @@ export type { EditorStore }
 
 export const useEditorStore = create<EditorStore>()(
   subscribeWithSelector(
-    // The zustand-mutative middleware gives slice recipes draft-mutation syntax
-    // plus structural sharing. enableAutoFreeze keeps the dev guard against
-    // accidental external mutation; existing code already tolerates frozen state.
-    // Patch-based undo history opts INTO patches per-call via mutative `create`.
-    mutative(
-      (...args) => ({
-        ...createSiteSlice(...args),
-        ...createSelectionSlice(...args),
-        ...createCanvasSlice(...args),
-        ...createUiSlice(...args),
-        ...createStyleRuleSlice(...args),
-        ...createFilesSlice(...args),
-        ...createVisualComponentsSlice(...args),
-        ...createSettingsSlice(...args),
-        ...createAgentSlice(siteAgentSliceConfig)(...args),
-        ...createSitePanelSlice(...args),
-        ...createClipboardSlice(...args),
-        ...createInlineEditSlice(...args),
-        ...createLayoutsSlice(...args),
-        ...createSaveTrackingSlice(...args),
-        ...createBoardSlice(...args),
-        ...createCommentsSlice(...args),
-        ...createPrototypeSlice(...args),
-        ...createLocalizedPageSlice(...args),
-      }),
-      { enableAutoFreeze: true },
-    )
+    // A write that changes nothing notifies nobody — see `skipUnchangedSets.ts`
+    // (P6-C: two such writes per canvas click each swept every mounted node's
+    // selectors).
+    skipUnchangedSets(
+      // The zustand-mutative middleware gives slice recipes draft-mutation syntax
+      // plus structural sharing. enableAutoFreeze keeps the dev guard against
+      // accidental external mutation; existing code already tolerates frozen state.
+      // Patch-based undo history opts INTO patches per-call via mutative `create`.
+      mutative(
+        (...args) => ({
+          ...createSiteSlice(...args),
+          ...createSelectionSlice(...args),
+          ...createCanvasSlice(...args),
+          ...createUiSlice(...args),
+          ...createStyleRuleSlice(...args),
+          ...createFilesSlice(...args),
+          ...createVisualComponentsSlice(...args),
+          ...createSettingsSlice(...args),
+          ...createAgentSlice(siteAgentSliceConfig)(...args),
+          ...createSitePanelSlice(...args),
+          ...createClipboardSlice(...args),
+          ...createInlineEditSlice(...args),
+          ...createLayoutsSlice(...args),
+          ...createSaveTrackingSlice(...args),
+          ...createBoardSlice(...args),
+          ...createCommentsSlice(...args),
+          ...createPrototypeSlice(...args),
+          ...createCanvasLayerSlice(...args),
+          ...createStreamedLoadSlice(...args),
+          ...createLocalizedPageSlice(...args),
+        }),
+        { enableAutoFreeze: true },
+      ),
+    ),
   )
 )
 
@@ -201,9 +212,15 @@ export const EDITOR_STORE_TEST_RESET_KEY = '__resetEditorStoreForTests'
 
 const PRISTINE_EDITOR_STATE = useEditorStore.getState()
 
-/** Restores the module-load state. Test-only — see the block comment above. */
+/**
+ * Restores the module-load state. Test-only — see the block comment above.
+ * Includes the hover, which is editor state kept off the store on purpose
+ * (`canvas/canvasHover.ts`, P2-I) and would otherwise leak between tests the
+ * same way.
+ */
 export function __resetEditorStoreForTests(): void {
   useEditorStore.setState(PRISTINE_EDITOR_STATE, true)
+  clearCanvasHover()
 }
 
 if (process.env.NODE_ENV === 'test') {
@@ -385,6 +402,11 @@ export function lookupCanvasPageById(site: SiteDocument, pageId: string): Page |
  */
 export const selectCanvasPageFor = (s: EditorStore, pageId: string | null, frameId?: string | null): Page | null => {
   if (!pageId) return selectActiveCanvasPage(s)
+  // P5-G — a loose layer on the free canvas renders its own module's tree,
+  // held apart from `site.pages` (`canvasLayerSlice.ts`). One keyed read: its
+  // `canvas:<id>` page id can never be a route's, so this cannot shadow a page.
+  const layerPage = s.canvasLayerPages[pageId]
+  if (layerPage) return layerPage
   // `hasAnyKey` FIRST, before `selectActiveBoard`: the locale branch can only
   // ever return something when a locale-variant page has actually been
   // fetched, and on a single-locale board (every board, until someone

@@ -82,7 +82,14 @@ export function createTransplantActions(helpers: SiteSliceHelpers): TransplantAc
       // a second drag fired before the first one's resync would plan against
       // the still-unshifted original and post a SECOND real write. Parked and
       // re-planned once the first has landed, rather than refused.
-      if (deferWhileStructuralCommitInFlight(() => { actions.transplantNodes(nodeIds, destination) })) return
+      if (
+        deferWhileStructuralCommitInFlight(
+          (relocate) => { actions.transplantNodes(nodeIds.map(relocate), { ...destination, parentId: relocate(destination.parentId) }) },
+          [...nodeIds, destination.parentId],
+        )
+      ) {
+        return
+      }
 
       const state = get()
       const site = state.site
@@ -106,7 +113,7 @@ export function createTransplantActions(helpers: SiteSliceHelpers): TransplantAc
           // The refused node is always the one the gesture named — re-issuing
           // after a detach/extract remedy lands means re-issuing the same drop
           // with that id swapped for its replacement.
-          retry: (newNodeId) => actions.transplantNodes([newNodeId], destination),
+          retry: (mapId) => actions.transplantNodes(nodeIds.map(mapId), { ...destination, parentId: mapId(destination.parentId) }),
           // D2 G3 — "Duplicate into frame instead": the SAME drop, with Alt's
           // meaning. It is the same store action and therefore the same gate,
           // the same `guardAgainstConcurrentStructuralCommit`, and the same
@@ -133,7 +140,6 @@ export function createTransplantActions(helpers: SiteSliceHelpers): TransplantAc
         anchorNodeId: commit.anchorNodeId,
         position: commit.position,
         copy: commit.copy,
-        destinationLabel: destinationPage.title || destinationPage.slug,
         // `store-14` — where it came from, which is the whole of a MOVE's undo.
         // The slot is recorded as parent + index rather than as a sibling id:
         // every sibling below the element shifts up the moment it leaves, so a

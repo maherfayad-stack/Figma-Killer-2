@@ -69,7 +69,6 @@ function resetStore(vcs: VisualComponent[] = []) {
     site: makeSite({ pages: [home], files: [], visualComponents: vcs }),
     activePageId: 'page-home',
     selectedNodeId: 'container-node',
-    hoveredNodeId: null,
     activeDocument: null,
     _historyPast: [],
     _historyFuture: [],
@@ -278,7 +277,6 @@ function resetStoreWithSlotInstance() {
     site: makeSite({ pages: [home], files: [], visualComponents: [] }),
     activePageId: 'page-home',
     selectedNodeId: 'slot-inst',
-    hoveredNodeId: null,
     activeDocument: null,
     _historyPast: [],
     _historyFuture: [],
@@ -392,7 +390,6 @@ describe('LayerNodeContextMenu — orphan slot-instance is NOT locked', () => {
       site: makeSite({ pages: [home], files: [], visualComponents: [] }),
       activePageId: 'page-home',
       selectedNodeId: 'orphan-slot',
-      hoveredNodeId: null,
       activeDocument: null,
       _historyPast: [],
       _historyFuture: [],
@@ -462,7 +459,6 @@ describe('LayerNodeContextMenu — "Insert module here" sibling fallback on leaf
       activePageId: 'page-mixed',
       selectedNodeId: null,
       selectedNodeIds: [],
-      hoveredNodeId: null,
       activeDocument: null,
       _historyPast: [],
       _historyFuture: [],
@@ -623,7 +619,6 @@ describe('LayerNodeContextMenu — "Insert module here" sibling fallback on leaf
       activePageId: 'page-slotless-vc',
       selectedNodeId: null,
       selectedNodeIds: [],
-      hoveredNodeId: null,
       activeDocument: null,
       _historyPast: [],
       _historyFuture: [],
@@ -690,7 +685,6 @@ describe('LayerNodeContextMenu — Hide / Unhide', () => {
       activePageId: 'page-hide',
       selectedNodeId: 'a',
       selectedNodeIds: [],
-      hoveredNodeId: null,
       activeDocument: null,
       _historyPast: [],
       _historyFuture: [],
@@ -734,9 +728,16 @@ describe('LayerNodeContextMenu — Hide / Unhide', () => {
     const menu = screen.getByRole('menu', { name: 'Node options' })
     const children = Array.from(menu.children)
 
-    expect(children[0].textContent).toBe('Hide')
+    // The label, without the item's shortcut keycaps (P5-E, UX-22): those are
+    // `aria-hidden` and read from the keybinding registry.
+    const label = (element: Element) => {
+      const copy = element.cloneNode(true) as Element
+      for (const hidden of copy.querySelectorAll('[aria-hidden="true"]')) hidden.remove()
+      return copy.textContent
+    }
+    expect(label(children[0])).toBe('Hide')
     expect(children[1].getAttribute('aria-hidden')).toBe('true')
-    expect(children[2].textContent).toBe('Rename')
+    expect(label(children[2])).toBe('Rename')
   })
 
   it('shows Unhide for a hidden node and marks it visible when clicked', () => {
@@ -819,7 +820,6 @@ describe('LayerNodeContextMenu — multi-delete confirmation', () => {
       activePageId: 'page-multi',
       selectedNodeId: 'b',
       selectedNodeIds: ['a', 'b'],
-      hoveredNodeId: null,
       activeDocument: null,
       _historyPast: [],
       _historyFuture: [],
@@ -898,7 +898,6 @@ function renderMenuForNode(
     activePageId: page.id,
     selectedNodeId: nodeId,
     selectedNodeIds,
-    hoveredNodeId: null,
     activeDocument: null,
     _historyPast: [],
     _historyFuture: [],
@@ -1018,7 +1017,9 @@ describe('LayerNodeContextMenu — R4 pre-disabled structural gestures', () => {
   // The multi-select half of the same rule: several elements can be duplicated
   // or deleted in one batch (ordered bottom-to-top), but ONE wrapper around
   // several ranges is not a write `wrapJsxElement` makes.
-  it('a multi-selection can be duplicated but not wrapped', () => {
+  // P3-D — a wrap of several elements is a group now (one container around
+  // their run), so the item is enabled. It used to be refused `multi-select`.
+  it('a multi-selection can be duplicated AND wrapped', () => {
     const page = makePage({
       id: 'page-multi',
       rootNodeId: 'root',
@@ -1033,7 +1034,7 @@ describe('LayerNodeContextMenu — R4 pre-disabled structural gestures', () => {
     expect(screen.getByRole('menuitem', { name: /duplicate/i }).getAttribute('aria-disabled')).toBeNull()
     fireEvent.mouseEnter(screen.getByRole('menuitem', { name: /wrap in/i }))
     const containerItem = within(screen.getByRole('menu', { name: 'Wrap in' })).getByRole('menuitem', { name: /container/i })
-    expect(containerItem.getAttribute('aria-disabled')).toBe('true')
+    expect(containerItem.getAttribute('aria-disabled')).toBeNull()
   })
 })
 
@@ -1088,7 +1089,10 @@ describe('LayerNodeContextMenu — refusal footer', () => {
     expect(screen.queryByTestId('constraint-notice')).toBeNull()
   })
 
-  it('explains a shared-component refusal and names where the markup really lives', () => {
+  // OD-7 (P3-D) — a gesture inside a shared component is written to THIS
+  // instance (detach, then the gesture), so nothing is refused and no footer
+  // shows. The footer used to explain a `shared-component` refusal here.
+  it('refuses nothing inside a shared component — it applies to this instance (OD-7)', () => {
     const shared = 'src/screens/Home.jsx:9:1~src/ui/Icon.jsx:3:4'
     const page = makePage({
       id: 'page-shared',
@@ -1100,17 +1104,7 @@ describe('LayerNodeContextMenu — refusal footer', () => {
     })
     renderMenuForNode(shared, page)
 
-    const notice = screen.getByTestId('constraint-notice')
-    expect(notice.getAttribute('data-constraint-reason')).toBe('shared-component')
-    // R1 (`STATE.md`'s `refusal-01`) gave `shared-component` a real targeted
-    // `edit-component` action — `ConstraintNotice`'s own de-dup rule
-    // ("origin is offered on its own only when no action already points at a
-    // file") now correctly suppresses the separate `constraint-origin` badge
-    // this test used to assert on, since the action button below points at
-    // the same file. The button's own label doesn't name the file the way
-    // the old badge did — a real, minor precision loss worth a follow-up,
-    // not a bug this test should paper over.
-    expect(screen.queryByTestId('constraint-origin')).toBeNull()
-    expect(screen.getByTestId('constraint-action-edit-component').textContent).toContain('Open the component definition')
+    expect(screen.queryByTestId('constraint-notice')).toBeNull()
+    expect(screen.getByRole('menuitem', { name: /delete/i }).getAttribute('aria-disabled')).toBeNull()
   })
 })

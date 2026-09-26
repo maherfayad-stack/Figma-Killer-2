@@ -34,7 +34,7 @@
  * a read-only reviewer unable to see that deleted work still exists.
  */
 import { Type } from '@core/utils/typeboxHelpers'
-import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import { projectsRootDir, studioProjectSummary } from '../studioProjects'
 import {
   ProjectTrashError,
@@ -69,8 +69,7 @@ export async function tryServeStudioTrashRoutes(
     try {
       return jsonResponse({ projects: listTrashedProjects(projectsRootDir()) })
     } catch (err) {
-      console.error('[studio/trashRoutes]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio/trashRoutes]', err)
     }
   }
 
@@ -88,8 +87,7 @@ export async function tryServeStudioTrashRoutes(
       return jsonResponse({ project: studioProjectSummary(dir) })
     } catch (err) {
       if (err instanceof ProjectTrashError) return trashErrorResponse(err)
-      console.error('[studio/trashRoutes]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio/trashRoutes]', err)
     }
   }
 
@@ -105,8 +103,7 @@ export async function tryServeStudioTrashRoutes(
       return jsonResponse({ projects: listTrashedProjects(projectsRootDir()) })
     } catch (err) {
       if (err instanceof ProjectTrashError) return trashErrorResponse(err)
-      console.error('[studio/trashRoutes]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio/trashRoutes]', err)
     }
   }
 

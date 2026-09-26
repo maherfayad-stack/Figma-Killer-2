@@ -28,7 +28,7 @@ export const StudioRegisterDesignReferenceInputSchema = Type.Object({
   url: Type.Optional(Type.String({
     minLength: 1,
     description:
-      'An http:// or https:// URL that returns the reference\'s image bytes (e.g. a Figma export/download URL another tool already returned) — fetched SERVER-SIDE, never transiting you, the same studio_fetch_remote_asset pattern. Provide exactly one of url or imageBase64.',
+      'A URL returning the reference image bytes, fetched SERVER-SIDE so they never transit you: one a Figma connector returned, or one the user pasted into this conversation (other hosts are refused host-not-allowed). Provide exactly one of url, path or imageBase64.',
   })),
   imageBase64: Type.Optional(Type.String({
     minLength: 1,
@@ -39,7 +39,7 @@ export const StudioRegisterDesignReferenceInputSchema = Type.Object({
     description:
       'Path to an image file ALREADY ON DISK inside this project, relative to the project root (e.g. ".studio/figma/hero.png"). This is the route to use after any tool that DOWNLOADS an export to disk — a Figma MCP server\'s asset-download tool, a shell fetch, anything. Read server-side; the bytes never transit you. Must resolve inside the project directory. Provide exactly one of url, path or imageBase64.',
   })),
-  pageId: Type.Optional(Type.String({ description: 'The Studio page id (from studio_list_pages) this is a design reference FOR. Optional, but required for studio_recommend_export_dpr and for filtering studio_list_design_references by page.' })),
+  pageId: Type.Optional(Type.String({ description: 'The Studio page id (from studio_list_pages) this is a design reference FOR. Optional, but it is how studio_compare finds this reference for the page and how studio_list_design_references filters by page.' })),
   label: Type.Optional(Type.String({ description: 'A short human-readable name, e.g. "Homepage hero — Figma export".' })),
   source: Type.Optional(Type.String({ description: 'Free-form provenance, e.g. a Figma file/node URL, so a later reader knows where this came from.' })),
   role: Type.Optional(Type.Union([Type.Literal('spec'), Type.Literal('context')], {
@@ -71,7 +71,7 @@ export const StudioReadDesignReferenceInputSchema = Type.Object({
   dir: Type.Optional(Type.String({ description: DIR_INPUT_DESCRIPTION })),
   referenceId: Type.String({ minLength: 1, description: 'A studio_register_design_reference id (from its own result or studio_list_design_references).' }),
   includeImage: Type.Optional(Type.Boolean({
-    description: 'When true, also returns the ORIGINAL image bytes as an MCP image block, so you can actually look at the reference (not only its metadata). Costs real context for a large reference — omit (default false) when only the metadata (dimensions, label, pageId) is needed, e.g. before calling studio_recommend_export_dpr or studio_diff_frames.',
+    description: 'When true, also returns the ORIGINAL image bytes as an MCP image block, so you can actually look at the reference (not only its metadata). Costs real context for a large reference — omit (default false) when only the metadata (dimensions, label, pageId) is needed.',
   })),
 })
 

@@ -262,11 +262,12 @@ function BoardFrameViewImpl({
     void ensureLocalizedPage(projectDir, frame.pageId, frame.axes.locale)
   }, [projectDir, frame.pageId, frame.axes?.locale, boardAxes.locale, ensureLocalizedPage])
   // WS-5.3 — frozen poster for this frame's offscreen placeholder. Capture
-  // reads the live iframe straight out of `frameBodyRef` while on screen; see
-  // `useFramePosterCapture.ts`'s own doc comment for why it doesn't mount a
-  // second offscreen frame to do this.
+  // reads the live iframe straight out of `frameBodyRef` while it is still
+  // mounted; see `useFramePosterCapture.ts`'s own doc comment for when (P2-I:
+  // not while the frame is on screen and already has one) and for why it
+  // doesn't mount a second offscreen frame to do this.
   const frameBodyRef = useRef<HTMLDivElement>(null)
-  useFramePosterCapture(frameBodyRef, page, width, isOnScreen)
+  useFramePosterCapture(frameBodyRef, page, width, isOnScreen, mounted)
   // S1 — the frame's mount is staged (iframe -> injectors -> node tree; see
   // `IframeFrameSurface`'s header), so between entering the viewport and the
   // tree's commit the iframe is a real but EMPTY document. The poster stays
@@ -550,7 +551,7 @@ function BoardFrameViewImpl({
             <CanvasPageContext.Provider value={page.id}>
               {/* WS-10 Phase 2 — this frame's OWN id, so NodeRenderer can tag
                   every selection/hover it originates with the frame it came
-                  from (`selectedNodeFrameId`/`hoveredFrameId`). Without this a
+                  from (`selectedNodeFrameId`, `canvasHover`'s `frameId`). Without this a
                   "duplicate as variant" sibling of this page — sharing every
                   node id (trap #2) — would light up from a selection made in
                   THIS frame. See `CanvasFrameContext`'s doc. */}
@@ -605,7 +606,7 @@ function BoardFrameViewImpl({
             as "it did not load". Only for a frame that is actually drawing its
             iframe: an offscreen frame is showing a poster, and a caption over
             that would be about a page nobody can see. */}
-        {mounted && pageHasNoContent(page) && <CanvasEmptyPageHint />}
+        {mounted && pageHasNoContent(page) && <CanvasEmptyPageHint pageId={page.id} />}
       </div>
       {/* Resize handles — SELECTED frames only, not merely active.
           `activePageId` is the edit target: it is set by a capture-phase click

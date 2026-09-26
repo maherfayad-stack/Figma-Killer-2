@@ -79,6 +79,7 @@ import { UserAvatar } from '@admin/shared/UserAvatar'
 import { commentAvatarUser } from '@site/studio/commentAvatarUser'
 import type { CommentThread } from '@core/studio-comments'
 import { cn } from '@ui/cn'
+import { guardDragSession } from '@core/studio-runtime'
 import { canvasTransformLayerOf } from '../canvasZoom'
 import { commentAnchorAtPoint } from './commentAnchorAtPoint'
 import styles from './CommentPin.module.css'
@@ -134,8 +135,10 @@ export function CommentPin({ thread, active }: CommentPinProps) {
     const startX = event.clientX
     const startY = event.clientY
     let moved = false
+    let lastPoint = { clientX: startX, clientY: startY }
 
     const finish = () => {
+      disposeGuard()
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onCancel)
@@ -158,6 +161,7 @@ export function CommentPin({ thread, active }: CommentPinProps) {
     }
 
     const onMove = (moveEvent: PointerEvent) => {
+      lastPoint = { clientX: moveEvent.clientX, clientY: moveEvent.clientY }
       const dx = moveEvent.clientX - startX
       const dy = moveEvent.clientY - startY
       if (!moved) {
@@ -169,7 +173,7 @@ export function CommentPin({ thread, active }: CommentPinProps) {
       setOffset(dx, dy)
     }
 
-    const onUp = (upEvent: PointerEvent) => {
+    const onUp = (upEvent: Pick<PointerEvent, 'clientX' | 'clientY'>) => {
       finish()
       if (!moved) return
       void (async () => {
@@ -190,6 +194,14 @@ export function CommentPin({ thread, active }: CommentPinProps) {
       abort()
     }
 
+    // ERR-12 — a move with the button up drops the pin where it last was; a
+    // window blur puts it back.
+    const disposeGuard = guardDragSession({
+      documents: [document],
+      focusWindow: window,
+      onReleaseLost: () => onUp(lastPoint),
+      onAbandon: abort,
+    })
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
     window.addEventListener('pointercancel', onCancel)

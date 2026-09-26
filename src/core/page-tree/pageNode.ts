@@ -10,14 +10,29 @@
  * Constraint #269: no imports from editor / editor-store here.
  */
 
-import { Type, type Static } from '@core/utils/typeboxHelpers'
+import { Type, Value, type Static } from '@core/utils/typeboxHelpers'
 import { BaseNodeSchema, parseBaseNodeFields } from './baseNode'
 import { DynamicPropBindingSchema, parseDynamicBindings } from './dynamicBinding'
 import { asPlainObject } from './parseHelpers'
+import { ListRowSourceSchema, type ListRowSource } from './listRowSource'
 
 // ---------------------------------------------------------------------------
 // PageNodeSchema
 // ---------------------------------------------------------------------------
+
+/**
+ * Where a literal behind a resolved value lives — `textOrigin`, `assetOrigin`,
+ * `resolvedProps[*].origin`. `fingerprint` (P1-A) is the literal token's own
+ * identity as the parser read it, so a `literal`/`asset` write aimed here can
+ * be refused `element-moved` when the file shifted and that position now
+ * holds a different string. See `./sourceFingerprint.ts`.
+ */
+const SourceOriginSchema = Type.Object({
+  rel: Type.String(),
+  line: Type.Number(),
+  col: Type.Number(),
+  fingerprint: Type.Optional(Type.String()),
+})
 
 export const PageNodeSchema = Type.Object({
   ...BaseNodeSchema.properties,
@@ -69,7 +84,7 @@ export const PageNodeSchema = Type.Object({
          * same purpose as `textOrigin` below — the JSX cannot be written, the
          * literal one hop away can. See `Resolution.origin`.
          */
-        origin: Type.Optional(Type.Object({ rel: Type.String(), line: Type.Number(), col: Type.Number() })),
+        origin: Type.Optional(SourceOriginSchema),
       }),
     ),
   ),
@@ -97,11 +112,7 @@ export const PageNodeSchema = Type.Object({
    * JSX. See `ParsedNode.textOrigin` for the full reasoning and why it is scoped
    * to text rather than hung off `resolution`.
    */
-  textOrigin: Type.Optional(Type.Object({
-    rel: Type.String(),
-    line: Type.Number(),
-    col: Type.Number(),
-  })),
+  textOrigin: Type.Optional(SourceOriginSchema),
   /**
    * Studio import (WS-8.3) — where the IMPORT DECLARATION naming this node's
    * resolved image lives, when one of its props (`src`) resolved to a
@@ -113,11 +124,17 @@ export const PageNodeSchema = Type.Object({
    * position, and `setImportSpecifier` rewrites exactly that. See
    * `ParsedNode.assetOrigin` in `@core/page-parser`.
    */
-  assetOrigin: Type.Optional(Type.Object({
-    rel: Type.String(),
-    line: Type.Number(),
-    col: Type.Number(),
-  })),
+  assetOrigin: Type.Optional(SourceOriginSchema),
+  /**
+   * Studio import (P1-A) — the identity of the JSX element this node's id
+   * names, as the parser read it: `<tag>#<hash>` over its opening tag and its
+   * own direct text (`@core/page-parser`'s `sourceFingerprint.ts`). Every
+   * write aimed at this node carries it back as an expectation, and the server
+   * refuses `element-moved` when the element now at that `line:col` is not
+   * this one. Absent on a `.map` row, a synthetic root, and any node not read
+   * out of a file. See `./sourceFingerprint.ts`.
+   */
+  sourceFingerprint: Type.Optional(Type.String()),
   /**
    * Studio import — the prop names on this node that are NOT writable back to
    * source, because the source holds an expression rather than a literal
@@ -156,6 +173,14 @@ export const PageNodeSchema = Type.Object({
    * `ParsedNode.fromComponent` in `@core/page-parser`.
    */
   fromComponent: Type.Optional(Type.String()),
+  /**
+   * Studio import (OD-8) — on a `.map` row's ROOT node only: the array literal
+   * the row is an element of (its `[` position, this row's index, the length),
+   * or why there is no array in this file to edit. What makes a row's reorder,
+   * delete and duplicate writable — they edit the array, never the JSX. See
+   * `./listRowSource.ts`.
+   */
+  listRow: Type.Optional(ListRowSourceSchema),
 })
 
 export type PageNode = Static<typeof PageNodeSchema>
@@ -200,17 +225,24 @@ function parseBranchAlternatives(raw: unknown): { label: string; loc: { file: st
   return entries.length > 0 ? entries : undefined
 }
 
+type SourceOrigin = Static<typeof SourceOriginSchema>
+
 /** Parse a raw `textOrigin` field — same per-field tolerance as `resolution`. */
-function parseTextOrigin(raw: unknown): { rel: string; line: number; col: number } | undefined {
+function parseTextOrigin(raw: unknown): SourceOrigin | undefined {
   if (!raw || typeof raw !== 'object') return undefined
   const r = raw as Record<string, unknown>
   if (typeof r.rel !== 'string' || r.rel.length === 0) return undefined
   if (typeof r.line !== 'number' || typeof r.col !== 'number') return undefined
-  return { rel: r.rel, line: r.line, col: r.col }
+  return {
+    rel: r.rel,
+    line: r.line,
+    col: r.col,
+    ...(typeof r.fingerprint === 'string' && r.fingerprint.length > 0 ? { fingerprint: r.fingerprint } : {}),
+  }
 }
 
 /** Parse a raw `assetOrigin` field — same per-field tolerance as `textOrigin` (identical shape, different meaning). */
-function parseAssetOrigin(raw: unknown): { rel: string; line: number; col: number } | undefined {
+function parseAssetOrigin(raw: unknown): SourceOrigin | undefined {
   return parseTextOrigin(raw)
 }
 
@@ -270,8 +302,17 @@ export function parsePageNode(raw: unknown, nodePath: string): PageNode {
     ...(assetOrigin !== undefined ? { assetOrigin } : {}),
     ...(codeProps !== undefined ? { codeProps } : {}),
     ...(codeFunctionPaths !== undefined ? { codeFunctionPaths } : {}),
+    ...(typeof r.sourceFingerprint === 'string' && r.sourceFingerprint.length > 0
+      ? { sourceFingerprint: r.sourceFingerprint }
+      : {}),
     ...(typeof r.fromComponent === 'string' && r.fromComponent.length > 0
       ? { fromComponent: r.fromComponent }
       : {}),
+    ...(isListRowSource(r.listRow) ? { listRow: r.listRow } : {}),
   }
+}
+
+/** A raw `listRow` field that is a well-formed stamp — dropped (not thrown) otherwise, like every Studio provenance field. */
+function isListRowSource(raw: unknown): raw is ListRowSource {
+  return Value.Check(ListRowSourceSchema, raw)
 }

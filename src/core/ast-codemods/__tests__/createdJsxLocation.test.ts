@@ -55,7 +55,7 @@ describe('insertJsxElement reports where the new element landed', () => {
 
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.created).toEqual(locateTag(read(file), 'span'))
+    expect(result.created).toEqual([locateTag(read(file), 'span')])
   })
 
   it('accounts for the import line it writes above the JSX', () => {
@@ -73,7 +73,7 @@ describe('insertJsxElement reports where the new element landed', () => {
     // The import pushed every JSX line down by one; a `created` that had been
     // measured against the pre-write text would be exactly one line short.
     expect(after.startsWith("import { Chip } from '../design-system'")).toBe(true)
-    expect(result.created).toEqual(locateTag(after, 'Chip'))
+    expect(result.created).toEqual([locateTag(after, 'Chip')])
   })
 
   it('names the new element when it joins an existing line', () => {
@@ -88,7 +88,7 @@ describe('insertJsxElement reports where the new element landed', () => {
 
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.created).toEqual(locateTag(read(file), 'b'))
+    expect(result.created).toEqual([locateTag(read(file), 'b')])
   })
 
   it('names the first child of a self-closing parent it reopened', () => {
@@ -103,7 +103,7 @@ describe('insertJsxElement reports where the new element landed', () => {
 
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.created).toEqual(locateTag(read(file), 'p'))
+    expect(result.created).toEqual([locateTag(read(file), 'p')])
   })
 
   it('names the ROOT of a nested subtree written in one call', () => {
@@ -117,7 +117,7 @@ describe('insertJsxElement reports where the new element landed', () => {
 
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.created).toEqual(locateTag(read(file), 'article'))
+    expect(result.created).toEqual([locateTag(read(file), 'article')])
   })
 })
 

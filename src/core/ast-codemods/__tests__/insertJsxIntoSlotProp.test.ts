@@ -349,7 +349,7 @@ export default function Page() {
 })
 
 describe('insertJsxIntoSlotProp — binding conflict', () => {
-  it('refuses rather than shadow an existing binding', () => {
+  it('P3-C (WB-19) — imports under an alias rather than shadow (or refuse on) an existing binding', () => {
     const source = `import { Sheet } from './Sheet'
 import { Icon } from './local/Icon'
 
@@ -369,9 +369,11 @@ export default function Page() {
       node: { name: 'Icon', importSpecifier: DS },
     })
 
-    expect(result.ok).toBe(false)
-    if (result.ok) throw new Error('unreachable')
-    expect(result.refusal.reason).toBe('binding-conflict')
-    expect(fs.readFileSync(file, 'utf8')).toBe(source)
+    expect(result.ok).toBe(true)
+    expect(fs.readFileSync(file, 'utf8')).toBe(
+      source
+        .replace("import { Icon } from './local/Icon'\n", `import { Icon } from './local/Icon'\nimport { Icon as Icon2 } from '${DS}';\n`)
+        .replace('<Sheet title="Where to?" />', '<Sheet title="Where to?" header={<Icon2 />} />'),
+    )
   })
 })

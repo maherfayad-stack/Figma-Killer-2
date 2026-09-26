@@ -88,8 +88,8 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
           // here: a call site that does not care about CSS sources/raw CSS
           // should not have to name the field. A fixture that does care still
           // overrides.
-          { kind: 'meta', styleRuleSources: {}, styledStyleRuleSources: {}, authoredCss: '', ...meta, pageCount: pages.length },
-          ...pages.map((page) => ({ kind: 'page', page })),
+          { kind: 'meta', styleRuleSources: {}, styledStyleRuleSources: {}, authoredCss: '', ...meta, pageList: pages.map(({ id, slug, title }) => ({ id, slug, title })) },
+          ...pages.map((page, index) => ({ kind: 'page', page, index })),
         ]
         return new Response(
           lines.map((line) => JSON.stringify(line)).join('\n') + '\n',
@@ -413,15 +413,24 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
       expect(shippedTextValue(secondBody.edits[0]!)).toBe('Hell')
     })
 
-    it('does NOT advance the baseline for a batch with an unexplained skip, so a stale-id failure keeps re-attempting instead of silently adopting the unwritten value', async () => {
+    it('does NOT advance the baseline for an edit the server refused, so it keeps re-attempting instead of silently adopting the unwritten value', async () => {
       stubFetch({
         '/admin/api/studio/load': {
           dir: '/tmp/studio-test', projectName: 'studio-test',
           pages: [makePage({ rootNodeId: 'root', nodes: { root: makeNode({ id: 'pages/Home.tsx:3:1', moduleId: 'base.text', props: { text: 'Hell' } }) } })],
           componentSources: {}, styleRules: {}, conditions: [], vendorCss: '', trust: 'static', paletteHiddenModuleIds: [],
         },
-        // written:0, skipped:1 — the edit never reached disk.
-        '/admin/api/studio/save': { ok: true, written: 0, skipped: 1, shifted: false, sharedComponents: false },
+        // written:0, skipped:1 — the edit never reached disk, and the refusal
+        // names it (WB-12: every edit that does not write is named).
+        '/admin/api/studio/save': {
+          ok: true, written: 0, skipped: 1, shifted: false, sharedComponents: false,
+          // Named under both shapes the edit can take: `text` when the text
+          // module is registered (its inline-text prop), `prop` when not.
+          refusals: [
+            { nodeId: 'pages/Home.tsx:3:1', kind: 'text', reason: 'write-failed', message: 'Studio could not write this change.' },
+            { nodeId: 'pages/Home.tsx:3:1', kind: 'prop', prop: 'text', reason: 'write-failed', message: 'Studio could not write this change.' },
+          ],
+        },
       })
       await loadThenResetCalls()
 
@@ -628,8 +637,9 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
     })
   })
 
-  // ─── Phase 0 seam A (item 0.7) — the unexplained-skips toast names the node ──
-  describe('save-skip toast names the affected node (0.7 seam)', () => {
+  // ─── WB-12 / WB-13 / WB-35 — a refusal is one warning with its remedy, and
+  // only the refused edit stays in the diff ────────────────────────────────
+  describe('save-time refusals (P3-A)', () => {
     function collectToasts(): Toast[] {
       let latest: Toast[] = []
       subscribeToasts((snapshot) => {
@@ -638,68 +648,105 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
       return latest
     }
 
-    it('a skip with no matching refusal produces a toast naming the real node label, not a bare count', async () => {
-      stubFetch({
-        '/admin/api/studio/load': {
-          dir: '/tmp/studio-test', projectName: 'studio-test',
-          pages: [makePage({
-            rootNodeId: 'root',
-            nodes: {
-              root: makeNode({ id: 'root', moduleId: 'base.body', children: ['pages/Home.tsx:3:1'] }),
-              'pages/Home.tsx:3:1': makeNode({ id: 'pages/Home.tsx:3:1', moduleId: 'base.text', label: 'Headline', props: { text: 'Hi' } }),
-            },
-          })],
-          componentSources: {}, styleRules: {}, conditions: [], vendorCss: '', trust: 'static', paletteHiddenModuleIds: [],
-        },
-        // written:0, skipped:1, and the server names exactly that node via
-        // `unexplainedSkips` (Phase 0 item 0.7's new field) — no matching
-        // `refusals` entry, so this is the "no writable location" case.
-        '/admin/api/studio/save': {
-          ok: true, written: 0, skipped: 1, shifted: false, sharedComponents: false,
-          unexplainedSkips: [{ nodeId: 'pages/Home.tsx:3:1', kind: 'text' }],
-        },
-      })
-      await loadThenResetCalls()
+    const HEADLINE = 'pages/Home.tsx:3:1'
 
-      const site = makeSite({
+    function loadedHeadline(props: Record<string, unknown>) {
+      return {
+        dir: '/tmp/studio-test', projectName: 'studio-test',
         pages: [makePage({
           rootNodeId: 'root',
           nodes: {
-            root: makeNode({ id: 'root', moduleId: 'base.body', children: ['pages/Home.tsx:3:1'] }),
-            'pages/Home.tsx:3:1': makeNode({ id: 'pages/Home.tsx:3:1', moduleId: 'base.text', label: 'Headline', props: { text: 'Bye' } }),
+            root: makeNode({ id: 'root', moduleId: 'base.body', children: [HEADLINE] }),
+            [HEADLINE]: makeNode({ id: HEADLINE, moduleId: 'base.text', label: 'Headline', props }),
+          },
+        })],
+        componentSources: {}, styleRules: {}, conditions: [], vendorCss: '', trust: 'static', paletteHiddenModuleIds: [],
+      }
+    }
+
+    function editedHeadline(props: Record<string, unknown>) {
+      return makeSite({
+        pages: [makePage({
+          rootNodeId: 'root',
+          nodes: {
+            root: makeNode({ id: 'root', moduleId: 'base.body', children: [HEADLINE] }),
+            [HEADLINE]: makeNode({ id: HEADLINE, moduleId: 'base.text', label: 'Headline', props }),
           },
         })],
       })
-      useEditorStore.setState({ site, activePageId: site.pages[0]!.id } as Parameters<typeof useEditorStore.setState>[0])
+    }
 
-      await fsCodemodAdapter.saveSite(site)
+    // One element, two prop edits in one batch: the refusal names WHICH prop
+    // (`prop`), so the other one can still be committed.
+    const BINDING_REFUSAL = {
+      nodeId: HEADLINE,
+      kind: 'prop',
+      prop: 'title',
+      reason: 'binding-overwrite',
+      message: '"title" is set from code here ({copy.title}), not a literal, so writing a value would replace that code.',
+    }
 
-      const toasts = collectToasts()
-      expect(toasts).toHaveLength(1)
-      // Named by the real node label ("Headline"), not the old bare-count
-      // "1 edit had no writable location" message.
-      expect(toasts[0].body).toContain('Headline')
-      expect(toasts[0].action?.label).toBe('Select node')
-    })
-
-    it('an older/dev server response with no unexplainedSkips field produces no toast, not a crash', async () => {
+    it('WB-13 — a refused edit is ONE warning naming its reason, with "Open in code" — never a red card', async () => {
       stubFetch({
+        '/admin/api/studio/load': loadedHeadline({ title: 'Hi' }),
         '/admin/api/studio/save': {
           ok: true, written: 0, skipped: 1, shifted: false, sharedComponents: false,
-          // No `unexplainedSkips` key at all — tolerant-rollout shape.
+          refusals: [BINDING_REFUSAL],
         },
       })
       await loadThenResetCalls()
 
-      const site = makeSite({
-        pages: [makePage({
-          rootNodeId: 'root',
-          nodes: { root: makeNode({ id: 'pages/Home.tsx:3:1', moduleId: 'base.text', props: { text: 'Bye' } }) },
-        })],
+      await fsCodemodAdapter.saveSite(editedHeadline({ title: 'Bye' }))
+
+      const toasts = collectToasts()
+      expect(toasts).toHaveLength(1)
+      expect(toasts[0]!.kind).toBe('warning')
+      expect(toasts[0]!.title).toBe('Property not saved to source')
+      expect(toasts[0]!.body).toContain('is set from code here')
+      expect(toasts[0]!.action?.label).toBe('Open in code')
+    })
+
+    it('WB-35 — a partly refused batch commits the edit that wrote; the next save re-sends only the refused one', async () => {
+      stubFetch({
+        '/admin/api/studio/load': loadedHeadline({ alt: 'a', title: 'old' }),
+        '/admin/api/studio/save': {
+          ok: true, written: 1, skipped: 1, shifted: false, sharedComponents: false,
+          refusals: [BINDING_REFUSAL],
+        },
       })
+      await loadThenResetCalls()
+      const site = editedHeadline({ alt: 'b', title: 'new' })
 
       await fsCodemodAdapter.saveSite(site)
+      const first = calls[0]!.body as { edits: Array<{ prop?: string }> }
+      expect(first.edits.map((edit) => edit.prop).sort()).toEqual(['alt', 'title'])
 
+      calls = []
+      await fsCodemodAdapter.saveSite(site)
+
+      // `alt` landed, so its baseline advanced and it is not sent again.
+      // The refused `title` did NOT land, so its baseline held — it is still
+      // the user's pending change, and a later save tries it again. (Before
+      // WB-35 the batch was all-or-nothing on an aggregate count, and a named
+      // refusal's value was adopted as if it had been written.)
+      expect(calls).toHaveLength(1)
+      const second = calls[0]!.body as { edits: Array<{ prop?: string }> }
+      expect(second.edits.map((edit) => edit.prop)).toEqual(['title'])
+    })
+
+    it('a batch the server fully wrote advances every baseline — nothing is re-sent', async () => {
+      stubFetch({
+        '/admin/api/studio/load': loadedHeadline({ alt: 'a', title: 'old' }),
+        '/admin/api/studio/save': { ok: true, written: 2, skipped: 0, shifted: false, sharedComponents: false, refusals: [] },
+      })
+      await loadThenResetCalls()
+      const site = editedHeadline({ alt: 'b', title: 'new' })
+
+      await fsCodemodAdapter.saveSite(site)
+      calls = []
+      await fsCodemodAdapter.saveSite(site)
+
+      expect(calls).toHaveLength(0)
       expect(collectToasts()).toHaveLength(0)
     })
   })
@@ -856,9 +903,11 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
 
       const toasts = collectToasts()
       expect(toasts).toHaveLength(1)
-      expect(toasts[0].kind).toBe('error')
+      // WB-13 — a warning with its one-click remedy, never a red card.
+      expect(toasts[0].kind).toBe('warning')
       expect(toasts[0].title).toBe('Class change not saved to source')
       expect(toasts[0].body).toContain('CSS Modules')
+      expect(toasts[0].action?.label).toBe('Open in code')
     })
   })
 
@@ -871,15 +920,16 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
       return latest
     }
 
-    // `#2` marks this as a `.map` iteration — `hasWritableSourceLocation`
-    // reports `false` for it (one piece of source JSX renders every row), so
-    // there is genuinely nowhere honest for `setJsxClassName` to write.
+    // An imported page's synthetic `<pageId>:body` root: the importer minted it,
+    // but nothing was written at it, so there is genuinely nowhere honest for
+    // `setJsxClassName` to write. (A `.map` row used to be the example here;
+    // since P3-C, OD-8, its class goes to the row template — tested below.)
     function unwritablePage(classIds: string[]) {
       return makePage({
-        rootNodeId: 'root',
+        id: 'home',
+        rootNodeId: 'home:body',
         nodes: {
-          root: makeNode({ id: 'root', moduleId: 'base.body', children: ['pages/Home.tsx:3:1#2'] }),
-          'pages/Home.tsx:3:1#2': makeNode({ id: 'pages/Home.tsx:3:1#2', moduleId: 'base.container', label: 'Card', classIds }),
+          'home:body': makeNode({ id: 'home:body', moduleId: 'base.body', label: 'Card', classIds }),
         },
       })
     }
@@ -934,6 +984,55 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
       // advanced after the first save, so this must be silent.
       await fsCodemodAdapter.saveSite(siteWithUnwritableClassIds(['class-1']))
       expect(collectToasts()).toHaveLength(0)
+    })
+  })
+
+  describe('P3-C (OD-8) — a class on a `.map` row is written to the row template', () => {
+    function menuPage(classIdsOfRow1: string[]) {
+      return makePage({
+        id: 'menu',
+        rootNodeId: 'menu:body',
+        nodes: {
+          'menu:body': makeNode({ id: 'menu:body', moduleId: 'base.body', children: ['pages/Menu.tsx:7:10#0', 'pages/Menu.tsx:7:10#1'] }),
+          'pages/Menu.tsx:7:10#0': makeNode({ id: 'pages/Menu.tsx:7:10#0', moduleId: 'base.container', label: 'Dish' }),
+          'pages/Menu.tsx:7:10#1': makeNode({ id: 'pages/Menu.tsx:7:10#1', moduleId: 'base.container', label: 'Dish', classIds: classIdsOfRow1 }),
+        },
+      })
+    }
+
+    it('sends one class edit at the template, says it applied to every row, and re-reads the page', async () => {
+      stubFetch({
+        '/admin/api/studio/load': {
+          dir: '/tmp/studio-test', projectName: 'studio-test',
+          pages: [menuPage([])],
+          componentSources: {}, styleRules: {},
+          styleRuleSources: { 'class-1': { file: 'pages/Menu.css', selector: '.featured' } },
+          conditions: [], vendorCss: '', trust: 'static', paletteHiddenModuleIds: [],
+        },
+        '/admin/api/studio/save': {
+          ok: true, written: 1, skipped: 0, shifted: false, sharedComponents: false, touchedFiles: ['/tmp/studio-test/pages/Menu.tsx'],
+        },
+      })
+      await loadThenResetCalls()
+      let latest: Toast[] = []
+      subscribeToasts((snapshot) => {
+        latest = [...snapshot]
+      })
+
+      await fsCodemodAdapter.saveSite(
+        makeSite({
+          styleRules: { 'class-1': { id: 'class-1', name: 'featured', kind: 'class', styles: {}, contexts: {} } as never },
+          pages: [menuPage(['class-1'])],
+        }),
+      )
+
+      const save = calls.find((c) => c.url === '/admin/api/studio/save')
+      expect((save?.body as { edits: unknown[] }).edits).toEqual([
+        { kind: 'class', nodeId: 'pages/Menu.tsx:7:10', add: [{ kind: 'literal', token: 'featured' }], remove: [] },
+      ])
+      expect(latest.map((toast) => [toast.kind, toast.title])).toEqual([['info', 'Applied to all 2 rows']])
+      // The write changed every row on disk, so the board re-reads the page.
+      expect(calls.some((c) => c.url === '/admin/api/studio/reload-scope' || c.url.startsWith('/admin/api/studio/load'))).toBe(true)
     })
   })
 

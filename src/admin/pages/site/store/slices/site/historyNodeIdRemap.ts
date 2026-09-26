@@ -95,6 +95,11 @@ export function buildReparseNodeIdRemap(
   for (const beforePage of before.pages) {
     const afterPage = afterById.get(beforePage.id)
     if (!afterPage) return new Map()
+    // An untouched page (`patchPages` keeps its object) renamed nothing, and
+    // walking it would contribute nothing — skipping it keeps a narrow resync
+    // O(touched pages) now that ERR-5 asks for this remap on every reload that
+    // has a held id, not only when there is history.
+    if (afterPage === beforePage) continue
     const pageRemap = new Map<string, string>()
     if (!walkTreePair(beforePage, afterPage, beforePage.rootNodeId, afterPage.rootNodeId, pageRemap)) {
       continue
@@ -141,12 +146,16 @@ function remapStructural(
     }
     return { gesture: 'source', source: { ...source, forward, inverse, inverseTemplate } }
   }
-  if (structural.gesture !== 'move') return structural
-  const step = (s: { nodeId: string; parentId: string; index: number }) => ({
+  const step = <T extends { nodeId: string; parentId: string }>(s: T): T => ({
     ...s,
     nodeId: remap.get(s.nodeId) ?? s.nodeId,
     parentId: remap.get(s.parentId) ?? s.parentId,
   })
+  // P2-C2 / P3-D — a move sequence names one element and one parent per
+  // step, the same two ids a single move does.
+  if (structural.gesture === 'moves') {
+    return { ...structural, undo: structural.undo.map(step), redo: structural.redo.map(step) }
+  }
   return { ...structural, undo: step(structural.undo), redo: step(structural.redo) }
 }
 

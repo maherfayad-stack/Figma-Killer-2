@@ -1,19 +1,34 @@
 /**
  * useCanvasSelectionKeyboard — the `node` scope's FIRST handler, and the ONE
- * owner of Enter, ⇧Enter, Escape and ⌘R for the canvas selection. It is
- * therefore the whole "how do I get back to nothing selected" ladder:
+ * owner of Enter, ⇧Enter, Escape, ⌘R, Tab / ⇧Tab and ⌘A for the canvas
+ * selection. It is therefore the whole "how do I get back to nothing
+ * selected" ladder:
  *
  *   1. `Enter` with a `studio.instance` selected steps INTO it (WS-4.2).
- *   2. `Enter` otherwise selects the anchor's FIRST CHILD — Figma's
- *      "step into" (`layers.selectFirstChild`, viewport-01).
- *   3. `⇧Enter` selects the anchor's PARENT (`layers.selectParent`).
- *   4. `Escape` inside an entered instance steps back OUT one level.
- *   5. `Escape` with anything else selected clears EVERY selection — nodes,
+ *   2. `Enter` on a text layer starts typing into it — the double-click
+ *      path (P5-E, IX-7). Portal frames only: a live frame's text edit is
+ *      started by its own runtime.
+ *   3. `Enter` otherwise selects EVERY child of the selection — Penpot's
+ *      and Figma's "step into" (`layers.selectChildren`; viewport-01 took
+ *      the first child only).
+ *   4. `⇧Enter` selects the PARENT of every selected layer
+ *      (`layers.selectParent`).
+ *   5. `Escape` inside an entered instance steps back OUT one level.
+ *   6. `Escape` with anything else selected clears EVERY selection — nodes,
  *      board frames, sticky notes / doc cards — and leaves Visual Component
  *      mode. All in one press: they are independent lists (a marquee can leave
  *      frames and annotations selected at once), so clearing a subset would
  *      leave the board looking deselected while Delete still had a target.
- *   6. `⌘R` opens the canvas rename dialog on the anchor (`layers.rename`).
+ *   7. `⌘R` opens the canvas rename dialog on the anchor (`layers.rename`).
+ *   8. `Tab` / `⇧Tab` select the next / previous sibling, wrapping (IX-3) —
+ *      ONLY while focus is on the canvas, a frame, or nowhere
+ *      (`isCanvasKeyboardSurface`). Inside a panel Tab walks the fields,
+ *      and taking that away is an accessibility regression, not a shortcut.
+ *   9. `⌘A` selects the anchor's siblings; again, it climbs a level (IX-4).
+ *      At the tree root there is no node level left, so it hands over to the
+ *      board's "every frame" (`useBoardSelectAllShortcut`'s meaning). It
+ *      claims the key whenever a node is selected: before P2-B nobody did, and
+ *      the browser selected the admin chrome's text instead.
  *
  * **Escape stays "deselect", it does NOT become "select parent"** (viewport-01).
  * Figma binds ⇧Enter for that and Esc for deselect, and rung 5 above is the
@@ -40,8 +55,20 @@
  */
 import { useEditorStore } from '@site/store/store'
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
-import { isInsideKeyOwningOverlay, isTextInputTarget } from './editorKeyGuards'
+import { isDrawGestureActive, isDrawTool } from './canvasDrawTool'
+import { startCanvasTextEdit } from './canvasTextEditStart'
+import { isCanvasKeyboardSurface, isInsideKeyOwningOverlay, isTextInputTarget } from './editorKeyGuards'
 import { useEditorKeyScope } from './useEditorKeyDispatcher'
+
+/**
+ * Rung 2 — Enter on ONE text layer types into it, exactly as a double-click
+ * does (`canvasTextEditStart.ts` decides; a live frame's text is its runtime's).
+ */
+function startTextEditOnEnter(): boolean {
+  const state = useEditorStore.getState()
+  if (!state.selectedNodeId || state.selectedNodeIds.length > 1) return false
+  return startCanvasTextEdit(state.selectedNodeId, state.selectedNodeFrameId)
+}
 
 /**
  * Registers the scope. Inert while live or read-only.
@@ -65,6 +92,10 @@ export function useCanvasSelectionKeyboard(
     (event) => {
       // ── Step into / out of an instance ────────────────────────────────
       if (isTextInputTarget(event.target)) return false
+      // P5-E — Escape during a draw ends the draw (the `board` rung puts the
+      // tool away); deselecting under a rectangle still following the pointer
+      // would be two gestures at once.
+      if (event.key === 'Escape' && isDrawGestureActive()) return false
 
       if (event.key === 'Escape') {
         // Only claims the keystroke when something is actually entered —
@@ -73,11 +104,20 @@ export function useCanvasSelectionKeyboard(
           event.preventDefault()
           return true
         }
-      } else if (getKeybindingForCommand('layers.selectFirstChild')?.match(event)) {
+      } else if (getKeybindingForCommand('layers.selectChildren')?.match(event)) {
+        // P5-E — with a draw tool armed, ⏎ is "insert at the selection", the
+        // board rung's (`useCanvasToolShortcuts`), so a keyboard-only user is
+        // never stranded by an armed tool.
+        if (isDrawTool(useEditorStore.getState().canvasTool)) return false
         // PLAIN Enter only — matched through the registry so ⇧Enter (select
         // parent) can never be swallowed here. A bare `event.key === 'Enter'`
         // test did exactly that once ⇧Enter existed.
         if (useEditorStore.getState().enterSelectedInstance()) {
+          event.preventDefault()
+          return true
+        }
+        // A menu or dialog owns its own Enter.
+        if (!isInsideKeyOwningOverlay(event.target) && startTextEditOnEnter()) {
           event.preventDefault()
           return true
         }
@@ -92,12 +132,15 @@ export function useCanvasSelectionKeyboard(
       //
       // Plain Enter only reaches here when the instance branch above did NOT
       // claim it (i.e. the selection isn't an un-entered `studio.instance`),
-      // so "step into an instance" and "select the first child" share one key
+      // so "step into an instance", "edit this text" and "select the children" share one key
       // without either shadowing the other.
       const intent =
         getKeybindingForCommand('layers.selectParent')?.match(event) ? 'selectParent'
-        : getKeybindingForCommand('layers.selectFirstChild')?.match(event) ? 'selectFirstChild'
+        : getKeybindingForCommand('layers.selectChildren')?.match(event) ? 'selectChildren'
         : getKeybindingForCommand('layers.rename')?.match(event) ? 'rename'
+        : getKeybindingForCommand('layers.selectNextSibling')?.match(event) ? 'nextSibling'
+        : getKeybindingForCommand('layers.selectPreviousSibling')?.match(event) ? 'previousSibling'
+        : getKeybindingForCommand('canvas.selectAll')?.match(event) ? 'selectAll'
         : event.key === 'Escape' ? 'deselect'
         : null
       if (!intent) return false
@@ -106,13 +149,34 @@ export function useCanvasSelectionKeyboard(
       // selection underneath an open modal is never what the user asked for.
       if (isInsideKeyOwningOverlay(event.target)) return false
 
+      if (intent === 'nextSibling' || intent === 'previousSibling') {
+        // Canvas-scoped (rung 7 above): a panel keeps Tab for focus order.
+        if (!isCanvasKeyboardSurface(event)) return false
+        const store = useEditorStore.getState()
+        if (!store.selectedNodeId) return false
+        // Claimed even when there is no sibling to move to: the canvas owns
+        // Tab here, and letting it through would walk focus out of the canvas.
+        event.preventDefault()
+        store.selectSiblingNode(intent === 'nextSibling' ? 'next' : 'previous')
+        return true
+      }
+
+      if (intent === 'selectAll') {
+        const store = useEditorStore.getState()
+        // Nothing selected: the board rung's "every frame" is the meaning.
+        if (!store.selectedNodeId) return false
+        event.preventDefault()
+        if (!store.selectAllSiblingNodes()) store.selectAllFrames()
+        return true
+      }
+
       if (intent === 'selectParent') {
         if (!useEditorStore.getState().selectParentNode()) return false
         event.preventDefault()
         return true
       }
-      if (intent === 'selectFirstChild') {
-        if (!useEditorStore.getState().selectFirstChildNode()) return false
+      if (intent === 'selectChildren') {
+        if (!useEditorStore.getState().selectChildNodes()) return false
         event.preventDefault()
         return true
       }

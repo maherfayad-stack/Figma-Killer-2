@@ -379,4 +379,26 @@ describe('tryServeStudioTokens', () => {
     const finalOnDisk = readStudioFrameworkFile(tmpDir)!
     expect(finalOnDisk.colors.tokens[0]?.lightValue).toBe('#USER-EDITED')
   })
+
+  it('perf-17: a repeat POST with nothing changed leaves framework.json alone — no rewrite, same bytes, same mtime', async () => {
+    write('design/tokens.module.css', ':root { --accent: #ff0055; }')
+    const post = () => {
+      const { req, url, pathname } = makeRequest('/admin/api/studio/tokens', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ dir: tmpDir }),
+      })
+      return tryServeStudioTokens(req, url, pathname)
+    }
+    expect((await post())!.status).toBe(200)
+    const file = path.join(tmpDir, '.studio', 'framework.json')
+    const past = new Date(Date.now() - 60_000)
+    fs.utimesSync(file, past, past)
+    const before = fs.statSync(file).mtimeMs
+
+    const res = await post()
+    expect(res!.status).toBe(200)
+    expect(((await res!.json()) as { framework: FrameworkSettings }).framework.colors.tokens).toHaveLength(1)
+    expect(fs.statSync(file).mtimeMs).toBe(before)
+  })
 })

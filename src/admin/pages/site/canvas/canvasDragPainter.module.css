@@ -1,0 +1,72 @@
+/* The drag painter's own classes (P2-E onward) — chrome about WHERE a drop lands, painted by
+   `canvasDragPainter.ts` into the parent-document drag layer (never inside the
+   frame, so these CSS Module classes exist where they are used). Kept apart
+   from `BreakpointSelectionOverlay.module.css`, which carries the selection
+   chrome.
+
+   IX-24 — the container a before/after drop lands in. Dashed and faint so it
+   reads as context, never as the drop itself (the solid ring of an "inside"
+   drop). Positioned through the same `--canvas-drop-*` rect channel as every
+   other indicator. */
+.dropParentOutline {
+    position: absolute;
+    box-sizing: border-box;
+    pointer-events: none;
+    transform: translate(var(--canvas-drop-x), var(--canvas-drop-y));
+    width: var(--canvas-drop-w);
+    height: var(--canvas-drop-h);
+    border-radius: 2px;
+    outline: 1px dashed var(--canvas-selection-ring-color);
+    outline-offset: -1px;
+    opacity: 0.55;
+}
+
+/* P5-F / IX-5d — an equal gap: a hairline segment across the gap, in the
+   measure colour Penpot and Figma both use for distances, and a pill with the
+   number. The segment rides the `--canvas-drop-*` rect channel with its
+   thickness pinned here; the pill counter-scales like the drag ghost so the
+   number is one size at every zoom. */
+.spacingSegment {
+    position: absolute;
+    box-sizing: border-box;
+    pointer-events: none;
+    transform: translate(var(--canvas-drop-x), var(--canvas-drop-y));
+    width: var(--canvas-drop-w);
+    height: var(--canvas-drop-h);
+    background: var(--canvas-measure-line-color);
+}
+
+.spacingSegment[data-axis="x"] {
+    height: 1px;
+}
+
+.spacingSegment[data-axis="y"] {
+    width: 1px;
+}
+
+.spacingPill {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 0;
+    height: 0;
+    pointer-events: none;
+    transform: translate(var(--canvas-drop-x), var(--canvas-drop-y)) scale(calc(1 / var(--canvas-zoom)));
+    transform-origin: 0 0;
+}
+
+.spacingPillLabel {
+    position: absolute;
+    top: 0;
+    left: 0;
+    transform: translate(-50%, -50%);
+    padding: var(--space-px) var(--space-2xs);
+    border-radius: var(--radius-sm);
+    background: var(--canvas-measure-pill-bg);
+    color: var(--canvas-measure-pill-text);
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    font-weight: 600;
+    line-height: 1.4;
+    white-space: nowrap;
+}

@@ -58,6 +58,10 @@ export const TOOL_REFUSAL_CODES = {
     retryable: false,
     meaning: 'The arguments are self-contradictory or incomplete in a way the schema cannot express (e.g. exactly one of three fields required).',
   },
+  'input-schema-mismatch': {
+    retryable: false,
+    meaning: 'The arguments do not match the tool\'s input schema. The refusal names each failing field\'s path, what was expected there and what arrived, plus a minimal valid call built from the schema (required fields only) whenever one can be built.',
+  },
   'missing-param': {
     retryable: false,
     meaning: 'A parameter this particular verb/mode requires was not supplied.',
@@ -108,6 +112,14 @@ export const TOOL_REFUSAL_CODES = {
     retryable: false,
     meaning: 'This project has no package.json, so there is no dependency manifest to act on.',
   },
+  'no-such-token': {
+    retryable: false,
+    meaning: 'No stylesheet the canvas loads declares that CSS custom property at the document root — in the requested colour scheme, when one was named. The refusal says whether the light value exists when the dark one does not.',
+  },
+  'no-such-component': {
+    retryable: false,
+    meaning: 'No component of that name is in the design-system catalog of this project (the one studio_list_components reads). The refusal lists the nearest names.',
+  },
   'no-writable-location': {
     retryable: false,
     meaning: 'The node has no single honest source location to write to — a synthetic node, or one produced inside a `.map` iteration.',
@@ -117,6 +129,18 @@ export const TOOL_REFUSAL_CODES = {
   'ambiguous-reference': {
     retryable: false,
     meaning: 'Two or more equally-ranked design references could stand in for this page. Name one explicitly with referenceId.',
+  },
+  'ambiguous-declaration': {
+    retryable: false,
+    meaning: 'The design token is declared in more than one place for the same colour scheme (two project stylesheets, or a responsive/second selector in one file), so no single declaration is "the" token. The refusal lists every file:line; edit the one you mean with the file tools.',
+  },
+  'read-only-source': {
+    retryable: false,
+    meaning: 'The declaration that wins comes from a package, from the built-in Studio design system, or from compiled Sass/PostCSS/Tailwind output — not a project file that can be edited in place. Override it in a stylesheet of the project, or edit the source the output was compiled from.',
+  },
+  'invalid-prop-value': {
+    retryable: false,
+    meaning: 'A prop value is not one the component accepts — an enum value outside its declared set, a non-boolean for a boolean prop, or a prop the component does not declare. The refusal lists the accepted values.',
   },
   'reference-unreadable': {
     retryable: false,
@@ -137,6 +161,42 @@ export const TOOL_REFUSAL_CODES = {
   'not-a-file': {
     retryable: false,
     meaning: 'The path exists but is a directory or another non-regular file.',
+  },
+  'protected-path': {
+    retryable: false,
+    meaning: 'The path is inside the project but is not the user\'s source: a directory Studio owns or that is not source (.studio, .claude, .git, node_modules, build output), a credential file (.env, .npmrc, key material), or a file with other hard-linked names. No agent file tool reads or writes it.',
+  },
+  'needs-user': {
+    retryable: false,
+    meaning: 'The file runs on the user\'s machine outside the page — build-tool config, package.json, env and package-manager config, git hooks, .vscode, CI workflows — or is standing agent instruction (CLAUDE.md). No agent writes it on either path: show the user the exact change and ask them to make or approve it. Screen files (.tsx, .ts, .css, assets) stay writable.',
+  },
+  'not-text': {
+    retryable: false,
+    meaning: 'The file (or the content supplied) is binary or not valid UTF-8, so a text tool cannot hand it back or rewrite it byte-faithfully. Images and fonts go through the asset tools.',
+  },
+  'file-too-large': {
+    retryable: false,
+    meaning: 'The file, or the content supplied for it, is over the file tools\' size cap. Split the file, or edit the part that needs to change.',
+  },
+  'stale-source': {
+    retryable: false,
+    meaning: 'The file on disk is not the version the write was built against: its hash no longer matches the expectedHash given, or an existing file was about to be overwritten with no expectedHash at all. Read it again (studio_read_file returns the hash) and rebuild the change against what is there now.',
+  },
+  'edit-no-match': {
+    retryable: false,
+    meaning: 'The oldString of an edit does not occur in the file. Read the file again and copy the exact text, whitespace and line breaks included.',
+  },
+  'edit-ambiguous': {
+    retryable: false,
+    meaning: 'The oldString of an edit occurs more than once, so which one to change is a guess. Include enough surrounding text to make it unique, or pass replaceAll:true when every occurrence should change.',
+  },
+  'no-open-project': {
+    retryable: false,
+    meaning: 'This tool writes only into the project open for this turn, and none is. The file-authoring tools never take a directory argument.',
+  },
+  'plan-not-approved': {
+    retryable: false,
+    meaning: 'The turn is in plan mode and no plan has been approved yet, so no write runs, and no tool that runs the project\'s own code (studio_lint, studio_render_reference). Call studio_propose_plan with the steps and wait for the user\'s approval.',
   },
   'stale-anchor': {
     retryable: false,
@@ -210,6 +270,18 @@ export const TOOL_REFUSAL_CODES = {
     retryable: false,
     meaning: 'A remote URL could not be fetched, was refused by the SSRF guard, or exceeded the size cap.',
   },
+  'host-not-allowed': {
+    retryable: false,
+    meaning: 'An agent may only make Studio fetch from Figma asset hosts, the stock photo provider, the Figma Dev Mode server when the operator enabled loopback, or a URL the user pasted into this conversation. Any other host is refused before a request is made.',
+  },
+  'stock-search-failed': {
+    retryable: true,
+    meaning: 'The stock photo provider could not answer: unreachable, rate-limited, or an error on its side. The same search can work a little later.',
+  },
+  'stock-key-refused': {
+    retryable: false,
+    meaning: 'The stock photo provider refused the API key this Studio server is configured with. Only the operator can fix it; carry on down the Assets ladder.',
+  },
   'asset-write-failed': {
     retryable: false,
     meaning: 'Bytes were obtained but could not be landed as a project file (validation, containment, or naming).',
@@ -230,6 +302,22 @@ export const TOOL_REFUSAL_CODES = {
     retryable: false,
     meaning: 'tsc itself could not run — a broken toolchain or tsconfig, not a code error. The refusal carries a capped output excerpt.',
   },
+  'eslint-not-installed': {
+    retryable: false,
+    meaning: 'The project has no ESLint of its own to lint with. Studio never substitutes its own or downloads one; install the project\'s dependencies, or rely on the typecheck when the project does not use ESLint.',
+  },
+  'no-eslint-config': {
+    retryable: false,
+    meaning: 'ESLint is installed but the project has no ESLint config inside it, so there are no project rules. Never write a config to make the lint pass.',
+  },
+  'lint-timed-out': {
+    retryable: false,
+    meaning: 'ESLint was killed before it finished; nothing it found is known. Lint fewer paths at a time.',
+  },
+  'lint-invocation-error': {
+    retryable: false,
+    meaning: 'ESLint itself could not run or produced no readable report — a broken config or plugin, not a code error, or a report too large to read (lint fewer paths). The refusal carries a capped output excerpt.',
+  },
   'io-error': {
     retryable: true,
     meaning: 'An unexpected filesystem or subprocess error. The message carries the underlying cause.',
@@ -238,7 +326,23 @@ export const TOOL_REFUSAL_CODES = {
   // --- the tool refuses on principle -------------------------------------
   'duplicate-call': {
     retryable: false,
-    meaning: 'This exact mutating call, with these exact arguments, already ran this turn. The loop answered from the first call\'s result instead of running it again (Z3, `toolLoop.ts`) — the write you asked for has already happened, so read the echoed result rather than repeating it.',
+    meaning: 'This exact write, with these exact arguments, already ran this turn and nothing else has been written since. The loop answered from the first call\'s result instead of running it again (Z3, `toolLoop.ts`) — the write you asked for has already happened, so read the echoed result rather than repeating it. Observers (screenshots, compares, measurements, typechecks) are never answered this way, and a write repeated after a different write landed runs again.',
+  },
+  'not-owned': {
+    retryable: false,
+    meaning: 'A studio_delegate subagent tried to write a file it does not own. A subagent owns exactly its page\'s component file and that page\'s .module.css; every shared file stays with the agent that delegated. Name the change you need in your final reply instead.',
+  },
+  'overlapping-ownership': {
+    retryable: false,
+    meaning: 'Two studio_delegate tasks name the same page, so two subagents would write the same files. Give each page to exactly one task.',
+  },
+  'delegation-unavailable': {
+    retryable: false,
+    meaning: 'Delegation runs only inside a chat turn on an API-key driver with a project open; this call has none (an external client, or a subagent, which cannot delegate further). Do the work yourself.',
+  },
+  'delegation-budget-exhausted': {
+    retryable: false,
+    meaning: 'This turn has spent its delegation budget: at most 2 studio_delegate calls, 8 subagents and 150 subagent rounds per turn, so a runaway turn cannot spend without bound on the user\'s key. Nothing from this call ran. Build the remaining pages yourself.',
   },
   'strict-mode-stand-in-refused': {
     retryable: false,

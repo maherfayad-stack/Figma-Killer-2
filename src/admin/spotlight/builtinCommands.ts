@@ -21,6 +21,7 @@ import { getNavigationCommands } from './commands/navigation'
 import { getAccountCommands } from './commands/account'
 import { getEditorCommands } from './commands/editor'
 import { getLayersCommands } from './commands/layers'
+import { getLayerArrangeCommands } from './commands/layerArrange'
 import { getPanelsCommands } from './commands/panels'
 import { getSettingsCommands } from './commands/settings'
 import { getHelpCommands } from './commands/help'
@@ -35,6 +36,7 @@ import { getAiAssistantCommands } from './commands/aiAssistant'
 import { getImportHtmlCommands } from './commands/importHtml'
 import { getSiteImportCommands } from './commands/siteImport'
 import { getSiteExportCommands } from './commands/siteExport'
+import { getImageCommands } from './commands/images'
 
 /**
  * Module-level cache of the STATIC built-in command list. Each
@@ -65,6 +67,7 @@ export function getAllCommands(): Command[] {
       ...getNavigationCommands(),
       ...getEditorCommands(),
       ...getLayersCommands(),
+      ...getLayerArrangeCommands(),
       ...getPanelsCommands(),
       ...getPagesCommands(),
       ...getBreakpointsCommands(),
@@ -76,6 +79,7 @@ export function getAllCommands(): Command[] {
       ...getSettingsCommands(),
       ...getPreviewCommands(),
       ...getImportHtmlCommands(),
+      ...getImageCommands(),
       ...getSiteImportCommands(),
       ...getSiteExportCommands(),
       ...getAiAssistantCommands(),

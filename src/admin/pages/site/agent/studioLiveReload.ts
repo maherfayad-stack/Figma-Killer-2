@@ -15,6 +15,10 @@
  * `liveReloadPush.ts`, right after a capability-gated server tool already
  * succeeded and wrote to disk.
  *
+ * P1-D — the same push also carries `diskChanged`: files that changed on disk
+ * WITHOUT Studio writing them (VS Code, `git pull`, the agent's own Edit
+ * tool), found by the server's project watcher (`outsideEditReload.ts`).
+ *
  * Fail-soft throughout, per this feature's own constraint: a stale canvas
  * after a failed/declined push is an expected, acceptable outcome (no open
  * board is the common case for a headless MCP connector) — this never
@@ -27,6 +31,9 @@ import { fetchBoards } from '../studio/boardsApi'
 import { fetchComments } from '../studio/commentsApi'
 import { studioWriteDir } from '../studio/studioWorkspaceDir'
 import { fetchStudioPagesById } from '../studio/studioLiveReloadFetch'
+import { noteBoardRead } from '../studio/sourceIdentity'
+import { resyncBoardAfterWrite } from '../studio/studioBoardResync'
+import { flushEditorSave } from '../hooks/editorSaveRef'
 import { getAgentStoreApi } from './storeRef'
 
 const getStoreState = (): EditorStore => getAgentStoreApi<EditorStore>().getState()
@@ -48,6 +55,12 @@ export const StudioLiveReloadInputSchema = Type.Object({
    * read as false by the handler below.
    */
   commentsChanged: Type.Optional(Type.Boolean()),
+  /**
+   * P1-D — workspace-relative files changed on disk by something other than
+   * Studio. An empty list means the server could not say which (a watcher
+   * overflow, or a directory that disappeared) — re-read everything.
+   */
+  diskChanged: Type.Optional(Type.Object({ files: Type.Array(Type.String()) })),
 })
 export type StudioLiveReloadInput = Static<typeof StudioLiveReloadInputSchema>
 
@@ -88,6 +101,24 @@ async function reloadStudioComments(dir: string): Promise<void> {
   getStoreState().loadComments(await fetchComments(dir))
 }
 
+/**
+ * Files changed on disk behind the board's back. Anything the user has typed
+ * but not yet saved goes FIRST: those edits name the ids the board holds now,
+ * and the server re-finds each one in the changed file by the identity it was
+ * read with (P1-D) — or refuses it, and the save's own recovery re-reads and
+ * retries. Re-reading first would re-address the document under the pending
+ * edits and leave the save diffing against a board that moved.
+ *
+ * The re-read is the one every Studio write uses (`resyncBoardAfterWrite`):
+ * `/reload-scope` decides whether the files feed a few pages or need the
+ * whole board, and an empty list is a full re-read by that function's own
+ * rule.
+ */
+async function reloadAfterDiskChange(files: readonly string[]): Promise<void> {
+  if (getStoreState().hasUnsavedChanges) await flushEditorSave()
+  await resyncBoardAfterWrite(files)
+}
+
 export async function runStudioLiveReload(input: StudioLiveReloadInput): Promise<AiToolOutput> {
   // A different project is open than the one the write landed in — applying
   // THAT project's pages/boards to THIS board would silently cross-
@@ -98,6 +129,14 @@ export async function runStudioLiveReload(input: StudioLiveReloadInput): Promise
   }
 
   const failed: string[] = []
+  if (input.diskChanged) {
+    try {
+      await reloadAfterDiskChange(input.diskChanged.files)
+    } catch (err) {
+      console.error('[studioLiveReload] re-reading files changed outside Studio failed — canvas may be stale:', err)
+      failed.push('disk')
+    }
+  }
   if (input.pageIds.length > 0) {
     try {
       // `styleRules`/`conditions` ride along deliberately: they are the
@@ -105,8 +144,10 @@ export async function runStudioLiveReload(input: StudioLiveReloadInput): Promise
       // pages without them renders freshly-parsed nodes against the previous
       // stylesheet — see `studioLiveReloadFetch.ts`'s doc for what that looks
       // like on screen.
-      const { pages, missingPageIds, styleRules, conditions } = await fetchStudioPagesById(input.pageIds)
+      const { pages, missingPageIds, styleRules, conditions, canvasLayers } = await fetchStudioPagesById(input.pageIds)
+      getStoreState().setCanvasLayers(canvasLayers) // P5-G — never part of the page patch
       getStoreState().patchPages({ pages, removedPageIds: missingPageIds, styleRules, conditions })
+      noteBoardRead(pages, 'merge') // P1-A — the agent's write renumbered these; see `sourceIdentity.ts`
     } catch (err) {
       console.error('[studioLiveReload] page reload failed — canvas may be stale for the touched page(s):', err)
       failed.push('pages')

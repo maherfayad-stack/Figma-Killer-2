@@ -36,7 +36,7 @@ function stubFetch(saveCalls: Array<{ body: unknown }>) {
         authoredCss: '',
         trust: 'static',
         paletteHiddenModuleIds: [],
-        pageCount: 0,
+        pageList: [],
       }
       return new Response(JSON.stringify(meta) + '\n', {
         status: 200,

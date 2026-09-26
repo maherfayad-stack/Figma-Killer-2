@@ -55,6 +55,12 @@ interface BridgeReadyEvent {
   bridgeId: string
 }
 
+/** Which turn this stream is — the persisted id of the user message that opened it (AI-7). */
+interface TurnEvent {
+  type: 'turn'
+  turnId: string
+}
+
 /**
  * The server-side driver needs the browser to apply a write tool against
  * the editor store. The browser executes it, then POSTs the result to
@@ -100,6 +106,22 @@ interface ToolResultEvent {
   toolName: string
   ok: boolean
   error?: string
+  /** A SERVER-run tool's images (a headless screenshot) — display only, session only. */
+  previewImages?: Array<{ mimeType: string; data: string }>
+}
+
+/** A tool call's arguments are still streaming (AI-26) — see `AgentMessage.inputProgress`. */
+interface ToolInputProgressEvent extends AgentToolInputProgress {
+  type: 'toolInputProgress'
+}
+
+export interface AgentToolInputProgress {
+  toolCallId: string
+  toolName: string
+  /** Argument bytes streamed so far. */
+  bytes: number
+  /** The file the call targets, once its `path` has streamed in. */
+  target?: string
 }
 
 /** Aggregated token usage for the entire turn — emitted just before `done`.
@@ -157,16 +179,50 @@ interface RoutingEvent extends AgentRoutedTurn {
   type: 'routing'
 }
 
+/**
+ * Which model this turn runs on and why (AI-25), emitted by the chat handler
+ * on every path. Display only. See `server/ai/routing/modelRouting.ts`.
+ */
+export interface AgentRoutedModel {
+  /** `pinned`: the user's pick. `routed`: moved to a cheaper model for the job. `default`: the conversation's own model. */
+  mode: 'pinned' | 'routed' | 'default'
+  modelId: string
+  /** build, creative, smallEdit or question. */
+  role: string
+  reason: string
+}
+
+interface ModelRoutingEvent extends AgentRoutedModel {
+  type: 'modelRouting'
+}
+
+/**
+ * The provider was momentarily unable and the server is re-sending the same
+ * request (AI-8, `server/ai/drivers/http/providerRetry.ts`). A quiet status,
+ * never an error: the turn is still alive.
+ */
+interface RetryingEvent {
+  type: 'retrying'
+  attempt: number
+  maxAttempts: number
+  delayMs: number
+  reason: string
+}
+
 export type ServerStreamEvent =
   | TextEvent
   | BridgeReadyEvent
+  | TurnEvent
   | ToolRequestEvent
   | ToolCallEvent
   | ToolResultEvent
+  | ToolInputProgressEvent
   | UsageEvent
   | ContextEvent
   | ReasoningEvent
   | RoutingEvent
+  | ModelRoutingEvent
+  | RetryingEvent
   | DoneEvent
   | ErrorEvent
 
@@ -221,6 +277,12 @@ export interface AgentMessageImageBlock {
 export interface AgentMessage {
   id: string
   role: 'user' | 'assistant'
+  /**
+   * AI-7 — on a USER message: the persisted id of that message, which is the
+   * turn it opened. The server announces it (`turn` event) for a live turn;
+   * a rehydrated message's own id is it. Keys `agentTurnChanges`.
+   */
+  turnId?: string
   blocks: AgentMessageBlock[]
   timestamp: number
   /**
@@ -233,6 +295,21 @@ export interface AgentMessage {
    * ordinary state — the strip then counts tool calls instead.
    */
   reportedStep?: { index: number; total: number }
+  /**
+   * AI-8 — set while the server is retrying a request the provider was
+   * momentarily unable to serve; cleared by the next thing the turn produces.
+   * Session-only and display-only, like `reportedStep`: the activity strip's
+   * headline says "retrying" instead of looking stuck, and it is never an
+   * error.
+   */
+  retrying?: { attempt: number; maxAttempts: number }
+  /**
+   * AI-26 — the tool call whose arguments are streaming right now (a long
+   * file write), so the activity strip can say "Writing Checkout.tsx · 3.2 KB"
+   * instead of looking stuck. Cleared when the call arrives whole. Session-only
+   * and display-only, like `retrying`.
+   */
+  inputProgress?: AgentToolInputProgress
 }
 
 export interface AgentLayoutRect {

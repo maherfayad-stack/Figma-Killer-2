@@ -1,13 +1,17 @@
 /**
  * subtreeFreeVariables — the free-variable analysis behind
- * `extractSubtreeToComponent.ts`: every name a JSX subtree references that
- * is NOT declared inside the subtree itself. Generalizes
- * `detachComponent.ts`'s `referencedIdentifiers` (which only ever needed the
- * single root identifier of one `JsxExpression`'s own top-level expression,
- * because detach substitutes into a known param name) into a real free-
- * variable partition, because extraction's whole contract depends on getting
- * this right: a MISSED free variable produces a new component file that
- * references something out of scope — broken code, not a refusal.
+ * `extractSubtreeToComponent.ts`, the reparent/duplicate scope checks, and
+ * `detachComponent.ts`'s post-build gate: every name a JSX subtree (or any
+ * expression) references that is NOT declared inside it. Every one of those
+ * callers' contracts depends on getting this right: a MISSED free variable
+ * produces code that references something out of scope — broken code, not a
+ * refusal.
+ *
+ * EVERY identifier counts, not only the ones inside a `{…}`. A
+ * `<div {...rest}>` spread attribute holds its expression directly (there is
+ * no `JsxExpression` around it), and a detached component can return a
+ * non-JSX root (`loading ? <Spinner/> : <List/>`) whose condition sits
+ * outside any JSX at all. Walking only expression containers missed both.
  *
  * THE MODEL — nothing in the subtree's own text is ever rewritten
  * -------------------------------------------------------------
@@ -87,6 +91,59 @@ function bindingNames(node: Node): Set<string> {
 }
 
 /**
+ * The scope node (a function, a block, a `for` statement, a catch clause, or
+ * the source file) whose own declarations bind `name` for `reference`,
+ * searching outward from `reference` up to and including `root`'s own scope —
+ * or `undefined` when nothing between them binds it.
+ */
+function findBindingScope(reference: Node, name: string, root: Node): Node | undefined {
+  let current: Node = reference
+  while (current !== root) {
+    const parent: Node | undefined = current.getParent()
+    if (!parent) return undefined
+
+    if (Node.isArrowFunction(parent) || Node.isFunctionExpression(parent) || Node.isFunctionDeclaration(parent)) {
+      for (const p of parent.getParameters()) {
+        if (bindingNames(p.getNameNode()).has(name)) return parent
+      }
+      // A named function EXPRESSION binds its own name inside its body.
+      if (Node.isFunctionExpression(parent) && parent.getName() === name) return parent
+    }
+
+    if (Node.isBlock(parent) || Node.isSourceFile(parent)) {
+      for (const stmt of parent.getStatements()) {
+        if (Node.isVariableStatement(stmt)) {
+          for (const decl of stmt.getDeclarationList().getDeclarations()) {
+            if (bindingNames(decl.getNameNode()).has(name)) return parent
+          }
+        }
+        if (Node.isFunctionDeclaration(stmt) && stmt.getName() === name) return parent
+        if (Node.isClassDeclaration(stmt) && stmt.getName() === name) return parent
+      }
+    }
+
+    // `for (const x of xs)`, `for (let i = 0; …)`, `for (const k in o)` —
+    // the loop's own initializer binds for the body.
+    if (Node.isForOfStatement(parent) || Node.isForInStatement(parent) || Node.isForStatement(parent)) {
+      const initializer = parent.getInitializer()
+      if (initializer && Node.isVariableDeclarationList(initializer)) {
+        for (const decl of initializer.getDeclarations()) {
+          if (bindingNames(decl.getNameNode()).has(name)) return parent
+        }
+      }
+    }
+
+    if (Node.isCatchClause(parent)) {
+      const decl = parent.getVariableDeclaration()
+      if (decl && bindingNames(decl.getNameNode()).has(name)) return parent
+    }
+
+    current = parent
+  }
+  return undefined
+}
+
+/**
  * True when `reference` (an identifier somewhere inside `root`'s subtree)
  * resolves to a binding introduced BETWEEN itself and `root` — a nested
  * arrow/function's own parameter, or a `const`/`let`/`function` declared
@@ -97,36 +154,33 @@ function bindingNames(node: Node): Set<string> {
  * caller to classify further).
  */
 function isLocallyBound(reference: Node, name: string, root: Node): boolean {
-  let current: Node = reference
-  while (current !== root) {
-    const parent: Node | undefined = current.getParent()
-    if (!parent) return false
+  return findBindingScope(reference, name, root) !== undefined
+}
 
-    if (Node.isArrowFunction(parent) || Node.isFunctionExpression(parent) || Node.isFunctionDeclaration(parent)) {
-      for (const p of parent.getParameters()) {
-        if (bindingNames(p.getNameNode()).has(name)) return true
-      }
-    }
+/**
+ * How `name` resolves at `position` inside `sourceFile`, by a static scope
+ * walk: `'local'` — bound below module scope (a parameter, a body `const`, a
+ * loop variable); `'module'` — an import or a top-level declaration of the
+ * file; `'none'` — neither (a global, or nothing at all). Nothing is
+ * evaluated.
+ */
+export type BindingKind = 'local' | 'module' | 'none'
 
-    if (Node.isBlock(parent) || Node.isSourceFile(parent)) {
-      for (const stmt of parent.getStatements()) {
-        if (Node.isVariableStatement(stmt)) {
-          for (const decl of stmt.getDeclarationList().getDeclarations()) {
-            if (bindingNames(decl.getNameNode()).has(name)) return true
-          }
-        }
-        if (Node.isFunctionDeclaration(stmt) && stmt.getName() === name) return true
-      }
-    }
+/**
+ * The node whose scope binds `name` at `position` — the `Block`, function or
+ * loop that declares it — or `undefined` when nothing in the file does (a
+ * global, or nothing at all). DET-3's gate asks it which component a moved
+ * hook's binding landed in; `bindingKindAt` is the coarse form of the same walk.
+ */
+export function bindingScopeAt(position: Node, name: string, sourceFile: SourceFile): Node | undefined {
+  return findBindingScope(position, name, sourceFile)
+}
 
-    if (Node.isCatchClause(parent)) {
-      const decl = parent.getVariableDeclaration()
-      if (decl && bindingNames(decl.getNameNode()).has(name)) return true
-    }
-
-    current = parent
-  }
-  return false
+export function bindingKindAt(position: Node, name: string, sourceFile: SourceFile): BindingKind {
+  const scope = findBindingScope(position, name, sourceFile)
+  if (scope && !Node.isSourceFile(scope)) return 'local'
+  if (scope || isPageModuleScopeName(sourceFile, name)) return 'module'
+  return 'none'
 }
 
 /** True when `id` sits inside a JSX tag-name position (either element in `<Foo.Bar/>`) anywhere between it and the nearest enclosing `JsxOpeningElement`/`JsxSelfClosingElement`/`JsxClosingElement` — tag names are collected separately (`collectTagNameOpenings`), so a general identifier walk must not also treat them as ordinary value references. */
@@ -140,14 +194,48 @@ function isWithinTagName(id: Node): boolean {
   return false
 }
 
-/** True when `id` is used as a VALUE reference — excludes property-access names (`.name` in `user.name`), non-computed object-literal/binding property keys, JSX attribute names, and declaration names (parameters, variable declarations) — all of which are syntactically `Identifier` nodes but never reference an outer binding. */
-function isReferenceIdentifier(id: Node): boolean {
+/**
+ * True when `id` is used as a REFERENCE — excludes property-access names
+ * (`.name` in `user.name`), non-computed object-literal/binding property keys,
+ * method and accessor names, JSX attribute names (plain and `ns:name`),
+ * declaration names (parameters, variables, functions, classes), labels,
+ * import/export specifier names and `import.meta` — all of which are
+ * syntactically `Identifier` nodes but never reference an outer binding.
+ * Exported: `detachComponent.ts` walks the component's own JSX with the same
+ * rule, so the two can never disagree about what "a reference" is.
+ */
+export function isReferenceIdentifier(id: Node): boolean {
   const parent = id.getParent()
   if (!parent) return true
   const pos = id.getStart()
+  const isNameOf = (node: { getNameNode(): Node | undefined }): boolean => node.getNameNode()?.getStart() === pos
 
   if (Node.isPropertyAccessExpression(parent) && parent.getNameNode().getStart() === pos) return false
   if (Node.isPropertyAssignment(parent) && parent.getNameNode().getStart() === pos) return false
+  if (
+    (Node.isFunctionDeclaration(parent) || Node.isFunctionExpression(parent) || Node.isClassDeclaration(parent) || Node.isClassExpression(parent)) &&
+    isNameOf(parent)
+  ) {
+    return false
+  }
+  if (
+    (Node.isMethodDeclaration(parent) || Node.isGetAccessorDeclaration(parent) || Node.isSetAccessorDeclaration(parent) || Node.isPropertyDeclaration(parent)) &&
+    isNameOf(parent)
+  ) {
+    return false
+  }
+  if (Node.isJsxNamespacedName(parent)) return false
+  if (Node.isMetaProperty(parent)) return false
+  if (Node.isLabeledStatement(parent) || Node.isBreakStatement(parent) || Node.isContinueStatement(parent)) return false
+  if (
+    Node.isImportSpecifier(parent) ||
+    Node.isImportClause(parent) ||
+    Node.isNamespaceImport(parent) ||
+    Node.isExportSpecifier(parent) ||
+    Node.isImportEqualsDeclaration(parent)
+  ) {
+    return false
+  }
   if (Node.isBindingElement(parent)) {
     if (parent.getNameNode().getStart() === pos) return false
     const propertyName = parent.getPropertyNameNode()
@@ -162,6 +250,20 @@ function isReferenceIdentifier(id: Node): boolean {
   if (isWithinTagName(id)) return false
 
   return true
+}
+
+/**
+ * The binding a JSX tag name reads, or `undefined` for an intrinsic element.
+ * `<Card/>` reads `Card`; `<motion.div/>` and `<Icons.Home/>` read their root
+ * segment (a member tag is always a reference, whatever its case); `<div/>`,
+ * `<svg:rect/>` and `<this.X/>` read no binding.
+ */
+export function tagReferenceRoot(tagNameNode: Node): string | undefined {
+  const text = tagNameNode.getText()
+  const rootSegment = text.split('.')[0]!
+  if (!/^[A-Za-z_$][\w$]*$/.test(rootSegment) || rootSegment === 'this') return undefined
+  if (!text.includes('.') && !/^[A-Z]/.test(rootSegment)) return undefined
+  return rootSegment
 }
 
 /** Every JSX opening tag (self-closing, or the opening half of a paired element) in `root`'s own subtree, INCLUDING `root` itself when `root` carries a tag. */
@@ -234,30 +336,56 @@ export function analyzeFreeVariables(root: Node, pageFile: SourceFile, excluded:
   for (const opening of collectTagNameOpenings(root)) {
     if (isWithinExcluded(opening, excluded)) continue
     const tagNameNode = opening.getTagNameNode()
-    const rootSegment = tagNameNode.getText().split('.')[0]!
-    if (!/^[A-Z]/.test(rootSegment)) continue // lowercase — an intrinsic HTML element, not a reference
+    const rootSegment = tagReferenceRoot(tagNameNode)
+    if (!rootSegment) continue
     if (isLocallyBound(tagNameNode, rootSegment, root)) continue
     record(rootSegment, true)
   }
 
-  // Pass 2 — every value reference inside a `{…}` (attribute value or JSX
-  // child expression), at whatever depth. Nothing here is rewritten; only
-  // OBSERVED, so the moved JSX text is never touched.
-  for (const jsxExpr of root.getDescendantsOfKind(SyntaxKind.JsxExpression)) {
-    if (isWithinExcluded(jsxExpr, excluded)) continue
-    const expr = jsxExpr.getExpression()
-    if (!expr) continue
-
-    const candidates = Node.isIdentifier(expr) ? [expr] : expr.getDescendantsOfKind(SyntaxKind.Identifier)
-    for (const id of candidates) {
-      if (!isReferenceIdentifier(id)) continue
-      const name = id.getText()
-      if (isLocallyBound(id, name, root)) continue
-      record(name, false)
-    }
+  // Pass 2 — every other reference, at whatever depth: inside a `{…}`, a
+  // `{...spread}` attribute, or a non-JSX root expression. Nothing here is
+  // rewritten; only OBSERVED, so the moved JSX text is never touched.
+  for (const id of freeReferenceIdentifiers(root)) {
+    if (isWithinExcluded(id, excluded)) continue
+    record(id.getText(), false)
   }
 
   return order.map((name) => ({ name, kind: kinds.get(name)!, isComponentTag: isTag.get(name)! }))
+}
+
+/**
+ * Every reference identifier inside `root` (including `root` itself) that
+ * nothing between it and `root` binds — JSX tag names excluded (they are
+ * pass 1 of {@link analyzeFreeVariables}). The raw material of every
+ * free-variable question in this module.
+ */
+function freeReferenceIdentifiers(root: Node): Node[] {
+  const out: Node[] = []
+  const candidates = Node.isIdentifier(root) ? [root] : root.getDescendantsOfKind(SyntaxKind.Identifier)
+  for (const id of candidates) {
+    if (!isReferenceIdentifier(id)) continue
+    if (isLocallyBound(id, id.getText(), root)) continue
+    out.push(id)
+  }
+  return out
+}
+
+/**
+ * The distinct names `root` reads from outside itself — JSX tag roots and
+ * every other reference, in first-reference order, unclassified. What a
+ * caller needs when it only asks "could any of these be captured or
+ * rebound", not "how would each be carried".
+ */
+export function freeReferenceNames(root: Node): string[] {
+  const names = new Set<string>()
+  for (const opening of collectTagNameOpenings(root)) {
+    const rootSegment = tagReferenceRoot(opening.getTagNameNode())
+    if (!rootSegment) continue
+    if (isLocallyBound(opening.getTagNameNode(), rootSegment, root)) continue
+    names.add(rootSegment)
+  }
+  for (const id of freeReferenceIdentifiers(root)) names.add(id.getText())
+  return [...names]
 }
 
 /**

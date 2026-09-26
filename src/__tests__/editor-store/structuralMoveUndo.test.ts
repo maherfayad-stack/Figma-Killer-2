@@ -26,6 +26,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
 import { useEditorStore } from '@site/store/store'
 import { makePage, makeSite } from '../fixtures'
 import type { PageNode } from '@core/page-tree'
+import { isStructuralCommitInFlight, resetStructuralCommitQueue } from '@site/studio/structuralCommitQueue'
 
 const FILE = 'app/page.tsx'
 /** A studio-imported id: `rel:line:col`. Moving markup renumbers these. */
@@ -63,6 +64,9 @@ let postedEdits: Record<string, unknown>[][]
 let realFetch: typeof globalThis.fetch
 
 beforeEach(() => {
+  // ERR-4 — the in-flight flag and the queue are module state: a commit left
+  // on the wire by one spec would park the next spec's gestures.
+  resetStructuralCommitQueue()
   postedEdits = []
   realFetch = globalThis.fetch
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -101,14 +105,21 @@ afterEach(() => {
   globalThis.fetch = realFetch
 })
 
-/** Let the fire-and-forget structural commit reach the (stubbed) network. */
+/**
+ * Let the fire-and-forget structural commit reach the (stubbed) network and
+ * finish. A structural gesture — and a structural ⌘Z/⌘⇧Z — made while one is
+ * still in flight is QUEUED behind it (ERR-4), so a spec that means "the user
+ * did this, then that" waits for the first to land, exactly as a person's
+ * second keypress arrives after the first round trip.
+ */
 async function settle() {
   for (let i = 0; i < 8; i++) await Promise.resolve()
   await new Promise((r) => setTimeout(r, 0))
+  for (let i = 0; i < 200 && isStructuralCommitInFlight(); i++) await new Promise((r) => setTimeout(r, 1))
 }
 
 describe('a structural reparse renames node ids — history is re-addressed, not wiped', () => {
-  it('re-points the stack at the new ids instead of wiping it', () => {
+  it('re-points the stack at the new ids instead of wiping it', async () => {
     // `a` spans two lines, so dragging it to the end renumbers b and c to
     // addresses that never previously existed — the ordinary case.
     const a = at(3), b = at(6), c = at(8)
@@ -122,6 +133,7 @@ describe('a structural reparse renames node ids — history is re-addressed, not
     // The drag: the store moves the node optimistically and commits the write.
     store().moveNodes([a], ROOT, 3)
     expect(store()._historyPast.length).toBe(2)
+    await settle()
 
     // The write lands and the file is re-read: b -> 3, c -> 5, a -> 7. Same
     // shape, new addresses; `c`'s old id is simply gone.
@@ -135,12 +147,14 @@ describe('a structural reparse renames node ids — history is re-addressed, not
 
     store().undo() // the move, re-issued against the new ids
     expect(store().site!.pages[0]!.nodes[ROOT]!.children).toEqual([a2, b2, c2])
+    // The re-issued move is a write; the next ⌘Z queues behind it (P3-D).
+    await settle()
 
     store().undo() // the value edit, at `c`'s NEW address
     expect(store().site!.pages[0]!.nodes[c2]!.props.text).toBe(c)
   })
 
-  it('never replays a patch against whatever element inherited the address', () => {
+  it('never replays a patch against whatever element inherited the address', async () => {
     // Three same-size siblings: moving the first to the end PERMUTES the line
     // numbers, so every old id still "exists" — pointing at a different
     // element. The pre-fix survivability check said "safe" and undo edited the
@@ -150,6 +164,7 @@ describe('a structural reparse renames node ids — history is re-addressed, not
     store().setActivePage('page-1')
     store().updateNodeProps(c, { text: 'edited' })
     store().moveNodes([a], ROOT, 3)
+    await settle()
 
     // b -> 3, c -> 4, a -> 5.
     const reparsed = studioSite([at(3), at(4), at(5)])
@@ -159,6 +174,7 @@ describe('a structural reparse renames node ids — history is re-addressed, not
     store().loadSite(reparsed)
 
     store().undo() // the move
+    await settle() // the re-issued move is a write; the next ⌘Z queues behind it
     store().undo() // the value edit
 
     // `c` is now at line 4. Its edit must be reverted THERE, and the element
@@ -223,39 +239,44 @@ describe('undo of a move is the inverse move, written to source', () => {
     expect(postedEdits[2]![0]).toMatchObject({ kind: 'move', nodeId: a })
   })
 
-  it('consumes exactly one entry — the inverse move must not push its own', () => {
+  it('consumes exactly one entry — the inverse move must not push its own', async () => {
     const a = at(3), b = at(4), c = at(5)
     store().loadSite(studioSite([a, b, c]))
     store().setActivePage('page-1')
 
     store().moveNodes([a], ROOT, 3)
     const pastAfterMove = store()._historyPast.length
+    await settle()
 
     store().undo()
     expect(store()._historyPast.length).toBe(pastAfterMove - 1)
     expect(store()._historyFuture.length).toBe(1)
     expect(store().canRedo).toBe(true)
+    await settle()
 
     store().redo()
     expect(store()._historyPast.length).toBe(pastAfterMove)
     expect(store()._historyFuture.length).toBe(0)
   })
 
-  it('keeps the rest of the redo chain when it re-issues a move', () => {
+  it('keeps the rest of the redo chain when it re-issues a move', async () => {
     const a = at(3), b = at(4), c = at(5)
     store().loadSite(studioSite([a, b, c]))
     store().setActivePage('page-1')
 
     store().updateNodeProps(c, { text: 'one' })
     store().moveNodes([a], ROOT, 3)
+    await settle()
     store().updateNodeProps(b, { text: 'two' })
     store().undo()
     store().undo()
+    await settle()
     store().undo()
     expect(store()._historyFuture.length).toBe(3)
 
     store().redo() // the first value edit
     store().redo() // the move — a structural re-issue, with a redo still queued
+    await settle()
     // The re-issued gesture clears `_historyFuture` on its way through
     // `commitHistoryEntry`; the entry queued BEHIND this one must survive that.
     expect(store()._historyFuture.length).toBe(1)
@@ -265,29 +286,29 @@ describe('undo of a move is the inverse move, written to source', () => {
     expect(store()._historyFuture.length).toBe(0)
   })
 
-  it('does not swallow the entry before it', () => {
+  it('does not swallow the entry before it', async () => {
     const a = at(3), b = at(4)
     store().loadSite(studioSite([a, b]))
     store().setActivePage('page-1')
     store().updateNodeProps(b, { text: 'edited' })
     store().moveNodes([a], ROOT, 2)
+    await settle()
 
     store().undo() // the move
     expect(store().site!.pages[0]!.nodes[ROOT]!.children).toEqual([a, b])
+    await settle()
     store().undo() // the value edit
     expect(store().site!.pages[0]!.nodes[b]!.props.text).toBe(b)
   })
 })
 
-describe('a source delete with no addressable parent says what it cannot undo, instead of faking it', () => {
-  // `a`/`b` sit directly under the synthetic page root in this fixture — a
-  // shape no real component returns (a component returns ONE root element;
-  // `<a/><b/>` as two top-level siblings has nowhere to be written), but
-  // exactly `deleteJsxElement`'s own `no-jsx-parent` refusal for the sole
-  // element a page actually returns: there is no source POSITION to reinsert
-  // into. `captureDeleteOrigin` reports exactly that — no origin — and the
-  // gesture is tagged `unsupported` rather than a made-up one.
-  it('tags the entry unsupported and refuses rather than guessing a position', () => {
+describe('a source delete the server journaled no undo for is skipped by ⌘Z, never faked and never a jam', () => {
+  // The save mock above answers without an `undoToken` — what the server
+  // says when it could not record the write's pre-image (P3-F,
+  // `undoJournal.ts`: an oversized or non-UTF-8 file). The entry keeps its
+  // `restore-journal` template with no inverse, so ⌘Z has nothing it could
+  // post and must skip it rather than resurrect the element on the canvas.
+  it('keeps no inverse, and ⌘Z drops the entry instead of faking it or sticking on it', async () => {
     const a = at(3), b = at(4)
     store().loadSite(studioSite([a, b]))
     store().setActivePage('page-1')
@@ -297,14 +318,32 @@ describe('a source delete with no addressable parent says what it cannot undo, i
     const entry = store()._historyPast[store()._historyPast.length - 1]!
     expect(entry.structural).toMatchObject({
       gesture: 'source',
-      source: { label: 'Delete', inverseTemplate: { kind: 'unsupported' }, inverse: null },
+      source: { label: 'Delete', inverseTemplate: { kind: 'restore-journal' }, inverse: null },
     })
 
     const pastBefore = store()._historyPast.length
+    await settle()
     store().undo()
     // The canvas must NOT resurrect an element the user's source no longer has.
     expect(store().site!.pages[0]!.nodes[ROOT]!.children).toEqual([b])
-    expect(store()._historyPast.length).toBe(pastBefore)
+    // ERR-2 stop-gap — the entry is SKIPPED, not left on top: before this,
+    // every later ⌘Z hit the same refusal and nothing below it was reachable.
+    expect(store()._historyPast.length).toBe(pastBefore - 1)
     expect(store()._historyFuture.length).toBe(0)
+  })
+
+  it('carries on to the step below in the same ⌘Z, so the edits before a delete stay undoable', async () => {
+    const a = at(3), b = at(4)
+    store().loadSite(studioSite([a, b]))
+    store().setActivePage('page-1')
+    store().updateNodeProps(b, { text: 'edited' })
+    store().deleteNodes([a])
+    await settle()
+
+    store().undo()
+    expect(store().site!.pages[0]!.nodes[ROOT]!.children).toEqual([b])
+    expect(store().site!.pages[0]!.nodes[b]!.props.text).toBe(b)
+    expect(store()._historyPast.length).toBe(0)
+    expect(store().canRedo).toBe(true)
   })
 })

@@ -22,11 +22,10 @@ import '@modules/base'
 import type { Page } from '@core/page-tree'
 import { useEditorStore } from '@site/store/store'
 import { registerEditorSave } from '@site/hooks/editorSaveRef'
-import { applyStructuralWriteOutcome } from '@site/hooks/usePersistence'
+import { applySitePagesPatch } from '@site/hooks/siteReloadApply'
 import { CMS_SITE_PAGES_PATCH_EVENT, type CmsSitePagesPatchDetail } from '@admin/state/adminEvents'
 import { __resetToastBusForTests, subscribeToasts, type Toast } from '@ui/components/Toast/toastBus'
 import { makeNode, makePage, makeSite } from '../../../../../__tests__/fixtures'
-import { clearPendingStructuralOutcome } from '../pendingStructuralOutcome'
 import { resetStructuralCommitQueue } from '../structuralCommitQueue'
 import { setStudioLoadedDir } from '../studioWorkspaceDir'
 
@@ -69,7 +68,6 @@ describe('a structural source write selects what it created', () => {
 
   beforeEach(() => {
     __resetToastBusForTests()
-    clearPendingStructuralOutcome()
     resetStructuralCommitQueue()
     originalFetch = globalThis.fetch
     saveCalls = []
@@ -83,14 +81,7 @@ describe('a structural source write selects what it created', () => {
     // Exactly what `usePersistence` does with a narrow resync: hand the fresh
     // pages to the store, then claim whatever the write created.
     patchListener = (evt: Event) => {
-      const detail = (evt as CustomEvent<CmsSitePagesPatchDetail>).detail
-      useEditorStore.getState().patchPages({
-        pages: detail.pages,
-        removedPageIds: detail.removedPageIds,
-        styleRules: detail.styleRules,
-        conditions: detail.conditions,
-      })
-      applyStructuralWriteOutcome()
+      applySitePagesPatch((evt as CustomEvent<CmsSitePagesPatchDetail>).detail)
     }
     window.addEventListener(CMS_SITE_PAGES_PATCH_EVENT, patchListener)
   })
@@ -100,7 +91,6 @@ describe('a structural source write selects what it created', () => {
     unregisterSave?.()
     if (patchListener) window.removeEventListener(CMS_SITE_PAGES_PATCH_EVENT, patchListener)
     setStudioLoadedDir(null)
-    clearPendingStructuralOutcome()
     resetStructuralCommitQueue()
     useEditorStore.getState().clearSite()
   })
@@ -145,9 +135,9 @@ describe('a structural source write selects what it created', () => {
             authoredCss: '',
             trust: 'static',
             paletteHiddenModuleIds: [],
-            pageCount: pages.length,
+            pageList: pages.map(({ id, slug, title }) => ({ id, slug, title })),
           },
-          ...pages.map((page) => ({ kind: 'page', page })),
+          ...pages.map((page, index) => ({ kind: 'page', page, index })),
         ]
         return new Response(lines.map((line) => JSON.stringify(line)).join('\n') + '\n', { status: 200 })
       }
@@ -250,7 +240,7 @@ describe('a structural source write selects what it created', () => {
       )
       // And it said so.
       await waitFor(() => toasts.length > 0)
-      expect(toasts[0]!.body).toContain('not part of this page')
+      expect(toasts[0]!.body).toContain('not in your project')
     } finally {
       unsubscribe()
     }

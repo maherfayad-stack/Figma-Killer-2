@@ -27,8 +27,8 @@
  * a press arrive before the move that preceded it.
  */
 import type { OutboundRuntimeMessage, RuntimeMode } from './messages'
-import { NODE_ID_ATTR, occurrenceIndexOf } from './nodeIdIndexing'
-import { nearestNodeOccurrence, rectRelativeToBody } from './nodeDom'
+import { NODE_ID_ATTR } from './nodeIdIndexing'
+import { nearestNodeOccurrence, rectRelativeToBody, stampedAncestors } from './nodeDom'
 import { SELECTION_OVERLAY_ROOT_ID } from './selectionChromeCss'
 
 type PointerRect = { x: number; y: number; width: number; height: number } | null
@@ -37,21 +37,6 @@ function rectsEqual(a: PointerRect, b: PointerRect): boolean {
   if (a === b) return true
   if (!a || !b) return false
   return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
-}
-
-/** How many stamped ancestors a pointer message carries — deeper than any real component nesting, small enough to never matter on the wire. */
-const MAX_ANCESTORS = 32
-
-/** Every stamped ancestor of `el` (inclusive), innermost first, each with its own occurrence index. */
-function stampedAncestors(doc: Document, el: Element | null): { nodeId: string; occurrenceIndex: number }[] {
-  const chain: { nodeId: string; occurrenceIndex: number }[] = []
-  let current = el?.closest(`[${NODE_ID_ATTR}]`) ?? null
-  while (current && chain.length < MAX_ANCESTORS) {
-    const occurrence = occurrenceIndexOf(doc, current)
-    if (occurrence) chain.push(occurrence)
-    current = current.parentElement?.closest(`[${NODE_ID_ATTR}]`) ?? null
-  }
-  return chain
 }
 
 export interface GestureForwardingOptions {

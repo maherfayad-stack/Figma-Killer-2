@@ -51,7 +51,7 @@ function levelRank(page: Page): number {
  * `isTemplatePage(page)` is true) — see this module's perf doc above for why
  * the caller passes this narrower list rather than the whole `SiteDocument`.
  */
-export function resolveEditorWrapperTemplates(templatePages: Page[], activeDoc: Page): Page[] {
+export function resolveEditorWrapperTemplates(templatePages: readonly Page[], activeDoc: Page): Page[] {
   const myRank = levelRank(activeDoc)
   // An `everywhere` template (rank 0) is the broadest — never wrapped.
   if (myRank <= 0) return []

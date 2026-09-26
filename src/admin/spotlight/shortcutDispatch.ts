@@ -1,5 +1,6 @@
 import { filterCommands, getAllCommands } from './commandRegistry'
 import { KEYBINDINGS, type KeyEventLike } from './keybindings'
+import { LAYER_COMMAND_IDS } from './keybindingLayerCommands'
 import type { Command, CommandContext } from './types'
 
 const CANVAS_ROOT_SELECTOR = '[data-studio-canvas-root="true"]'
@@ -19,12 +20,26 @@ const COMPONENT_OWNED_SHORTCUTS = new Set([
   // the Properties panel ends that for the session, which is the exact defect
   // `select-01` fixed for Escape.
   'layers.selectParent',
-  'layers.selectFirstChild',
+  'layers.selectChildren',
   // ⌘R opens the canvas rename DIALOG. `layers.rename` takes a text arg, so
   // the arg guard below would skip it anyway — listed explicitly because the
   // reason it can't auto-dispatch is a property of the command, and a future
   // argless rename command must not silently start double-firing.
   'layers.rename',
+  // P5-A — ⌘C / ⌘X / ⌘V are the `node` rung's (`useCanvasNodeShortcuts`),
+  // which lets the keystroke through so the browser raises the `copy` /
+  // `paste` EVENT the clipboard bridge reads (`canvasClipboardBridge.ts`).
+  // Run from here they were `preventDefault`ed in the capture phase, before
+  // the rung, and that cancels the event: no image or SVG paste, no marker.
+  'layers.copy',
+  'layers.cut',
+  'layers.paste',
+  // P5-E — align, front / back, flex and copy / paste style are handled on
+  // the `node` rung (`useCanvasLayerCommandKeys`), scoped by intent like
+  // Delete, so they also work after a click into the inspector. Their palette
+  // commands run the same functions; listing them here keeps a press inside
+  // the canvas from firing both.
+  ...LAYER_COMMAND_IDS,
 ])
 
 function isElementLike(value: unknown): value is Element {

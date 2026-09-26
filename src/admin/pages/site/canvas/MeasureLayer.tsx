@@ -8,6 +8,10 @@
  * the rule) plus the hovered element's padding bands and content box. Every
  * number is a pill in the editor's mono type scale.
  *
+ * With NOTHING hovered, the same drawing measures the selection against its
+ * parent (P2-E / IX-19, Figma's and Penpot's behaviour) — `resolveMeasureTarget`
+ * picks the target, and everything below just measures "the target".
+ *
  * ## Where it paints, and why the numbers are not zoom-multiplied
  *
  * Same two-space split as the selection rings (`BreakpointSelectionOverlay`'s
@@ -71,8 +75,8 @@ import {
   measureRectDistances,
   measureSegmentMidpoint,
   measureSegmentRect,
-  measurementWinsOverTreeLadder,
   parseMeasurePadding,
+  resolveMeasureTarget,
   type MeasureRect,
   type MeasureSide,
 } from './canvasMeasureGeometry'
@@ -168,11 +172,25 @@ export function MeasureLayer({
   const passTokenRef = useRef(0)
   const measureInFlightRef = useRef(false)
 
-  const active =
-    enabled &&
-    altHeld &&
-    !inlineEditing &&
-    measurementWinsOverTreeLadder(selectedNodeIds, hoveredNodeId)
+  // IX-19 — whether a node has been hovered in this frame since Alt went down.
+  // Once one has, the tree ladder is anchored on it and the no-hover parent
+  // fallback stands down (`resolveMeasureTarget`). Derived from props during
+  // render (React's "adjust state when a prop changes" pattern), reset with Alt.
+  const [hoverSeenDuringHold, setHoverSeenDuringHold] = useState(false)
+  const hoverSeenNow = altHeld && hoveredNodeId !== null
+  if (hoverSeenNow && !hoverSeenDuringHold) setHoverSeenDuringHold(true)
+  if (!altHeld && hoverSeenDuringHold) setHoverSeenDuringHold(false)
+
+  const measureTargetId =
+    enabled && altHeld && !inlineEditing
+      ? resolveMeasureTarget({
+          selectedNodeIds,
+          hoveredNodeId,
+          hoverSeenDuringHold: hoverSeenDuringHold || hoverSeenNow,
+          parentOf: (nodeId) => framePage?.nodes[nodeId]?.parentId ?? null,
+        })
+      : null
+  const active = measureTargetId !== null
 
   // Alt on BOTH documents: a keydown inside the frame never reaches the parent
   // (native events don't cross the boundary) and vice versa. `blur` clears,
@@ -235,6 +253,8 @@ export function MeasureLayer({
     hovered: string,
     iframe: HTMLIFrameElement,
   ) => {
+    // `hovered` is the measure TARGET: the hovered node, or (IX-19) the
+    // selection's parent when nothing is hovered.
     const elements = elementsRef.current!
     const get = (key: string) => elements.get(key) ?? null
     const hideAll = () => {
@@ -323,7 +343,7 @@ export function MeasureLayer({
 
   const runPass = useEffectEvent((token: number) => {
     const iframe = iframeElement
-    const hovered = hoveredNodeId
+    const hovered = measureTargetId
     if (!iframe || !hovered || selectedNodeIds.length === 0) return
     const adapter = listFrameAdapters().get(iframe) ?? null
     if (!adapter) return

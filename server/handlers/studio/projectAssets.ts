@@ -19,9 +19,12 @@
  * WHAT IS DELIBERATELY NOT HERE
  * -----------------------------
  *   - **No file contents, no stat, no thumbnails.** The response is a list of
- *     workspace-relative POSIX paths. Each one becomes a `<img src>` pointed
- *     at `/admin/api/studio/asset`, which already owns the adversarial path
- *     resolution — this route must not grow a second copy of it.
+ *     `{ relPath, src, buildSafe }`: the workspace-relative POSIX path, and
+ *     the URL the project's own site serves it at (`assetSiteUrl.ts`, the one
+ *     "file → URL" rule; `src` is `null` for a file nothing serves). The
+ *     picker writes `src`; its thumbnail is an `<img>` pointed at
+ *     `/admin/api/studio/asset` with `relPath`, which already owns the
+ *     adversarial path resolution — this route must not grow a second copy.
  *   - **No `prototype/`.** That directory is Studio's own preview scaffold
  *     sitting inside the user's repo (`isPrototypeShellPath`); its images are
  *     not the user's design assets and offering them would put Studio's own
@@ -30,8 +33,9 @@
  *     evaluated — "parse, never execute" holds trivially.
  */
 import { isDesignSystemPath, isPrototypeShellPath, listWorkspaceFiles } from '@core/page-parser'
-import { jsonResponse } from '../../http'
+import { jsonResponse, internalServerError } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
+import { assetSiteUrlResolver } from './assetSiteUrl'
 
 const ROUTE_PATH = '/admin/api/studio/project-assets'
 
@@ -69,6 +73,27 @@ export function listProjectImageAssets(dir: string): string[] {
   return assets
 }
 
+/** One listed image: where it is, and the URL the project's own site serves it at (`assetSiteUrl.ts`). */
+export interface ProjectImageAsset {
+  relPath: string
+  /** `null` when nothing serves the file (it sits outside the app root). */
+  src: string | null
+  /** True when a production build serves `src`, not only the dev server. */
+  buildSafe: boolean
+}
+
+/**
+ * {@link listProjectImageAssets} with each file's URL attached, so the picker
+ * writes the server's answer instead of deriving one (IMG-1).
+ */
+export function describeProjectImageAssets(dir: string): ProjectImageAsset[] {
+  const siteUrl = assetSiteUrlResolver(dir)
+  return listProjectImageAssets(dir).map((relPath) => {
+    const url = siteUrl(relPath)
+    return { relPath, src: url?.src ?? null, buildSafe: url?.buildSafe ?? false }
+  })
+}
+
 /** `GET /admin/api/studio/project-assets?dir=<abs>` — see module doc. */
 export async function tryServeStudioProjectAssets(
   req: Request,
@@ -79,10 +104,9 @@ export async function tryServeStudioProjectAssets(
 
   try {
     const dir = resolveProjectDir(url.searchParams.get('dir'))
-    return jsonResponse({ assets: listProjectImageAssets(dir) })
+    return jsonResponse({ assets: describeProjectImageAssets(dir) })
   } catch (err) {
     rethrowProjectDirRefusal(err)
-    console.error('[studio:project-assets]', err)
-    return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    return internalServerError('[studio:project-assets]', err)
   }
 }

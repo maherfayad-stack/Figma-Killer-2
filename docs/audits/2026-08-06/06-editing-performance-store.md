@@ -1,4 +1,5 @@
 # Audit 06 — Editing performance and correctness (store, mutations, save/undo)
+> **Trust:** historical, dated 2026-08-06. Paths may be wrong. Never act on it.
 
 Scope: `src/admin/pages/site/store/**`, `src/core/page-tree/{mutations,treeOperations,sourceWritability,sourceStructure}.ts`,
 `src/admin/pages/site/studio/{fsCodemodAdapter,localizedPageWriteback,styleRuleWriteback,studioSaveRequests,loadedValuesBaseline}.ts`,

@@ -107,7 +107,7 @@ import {
 import { NodeRenderer } from '@site/canvas/NodeRenderer'
 import { useFramePreviewAxes } from '@site/canvas/previewAxesFrameEffect'
 import { CursorClickSolidIcon } from 'pixel-art-icons/icons/cursor-click-solid'
-import { getStudioPaletteHiddenModuleIds } from './fsCodemodAdapter'
+import { getStudioPaletteHiddenModuleIds } from './studioProjectLoad'
 import { setPackageBundleStatus } from './studioProjectTrust'
 
 // ---------------------------------------------------------------------------

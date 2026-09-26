@@ -174,6 +174,7 @@ const { captureFramesHeadless } = await import('./headlessCapture')
 const { clearLaunchFailureMemo, closeWarmCaptureBrowser } = await import('./browserPool')
 const { liveCaptureGrantCount } = await import('./captureToken')
 const { studioCompareTool } = await import('../tools/studio/compare')
+const { studioScreenshotTool } = await import('../tools/studio/screenshot')
 
 function solidPng(width: number, height: number, rgb: [number, number, number] = [255, 255, 255]): Buffer {
   const png = new PNG({ width, height })
@@ -235,6 +236,11 @@ beforeEach(() => {
 afterEach(async () => {
   fs.rmSync(dir, { recursive: true, force: true })
   await closeWarmCaptureBrowser()
+  // A test that made the launch fail leaves the pool's launch-failure memo
+  // set, and the next FILE in this worker process would skip its own launch
+  // on the strength of it.
+  launchShouldFail = null
+  clearLaunchFailureMemo()
 })
 
 /** Scaffolds a page and sets its board frame's AUTHORED (CSS px) size. */
@@ -476,4 +482,45 @@ describe('W4-2A definition of done — studio_compare across 5 pages, no editor 
     // (`bun test --parallel=4`) — the default 5s is CPU contention, not a
     // regression signal.
   }, 60_000)
+})
+
+describe('AI-16 — studio_screenshot at several widths, and the board is never touched', () => {
+  it('renders each screen at each width through the real grant, leaving boards.json byte-identical', async () => {
+    const pageId = scaffoldPageAt('Checkout', 390, 844)
+    const boardsPath = path.join(dir, '.studio', 'boards.json')
+    const boardsBefore = fs.readFileSync(boardsPath, 'utf8')
+
+    const result = (await studioScreenshotTool.handler!(
+      { dir, pages: ['Checkout'], widths: [375, 768, 1280] },
+      { userId: 'u1', signal: new AbortController().signal } as never,
+    )) as { ok: boolean; data?: { frames: Array<CapturedFrame & { requestedWidth: number }>; capturedVia: string }; images?: unknown[] }
+
+    expect(result.ok).toBe(true)
+    const frames = result.data!.frames
+    expect(frames.map((f) => [f.pageId, f.requestedWidth, f.width, f.imageIndex])).toEqual([
+      [pageId, 375, 375, 0],
+      [pageId, 768, 768, 1],
+      [pageId, 1280, 1280, 2],
+    ])
+    // The frame keeps its own height at every width.
+    expect(frames.every((f) => f.height === 844)).toBe(true)
+    expect(result.images).toHaveLength(3)
+    expect(result.data!.capturedVia).toBe('headless')
+    // One navigation per width, and the board as it was.
+    expect(navigations).toHaveLength(3)
+    expect(fs.readFileSync(boardsPath, 'utf8')).toBe(boardsBefore)
+    expect(liveCaptureGrantCount()).toBe(0)
+  }, 60_000)
+
+  it('refuses rather than substitute the board width when the headless browser cannot run', async () => {
+    scaffoldPageAt('Checkout', 390, 844)
+    launchShouldFail = 'no chromium on this host'
+    const result = (await studioScreenshotTool.handler!(
+      { dir, pages: ['Checkout'], widths: [768] },
+      { userId: 'u1', signal: new AbortController().signal } as never,
+    )) as { ok: boolean; error?: string }
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('768px')
+    expect(result.error).toContain('no other width was substituted')
+  })
 })

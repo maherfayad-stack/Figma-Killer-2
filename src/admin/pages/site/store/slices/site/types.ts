@@ -22,6 +22,7 @@ import type {
   PageTemplateConfig,
   ConditionDef,
   StyleRule,
+  SequencedMove,
   StructuralExplorerRowOrder,
   StructuralSiteExplorerSectionId,
 } from '@core/page-tree'
@@ -33,7 +34,7 @@ import type { EditorStore } from '@site/store/types'
 import type { PendingStructuralHistory } from '@site/studio/pendingStructuralOutcome'
 import type { SlotOwnerEntry } from './nodeIndex'
 import type { ImportedNodesResult } from './importedNodesResult'
-
+import type { ImageDropRequest, LandableImageSource, SubtreeInsertRequest, UploadProgressPainter } from './imageDropShapes'
 
 // ---------------------------------------------------------------------------
 // Public action surface — every method below appears as a top-level entry on
@@ -99,6 +100,7 @@ export type {
   StructuralHistoryMove,
   StructuralHistory,
   StructuralSourceHistory,
+  PendingStructuralCommit,
 } from './historyTypes'
 
 export interface SiteSlice {
@@ -318,6 +320,9 @@ export interface SiteSlice {
   moveNode: (nodeId: string, newParentId: string, newIndex: number) => void
   /** Multi-move: moves every top-level id into newParent at newIndex (single undo step). */
   moveNodes: (nodeIds: string[], newParentId: string, newIndex: number) => void
+  /** P2-C2 — step every layer `steps[parentId]` places among its siblings / P3-D: apply moves IN ORDER — one entry, one write. `moveSequenceActions.ts`. */
+  stepSiblings: (nodeIds: string[], steps: Readonly<Record<string, number>>) => void
+  moveNodesInSequence: (moves: SequencedMove[]) => void
   duplicateNode: (nodeId: string) => string
   /** Multi-duplicate: duplicates every id in place (single undo step). Returns the new ids. */
   duplicateNodes: (nodeIds: string[]) => string[]
@@ -349,20 +354,19 @@ export interface SiteSlice {
    */
   transplantNodes: (nodeIds: string[], destination: TransplantDestination) => void
   /**
-   * D2 G15 — the `<img src alt>` a file dropped from the operating system
-   * becomes, written into the page the drop landed on.
-   *
-   * Names its page rather than using the active one: a dropped file lands
-   * wherever the pointer was, and the frame under a drop was never activated
-   * by a pointerdown because there was no pointerdown. See
-   * `imageDropActions.ts`.
+   * D2 G15 / P5-B — dropped images (P5-B3: any `ImageDropSource` — a file,
+   * a URL from another tab, a project file from the Assets panel): every one
+   * landed, then ONE insert of N `<img>` siblings (one write, one undo step),
+   * a ghost per image while it lands. Names its page and activates it
+   * (`gesturePage.ts`).
    */
-  insertImageIntoPage: (
-    pageId: string,
-    parentId: string,
-    index: number,
-    image: { src: string; alt: string },
-  ) => void
+  dropImagesIntoPage: (drop: ImageDropRequest) => void
+  /** P5-B (IMG-3) — a file dropped onto an `<img>` replaces its source: the import it reads, or its literal `src`. */
+  replaceImageInPage: (pageId: string, nodeId: string, source: LandableImageSource, paintProgress?: UploadProgressPainter) => void
+  /** P5-B (IMG-7) — ⇧-drop: the file becomes the element's top background layer, written to its own inline style. */
+  setBackgroundImageInPage: (pageId: string, nodeId: string, source: LandableImageSource) => void
+  /** P5-A — a pasted SVG's converted subtree: ONE `insert`, one undo step. See `subtreeInsertActions.ts`. */
+  insertJsxSubtreeIntoPage: (request: SubtreeInsertRequest) => void
   wrapNode: (nodeId: string, containerModuleId: string, defaults?: Record<string, unknown>) => string
   /**
    * Wrap a multi-selection inside one new container with closest-common-ancestor
@@ -527,8 +531,8 @@ export interface SiteSlice {
   /**
    * `store-14` — apply what a landed STRUCTURAL SOURCE write means for the undo
    * stack: push the gesture's own entry, or refresh the one an undo/redo just
-   * moved. Called by `usePersistence.ts` when it drains
-   * `pendingStructuralOutcome.ts`, which is the first moment the board holds
+   * moved. Called by `siteReloadApply.ts` with the
+   * `pendingStructuralOutcome.ts` value that rode the re-read — the first moment the board holds
    * the nodes the write made — see `structuralSourceHistory.ts`.
    */
   recordStructuralSourceWrite: (history: PendingStructuralHistory) => void

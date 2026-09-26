@@ -81,11 +81,36 @@ export function setCanvasSpacePanActive(
   active: boolean,
 ): void {
   const key = CANVAS_SPACE_PAN_DATA_KEYS[source]
+  const { dataset } = doc.documentElement
+  // No-op writes stay no-ops: a held Space re-asserts its source on every
+  // auto-repeat keydown (see `releaseCanvasKeyboardPan`), and an attribute
+  // write is a mutation record even when the value does not change.
   if (active) {
-    doc.documentElement.dataset[key] = '1'
+    if (dataset[key] !== '1') dataset[key] = '1'
     return
   }
-  delete doc.documentElement.dataset[key]
+  if (key in dataset) delete dataset[key]
+}
+
+/**
+ * "Space is no longer held" — clears BOTH keyboard sources at once, and never
+ * the hand tool (a deliberate latch that only another tool puts away).
+ *
+ * Why both, from wherever the release is observed (ERR-11): the key is one
+ * physical fact, but its keydown and its keyup can land in different
+ * documents. Hold Space over the editor, click into a frame, let go — the
+ * press raised `parentDocument` and the release arrives in the FRAME. Clearing
+ * only the source that saw the release left the other set forever, and a set
+ * flag makes every frame `pointer-events: none` (`IframeFrameSurface`), so every
+ * later click panned instead of selecting. The same goes for the window losing
+ * focus mid-hold: the keyup is delivered to some other application.
+ *
+ * Over-clearing is self-healing: a Space still physically held keeps sending
+ * auto-repeat keydowns, and every Space keydown re-asserts its source.
+ */
+export function releaseCanvasKeyboardPan(doc: Document): void {
+  setCanvasSpacePanActive(doc, 'parentDocument', false)
+  setCanvasSpacePanActive(doc, 'iframe', false)
 }
 
 export function isCanvasSpacePanActive(doc: Document): boolean {

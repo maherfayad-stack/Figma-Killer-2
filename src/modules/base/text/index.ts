@@ -13,9 +13,8 @@ import {
   htmlAttributesControl,
 } from '@modules/base/shared/htmlAttributes'
 import { textToBreakHtml } from '@modules/base/shared/inlineText'
-import { textTagControl } from '@modules/base/utils/htmlTag'
+import { customHtmlTagControl, resolveTextTag, textTagControl } from '@modules/base/utils/htmlTag'
 import { TextEditor } from './TextEditor'
-import { normalizeTag } from './tags'
 import { TextPropsSchema, type TextStoredProps } from './props'
 
 export const TextModule: ModuleDefinition<TextStoredProps> = {
@@ -33,6 +32,7 @@ export const TextModule: ModuleDefinition<TextStoredProps> = {
   schema: {
     text: { type: 'textarea', label: 'Text', rows: 4, placeholder: 'Enter text...' },
     tag: textTagControl(),
+    customTag: customHtmlTagControl(),
     htmlAttributes: htmlAttributesControl(),
   },
 
@@ -43,7 +43,7 @@ export const TextModule: ModuleDefinition<TextStoredProps> = {
   component: TextEditor,
 
   htmlTag: (props) => {
-    const tag = normalizeTag(props.tag)
+    const tag = resolveTextTag(props.tag, props.customTag)
     return tag === 'none' ? null : tag
   },
 
@@ -52,7 +52,7 @@ export const TextModule: ModuleDefinition<TextStoredProps> = {
   // which has no JSX equivalent the parser could hand an id back for (a bare
   // text node is not an element), so a source insert uses the default tag.
   sourceIntrinsic: (props) => {
-    const tag = normalizeTag(props.tag)
+    const tag = resolveTextTag(props.tag, props.customTag)
     return { tag: tag === 'none' ? 'p' : tag, text: props.text }
   },
 
@@ -60,7 +60,7 @@ export const TextModule: ModuleDefinition<TextStoredProps> = {
     // props.text is pre-escaped by escapeProps — only turn newlines into the
     // hard <br> breaks the author typed (sanitizer allows <br>).
     const text = textToBreakHtml(String(props.text))
-    const tag = normalizeTag(props.tag)
+    const tag = resolveTextTag(props.tag, props.customTag)
     if (tag === 'none') {
       return { html: text }
     }

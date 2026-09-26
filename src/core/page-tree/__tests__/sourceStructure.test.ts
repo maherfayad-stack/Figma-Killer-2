@@ -104,12 +104,6 @@ describe('refuseStructuralEdit', () => {
     )
   })
 
-  it('refuses a wrap of SEVERAL elements — one wrapper is one write spanning all of them', () => {
-    const refusal = refuseStructuralEdit({ kind: 'wrap', node: { id: PLAIN }, multi: true })
-    expect(refusal?.reason).toBe('multi-select')
-    // A multi DUPLICATE is fine: the save batch is ordered bottom-to-top.
-    expect(refuseStructuralEdit({ kind: 'duplicate', node: { id: PLAIN }, multi: true })).toBeNull()
-  })
 
   it('allows a reparent into a plain container in the same file', () => {
     expect(
@@ -165,12 +159,6 @@ describe('refuseStructuralEdit', () => {
     expect(refuseMintedNodeInsert({ parent: { id: 'V1StGXR8_Z5jdHi6B-myT' }, studioPageRoot: false })).toBeNull()
   })
 
-  it('refuses a multi REORDER but not a multi DELETE', () => {
-    expect(
-      refuseStructuralEdit({ kind: 'reorder', node: { id: PLAIN }, anchor: { id: SIBLING }, multi: true })?.reason,
-    ).toBe('multi-select')
-    expect(refuseStructuralEdit({ kind: 'delete', node: { id: PLAIN }, multi: true })).toBeNull()
-  })
 
   it('refuses a reorder whose anchor lives in another file', () => {
     expect(
@@ -279,7 +267,9 @@ describe('previewStructuralMove', () => {
     if (!result.ok) expect(result.refusal.reason).toBe('shared-component')
   })
 
-  it('refuses a cross-parent move of SEVERAL nodes — each write moves the others lines', () => {
+  // ERR-7 — this used to refuse `multi-select`: several elements are now a
+  // sequence of single-element moves, each asked on its own.
+  it('allows a cross-parent move of SEVERAL nodes — a sequence of single moves', () => {
     const CONTAINER = 'pages/Home.tsx:18:4'
     const tree = page({
       root: node('root', [CONTAINER, A, B]),
@@ -288,8 +278,7 @@ describe('previewStructuralMove', () => {
       [B]: node(B),
     })
     const result = previewStructuralMove(tree, [A, B], CONTAINER, 0)
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.refusal.reason).toBe('multi-select')
+    expect(result).toEqual({ ok: true, commit: null })
   })
 
   it('refuses moving a canvas-only (nanoid) node into a studio-imported parent — nothing to write', () => {
@@ -321,7 +310,8 @@ describe('previewStructuralMove', () => {
     if (!result.ok) expect(result.refusal.reason).toBe('shared-component')
   })
 
-  it('refuses a multi-node reorder (each write shifts the others\' lines)', () => {
+  // ERR-7 — used to refuse `multi-select`.
+  it('allows a multi-node reorder — each step is written against the file the last one left', () => {
     const tree = page({
       root: node('root', [A, B, C]),
       [A]: node(A),
@@ -329,8 +319,19 @@ describe('previewStructuralMove', () => {
       [C]: node(C),
     })
     const result = previewStructuralMove(tree, [A, B], 'root', 3)
+    expect(result).toEqual({ ok: true, commit: null })
+  })
+
+  it('still refuses a multi-node move when ONE of its steps would refuse', () => {
+    const tree = page({
+      root: node('root', [A, INLINED, C]),
+      [A]: node(A),
+      [INLINED]: node(INLINED),
+      [C]: node(C),
+    })
+    const result = previewStructuralMove(tree, [A, INLINED], 'root', 3)
     expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.refusal.reason).toBe('multi-select')
+    if (!result.ok) expect(result.refusal.reason).toBe('shared-component')
   })
 
   it('is a no-op (ok, no refusal invented) for a stale target — missing node or parent', () => {

@@ -35,15 +35,14 @@
  * `htmlImport`, and every base module's renderer still read it; only its
  * retired editor UI is gone.
  */
-import { EmptyState } from '@ui/components/EmptyState'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import type { AnyModuleDefinition } from '@core/module-engine'
-import { describeStructuralRefusal, hasWritableSourceLocation, refusePlacement } from '@core/page-tree'
+import { describeStructuralRefusal, hasWritableSourceLocation, listRowArrayOf, refusePlacement } from '@core/page-tree'
 import type { StyleRule, PageNode } from '@core/page-tree'
 import type { VisualComponent } from '@core/visualComponents'
 import type { ActiveDocument } from '../../store/slices/uiSlice'
 import { ClassPicker, type ClassPickerHandle } from './ClassPicker'
-import { FrameSizePanel } from './FrameSizePanel'
+import { EmptySelectionPanel } from './EmptySelectionPanel'
 import { StyleSurface } from './StyleSurface'
 import { ComponentRefView } from './ComponentRefView'
 import { ComponentParamsOverview } from './ComponentParamsOverview'
@@ -131,24 +130,12 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
     if (inEmptyVcCanvas && activeVc) {
       return <ComponentParamsOverview vc={activeVc} />
     }
-    // panel-39 — the frame's own device preset + W/H live HERE, in the
-    // nothing-selected state, and nowhere else. They used to render above
-    // every single-node selection, which put a second, unrelated W/H pair
-    // four rows above `MeasuresSection`'s real one and cost 88px of
-    // permanent chrome on a panel that does not fit a 900px window. Figma
-    // shows a frame's size when the frame is what you are looking at; a
-    // multi-frame selection gets the same controls from
-    // `FrameBulkInspector`. `FrameSizePanel` renders `null` when the active
-    // page is not a board frame, so the empty state stands alone elsewhere.
-    return (
-      <div className={styles.emptySelection}>
-        <FrameSizePanel />
-        <EmptyState
-          variant="centered"
-          title="Select an element on the canvas to view its properties."
-        />
-      </div>
-    )
+    // panel-39 — the frame's own device preset + W/H live in the
+    // nothing-selected state, and nowhere else (a multi-frame selection gets
+    // the same controls from `FrameBulkInspector`). P5-F / UX-9 — the rest of
+    // that state is the screen's own properties rather than one sentence:
+    // see `EmptySelectionPanel`.
+    return <EmptySelectionPanel />
   }
 
   if (selectedNode.moduleId === 'base.visual-component-ref') {
@@ -202,35 +189,48 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
   return (
     <MultiSelectTargetProvider>
     <div className={styles.nodeArea}>
-      {singleNodeChrome && selectedNode?.fromComponent && selectedNodeId ? (
-        <SharedComponentNotice componentName={selectedNode.fromComponent} nodeId={selectedNodeId} />
-      ) : null}
-      {/* E2.5 — the selected node IS the content filling another component's
-          slot (a `header={<Icon/>}` fill, or a fragment-slot child). States
-          which slot/instance it belongs to; renders nothing for every other
-          node (the common case). */}
-      {singleNodeChrome && selectedNodeId ? <SlotFillNotice nodeId={selectedNodeId} /> : null}
-      {/* Track F2 / R7 — the ONLY two whole-node facts left here: a
-          structural lock, and where a resolved text's own literal lives. Every
-          other per-field fact (`CodeValueControl`'s per-prop hint,
-          `propLockReason`'s per-prop source — R2) lives next to the control
-          it's about instead of repeating itself in a node-level paragraph. */}
-      {singleNodeChrome && (
-        <SourceConstraintNotice
-          lockReason={selectedNode.lockReason}
-          textOrigin={selectedNode.textOrigin}
-          sharedWith={sharedTextOriginCount}
-          hasWritableLocation={hasWritableSourceLocation(selectedNode.id)}
-          constraint={structuralConstraint}
-          nodeId={selectedNodeId ?? undefined}
-        />
-      )}
-      {/* parser-06 — the chosen branch is NOT locked (the parser is certain of
-          its structure), but the fact that OTHER branches exist and weren't
-          shown is still worth surfacing. */}
-      {singleNodeChrome && selectedNode.branchAlternatives?.length ? (
-        <BranchChoiceNotice alternatives={selectedNode.branchAlternatives} />
-      ) : null}
+      {/* The node-level notices share ONE inset band (UX-25): mounted
+          straight into `.nodeArea` they ran edge to edge while the
+          ClassPicker under them sat on the panel gutter. The band collapses
+          when every notice renders nothing — the common case — so a plain
+          selection pays no height for it. */}
+      <div className={styles.nodeNotices} data-testid="properties-node-notices">
+        {singleNodeChrome && selectedNode?.fromComponent && selectedNodeId ? (
+          <SharedComponentNotice
+            componentName={selectedNode.fromComponent}
+            nodeId={selectedNodeId}
+            node={selectedNode}
+            textOrigin={selectedNode.textOrigin}
+          />
+        ) : null}
+        {/* E2.5 — the selected node IS the content filling another component's
+            slot (a `header={<Icon/>}` fill, or a fragment-slot child). States
+            which slot/instance it belongs to; renders nothing for every other
+            node (the common case). */}
+        {singleNodeChrome && selectedNodeId ? <SlotFillNotice nodeId={selectedNodeId} /> : null}
+        {/* Track F2 / R7 — the ONLY two whole-node facts left here: a
+            structural lock, and where a resolved text's own literal lives. Every
+            other per-field fact (`CodeValueControl`'s per-prop hint,
+            `propLockReason`'s per-prop source — R2) lives next to the control
+            it's about instead of repeating itself in a node-level paragraph. */}
+        {singleNodeChrome && (
+          <SourceConstraintNotice
+            lockReason={selectedNode.lockReason}
+            textOrigin={selectedNode.textOrigin}
+            sharedWith={sharedTextOriginCount}
+            hasWritableLocation={hasWritableSourceLocation(selectedNode.id)}
+            listRowArray={listRowArrayOf(selectedNode) ?? undefined}
+            constraint={structuralConstraint}
+            nodeId={selectedNodeId ?? undefined}
+          />
+        )}
+        {/* parser-06 — the chosen branch is NOT locked (the parser is certain of
+            its structure), but the fact that OTHER branches exist and weren't
+            shown is still worth surfacing. */}
+        {singleNodeChrome && selectedNode.branchAlternatives?.length ? (
+          <BranchChoiceNotice alternatives={selectedNode.branchAlternatives} />
+        ) : null}
+      </div>
       {/* ClassPicker — always visible to style-edit-capable callers. Hidden
           for content-only Clients, and for a multi-selection (it writes ONE
           node's `classIds`). */}

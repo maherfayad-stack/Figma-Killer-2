@@ -11,12 +11,10 @@
 import { describe, expect, it } from 'bun:test'
 import {
   explainClassNameConstraint,
-  explainCssRuleConstraint,
   explainDetachConstraint,
   explainPropConstraint,
   explainStyleConstraint,
   explainSwapConstraint,
-  explainUnexplainedSkip,
   type EditConstraint,
 } from '../editConstraint'
 import {
@@ -123,12 +121,27 @@ describe('explainPropConstraint', () => {
 // ---------------------------------------------------------------------------
 
 describe('explainStyleConstraint', () => {
-  it('row 6 — whole node has no writable location at all', () => {
-    const node = { id: 'src/screens/Home.jsx:70:21#2', codeProps: ['style:color'] }
+  it('row 6 — whole node has no writable location and no row template at all', () => {
+    const node = { id: 'home:body', codeProps: ['style:color'] }
     const constraint = explainStyleConstraint(node, 'color')
     assertWellFormed(constraint)
     expect(constraint.reason).toBe('no-inline-style-target')
     expect(constraint.explanation).toContain('Assign a class instead')
+  })
+
+  it('P3-C (OD-8) — a .map row’s literal style is writable (to the template); a per-row value explains its source', () => {
+    expect(explainStyleConstraint({ id: 'src/screens/Home.jsx:70:21#2', codeProps: [] }, 'color')).toBeNull()
+    const perRow = explainStyleConstraint(
+      {
+        id: 'src/screens/Home.jsx:70:21#2',
+        codeProps: ['style:color'],
+        resolvedProps: { 'style:color': { source: 'item.tone' } },
+      },
+      'color',
+    )
+    assertWellFormed(perRow)
+    expect(perRow.reason).toBe('resolved-style-expression')
+    expect(perRow.explanation).toContain('item.tone')
   })
 
   it('row 5 — a resolved style expression names its source', () => {
@@ -261,28 +274,12 @@ describe('explainStructuralConstraint', () => {
     expect(constraint.reason).toBe('list-row')
   })
 
-  it('row 13 — wrap is allowed on one element and refused on a multi-selection', () => {
+  // Rows 13–14 (multi-select wrap / reorder) are writes since P3-D: a
+  // multi-wrap is a group and a multi-reorder is a move sequence, so the
+  // per-node rule no longer has a `multi` input to refuse on.
+  it('row 13 — wrap is allowed on one element', () => {
     const node = { id: 'src/screens/Home.jsx:9:1' }
     expect(explainStructuralConstraint({ kind: 'wrap', node })).toBeNull()
-
-    const constraint = explainStructuralConstraint({ kind: 'wrap', node, multi: true })
-    assertWellFormed(constraint)
-    expect(constraint.reason).toBe('multi-select')
-  })
-
-  it('row 14 — multi-select reorder refuses with no action: the old "one at a time" button was permanently unwired dead code', () => {
-    const node = { id: 'src/screens/Home.jsx:9:1' }
-    const anchor = { id: 'src/screens/Home.jsx:11:1' }
-    const constraint = explainStructuralConstraint({ kind: 'reorder', node, anchor, multi: true })
-    assertWellFormed(constraint)
-    expect(constraint.reason).toBe('multi-select')
-    // The instruction still reaches the user — it's in `explanation`
-    // (`refuseStructuralEdit`'s own sentence, "Drag them one by one").
-    // `actions` is empty because `constraintActions.ts` never wired
-    // `select-container` to anything: a button that does nothing is worse
-    // than no button.
-    expect(constraint.explanation).toContain('one by one')
-    expect(constraint.actions).toEqual([])
   })
 
   it('row 15 — no-sibling-anchor refuses with no action', () => {
@@ -480,8 +477,9 @@ describe('explainGestureConstraint (scope: gesture, D2 seam)', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Absorbed vocabularies — Detach (19-21), className (B2), CSS (B1/B1b),
-// unexplained-skip (23).
+// Absorbed vocabularies — Detach (19-21), className (B2), CSS (B1/B1b).
+// Row 23 (an aggregate "unexplained skip") is gone: every save-time edit that
+// does not write is a named refusal now (WB-12).
 // ---------------------------------------------------------------------------
 
 describe('absorbed vocabularies — no parallel reasons invented', () => {
@@ -497,10 +495,19 @@ describe('absorbed vocabularies — no parallel reasons invented', () => {
     expect(constraint.actions[0]?.kind).toBe('extract')
   })
 
-  it('row 21 — name-collision carries no action', () => {
+  it('row 21 — name-collision offers the extract hatch (audit 07 §B.7: a repointed copy rebinds nothing)', () => {
     const constraint = explainDetachConstraint('name-collision', 'A binding with that name already exists.')
     assertWellFormed(constraint)
-    expect(constraint.actions).toEqual([])
+    expect(constraint.actions[0]?.kind).toBe('extract')
+  })
+
+  it('DET-1/DET-2 — every new fail-closed Detach reason offers the extract hatch', () => {
+    for (const reason of ['spread-ambiguous', 'body-local', 'unbound-reference']) {
+      const constraint = explainDetachConstraint(reason, 'Detach refused.')
+      assertWellFormed(constraint)
+      expect(constraint.reason).toBe(reason as typeof constraint.reason)
+      expect(constraint.actions[0]?.kind).toBe('extract')
+    }
   })
 
   it('B2 — css-module-binding offers "edit the class definition"', () => {
@@ -517,38 +524,10 @@ describe('absorbed vocabularies — no parallel reasons invented', () => {
     }
   })
 
-  it('B1/B1b — no-editable-stylesheet offers "style the element instead"', () => {
-    const constraint = explainCssRuleConstraint('no-editable-stylesheet', 'This class has no hand-editable source.')
-    assertWellFormed(constraint)
-    expect(constraint.actions[0]?.kind).toBe('style-inline-instead')
-  })
-
-  it('B1/B1b — ambiguous-stylesheet and stylesheet-import-shape-mismatch also offer the inline hatch', () => {
-    for (const reason of ['ambiguous-stylesheet', 'stylesheet-import-shape-mismatch']) {
-      const constraint = explainCssRuleConstraint(reason, `refused: ${reason}`)
-      assertWellFormed(constraint)
-      expect(constraint.actions[0]?.kind).toBe('style-inline-instead')
-    }
-  })
-
-  it('row 26 — breakpoint-override-unsupported carries no action (told, not fixed)', () => {
-    const constraint = explainCssRuleConstraint('breakpoint-override-unsupported', 'Breakpoint override not saved to source.')
-    assertWellFormed(constraint)
-    expect(constraint.actions).toEqual([])
-  })
-
   it('row 22 — swap refusal passes the codemod\'s own reason/message through', () => {
     const constraint = explainSwapConstraint('shape-mismatch', 'The candidate has a different prop shape.')
     assertWellFormed(constraint)
     expect(constraint.explanation).toContain('different prop shape')
     expect(constraint.actions).toEqual([])
-  })
-
-  it('row 23 — unexplained-skip is informational only, singular vs. plural wording', () => {
-    const one = explainUnexplainedSkip(1)
-    const many = explainUnexplainedSkip(3)
-    expect(one.explanation).toContain('1 edit')
-    expect(many.explanation).toContain('3 edits')
-    expect(one.actions).toEqual([])
   })
 })

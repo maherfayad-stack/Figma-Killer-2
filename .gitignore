@@ -120,6 +120,14 @@ docs/superpowers/
 # the inputs (server/handlers/studio/styleCompile.ts). Pure derived output —
 # regenerated on demand, and committing it only produces churn in every diff.
 **/.studio/cache/
+# Agent turn checkpoints (server/handlers/studio/agentCheckpoints.ts) — the
+# pre- and post-image of every file an agent turn wrote, so the user can revert
+# the turn. Per account, machine-local, never source.
+**/.studio/agent-checkpoints/
+# The editor's undo journal (server/handlers/studio/undoJournal.ts) — the
+# pre-image of each delete/detach/swap/extract, so ⌘Z can put it back.
+# Bounded, machine-local, never source.
+**/.studio/undo-journal/
 # Design references (server/handlers/studio/designReferenceStore.ts) —
 # durable, addressable-by-id copies of a design comp (typically a Figma
 # export) an agent measures a Studio frame against. Unlike every OTHER entry
@@ -144,7 +152,7 @@ docs/superpowers/
 **/.studio/variables/
 
 # --- studio-workspace/ -- USER DATA, not this repository's source -----------
-# STUDIO-FIGMA-FEEL-PLAN.md §6 decision 4. Every `studio-workspace/<project>/`
+# docs/decisions.md, FEEL §6.4. Every `studio-workspace/<project>/`
 # is a user's own React repository checked out inside this one, so the default
 # is IGNORED: a dogfooding session, a GitHub import, or a bench fixture
 # (`__bench-synth/` and `__bench-live-synth/`, whose one-by-one rules this

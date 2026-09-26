@@ -37,10 +37,10 @@
  *     TypeBox schema runs, so a same-shaped message from an unrelated
  *     `postMessage` sender (React DevTools, a browser extension) is dropped
  *     without ever reaching a handler.
- *   - `optimistic.insert`/`optimistic.text` never touch `innerHTML`, and
- *     refuse a dangerous tag name case-insensitively before
- *     `createElement` runs — see `optimisticDomOps.ts`, which owns all four
- *     mutations and is deliberately small enough to audit at a glance.
+ *   - `optimistic.insert` never touches `innerHTML`, and refuses a dangerous
+ *     tag name case-insensitively before `createElement` runs — see
+ *     `optimisticDomOps.ts`, which owns every structural preview
+ *     mutation and is deliberately small enough to audit at a glance.
  *   - The outbound `error` channel (Z5) carries only bounded plain text, no
  *     HTML and no node id, capped and rate-limited at this honest sender
  *     (`runtimeErrorTaps.ts`). A same-realm forger can still post directly,
@@ -57,6 +57,7 @@ import {
   type RuntimeMode,
 } from './messages'
 import { installGestureForwarding } from './gestureForwarding'
+import { installKeyForwarding } from './keyForwarding'
 import { installInlineTextEdit } from './inlineTextEdit'
 import { rectRelativeToBody } from './nodeDom'
 import { installResizeHandles } from './resizeHandles'
@@ -67,11 +68,11 @@ import {
   applyOptimisticDelete,
   applyOptimisticInsert,
   applyOptimisticMove,
-  applyOptimisticText,
   revertOptimisticDom,
+  revertOptimisticNodes,
   sweepOptimisticGhosts,
 } from './optimisticDomOps'
-import { applyOptimisticStyle, clearOptimisticStyle, OPTIMISTIC_STYLE_ATTR, revertAllOptimisticStyle } from './optimisticStyle'
+import { applyOptimisticStyle, clearOptimisticStyle, revertAllOptimisticStyle } from './optimisticStyle'
 import { startHoverSuppression, type HoverSuppressionController } from './hoverSuppressionRules'
 import { startScrollUnroll, type ScrollUnrollController } from './scrollUnrollRules'
 import { startAnimationFreeze, type AnimationFreezeController } from './animationFreezeRules'
@@ -79,6 +80,12 @@ import { SELECTION_CHROME_RULES, SELECTION_OVERLAY_ROOT_ID, SELECTION_STYLE_TAG_
 import { wireHmrStateAcrossUpdates, type ViteHotContext } from './hmrState'
 import { findNthNodeById } from './nodeIdIndexing'
 import { collectScrollDeficits, DEFAULT_FRAME_FIT_HEIGHT, resolveFrameFitHeight, type FrameFitMetrics } from './frameFitRules'
+import {
+  createFrameFitMutationScheduler,
+  FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
+  LIVE_FRAME_FIT_STRUCTURAL_DEBOUNCE_MS,
+} from './frameFitMutationScheduler'
+import { isSelectionChromeMutation } from './selectionChromeMutation'
 import { OVERLAY_ID_ATTR } from './overlayStyleAttr'
 
 const RUNTIME_SCROLL_UNROLL_STYLE_ID = 'studio-runtime-scroll-unroll'
@@ -357,12 +364,19 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
   }
 
   // ---- resize handles (`live-13`) — drawn and dragged here, committed by the parent ----
+  let resizeGestureActive = false
   const resize = installResizeHandles({
     doc,
     view,
     ensureOverlayRoot,
     resolveTarget: (target) => findByNodeId(doc, target.nodeId, target.occurrenceIndex),
     onCommit: (target, patch) => postOutbound({ type: 'resize:commit', nodeId: target.nodeId, occurrenceIndex: target.occurrenceIndex, patch }),
+    onGuides: (guides) => postOutbound({ type: 'resize:guides', guides: [...guides] }),
+    // No height report while the badge hangs under the element (canvas-23) — one after.
+    onGestureChange: (active) => {
+      resizeGestureActive = active
+      if (!active) scheduleFrameResize()
+    },
     onPreview: scheduleReposition,
   })
 
@@ -420,6 +434,8 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
   // Pointer + wheel forwarding, and design-mode ownership of the gesture —
   // `gestureForwarding.ts` (`live-12`), reading `mode` live through the getter.
   const disposeGestureForwarding = installGestureForwarding(doc, { getMode: () => mode, post: postOutbound })
+  // Design-mode keyboard → the parent's key dispatcher (P2-B) — `keyForwarding.ts`.
+  const disposeKeyForwarding = installKeyForwarding(doc, { getMode: () => mode, post: postOutbound })
 
   // `live-18` — double-click-to-edit text; see `inlineTextEdit.ts`'s module doc.
   const textEdit = installInlineTextEdit({ doc, getMode: () => mode, post: postOutbound })
@@ -429,36 +445,30 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
 
   // ---- resize / layout-driven ring repositioning ----------------------------
   view.addEventListener('resize', scheduleReposition)
+  // A genuine content mutation may mean the page got shorter, so the fit pin
+  // is re-derived from scratch instead of only ever growing — through the
+  // SAME scheduler the portal frame uses (`frameFitMutationScheduler.ts`,
+  // PERF-9). It ignores this runtime's own writes by construction: the pin
+  // write on `body.style`, the resize preview's stamp and `speed-01`'s
+  // optimistic style stamp are all ATTRIBUTE records, which never reset a
+  // fit, and the ring overlay is selection chrome. What is left — nodes
+  // added or removed — settles after a trailing debounce, because a live app
+  // may add and remove nodes every frame on its own (a carousel, an
+  // `AnimatePresence`) and each reset is a full-document forced layout.
+  const frameFitScheduler = createFrameFitMutationScheduler({
+    onSettle: resetFrameFit,
+    textDebounceMs: FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
+    structuralDebounceMs: LIVE_FRAME_FIT_STRUCTURAL_DEBOUNCE_MS,
+  })
   let layoutObserver: MutationObserver | null = null
   if (doc.body) {
     const MutationObserverCtor = view.MutationObserver ?? MutationObserver
     try {
       layoutObserver = new MutationObserverCtor((records) => {
-        scheduleReposition()
-        // A genuine DOM mutation may mean the page got shorter — re-derive
-        // the fit pin from scratch instead of only ever growing it. See the
-        // "frame:resize" section's module comment below for the known
-        // simplification (undebounced) vs. portal mode's own scheduler.
-        //
-        // MUST ignore a record that is ONLY this adapter's own chrome: (1)
-        // `doc.body`'s own `style` attribute (`resetFrameFit`/
-        // `reportFrameHeight`'s pin write — without this, the pin write
-        // re-triggers `resetFrameFit`, which pins again, forever), or (2)
-        // anything inside the selection/hover ring overlay root (repositioning
-        // a ring on every select/hover would otherwise spuriously reset the
-        // fit pin, since ring elements live inside `doc.body`'s observed
-        // subtree too). Any OTHER mutation — real content added/removed
-        // anywhere, or a non-chrome attribute change — still resets normally.
-        const isIgnorable = (record: MutationRecord): boolean => {
-          if (record.target === doc.body && record.type === 'attributes' && record.attributeName === 'style') return true
-          // (3) the resize preview's own stamp on the element it sizes — a
-          // drag in flight, not new content.
-          if (record.target === resize.previewElement() && record.type === 'attributes') return true
-          if (record.type === 'attributes' && record.attributeName === OPTIMISTIC_STYLE_ATTR) return true // (4) `speed-01`'s style stamp, any element
-          return record.target instanceof Element && record.target.closest(`#${SELECTION_OVERLAY_ROOT_ID}`) !== null
-        }
-        if (records.every(isIgnorable)) return
-        resetFrameFit()
+        // The rings' own repositioning writes are chrome; repositioning for
+        // them would schedule another frame for nothing.
+        if (!records.every(isSelectionChromeMutation)) scheduleReposition()
+        frameFitScheduler.handle(records)
       })
       layoutObserver.observe(doc.body, { childList: true, subtree: true, attributes: true })
     } catch (_err) {
@@ -488,25 +498,14 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
   // ring repositioning and height reporting are independent concerns that
   // shouldn't drop each other's frame.
   //
-  // KNOWN SIMPLIFICATION vs. portal mode, flagged rather than silently
-  // claimed as full parity: portal mode resets the pin to the viewport
-  // height (allowing it to SHRINK) only on a genuine content mutation,
-  // debounced through `frameFitMutationScheduler.ts` so a burst of
-  // inline-text-edit keystrokes doesn't each pay the O(all elements)
-  // `collectScrollDeficits` scan. This reuses the SAME `layoutObserver`
-  // MutationObserver already installed for ring repositioning as the reset
-  // trigger, undebounced — correct in direction (an edit that removes
-  // content can shrink the frame again) but not yet perf-hardened against a
-  // rapid-fire real-content-edit burst the way portal mode is. Untestable
-  // against a real cross-origin ResizeObserver feedback loop until L1-L4 are
-  // real running services (see this file's own PR description) — a
-  // dedicated `frameFitMutationScheduler`-equivalent port is a reasonable
-  // Batch 5 follow-up if that turns out to matter in practice.
+  // The pin is reset (allowing the frame to SHRINK) only on a genuine
+  // content mutation, through `frameFitScheduler` above — the same
+  // classify-and-debounce module portal mode uses (PERF-9).
   let pinnedHeight = DEFAULT_FRAME_FIT_HEIGHT
   let frameFitPassesUsed = 0
   let lastReportedHeight: number | null = null
   function reportFrameHeight(): void {
-    if (!doc.body || mode !== 'design') return
+    if (!doc.body || mode !== 'design' || resizeGestureActive) return
     const fitted = resolveFrameFitHeight({
       pinnedHeight,
       scrollDeficits: collectScrollDeficits(doc),
@@ -517,7 +516,12 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       frameFitPassesUsed += 1
       doc.body.style.height = `${fitted}px`
     }
+    // Chrome is not content (canvas-23): handles and the W×H badge hang past
+    // an element at the body's bottom edge. Hidden for the read, same task.
+    const chrome = overlayRoot?.isConnected ? overlayRoot : null
+    if (chrome) chrome.style.display = 'none'
     const height = doc.body.scrollHeight
+    if (chrome) chrome.style.display = ''
     if (height === lastReportedHeight) return
     lastReportedHeight = height
     postOutbound({ type: 'frame:resize', height })
@@ -577,7 +581,7 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
         applyMode(message.mode)
         return
       case 'setResizeTarget':
-        resize.setTarget(message.ref, message.proportional)
+        resize.setTarget(message.ref, message.proportional, { sizing: message.sizing ?? {}, snap: message.snap ?? null })
         return
       case 'text:edit':
         textEdit.handleReply(message)
@@ -591,8 +595,9 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       case 'optimistic.move':
         applyOptimisticMove(doc, message.nodeId, message.occurrenceIndex, message.parentNodeId, message.parentOccurrenceIndex, message.index)
         return
-      case 'optimistic.text':
-        applyOptimisticText(doc, message.nodeId, message.occurrenceIndex, message.text)
+      case 'optimistic.revert':
+        revertOptimisticNodes(doc, message.refs)
+        scheduleReposition()
         return
       case 'optimistic.style':
         applyOptimisticStyle(doc, message.ref, message.patch) // `message.className` is wire-informational only — see `optimisticStyle.ts`
@@ -655,10 +660,12 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       view.removeEventListener('message', onWindowMessage)
       view.removeEventListener('resize', scheduleReposition)
       disposeGestureForwarding()
+      disposeKeyForwarding()
       resize.dispose()
       textEdit.dispose()
       disposeErrorTaps()
       layoutObserver?.disconnect()
+      frameFitScheduler.dispose()
       if (repositionRaf !== null) (view.cancelAnimationFrame?.bind(view) ?? cancelAnimationFrame)(repositionRaf)
       frameResizeObserver?.disconnect()
       if (resizeRaf !== null) (view.cancelAnimationFrame?.bind(view) ?? cancelAnimationFrame)(resizeRaf)

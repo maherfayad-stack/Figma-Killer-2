@@ -44,7 +44,6 @@ function resetStore() {
     activeDocument: null,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
   } as Parameters<typeof useEditorStore.setState>[0])
 }
 

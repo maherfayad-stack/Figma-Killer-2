@@ -19,6 +19,7 @@ import React from 'react'
 import { cleanup, fireEvent, render } from '@testing-library/react'
 import { DndContext } from '@dnd-kit/core'
 import { useEditorStore } from '@site/store/store'
+import { getCanvasHover } from '@site/canvas/canvasHover'
 import { queryCanvasElement, waitForCanvasElement } from './iframeCanvasQuery'
 import { CanvasRoot } from '@site/canvas/CanvasRoot'
 import { makeNode, makePage, makeSite } from '../fixtures'
@@ -109,7 +110,6 @@ function setupAnnotatedPage() {
     activeBreakpointId: 'mobile',
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     _historyPast: [],
     _historyFuture: [],
     canUndo: false,
@@ -130,7 +130,6 @@ beforeEach(() => {
     activeDocument: null,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     _historyPast: [],
     _historyFuture: [],
     canUndo: false,
@@ -191,9 +190,8 @@ describe('B3 — NodeRenderer lock-down: click routing for inlined VC body nodes
 
     fireEvent.mouseEnter(vcBodyEl)
 
-    // Lock-down routed hover to ref1 → ref1 gets data-hovered, vc-body does not.
-    expect(ref1El!.getAttribute('data-hovered')).toBe('true')
-    expect(vcBodyEl.hasAttribute('data-hovered')).toBe(false)
+    // Lock-down routed hover to ref1, not vc-body.
+    expect(getCanvasHover()?.nodeId).toBe('ref1')
   })
 
   it('hovering a slot-content node hovers that node directly (no redirect)', async () => {
@@ -206,9 +204,8 @@ describe('B3 — NodeRenderer lock-down: click routing for inlined VC body nodes
 
     fireEvent.mouseEnter(slotChildEl)
 
-    // Slot content behaves normally — slot-child gets data-hovered.
-    expect(slotChildEl.getAttribute('data-hovered')).toBe('true')
-    expect(ref1El!.hasAttribute('data-hovered')).toBe(false)
+    // Slot content behaves normally — slot-child itself is hovered.
+    expect(getCanvasHover()?.nodeId).toBe('slot-child')
   })
 })
 

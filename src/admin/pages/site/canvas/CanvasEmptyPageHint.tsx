@@ -32,21 +32,50 @@
  * loses the hint immediately, and a page emptied by deleting its last element
  * gets it back, which is correct both times: the hint is a statement about the
  * page, not about the user.
+ *
+ * ## …unless the page is not empty at all (P3-B, WB-5)
+ *
+ * An imported page whose default export the parser cannot read a component out
+ * of (`lazy(…)`, a component imported from another file, a class with no JSX
+ * `render()`) also arrives with no nodes — and "This page is empty. Add the
+ * first element" would be false twice: the page has content, and adding an
+ * element here would write into a file whose real component Studio never
+ * showed. The load names that shape (`unreadable-page-export`, via
+ * `studioLoadWarningsStore.ts`), and the hint says it instead.
  */
+import { useSyncExternalStore } from 'react'
 import { AppGridPlusGlyphIcon } from 'pixel-art-icons/icons/app-grid-plus-glyph'
+import { CodeIcon } from 'pixel-art-icons/icons/code'
 import { EmptyState } from '@ui/components/EmptyState'
+import {
+  getStudioLoadWarnings,
+  subscribeStudioLoadWarnings,
+  unreadablePageExportMessage,
+} from '../studio/studioLoadWarningsStore'
 import styles from './CanvasEmptyPageHint.module.css'
 
-export function CanvasEmptyPageHint() {
+export function CanvasEmptyPageHint({ pageId }: { pageId: string }) {
+  const warnings = useSyncExternalStore(subscribeStudioLoadWarnings, getStudioLoadWarnings)
+  const unreadable = unreadablePageExportMessage(warnings, pageId)
   return (
     <div className={styles.hint} data-testid="canvas-empty-page-hint">
-      <EmptyState
-        variant="centered"
-        plain
-        icon={<AppGridPlusGlyphIcon size={22} aria-hidden="true" />}
-        title="This page is empty."
-        description="Add the first element from the toolbar’s Add button, or drop one in from the insert palette."
-      />
+      {unreadable ? (
+        <EmptyState
+          variant="centered"
+          plain
+          icon={<CodeIcon size={22} aria-hidden="true" />}
+          title="Studio can’t draw this page from its code."
+          description={`${unreadable} Open the file in your editor to change it.`}
+        />
+      ) : (
+        <EmptyState
+          variant="centered"
+          plain
+          icon={<AppGridPlusGlyphIcon size={22} aria-hidden="true" />}
+          title="This page is empty."
+          description="Add the first element from the toolbar’s Add button, or drop one in from the insert palette."
+        />
+      )}
     </div>
   )
 }

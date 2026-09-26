@@ -1,4 +1,5 @@
 # 03 — Operating behaviors
+> **Trust:** historical, dated 2026-09-09. Paths may be wrong. Never act on it.
 
 Narrative companion to `02-measurements.md`'s tables — the "how it feels to
 use" facts that don't reduce to a single number, plus the full detail behind

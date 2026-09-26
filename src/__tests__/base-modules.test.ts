@@ -229,9 +229,35 @@ describe('base.text — unified text module', () => {
     expect(baseIndex).not.toContain("import './paragraph'")
   })
 
-  it('has only content, tag, and HTML attribute module settings', async () => {
+  it('has only content, tag (with its custom escape hatch), and HTML attribute module settings', async () => {
     expect(TextModule.id).toBe('base.text')
-    expect(Object.keys(TextModule.schema).sort()).toEqual(['htmlAttributes', 'tag', 'text'])
+    expect(Object.keys(TextModule.schema).sort()).toEqual(['customTag', 'htmlAttributes', 'tag', 'text'])
+  })
+
+  // P3-B (WB-3) — an imported `<li>Item</li>` is text in an `<li>`. The text
+  // module keeps the element through the same `custom` + `customTag` escape
+  // hatch `base.container` has, on the canvas and in published HTML alike.
+  it('renders a custom tag that holds text, on both render paths', () => {
+    const { html } = renderModule(TextModule, { tag: 'custom', customTag: 'li', text: 'Item' })
+    expect(html).toBe('<li>Item</li>')
+
+    const { container } = renderReact(
+      React.createElement(TextModule.component, {
+        props: { text: 'Item', tag: 'custom', customTag: 'li', htmlAttributes: {} },
+        nodeId: 'n1',
+        isSelected: false,
+        mcClassName: 'ist-x',
+        nodeWrapperProps: { 'data-node-id': 'n1', 'data-module-id': 'base.text', tabIndex: 0 },
+      } as never),
+    )
+    expect(container.querySelector('li')?.textContent).toBe('Item')
+  })
+
+  it('falls back to <p> for a custom tag that is unsafe, void, or not text content', () => {
+    for (const customTag of ['script', 'style', 'br', 'textarea', 'option', 'x"y', '']) {
+      const { html } = renderModule(TextModule, { tag: 'custom', customTag, text: 'Item' })
+      expect(html).toBe('<p>Item</p>')
+    }
   })
 
   it('renders the selected semantic tag', async () => {
@@ -931,13 +957,15 @@ describe('base.svg — render() specifics', () => {
       } as never),
     )
 
-    const wrapper = container.querySelector('span')
-    expect(wrapper?.getAttribute('role')).toBe('img')
-    expect(wrapper?.getAttribute('aria-label')).toBe('Preview mark')
-    expect(wrapper?.classList.contains('ist-svg')).toBe(true)
-    expect(wrapper?.querySelector('svg')).not.toBeNull()
-    expect(wrapper?.innerHTML.toLowerCase()).not.toContain('<script')
-    expect(wrapper?.innerHTML.toLowerCase()).not.toContain('onload')
+    // A literal `<svg>` renders AS the node (P5-D SVG-0): the label, the
+    // class and the editor wiring are on the `<svg>` itself.
+    const node = container.querySelector('[data-node-id="svg-node"]')
+    expect(node?.localName).toBe('svg')
+    expect(node?.getAttribute('role')).toBe('img')
+    expect(node?.getAttribute('aria-label')).toBe('Preview mark')
+    expect(node?.classList.contains('ist-svg')).toBe(true)
+    expect(container.innerHTML.toLowerCase()).not.toContain('<script')
+    expect(container.innerHTML.toLowerCase()).not.toContain('onload')
   })
 
   it('does not access DOM globals during publish render', () => {
@@ -1345,8 +1373,8 @@ describe('base.link — render() specifics', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Inline text edit declarations (docs/superpowers/specs/
-// 2026-06-10-inline-text-editing-design.md) — the canvas resolves these
+// Inline text edit declarations (docs/agent-refs/canvas-internals.md →
+// "Inline text editing") — the canvas resolves these
 // generically; the declaration IS the feature's per-module surface.
 // ---------------------------------------------------------------------------
 

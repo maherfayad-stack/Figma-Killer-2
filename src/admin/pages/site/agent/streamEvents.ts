@@ -15,6 +15,8 @@
  *   usage         per-turn token + cost totals
  *   reasoning     extended-thinking text chunk (WS-12 §5.4, unverified —
  *                 see server/ai/drivers/claudeCliEvents.ts's doc comment)
+ *   retrying      the provider was momentarily unable and the server is
+ *                 re-sending the request (AI-8) — a status, never an error
  *   error         server-side terminal error
  *   done          stream finished cleanly
  *
@@ -39,6 +41,7 @@ import type {
 import { getErrorMessage } from '@core/utils/errorMessage'
 import {
   PERMISSION_REQUEST_TOOL,
+  PROPOSE_PLAN_TOOL,
   awaitPermissionDecision,
   describePermissionRequest,
   parsePermissionRequestInput,
@@ -62,6 +65,7 @@ export const ServerStreamEventSchema = Type.Union([
     type: Type.Literal('bridgeReady'),
     bridgeId: Type.String(),
   }),
+  Type.Object({ type: Type.Literal('turn'), turnId: Type.String() }),
   Type.Object({
     type: Type.Literal('toolRequest'),
     requestId: Type.String(),
@@ -81,6 +85,14 @@ export const ServerStreamEventSchema = Type.Union([
     toolName: Type.String(),
     ok: Type.Boolean(),
     error: Type.Optional(Type.String()),
+    previewImages: Type.Optional(Type.Array(Type.Object({ mimeType: Type.String({ pattern: '^image/(png|jpeg|webp|gif)$' }), data: Type.String({ pattern: '^[A-Za-z0-9+/=]*$' }) }), { maxItems: 8 })),
+  }),
+  Type.Object({
+    type: Type.Literal('toolInputProgress'),
+    toolCallId: Type.String(),
+    toolName: Type.String(),
+    bytes: Type.Number(),
+    target: Type.Optional(Type.String()),
   }),
   Type.Object({
     type: Type.Literal('usage'),
@@ -105,6 +117,21 @@ export const ServerStreamEventSchema = Type.Union([
     shape: Type.Optional(Type.String()),
     reason: Type.String(),
   }),
+  Type.Object({
+    // Which model this turn runs on — see `AgentRoutedModel` in ./types.
+    type: Type.Literal('modelRouting'),
+    mode: Type.Union([Type.Literal('pinned'), Type.Literal('routed'), Type.Literal('default')]),
+    modelId: Type.String(),
+    role: Type.String(),
+    reason: Type.String(),
+  }),
+  Type.Object({
+    type: Type.Literal('retrying'),
+    attempt: Type.Number(),
+    maxAttempts: Type.Number(),
+    delayMs: Type.Number(),
+    reason: Type.String(),
+  }),
   Type.Object({ type: Type.Literal('done') }),
   Type.Object({ type: Type.Literal('error'), message: Type.String() }),
 ])
@@ -112,6 +139,20 @@ export const ServerStreamEventSchema = Type.Union([
 // ---------------------------------------------------------------------------
 // Stream event processor
 // ---------------------------------------------------------------------------
+
+/**
+ * Assistant turns currently showing a retry notice. Checked before clearing so
+ * the per-token `text` path costs a set lookup, not a store update.
+ */
+const retryingTurns = new Set<string>()
+
+function clearRetrying(set: EditorStoreSet, assistantId: string): void {
+  if (!retryingTurns.delete(assistantId)) return
+  set((state) => {
+    const msg = state.agentMessages.find((m) => m.id === assistantId)
+    if (msg?.retrying) delete msg.retrying
+  })
+}
 
 export async function processStreamEvent(
   event: ServerStreamEvent,
@@ -128,7 +169,22 @@ export async function processStreamEvent(
    */
   buildSnapshot?: () => unknown,
 ): Promise<void> {
+  // Anything the turn produces means the provider is answering again, and a
+  // turn that ended (done or error) is no longer retrying either.
+  if (event.type !== 'retrying' && event.type !== 'context' && event.type !== 'bridgeReady' && event.type !== 'turn') clearRetrying(set, assistantId)
+
   switch (event.type) {
+    case 'retrying': {
+      // A status, never an error: the headline says so, and nothing is added
+      // to the transcript.
+      retryingTurns.add(assistantId)
+      set((state) => {
+        const msg = state.agentMessages.find((m) => m.id === assistantId)
+        if (msg) msg.retrying = { attempt: event.attempt, maxAttempts: event.maxAttempts }
+      })
+      break
+    }
+
     case 'text': {
       textSink.append(assistantId, event.text)
       // A9 — the model reports "step k/N" as it works (the static prompt's
@@ -171,6 +227,17 @@ export async function processStreamEvent(
       break
     }
 
+    case 'turn': {
+      // The user message this turn answers is the one right before its
+      // assistant placeholder — both were pushed together on send.
+      set((state) => {
+        const index = state.agentMessages.findIndex((m) => m.id === assistantId)
+        const userMsg = index > 0 ? state.agentMessages[index - 1] : undefined
+        if (userMsg?.role === 'user') userMsg.turnId = event.turnId
+      })
+      break
+    }
+
     case 'toolRequest': {
       // A permission prompt is a question for the USER, not work for the tool
       // dispatcher — intercepted before dispatch so it never looks for a tool
@@ -188,6 +255,23 @@ export async function processStreamEvent(
           break
         }
         await postToolResult(bridge.bridgeId, event.requestId, { ok: true, data: decision }, signal)
+        break
+      }
+
+      // AI-22 — the HTTP agent's plan, in plan mode: the same card as the
+      // CLI's ExitPlanMode prompt, and the answer goes back as the tool's
+      // result, which is what lets the agent proceed (or revise).
+      if (event.toolName === PROPOSE_PLAN_TOOL) {
+        const decision = await promptForPermission(set, PROPOSE_PLAN_TOOL, event.input)
+        if (!bridge.bridgeId) {
+          console.error('[AgentSlice] plan toolRequest received before bridgeReady')
+          break
+        }
+        const answer = {
+          approved: decision.behavior === 'allow',
+          ...(decision.message ? { feedback: decision.message } : {}),
+        }
+        await postToolResult(bridge.bridgeId, event.requestId, { ok: true, data: answer }, signal)
         break
       }
 
@@ -236,6 +320,15 @@ export async function processStreamEvent(
       break
     }
 
+    case 'toolInputProgress': {
+      // AI-26 — throttled server-side (one per KB), so a plain store write.
+      set((state) => {
+        const msg = state.agentMessages.find((m) => m.id === assistantId)
+        if (msg) msg.inputProgress = { toolCallId: event.toolCallId, toolName: event.toolName, bytes: event.bytes, ...(event.target ? { target: event.target } : {}) }
+      })
+      break
+    }
+
     case 'toolCall': {
       // Driver issued a tool call (status: pending). Drain any pending text
       // deltas BEFORE adding the block so the chronological order
@@ -244,6 +337,8 @@ export async function processStreamEvent(
       set((state) => {
         const msg = state.agentMessages.find((m) => m.id === assistantId)
         if (!msg) return
+        // The call arrived whole: its argument progress is over.
+        if (msg.inputProgress) delete msg.inputProgress
         const inputAsRecord = event.input && typeof event.input === 'object'
           ? (event.input as Record<string, unknown>)
           : null
@@ -290,6 +385,11 @@ export async function processStreamEvent(
           ok: event.ok,
           error: event.ok ? undefined : event.error ?? 'Tool call failed.',
         }
+        // A server-run tool's images (a headless screenshot) — what the agent
+        // looked at, and the variants card's thumbnails.
+        if (event.previewImages?.length) {
+          block.toolCall.previewImages = event.previewImages.map((image) => `data:${image.mimeType};base64,${image.data}`)
+        }
       })
       break
     }
@@ -321,6 +421,15 @@ export async function processStreamEvent(
           ...(event.shape ? { shape: event.shape } : {}),
           reason: event.reason,
         }
+      })
+      break
+    }
+
+    case 'modelRouting': {
+      // Display only, like `routing`: the composer chip names a turn that ran
+      // on a cheaper model than the conversation's, with the router's reason.
+      set((state) => {
+        state.agentRoutedModel = { mode: event.mode, modelId: event.modelId, role: event.role, reason: event.reason }
       })
       break
     }

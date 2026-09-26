@@ -17,7 +17,7 @@
  * here only because `collectStyleRuleEdits`'s return type includes all
  * three. `create`'s "which file was created" surfacing is wired: `saveSite`
  * calls `notifyCreatedStylesheets` (`studioSaveRequests.ts`) once the save
- * response arrives, alongside the `unexplainedSkips` handling.
+ * response arrives, alongside the refusal handling.
  *
  * Track B2 — `class` (`server/handlers/studioEditSchemas.ts`'s
  * `ClassEditSchema`, matching `classNameWriteback.ts`'s `ClassNameEditPayload`)
@@ -43,10 +43,10 @@ export type StudioEditPayload =
   | { kind: 'literal'; nodeId: string; text: string }
   | { kind: 'tag'; nodeId: string; tag: string }
   | { kind: 'asset'; nodeId: string; assetPath: string }
-  | { kind: 'css'; op: 'set'; nodeId: string; file: string; selector: string; property: string; value: string; atMedia?: string }
-  | { kind: 'css'; op: 'unset'; nodeId: string; file: string; selector: string; property: string; atMedia?: string }
-  | { kind: 'css'; op: 'insert'; nodeId: string; file: string; selector: string; declarations: Record<string, string>; atMedia?: string }
-  | { kind: 'css'; op: 'create'; nodeId: string; pageFile: string; selector: string; declarations: Record<string, string>; atMedia?: string }
+  | { kind: 'css'; op: 'set'; nodeId: string; file: string; selector: string; property: string; value: string; atRule?: string }
+  | { kind: 'css'; op: 'unset'; nodeId: string; file: string; selector: string; property: string; atRule?: string }
+  | { kind: 'css'; op: 'insert'; nodeId: string; file: string; selector: string; declarations: Record<string, string>; atRule?: string }
+  | { kind: 'css'; op: 'create'; nodeId: string; pageFile?: string; selector: string; declarations: Record<string, string>; atRule?: string }
   // W5-5 — the same three moves inside a `@keyframes` block. A keyframes
   // target is a FILE + ANIMATION NAME + STEP rather than a file + selector,
   // which is why these are their own variants rather than a widened `set`:
@@ -62,4 +62,4 @@ export type StudioEditPayload =
   // batch ordering unchanged. There is no `op`: a styled edit only ever sets
   // an existing declaration's value, and `styleRuleWriteback.ts` refuses the
   // add/remove cases client-side before one is built.
-  | { kind: 'styled'; nodeId: string; className: string; selector: string; property: string; value: string; atMedia?: string }
+  | { kind: 'styled'; nodeId: string; className: string; selector: string; property: string; value: string; atRule?: string }

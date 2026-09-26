@@ -77,7 +77,7 @@ import type { PageStylesheet } from '@core/studio-sync/pageStylesheet'
  * names that appear in almost every system font stack; flagging them would
  * make this rule fire on correct code.
  */
-const ALWAYS_AVAILABLE_FAMILIES = new Set(
+export const ALWAYS_AVAILABLE_FAMILIES = new Set(
   [
     'sans-serif', 'serif', 'monospace', 'cursive', 'fantasy',
     'system-ui', 'ui-sans-serif', 'ui-serif', 'ui-monospace', 'ui-rounded', 'math', 'emoji', 'fangsong',
@@ -127,7 +127,7 @@ const GOOGLE_FONTS_URL_RE = /fonts\.googleapis\.com\/[^"'\s)]*/gi
 const NEXT_FONT_GOOGLE_IMPORT_RE = /import\s*\{([^}]*)\}\s*from\s*['"]next\/font\/google['"]/g
 
 /** Lowercase, unquote, and strip every separator — so `"Helvetica Neue"`, `Helvetica-Neue` and `helvetica_neue` are one family. */
-function normalizeFamily(raw: string): string {
+export function normalizeFamily(raw: string): string {
   return raw
     .trim()
     .replace(/^['"]|['"]$/g, '')
@@ -259,11 +259,16 @@ function fontFilesOnDisk(dir: string): { families: string[]; files: string[] } {
  * `studio_quality_check` call and reused for every page — the disk walk and
  * the setup-file reads are workspace facts, not per-page ones.
  */
+/** How a family became available — what `studio_list_fonts` reports next to each one. */
+export type FontSource = '@font-face' | 'google-fonts' | 'next/font/google' | 'font-file'
+
 export interface FontAvailability {
   /** Normalised family names (see `normalizeFamily`). */
   readonly families: ReadonlySet<string>
   /** Original spellings, for the "what you DO have" half of a finding's message. Capped at the point of use. */
   readonly declared: readonly string[]
+  /** Each declared family with the way it was found, in scan order — `declared`, with its evidence. */
+  readonly sources: ReadonlyArray<{ readonly family: string; readonly via: FontSource }>
   /** Font files found on disk, workspace-relative — evidence for a "the file is there, the @font-face is not" message. */
   readonly fontFiles: readonly string[]
   /** `--token` -> value, from the project's compiled CSS, so a `font-family: var(--font-body)` stack can be resolved before it is judged. */
@@ -273,12 +278,15 @@ export interface FontAvailability {
 }
 
 export function collectFontAvailability(dir: string, projectCss: readonly string[]): FontAvailability {
-  const declared: string[] = []
+  const sources: Array<{ family: string; via: FontSource }> = []
+  const add = (families: readonly string[], via: FontSource): void => {
+    for (const family of families) sources.push({ family, via })
+  }
   let suppressed = false
 
   for (const css of projectCss) {
-    declared.push(...fontFaceFamilies(css))
-    declared.push(...googleFontFamilies(css))
+    add(fontFaceFamilies(css), '@font-face')
+    add(googleFontFamilies(css), 'google-fonts')
   }
 
   for (const relFile of FONT_SETUP_FILES) {
@@ -286,13 +294,14 @@ export function collectFontAvailability(dir: string, projectCss: readonly string
     if (!existsSync(abs)) continue
     const text = readFileOrEmpty(abs)
     if (text.includes('next/font/local')) suppressed = true
-    declared.push(...googleFontFamilies(text))
-    declared.push(...nextFontGoogleFamilies(text))
-    declared.push(...fontFaceFamilies(text))
+    add(googleFontFamilies(text), 'google-fonts')
+    add(nextFontGoogleFamilies(text), 'next/font/google')
+    add(fontFaceFamilies(text), '@font-face')
   }
 
   const { families: fileFamilies, files } = fontFilesOnDisk(dir)
-  declared.push(...fileFamilies)
+  add(fileFamilies, 'font-file')
+  const declared = sources.map((source) => source.family)
 
   const cssVariables = new Map<string, string>()
   for (const css of projectCss) {
@@ -302,6 +311,7 @@ export function collectFontAvailability(dir: string, projectCss: readonly string
   return {
     families: new Set(declared.map(normalizeFamily)),
     declared,
+    sources,
     fontFiles: files,
     cssVariables,
     suppressed,

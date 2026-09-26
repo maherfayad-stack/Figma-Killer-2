@@ -31,6 +31,12 @@
  * event types to the parent (using the original drag's pointerId so the
  * parent's session-id assumptions still line up).
  *
+ * Clipboard
+ * ─────────
+ * P5-A. `copy` / `cut` / `paste` raised in the frame's document reach the
+ * canvas's clipboard bridge (`canvasClipboardBridge.ts`), which is what lets
+ * ⌘V read an image or an SVG from the OS clipboard with focus in a frame.
+ *
  * OS file drop
  * ────────────
  * D2 G15. A `dragover`/`drop` carrying files from the desktop is re-dispatched
@@ -44,8 +50,11 @@
  * ────────
  * Clicking a node to select it focuses the iframe, so subsequent keystrokes go
  * to the iframe document — where none of the editor's parent-level native
- * shortcut listeners can see them. They are cloned onto the parent `document`
- * instead. See `onKeyDown` for the inline-edit stand-down that makes this safe.
+ * shortcut listeners can see them. keydown is cloned onto the parent
+ * `document`, keyup feeds the dispatcher's release broadcast, and the frame's
+ * window losing focus releases every held key — all through
+ * `canvasFrameKeyRelay.ts`, which the bridge-frame relay shares. See
+ * `onKeyDown` for the inline-edit stand-down that makes this safe.
  *
  * All of that is canvas-only: live frames pan nothing, host no cross-frame
  * drag, and scroll natively.
@@ -59,21 +68,22 @@
  *
  * Portal mode only (`live-05`, STATE.md, Batch 3) — reads the frame's native
  * `Document` through `PortalFrameAdapter`'s escape hatch (`getPortalWindow`).
- * A bridge frame's wheel and pan presses take the wire instead: the runtime
+ * A bridge frame's wheel and pan presses  * the wire instead: the runtime
  * forwards them as `wheel`/`pointer` messages and
  * `useBridgeFrameInteraction` (`live-12`/`live-13`) replays them on the
- * iframe element, the same target this hook dispatches to. Two gaps remain
- * there, real and documented rather than silent: no wire message forwards
- * the KEYBOARD (a design-mode bridge frame never takes focus, so Space and
- * the shortcuts land on the parent document anyway), and the cross-frame
- * drag relay has no bridge-mode equivalent.
+ * iframe element, the same target this hook dispatches to. Its keyboard rides
+ * the wire too since P2-B (`key`/`blur` messages → `canvasFrameKeyRelay.ts`).
+ * One gap remains there, real and documented rather than silent: the
+ * cross-frame drag relay has no bridge-mode equivalent.
  */
 
 import { useEffect, type RefObject } from 'react'
 import { iframeLocalPointToParentClientPoint } from './iframeEventCoordinates'
 import { installFrameDragRelay } from './canvasFrameDragRelay'
+import { installCanvasClipboardBridge } from './canvasClipboardBridge'
 import { readCanvasPointerRelay } from './canvasPointerRelay'
 import { isCanvasSpacePanActive, setCanvasSpacePanActive, shouldStartCanvasPointerPan } from './canvasPanInput'
+import { frameKeyInitFrom, relayFrameBlur, relayFrameKeyDown, relayFrameKeyUp } from './canvasFrameKeyRelay'
 import { useEditorStore } from '@site/store/store'
 import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
 import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
@@ -159,6 +169,21 @@ export function useIframeEventForwarding(
     return installFrameDragRelay(iframeDoc, iframe)
   }, [adapter, iframeRef, isLive])
 
+  // ── Clipboard events (P5-A) ───────────────────────────────────────────
+  // ⌘V pressed with focus in this frame raises its `paste` in THIS document,
+  // and a native clipboard event does not cross the iframe boundary; the key
+  // relay's clone on the parent document raises none. So the bridge listens
+  // here too, as `useCanvasClipboardBridge` does in the editor's document.
+  // See `canvasClipboardBridge.ts`.
+  useEffect(() => {
+    // A live frame is the running app: its clipboard is the app's.
+    if (isLive) return
+    if (!isPortalFrameAdapter(adapter)) return
+    const iframeDoc = adapter.getPortalWindow()?.document
+    if (!iframeDoc) return
+    return installCanvasClipboardBridge(iframeDoc)
+  }, [adapter, isLive])
+
   // ── Forward pointer events for canvas pan gestures + parent-doc canvas drags ────
   // The canvas pan gesture (useCanvas via @use-gesture) and the canvas
   // parent-doc canvas drag handlers both live in the parent document
@@ -195,78 +220,55 @@ export function useIframeEventForwarding(
     if (!iframe) return
     let spaceHeld = false
     // Clicking a node to select it focuses this iframe, so every subsequent
-    // keystroke is delivered to the iframe document instead of the parent.
-    // The editor's global / editor / panel shortcuts are NATIVE listeners on
-    // the parent `window` (spotlight ⌘K, save ⌘S) and parent `document`
-    // (panel toggles, undo/redo) — none of which see events that fire inside
-    // an iframe. We bridge them by re-dispatching a clone on the parent
-    // `document`: it reaches every `document`-level listener at the target
-    // and every `window`-level listener during capture/bubble.
-    //
-    // We deliberately dispatch on `document`, NOT on the iframe element. The
-    // global shortcut dispatcher and canvas-level native bridge both listen
-    // in the parent document; dispatching here keeps the clone out of the
-    // iframe document so this listener never sees it again (no loop).
+    // keystroke is delivered to the iframe document instead of the parent,
+    // where the editor's key dispatcher and the window-level ⌘S / ⌘K live.
+    // `canvasFrameKeyRelay.ts` bridges it: a keydown CLONE on the parent
+    // `document` (never on the iframe element — that would double-fire
+    // anything listening via fiber bubbling), and the keyup into the
+    // dispatcher's release broadcast. Dispatching on the parent document also
+    // keeps the clone out of this iframe document, so it never loops back.
     const parentDocument = iframe.ownerDocument
-    const forwardKeyboard = (e: KeyboardEvent) => {
-      const forwarded = new KeyboardEvent('keydown', {
-        bubbles: true,
-        cancelable: true,
-        key: e.key,
-        code: e.code,
-        location: e.location,
-        repeat: e.repeat,
-        ctrlKey: e.ctrlKey,
-        shiftKey: e.shiftKey,
-        altKey: e.altKey,
-        metaKey: e.metaKey,
-      })
-      parentDocument.dispatchEvent(forwarded)
-      // If a parent handler claimed the shortcut (e.g. ⌘K, ⌘S), suppress the
-      // iframe's own default for the original key so the browser doesn't also
-      // act on it (e.g. native ⌘S save dialog).
-      if (forwarded.defaultPrevented) {
-        e.preventDefault()
-        e.stopPropagation()
-      }
-    }
     const onKeyDown = (e: KeyboardEvent) => {
       // While inline text editing, the contentEditable node owns the keyboard.
       // Stand the whole canvas key layer down: don't track space-pan, don't
-      // block Tab, and DON'T forward the keystroke to the parent document.
-      // Forwarding re-dispatches a clone on `document`, where native handlers
-      // (undo/redo, zoom reset, panel rail, space-pan) guard only on
-      // `e.target.isContentEditable` — but the clone's target is `document`,
-      // not the cross-realm editing element, so they'd fire mid-edit. The
-      // worst is Cmd+Z running the store `undo()` (reverting the whole
-      // coalesced session) while the DOM keeps the text — store/DOM diverge.
-      // The element's own React onKeyDown still owns Escape/Enter.
+      // touch Tab, and DON'T forward the keystroke to the parent document.
+      // The clone's target is `document`, not the cross-realm editing
+      // element, so no target-based guard in the parent could tell it was
+      // typing. The dispatcher's `inline-edit` rung would halt it anyway; the
+      // window-level listeners (⌘S aside, which must survive an edit) would
+      // not. The worst case is Cmd+Z running the store `undo()` (reverting
+      // the whole coalesced session) while the DOM keeps the text — store and
+      // DOM diverge. The element's own React onKeyDown owns Escape/Enter.
       if (useEditorStore.getState().activeInlineEdit) return
-      if (e.code === 'Space' && !e.repeat) {
-        spaceHeld = true
-        setCanvasSpacePanActive(parentDocument, 'iframe', true)
-      }
-      // Block Tab navigation inside the canvas iframe. The author is
-      // designing, not using, the page — letting Tab walk through
-      // link / button controls inside the iframe surface the browser's
-      // default focus outline and traps the keyboard inside the
-      // preview. The canvas exposes its own keyboard model
-      // (arrow keys / Cmd+navigation) at the parent level.
-      if (e.key === 'Tab') {
+      if (e.code === 'Space') spaceHeld = true
+      // Tab is cancelled HERE, always: the author is designing the page, not
+      // using it, and letting Tab walk its links and buttons draws the
+      // browser's focus ring inside the design and traps the keyboard in the
+      // frame. It is still FORWARDED (P2-B, IX-3) — with a node selected the
+      // `node` rung reads it as "select the next sibling".
+      if (e.key === 'Tab') e.preventDefault()
+      // A parent handler claimed the key (⌘K, ⌘S, Delete, …): suppress the
+      // iframe's own default too, so the browser does not ALSO act on it
+      // (e.g. the native ⌘S save dialog).
+      if (relayFrameKeyDown(parentDocument, frameKeyInitFrom(e), { userGesture: e.isTrusted })) {
         e.preventDefault()
         e.stopPropagation()
-        return
       }
-      forwardKeyboard(e)
     }
     const onKeyUp = (e: KeyboardEvent) => {
-      if (e.code === 'Space') {
-        spaceHeld = false
-        setCanvasSpacePanActive(parentDocument, 'iframe', false)
-      }
+      if (e.code === 'Space') spaceHeld = false
+      relayFrameKeyUp(parentDocument, frameKeyInitFrom(e))
+    }
+    // ERR-11 — Alt-Tab with focus in this frame blurs THIS window, and the
+    // parent hears nothing (its own blur fired when the frame took focus).
+    const frameWindow = iframeDoc.defaultView
+    const onFrameBlur = () => {
+      spaceHeld = false
+      relayFrameBlur(parentDocument)
     }
     iframeDoc.addEventListener('keydown', onKeyDown)
     iframeDoc.addEventListener('keyup', onKeyUp)
+    frameWindow?.addEventListener('blur', onFrameBlur)
 
     const forwardPointer = (e: PointerEvent, overridePointerId?: number) => {
       const rect = iframe.getBoundingClientRect()
@@ -361,6 +363,7 @@ export function useIframeEventForwarding(
       setCanvasSpacePanActive(parentDocument, 'iframe', false)
       iframeDoc.removeEventListener('keydown', onKeyDown)
       iframeDoc.removeEventListener('keyup', onKeyUp)
+      frameWindow?.removeEventListener('blur', onFrameBlur)
       iframeDoc.removeEventListener('pointerdown', maybeForward)
       iframeDoc.removeEventListener('pointermove', maybeForward)
       iframeDoc.removeEventListener('pointerup', maybeForward)

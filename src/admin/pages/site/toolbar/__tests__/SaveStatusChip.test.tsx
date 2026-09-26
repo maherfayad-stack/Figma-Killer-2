@@ -12,7 +12,7 @@
  */
 import { afterEach, describe, expect, it } from 'bun:test'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import type { PersistenceSaveStatus } from '@site/hooks/usePersistence'
+import type { PersistenceSaveStatus } from '@site/hooks/persistenceStatus'
 import { SaveStatusChip } from '../SaveStatusChip'
 
 afterEach(() => {

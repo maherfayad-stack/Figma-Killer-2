@@ -1,4 +1,5 @@
 # Studio git integration
+> **Purpose:** version control against the project's own repository, GitHub sign-in, the agent commit tool · **Read when:** touching the Git panel or git routes · **Trust:** current · **Owner:** server-engineer · **Verified:** not yet
 
 **Status:** v1 (W4-3). **Dogfooded against a real private github.com repository**
 by `tests/e2e/github-sync.e2e.ts` (the G8 script from `git-22`), which creates a
@@ -287,6 +288,16 @@ one.
   it sits behind the same danger-styled confirmation `restore` uses. It is
   narrower than it looks: the pull refused to start over a dirty tree, so there
   is no uncommitted work for an abort to discard.
+- **No git verb raises a grant.** A pull, a branch switch or a conflict
+  resolved to "theirs" can bring any file the repository tracks, including
+  `.studio/meta.json` and `.studio/shares.json`. `withGitWriteLock` runs every
+  verb with the grants pinned (`studioGrants.ts`): afterwards the trust tier,
+  MCP approvals and registered MCP servers are each the LESSER of what they
+  were before and what the verb left (a deleted `meta.json` does not fall back
+  to the default tier), share state the verb touched is dropped with every
+  link in it, and `.studio/` is made link-free. A lowering shows in `git status`
+  as a local change to `.studio/meta.json`; Studio will not pull again until it
+  is committed or discarded, which is the honest place for the user to see it.
 - **One writer at a time, per project.** See below.
 
 ### The project write lock
@@ -603,8 +614,9 @@ a commit attaches their git identity to a change in a repository they may push
 to a team. Those are different consents.
 
 Like `studio.run.project`, it is **not** granted to the built-in Admin role: it
-must be granted deliberately, per MCP connector or on a custom role. `mutates:
-true` additionally requires `ai.tools.write`, so both axes must be held.
+must be granted deliberately, per MCP connector or on a custom role.
+`requiresWrite: true` additionally requires `ai.tools.write`, so both axes must
+be held.
 
 The human panel is unaffected — that surface is gated by `site.structure.edit`
 like every other editing panel.

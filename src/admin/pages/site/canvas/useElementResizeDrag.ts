@@ -22,33 +22,103 @@
  * (`BreakpointSelectionOverlay`'s docblock); dividing by zoom here would
  * double-correct and make the element run away from the cursor at any zoom
  * other than 1. `setPointerCapture` on the handle keeps the whole gesture in
- * that one document even when the cursor leaves the frame.
+ * that one document even when the cursor leaves the frame. The ONE zoom-aware
+ * number is the snap threshold, which is screen px by design (IX-5a).
+ *
+ * ## Snapping (P2-E / IX-6e)
+ *
+ * The edge under the cursor snaps to its siblings' and its parent's edges and
+ * centres — `elementResizeSnapRules.ts` says which edge that is (only one the drag
+ * really moves), reads the peers once at pointerdown, and snaps the POINTER
+ * delta before `resizeElementBox` sees it. The guides are painted in the
+ * frame's parent-document drag layer in the same rAF as the preview.
+ *
+ * ## What a drag writes
+ *
+ * The geometry is `elementResizeRules.ts` (shared with the live runtime's
+ * handles): the dragged border box is converted to the CSS `width`/`height`
+ * the element's `box-sizing` means (IX-6a), ⇧ / ⌥ are read from every move
+ * and every modifier key change (IX-6c), and a `position: absolute | fixed`
+ * element's W/N handles also move its offset so the opposite edge stays put
+ * (IX-6d) — the offsets the source ANCHORS it by, so a `right`-anchored layer
+ * keeps `right` and never gains a `left` (IX-21, `elementResizeAnchoring.ts`).
+ * Every axis the drag writes also carries the inspector's Fixed
+ * switch (`elementResizeSizing.ts`), so a flex item's `flex: 1` cannot swallow
+ * the width (IX-6b).
  *
  * ## Preview, then commit
  *
- * During the drag the size is written straight onto the element's own
+ * During the drag that whole patch is written straight onto the element's own
  * `style` — no store round trip, so it tracks the pointer at frame rate and
  * the selection ring (which re-measures every tick) follows for free. On drop
- * the real edit goes through `setNodeInlineStyles`, which is what reaches the
- * user's source as `style={{ width: '240px' }}` on that one JSX element.
+ * the real edit goes through ONE `setNodeInlineStyles` call: one undo entry,
+ * one source write, `style={{ width: '240px' }}` on that one JSX element.
  *
- * The override is dropped BEFORE the store commit, so React's re-render is
- * what finally sets the size and the DOM never disagrees with what React
+ * The preview is RESTORED BEFORE the store commit, so React's re-render is
+ * what finally sets the styles and the DOM never disagrees with what React
  * thinks it wrote. When the commit is refused (a locked node, a write the
  * codemod will not make) nothing re-renders and the element is left at what
  * the document actually says — the honest outcome, and better than a canvas
  * showing a size that was never written.
  *
- * Escape cancels: the override is dropped and nothing is committed.
+ * ## Double-click: Hug (P5-F, IX-6f)
+ *
+ * A double-click on a handle sets Hug contents on the axes it owns
+ * (`hugPatchForHandle`) — one `setNodeInlineStyles`, one undo entry. It is
+ * detected here, as a SECOND PRESS on the same handle within
+ * {@link DOUBLE_PRESS_MS} of a first press that moved nothing, never from the
+ * native `dblclick`: every handle press cancels its `pointerdown` (so the page
+ * never sees it), and a real browser then does not reliably deliver the
+ * `dblclick` (measured in `canvas-snapping-and-backlog.e2e.ts`). The first
+ * press is a zero-distance drag that commits nothing (`resizeInlinePatch` is
+ * `null` for a step that moved nothing); the second one hugs instead of
+ * starting a drag.
+ *
+ * Escape and a window blur cancel: the preview is restored and nothing is
+ * committed. A move that arrives with the button already up (the release
+ * happened somewhere this document never heard) finishes the drag at the last
+ * point it showed — `guardDragSession`, ERR-12.
  */
 import { useEffect } from 'react'
 import { useEditorStore } from '@site/store/store'
-import { beginCanvasGesture, endCanvasGesture } from './canvasGesture'
+import { selectActiveBoardGuides } from '@site/store/slices/boardSelectors'
+import { startHandleDrag } from './handleDragSession'
 import { presentedElementForNode } from './canvasNodeLookup'
-import { MIN_ELEMENT_SIZE, resizeElementSize, resizeStylePatch, type ResizeHandle } from '@core/studio-runtime'
+import { findNodeById } from './InPlaceInspector/findNodeById'
+import {
+  MIN_ELEMENT_SIZE,
+  planResizeSizing,
+  readResizeBoxStart,
+  readResizeSnapInput,
+  RESIZE_ACTIVE_ATTR,
+  RESIZE_HANDLE_ATTR,
+  RESIZE_SIZE_BADGE_ATTR,
+  resizeElementBox,
+  hugPatchForHandle,
+  readSizingParentLayout,
+  resizeInlinePatch,
+  resizeSnapEdges,
+  sizingUnavailableReason,
+  resizeStartStep,
+  snapResizeDelta,
+  writeSizeBadge,
+  type ResizeHandle,
+  type SnapGuide,
+} from '@core/studio-runtime'
+import { createInlineStylePreview } from './elementResizeInlinePreview'
+import { pushToast } from '@ui/components/Toast'
+import { anchorResizePatch } from './elementResizeAnchoring'
+import { authoredOffsets, planNudge, type NudgePlan } from './canvasNodeArrowMove'
+import { nodeVisualRect } from './canvasDomGeometry'
+import { iframeZoom, paintResizeGuides, resizeGuideLines, resolveResizeGuideSurface } from './elementResizeGuides'
 
-/** The attribute each handle carries, naming the direction it drags. */
-export const RESIZE_HANDLE_ATTR = 'data-canvas-resize-handle'
+/** A node with no `style={{…}}` of its own — stable, so no fallback object is built per press. */
+const NO_INLINE_STYLES: Readonly<Record<string, unknown>> = {}
+
+/** Two presses on one handle this close together are a double-click (the OS default is ~500 ms). */
+export const DOUBLE_PRESS_MS = 400
+/** …and this close in place, frame px. */
+const DOUBLE_PRESS_SLOP_PX = 4
 
 interface ElementResizeDragOptions {
   /** The handle container portalled into the iframe overlay root, or `null`. */
@@ -57,33 +127,69 @@ interface ElementResizeDragOptions {
   iframeDoc: Document | null
   /** The single selected node, or `null` when resize is not offered. */
   nodeId: string | null
-  /**
-   * `K4` — the scale tool (`K`) is armed: keep the element's aspect ratio and
-   * commit BOTH dimensions. Captured in the closure at `pointerdown`, so
-   * pressing `K` mid-drag cannot change the gesture already under the cursor.
-   */
-  proportional: boolean
 }
 
-export function useElementResizeDrag({
-  frame,
-  iframeDoc,
-  nodeId,
-  proportional,
-}: ElementResizeDragOptions): void {
+export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResizeDragOptions): void {
   useEffect(() => {
-    if (!frame || !iframeDoc || !nodeId) return
-
-    // The same resolver `CanvasResizeHandles` gates on, so the thing being
-    // dragged and the thing the handles were drawn for cannot disagree — which
-    // matters most for an `alm.*` node, where the node id sits on a
-    // `display: contents` host and the box is one level down. Its own
-    // escaping, deliberately, rather than `CSS.escape` — which is not defined
-    // in the test environment's DOM.
-    const target = presentedElementForNode(iframeDoc, nodeId)
-    if (!target) return
+    const view = iframeDoc?.defaultView
+    if (!frame || !iframeDoc || !view || !nodeId) return
 
     const cleanups: Array<() => void> = []
+    // The drag in flight, if any — cancelled when the handles are torn down
+    // under it, so a gesture can never outlive its element and leave
+    // `canvasGesture` frozen.
+    let cancelActive: (() => void) | null = null
+
+    // A press on a handle ends in a `click` (and two in a `dblclick`) ON the
+    // handle — and the overlay root sits inside the page's body, so that click
+    // bubbled into the body node's click-to-select: every resize ended with
+    // the PAGE selected instead of the element just sized (measured in
+    // `element-resize.e2e.ts`). Captured at the document, which runs before
+    // any node's own capture handler, and only for targets inside the handle
+    // frame — a click anywhere else is untouched.
+    const swallowHandleClick = (event: MouseEvent) => {
+      if (!frame.contains(event.target as Node | null)) return
+      event.preventDefault()
+      event.stopPropagation()
+    }
+
+    // IX-6f — the last press that ended without moving anything: a second
+    // one on the same handle, soon and close, is the double-click.
+    let lastStillPress: { handle: ResizeHandle; at: number; x: number; y: number } | null = null
+    const isSecondPress = (handle: ResizeHandle, event: PointerEvent): boolean =>
+      lastStillPress !== null &&
+      lastStillPress.handle === handle &&
+      performance.now() - lastStillPress.at <= DOUBLE_PRESS_MS &&
+      Math.abs(event.clientX - lastStillPress.x) <= DOUBLE_PRESS_SLOP_PX &&
+      Math.abs(event.clientY - lastStillPress.y) <= DOUBLE_PRESS_SLOP_PX
+
+    // IX-6f — Hug on the double-clicked handle's axes. Resolved per gesture
+    // like a drag: the element on screen now, its parent's layout now.
+    const hugFromHandle = (handle: ResizeHandle) => {
+      const element = presentedElementForNode(iframeDoc, nodeId)
+      if (!element) return
+      const state = useEditorStore.getState()
+      const stored = findNodeById(state, nodeId)?.inlineStyles ?? NO_INLINE_STYLES
+      const patch = hugPatchForHandle(handle, readSizingParentLayout(view, element), stored)
+      if (!patch) {
+        pushToast({
+          kind: 'info',
+          title: 'Hug is not available here',
+          body: sizingUnavailableReason(null),
+        })
+        return
+      }
+      state.setNodeInlineStyles(
+        nodeId,
+        Object.fromEntries(Object.entries(patch).map(([key, value]) => [key, value ?? null])),
+      )
+    }
+    iframeDoc.addEventListener('click', swallowHandleClick, true)
+    iframeDoc.addEventListener('dblclick', swallowHandleClick, true)
+    cleanups.push(() => {
+      iframeDoc.removeEventListener('click', swallowHandleClick, true)
+      iframeDoc.removeEventListener('dblclick', swallowHandleClick, true)
+    })
 
     for (const handleEl of frame.querySelectorAll<HTMLElement>(`[${RESIZE_HANDLE_ATTR}]`)) {
       const handle = handleEl.getAttribute(RESIZE_HANDLE_ATTR) as ResizeHandle | null
@@ -97,96 +203,116 @@ export function useElementResizeDrag({
         event.preventDefault()
         event.stopPropagation()
 
-        const rect = target.getBoundingClientRect()
-        const start = { width: rect.width, height: rect.height }
-        const startX = event.clientX
-        const startY = event.clientY
-        let last = start
-
-        // Freeze the expensive derived geometry (the parent-doc anchor session,
-        // the frame's auto-height refit) for the length of the drag — this
-        // gesture changes layout on every frame, which is exactly what those
-        // two are built to assume does not happen. See `canvasGesture.ts`.
-        const gesture = beginCanvasGesture()
-
-        try {
-          handleEl.setPointerCapture(event.pointerId)
-        } catch (_err) {
-          // A capture the browser refuses (a pointer already released) is not
-          // fatal — the document-level listeners below still drive the drag.
+        if (isSecondPress(handle, event)) {
+          lastStillPress = null
+          hugFromHandle(handle)
+          return
         }
+        lastStillPress = null
 
-        const clearPreview = () => {
-          target.style.removeProperty('width')
-          target.style.removeProperty('height')
-        }
+        // The same resolver `CanvasResizeHandles` gates on, so the thing being
+        // dragged and the thing the handles were drawn for cannot disagree —
+        // which matters most for an `alm.*` node, where the node id sits on a
+        // `display: contents` host and the box is one level down. Resolved per
+        // press, not per effect: a write re-renders the page, and an element
+        // captured before it may no longer be the one on screen.
+        const target = presentedElementForNode(iframeDoc, nodeId)
+        if (!target) return
+        const start = readResizeBoxStart(view, target)
+        const state = useEditorStore.getState()
+        // `K4` — the scale tool (`K`) locks the ratio as if ⇧ were held. Read
+        // once, here: the tool is latched for the gesture, ⇧ and ⌥ are live.
+        const scaleTool = state.canvasTool === 'scale'
+        const node = findNodeById(state, nodeId)
+        const stored = node?.inlineStyles ?? NO_INLINE_STYLES
+        const plan = planResizeSizing(view, target, start, stored)
+        // IX-21 — which offsets a positioned layer is anchored by, read once.
+        const anchors: NudgePlan | null = start.offsets && node
+          ? planNudge(view.getComputedStyle(target), authoredOffsets(node, state.site?.styleRules))
+          : null
+        const patchAt = (step: typeof last) => anchorResizePatch(resizeInlinePatch(start, step, plan), start, step, anchors)
+        const preview = createInlineStylePreview(target)
+        let last = resizeStartStep(start)
 
-        // Coalesced to ONE write per animation frame. A pointermove stream runs
-        // well past 60Hz on a trackpad or a high-rate mouse, and every write to
-        // `style.width` invalidates layout for the whole page inside the frame
-        // — which the overlay's own RAF tick then measures. Writing on each
-        // event makes the browser lay out several times per painted frame and
-        // the drag visibly falls behind the cursor; writing once per frame
-        // cannot, and loses nothing, because only the last position of a frame
-        // was ever going to be seen.
-        let pendingFrame: number | null = null
-        const applyPending = () => {
-          pendingFrame = null
-          if (last.width !== start.width) target.style.width = `${last.width}px`
-          if (last.height !== start.height) target.style.height = `${last.height}px`
-        }
+        // IX-6e — what the moving edge snaps to, and where its guides paint.
+        // Both read once, here, before the first write of the drag.
+        const iframe = view.frameElement
+        const guideSurface = resolveResizeGuideSurface(iframe)
+        const parentNode = node?.parentId ? findNodeById(state, node.parentId) : null
+        const snapInput = readResizeSnapInput({
+          view,
+          element: target,
+          siblings: (parentNode?.children ?? []).filter((id) => id !== nodeId),
+          parent: parentNode?.id ?? null,
+          resolveElement: (id) => presentedElementForNode(iframeDoc, id),
+          resolveRect: (element) => {
+            const rect = nodeVisualRect(element)
+            return rect ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : null
+          },
+          zoom: guideSurface?.zoom ?? iframeZoom(iframe),
+          // P5-F - the ruler guides (IX-5c) and the snap toggles (IX-5e).
+          guideLines: resizeGuideLines(iframe, selectActiveBoardGuides(state)),
+          preferences: state.snapPreferences,
+        })
+        let guides: SnapGuide[] = []
 
-        const onMove = (moveEvent: PointerEvent) => {
-          last = resizeElementSize(
-            handle,
-            start,
-            moveEvent.clientX - startX,
-            moveEvent.clientY - startY,
-            MIN_ELEMENT_SIZE,
-            proportional,
-          )
-          pendingFrame ??= requestAnimationFrame(applyPending)
-        }
+        // IX-18 — the W×H badge under the element. The overlay's measure pass
+        // keeps its text current from the ring's own rect while the frame
+        // carries the resize-active attribute; seed it here so the first
+        // painted frame of the drag already reads right.
+        const badge = frame.querySelector<HTMLElement>(`[${RESIZE_SIZE_BADGE_ATTR}]`)
+        if (badge) writeSizeBadge(badge, start.width + start.insetWidth, start.height + start.insetHeight)
 
-        const finish = (commit: boolean) => {
-          if (pendingFrame !== null) cancelAnimationFrame(pendingFrame)
-          iframeDoc.removeEventListener('pointermove', onMove)
-          iframeDoc.removeEventListener('pointerup', onUp)
-          iframeDoc.removeEventListener('pointercancel', onCancel)
-          iframeDoc.removeEventListener('keydown', onKeyDown)
-          try {
-            handleEl.releasePointerCapture(event.pointerId)
-          } catch (_err) {
-            // Already released with the pointer — nothing to undo.
-          }
-          // Drop the preview BEFORE the commit, never after. The preview and
-          // the committed value are the SAME DOM property, so clearing it
-          // afterwards deletes exactly what React just wrote — and React will
-          // not write it again, because from its point of view the style prop
-          // did not change. The element then sits at its DOCUMENT size (full
-          // width, for an ordinary block child) until a reload rebuilds the
-          // tree, while the user's file says otherwise. Clearing first makes
-          // the store update's re-render the last thing to touch
-          // `style.width`; both happen inside this one event handler, so the
-          // browser paints once and the intermediate state is never seen.
-          clearPreview()
-          const patch = commit ? resizeStylePatch(handle, start, last, proportional) : null
-          if (patch) useEditorStore.getState().setNodeInlineStyles(nodeId, patch)
-          // Unfreeze AFTER the commit, so the single settle pass measures the
-          // final size rather than the last previewed one.
-          endCanvasGesture(gesture)
-        }
-
-        const onUp = () => finish(true)
-        const onCancel = () => finish(false)
-        const onKeyDown = (keyEvent: KeyboardEvent) => {
-          if (keyEvent.key === 'Escape') finish(false)
-        }
-
-        iframeDoc.addEventListener('pointermove', onMove)
-        iframeDoc.addEventListener('pointerup', onUp)
-        iframeDoc.addEventListener('pointercancel', onCancel)
-        iframeDoc.addEventListener('keydown', onKeyDown)
+        cancelActive = startHandleDrag({
+          event,
+          handleEl,
+          frame,
+          activeAttr: RESIZE_ACTIVE_ATTR,
+          iframeDoc,
+          scaleTool,
+          callbacks: {
+            step: (dx, dy, modifiers) => {
+              const snapped = snapInput
+                ? snapResizeDelta(
+                    resizeSnapEdges(handle, modifiers, start.offsets !== null, snapInput.anchored),
+                    snapInput.rect,
+                    dx,
+                    dy,
+                    snapInput.peers,
+                    snapInput.threshold,
+                    snapInput.lines,
+                  )
+                : { dx, dy, guides: [] }
+              guides = snapped.guides
+              last = resizeElementBox(handle, start, snapped.dx, snapped.dy, modifiers, MIN_ELEMENT_SIZE)
+            },
+            paint: () => {
+              preview.apply(patchAt(last) ?? {})
+              paintResizeGuides(guideSurface, guides)
+            },
+            end: (commit) => {
+              cancelActive = null
+              paintResizeGuides(guideSurface, [])
+              // Restore the preview BEFORE the commit, never after. The
+              // preview and the committed value are the SAME DOM properties,
+              // so restoring afterwards deletes exactly what React just wrote
+              // — and React will not write it again, because from its point
+              // of view the style prop did not change.
+              preview.clear()
+              const patch = commit ? patchAt(last) : null
+              // A press that moved nothing may be the first half of a double-click.
+              lastStillPress = commit && patchAt(last) === null
+                ? { handle, at: performance.now(), x: event.clientX, y: event.clientY }
+                : null
+              if (patch) {
+                useEditorStore.getState().setNodeInlineStyles(
+                  nodeId,
+                  Object.fromEntries(Object.entries(patch).map(([key, value]) => [key, value ?? null])),
+                )
+              }
+            },
+          },
+        })
       }
 
       handleEl.addEventListener('pointerdown', onPointerDown)
@@ -194,7 +320,8 @@ export function useElementResizeDrag({
     }
 
     return () => {
+      cancelActive?.()
       for (const cleanup of cleanups) cleanup()
     }
-  }, [frame, iframeDoc, nodeId, proportional])
+  }, [frame, iframeDoc, nodeId])
 }

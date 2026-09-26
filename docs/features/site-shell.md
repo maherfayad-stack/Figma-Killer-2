@@ -1,4 +1,5 @@
 # Site Shell
+> **Purpose:** the persisted CMS site config: breakpoints, classes, files, dependencies · **Read when:** touching the DB site row · **Trust:** current-cms · **Owner:** store-engineer · **Verified:** not yet
 
 The site shell — the top-level persisted site config. Everything that's "the site" but **not** a page or a Visual Component lives here: name, viewport contexts (`breakpoints` in the persisted schema), settings (colors, typography, spacing), class registry, files, Site Explorer organization, dependencies, and runtime config.
 

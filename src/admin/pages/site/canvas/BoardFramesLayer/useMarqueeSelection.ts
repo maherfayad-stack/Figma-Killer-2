@@ -52,6 +52,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { isCanvasSpacePanActive } from '../canvasPanInput'
+import { guardDragSession } from '@core/studio-runtime'
 import type { AnnotationRef } from '@core/studio-board'
 import { annotationRefKey } from '@site/store/slices/boardAnnotationSliceActions'
 import {
@@ -182,6 +183,7 @@ export function useMarqueeSelection(
     // `CanvasRoot`'s background-click-to-deselect handler and immediately
     // wipe the selection the drag just made.
     let suppressNextClick = false
+    let disposeGuard: (() => void) | null = null
 
     const handlePointerDown = (e: PointerEvent) => {
       if (e.button !== 0) return
@@ -201,6 +203,15 @@ export function useMarqueeSelection(
         annotations: measureAnnotationRects(canvasRootEl),
       }
       canvasRootEl.setPointerCapture(e.pointerId)
+      // ERR-12 — capture can still lose the release (outside the window, an
+      // OS dialog): a move with the button up, or a blur, ends the marquee.
+      disposeGuard?.()
+      disposeGuard = guardDragSession({
+        documents: [document],
+        focusWindow: window,
+        onReleaseLost: endMarquee,
+        onAbandon: endMarquee,
+      })
       // Claim the whole gesture — see the module doc for why this
       // deterministically means the pan gesture's pointerdown never runs
       // for this event.
@@ -248,12 +259,21 @@ export function useMarqueeSelection(
       )
     }
 
-    const handlePointerEnd = (e: PointerEvent) => {
-      if (marqueeDragRef.current?.pointerId !== e.pointerId) return
-      e.stopPropagation()
+    // The selection IS the marquee's preview (it updates on every move), so a
+    // release, a release nobody heard and a window blur all end the same way:
+    // the marquee goes, what it selected stays.
+    const endMarquee = () => {
+      disposeGuard?.()
+      disposeGuard = null
       if (marqueeRectRef.current) suppressNextClick = true
       marqueeDragRef.current = null
       setMarqueeRectBoth(null)
+    }
+
+    const handlePointerEnd = (e: PointerEvent) => {
+      if (marqueeDragRef.current?.pointerId !== e.pointerId) return
+      e.stopPropagation()
+      endMarquee()
     }
 
     // The single native 'click' event generated after a completed
@@ -271,6 +291,7 @@ export function useMarqueeSelection(
     canvasRootEl.addEventListener('pointercancel', handlePointerEnd)
     canvasRootEl.addEventListener('click', handleClick)
     return () => {
+      disposeGuard?.()
       canvasRootEl.removeEventListener('pointerdown', handlePointerDown)
       canvasRootEl.removeEventListener('pointermove', handlePointerMove)
       canvasRootEl.removeEventListener('pointerup', handlePointerEnd)

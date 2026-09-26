@@ -1,7 +1,8 @@
 /**
  * The structural gestures that, on a studio-imported tree, are a SOURCE WRITE
  * rather than a tree mutation: insert, duplicate, wrap, (K3) group and
- * ungroup, and (`store-13`) paste.
+ * ungroup. Paste (`store-13`) is the same shape and lives next door, in
+ * `studioPasteWrites.ts`.
  *
  * `struct-02` shipped the first one and W4-1 added the other two, at which
  * point they stopped being a detail of `nodeActions.ts` and became a thing of
@@ -23,8 +24,8 @@
  * Either way the caller must not mint anything.
  *
  * `store-13` — the new element is nonetheless SELECTED once it arrives. The
- * save route reports the ids it created and `commitStructural` leaves them in
- * `pendingStructuralOutcome.ts` for the resync to claim, so "no id to return
+ * save route reports the ids it created and `commitStructural` hands them to
+ * the resync that reads the write back (`pendingStructuralOutcome.ts`), so "no id to return
  * here" no longer means "the gesture's result is never pointed at".
  *
  * The wrapper/element spelling comes from the MODULE REGISTRY
@@ -32,16 +33,17 @@
  * so a project with its own component library writes its own components.
  */
 import { registry } from '@core/module-engine'
-import { describeStructuralRefusal, isSourceDerivedNodeId, type NodeTree, type PageNode } from '@core/page-tree'
+import { describeStructuralRefusal, planListRowCopy, planListRowCopyTo, type NodeTree, type PageNode } from '@core/page-tree'
 import { broadcastOptimisticInsert } from '@site/canvas/frameAdapter/optimisticStructuralBroadcast'
 import {
   commitStudioDuplicate,
+  commitStudioDuplicateTo,
   commitStudioGroup,
   commitStudioInsert,
   commitStudioUngroup,
   commitStudioWrap,
 } from '@site/studio/studioStructuralCommits'
-import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
+import { deferWhileStructuralCommitInFlight, type RelocateNodeId } from '@site/studio/structuralCommitQueue'
 import {
   STRUCTURAL_REFUSAL_TITLE,
   planSourceDuplicate,
@@ -60,6 +62,7 @@ import {
   previewOptimisticInsert,
   previewOptimisticWrap,
 } from './structuralOptimism'
+import { writeListRowPlan } from './listRowSourceWrites'
 import type { SiteSliceHelpers } from './types'
 
 /**
@@ -97,13 +100,8 @@ export interface StudioSourceWrites extends StudioSourceRefusals {
   ) => boolean
   /** K3 - Cmd+Shift+G: a container dissolved, its children taking its place. */
   writeUngroupToSource: (nodeId: string) => boolean
-  /**
-   * `store-13` — ⌘V. True when the caller must stop: the paste was written to
-   * source, or refused out loud. `false` only for an ordinary CMS tree, which
-   * takes the clipboard-snapshot path unchanged.
-   */
-  writePasteToSource: (clipboardRootIds: readonly string[], parentId: string, index?: number) => boolean
 }
+
 
 /**
  * `readTree` is passed in rather than re-derived: `nodeActions.ts` already has
@@ -143,9 +141,9 @@ export function createStudioSourceWrites(
     // parked as a thunk and re-planned against the tree that commit's resync
     // leaves behind; see `structuralCommitQueue.ts`.
     if (
-      deferWhileStructuralCommitInFlight(() => {
-        writeInsertToSource(moduleId, defaults, parentId, index, inlineStyles)
-      })
+      deferWhileStructuralCommitInFlight((relocate) => {
+        writeInsertToSource(moduleId, defaults, relocate(parentId), index, inlineStyles)
+      }, [parentId])
     ) {
       return true
     }
@@ -157,7 +155,7 @@ export function createStudioSourceWrites(
         nodeId: plan.nodeId,
         // The refused node here is the CONTAINER (`parentId`) — re-issue the
         // same insert against whatever replaces it once detach/extract lands.
-        retry: (newParentId) => writeInsertToSource(moduleId, defaults, newParentId, index, inlineStyles),
+        retry: (mapId) => writeInsertToSource(moduleId, defaults, mapId(parentId), index, inlineStyles),
         getState: get,
         set,
       })
@@ -268,19 +266,33 @@ export function createStudioSourceWrites(
     // than refused, and re-plans against the resynced tree when it runs — five
     // ⌘D presses are five copies, not one. K2's Alt+drag rides the identical
     // queue, for the identical reason.
-    if (deferWhileStructuralCommitInFlight(() => { writeDuplicateToSource(nodeIds, destination) })) return true
+    const relocateDestination = (relocate: RelocateNodeId) =>
+      destination ? { ...destination, parentId: relocate(destination.parentId) } : undefined
+    if (
+      deferWhileStructuralCommitInFlight(
+        (relocate) => { writeDuplicateToSource(nodeIds.map(relocate), relocateDestination(relocate)) },
+        destination ? [...nodeIds, destination.parentId] : nodeIds,
+      )
+    ) {
+      return true
+    }
     const tree = readTree()
     if (!tree) return false
 
-    const retryOn = (refusedNodeId: string | undefined) =>
-      refusedNodeId
-        ? (newNodeId: string) => {
-            void writeDuplicateToSource(
-              nodeIds.map((id) => (id === refusedNodeId ? newNodeId : id)),
-              destination,
-            )
-          }
-        : undefined
+    const retryWithMap = (mapId: (nodeId: string) => string): void => {
+      void writeDuplicateToSource(nodeIds.map(mapId), destination ? { ...destination, parentId: mapId(destination.parentId) } : undefined)
+    }
+
+    // OD-8 — `.map` rows are copied in their array: after themselves (⌘D),
+    // or where an Alt-drag drops them inside their own list.
+    const rowNodes = nodeIds.map((id) => tree.nodes[id]).filter((node): node is PageNode => node !== undefined)
+    const rows = destination
+      ? planListRowCopyTo(tree, rowNodes, destination.parentId, destination.index)
+      : planListRowCopy(rowNodes)
+    if (rows) {
+      writeListRowPlan(rows, STRUCTURAL_REFUSAL_TITLE.duplicate, { get, set })
+      return true
+    }
 
     // K2 — Alt+drag: the copy lands INSIDE a container the user pointed at,
     // which is a second question (`planSourceDuplicateTo`) rather than a flag
@@ -291,15 +303,14 @@ export function createStudioSourceWrites(
       if (!plan.ok) {
         presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.duplicate, plan.constraint, {
           nodeId: plan.nodeId,
-          retry: retryOn(plan.nodeId),
+          retry: retryWithMap,
           getState: get,
           set,
         })
         return true
       }
       if (!plan.commit) return false // an ordinary CMS tree — nothing to write
-      const { nodeId, ...where } = plan.commit
-      void commitStudioDuplicate([nodeId], where)
+      void commitStudioDuplicateTo(plan.commit)
       return true
     }
 
@@ -307,7 +318,7 @@ export function createStudioSourceWrites(
     if (!plan.ok) {
       presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.duplicate, plan.constraint, {
         nodeId: plan.nodeId,
-        retry: retryOn(plan.nodeId),
+        retry: retryWithMap,
         getState: get,
         set,
       })
@@ -319,7 +330,7 @@ export function createStudioSourceWrites(
     // so the canvas shows the duplicate the instant ⌘D fires rather than
     // after the write's own resync.
     const optimistic = previewOptimisticDuplicate(helpers, plan.commit) ?? undefined
-    void commitStudioDuplicate(plan.commit, undefined, optimistic)
+    void commitStudioDuplicate(plan.commit, optimistic)
     return true
   }
 
@@ -331,11 +342,14 @@ export function createStudioSourceWrites(
    * block with no form in a user's repo, which refuses by saying exactly that.
    */
   const writeWrapToSource = (nodeIds: readonly string[], containerModuleId: string, defaults: Record<string, unknown>): boolean => {
+    // ERR-7 — one container around SEVERAL elements is a group: one wrapper
+    // around their run, one write, one undo. It used to refuse `multi-select`.
+    if (nodeIds.length > 1) return writeGroupToSource(nodeIds, containerModuleId, defaults)
     // `store-14` — same queue as `writeDuplicateToSource`.
     if (
-      deferWhileStructuralCommitInFlight(() => {
-        writeWrapToSource(nodeIds, containerModuleId, defaults)
-      })
+      deferWhileStructuralCommitInFlight((relocate) => {
+        writeWrapToSource(nodeIds.map(relocate), containerModuleId, defaults)
+      }, nodeIds)
     ) {
       return true
     }
@@ -346,15 +360,7 @@ export function createStudioSourceWrites(
       const refusedNodeId = plan.nodeId
       presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.wrap, plan.constraint, {
         nodeId: refusedNodeId,
-        retry: refusedNodeId
-          ? (newNodeId) => {
-              void writeWrapToSource(
-                nodeIds.map((id) => (id === refusedNodeId ? newNodeId : id)),
-                containerModuleId,
-                defaults,
-              )
-            }
-          : undefined,
+        retry: (mapId) => { void writeWrapToSource(nodeIds.map(mapId), containerModuleId, defaults) },
         getState: get,
         set,
       })
@@ -408,9 +414,9 @@ export function createStudioSourceWrites(
     // not plan a second group against the still-unshifted original, but it
     // must not be thrown away either.
     if (
-      deferWhileStructuralCommitInFlight(() => {
-        writeGroupToSource(nodeIds, containerModuleId, defaults)
-      })
+      deferWhileStructuralCommitInFlight((relocate) => {
+        writeGroupToSource(nodeIds.map(relocate), containerModuleId, defaults)
+      }, nodeIds)
     ) {
       return true
     }
@@ -421,15 +427,7 @@ export function createStudioSourceWrites(
       const refusedNodeId = plan.nodeId
       presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.group, plan.constraint, {
         nodeId: refusedNodeId,
-        retry: refusedNodeId
-          ? (newNodeId) => {
-              void writeGroupToSource(
-                nodeIds.map((id) => (id === refusedNodeId ? newNodeId : id)),
-                containerModuleId,
-                defaults,
-              )
-            }
-          : undefined,
+        retry: (mapId) => { void writeGroupToSource(nodeIds.map(mapId), containerModuleId, defaults) },
         getState: get,
         set,
       })
@@ -475,14 +473,14 @@ export function createStudioSourceWrites(
    */
   const writeUngroupToSource = (nodeId: string): boolean => {
     // `store-14` — same queue as the other source writers.
-    if (deferWhileStructuralCommitInFlight(() => { writeUngroupToSource(nodeId) })) return true
+    if (deferWhileStructuralCommitInFlight((relocate) => { writeUngroupToSource(relocate(nodeId)) }, [nodeId])) return true
     const tree = readTree()
     if (!tree) return false
     const plan = planSourceUngroup(tree, nodeId)
     if (!plan.ok) {
       presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.ungroup, plan.constraint, {
         nodeId: plan.nodeId,
-        retry: plan.nodeId ? (newNodeId) => { void writeUngroupToSource(newNodeId) } : undefined,
+        retry: (mapId) => { void writeUngroupToSource(mapId(nodeId)) },
         getState: get,
         set,
       })
@@ -493,103 +491,6 @@ export function createStudioSourceWrites(
     return true
   }
 
-  /**
-   * `store-13` — ⌘V on a studio-imported tree is a SOURCE write, for the same
-   * reason every other gesture in this module is.
-   *
-   * Paste was the one structural gesture that never asked. It restored the
-   * clipboard SNAPSHOT — a set of nodes carrying nanoid ids — straight into
-   * the tree, and `saveSite` diffs values only, so nothing about the new
-   * elements ever reached the `.tsx`. The board showed them until the next
-   * parse and then silently did not, which is precisely the failure
-   * `struct-01` removed for move and delete and `struct-02` for insert.
-   *
-   * The honest write is a DUPLICATE-TO: the clipboard's roots are elements
-   * that exist (or existed) in this project's code, and `duplicateJsxElement`
-   * can copy their own source text into the destination container. So this
-   * asks the same two questions in the same order every other writer here
-   * asks, then commits through the identical path — which is also how a
-   * pasted element ends up selected after the resync
-   * (`pendingCreatedSelection.ts`).
-   *
-   * What it will NOT do is fall back to the snapshot path on a studio tree.
-   * A clipboard entry whose roots are no longer elements in this file — copied
-   * from another project, from another page, or from a session before the file
-   * changed — has no source text to copy, and restoring the snapshot anyway is
-   * the orphan this function exists to stop. That refuses, by name.
-   */
-  const writePasteToSource = (
-    clipboardRootIds: readonly string[],
-    parentId: string,
-    index?: number,
-  ): boolean => {
-    if (clipboardRootIds.length === 0) return false
-    const tree = readTree()
-    if (!tree) return false
-
-    // Is this a studio-imported tree at all? `planSourceInsert` answers with
-    // `commit: null` for an ordinary CMS container, and that is the ONLY
-    // outcome that may take the snapshot path.
-    const container = planSourceInsert(tree, parentId, index)
-    if (container.ok && !container.commit) return false
-
-    // `store-14` — a paste is as much a real write as a duplicate is, and two
-    // in flight would plan against the same unshifted source. Queued, not
-    // refused: ⌘V held down pastes N times.
-    if (
-      deferWhileStructuralCommitInFlight(() => {
-        writePasteToSource(clipboardRootIds, parentId, index)
-      })
-    ) {
-      return true
-    }
-
-    if (!container.ok) {
-      presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, container.constraint, {
-        nodeId: container.nodeId,
-        retry: (newParentId) => { writePasteToSource(clipboardRootIds, newParentId, index) },
-        getState: get,
-        set,
-      })
-      return true
-    }
-
-    const orphaned = clipboardRootIds.filter((id) => !isSourceDerivedNodeId(id) || !tree.nodes[id])
-    if (orphaned.length > 0) {
-      // Always `actions: []` — always the toast, never the dialog: there is no
-      // node left to offer a remedy against.
-      presentStructuralRefusal(
-        STRUCTURAL_REFUSAL_TITLE.insert,
-        describeStructuralRefusal({
-          refusal: {
-            reason: 'insert',
-            message:
-              'What you copied is not part of this page’s code any more, so Studio has no source to copy from — pasting it would put elements on the canvas that the files do not contain. Copy the element again from this page and paste it.',
-          },
-        }),
-        { getState: get, set },
-      )
-      return true
-    }
-
-    const plan = planSourceDuplicateTo(tree, clipboardRootIds, parentId, index ?? Number.MAX_SAFE_INTEGER)
-    if (!plan.ok) {
-      presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.constraint, {
-        nodeId: plan.nodeId,
-        getState: get,
-        set,
-      })
-      return true
-    }
-    // `commit: null` here would mean "not a source-derived tree", which the
-    // container check above already ruled out — but a stale root is also
-    // reported that way, and there is nothing to write either way.
-    if (!plan.commit) return true
-    const { nodeId, ...where } = plan.commit
-    void commitStudioDuplicate([nodeId], where)
-    return true
-  }
-
   return {
     ...refusals,
     writeInsertToSource,
@@ -597,7 +498,6 @@ export function createStudioSourceWrites(
     writeWrapToSource,
     writeGroupToSource,
     writeUngroupToSource,
-    writePasteToSource,
   }
 }
 

@@ -93,9 +93,8 @@ export function StyleCompileConsentBanner() {
         title: 'Could not run this project’s compiler',
         body: getErrorMessage(err, 'Unknown error promoting this project'),
       })
-    } finally {
-      setPromoting(false)
     }
+    setPromoting(false)
   }
 
   const handleDismiss = async () => {

@@ -1,0 +1,57 @@
+/*
+ * EffectsSection — the Effects `PropertyList` (one row per shadow layer, one
+ * per blur, plus the raw-text refusal rows) and `EffectEditorPopover`'s
+ * fields. The merge of the former `ShadowSection.module.css` and
+ * `BlurSection.module.css` (P2-F, OD-4); the rules themselves are unchanged.
+ */
+
+/* ── Leading swatch (shadow layers) ────────────────────────────────────── */
+
+.swatch {
+    width: var(--inspector-space-l);
+    height: var(--inspector-space-l);
+    border-radius: var(--radius-sm);
+    background: var(--effect-swatch-color);
+    flex-shrink: 0;
+}
+
+.swatchInset {
+    background: transparent;
+    border: var(--inspector-space-4xs) solid var(--effect-swatch-color);
+}
+
+/* ── Raw-text fallback (honest refusal, and Mixed) ────────────────────── */
+
+.rawEditor {
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-space-xs);
+}
+
+.rawEditorReason {
+    margin: 0;
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+}
+
+/* ── Shadow layer fields (F21) ────────────────────────────────────────── */
+
+.shadowFields {
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-space-m);
+}
+
+.insetRow {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-space-xs);
+    color: var(--text);
+    font-size: var(--text-xs);
+}
+
+.shadowGrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--inspector-space-s);
+}

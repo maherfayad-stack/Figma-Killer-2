@@ -12,8 +12,8 @@
  *   - NodeRenderer builds an `InlineEditBinding`, passes `inlineEdit` to the
  *     component, and focuses the element via `useLayoutEffect`;
  *   - the editor key ladder's `inline-edit` rung halts every canvas scope on
- *     `activeInlineEdit` so Delete/Cmd+D never fire mid-edit, and `useCanvas`'s
- *     React-side viewport keys bail on it separately;
+ *     `activeInlineEdit` so Delete/Cmd+D never fire mid-edit — the viewport
+ *     keys included, since P2-B moved them onto the ladder;
  *   - BreakpointFrame no longer mounts an inline-edit overlay (the node itself
  *     is the editor now).
  */
@@ -27,6 +27,7 @@ const CANVAS_VIEWPORT = new URL('../../admin/pages/site/hooks/useCanvas.ts', imp
 const IFRAME_EVENT_FORWARDING = new URL('../../admin/pages/site/canvas/useIframeEventForwarding.ts', import.meta.url)
 const BREAKPOINT_FRAME = new URL('../../admin/pages/site/canvas/BreakpointFrame.tsx', import.meta.url)
 const CONTEXTS = new URL('../../admin/pages/site/canvas/CanvasContexts.ts', import.meta.url)
+const INLINE_EDIT_SLICE = new URL('../../admin/pages/site/store/slices/inlineEditSlice.ts', import.meta.url)
 
 describe('inline text editing wiring (in-place contentEditable)', () => {
   it('the node-interaction hook starts a session on double-click, gated to design mode', () => {
@@ -51,14 +52,14 @@ describe('inline text editing wiring (in-place contentEditable)', () => {
     // Edits flow live: read the contentEditable text back, commit through the store.
     expect(src).toContain('const inlineEditBinding: InlineEditBinding | undefined = isInlineEditing')
     expect(src).toContain('applyInlineEditValue(readInlineEditableText')
-    // Session is scoped to the one frame that owns it. The three reads of the
-    // session (`isInlineEditing` + the two session values) were collapsed into
-    // ONE `useShallow` subscription for the per-node selector budget, so the
-    // match now reads a local `session` binding rather than `s.activeInlineEdit`
-    // three times — the SCOPING is what this gate is about, not the spelling.
-    expect(src).toContain('const session = s.activeInlineEdit')
-    expect(src).toContain('session.breakpointId === breakpointId')
-    expect(src).toContain('session.frameId === frameId')
+    // Session is scoped to the one frame that owns it. Since P2-I the match is
+    // ONE primitive selector through `isInlineEditSessionFor` (the session's
+    // constant values are read through `getState()` where they are used) — the
+    // SCOPING is what this gate is about, not the spelling.
+    expect(src).toContain('isInlineEditSessionFor(s.activeInlineEdit, nodeId, breakpointId, frameId)')
+    const slice = readFileSync(INLINE_EDIT_SLICE, 'utf-8')
+    expect(slice).toContain('session.breakpointId === breakpointId')
+    expect(slice).toContain('session.frameId === frameId')
   })
 
   it('NodeRenderer passes inlineEdit to the module component (the element IS the editor)', () => {
@@ -85,14 +86,18 @@ describe('inline text editing wiring (in-place contentEditable)', () => {
     expect(src).toContain('useEditorStore.getState().activeInlineEdit !== null')
   })
 
-  it('the canvas VIEWPORT keys bail separately, because React synthetic events cross the iframe', () => {
-    // The ladder above only covers the dispatcher's own `document` listener.
-    // `useCanvas`'s +/−/⇧1/⇧2 handler is a React `onKeyDown` on the canvas
-    // div, and a synthetic event raised inside a frame iframe still reaches it
-    // through the fiber tree — so `-` typed mid-edit would zoom the canvas out
-    // without this second, store-backed guard.
+  it('the canvas VIEWPORT keys ride the ladder, so the inline-edit halt covers them', () => {
+    // Until P2-B, `useCanvas`'s +/−/⇧1/⇧2 handler was a React `onKeyDown` on
+    // the canvas div — and a synthetic event raised inside a frame iframe
+    // still reaches one through the fiber tree, so `-` typed mid-edit zoomed
+    // the canvas out unless that handler re-checked `activeInlineEdit` by
+    // hand. The keys are a dispatcher scope now (`useCanvasViewportKeys`), and
+    // the `inline-edit` rung above halts them with everything else. Pin that
+    // there is no React key handler left to forget the check in.
     const src = readFileSync(CANVAS_VIEWPORT, 'utf-8')
-    expect(src).toContain('if (useEditorStore.getState().activeInlineEdit) return')
+    expect(src).toContain('useCanvasViewportKeys(')
+    expect(src).not.toContain('handleKeyDown')
+    expect(src).not.toContain("addEventListener('keydown'")
   })
 
   it('the iframe key-forwarding stands down while an inline edit is active', () => {

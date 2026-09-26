@@ -29,6 +29,20 @@ import { performance } from 'node:perf_hooks'
 import type { BenchModule, BenchResult, BenchRow, BenchContext } from '../lib/types'
 import { summarize, fmtMs, fmtNum, fmtBytes } from '../lib/stats'
 import { log } from '../lib/log'
+import {
+  FULL_SWEEP_SHAPE,
+  SUBSCRIBER_SWEEP_BUDGETS_MS,
+  runCanvasSubscriberSweep,
+  subscriberSweepBreaches,
+  type SubscriberSweepScenario,
+} from '../lib/canvasSubscriberSweep'
+import {
+  FULL_RESYNC_SHAPE,
+  POST_WRITE_RESYNC_BUDGETS,
+  postWriteResyncBreaches,
+  runPostWriteResync,
+  type PostWriteResyncScenario,
+} from '../lib/postWriteResync'
 
 // Load the live editor store. Imports `@admin/state/adminUi` which is
 // admin-shell only, but the actions themselves don't touch the DOM.
@@ -48,7 +62,6 @@ function resetStore(useStore: Awaited<ReturnType<typeof loadStore>>): void {
     canRedo: false,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     hasUnsavedChanges: false,
     activeDocument: null,
     activePageId: null,
@@ -479,102 +492,82 @@ export const editorStoreBench: BenchModule = {
       }
     }
 
-    // ---- set() latency with N canvas-like subscribers -----------------------
-    // Zustand re-runs EVERY subscriber's selector on EVERY store set. The
-    // canvas mounts ~6 per-node subscriptions per rendered node per breakpoint
-    // frame (NodeRenderer), so the hottest editor events — hoverNode on every
-    // mouse crossing, updateNodeProps on every keystroke — pay a full selector
-    // sweep. This scenario registers the same selectors NodeRenderer uses and
-    // measures the set() cost they add. Without subscribers (the scenarios
-    // above) this cost is invisible.
-    log.step('set() latency with N canvas-like subscribers')
+    // ---- The canvas subscriber sweep (budget 1) -------------------------------
+    // Zustand re-runs EVERY subscriber's selector on EVERY store set, and the
+    // canvas mounts eleven per node per mounted frame (NodeRenderer). This is
+    // the one scenario here that is a GATE: its medians are asserted against
+    // `SUBSCRIBER_SWEEP_BUDGETS_MS`, and a breach fails the bench after the
+    // report rows are recorded. See `lib/canvasSubscriberSweep.ts`.
+    log.step('Canvas subscriber sweep (40 pages x 300 nodes, 12 mounted frames)')
     const subscriberSweepRows: BenchRow[] = []
+    let sweepBreaches: string[]
     {
-      const PAGES = ctx.quick ? 5 : 20
-      const NODES = ctx.quick ? 200 : 500
-      const FRAMES = 3
-      const HOVERS = ctx.quick ? 100 : 300
-      const KEYS = ctx.quick ? 50 : 150
+      const shape = { ...FULL_SWEEP_SHAPE, iterations: ctx.quick ? 60 : FULL_SWEEP_SHAPE.iterations }
+      const label = `${fmtNum(shape.pages)} pages x ${fmtNum(shape.nodesPerPage)} nodes, ${shape.mountedFrames} mounted frames`
       try {
-        const { selectActiveCanvasPage } = await import('../../../src/admin/pages/site/store/store')
-        const { getCanvasNodeClassName } = await import('../../../src/admin/pages/site/canvas/canvasNodeClassName')
-        const { resolveEditorFormPreviewState, resolveEditorFormPreviewSuccessMessage } = await import(
-          '../../../src/admin/pages/site/canvas/canvasFormPreview'
-        )
-
-        const pages = Array.from({ length: PAGES }, (_, i) =>
-          buildStorePage(`sw${i}`, i === 0 ? 'index' : `sweep-page-${i}`, NODES),
-        )
-        loadSyntheticSite(useStore, pages)
-        const state = useStore.getState() as {
-          site: { pages: Array<{ id: string; nodes: Record<string, StoreNode> }> }
-          activePageId: string
-          hoverNode: (nodeId: string | null, breakpointId?: string | null) => void
-          updateNodeProps: (nodeId: string, patch: Record<string, unknown>) => void
-        }
-        const activePage = state.site.pages.find((p) => p.id === state.activePageId)
-        if (!activePage) throw new Error('No active page after loadSite — update editor-store bench.')
-        const nodeIds = Object.keys(activePage.nodes)
-
-        type S = Parameters<typeof selectActiveCanvasPage>[0]
-        const noop = () => {}
-        const unsubs: Array<() => void> = []
-        for (let frame = 0; frame < FRAMES; frame++) {
-          for (const nodeId of nodeIds) {
-            unsubs.push(useStore.subscribe((s: S) => selectActiveCanvasPage(s)?.nodes[nodeId] ?? null, noop))
-            unsubs.push(useStore.subscribe((s: S) => s.selectedNodeIds.includes(nodeId), noop))
-            unsubs.push(useStore.subscribe((s: S) => s.hoveredNodeId === nodeId, noop))
-            unsubs.push(useStore.subscribe(
-              (s: S) => (s.previewClassAssignment?.nodeId === nodeId ? s.previewClassAssignment : null),
-              noop,
-            ))
-            unsubs.push(useStore.subscribe((s: S) => resolveEditorFormPreviewState(s, nodeId), noop))
-            unsubs.push(useStore.subscribe((s: S) => resolveEditorFormPreviewSuccessMessage(s, nodeId), noop))
-            unsubs.push(useStore.subscribe((s: S) => {
-              const canvasNode = selectActiveCanvasPage(s)?.nodes[nodeId]
-              const preview = s.previewClassAssignment?.nodeId === nodeId ? s.previewClassAssignment : null
-              return getCanvasNodeClassName(canvasNode?.classIds, preview, nodeId, s.site?.styleRules)
-            }, noop))
-          }
-        }
-
-        try {
-          const hoverSamples: number[] = []
-          for (let i = 0; i < HOVERS; i++) {
-            const target = nodeIds[i % nodeIds.length]
-            const t0 = performance.now()
-            state.hoverNode(target)
-            hoverSamples.push(performance.now() - t0)
-          }
-          const textNodeId = nodeIds.find((id) => activePage.nodes[id].moduleId === 'base.text')
-          if (!textNodeId) throw new Error('Synthetic page has no text node — update editor-store bench.')
-          const keySamples: number[] = []
-          for (let i = 0; i < KEYS; i++) {
-            const t0 = performance.now()
-            state.updateNodeProps(textNodeId, { text: 'x'.repeat(i + 1) })
-            keySamples.push(performance.now() - t0)
-          }
-          const hover = summarize(hoverSamples)
-          const keys = summarize(keySamples)
+        const sweep = await runCanvasSubscriberSweep(shape)
+        sweepBreaches = subscriberSweepBreaches(sweep)
+        for (const [scenario, summary] of Object.entries(sweep.scenarios) as Array<[SubscriberSweepScenario, (typeof sweep.scenarios)[SubscriberSweepScenario]]>) {
+          const budget = SUBSCRIBER_SWEEP_BUDGETS_MS[scenario]
           subscriberSweepRows.push({
-            label: `${fmtNum(unsubs.length)} subscribers (${fmtNum(NODES)} nodes × ${FRAMES} frames), ${fmtNum(PAGES)} pages`,
-            inputs: { pages: PAGES, nodes: NODES, frames: FRAMES, subscribers: unsubs.length },
+            label: `${scenario} — ${label}`,
+            inputs: { subscribers: sweep.subscribers },
             metrics: {
-              hover_mean: fmtMs(hover.mean),
-              hover_p95: fmtMs(hover.p95),
-              keystroke_mean: fmtMs(keys.mean),
-              keystroke_p95: fmtMs(keys.p95),
+              median: fmtMs(summary.p50),
+              p95: fmtMs(summary.p95),
+              budget_median: fmtMs(budget),
+              verdict: summary.p50 <= budget ? 'within' : 'OVER',
             },
           })
-          log.detail(`    hover mean=${fmtMs(hover.mean)} p95=${fmtMs(hover.p95)}  keystroke mean=${fmtMs(keys.mean)} p95=${fmtMs(keys.p95)}`)
-        } finally {
-          for (const unsub of unsubs) unsub()
+          log.detail(`    ${scenario.padEnd(22)} median=${fmtMs(summary.p50)} p95=${fmtMs(summary.p95)} budget=${fmtMs(budget)}`)
         }
       } catch (err) {
-        subscriberSweepRows.push(unavailableRow(`${fmtNum(NODES)} nodes × ${FRAMES} frames canvas subscriber sweep`, err))
+        subscriberSweepRows.push(unavailableRow(`canvas subscriber sweep — ${label}`, err))
+        sweepBreaches = [`the sweep did not complete: ${err instanceof Error ? err.message : String(err)}`]
+      } finally {
+        resetStore(useStore)
       }
     }
-
+    // ---- Post-write re-sync (PERF-6, budget 8) --------------------------------
+    // What ONE `patchPages` re-read makes the canvas do: NodeRenderer
+    // re-renders and remounts, and frame restyles. Deterministic counts,
+    // asserted against `POST_WRITE_RESYNC_BUDGETS`. See `lib/postWriteResync.ts`.
+    log.step('Post-write re-sync (40 pages x 300 nodes, 12 mounted frames)')
+    const resyncRows: BenchRow[] = []
+    let resyncBreaches: string[]
+    {
+      const shape = { ...FULL_RESYNC_SHAPE, iterations: ctx.quick ? 10 : FULL_RESYNC_SHAPE.iterations }
+      const label = `${fmtNum(shape.pages)} pages x ${fmtNum(shape.nodesPerPage)} nodes, ${shape.mountedFrames} mounted frames`
+      try {
+        const resync = await runPostWriteResync(shape)
+        resyncBreaches = postWriteResyncBreaches(resync)
+        for (const scenario of Object.keys(resync.scenarios) as PostWriteResyncScenario[]) {
+          const { counts, patchMs } = resync.scenarios[scenario]
+          const budget = POST_WRITE_RESYNC_BUDGETS[scenario](shape)
+          const within = counts.rerenders <= budget.rerenders && counts.remounts <= budget.remounts && counts.restyles <= budget.restyles
+          resyncRows.push({
+            label: `${scenario} — ${label}`,
+            inputs: { style_rules: shape.styleRules },
+            metrics: {
+              rerenders: `${counts.rerenders} (budget ${budget.rerenders})`,
+              remounts: `${counts.remounts} (budget ${budget.remounts})`,
+              restyles: `${counts.restyles} (budget ${budget.restyles})`,
+              patch_median: fmtMs(patchMs.p50),
+              patch_p95: fmtMs(patchMs.p95),
+              verdict: within ? 'within' : 'OVER',
+            },
+          })
+          log.detail(
+            `    ${scenario.padEnd(10)} rerenders=${counts.rerenders} remounts=${counts.remounts} restyles=${counts.restyles} patch median=${fmtMs(patchMs.p50)}`,
+          )
+        }
+      } catch (err) {
+        resyncRows.push(unavailableRow(`post-write re-sync — ${label}`, err))
+        resyncBreaches = [`the re-sync bench did not complete: ${err instanceof Error ? err.message : String(err)}`]
+      } finally {
+        resetStore(useStore)
+      }
+    }
     // ---- Undo coalescing burst ----------------------------------------------
     log.step('Undo coalescing burst (single-prop typing burst + retained history)')
     const coalesceRows: BenchRow[] = []
@@ -635,6 +628,7 @@ export const editorStoreBench: BenchModule = {
         [`${largestLookupRow?.label ?? 'lookup'} ns/op`]: largestLookupRow?.metrics.ns_per_lookup ?? '—',
         [`multi-${multiDeleteRow?.label ?? 'delete'}`]: multiDeleteRow?.metrics.mean_total ?? '—',
         [`VC sweep ${vcSweepRow?.label ?? ''} mean`]: vcSweepRow?.metrics.mean_per_op ?? '—',
+        'subscriber sweep hoverEdge median': subscriberSweepRows[0]?.metrics.median ?? '—',
       },
       sections: [
         {
@@ -673,10 +667,16 @@ export const editorStoreBench: BenchModule = {
           rows: vcSweepRows,
         },
         {
-          title: 'set() latency with canvas-like subscribers',
+          title: 'Canvas subscriber sweep (budget 1)',
           intro:
-            'hoverNode / updateNodeProps latency with NodeRenderer-equivalent per-node Zustand subscriptions registered (nodes × 3 frames × 7 selectors). Measures the selector-sweep cost every canvas-visible store set pays — the cost the zero-subscriber scenarios above cannot see.',
+            'The cost of ONE store set() with the eleven per-node NodeRenderer selectors mounted for every node of 12 frames on a 40-page x 300-node board (audit 01-perf §1). No React, no DOM — the selector floor every hover crossing, click, keystroke and pan commit pays. Medians are asserted against SUBSCRIBER_SWEEP_BUDGETS_MS; a row reading OVER fails the bench.',
           rows: subscriberSweepRows,
+        },
+        {
+          title: 'Post-write re-sync (budget 8)',
+          intro:
+            'What ONE `patchPages` re-read of a written page makes the canvas do on a 40-page x 300-node board with 12 mounted frames (audit 01-perf PERF-6): NodeRenderer re-renders, remounts (a lost React key), and frame restyles (a new style-registry object). `propEdit` changes one text prop; `move` moves a subtree to the front, renumbering every `rel:line:col` id it passes. Counts are deterministic and asserted against POST_WRITE_RESYNC_BUDGETS; a row reading OVER fails the bench.',
+          rows: resyncRows,
         },
         {
           title: 'Undo coalescing burst',
@@ -685,6 +685,7 @@ export const editorStoreBench: BenchModule = {
           rows: coalesceRows,
         },
       ],
+      ...(sweepBreaches.length + resyncBreaches.length > 0 ? { budgetFailures: [...sweepBreaches, ...resyncBreaches] } : {}),
     }
   },
 }

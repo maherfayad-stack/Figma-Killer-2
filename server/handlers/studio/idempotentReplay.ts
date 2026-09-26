@@ -2,8 +2,11 @@
  * idempotentReplay — durable replay protection for the Studio write routes
  * where a lost response must never turn into a second effect: `POST
  * /admin/api/studio/save` (structural edits — duplicate/insert/wrap/group/
- * move/…), `POST`/`DELETE /admin/api/studio/page`, and `POST
- * /admin/api/studio/boards`.
+ * move/…), `POST`/`DELETE /admin/api/studio/page`, `POST
+ * /admin/api/studio/boards`, and `POST /admin/api/studio/asset-drop` (IMG-1:
+ * a retried image landing would otherwise write `photo-2.png`; that route is
+ * also idempotent by content, since `landAssetBytes` dedupes, so a retry whose
+ * record was lost still reuses the first file rather than copying it).
  *
  * ## The gap this closes
  *
@@ -71,13 +74,13 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, s
 import { join, resolve } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { safeParseJson } from '@core/utils/jsonValidate'
+import { resolveStudioDataRoot } from '../../runtimeDirs'
 
-const DEFAULT_DATA_ROOT_SEGMENT = ['.data', 'studio-idempotency'] as const
 
 /** Resolve (without creating) the data root — overridable via env, same convention as `resolveMcpServerSecretsRoot`. */
 export function resolveIdempotencyRoot(env: Record<string, string | undefined> = process.env): string {
   const configured = env.STUDIO_IDEMPOTENCY_DATA_DIR
-  return configured ? resolve(configured) : resolve(process.cwd(), ...DEFAULT_DATA_ROOT_SEGMENT)
+  return configured ? resolve(configured) : join(resolveStudioDataRoot(env), 'studio-idempotency')
 }
 
 /** How long a record answers a replay for — see the module doc's TTL section. */
@@ -100,6 +103,15 @@ export function readIdempotencyKey(req: Request): string | null {
 
 /** Validated at the read boundary — no `JSON.parse(...) as` cast on a file this module itself controls the shape of, but which a stale/half-written/foreign file on disk could still fail to match. */
 const StoredReplaySchema = Type.Object({
+  /**
+   * Who sent the original request, and to which method + path. A record is
+   * answered only to the same user on the same route (security review F4):
+   * a key is a 122-bit secret nobody else sees, so this is defence in depth,
+   * not the primary guard.
+   */
+  userId: Type.String(),
+  method: Type.String(),
+  pathname: Type.String(),
   status: Type.Number(),
   contentType: Type.String(),
   body: Type.String(),
@@ -143,7 +155,9 @@ function pruneExpired(root: string): void {
   }
   const now = Date.now()
   for (const entry of entries) {
-    if (!entry.endsWith('.json')) continue
+    // `.tmp` too: a staging file orphaned by a crash between write and
+    // rename is garbage once it is as old as a record could live.
+    if (!entry.endsWith('.json') && !entry.endsWith('.tmp')) continue
     const full = join(root, entry)
     try {
       if (now - statSync(full).mtimeMs > RECORD_TTL_MS) rmSync(full, { force: true })
@@ -166,20 +180,30 @@ function pruneExpired(root: string): void {
  *     being returned — a non-2xx (a 404/409 refusal) is safe to just
  *     recompute on the next attempt, since nothing changed on disk to make
  *     the recomputed answer differ, so it is never cached.
- *   - A key the store already has a fresh record for → returns that record
- *     verbatim, WITHOUT calling `run()` at all. This is the whole point: the
- *     route's real side effect, if any, already happened exactly once.
+ *   - A key the store already has a fresh record for, recorded for the SAME
+ *     user, method and path → returns that record verbatim, WITHOUT calling
+ *     `run()` at all. This is the whole point: the route's real side effect,
+ *     if any, already happened exactly once.
+ *   - A fresh record for the same key but a different user, method or path →
+ *     a miss: `run()` runs, and its answer is NOT recorded, so the original
+ *     owner's record is never replaced by somebody else's.
+ *
+ * `userId` is the user the Studio route gate already authenticated.
  */
 export async function withIdempotentReplay(
   req: Request,
+  userId: string,
   run: () => Promise<Response>,
   root: string = resolveIdempotencyRoot(),
 ): Promise<Response> {
   const key = readIdempotencyKey(req)
   if (!key) return run()
 
+  const method = req.method.toUpperCase()
+  const pathname = new URL(req.url).pathname
   const existing = readRecord(root, key)
   if (existing) {
+    if (existing.userId !== userId || existing.method !== method || existing.pathname !== pathname) return run()
     return new Response(existing.body, {
       status: existing.status,
       headers: { 'content-type': existing.contentType },
@@ -190,6 +214,9 @@ export async function withIdempotentReplay(
   if (res.status >= 200 && res.status < 300) {
     const body = await res.clone().text()
     writeRecord(root, key, {
+      userId,
+      method,
+      pathname,
       status: res.status,
       contentType: res.headers.get('content-type') ?? 'application/json',
       body,

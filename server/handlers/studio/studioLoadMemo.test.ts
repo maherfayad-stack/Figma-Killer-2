@@ -9,11 +9,14 @@
  * the aliasing guarantee that lets two tools hold the result at once.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { loadStudioPages } from '../studioPageLoad'
-import { clearStudioLoadMemo, getMemoizedStudioLoad, workspaceLoadFingerprint } from './studioLoadMemo'
+import { loadStudioPages, loadStudioPagesShared } from '../studioPageLoad'
+import { clearLoadedProjects } from './loadedProjects'
+import { fileStamp } from './loadDigest'
+import { clearStudioLoadMemo, memoizedStudioLoad, workspaceLoadFingerprint, type StudioLoadComputation } from './studioLoadMemo'
+import type { StudioLoadResult } from './studioLoadContract'
 
 function page(heading: string): string {
   return `export default function Page() {\n  return <div><h1>${heading}</h1></div>\n}\n`
@@ -40,6 +43,7 @@ describe('loadStudioPages memo — invalidation', () => {
   })
 
   afterEach(() => {
+    clearLoadedProjects()
     rmSync(dir, { recursive: true, force: true })
   })
 
@@ -105,28 +109,49 @@ describe('loadStudioPages memo — invalidation', () => {
     // insert paid a full cold `computeStudioPages` — measured at ~600 ms on a
     // two-page project, against ~15 ms once the memo works.
     //
-    // Asserted against the FINGERPRINT and the memo directly, not through a
+    // Asserted against the FINGERPRINT and the memo's identity, not through a
     // load's content: a hit and a miss return the same bytes when nothing but
     // the timestamp moved, so content cannot tell them apart and a timing
-    // assertion would be a flake. This is the seam that actually broke.
+    // assertion would be a flake. A memo hit hands the route the SAME shared
+    // object; a recompute builds a new one.
     mkdirSync(join(dir, '.studio'), { recursive: true })
     const meta = join(dir, '.studio', 'meta.json')
     writeFileSync(meta, JSON.stringify({ displayName: 'Fixture', lastOpenedAt: 1 }))
-    await loadStudioPages(dir)
-
+    const first = await loadStudioPagesShared(dir)
     const before = workspaceLoadFingerprint(dir)
-    expect(getMemoizedStudioLoad(dir, before), 'the first load stored nothing').not.toBeNull()
 
     // Exactly what `recordProjectOpened` does, and nothing else.
     writeFileSync(meta, JSON.stringify({ displayName: 'Fixture', lastOpenedAt: 2 }))
     expect(workspaceLoadFingerprint(dir), 'a new `lastOpenedAt` changed the fingerprint').toBe(before)
-    expect(getMemoizedStudioLoad(dir, workspaceLoadFingerprint(dir))).not.toBeNull()
+    expect(await loadStudioPagesShared(dir), 'a new `lastOpenedAt` busted the memo').toBe(first)
 
     // The exclusion must not have widened: a field that DOES decide a parse
     // still invalidates, from the same file.
     writeFileSync(meta, JSON.stringify({ displayName: 'Fixture', lastOpenedAt: 2, pagesDir: 'src/screens' }))
     expect(workspaceLoadFingerprint(dir), 'a changed `pagesDir` was ignored').not.toBe(before)
-    expect(getMemoizedStudioLoad(dir, workspaceLoadFingerprint(dir))).toBeNull()
+    expect(await loadStudioPagesShared(dir)).not.toBe(first)
+  })
+
+  it('PERF-8 — the fingerprint is collision-safe: `Aa.tsx` and `BB.tsx` with identical stamps differ', () => {
+    // The 32-bit `hash * 31 + charCode` it replaced is Java's
+    // `String.hashCode`, under which "Aa" and "BB" collide — so a page renamed
+    // between those names, keeping its size and mtime, fingerprinted the SAME
+    // and the memo served the old page list.
+    const other = mkdtempSync(join(tmpdir(), 'studio-load-memo-collide-'))
+    try {
+      rmSync(join(dir, 'pages', 'Home.tsx'))
+      mkdirSync(join(other, 'pages'), { recursive: true })
+      const when = new Date('2026-01-01T00:00:00Z')
+      writeFileSync(join(dir, 'pages', 'Aa.tsx'), page('Same'))
+      writeFileSync(join(other, 'pages', 'BB.tsx'), page('Same'))
+      writeFileSync(join(other, 'package.json'), JSON.stringify({ name: 'fixture', dependencies: { react: '^18.0.0' } }))
+      for (const file of [join(dir, 'pages', 'Aa.tsx'), join(other, 'pages', 'BB.tsx'), join(dir, 'package.json'), join(other, 'package.json')]) {
+        utimesSync(file, when, when)
+      }
+      expect(workspaceLoadFingerprint(dir)).not.toBe(workspaceLoadFingerprint(other))
+    } finally {
+      rmSync(other, { recursive: true, force: true })
+    }
   })
 
 
@@ -168,5 +193,74 @@ describe('loadStudioPages memo — invalidation', () => {
     const narrowed = await loadStudioPages(dir, { pageIds: ['about'] })
     expect(narrowed.pages.map((p) => p.id)).toEqual(['about'])
     expect((await loadStudioPages(dir)).pages.map((p) => p.id).sort()).toEqual(['about', 'home'])
+  })
+})
+
+describe('memoizedStudioLoad — one compute per project at a time', () => {
+  let dir: string
+
+  beforeEach(() => {
+    clearStudioLoadMemo()
+    dir = mkdtempSync(join(tmpdir(), 'studio-load-inflight-'))
+    mkdirSync(join(dir, 'pages'), { recursive: true })
+    writeFileSync(join(dir, 'pages', 'Home.tsx'), page('One'))
+  })
+
+  afterEach(() => {
+    clearLoadedProjects()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  /** A computation whose compute runs only when the test says so, stamped on `pages/Home.tsx` as read at compute START. */
+  function gatedComputation() {
+    const releases: Array<() => void> = []
+    let computes = 0
+    const homeFile = join(dir, 'pages', 'Home.tsx')
+    const computation: StudioLoadComputation = {
+      routeListing: () => 'pages/Home.tsx',
+      compute: async () => {
+        computes += 1
+        const label = `compute-${computes}`
+        const stamp = fileStamp(homeFile)
+        await new Promise<void>((resolve) => releases.push(resolve))
+        return { result: { label } as unknown as StudioLoadResult, dependencies: new Map([[homeFile, stamp]]) }
+      },
+    }
+    const releaseNext = async () => {
+      while (releases.length === 0) await new Promise((resolve) => setTimeout(resolve, 1))
+      releases.shift()!()
+    }
+    /** Lets every compute started so far run — on the old code, the duplicate one too. */
+    const releaseAll = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      for (const release of releases.splice(0)) release()
+    }
+    return { computation, releaseNext, releaseAll, computes: () => computes, homeFile }
+  }
+
+  const labelOf = (result: StudioLoadResult) => (result as unknown as { label: string }).label
+
+  it('two loads at once share ONE compute and get the same result', async () => {
+    const gated = gatedComputation()
+    const first = memoizedStudioLoad(dir, gated.computation)
+    const second = memoizedStudioLoad(dir, gated.computation)
+    await gated.releaseAll()
+    await gated.releaseAll()
+    const [a, b] = await Promise.all([first, second])
+    expect(gated.computes()).toBe(1)
+    expect(b).toBe(a)
+  })
+
+  it('a load that joined a compute whose input changed meanwhile computes again — never the stale result', async () => {
+    const gated = gatedComputation()
+    const first = memoizedStudioLoad(dir, gated.computation)
+    const second = memoizedStudioLoad(dir, gated.computation)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    writeFileSync(gated.homeFile, page('Two, and longer'))
+    await gated.releaseNext()
+    expect(labelOf(await first)).toBe('compute-1')
+    await gated.releaseNext()
+    expect(labelOf(await second)).toBe('compute-2')
+    expect(gated.computes()).toBe(2)
   })
 })

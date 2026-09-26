@@ -1,4 +1,5 @@
 # Capabilities
+> **Purpose:** every capability string, its default roles, and how to add one · **Read when:** gating a route or tool on a capability · **Trust:** current · **Owner:** security-guard · **Verified:** not yet
 
 The full catalog of `CoreCapability` strings, what each grants, which role gets them by default, and how to add a new capability.
 
@@ -55,13 +56,13 @@ For the broader auth flow (sessions, MFA, step-up), see [docs/features/auth-and-
 
 The `own / any` split is the standard CMS workflow: a contributor can edit/publish their own posts; an editor (`content.edit.any`, `content.publish.any`) can manage everyone's.
 
-### Data workspace (schema + raw rows + bundles)
+### Data (schema + raw rows + bundles)
 
-The Data workspace is split from the Content workspace: Content owns row-level editorial via `content.*`; Data owns schema design, cross-collection row moves, and bundle export/import. Table read/manage is further split **system vs custom**, so a persona (e.g. Client) can browse and manage custom tables without ever seeing the four internal system tables (`posts`, `pages`, `components`, `layouts`).
+There is no Content or Data workspace UI; these capabilities gate the `data_tables`/`data_rows` API, the data pickers and bundle export/import that remain. `content.*` covers row-level editorial; `data.*` covers schema design, cross-collection row moves, and bundle export/import. Table read/manage is further split **system vs custom**, so a persona (e.g. Client) can browse and manage custom tables without ever seeing the four internal system tables (`posts`, `pages`, `components`, `layouts`).
 
 | Capability                    | Grants                                                              | Roles         |
 |-------------------------------|---------------------------------------------------------------------|---------------|
-| `data.custom.tables.read`     | Open the Data workspace; see + browse **custom** tables and their field schemas | Owner, Admin, Client |
+| `data.custom.tables.read`     | See + browse **custom** tables and their field schemas through the API and data pickers | Owner, Admin, Client |
 | `data.custom.tables.manage`   | Create, rename, delete **custom** tables; add/rename/delete fields; change primary field, route base. **Step-up gated** — changes public URL surface. | Owner, Admin |
 | `data.system.tables.read`     | See + open the four **system** tables (`posts`/`pages`/`components`/`layouts`). | Owner, Admin |
 | `data.system.tables.manage`   | On a system table: add/edit/remove **custom** fields and set the primary field. The table's identity (name, slug, route base, labels, kind) and its **built-in fields** are frozen for everyone — `assertSystemTableUpdateAllowed` rejects those edits server-side. Built-in field *values* on the structural system tables (pages/components/layouts) are read-only in the grid; `posts` built-ins stay editable. | Owner, Admin |
@@ -73,7 +74,7 @@ The Data workspace is split from the Content workspace: Content owns row-level e
 
 | Capability       | Grants                                                              | Roles         |
 |------------------|---------------------------------------------------------------------|---------------|
-| `media.read`     | Open the Media workspace; browse assets and folders; see thumbnails in pickers. Also gated by `/dashboard/media`. | Owner, Admin, Client |
+| `media.read`     | Browse assets and folders; see thumbnails in the media picker. Also gates `GET /admin/api/cms/dashboard/media`. | Owner, Admin, Client |
 | `media.write`    | Upload assets; edit metadata (alt text, caption, tags); manage folders; restore from trash. | Owner, Admin |
 | `media.replace`  | Overwrite the bytes for an existing asset (variants regenerate). Split out from `media.write` because this silently swaps the bytes every page reference points at. | Owner, Admin |
 | `media.delete`   | Soft-delete to trash; hard-purge (`?purge=1`) additionally requires step-up. Also gates `DELETE /media/folders/:id` (cascade). | Owner, Admin |
@@ -131,7 +132,7 @@ Studio is a filesystem workspace (a project on disk), not a DB-backed site docum
 
 | Capability             | Grants                                                              | Roles         |
 |------------------------|-----------------------------------------------------------------------|---------------|
-| `studio.write`         | Install dependencies, apply source edits, run codemods, and rearrange board frames in a Studio project. Gates the Studio agent's write tools (`studio_create_page`, `studio_apply_edits`, `studio_codemod`, `studio_set_frames`, …). | Owner, Admin |
+| `studio.write`         | Install dependencies, apply source edits, run codemods, and rearrange board frames in a Studio project. Gates the Studio agent's write tools (`studio_create_page`, `studio_apply_edits`, `studio_codemod`, `studio_set_frames`, `studio_arrange_frames`, `studio_set_tokens`, …). | Owner, Admin |
 | `studio.run.project`   | Boot the open project's own dev server and screenshot it for visual comparison — Tier 2, executes the user's code. **Half of a two-part gate:** the target project's own `.studio/meta.json` trust tier must ALSO be exactly `run-project`, checked per call by `checkTrustTier` (`server/handlers/studio/trustGate.ts`). Holding the capability authorises nothing on a project that is not at that tier — see the note below for what that does and does not prove. | Owner, Admin |
 | `studio.git.write`     | Let the AI record a commit in the project's own git repository, under the user's git identity. **Never granted by default**, including to Admin — unlike `studio.run.project`, there is no second per-project gate behind it. A human using the Version control panel is gated by `site.structure.edit` instead, and since the Studio route gate landed that is enforced rather than merely intended: `/admin/api/studio/git/*` and `/admin/api/studio/github/*` declare `site.structure.edit` as their mutate capability. Never implies push, branch, or repository creation. | Owner |
 

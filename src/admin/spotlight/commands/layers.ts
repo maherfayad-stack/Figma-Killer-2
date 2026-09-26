@@ -14,21 +14,14 @@
  *   - Wrap in container
  *   - Group / Ungroup (K3)
  *   - Move up / Move down
- *   - Select parent / first child / next sibling / previous sibling
+ *   - Select parent / children / next sibling / previous sibling
  *   - Convert selection to Visual Component
  */
 
-import { getParent } from '@core/page-tree'
 import type { Command } from '../types'
 
 const hasSelection = (ctx: { editor?: { selectedNodeIds: ReadonlyArray<string> } }) =>
   (ctx.editor?.selectedNodeIds.length ?? 0) > 0
-
-async function getActiveLayerTree() {
-  const { useEditorStore, selectActiveCanvasPage } = await import('@site/store/store')
-  const store = useEditorStore.getState()
-  return { store, page: selectActiveCanvasPage(store) }
-}
 
 export function getLayersCommands(): Command[] {
   return [
@@ -359,7 +352,7 @@ export function getLayersCommands(): Command[] {
     {
       id: 'layers.moveUp',
       title: 'Move layer up',
-      subtitle: 'Move the selected layer one position up',
+      subtitle: 'Move the selected layers one position up',
       group: 'editor',
       iconName: 'arrow-up',
       keywords: ['layer', 'move', 'up', 'reorder', 'position'],
@@ -368,19 +361,14 @@ export function getLayersCommands(): Command[] {
       when: hasSelection,
       run: async (ctx) => {
         ctx.closeSpotlight()
-        const nodeId = ctx.editor?.selectedNodeIds[ctx.editor.selectedNodeIds.length - 1]
-        if (!nodeId) return
+        // P2-C2 — the whole selection, as one gesture (the same helper ⌥↑ / ⌥↓ use).
+        const nodeIds = ctx.editor?.selectedNodeIds ?? []
+        if (nodeIds.length === 0) return
         try {
-          const { store, page } = await getActiveLayerTree()
-          if (!page) return
-          const parent = getParent(page, nodeId)
-          if (!parent) return
-          const siblings = parent.children ?? []
-          const idx = siblings.indexOf(nodeId)
-          if (idx <= 0) return
-          store.moveNode(nodeId, parent.id, idx - 1)
+          const { stepSelectionAmongSiblings } = await import('@site/canvas/canvasNodeArrowMove')
+          stepSelectionAmongSiblings(nodeIds, -1)
         } catch (err) {
-          console.error('[spotlight] moveNode up failed:', err)
+          console.error('[spotlight] move up failed:', err)
         }
       },
     },
@@ -389,7 +377,7 @@ export function getLayersCommands(): Command[] {
     {
       id: 'layers.moveDown',
       title: 'Move layer down',
-      subtitle: 'Move the selected layer one position down',
+      subtitle: 'Move the selected layers one position down',
       group: 'editor',
       iconName: 'arrow-down',
       keywords: ['layer', 'move', 'down', 'reorder', 'position'],
@@ -398,19 +386,14 @@ export function getLayersCommands(): Command[] {
       when: hasSelection,
       run: async (ctx) => {
         ctx.closeSpotlight()
-        const nodeId = ctx.editor?.selectedNodeIds[ctx.editor.selectedNodeIds.length - 1]
-        if (!nodeId) return
+        // P2-C2 — the whole selection, as one gesture (the same helper ⌥↑ / ⌥↓ use).
+        const nodeIds = ctx.editor?.selectedNodeIds ?? []
+        if (nodeIds.length === 0) return
         try {
-          const { store, page } = await getActiveLayerTree()
-          if (!page) return
-          const parent = getParent(page, nodeId)
-          if (!parent) return
-          const siblings = parent.children ?? []
-          const idx = siblings.indexOf(nodeId)
-          if (idx < 0 || idx >= siblings.length - 1) return
-          store.moveNode(nodeId, parent.id, idx + 1)
+          const { stepSelectionAmongSiblings } = await import('@site/canvas/canvasNodeArrowMove')
+          stepSelectionAmongSiblings(nodeIds, 1)
         } catch (err) {
-          console.error('[spotlight] moveNode down failed:', err)
+          console.error('[spotlight] move down failed:', err)
         }
       },
     },
@@ -443,14 +426,14 @@ export function getLayersCommands(): Command[] {
       },
     },
 
-    // ── Select first child ───────────────────────────────────────────────────
+    // ── Select children (P5-E, IX-7) ─────────────────────────────────────────
     {
-      id: 'layers.selectFirstChild',
-      title: 'Select first child layer',
-      subtitle: 'Move selection to the first child of the current layer',
+      id: 'layers.selectChildren',
+      title: 'Select children',
+      subtitle: 'Select every child of the selected layers (Enter on a text layer edits it)',
       group: 'editor',
       iconName: 'arrow-down',
-      keywords: ['layer', 'child', 'select', 'down', 'navigate', 'first'],
+      keywords: ['layer', 'child', 'children', 'select', 'down', 'navigate', 'enter'],
       workspaces: ['site'],
       capability: 'site.read',
       when: hasSelection,
@@ -460,11 +443,12 @@ export function getLayersCommands(): Command[] {
         try {
           // viewport-01 — see `layers.selectParent` above: one shared,
           // board-aware walk in the store, called from both the palette and
-          // the Enter keybinding.
+          // the Enter keybinding. The palette never starts a text edit: that
+          // half of Enter is a canvas gesture (`useCanvasSelectionKeyboard`).
           const { useEditorStore } = await import('@site/store/store')
-          useEditorStore.getState().selectFirstChildNode()
+          useEditorStore.getState().selectChildNodes()
         } catch (err) {
-          console.error('[spotlight] selectFirstChild failed:', err)
+          console.error('[spotlight] selectChildren failed:', err)
         }
       },
     },

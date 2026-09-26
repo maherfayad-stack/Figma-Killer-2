@@ -52,7 +52,10 @@
  *   1. the `<iframe srcDoc>` element alone (this component's own return),
  *   2. the injector chain, once `load`/`contentDocument` gives us a document,
  *   3. the node tree + runtime scripts, in a `startTransition` scheduled from
- *      the effect that runs right after (2) commits.
+ *      the effect that runs right after (2) commits — once it is this frame's
+ *      turn in `frameTreeMountQueue.ts`: ONE frame's tree at a time, closest
+ *      to the viewport centre first, so each frame commits and paints on its
+ *      own instead of every frame of a board landing in one commit.
  *
  * Stage 3 is a `startTransition`, NOT an `rAF`/`setTimeout`/`requestIdleCallback`
  * chain. That distinction is the whole reason this is safe to ship: the
@@ -86,7 +89,9 @@ import {
   forwardRef,
   startTransition,
   useEffect,
+  useEffectEvent,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
 } from 'react'
@@ -112,7 +117,8 @@ import { applyIframeBodyReset } from './iframeBodyReset'
 import type { InjectableRuntimeScript } from './useRuntimeScriptBuild'
 import { closestReadonlyRegion, isElementLike } from './readonlyRegion'
 import styles from './IframeFrameSurface.module.css'
-import { IFRAME_SRC_DOC, claimIframeSrcDocument } from './iframeSrcDocument'
+import { IFRAME_SRC_DOC } from './iframeSrcDocument'
+import { useAttachIframeDocument, type FrameDocumentState } from './attachIframeDocument'
 import { CanvasFrameContexts } from './CanvasFrameContexts'
 import { useApplyPreviewAxes } from './previewAxesFrameEffect'
 import { PortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
@@ -120,6 +126,7 @@ import { BridgeFrameAdapter, isBridgeFrameAdapter, type BridgeFrameChannel } fro
 import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
 import { registerFrameAdapter, unregisterFrameAdapter } from './frameAdapter/canvasFrameAdapterRegistry'
 import { resolveLiveFrameSrc } from './resolveLiveFrameSrc'
+import { requestFrameTreeMount, type FrameTreeMountTicket } from './frameTreeMountQueue'
 
 /** Stable empty list so a script-less frame doesn't churn the injector's deps. */
 const EMPTY_RUNTIME_SCRIPTS: InjectableRuntimeScript[] = []
@@ -137,8 +144,6 @@ const NAVIGABLE_SELECTOR = 'a[href], area[href], button[type="submit"], input[ty
 // already imports the handle from this module.
 export type { IframeFrameSurfaceHandle } from './iframeFrameSurfaceContract'
 import type { IframeFrameSurfaceHandle, IframeFrameSurfaceProps } from './iframeFrameSurfaceContract'
-
-type IframeWithCleanup = HTMLIFrameElement & { _studioCleanup?: () => void }
 
 export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFrameSurfaceProps>(
   function IframeFrameSurface(
@@ -159,6 +164,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       documentMode = 'portal',
       liveFrame,
       onContentReadyChange,
+      sizing = 'content',
     },
     ref,
     ) {
@@ -168,24 +174,42 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       // {@link IframeInteraction}.
       const isCapture = interaction === 'capture'
       const iframeRef = useRef<HTMLIFrameElement | null>(null)
-      const [iframeDoc, setIframeDoc] = useState<Document | null>(null)
+      // The iframe element travels WITH its document so render reads state,
+      // never `iframeRef.current` (the frame contexts need the element).
+      const [frameDocument, setFrameDocument] = useState<FrameDocumentState | null>(null)
+      const iframeDoc = frameDocument?.doc ?? null
       const [overlayRoot, setOverlayRoot] = useState<HTMLDivElement | null>(null)
       const [adapter, setAdapter] = useState<FrameDocumentAdapter | null>(null)
       // Mount stage 3 — see this module's header. `false` until the injector
       // commit has landed and the transition scheduled below has run.
-      const [treeMounted, setTreeMounted] = useState(false)
+      const [queuedTreeMounted, setQueuedTreeMounted] = useState(false)
+      // A CAPTURE frame skips the queue AND the transition round-trip: its
+      // "may the tree mount" signal is read straight off `iframeDoc` in the
+      // SAME render, not from a follow-up effect's `setState`. Measured: an
+      // effect-scheduled `setTreeMounted(true)` for the one-shot capture path
+      // never got a scheduler flush in the headless test runner (a `flushSync`
+      // wrap made it commit instantly, proving the update itself was correct
+      // and simply never drained) — the exact "body held 0 children for the
+      // whole 5s window" timeout `agentBreakpointCapture.test.tsx` guards.
+      // Deriving it during render removes the round-trip instead of hoping a
+      // passive effect gets scheduled: a capture frame needs no staging (see
+      // the effect below), so there is no reason its readiness should depend
+      // on one at all.
+      const treeMounted = isCapture ? iframeDoc !== null : queuedTreeMounted
+      // This frame's place in `frameTreeMountQueue.ts`, and the committed
+      // value of `treeMounted` as the effects last saw it.
+      const mountTicketRef = useRef<FrameTreeMountTicket | null>(null)
+      const treeMountedRef = useRef(false)
 
-    // `live-07` (STATE.md) — keeps the freshest `liveFrame` reachable from
-    // inside the construct effect below WITHOUT it being a dependency of
-    // that effect. `liveFrame` is a new object on every render where
-    // `nodeIdsInTreeOrder` changed (every structural resync re-parses and
-    // re-mints the active page's node id list), and the construct effect
-    // below must NOT re-run for that — only for a genuinely different
-    // frame/document. Assigning during render (not inside an effect) is the
-    // standard "always-current ref" pattern: it costs nothing and never
-    // triggers a re-render on its own.
-    const liveFrameRef = useRef(liveFrame)
-    liveFrameRef.current = liveFrame
+    // `live-07` (STATE.md) — the freshest `liveFrame`, readable from inside
+    // the construct effect below WITHOUT being a dependency of it.
+    // `liveFrame` is a new object on every render where `nodeIdsInTreeOrder`
+    // changed (every structural resync re-parses and re-mints the active
+    // page's node id list), and the construct effect must NOT re-run for
+    // that — only for a genuinely different frame/document. An effect event,
+    // not a ref assigned during render: the React Compiler refuses to compile
+    // a component that writes a ref in render.
+    const readLiveFrame = useEffectEvent(() => liveFrame)
 
     // `live-05` (STATE.md) — every canvas frame publishes a `FrameDocumentAdapter`,
     // constructed/disposed with its own lifecycle. `documentMode==='bridge'`
@@ -207,11 +231,26 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
     // drops every pending `measure()` promise, event subscription, and the
     // adapter's own identity for no reason. See the id-only effect below,
     // which is what actually reconciles the id list in place.
-    useEffect(() => {
+    //
+    // `useLayoutEffect`, not `useEffect`: `setAdapter` here is consumed by
+    // `AgentSnapshotReadyMarker` (a CAPTURE-frame-only descendant, reached
+    // through `CanvasFrameAdapterContext`) to start the settle/readiness wait
+    // that `waitForAgentRenderFrame` blocks on. A passive effect's `setState`
+    // is flushed by the Scheduler on its own macrotask; measured in the
+    // one-shot capture path, that flush never arrived in the headless test
+    // runner once nothing ELSE happened to trigger another commit — the
+    // adapter stayed `null` for the whole 5 s wait (a `flushSync` wrap made it
+    // commit instantly, proving the update itself was fine and simply never
+    // got scheduled). A layout effect's state update is reconciled
+    // synchronously in the same commit, before the browser paints, so it
+    // cannot be starved that way — correct for every interaction mode, not a
+    // capture-only special case, since nothing here depends on yielding to a
+    // gesture.
+    useLayoutEffect(() => {
       if (documentMode === 'bridge') {
         const iframe = iframeRef.current
         const frameWindow = iframe?.contentWindow
-        const frame = liveFrameRef.current
+        const frame = readLiveFrame()
         if (!iframe || !frameWindow || !frame) {
           setAdapter(null)
           return
@@ -273,7 +312,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
 
     useIframeCursorBridge(iframeRef, adapter, { onCursorMove, onCursorLeave })
     useCanvasFormControlSuppression(adapter, { breakpointId, enabled: !isLive })
-    useIframeFrameAutoHeight({ iframeRef, iframeDoc, adapter, isLive })
+    useIframeFrameAutoHeight({ iframeRef, iframeDoc, adapter, fitToContent: !isLive && sizing === 'content' })
     // WS-10 — direction/color-scheme, an attribute effect (never `srcDoc`/a
     // `key` — see `previewAxesFrameEffect.ts`). `axesOverride` (Phase 2) is a
     // per-frame override merged onto the board-global axes inside the hook.
@@ -292,20 +331,42 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
     // on its tree — there is no gesture to yield to, and yielding hands React
     // licence to leave that one commit behind whatever higher-priority work
     // the editor is doing (an agent turn streams store updates continuously).
-    // Measured: the transient frame's body held 0 children for the WHOLE 5 s
-    // `waitForAgentRenderFrame` window, so the capture timed out with
-    // "did not become ready" — `agentBreakpointCapture.test.tsx` is the gate.
+    // It skips this effect entirely — see `treeMounted`'s own declaration
+    // above for why an effect-driven flag was the wrong shape for it.
+    //
+    // The transition waits for this frame's turn in `frameTreeMountQueue.ts`:
+    // one frame's tree at a time, closest to the viewport centre first. Every
+    // frame starting its own transition in one burst put them all in ONE
+    // render and ONE commit (React renders pending transition lanes together),
+    // so the first frame of a board could not paint before the last.
     useEffect(() => {
+      if (isCapture) return
       if (!iframeDoc) {
-        setTreeMounted(false)
+        setQueuedTreeMounted(false)
         return
       }
-      if (isCapture) {
-        setTreeMounted(true)
-        return
+      // Already mounted (the document was re-attached without going through
+      // `null`): a grant would be a no-op update, so the release effect below
+      // would never run and the queue would stall behind this frame.
+      if (treeMountedRef.current) return
+      const ticket = requestFrameTreeMount(
+        () => iframeRef.current,
+        () => startTransition(() => setQueuedTreeMounted(true)),
+      )
+      mountTicketRef.current = ticket
+      return () => {
+        ticket.release()
+        if (mountTicketRef.current === ticket) mountTicketRef.current = null
       }
-      startTransition(() => setTreeMounted(true))
     }, [iframeDoc, isCapture])
+
+    // This frame's tree has committed: hand the grant to the next frame. A
+    // passive effect, so the next tree starts rendering after this commit.
+    // No-op for a capture frame (`mountTicketRef` never holds a ticket there).
+    useEffect(() => {
+      treeMountedRef.current = treeMounted
+      if (treeMounted) mountTicketRef.current?.release()
+    }, [treeMounted])
 
     // Publish stage 3. ONE readiness notion, two transports:
     //  - `onContentReadyChange` for the board frame, which keeps its frozen
@@ -348,52 +409,10 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       [iframeDoc, overlayRoot, adapter],
     )
 
-    // Wire up the iframe document once it's ready. Capture both onLoad and
-    // the synchronous `contentDocument` path: `srcDoc` parses immediately so
-    // contentDocument is often already populated by the time React commits
-    // the iframe element; we still listen for `load` as a fallback in case
-    // the browser deferred parsing.
-    const attachIframeDoc = (iframe: HTMLIFrameElement | null) => {
-      const previousIframe = iframeRef.current as IframeWithCleanup | null
-      if (previousIframe && previousIframe !== iframe) {
-        previousIframe._studioCleanup?.()
-        previousIframe._studioCleanup = undefined
-      }
-      iframeRef.current = iframe
-      if (!iframe) {
-        setIframeDoc(null)
-        return
-      }
-      delete iframe.dataset.studioCanvasDocumentLoaded
-      const captureSrcDoc = () => {
-        const doc = iframe.contentDocument
-        if (
-          !doc ||
-          doc.readyState === 'loading' ||
-          !claimIframeSrcDocument(doc)
-        ) return
-        // Never portal the canvas tree into the short-lived initial about:blank
-        // document. Module effects, media reads, and authored runtime scripts
-        // must run once against the final srcDoc document only.
-        setIframeDoc(doc)
-        iframe.dataset.studioCanvasDocumentLoaded = 'true'
-      }
-      // srcDoc often parses before the ref commits; otherwise its load event
-      // retries. The bootstrap sentinel, not event timing or URL heuristics,
-      // identifies the document we own; claimIframeSrcDocument removes it from
-      // authored DOM before the portal mounts.
-      captureSrcDoc()
-      iframe.addEventListener('load', captureSrcDoc)
-      // Stash the cleanup on the ref so React's ref-callback contract (the
-      // function may be called again with null on unmount) doesn't leak
-      // listeners.
-      const cleanableIframe = iframe as IframeWithCleanup
-      cleanableIframe._studioCleanup = () => {
-        iframe.removeEventListener('load', captureSrcDoc)
-        delete iframe.dataset.studioCanvasDocumentLoaded
-        cleanableIframe._studioCleanup = undefined
-      }
-    }
+    // Wire up the iframe document once it's ready — the stable ref callback
+    // itself (and why it MUST be stable) lives in `attachIframeDocument.ts`,
+    // split out at this module's size cap.
+    const attachIframeDoc = useAttachIframeDocument(iframeRef, setFrameDocument)
 
     // Tag the iframe body with `data-breakpoint-id` (matches the existing
     // canvasClassCss selector `[data-breakpoint-id="..."] .myClass`) and
@@ -564,7 +583,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
         {iframeDoc &&
           createPortal(
             <CanvasFrameContexts
-              frameElement={iframeRef.current}
+              frameElement={frameDocument?.iframe ?? null}
               adapter={adapter}
               axes={frameAxes}
               interaction={interaction}

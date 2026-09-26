@@ -21,7 +21,13 @@
 import { beforeEach, describe, expect, it } from 'bun:test'
 import type { Page, StyleRule } from '@core/page-tree'
 import { collectClassNameEdits } from '@site/studio/classNameWriteback'
-import { buildClassPageIndex, resolveCssInsertDestination, setStudioStyleRuleSources } from '@site/studio/styleRuleWriteback'
+import {
+  buildClassPageIndex,
+  resetCssDestinationMemory,
+  resolveCssInsertDestination,
+  setOpenPageFile,
+  setStudioStyleRuleSources,
+} from '@site/studio/styleRuleWriteback'
 import { commitClassIdsBaseline, resetLoadedValues } from '@site/studio/loadedValuesBaseline'
 import { makeNode, makePage } from '../fixtures'
 
@@ -57,6 +63,8 @@ function baselineWithout(pages: Page[]): void {
 
 beforeEach(() => {
   setStudioStyleRuleSources({}, {})
+  setOpenPageFile(null)
+  resetCssDestinationMemory()
 })
 
 describe('a CSS-Modules class is attached as a binding, never as its compiled name', () => {
@@ -138,8 +146,10 @@ describe('a class the editor authored takes the SAME destination its declaration
 
   // The honest guard. The SERVER decides a created stylesheet's name and
   // convention, so the client cannot know whether the class is reachable by
-  // name — and it must not guess.
-  it('REFUSES, and holds the node back, when the stylesheet is being created in this same save', () => {
+  // name — and it must not guess. P3-C (ERR-15): it must not WARN either. The
+  // node is held back silently and `awaitingCreatedStylesheet` tells the save
+  // to run again the moment the stylesheet exists.
+  it('holds the node back SILENTLY when the stylesheet is being created in this same save', () => {
     const pages = [pageWith('pages/Home.tsx:3:1')]
     baselineWithout(pages)
     setStudioStyleRuleSources({}, {})
@@ -149,8 +159,8 @@ describe('a class the editor authored takes the SAME destination its declaration
     const plan = collectClassNameEdits(after, { [NEW_ID]: created }, {})
 
     expect(plan.edits).toHaveLength(0)
-    expect(plan.tokenRefusals).toHaveLength(1)
-    expect(plan.tokenRefusals[0]!.reason).toBe('stylesheet-not-created-yet')
+    expect(plan.tokenRefusals).toEqual([])
+    expect(plan.awaitingCreatedStylesheet).toBe(true)
     expect(plan.refusedNodeIds).toEqual(['pages/Home.tsx:3:1'])
 
     // …and the baseline held back means the SAME assignment is offered again
@@ -193,13 +203,13 @@ describe('style-02 — a new class co-locates with the page it is USED on', () =
     const index = buildClassPageIndex([pageWith('pages/Onboarding.tsx:9:3', ['new-1'])])
 
     expect(resolveCssInsertDestination(styleRule({ id: 'new-1', name: 'banner' }), index)).toEqual({
-      ok: true,
       kind: 'existing',
       file: 'pages/Onboarding.module.css',
+      alternatives: [],
     })
   })
 
-  it('still refuses when the same class is used on TWO pages — there is no single answer', () => {
+  it('used on TWO pages, the class has no page of its own — Studio chooses (P3-C, ERR-14)', () => {
     setStudioStyleRuleSources(FOUR_SHEETS, {})
     const index = buildClassPageIndex([
       pageWith('pages/Onboarding.tsx:9:3', ['new-1']),
@@ -207,8 +217,11 @@ describe('style-02 — a new class co-locates with the page it is USED on', () =
     ])
 
     expect(index.has('new-1')).toBe(false)
+    // Four modules, equally near and sized: alphabetical. (This used to refuse
+    // `ambiguous-stylesheet` and open a modal.)
     expect(resolveCssInsertDestination(styleRule({ id: 'new-1', name: 'banner' }), index)).toMatchObject({
-      reason: 'ambiguous-stylesheet',
+      kind: 'existing',
+      file: 'pages/Home.module.css',
     })
   })
 })
@@ -228,9 +241,9 @@ describe('generic repo shape — feature folders, one global plain stylesheet', 
 
     // The declarations go to the one editable stylesheet…
     expect(resolveCssInsertDestination(created, buildClassPageIndex(pages))).toEqual({
-      ok: true,
       kind: 'existing',
       file: 'src/styles/app.css',
+      alternatives: [],
     })
     // …and the class attaches by name, because a plain `.css` class IS its
     // own DOM name.
@@ -239,7 +252,7 @@ describe('generic repo shape — feature folders, one global plain stylesheet', 
     expect(plan.tokenRefusals).toHaveLength(0)
   })
 
-  it('refuses rather than guessing when a feature folder has two candidate stylesheets and the class is on neither page', () => {
+  it('chooses the main stylesheet when a feature folder has two candidates and the class is on neither page (P3-C, ERR-14)', () => {
     setStudioStyleRuleSources(
       {
         a: { file: 'src/styles/app.css', selector: '.a' },
@@ -249,6 +262,7 @@ describe('generic repo shape — feature folders, one global plain stylesheet', 
     )
     const created = styleRule({ id: 'kQ91zz', name: 'checkoutTotal' })
 
-    expect(resolveCssInsertDestination(created, new Map())).toMatchObject({ reason: 'ambiguous-stylesheet' })
+    // Equally near and sized: alphabetical. (This used to refuse `ambiguous-stylesheet`.)
+    expect(resolveCssInsertDestination(created, new Map())).toMatchObject({ kind: 'existing', file: 'src/styles/app.css' })
   })
 })

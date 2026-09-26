@@ -19,7 +19,7 @@
  * link has no author — so this is an ordinary `STUDIO_SUB_ROUTERS` entry with
  * the uniform `(req, url, pathname)` signature.
  */
-import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import { Type } from '@core/utils/typeboxHelpers'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { PrototypeOpSchema, applyPrototypeOp, readPrototypeFile, writePrototypeFile } from './prototypeStore'
@@ -78,8 +78,7 @@ export async function tryServeStudioPrototype(
       return jsonResponse({ ok: true, changed: result.changed, prototype: result.file })
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio:prototype]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio:prototype]', err)
     }
   }
 

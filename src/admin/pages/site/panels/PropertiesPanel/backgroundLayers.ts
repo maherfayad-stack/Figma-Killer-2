@@ -1,6 +1,6 @@
 /**
  * backgroundLayers — pure parse/serialise for the CSS `background-*` layer
- * stack (docs/features/inspector-disclosure.md §4 G6.5).
+ * stack (docs/features/inspector.md §4 G6.5).
  *
  * THE MODEL
  * ---------

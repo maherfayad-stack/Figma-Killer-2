@@ -23,9 +23,12 @@
  * correct, predictable, dependency-free choice here. (Richtext HTML still
  * uses DOMPurify — happy-dom handles HTML fine; only SVG is broken.)
  *
- * Defense in depth: the sanitised bytes are what hit disk AND what the browser
- * receives, with no out-of-band cleaning step. Static assets are also served
- * with their own headers; this sanitiser is the content-level guard.
+ * Defence in depth, not the boundary: the sanitised bytes are what hit disk
+ * AND what the browser receives, with no out-of-band cleaning step. The
+ * boundary is the response header: every route that serves a user or
+ * project SVG on Studio's origin sends `INERT_FILE_CSP` (`server/static.ts`,
+ * `default-src 'none'; sandbox`), because a regex over XML cannot promise to
+ * see every spelling of a script (security review of #248).
  */
 
 // Each pattern targets one vector. The `gi` flags + `[\s\S]` (rather than `.`)
@@ -36,42 +39,180 @@
 // `<script>`. `(?:[\s/][^>]*)?` after the name accepts any whitespace/junk run
 // up to that `>` while `\b`-anchoring rejects `</scriptfoo>`. A bare `<\/x\s*>`
 // (the previous form) missed these and is what CodeQL's bad-tag-filter flagged.
-const scriptClose = String.raw`<\/script(?:[\s/][^>]*)?>`
-const foreignObjectClose = String.raw`<\/foreignObject(?:[\s/][^>]*)?>`
-const styleClose = String.raw`<\/style(?:[\s/][^>]*)?>`
+//
+// Security review of #248 (finding 1) showed four more spellings getting
+// through, each handled below. None of this is the boundary: every Studio
+// route that serves a user or project SVG sends `INERT_FILE_CSP`
+// (`server/static.ts`), which stops script whatever this misses. This is
+// defence in depth on top of it.
+//
+//   - A namespace PREFIX on the element (`<x:script xmlns:x="…svg">`): in an
+//     XML document that is a real script element. Every element pattern
+//     accepts an optional `prefix:` before its local name.
+//   - An entity-encoded or whitespace-split scheme (`jav&#x61;script:`,
+//     `java<TAB>script:`): the XML parser decodes the entity and the URL
+//     parser drops the tab AFTER a regex has looked. URL-bearing attribute
+//     values are decoded and stripped of whitespace/control characters before
+//     their scheme is judged.
+//   - SMIL (`<animate attributeName="href" values="javascript:…">`,
+//     `<set attributeName="onmouseover" to="…">`): an animation that targets
+//     a link or an event handler is removed whole. Animations of geometry and
+//     colour stay.
+//   - An attribute separated by `/` instead of whitespace (`<a/onmouseover=…>`),
+//     which an HTML parser accepts when the SVG is inlined into a page.
+//
+// The re-review of #248 (`review-248`) left three more follow-ups, taken by
+// P5-D SVG-2. Each is a way an XML document runs script without ever spelling
+// `<script>`, stopped today only by the sandbox CSP:
+//
+//   - A DOCTYPE. Its internal subset can declare an entity whose replacement
+//     text is markup (`<!ENTITY x "<h:script …>">` then `&x;`), and nested
+//     entities are the billion-laughs expansion. The whole DOCTYPE goes; a
+//     reference to an entity it declared then fails to parse, and an SVG that
+//     fails to parse draws nothing — the safe failure.
+//   - XHTML elements. In an XML document an element in the XHTML namespace IS
+//     an HTML element, rendered or not: `<h:iframe srcdoc="…">` loads and runs
+//     its document even outside `<foreignObject>`. Every embedding element is
+//     removed (whatever its prefix), `srcdoc` is removed from any element, and
+//     an XHTML namespace declaration is removed so no element can join it —
+//     a prefixed element left behind then fails to parse.
+//   - XSLT. `<?xml-stylesheet type="text/xsl" href="…"?>` has the browser
+//     transform the document with a stylesheet that can emit script. Every
+//     processing instruction except the leading `<?xml …?>` declaration goes.
 
-/** `<script …>…</script>` including any attributes / whitespace / newlines. */
-const SCRIPT_BLOCK_RE = new RegExp(String.raw`<script\b[\s\S]*?${scriptClose}`, 'gi')
+/** An optional XML namespace prefix before an element's local name. */
+const PREFIX = String.raw`(?:[A-Za-z_][\w.-]*:)?`
+
+/** An element name matcher: `<(prefix:)?name` followed by a boundary. */
+function elementClose(name: string): string {
+  return String.raw`<\/${PREFIX}${name}(?:[\s/][^>]*)?>`
+}
+
+const scriptClose = elementClose('script')
+const foreignObjectClose = elementClose('foreignObject')
+const styleClose = elementClose('style')
+const handlerClose = elementClose('handler')
+
+/** `<script …>…</script>` including any attributes / whitespace / newlines, with or without a namespace prefix. */
+const SCRIPT_BLOCK_RE = new RegExp(String.raw`<${PREFIX}script\b[\s\S]*?${scriptClose}`, 'gi')
 /** A self-closing or unclosed `<script …/>` / `<script …>` with no close tag. */
-const SCRIPT_OPEN_RE = /<script\b[^>]*\/?>/gi
+const SCRIPT_OPEN_RE = new RegExp(String.raw`<${PREFIX}script\b[^>]*\/?>`, 'gi')
 /** A dangling `</script …>` close tag left after its opener was stripped. */
 const SCRIPT_CLOSE_RE = new RegExp(scriptClose, 'gi')
+/** SVG Tiny's `<handler>` element carries script too. */
+const HANDLER_BLOCK_RE = new RegExp(String.raw`<${PREFIX}handler\b[\s\S]*?${handlerClose}`, 'gi')
+const HANDLER_OPEN_RE = new RegExp(String.raw`<${PREFIX}handler\b[^>]*\/?>`, 'gi')
 /** `<foreignObject …>…</foreignObject>` — can carry arbitrary HTML. */
-const FOREIGN_OBJECT_RE = new RegExp(String.raw`<foreignObject\b[\s\S]*?${foreignObjectClose}`, 'gi')
-const FOREIGN_OBJECT_OPEN_RE = /<foreignObject\b[^>]*\/?>/gi
-/** `<a …>` / `</a>` is allowed, but href values are scrubbed below. */
-/** `on*="…"` / `on*='…'` / `on*=value` event-handler attributes. */
-const EVENT_HANDLER_RE = /\son[a-z0-9_-]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi
+const FOREIGN_OBJECT_RE = new RegExp(String.raw`<${PREFIX}foreignObject\b[\s\S]*?${foreignObjectClose}`, 'gi')
+const FOREIGN_OBJECT_OPEN_RE = new RegExp(String.raw`<${PREFIX}foreignObject\b[^>]*\/?>`, 'gi')
 /**
- * `href` / `xlink:href` / `src` whose value (after optional whitespace and
- * entity-encoding tricks) resolves to a `javascript:` scheme. We blank the
- * whole attribute rather than try to rewrite it.
+ * `on*="…"` / `on*='…'` / `on*=value` event-handler attributes, after
+ * whitespace, a `/` (`<a/onclick=…>`) or a closing quote (`x="1"onclick=…`).
  */
-const JS_URL_ATTR_RE =
-  /\s(?:xlink:href|href|src)\s*=\s*(?:"\s*javascript:[^"]*"|'\s*javascript:[^']*'|javascript:[^\s>]*)/gi
+const EVENT_HANDLER_RE = /([\s/"'])on[a-z0-9_-]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi
+/**
+ * An attribute that carries a URL or an animated value, with its value — the
+ * candidates whose scheme is judged after decoding (`unsafeUrlValue`).
+ */
+const URL_ATTR_RE =
+  /([\s/"'])((?:[A-Za-z_][\w.-]*:)?(?:href|src|action|formaction|values|to|from|by))\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi
+/** A SMIL animation element, self-closing or paired. */
+const ANIMATION_ELEMENT_RE = new RegExp(
+  String.raw`<(${PREFIX}(?:set|animate|animateMotion|animateTransform|animateColor))\b([^>]*?)(?:\/>|>[\s\S]*?<\/\1\s*>)`,
+  'gi',
+)
+/**
+ * `<!DOCTYPE …>`, internal subset included. The subset is matched as a
+ * bracketed run so a `>` inside an `<!ENTITY …>` declaration does not end the
+ * match early.
+ */
+const DOCTYPE_RE = /<!DOCTYPE\b[^[>]*(?:\[[\s\S]*?\]\s*)?>/gi
+/** A DOCTYPE opener the pattern above could not close, and a stray entity declaration. */
+const DOCTYPE_OPEN_RE = /<!(?:DOCTYPE|ENTITY)\b[^>]*>?/gi
+/** Every processing instruction except the XML declaration (`<?xml version…?>`), terminated or not. */
+const PROCESSING_INSTRUCTION_RE = /<\?(?!xml[\s?])[\s\S]*?(?:\?>|$)/gi
+/** HTML elements that load or embed another document, or change where this one points, under any prefix. */
+const EMBEDDING_ELEMENTS = ['iframe', 'frame', 'frameset', 'object', 'embed', 'applet', 'portal', 'meta', 'link', 'base', 'form']
+const EMBEDDING_BLOCK_RES = EMBEDDING_ELEMENTS.map(
+  (name) => new RegExp(String.raw`<${PREFIX}${name}\b[\s\S]*?${elementClose(name)}`, 'gi'),
+)
+const EMBEDDING_OPEN_RE = new RegExp(String.raw`<\/?${PREFIX}(?:${EMBEDDING_ELEMENTS.join('|')})\b[^>]*>`, 'gi')
+/** `srcdoc="…"` on any element — an inline document for a frame to run. */
+const SRCDOC_RE = /([\s/"'])(?:[A-Za-z_][\w.-]*:)?srcdoc\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi
+/** A namespace declaration with its value, judged after decoding (`xhtmlNamespace`). */
+const NAMESPACE_DECLARATION_RE = /([\s/"'])(xmlns(?::[A-Za-z_][\w.-]*)?)\s*=\s*("[^"]*"|'[^']*')/gi
+
 /** `<style>…</style>` blocks — CSS can carry `@import url(javascript:…)`. */
-const STYLE_BLOCK_RE = new RegExp(String.raw`<style\b[\s\S]*?${styleClose}`, 'gi')
+const STYLE_BLOCK_RE = new RegExp(String.raw`<${PREFIX}style\b[\s\S]*?${styleClose}`, 'gi')
+
+const NAMED_ENTITIES: Readonly<Record<string, string>> = { colon: ':', tab: '\t', newline: '\n', amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" }
+
+/** Decode the character references an XML parser would, so a scheme cannot hide behind one. */
+function decodeEntities(value: string): string {
+  return value.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);?/gi, (whole, ref: string) => {
+    if (ref[0] === '#') {
+      const code = ref[1] === 'x' || ref[1] === 'X' ? Number.parseInt(ref.slice(2), 16) : Number.parseInt(ref.slice(1), 10)
+      return Number.isFinite(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : ''
+    }
+    return NAMED_ENTITIES[ref.toLowerCase()] ?? whole
+  })
+}
+
+/** `value` without any C0 control character, space or DEL — what a URL parser drops from a scheme. */
+function withoutControlAndSpace(value: string): string {
+  let out = ''
+  for (const char of value) {
+    const code = char.codePointAt(0)!
+    if (code > 0x20 && code !== 0x7f) out += char
+  }
+  return out
+}
+
+/** Whether an attribute value, once decoded and stripped the way a URL parser strips it, names a script-running scheme. */
+function unsafeUrlValue(raw: string): boolean {
+  const unquoted = raw.replace(/^["']|["']$/g, '')
+  // Every control character and whitespace, including the tab and newline a
+  // URL parser silently drops from the middle of a scheme.
+  const normalized = withoutControlAndSpace(decodeEntities(unquoted)).toLowerCase()
+  return /(?:javascript|vbscript|livescript):/.test(normalized) || /(?:^|;)data:(?:text\/html|application\/xhtml|image\/svg)/.test(normalized)
+}
+
+/** Whether a namespace declaration's value, decoded the way the XML parser decodes it, is the XHTML namespace. */
+function xhtmlNamespace(raw: string): boolean {
+  const value = withoutControlAndSpace(decodeEntities(raw.replace(/^["']|["']$/g, ''))).toLowerCase()
+  return value === 'http://www.w3.org/1999/xhtml'
+}
+
+/** A SMIL element that animates a link or an event handler, judged on its decoded `attributeName`. */
+function dangerousAnimation(attributes: string): boolean {
+  const target = /attributeName\s*=\s*("[^"]*"|'[^']*'|[^\s>/]+)/i.exec(attributes)
+  if (!target) return false
+  const name = withoutControlAndSpace(decodeEntities(target[1]!.replace(/^["']|["']$/g, ''))).toLowerCase()
+  const local = name.includes(':') ? name.slice(name.lastIndexOf(':') + 1) : name
+  return local === 'href' || local === 'src' || local.startsWith('on')
+}
 
 function stripVectorsOnce(svg: string): string {
-  return svg
+  let out = svg
+    .replace(DOCTYPE_RE, '')
+    .replace(DOCTYPE_OPEN_RE, '')
+    .replace(PROCESSING_INSTRUCTION_RE, '')
+  for (const block of EMBEDDING_BLOCK_RES) out = out.replace(block, '')
+  return out
+    .replace(EMBEDDING_OPEN_RE, '')
+    .replace(SRCDOC_RE, '$1')
+    .replace(NAMESPACE_DECLARATION_RE, (whole, lead: string, _name: string, value: string) => (xhtmlNamespace(value) ? lead : whole))
     .replace(SCRIPT_BLOCK_RE, '')
     .replace(SCRIPT_OPEN_RE, '')
     .replace(SCRIPT_CLOSE_RE, '')
+    .replace(HANDLER_BLOCK_RE, '')
+    .replace(HANDLER_OPEN_RE, '')
     .replace(FOREIGN_OBJECT_RE, '')
     .replace(FOREIGN_OBJECT_OPEN_RE, '')
     .replace(STYLE_BLOCK_RE, '')
-    .replace(EVENT_HANDLER_RE, '')
-    .replace(JS_URL_ATTR_RE, '')
+    .replace(ANIMATION_ELEMENT_RE, (whole, _name: string, attributes: string) => (dangerousAnimation(attributes) ? '' : whole))
+    .replace(EVENT_HANDLER_RE, '$1')
+    .replace(URL_ATTR_RE, (whole, lead: string, _name: string, value: string) => (unsafeUrlValue(value) ? lead : whole))
 }
 
 /**

@@ -474,7 +474,7 @@ export function auditPageSourceQuality(
       file: relFile,
       line: dead.line,
       selector: dead.localName,
-      message: `"${dead.localName}" imports "${dead.specifier}", and that file is not on disk. Nothing renders where it is used — the element keeps its class and its box and comes out EMPTY, which looks like a layout bug rather than a missing file, and it typechecks because "*.svg?raw" is declared ambiently. Check the real filename in the design system's icon directory (studio_design_system_guide lists them) and import that.`,
+      message: `"${dead.localName}" imports "${dead.specifier}", and that file is not on disk. Nothing renders where it is used — the element keeps its class and its box and comes out EMPTY, which looks like a layout bug rather than a missing file, and it typechecks because "*.svg?raw" is declared ambiently. Check the real filename in the design system's icon directory (.claude/design-system-icons.md lists every one with its exact import) and import that.`,
     })
   }
 

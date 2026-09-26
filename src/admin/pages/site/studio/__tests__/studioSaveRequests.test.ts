@@ -79,8 +79,8 @@ describe('commitStructural (via commitStudioMove / commitStudioDelete / commitSt
         const key = query.get('pageIds') ?? ''
         const pages = opts.loadPagesFor?.[key] ?? []
         const lines = [
-          { kind: 'meta', dir: '/tmp/studio-test', projectName: 'studio-test', componentSources: {}, styleRules: {}, styleRuleSources: {}, styledStyleRuleSources: {}, conditions: [], vendorCss: '', authoredCss: '', trust: 'static', paletteHiddenModuleIds: [], pageCount: pages.length },
-          ...pages.map((page) => ({ kind: 'page', page })),
+          { kind: 'meta', dir: '/tmp/studio-test', projectName: 'studio-test', componentSources: {}, styleRules: {}, styleRuleSources: {}, styledStyleRuleSources: {}, conditions: [], vendorCss: '', authoredCss: '', trust: 'static', paletteHiddenModuleIds: [], pageList: pages.map(({ id, slug, title }) => ({ id, slug, title })) },
+          ...pages.map((page, index) => ({ kind: 'page', page, index })),
         ]
         return new Response(lines.map((l) => JSON.stringify(l)).join('\n') + '\n', { status: 200 })
       }
@@ -111,7 +111,7 @@ describe('commitStructural (via commitStudioMove / commitStudioDelete / commitSt
     registerFlush()
     stubFetch({ saveBody: { ok: true, written: 1, skipped: 0, shifted: false, sharedComponents: false, touchedFiles: ['pages/Home.tsx'] } })
 
-    await commitStudioMove('node-a', 'node-b', 'after')
+    await commitStudioMove({ nodeId: 'node-a', anchorNodeId: 'node-b', position: 'after' })
 
     // 'post' (the /save call), then 'reload-scope' (the C5 narrow-reload
     // check, gated on `written > 0`) — the flush is always first.
@@ -125,7 +125,7 @@ describe('commitStructural (via commitStudioMove / commitStudioDelete / commitSt
     })
     stubFetch({ saveBody: { ok: true, written: 1, skipped: 0, shifted: false, sharedComponents: false, touchedFiles: ['pages/Home.tsx'] } })
 
-    await commitStudioMove('node-a', 'node-b', 'after')
+    await commitStudioMove({ nodeId: 'node-a', anchorNodeId: 'node-b', position: 'after' })
 
     expect(order).toEqual(['flush-failed', 'post', 'reload-scope'])
   })
@@ -135,7 +135,7 @@ describe('commitStructural (via commitStudioMove / commitStudioDelete / commitSt
     // `usePersistence` never mounted.
     stubFetch({ saveBody: { ok: true, written: 1, skipped: 0, shifted: false, sharedComponents: false, touchedFiles: ['pages/Home.tsx'] } })
 
-    const reloads = await countEvents(CMS_SITE_RELOAD_EVENT, () => commitStudioMove('node-a', 'node-b', 'after'))
+    const reloads = await countEvents(CMS_SITE_RELOAD_EVENT, () => commitStudioMove({ nodeId: 'node-a', anchorNodeId: 'node-b', position: 'after' }))
 
     // reload-scope's default stub answer is "not safe" (`narrow: false`), so
     // this still falls back to exactly one full reload.
@@ -151,7 +151,7 @@ describe('commitStructural (via commitStudioMove / commitStudioDelete / commitSt
         },
       })
 
-      const reloads = await countEvents(CMS_SITE_RELOAD_EVENT, () => commitStudioMove('node-a', 'node-b', 'after'))
+      const reloads = await countEvents(CMS_SITE_RELOAD_EVENT, () => commitStudioMove({ nodeId: 'node-a', anchorNodeId: 'node-b', position: 'after' }))
 
       expect(reloads).toBe(0)
       expect(order).toEqual(['post']) // no reload-scope call at all
@@ -168,7 +168,7 @@ describe('commitStructural (via commitStudioMove / commitStudioDelete / commitSt
     it('DOES reload (falling back, since reload-scope defaults to not-safe) when a write landed', async () => {
       stubFetch({ saveBody: { ok: true, written: 1, skipped: 0, shifted: false, sharedComponents: false, touchedFiles: ['pages/Home.tsx'] } })
 
-      const reloads = await countEvents(CMS_SITE_RELOAD_EVENT, () => commitStudioMove('node-a', 'node-b', 'after'))
+      const reloads = await countEvents(CMS_SITE_RELOAD_EVENT, () => commitStudioMove({ nodeId: 'node-a', anchorNodeId: 'node-b', position: 'after' }))
 
       expect(reloads).toBe(1)
     })
@@ -178,7 +178,7 @@ describe('commitStructural (via commitStudioMove / commitStudioDelete / commitSt
         throw new Error('network down')
       }) as typeof fetch
 
-      const reloads = await countEvents(CMS_SITE_RELOAD_EVENT, () => commitStudioMove('node-a', 'node-b', 'after'))
+      const reloads = await countEvents(CMS_SITE_RELOAD_EVENT, () => commitStudioMove({ nodeId: 'node-a', anchorNodeId: 'node-b', position: 'after' }))
 
       expect(reloads).toBe(0)
     })
@@ -191,7 +191,7 @@ describe('commitStructural (via commitStudioMove / commitStudioDelete / commitSt
     it('posts the /save response\'s touchedFiles to /reload-scope', async () => {
       stubFetch({ saveBody: { ok: true, written: 1, skipped: 0, shifted: false, sharedComponents: true, touchedFiles: ['pages/Home.tsx'] } })
 
-      await commitStudioMove('node-a', 'node-b', 'after')
+      await commitStudioMove({ nodeId: 'node-a', anchorNodeId: 'node-b', position: 'after' })
 
       const scopeCall = calls.find((c) => c.url.includes('/reload-scope'))
       expect(scopeCall).toBeDefined()
@@ -213,7 +213,7 @@ describe('commitStructural (via commitStudioMove / commitStudioDelete / commitSt
       const onPatch = (evt: Event) => { patchDetail = (evt as CustomEvent<CmsSitePagesPatchDetail>).detail }
       window.addEventListener(CMS_SITE_PAGES_PATCH_EVENT, onPatch)
       const fullReloads = await countEvents(CMS_SITE_RELOAD_EVENT, () =>
-        commitStudioMove('node-a', 'node-b', 'after'),
+        commitStudioMove({ nodeId: 'node-a', anchorNodeId: 'node-b', position: 'after' }),
       )
       window.removeEventListener(CMS_SITE_PAGES_PATCH_EVENT, onPatch)
 
@@ -299,7 +299,7 @@ describe('commitStructural (via commitStudioMove / commitStudioDelete / commitSt
     it('an empty touchedFiles list (defensive — should not occur when written > 0) never calls /reload-scope and falls back to a full reload', async () => {
       stubFetch({ saveBody: { ok: true, written: 1, skipped: 0, shifted: false, sharedComponents: false, touchedFiles: [] } })
 
-      const fullReloads = await countEvents(CMS_SITE_RELOAD_EVENT, () => commitStudioMove('node-a', 'node-b', 'after'))
+      const fullReloads = await countEvents(CMS_SITE_RELOAD_EVENT, () => commitStudioMove({ nodeId: 'node-a', anchorNodeId: 'node-b', position: 'after' }))
 
       expect(fullReloads).toBe(1)
       expect(calls.some((c) => c.url.includes('/reload-scope'))).toBe(false)

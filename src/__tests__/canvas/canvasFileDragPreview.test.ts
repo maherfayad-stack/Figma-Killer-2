@@ -21,6 +21,7 @@ import {
   readDraggedFileFacts,
   resolveCanvasFileDragPaint,
 } from '@site/canvas/canvasFileDragPreview'
+import { NO_DROP_MODIFIERS, type CanvasFileDropModifiers } from '@site/canvas/canvasFileDrop'
 import { measureBoardDropSurfaces } from '@site/canvas/canvasDragBoard'
 import {
   registerCanvasDropSurface,
@@ -99,12 +100,13 @@ function hintLayer(): HTMLElement {
   return layer
 }
 
-function paintAt(point: { x: number; y: number }, facts: { count: number; type: string }) {
+function paintAt(point: { x: number; y: number }, facts: { types: string[] }, modifiers: CanvasFileDropModifiers = NO_DROP_MODIFIERS) {
   const session = beginCanvasFileDragSession(measureBoardDropSurfaces(null))
   const layer = hintLayer()
   return resolveCanvasFileDragPaint(session, {
     point,
     facts,
+    modifiers,
     transform: null,
     readPage,
     hintLayer: layer,
@@ -120,7 +122,7 @@ afterEach(() => {
 describe('resolveCanvasFileDragPaint — over a frame', () => {
   it('paints the same drop line an element drag would, in that frame’s own layer', () => {
     mountFrame()
-    const { layer, paint } = paintAt({ x: 100, y: 100 }, { count: 1, type: 'image/png' })
+    const { layer, paint } = paintAt({ x: 100, y: 100 }, { types: ['image/png'] })
 
     expect(layer).toBe(frameLayer)
     expect(paint?.target).not.toBeNull()
@@ -130,31 +132,39 @@ describe('resolveCanvasFileDragPaint — over a frame', () => {
 
   it('names the format, never a file name — the browser will not give one before the drop', () => {
     mountFrame()
-    const { paint } = paintAt({ x: 100, y: 100 }, { count: 1, type: 'image/png' })
+    const { paint } = paintAt({ x: 100, y: 100 }, { types: ['image/png'] })
     expect(paint?.ghost?.label).toBe('PNG image')
   })
 
   it('refuses a non-image while the pointer is still moving, with no drop line', () => {
     mountFrame()
-    const { paint } = paintAt({ x: 100, y: 100 }, { count: 1, type: 'application/pdf' })
+    const { paint } = paintAt({ x: 100, y: 100 }, { types: ['application/pdf'] })
 
     expect(paint?.target).toBeNull()
     expect(paint?.ghost?.refusing).toBe(true)
     expect(paint?.ghost?.label).toContain('application/pdf')
   })
 
-  it('refuses several files at once, before any of them is read', () => {
+  it('P5-B IMG-2 — several images show ONE drop line and say how many will land', () => {
     mountFrame()
-    const { paint } = paintAt({ x: 100, y: 100 }, { count: 3, type: 'image/png' })
+    const { paint } = paintAt({ x: 100, y: 100 }, { types: ['image/png', 'image/jpeg', 'image/png'] })
+    expect(paint?.target).not.toBeNull()
+    expect(paint?.ghost?.refusing).toBeFalsy()
+    expect(paint?.ghost?.label).toBe('Add 3 images')
+  })
+
+  it('a shift drag says it will set a background, and draws no drop line', () => {
+    mountFrame()
+    const { paint } = paintAt({ x: 100, y: 100 }, { types: ['image/png'] }, { ...NO_DROP_MODIFIERS, shift: true })
     expect(paint?.target).toBeNull()
-    expect(paint?.ghost?.label).toBe('One image at a time')
+    expect(paint?.ghost?.label).toBe('Set as background')
   })
 })
 
 describe('resolveCanvasFileDragPaint — over the empty board', () => {
   it('says where to drop instead, in the board layer rather than a frame’s', () => {
     mountFrame()
-    const { layer, paint } = paintAt({ x: 900, y: 400 }, { count: 1, type: 'image/png' })
+    const { layer, paint } = paintAt({ x: 900, y: 400 }, { types: ['image/png'] })
 
     expect(layer).not.toBe(frameLayer)
     expect(paint?.target).toBeNull()
@@ -162,9 +172,26 @@ describe('resolveCanvasFileDragPaint — over the empty board', () => {
     expect(paint?.ghost?.label).toBe('Drop onto a frame')
   })
 
+  it('offers the free canvas on a Studio board (P5-G) — not a refusal', () => {
+    mountFrame()
+    const session = beginCanvasFileDragSession(measureBoardDropSurfaces(null))
+    const { paint } = resolveCanvasFileDragPaint(session, {
+      point: { x: 900, y: 400 },
+      facts: { types: ['image/png'] },
+      modifiers: NO_DROP_MODIFIERS,
+      transform: null,
+      readPage,
+      hintLayer: document.createElement('div'),
+      hintOrigin: { x: 0, y: 0 },
+      freeCanvas: true,
+    })
+    expect(paint?.ghost?.label).toBe('Place on canvas')
+    expect(paint?.ghost?.refusing).toBeUndefined()
+  })
+
   it('still leads with the FILE’s own refusal when there is one — the nearer fact', () => {
     mountFrame()
-    const { paint } = paintAt({ x: 900, y: 400 }, { count: 1, type: 'application/pdf' })
+    const { paint } = paintAt({ x: 900, y: 400 }, { types: ['application/pdf'] })
     expect(paint?.ghost?.label).toContain('application/pdf')
   })
 
@@ -173,7 +200,8 @@ describe('resolveCanvasFileDragPaint — over the empty board', () => {
     const session = beginCanvasFileDragSession(measureBoardDropSurfaces(null))
     const { layer, paint } = resolveCanvasFileDragPaint(session, {
       point: { x: 900, y: 400 },
-      facts: { count: 1, type: 'image/png' },
+      facts: { types: ['image/png'] },
+      modifiers: NO_DROP_MODIFIERS,
       transform: null,
       readPage,
       hintLayer: null,
@@ -193,7 +221,7 @@ describe('readDraggedFileFacts — the protected-mode half of a DataTransfer', (
     expect(readDraggedFileFacts(transfer)).toBeNull()
   })
 
-  it('counts the file entries and reads the first one’s declared type', () => {
+  it('reads every file entry’s declared type, in order', () => {
     const transfer = {
       items: [
         { kind: 'file', type: 'image/webp' },
@@ -201,22 +229,22 @@ describe('readDraggedFileFacts — the protected-mode half of a DataTransfer', (
       ],
       types: ['Files'],
     } as unknown as DataTransfer
-    expect(readDraggedFileFacts(transfer)).toEqual({ count: 2, type: 'image/webp' })
+    expect(readDraggedFileFacts(transfer)).toEqual({ types: ['image/webp', 'image/png'] })
   })
 
   it('trusts a `Files` type even when the browser enumerates no items', () => {
     const transfer = { items: [], types: ['Files'] } as unknown as DataTransfer
-    expect(readDraggedFileFacts(transfer)).toEqual({ count: 1, type: '' })
+    expect(readDraggedFileFacts(transfer)).toEqual({ types: [''] })
   })
 })
 
 describe('describeDraggedImage', () => {
   it('shortens the MIME type to the format a person reads', () => {
-    expect(describeDraggedImage({ count: 1, type: 'image/png' })).toBe('PNG image')
-    expect(describeDraggedImage({ count: 1, type: 'image/svg+xml' })).toBe('SVG image')
+    expect(describeDraggedImage('image/png')).toBe('PNG image')
+    expect(describeDraggedImage('image/svg+xml')).toBe('SVG image')
   })
 
   it('claims nothing about a file the platform declared no type for', () => {
-    expect(describeDraggedImage({ count: 1, type: '' })).toBe('Image file')
+    expect(describeDraggedImage('')).toBe('Image file')
   })
 })

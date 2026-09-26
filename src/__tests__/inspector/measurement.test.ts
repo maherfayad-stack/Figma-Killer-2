@@ -78,6 +78,16 @@
  * `MultiInlineStyleComposer`) is deleted. It never mounts for the
  * single-node F1–F4 fixtures, so it adds nothing to the Design-tab total
  * below.
+ *
+ * ── P2-F note (owner decision OD-4 — the design pane's spacing) ──────────
+ * `shadow` and `blur` are ONE `effects` entry now (Figma's Effects section),
+ * so the manifest is 15 entries. The between-section gap is its own named
+ * token, `--inspector-section-gap`, at 12px — read from `globals.css` below,
+ * not re-typed — and the rows inside Text, Measures and the Module block sit
+ * the within-group 4px apart. This file also pins the Module block's new
+ * boundary (a real header, bottom padding, a hairline) and the ClassPicker
+ * fade's scrolled-only rule as structure, since happy-dom can measure
+ * neither.
  */
 
 import { describe, expect, it } from 'bun:test'
@@ -90,7 +100,7 @@ const SRC_ROOT = join(import.meta.dir, '../..')
 const GLOBALS_CSS = readFileSync(join(SRC_ROOT, 'styles/globals.css'), 'utf8')
 
 // ---------------------------------------------------------------------------
-// Manifest shape — the 16-entry `INSPECTOR_SECTIONS` array `sections/
+// Manifest shape — the 15-entry `INSPECTOR_SECTIONS` array `sections/
 // index.ts` itself documents, in the exact order and with contiguous
 // `order` fields. A gap or a dupe here means a section either double-mounts
 // or silently stops rendering.
@@ -100,15 +110,14 @@ const EXPECTED_SECTION_IDS = [
   'layer',
   'align',
   'measures',
+  'component',
   'layout',
   'fill',
   'selectionColors',
   'stroke',
-  'shadow',
-  'blur',
+  'effects',
   'text',
   'export',
-  'component',
   'transform',
   'animations',
   'interaction',
@@ -127,17 +136,24 @@ const MORE_GROUP_SECTION_IDS = [
 ] as const
 
 describe('INSPECTOR_SECTIONS manifest shape', () => {
-  it('has exactly 16 entries', () => {
-    expect(INSPECTOR_SECTIONS.length).toBe(16)
+  it('has exactly 15 entries', () => {
+    expect(INSPECTOR_SECTIONS.length).toBe(15)
   })
 
   it('lists ids in the exact order sections/index.ts itself documents', () => {
     expect(INSPECTOR_SECTIONS.map((s) => s.id)).toEqual([...EXPECTED_SECTION_IDS])
   })
 
-  it('has order fields 0-15 with no gaps or dupes', () => {
+  it('has order fields 0-14 with no gaps or dupes', () => {
     const orders = INSPECTOR_SECTIONS.map((s) => s.order).sort((a, b) => a - b)
-    expect(orders).toEqual(Array.from({ length: 16 }, (_, i) => i))
+    expect(orders).toEqual(Array.from({ length: 15 }, (_, i) => i))
+  })
+
+  it('draws shadows and blurs as ONE Effects section (P2-F, OD-4)', () => {
+    const ids = INSPECTOR_SECTIONS.map((s) => s.id)
+    expect(ids).toContain('effects')
+    expect(ids).not.toContain('shadow')
+    expect(ids).not.toContain('blur')
   })
 
   it('tags exactly the 3 dual-tab sections tabs: [design, prototype]; every other entry defaults to design-only', () => {
@@ -182,7 +198,8 @@ const FROZEN_INSPECTOR_TOKENS: ReadonlyArray<readonly [string, string]> = [
   ['--inspector-field-gap', '6px'],
   ['--inspector-group-gap', '8px'],
   ['--inspector-caption-gap', '3px'],
-  ['--inspector-label-w', '68px'],
+  // P2-G / UX-10 — 68px ellipsised any prop name over ~10 characters.
+  ['--inspector-label-w', '96px'],
   ['--inspector-rail-w', '32px'],
   ['--inspector-field-radius', '8px'],
   ['--inspector-space-4xs', '2px'],
@@ -193,6 +210,8 @@ const FROZEN_INSPECTOR_TOKENS: ReadonlyArray<readonly [string, string]> = [
   ['--inspector-space-m', '8px'],
   ['--inspector-space-l', '10px'],
   ['--inspector-space-xl', '12px'],
+  // P2-F / OD-4 — the between-section step, its own role since UX-2.
+  ['--inspector-section-gap', '12px'],
 ]
 
 describe('inspector geometry is frozen', () => {
@@ -222,24 +241,17 @@ describe('inspector geometry is frozen', () => {
    * `admin/pages/site/inspector/sections/**\/*.module.css` — the real gap
    * this pass's recon found: none of the 16 new sections' own CSS modules
    * were covered by this check before.
+   *
+   * P2-H (UX-27) widened it from the eight small steps to EVERY fluid step:
+   * `--space-2xl` … `--space-11xl` grow just the same, and six of them had
+   * slipped in precisely because only the small ones were checked. The one
+   * exception is `--space-px`, which is a literal 1px hairline, not a step.
    */
   it('inspector CSS modules use the frozen scale, not the fluid --space-* one', () => {
-    const FLUID_SMALL_STEPS = ['4xs', '3xs', '2xs', 'xs', 's', 'm', 'l', 'xl']
     const offenders: string[] = []
-    const roots = [
-      join(SRC_ROOT, 'admin/pages/site/panels/PropertiesPanel'),
-      join(SRC_ROOT, 'admin/pages/site/property-controls'),
-      join(SRC_ROOT, 'admin/pages/site/inspector/sections'),
-      join(SRC_ROOT, 'ui/components/Section'),
-    ]
-    for (const root of roots) {
-      for (const file of new Bun.Glob('**/*.module.css').scanSync({ cwd: root })) {
-        const source = readFileSync(join(root, file), 'utf8')
-        for (const step of FLUID_SMALL_STEPS) {
-          if (source.includes(`var(--space-${step})`)) {
-            offenders.push(`${file} -> var(--space-${step})`)
-          }
-        }
+    for (const { file, source } of inspectorCssModules()) {
+      for (const match of source.matchAll(/var\(--space-([a-z0-9]+)\)/g)) {
+        if (match[1] !== 'px') offenders.push(`${file} -> ${match[0]}`)
       }
     }
     expect(offenders).toEqual([])
@@ -330,7 +342,7 @@ describe('primitives carry the inspector skin', () => {
 //     still renders it `forceOpen`, which is why this row is the REST state
 //     and not the section's typical size. Measured saving: 167px on every
 //     selection that is not itself a container.
-//   - fill / stroke / shadow / blur / export / transform / animations /
+//   - fill / stroke / effects / export / transform / animations /
 //     interaction (headered, all use `Section`'s `empty` prop — Law 1's
 //     "nothing set anywhere and the user hasn't clicked '+' yet" state,
 //     confirmed in each file): 0 rows in their default/unrevealed state.
@@ -338,11 +350,11 @@ describe('primitives carry the inspector skin', () => {
 //     section... onto the same four rows: family; weight+size; line-height+
 //     letter-spacing; text-align + vertical-align + a settings gear"):
 //     4 rows, never collapses (a text layer always has a font to show).
-//   - component (headered "Component", `appliesTo: studio.instance` only —
-//     does NOT mount for the F2/F3 fixtures below; included here for
-//     manifest completeness, not exercised by the e2e spec): 1 row (the
-//     header/name row) for a component with zero declared props — a real
-//     floor, not its typical size (each declared prop adds one more row).
+//   - component (one title row naming the instance since P2-G, "Button ·
+//     Local"; `appliesTo` one `studio.instance` only — does NOT mount for the
+//     F1-F4 fixtures below, and is measured as the e2e spec's F5): 1 row —
+//     the "takes no props" line — for a component with zero declared props, a
+//     real floor, not its typical size (each declared prop adds one row).
 //   - customProperties (headered "Custom properties", always resident, per
 //     its own doc: "still render the section so the 'Add property'
 //     affordance is discoverable; just no rows"): 1 row — the "Add property"
@@ -371,8 +383,7 @@ const SECTION_MINIMAL_STATE: Record<(typeof EXPECTED_SECTION_IDS)[number], { has
   // whose colours all come from classes has no inline colour to offer.
   selectionColors: { hasHeader: true, rowCount: 0 },
   stroke: { hasHeader: true, rowCount: 0 },
-  shadow: { hasHeader: true, rowCount: 0 },
-  blur: { hasHeader: true, rowCount: 0 },
+  effects: { hasHeader: true, rowCount: 0 },
   text: { hasHeader: true, rowCount: 4 },
   export: { hasHeader: true, rowCount: 0 },
   component: { hasHeader: true, rowCount: 1 },
@@ -390,8 +401,7 @@ const EXPECTED_REST_HEIGHT_PX: Record<(typeof EXPECTED_SECTION_IDS)[number], num
   fill: 32, // 32 + 0 + 0
   selectionColors: 32, // multi-select only — see SECTION_MINIMAL_STATE
   stroke: 32,
-  shadow: 32,
-  blur: 32,
+  effects: 32,
   text: 172, // 32 + 4*32 + 3*4
   export: 32,
   component: 64, // 32 + 1*32 + 0*4
@@ -406,10 +416,12 @@ const EXPECTED_REST_HEIGHT_PX: Record<(typeof EXPECTED_SECTION_IDS)[number], num
 //
 // Still computed, not measured (same happy-dom limitation as everything
 // above): the sum of the sections the F2 text node mounts in the Design tab,
-// plus `.surfaceContent`'s own `--inspector-space-m` (8px) grid gap between
-// every mounted wrapper. `align` renders `null` for this fixture but still
-// occupies a grid item, so it contributes 0px of height and one full gap —
-// counted honestly rather than skipped.
+// plus `.surfaceContent`'s own `--inspector-section-gap` grid gap between
+// every mounted wrapper. `align` renders `null` for this fixture, and its
+// empty `[data-section-id]` wrapper is `display: none`
+// (`StyleSurface.module.css`'s `[data-section-id]:empty`), so it is NOT a
+// grid item and costs no gap — this table used to count one for it, which
+// the measured artefact never agreed with.
 //
 // Panel CHROME above the sections (ClassPicker's one tag-input row,
 // `.surface`'s own padding) is NOT in this number: none of it is an
@@ -425,20 +437,22 @@ const EXPECTED_REST_HEIGHT_PX: Record<(typeof EXPECTED_SECTION_IDS)[number], num
 // artefact rather than being invisible to both tables.
 // ---------------------------------------------------------------------------
 
-const BETWEEN_SECTION_GAP = 8 // --inspector-space-m
+/**
+ * `--inspector-section-gap`, read from `globals.css` rather than re-typed, so
+ * this table can never quietly disagree with the token it models (UX-2).
+ */
+const BETWEEN_SECTION_GAP = Number(/--inspector-section-gap: (\d+)px;/.exec(GLOBALS_CSS)?.[1])
 /** `Section`'s header alone, which is all a collapsed More group costs. */
 const MORE_HEADER_H = HEADER_H
 
 /** What the F2 text node mounts in the Design tab's continuous scroll. */
 const F2_PRIMARY_SECTION_IDS = [
   'layer',
-  'align',
   'measures',
   'layout',
   'fill',
   'stroke',
-  'shadow',
-  'blur',
+  'effects',
   'text',
   'export',
 ] as const
@@ -472,33 +486,51 @@ describe('computed section rest-height budget', () => {
     expect(rotationRadiusRow - xyRow).toBeLessThanOrEqual(ROW_H + WITHIN_GROUP_GAP)
   })
 
-  it('the F2 text node Design tab costs 612px of sections with More collapsed', () => {
-    // This is a SECTIONS-only sum, and it is not the whole Design tab. The
-    // measured `contentHeight` for the same fixture is 782px against 746px of
-    // room at a 900px viewport (`tests/e2e/inspector-height.e2e.ts`,
-    // `STATE.md` panel-41) — the difference is the Module block, the
-    // between-section gaps and the container padding, none of which a static
-    // row count can see. What this exact number is good for is catching a
-    // section that quietly grows a resident row without anyone opening a
-    // browser; it is NOT evidence that the tab fits.
-    //
-    // 756 -> 612 is panel-39: Layout's rest state dropped from 3 rows to a
-    // collapsed header (-104), and the between-section gap moved from 12px to
-    // Figma's measured 8px (-40 across ten gaps).
-    const primary = F2_PRIMARY_SECTION_IDS.map((id) => EXPECTED_REST_HEIGHT_PX[id])
-    expect(sumWithGaps([...primary, MORE_HEADER_H])).toBe(612)
+  it('the between-section gap is 12px, one step above the 8px between-group step', () => {
+    expect(BETWEEN_SECTION_GAP).toBe(12)
+    expect(BETWEEN_SECTION_GAP).toBeGreaterThan(8)
   })
 
-  it('the More disclosure buys back 152px that used to be always-mounted', () => {
+  it('the F2 text node Design tab costs 596px of sections with More collapsed', () => {
+    // This is a SECTIONS-only sum, and it is not the whole Design tab — the
+    // Module block and the container padding are not manifest entries. The
+    // measured `contentHeight` lives in `tests/e2e/inspector-height.e2e.ts`
+    // and `05-section-heights.json`. What this exact number is good for is
+    // catching a section that quietly grows a resident row without anyone
+    // opening a browser; it is NOT evidence that the tab fits.
+    //
+    // 756 -> 612 was panel-39 (Layout collapsed at rest, and a 12 -> 8px
+    // section gap). 612 -> 596 is P2-F: the gap goes to 12px as its own token
+    // (+32 across the eight gaps that remain), Shadow + Blur become one
+    // Effects section (-32 of header, -8 of gap), and `align`'s phantom gap
+    // is no longer counted (-8, see this table's own header).
+    const primary = F2_PRIMARY_SECTION_IDS.map((id) => EXPECTED_REST_HEIGHT_PX[id])
+    expect(sumWithGaps([...primary, MORE_HEADER_H])).toBe(596)
+  })
+
+  it('merging Shadow + Blur into Effects is worth one header and one gap', () => {
+    // The static half of UX-5: what pays for the wider section gap. The
+    // measured saving is 33px of header (32 + the Section hairline) plus a
+    // gap — 45px at 12px.
+    const separate = sumWithGaps([EXPECTED_REST_HEIGHT_PX.stroke, 32, 32, EXPECTED_REST_HEIGHT_PX.text])
+    const merged = sumWithGaps([
+      EXPECTED_REST_HEIGHT_PX.stroke,
+      EXPECTED_REST_HEIGHT_PX.effects,
+      EXPECTED_REST_HEIGHT_PX.text,
+    ])
+    expect(separate - merged).toBe(HEADER_H + BETWEEN_SECTION_GAP)
+  })
+
+  it('the More disclosure buys back 164px that used to be always-mounted', () => {
     const primary = F2_PRIMARY_SECTION_IDS.map((id) => EXPECTED_REST_HEIGHT_PX[id])
     const moreSectionHeights = MORE_GROUP_SECTION_IDS.map((id) => EXPECTED_REST_HEIGHT_PX[id])
     // Before S5: all four mounted inline, each its own grid item.
     const before = sumWithGaps([...primary, ...moreSectionHeights])
     // After S5: one collapsed header in their place.
     const after = sumWithGaps([...primary, MORE_HEADER_H])
-    // Was 164 while the between-section gap was 12px; the same fold is worth
-    // 152 at the 8px gap panel-39 moved it to (three fewer gaps × 4px).
-    expect(before - after).toBe(152)
+    // 164 at the 12px section gap (it was 152 while panel-39 held the gap at
+    // 8px — three fewer gaps × 4px).
+    expect(before - after).toBe(164)
   })
 
   it('collapsing Layout until a layout exists is worth 104px of section column', () => {
@@ -510,5 +542,309 @@ describe('computed section rest-height budget', () => {
     const openLayout = computedRestHeight(true, 3)
     expect(openLayout - EXPECTED_REST_HEIGHT_PX.layout).toBe(104)
     expect(EXPECTED_REST_HEIGHT_PX.layout).toBe(EXPECTED_REST_HEIGHT_PX.fill)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// P2-F — the design pane's spacing, pinned as structure.
+//
+// happy-dom neither lays out nor resolves CSS Modules, so the rules the
+// owner's ask rests on ("space between the props and the element below",
+// UX-1/UX-2/UX-3/UX-6) are asserted against the stylesheets themselves — the
+// same way the primitives' inspector skin is pinned above. The measured half
+// is `tests/e2e/inspector-height.e2e.ts`.
+// ---------------------------------------------------------------------------
+
+function readSource(relativePath: string): string {
+  return readFileSync(join(SRC_ROOT, relativePath), 'utf8')
+}
+
+/** The declarations inside the first `selector { … }` block of a stylesheet. */
+function ruleBody(css: string, selector: string): string {
+  const start = css.indexOf(`${selector} {`)
+  expect(start, `${selector} is not declared`).toBeGreaterThanOrEqual(0)
+  return css.slice(start, css.indexOf('}', start))
+}
+
+const PANEL_DIR = 'admin/pages/site/panels/PropertiesPanel'
+const SECTIONS_DIR = 'admin/pages/site/inspector/sections'
+
+/** Every CSS module the frozen-inspector rules apply to, comments stripped. */
+function inspectorCssModules(): Array<{ file: string; source: string }> {
+  const roots = [
+    'admin/pages/site/panels/PropertiesPanel',
+    'admin/pages/site/property-controls',
+    'admin/pages/site/inspector/sections',
+    'ui/components/Section',
+  ]
+  const modules: Array<{ file: string; source: string }> = []
+  for (const root of roots) {
+    for (const file of new Bun.Glob('**/*.module.css').scanSync({ cwd: join(SRC_ROOT, root) })) {
+      const source = readFileSync(join(SRC_ROOT, root, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+      modules.push({ file: `${root}/${file}`, source })
+    }
+  }
+  return modules
+}
+
+describe('P2-F — the props block has a real boundary (UX-1)', () => {
+  it('titles the Module block with the shared section header recipe, not a hand-rolled label', () => {
+    const tsx = readSource(`${PANEL_DIR}/ModuleBlock.tsx`)
+    expect(tsx).toContain('<SectionStaticHeader')
+    expect(readSource(`${PANEL_DIR}/ModuleBlock.module.css`)).not.toContain('text-transform: uppercase')
+  })
+
+  it('ends the block in 8px of padding and a hairline', () => {
+    const css = readSource(`${PANEL_DIR}/ModuleBlock.module.css`)
+    expect(ruleBody(css, '.block')).toContain('border-bottom: 1px solid var(--inspector-divider)')
+    expect(ruleBody(css, '.body.body')).toContain('padding: 0 var(--inspector-pad-x) var(--inspector-space-m)')
+  })
+})
+
+describe('P2-F — the three-step spacing hierarchy (UX-2, UX-3)', () => {
+  it('spaces sections by the named --inspector-section-gap', () => {
+    const css = readSource(`${PANEL_DIR}/StyleSurface.module.css`)
+    expect(ruleBody(css, '.surfaceContent')).toContain('gap: var(--inspector-section-gap)')
+  })
+
+  it('sits the rows inside one group 4px apart: Module props, Text, Measures, component props', () => {
+    const WITHIN = 'gap: var(--inspector-space-2xs)'
+    expect(ruleBody(readSource(`${PANEL_DIR}/ModuleBlock.module.css`), '.body.body')).toContain(WITHIN)
+    expect(ruleBody(readSource(`${SECTIONS_DIR}/TextSection.module.css`), '.section')).toContain(WITHIN)
+    expect(ruleBody(readSource(`${SECTIONS_DIR}/MeasuresSection.module.css`), '.measures')).toContain(WITHIN)
+    expect(ruleBody(readSource(`${SECTIONS_DIR}/ComponentSection.module.css`), '.propsList')).toContain(WITHIN)
+    expect(readSource(`${SECTIONS_DIR}/TextSection.tsx`)).toContain('rhythm="within-group"')
+  })
+
+  it('no longer repeats the false "8px is Penpot\'s section gap" claim', () => {
+    for (const file of ['styles/globals.css', `${PANEL_DIR}/StyleSurface.module.css`]) {
+      expect(readSource(file)).not.toMatch(/8px is Figma's and Penpot's (own )?measured section gap/)
+    }
+  })
+})
+
+describe('P2-F — the ClassPicker fade only shows once scrolled (UX-6)', () => {
+  it('is transparent at rest and opaque only while the scroll container reports data-scrolled', () => {
+    const css = readSource(`${PANEL_DIR}/PropertiesPanel.module.css`)
+    expect(ruleBody(css, '.headerClassPicker::after')).toContain('opacity: 0')
+    expect(ruleBody(css, ".headerClassPicker:has(~ [data-scrolled='true'])::after")).toContain('opacity: 1')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// P2-G — the Component section, pinned as structure (UX-4, UX-7, UX-10,
+// UX-14). The measured half is F5 in `tests/e2e/inspector-height.e2e.ts`.
+// ---------------------------------------------------------------------------
+
+describe('P2-G — the Component section', () => {
+  it('sits directly under Measures, before every other section (UX-7)', () => {
+    const ids = INSPECTOR_SECTIONS.map((s) => s.id)
+    expect(ids.indexOf('component')).toBe(ids.indexOf('measures') + 1)
+    const component = INSPECTOR_SECTIONS.find((s) => s.id === 'component')!
+    expect(component.order).toBe(3)
+  })
+
+  it('is the one section that writes a call site, so no style lock hides it', () => {
+    const callSite = INSPECTOR_SECTIONS.filter((s) => s.writes === 'call-site').map((s) => s.id)
+    expect(callSite).toEqual(['component'])
+    expect(readSource(`${PANEL_DIR}/StyleSurface.tsx`)).toContain('designCallSiteSections(model)')
+  })
+
+  it('draws one title row — the shared static header — and no banded strips (UX-4)', () => {
+    const tsx = readSource(`${SECTIONS_DIR}/ComponentSection.tsx`)
+    expect(tsx).toContain('<SectionStaticHeader')
+    expect(tsx).not.toContain('<Section ')
+    const css = readSource(`${SECTIONS_DIR}/ComponentSection.module.css`)
+    expect(css).not.toContain('.header {')
+    expect(css).not.toContain('.actionsRow')
+    expect(css).not.toContain('var(--bg-surface-3)')
+    expect(css).not.toContain('1px solid var(--border)')
+    expect(ruleBody(css, '.section')).toContain('border-top: 1px solid var(--inspector-divider)')
+  })
+
+  it('does not mount for a multi-selection (UX-14)', () => {
+    const component = INSPECTOR_SECTIONS.find((s) => s.id === 'component')!
+    type Selection = Parameters<typeof component.appliesTo>[0]
+    const instance = { moduleId: 'studio.instance' }
+    expect(component.appliesTo({ isMultiSelect: false, selectedNode: instance } as unknown as Selection)).toBe(true)
+    expect(component.appliesTo({ isMultiSelect: true, selectedNode: instance } as unknown as Selection)).toBe(false)
+  })
+
+  it('the prop label column fits a real prop name, and the row gaps are frozen inside the panel (UX-10)', () => {
+    expect(readSource('admin/pages/site/panels/PropertiesPanel/PropertiesPanel.module.css')).toContain(
+      '--control-label-w: var(--inspector-label-w)',
+    )
+    const controlRow = readSource('ui/components/ControlRow/ControlRow.module.css')
+    expect(ruleBody(controlRow, "[data-field-skin='inspector'] .controlWrapper")).toContain(
+      'gap: var(--inspector-space-2xs)',
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// P2-H — panel polish (UX-11, UX-12, UX-13, UX-15, UX-25). Colour and corner
+// rules happy-dom cannot see; the computed half (a hovered field, a focused
+// Layers row, an inset notice) is `tests/e2e/inspector-panel-polish.e2e.ts`.
+// ---------------------------------------------------------------------------
+
+/** The declarations of `:root { … }` (dark) and the light-theme block. */
+function themeBlocks(): { dark: string; light: string } {
+  const darkStart = GLOBALS_CSS.indexOf(':root {')
+  const lightStart = GLOBALS_CSS.indexOf(":root[data-editor-theme='light'],")
+  expect(darkStart).toBeGreaterThanOrEqual(0)
+  expect(lightStart).toBeGreaterThan(darkStart)
+  return {
+    dark: GLOBALS_CSS.slice(darkStart, GLOBALS_CSS.indexOf('\n}', darkStart)),
+    light: GLOBALS_CSS.slice(lightStart, GLOBALS_CSS.indexOf('\n}', lightStart)),
+  }
+}
+
+type Rgba = readonly [number, number, number, number]
+
+/**
+ * A token's colour in one theme: a hex literal, an `rgba()`, or a `var()`
+ * to another token (the light block falls back to `:root` for anything it
+ * does not redefine — exactly the cascade the browser applies).
+ */
+function tokenColour(token: string, theme: 'dark' | 'light'): Rgba {
+  const blocks = themeBlocks()
+  const read = (block: string) => new RegExp(`${token}:\\s*([^;]+);`).exec(block)?.[1].trim()
+  const raw = (theme === 'light' ? read(blocks.light) : undefined) ?? read(blocks.dark)
+  expect(raw, `${token} is not declared`).toBeDefined()
+  const value = raw!
+  const alias = /^var\((--[a-z0-9-]+)\)$/.exec(value)
+  if (alias) return tokenColour(alias[1], theme)
+  const hex = /^#([0-9a-f]{6})$/i.exec(value)
+  if (hex) {
+    const n = Number.parseInt(hex[1], 16)
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255, 1]
+  }
+  const rgba = /^rgba?\(([^)]+)\)$/.exec(value)
+  if (rgba) {
+    const [r, g, b, a = '1'] = rgba[1].split(',').map((part) => part.trim())
+    return [Number(r), Number(g), Number(b), Number(a)]
+  }
+  throw new Error(`${token}: cannot resolve ${value}`)
+}
+
+/** WCAG relative luminance of `colour` painted over the opaque `under`. */
+function luminanceOver(colour: Rgba, under: Rgba): number {
+  const [r, g, b] = [0, 1, 2].map((i) => colour[i] * colour[3] + under[i] * (1 - colour[3]))
+  const lin = (c: number) => {
+    const s = c / 255
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+  }
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+}
+
+describe('P2-H — field hover lifts away from the panel (UX-11)', () => {
+  for (const theme of ['dark', 'light'] as const) {
+    it(`a hovered field sits further from the docked panel than a resting one (${theme})`, () => {
+      // The docked panel paints `--bg-body`, and a field REPLACES its fill on
+      // hover (`Input.module.css`). The hover fill used to be `--overlay-10`,
+      // which over black is darker than the resting #212426: hover receded.
+      const panel = tokenColour('--bg-body', theme)
+      const lumPanel = luminanceOver(panel, panel)
+      const rest = luminanceOver(tokenColour('--inspector-field-bg', theme), panel)
+      const hover = luminanceOver(tokenColour('--inspector-field-bg-hover', theme), panel)
+      expect(Math.abs(hover - lumPanel)).toBeGreaterThan(Math.abs(rest - lumPanel))
+    })
+  }
+})
+
+describe('P2-H — informative text meets WCAG AA (UX-15)', () => {
+  const contrast = (a: number, b: number) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+
+  for (const theme of ['dark', 'light'] as const) {
+    it(`--text-subtle reads at 4.5:1 on the docked panel (${theme})`, () => {
+      const panel = tokenColour('--bg-body', theme)
+      const text = luminanceOver(tokenColour('--text-subtle', theme), panel)
+      expect(contrast(text, luminanceOver(panel, panel))).toBeGreaterThanOrEqual(4.5)
+    })
+
+    // The FLOATING inspector paints `--bg-surface` (`PropertiesPanel.module.css`
+    // `.panel`), not `--bg-body`. Dark `#787878` measured 3.9:1 there (P2-H's
+    // own landmine, `panel-45`): AA on the docked panel, not on the floating one.
+    it(`--text-subtle reads at 4.5:1 on the floating panel (${theme})`, () => {
+      const panel = tokenColour('--bg-surface', theme)
+      const text = luminanceOver(tokenColour('--text-subtle', theme), panel)
+      expect(contrast(text, luminanceOver(panel, panel))).toBeGreaterThanOrEqual(4.5)
+    })
+  }
+
+  it('no inspector module paints text in --text-disabled outside a disabled or placeholder rule', () => {
+    // `--text-disabled` is ~2.7:1 on the panel: right for a control you
+    // cannot use, wrong for a caption, a unit, an empty state or a count.
+    const offenders: string[] = []
+    const modules = [
+      ...inspectorCssModules(),
+      {
+        file: 'ui/components/ControlRow/ControlRow.module.css',
+        source: readSource('ui/components/ControlRow/ControlRow.module.css').replace(/\/\*[\s\S]*?\*\//g, ''),
+      },
+    ]
+    for (const { file, source } of modules) {
+      for (const [, selector, body] of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        if (!/(?:^|[\s;])color:\s*var\(--text-disabled\)/.test(body)) continue
+        if (/disabled|placeholder/i.test(selector)) continue
+        offenders.push(`${file} -> ${selector.trim()}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+})
+
+describe('P2-H — inspector corners and tokens (UX-12, UX-13)', () => {
+  it('draws every corner from the radius scale — no literal px radius', () => {
+    const offenders: string[] = []
+    for (const { file, source } of inspectorCssModules()) {
+      for (const match of source.matchAll(/border(?:-[a-z]+)*-radius:\s*([^;]+);/g)) {
+        const value = match[1].trim()
+        if (value === '0' || value === '50%' || /^(?:var\(--[a-z0-9-]+\)\s*)+$/.test(value)) continue
+        offenders.push(`${file} -> ${match[0]}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('declares no inspector token nothing reads', () => {
+    // Penpot's accents and its muted section-label colour were carried over
+    // from the token-gap audit and never applied: Studio's section titles
+    // follow Figma (bright, bold), not Penpot (muted, uppercase).
+    for (const dead of ['--inspector-accent-dark', '--inspector-accent-light', '--inspector-section-label-color']) {
+      expect(GLOBALS_CSS).not.toContain(dead)
+    }
+  })
+
+  it('keeps the info tone as one tint token, defined for both themes', () => {
+    const { dark, light } = themeBlocks()
+    expect(dark).toMatch(/--info-10:\s*rgba\(/)
+    expect(light).toMatch(/--info-10:\s*rgba\(/)
+    for (const notice of ['SharedComponentNotice.module.css', 'SlotFillNotice.module.css']) {
+      const css = readSource(`${PANEL_DIR}/${notice}`)
+      expect(css).toContain('var(--info-10)')
+      expect(css).not.toContain('var(--info-text) 12%')
+    }
+  })
+})
+
+describe('P2-H — node notices sit on the panel gutter (UX-25)', () => {
+  it('mounts every node-level notice inside one inset band', () => {
+    const tsx = readSource(`${PANEL_DIR}/PropertiesPanelBody.tsx`)
+    const band = tsx.indexOf('className={styles.nodeNotices}')
+    const picker = tsx.indexOf('className={styles.headerClassPicker}')
+    expect(band).toBeGreaterThan(0)
+    for (const notice of ['<SharedComponentNotice', '<SlotFillNotice', '<SourceConstraintNotice', '<BranchChoiceNotice']) {
+      const at = tsx.indexOf(notice)
+      expect(at, `${notice} is outside the notice band`).toBeGreaterThan(band)
+      expect(at, `${notice} is outside the notice band`).toBeLessThan(picker)
+    }
+  })
+
+  it('insets the band to the ClassPicker gutter, and costs nothing when empty', () => {
+    const css = readSource(`${PANEL_DIR}/PropertiesPanel.module.css`)
+    expect(ruleBody(css, '.nodeNotices')).toContain('padding: var(--inspector-space-m) var(--inspector-pad-x) 0')
+    expect(ruleBody(css, '.nodeNotices:empty')).toContain('display: none')
+    expect(ruleBody(css, '.headerClassPicker')).toContain('var(--inspector-pad-x)')
   })
 })
