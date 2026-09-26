@@ -55,6 +55,22 @@ function fontsFilePath(dir: string): string {
 }
 
 /**
+ * Writes `text` unless the file already holds exactly that (perf-17). Every
+ * project open posts the token extraction, whose merge is a no-op once the
+ * framework is populated, and it rewrote `framework.json` every time anyway:
+ * a disk write, a new mtime for anything watching `.studio/`, for nothing.
+ */
+function writeSidecarIfChanged(file: string, text: string): void {
+  try {
+    if (readFileSync(file, 'utf8') === text) return
+  } catch (_err) {
+    // absent or unreadable: write it
+  }
+  mkdirSync(dirname(file), { recursive: true })
+  writeFileSync(file, text)
+}
+
+/**
  * Reads `<dir>/.studio/framework.json`, or `null` when it doesn't exist or
  * doesn't validate against `FrameworkSettingsSchema` — the caller's own
  * default (already built by `createDefaultSiteDocument`) stands in either
@@ -84,9 +100,7 @@ export function writeStudioFrameworkFile(
   if (!result.ok) {
     return { ok: false, message: result.errors.map((e) => `${e.path}: ${e.message}`).join('; ') }
   }
-  const file = frameworkFilePath(dir)
-  mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, JSON.stringify(result.value))
+  writeSidecarIfChanged(frameworkFilePath(dir), JSON.stringify(result.value))
   return { ok: true, value: result.value }
 }
 
@@ -121,8 +135,6 @@ export function writeStudioFontsFile(
   if (!result.ok) {
     return { ok: false, message: result.errors.map((e) => `${e.path}: ${e.message}`).join('; ') }
   }
-  const file = fontsFilePath(dir)
-  mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, JSON.stringify(result.value))
+  writeSidecarIfChanged(fontsFilePath(dir), JSON.stringify(result.value))
   return { ok: true, value: result.value }
 }

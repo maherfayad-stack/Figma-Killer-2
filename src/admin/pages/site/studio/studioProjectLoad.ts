@@ -104,7 +104,7 @@ export function getStudioPaletteHiddenModuleIds(): readonly string[] {
 export async function refreshExtractedTokens(): Promise<TokenExtractionStatus> {
   const dir = studioWriteDir()
   if (dir === null) throw new Error('[studioProjectLoad] refreshExtractedTokens called before a project loaded')
-  const { framework, status } = await fetchExtractedTokens(dir)
+  const { framework, status } = await fetchExtractedTokens(dir, { rescan: true })
   useEditorStore.getState().applyExtractedFrameworkTokens(framework)
   noteFrameworkSynced(framework)
   return status

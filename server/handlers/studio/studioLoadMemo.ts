@@ -69,6 +69,13 @@
  * and the full load that follows a canvas resync is a memo hit.
  *
  * One entry per loaded project, forgotten with it (`loadedProjects.ts`' LRU).
+ *
+ * ## One compute per project at a time
+ *
+ * A load that finds a compute of the same project already running waits for
+ * it, then checks the memo like any other load (perf-17). It does not take the
+ * running compute's result unchecked: that compute began earlier, and a change
+ * in between must still produce a fresh one.
  */
 import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -76,7 +83,7 @@ import { listWorkspaceFiles } from '@core/page-parser'
 import { canvasLayerRelPath } from '@core/studio-board'
 import { listCanvasLayerIds } from './canvasLayerFiles'
 import { digestOf, fileStamp, stampsUnchanged } from './loadDigest'
-import { onLoadedProjectEvicted, retainLoadedProject } from './loadedProjects'
+import { onLoadedProjectEvicted, retainLoadedProject, type LoadedProject } from './loadedProjects'
 import type { StudioLoadResult } from './studioLoadContract'
 
 /**
@@ -181,28 +188,61 @@ export interface StudioLoadComputation {
   routeListing: () => string
 }
 
-interface MemoEntry {
+/**
+ * Where a project's inputs stood when a compute began — rules 1 and 4 of this
+ * module's doc, shared with every other per-project cache that must go stale
+ * exactly when a load would (`tokenExtractMemo.ts`).
+ */
+export interface ProjectInputsMark {
   /** Change-feed position when the compute began. */
   cursor: number
   /** Present only when the feed could not vouch at compute time — the fallback. */
   fingerprint: string | null
   metaStamp: string
+}
+
+/** Mark `project`'s inputs now, before a compute reads them. The feed must have been settled first. */
+export function markProjectInputs(project: LoadedProject): ProjectInputsMark {
+  const cursor = project.changes.cursor()
+  const fingerprint = project.changes.changesSince(cursor) === null ? workspaceLoadFingerprint(project.key) : null
+  return { cursor, fingerprint, metaStamp: metaStamp(project.key) }
+}
+
+/**
+ * Whether nothing that can change a load has changed since `mark`: the
+ * watcher reported no {@link FINGERPRINTED_EXTENSIONS} file (or, when it cannot
+ * vouch, the whole-project fingerprint is unchanged) and `.studio/meta.json`
+ * is unchanged. The feed must have been settled first.
+ */
+export function projectInputsUnchanged(mark: ProjectInputsMark, project: LoadedProject): boolean {
+  const changedSince = project.changes.changesSince(mark.cursor)
+  if (changedSince === null) {
+    if (mark.fingerprint === null || workspaceLoadFingerprint(project.key) !== mark.fingerprint) return false
+  } else {
+    for (const rel of changedSince) if (FINGERPRINTED_EXTENSIONS.test(rel)) return false
+  }
+  return metaStamp(project.key) === mark.metaStamp
+}
+
+interface MemoEntry {
+  inputs: ProjectInputsMark
   routeListing: string
   dependencies: ReadonlyMap<string, string>
   result: StudioLoadResult
 }
 
 const memo = new Map<string, MemoEntry>()
+/**
+ * The compute running for a project right now, if any. Two loads of one
+ * project at once — React's dev double-mount, two tabs, the board's resync
+ * beside an agent's read — used to run two full computes of the same thing.
+ */
+const inFlight = new Map<string, Promise<ComputedStudioLoad>>()
 onLoadedProjectEvicted((key) => memo.delete(key))
 
-function isStillValid(entry: MemoEntry, dir: string, computation: StudioLoadComputation, changedSince: ReadonlySet<string> | null): boolean {
-  if (changedSince === null) {
-    if (entry.fingerprint === null || workspaceLoadFingerprint(dir) !== entry.fingerprint) return false
-  } else {
-    for (const rel of changedSince) if (FINGERPRINTED_EXTENSIONS.test(rel)) return false
-  }
+function isStillValid(entry: MemoEntry, project: LoadedProject, computation: StudioLoadComputation): boolean {
   return (
-    metaStamp(dir) === entry.metaStamp &&
+    projectInputsUnchanged(entry.inputs, project) &&
     stampsUnchanged(entry.dependencies) &&
     computation.routeListing() === entry.routeListing
   )
@@ -217,26 +257,45 @@ export async function memoizedStudioLoad(dir: string, computation: StudioLoadCom
   const key = resolve(dir)
   const { project, release } = retainLoadedProject(key)
   try {
-    await project.changes.settle()
-    const entry = memo.get(key)
-    if (entry && isStillValid(entry, key, computation, project.changes.changesSince(entry.cursor))) return entry.result
+    // A load of this project already computing is WAITED FOR, then judged by
+    // the same rules as any memo entry — never handed over as-is. It began
+    // before this call, so a change since then must still force a compute of
+    // our own; the loop re-checks after every wait for that reason.
+    for (;;) {
+      await project.changes.settle()
+      const entry = memo.get(key)
+      if (entry && isStillValid(entry, project, computation)) return entry.result
+      const running = inFlight.get(key)
+      if (!running) break
+      await running.then(ignoreOutcome, ignoreOutcome)
+    }
 
-    const cursor = project.changes.cursor()
-    const fingerprint = project.changes.changesSince(cursor) === null ? workspaceLoadFingerprint(key) : null
-    const stamp = metaStamp(key)
+    // Synchronous from the check above to `inFlight.set`, so a second caller
+    // cannot also find nothing running and start a second compute.
+    const inputs = markProjectInputs(project)
     const routeListing = computation.routeListing()
-    const { result, dependencies } = await computation.compute()
-    if (dependencies) memo.set(key, { cursor, fingerprint, metaStamp: stamp, routeListing, dependencies, result })
-    else memo.delete(key)
-    return result
+    const run = computation.compute()
+    inFlight.set(key, run)
+    try {
+      const { result, dependencies } = await run
+      if (dependencies) memo.set(key, { inputs, routeListing, dependencies, result })
+      else memo.delete(key)
+      return result
+    } finally {
+      if (inFlight.get(key) === run) inFlight.delete(key)
+    }
   } finally {
     release()
   }
 }
 
+/** A waiter only needs the compute to be over; its own outcome is decided by the memo check that follows. */
+function ignoreOutcome(): void {}
+
 /** Test-only: drop every memoized load so a test does not leak state into the next one. */
 export function clearStudioLoadMemo(): void {
   memo.clear()
+  inFlight.clear()
 }
 
 /** Test/diagnostic only: whether `dir` has a memoized load at all (valid or not). */

@@ -79,17 +79,20 @@ export function subscribeStudioTokenExtractionStatus(listener: () => void): () =
 
 /**
  * Runs (or re-runs) server-side token extraction for `dir` and records the
- * result in the status store above. Does NOT touch the live editor document
+ * result in the status store above. The server answers from its memo while
+ * nothing the extraction reads has changed; `rescan` makes it extract anyway
+ * (the person asked for it). Does NOT touch the live editor document
  * — `loadSite` has none yet to apply it to, and `studioProjectLoad
  * .refreshExtractedTokens` (the "Re-scan tokens" action, which DOES have a
  * live document) applies the returned `framework` itself.
  */
 export async function fetchExtractedTokens(
   dir: string,
+  options: { rescan?: boolean } = {},
 ): Promise<{ framework: FrameworkSettings; status: TokenExtractionStatus }> {
   const { framework, source, counts, warnings } = await apiRequest('/admin/api/studio/tokens', {
     method: 'POST',
-    body: { dir },
+    body: { dir, ...(options.rescan ? { rescan: true } : {}) },
     schema: StudioTokensPostResponseSchema,
   })
   const status: TokenExtractionStatus = { source, counts, warnings }
