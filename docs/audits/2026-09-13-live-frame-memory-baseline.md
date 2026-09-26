@@ -1,5 +1,5 @@
 # Live-frame memory baseline — L8 Phase B (`perf-06`)
-> **Trust:** historical, dated 2026-09-13. Paths may be wrong. Never act on it.
+> **Trust:** the 2026-09-13 placeholder below is historical — paths may be wrong, never act on it. The **2026-09-26 section at the end is current**: the first measured baseline (P6-C).
 
 **Status: BLOCKED, placeholder only. No number in this document has been
 measured.** This file exists so the blocker and the exact steps to clear it
@@ -75,3 +75,54 @@ live board with no flash" exit criterion still needs a human to drive it.
   any of the above — it needs only a stubbed `postMessage` channel, and
   already has a real, passing measurement:
   `src/__tests__/canvas/frameAdapter/bridgeApplyOverlayGlueLatency.test.ts`.
+
+## 2026-09-26 — the first measured baseline (P6-C)
+
+> **Trust:** current as of 2026-09-26 (`perf/remaining-budgets`). Measured, not
+> estimated. Re-run `tests/e2e/live-frame-budgets.e2e.ts` to reproduce.
+
+The blocker above is gone for a reason it did not anticipate: the e2e suite can
+now boot a real Tier-2 board by itself. `tests/e2e/helpers/liveAnimatedFixture.ts`
+copies `vite` and `@vitejs/plugin-react` out of this checkout's own install
+into the fixture's `node_modules` (copies, because `resolveProjectPackageBin`
+refuses a bin that resolves outside the project), and everything they import
+resolves upward into the checkout. So these are real cross-origin bridge
+frames against a real spawned Vite, reporting `ready` — not the fallback.
+
+**Method.** `live-frame-budgets.e2e.ts`, case "memory per live frame": a
+ten-frame board (one animated screen, nine plain 25-row screens), zoomed out
+until all ten are on screen and all ten report `ready`; then zoomed in on one
+frame so the live pool (`framePool.ts`, `max(onScreen, 8)`) evicts two. Both
+states are read after two forced GCs through the PAGE's CDP session
+(`Performance.getMetrics`). The live origin is `localhost:<port>` and the
+editor `127.0.0.1:<port>`, but Chromium puts them in one renderer process here
+(Playwright reports the live frame as part of the page's session), so the
+page's JS heap and DOM counters include the live documents. That makes this a
+per-process number, not a per-iframe-isolated one — the caveat step 4 above
+asked to state.
+
+| | 10 live frames | 8 live frames | per evicted frame |
+|---|---|---|---|
+| JS heap used | 56.5 / 55.7 MB | 54.8 / 54.0 MB | **0.83 / 0.86 MB** |
+| Documents | 12 | 10 | **1.00** |
+| DOM nodes | 3,010 / 3,007 | 2,787 / 2,781 | **~112** |
+| Detached documents (Documents − Frames) | — | 1 | — |
+
+Two runs, both listed. A plain 25-row screen is small; the heap per frame is
+the live document's own React app plus Studio's runtime, and it will grow
+with the page. The one "detached" document is constant across every run and
+every board size measured (also 1 on the 40-frame portal corpus after 20 pan
+cycles and 50 edits, `canvas-edit-budgets.e2e.ts`), so it is not a leak.
+
+**Machine.** Intel Core i5-14400F (16 logical cores), 32 GB, Windows 11 Pro,
+headless Chromium from Playwright, GPU rasterization per Chromium's defaults —
+under the usual load of several agents' test runs, taken under the shared
+heavy-run lock. Treat the absolute numbers as this box's, the per-frame deltas
+as the portable part.
+
+**What it decided.** Eight live frames cost well under 10 MB of heap here, so
+`LIVE_FRAME_POOL_SIZE` is not memory-bound at this page size. P6-C did NOT
+raise it: the pool change that shipped instead is that a Tier-2 board whose
+dev server is not ready uses the portal budget (its frames ARE portal
+fallbacks until then), which is what lets those frames be rasterized into
+posters. See `framePool.ts`.

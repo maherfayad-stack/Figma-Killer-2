@@ -9,7 +9,8 @@
  * See useCanvas.ts for the RAF-batched write pattern.
  */
 
-import { lazy, Suspense, type Ref } from 'react'
+import { Suspense, type Ref } from 'react'
+import { StudioBoardLayers } from './studioBoardLayersChunk'
 import { DEFAULT_BREAKPOINTS, type Page, type Breakpoint } from '@core/page-tree'
 import type { TemplateRenderDataContext } from '@core/templates/dynamicBindings'
 import { useEditorStore } from '@site/store/store'
@@ -19,14 +20,9 @@ import { CanvasFrameSkeletonFrame } from '@admin/shared/CanvasFrameSkeleton'
 import type { InjectableRuntimeScript } from './useRuntimeScriptBuild'
 import styles from './CanvasTransformLayer.module.css'
 
-// Studio-only board overlay layers (frames, sticky notes, doc blocks, snap
-// guides) — see StudioBoardLayers.tsx. All four self-gate to `null` outside
-// an active board, so this lazy boundary only changes WHEN the chunk is
-// fetched, not what renders: `activeBoard` is always `null` in the default
-// (non-Studio) CMS editor.
-const StudioBoardLayers = lazy(() =>
-  import('./StudioBoardLayers').then((m) => ({ default: m.StudioBoardLayers })),
-)
+// The board layers (frames, sticky notes, doc blocks, snap guides) are their
+// own chunk, preloaded together with the editor body — see
+// `studioBoardLayersChunk.ts`.
 
 interface CanvasTransformLayerProps {
   page: Page | null

@@ -88,7 +88,7 @@ The Vite plugin stamps the **same id the parser mints** (`src/__tests__/studio-r
 - **State a component derives from a fetch or a timer resets on HMR.** `hmrState.ts` restores form values, checked state, scroll, focus and open dialogs by node id, and nothing else.
 - **An optimistic class edit previews on the edited node only.** Other elements that share the class update on the next HMR.
 - **Package components still go through `componentBundle.ts` on Tier-2 boards**, although the dev server already serves them; removing that branch is ROADMAP §13 (LIVE-CANVAS L9).
-- **The Tier-2 budgets are partly unmeasured.** Warm reopen to first live paint, save to HMR, and memory per live frame have no committed baseline (`docs/audits/2026-09-13-live-frame-memory-baseline.md` is a placeholder).
+- **The Tier-2 budgets are partly unmeasured.** Warm reopen to first live paint and save to HMR have no committed baseline. Memory per live frame does (P6-C, `docs/audits/2026-09-13-live-frame-memory-baseline.md`'s 2026-09-26 section: ~0.85 MB of heap, one document and ~110 DOM nodes per small live frame), and so does a JavaScript-animated live frame: `tests/e2e/live-frame-budgets.e2e.ts` boots a real Tier-2 board (its fixture copies this checkout's Vite into the project) and asserts the fit is not re-derived every frame.
 
 ## Related
 

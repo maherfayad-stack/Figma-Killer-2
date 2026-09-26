@@ -135,7 +135,7 @@ Accurate, and much of it load-bearing for Studio under a CMS-shaped name (see [`
 | [`audits/2026-09-23-studio-audit/`](audits/2026-09-23-studio-audit/README.md) | The ten audits behind `ROADMAP.md`; every bundle's finding IDs resolve here | historical |
 | [`audits/2026-08-06/`](audits/2026-08-06/) | The twelve audits behind the finished parity plan | historical |
 | [`audits/penpot-inspector-baseline/`](audits/penpot-inspector-baseline/README.md) | Measured Penpot inspector geometry; `measurement.test.ts` and the inspector source cite it as evidence | historical |
-| [`audits/2026-09-13-live-frame-memory-baseline.md`](audits/2026-09-13-live-frame-memory-baseline.md) | A placeholder for the live-frame memory baseline, not yet measured | historical |
+| [`audits/2026-09-13-live-frame-memory-baseline.md`](audits/2026-09-13-live-frame-memory-baseline.md) | The live-frame memory baseline: a 2026-09-13 placeholder, then the first measured numbers (2026-09-26, P6-C) | current (last section) |
 | [`assets/`](assets/) | Images the pages above reference | — |
 
 ## Related

@@ -3,12 +3,19 @@
  * `BoardFrameView`'s render fork (the other half stays today's unmodified
  * portal `BreakpointFrame`, for Tier 0/1).
  *
- * Mounts BOTH subtrees at once — a Tier-0 fallback (a cached poster, or a
- * plain portal `BreakpointFrame` over the SAME page tree the store already
- * holds — the static parse is trust-tier-independent) and the real bridge
- * iframe — so the bridge's cold boot runs CONCURRENTLY with showing the
- * fallback instead of paying that cost serially after the fallback is
- * already on screen. Swaps to the bridge iframe the instant its adapter
+ * Mounts BOTH subtrees at once — a Tier-0 fallback (a plain portal
+ * `BreakpointFrame` over the SAME page tree the store already holds — the
+ * static parse is trust-tier-independent) and the real bridge iframe — so the
+ * bridge's cold boot runs CONCURRENTLY with showing the fallback instead of
+ * paying that cost serially after the fallback is already on screen.
+ *
+ * The fallback is always the real, clickable frame. A cached poster is only
+ * painted OVER it until its node tree has committed — the same overlay a
+ * Tier 0/1 frame gets in `BoardFrameView` — and never INSTEAD of it. It used
+ * to replace it: a frame whose poster had been captured came back as a
+ * picture with nothing under it, so on a board whose dev server was booting,
+ * failed, or could not start at all, a frame the user had panned away from
+ * and back to could no longer be selected (P6-C). Swaps to the bridge iframe the instant its adapter
  * fires `ready` (`live-05`'s own signal, already built and tested on both
  * `PortalFrameAdapter` and `BridgeFrameAdapter` — no new "ready" concept
  * needed here).
@@ -73,6 +80,9 @@ export function LiveBoardFrame({
 
   const [adapter, setAdapter] = useState<FrameDocumentAdapter | null>(null)
   const ready = useAdapterReady(adapter)
+  // The fallback's node tree has committed (`IframeFrameSurface`'s stage 3);
+  // until then its poster, if one is cached, stays painted over it.
+  const [fallbackContentReady, setFallbackContentReady] = useState(false)
 
   // Z5 — a crash inside this cross-origin frame is posted over the bridge as
   // an `error` message and reaches nothing unless somebody records it. The
@@ -132,19 +142,19 @@ export function LiveBoardFrame({
   return (
     <>
       {!ready && (
-        posterUrl ? (
-          <FramePosterPlaceholder title={page.title} posterUrl={posterUrl} />
-        ) : (
-          <BreakpointFrame
-            page={page}
-            breakpoint={breakpoint}
-            isActive={isActive}
-            onActivate={onActivate}
-            frameId={frameId}
-            axesOverride={axesOverride}
-            showBreakpointChrome={false}
-          />
-        )
+        <BreakpointFrame
+          page={page}
+          breakpoint={breakpoint}
+          isActive={isActive}
+          onActivate={onActivate}
+          frameId={frameId}
+          axesOverride={axesOverride}
+          showBreakpointChrome={false}
+          onContentReadyChange={setFallbackContentReady}
+        />
+      )}
+      {!ready && !fallbackContentReady && (
+        <FramePosterPlaceholder title={page.title} posterUrl={posterUrl} overlay />
       )}
       <div hidden={!ready} data-testid="live-board-frame-bridge">
         <BreakpointFrame

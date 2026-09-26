@@ -70,7 +70,6 @@ import { cmsAdapter } from '@core/persistence/cms'
 import { SiteValidationError } from '@core/persistence/validate'
 import {
   readAutoSavePreference,
-  readEditorSelectPreference,
   subscribeToEditorPrefsChanged,
 } from '@site/preferences/editorPreferences'
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
@@ -83,7 +82,13 @@ import {
   type PersistenceSaveStatus,
 } from './persistenceStatus'
 import { noteBoardRead } from '@site/studio/sourceIdentity'
-import { applySitePagesPatch, applyStructuralWriteOutcome } from './siteReloadApply'
+import {
+  applyDefaultBreakpointPreference,
+  applySitePagesPatch,
+  applyStructuralWriteOutcome,
+  STUDIO_LOAD_COMPLETE_MARK,
+  streamedOpenProgress,
+} from './siteReloadApply'
 import { registerEditorSave } from './editorSaveRef'
 import { nextAutoSaveDelayMs, resolveAutoSaveDelayMs } from './autosaveSchedule'
 
@@ -128,20 +133,6 @@ function siteMissesEditorDataDeepLink(site: SiteDocument): boolean {
     return !site.pages.some((page) => page.id === deepLink.rowId)
   }
   return !site.visualComponents.some((component) => component.id === deepLink.rowId)
-}
-
-/**
- * Apply the user's `defaultBreakpoint` preference if the loaded site declares
- * a matching breakpoint id. Falls back silently when the preference points to
- * a breakpoint the current site doesn't have (e.g. user previously edited a
- * site with a custom 'wide' breakpoint, then opened a site without it).
- */
-function applyDefaultBreakpointPreference(
-  breakpoints: ReadonlyArray<{ id: string }>,
-): void {
-  const preferredId = readEditorSelectPreference('defaultBreakpoint')
-  if (!breakpoints.some((bp) => bp.id === preferredId)) return
-  useEditorStore.getState().setActiveBreakpoint(preferredId)
 }
 
 /**
@@ -312,6 +303,8 @@ export function usePersistence(
     }
 
     let cancelled = false
+    // Superseding a load (unmount, React's dev double-mount) stops its request too.
+    const controller = new AbortController()
 
     async function load() {
       // Read actions point-in-time — no React subscription needed
@@ -343,6 +336,9 @@ export function usePersistence(
       const covers = latestCmsSiteReloadRequest()
 
       if (idToTry) {
+        // P6-B — a first open paints each page as it arrives; a re-read of a
+        // document already on screen replaces it whole, as before.
+        const streamed = existingSite ? null : streamedOpenProgress(() => !cancelled, () => { loadedRef.current = true })
         try {
           // The adapter validates internally (validateSite + validatePages).
           // Constraint #230 is satisfied at the adapter boundary.
@@ -352,7 +348,7 @@ export function usePersistence(
           const site = await retryWhileUnreachable(
             () => {
               if (cancelled) throw new DOMException('Load superseded', 'AbortError')
-              return adapterRef.current.loadSite(idToTry)
+              return adapterRef.current.loadSite(idToTry, { signal: controller.signal, progress: streamed?.progress })
             },
             {
               backoffMs: LOAD_RETRY_BACKOFF_MS,
@@ -363,16 +359,22 @@ export function usePersistence(
           )
           if (site && !cancelled) {
             if (pendingCmsSiteReload) consumePendingCmsSiteReload()
-            loadSite(site)
-            noteBoardRead(site.pages, 'reset') // P1-A — who every source position names, as just read
+            if (streamed?.opened()) {
+              useEditorStore.getState().finishStreamedLoad(site.pages.map((page) => page.id))
+            } else {
+              loadSite(site)
+              noteBoardRead(site.pages, 'reset') // P1-A — who every source position names, as just read
+              applyDefaultBreakpointPreference(site.breakpoints)
+            }
             settleReloadRequests(covers)
-            applyDefaultBreakpointPreference(site.breakpoints)
             loadedRef.current = true
             setBoardStale(false)
             setSaveStatus(loadedSaveStatus())
+            performance.mark(STUDIO_LOAD_COMPLETE_MARK)
             return
           }
         } catch (err) {
+          if (streamed?.opened() && !cancelled) useEditorStore.getState().abandonStreamedLoad()
           if (cancelled || isAbortError(err)) return
           if (err instanceof SiteValidationError) {
             console.warn('[persistence] Corrupt CMS site data:', err.message)
@@ -425,7 +427,10 @@ export function usePersistence(
     }
 
     load()
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
   }, [enabled, markNewSiteUnsaved, requestedSiteId, loadAttempt])
 
   // ERR-18 — the Retry button: the whole load again, from a clean "loading".

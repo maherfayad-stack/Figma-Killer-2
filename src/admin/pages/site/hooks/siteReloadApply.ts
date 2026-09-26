@@ -13,6 +13,8 @@ import { useEditorStore } from '@site/store/store'
 import type { PendingStructuralOutcome } from '@site/studio/pendingStructuralOutcome'
 import type { CmsSitePagesPatchDetail } from '@admin/state/adminEvents'
 import { noteBoardRead } from '@site/studio/sourceIdentity'
+import { readEditorSelectPreference } from '@site/preferences/editorPreferences'
+import type { SiteLoadProgress } from '@core/persistence/types'
 
 /**
  * `store-13`/`store-14` — apply what a structural source write means, now that
@@ -60,4 +62,61 @@ export function applySitePagesPatch(detail: CmsSitePagesPatchDetail): void {
   // outcome is applied: a gesture queued behind this write re-finds its ids from it.
   noteBoardRead(detail.pages, 'merge')
   applyStructuralWriteOutcome(detail.structuralOutcome)
+}
+
+/**
+ * Apply the user's `defaultBreakpoint` preference if the loaded site declares
+ * a matching breakpoint id. Falls back silently when the preference points to
+ * a breakpoint the current site doesn't have (e.g. user previously edited a
+ * site with a custom 'wide' breakpoint, then opened a site without it).
+ */
+export function applyDefaultBreakpointPreference(breakpoints: ReadonlyArray<{ id: string }>): void {
+  const preferredId = readEditorSelectPreference('defaultBreakpoint')
+  if (!breakpoints.some((bp) => bp.id === preferredId)) return
+  useEditorStore.getState().setActiveBreakpoint(preferredId)
+}
+
+/** A streamed first open, as `usePersistence` drives it: the progress to hand the adapter, and whether it has opened. */
+export interface StreamedOpen {
+  progress: SiteLoadProgress
+  opened(): boolean
+}
+
+/**
+ * P6-B — the first open of a project, handed to the store as its pages arrive
+ * (`streamedLoadSlice.ts`): the document with its first pages, then each later
+ * batch. `live()` turns false once the load that owns this has been superseded
+ * (an unmount, a newer load), after which nothing more reaches the store.
+ * `onOpen` runs once the document is in the store — from then on it is the
+ * document the editor edits and saves, while the rest is still arriving.
+ */
+/**
+ * Performance-timeline marks for a project opening (P6-B): the document reaching
+ * the store, and its last page arriving. `tests/e2e/studio-board-load.e2e.ts`
+ * reads them; a person can too, in the Performance panel.
+ */
+export const STUDIO_LOAD_OPEN_MARK = 'studio:load:open'
+export const STUDIO_LOAD_COMPLETE_MARK = 'studio:load:complete'
+
+export function streamedOpenProgress(live: () => boolean, onOpen: () => void): StreamedOpen {
+  let opened = false
+  return {
+    opened: () => opened,
+    progress: {
+      open(site, pending) {
+        if (!live()) return
+        opened = true
+        useEditorStore.getState().openStreamedLoad(site, pending)
+        noteBoardRead(site.pages, 'reset') // P1-A — who every source position names, as just read
+        applyDefaultBreakpointPreference(site.breakpoints)
+        onOpen()
+        performance.mark(STUDIO_LOAD_OPEN_MARK, { detail: { pages: site.pages.length, pending: pending.length } })
+      },
+      pages(pages) {
+        if (!live()) return
+        useEditorStore.getState().receiveStreamedPages(pages)
+        noteBoardRead(pages, 'merge')
+      },
+    },
+  }
 }

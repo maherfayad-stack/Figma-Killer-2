@@ -224,7 +224,7 @@ jobs:
   e2e-budgets:
     name: Browser budgets (canvas + inspector)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -263,7 +263,7 @@ jobs:
       - name: Run the budget specs
         run: |
           specs=""
-          for spec in tests/e2e/studio-board-perf.e2e.ts tests/e2e/canvas-feel-budgets.e2e.ts tests/e2e/inspector-panel-measurement.e2e.ts tests/e2e/inspector-height.e2e.ts tests/e2e/studio-feel.e2e.ts; do
+          for spec in tests/e2e/studio-board-perf.e2e.ts tests/e2e/studio-board-load.e2e.ts tests/e2e/canvas-feel-budgets.e2e.ts tests/e2e/canvas-edit-budgets.e2e.ts tests/e2e/live-frame-budgets.e2e.ts tests/e2e/inspector-panel-measurement.e2e.ts tests/e2e/inspector-height.e2e.ts tests/e2e/studio-feel.e2e.ts; do
             if [ -f "$spec" ]; then
               specs="$specs $spec"
             else
@@ -276,6 +276,18 @@ jobs:
           fi
           echo "running:$specs"
           bunx playwright test $specs
+
+      # The budgets whose TARGET is stated for a production build (WS-5.6's
+      # selection -> ring < 32 ms, WS-5.5's first frame interactive < 2 s
+      # warm), against the production bundle: `E2E_VITE_MODE=preview` makes
+      # `scripts/e2e-dev.ts` run `vite build` and serve it with `vite
+      # preview` (`scripts/lib/e2eStack.ts`). Development React renders
+      # several times slower, so the step above can only ratchet these; this
+      # one holds them to the product's own numbers. Only the tests tagged
+      # `@production-bundle` run here — each reads the mode and asserts the
+      # production budget.
+      - name: Run the production-bundle budgets
+        run: E2E_VITE_MODE=preview bunx playwright test tests/e2e/canvas-feel-budgets.e2e.ts tests/e2e/canvas-edit-budgets.e2e.ts tests/e2e/studio-board-perf.e2e.ts --grep @production-bundle
 
       # ONE upload, not two. There used to be an `if: failure()` step and an
       # `if: always()` step that both uploaded an artifact called

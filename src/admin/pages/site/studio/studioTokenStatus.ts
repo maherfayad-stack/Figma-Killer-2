@@ -8,11 +8,10 @@
  * already self-contained concern (a response schema, a tiny external store,
  * and the fetch that refreshes it), not a change of ownership. `loadSite`
  * calls `fetchExtractedTokens` directly (it has no live document yet to
- * apply the result to); `fsCodemodAdapter.refreshExtractedTokens` — the
+ * apply the result to); `studioProjectLoad.refreshExtractedTokens` — the
  * Framework panel's "Re-scan tokens" action — wraps it and additionally
  * pushes the result into the live store, which is why that thin wrapper
- * stays in `fsCodemodAdapter.ts` (it needs `loadedDir`/`lastSyncedFrameworkJson`,
- * both private module state there).
+ * lives with the load (it needs the loaded dir and the sidecar baseline).
  */
 import { apiRequest } from '@core/http'
 import { FrameworkSettingsSchema, type FrameworkSettings } from '@core/framework-schema'
@@ -81,7 +80,7 @@ export function subscribeStudioTokenExtractionStatus(listener: () => void): () =
 /**
  * Runs (or re-runs) server-side token extraction for `dir` and records the
  * result in the status store above. Does NOT touch the live editor document
- * — `loadSite` has none yet to apply it to, and `fsCodemodAdapter
+ * — `loadSite` has none yet to apply it to, and `studioProjectLoad
  * .refreshExtractedTokens` (the "Re-scan tokens" action, which DOES have a
  * live document) applies the returned `framework` itself.
  */

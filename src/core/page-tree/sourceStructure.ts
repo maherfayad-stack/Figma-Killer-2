@@ -27,7 +27,10 @@
  *
  *   - **`list-row`** — a `.map` row (`…:70:21#2`). One piece of source JSX
  *     renders every row; there is no position an edit to row 2 could occupy
- *     that would not rewrite all of them.
+ *     that would not rewrite all of them. (OD-8: a row ROOT's reorder, delete
+ *     and duplicate are written to the array it maps over instead — the store
+ *     asks `listRowPlans.ts` first, so what reaches this rule is a gesture the
+ *     array cannot express, or a list whose array is not written here.)
  *   - **`shared-component`** — an inlined id (`callSite~component:l:c`). The
  *     markup lives in the component's own file, so moving it here moves it for
  *     every instance on the board.
@@ -84,6 +87,7 @@ import {
   isRouteChromeNodeId,
   isSourceDerivedNodeId,
 } from './sourceNodeId'
+import { listRowRefusalMessage, type ListRowSource } from './listRowSource'
 
 /** The structural gestures the editor offers. One refusal vocabulary for all of them. */
 export type StructuralEditKind =
@@ -136,10 +140,12 @@ export interface StructuralRefusal {
   message: string
 }
 
-/** The only two fields these rules read — structural, so a `BaseNode` can be asked the question too. */
+/** The fields these rules read — structural, so a `BaseNode` can be asked the question too. */
 export interface SourceStructureNode {
   id: string
   lockReason?: string
+  /** OD-8 — a `.map` row root's array stamp, which is what its refusal sentence names (`listRowSource.ts`). */
+  listRow?: ListRowSource
 }
 
 /** Human label for the gesture, used in every refusal sentence. */
@@ -316,10 +322,11 @@ export function refuseStructuralEdit(input: {
  */
 export function refusePlacement(node: SourceStructureNode, gesture: string): StructuralRefusal | null {
   if (!hasWritableSourceLocation(node.id)) {
-    return {
-      reason: 'list-row',
-      message: `${gesture} a row of a list that the code generates. One piece of source JSX renders every row, so there is no way to change just this one — edit the array it maps over.`,
-    }
+    // OD-8 — a row root whose array is editable is written THROUGH it by the
+    // store (`listRowPlans.ts`) before this is asked; what reaches here is a
+    // gesture the array cannot express, a node inside a row, or a list whose
+    // array is not written here — each told apart in the sentence.
+    return { reason: 'list-row', message: listRowRefusalMessage(node, gesture, false) }
   }
   if (isInlinedNodeId(node.id) && !isSoleInstanceNodeId(node.id)) {
     return {

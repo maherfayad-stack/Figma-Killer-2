@@ -21,14 +21,14 @@ import { useInsertModule } from './useInsertModule'
  * new node as a last child, leaf targets get a sibling-after insertion).
  */
 export function useInsertInserterItem() {
-  const canvasPage = useEditorStore(selectActiveCanvasPage)
-  const insertComponentRef = useEditorStore((s) => s.insertComponentRef)
-  const selectedNodeId = useEditorStore((s) => s.selectedNodeId)
   const insertModule = useInsertModule()
 
-  const insertLayoutAction = useEditorStore((s) => s.insertLayout)
-
+  // The page and the selection are read when an item is inserted, not
+  // subscribed — see `useInsertModule` for why (P6-C).
   const insertVC = (vcId: string, explicitTarget?: InsertLocation): boolean => {
+    const state = useEditorStore.getState()
+    const canvasPage = selectActiveCanvasPage(state)
+    const { selectedNodeId, insertComponentRef } = state
     if (!canvasPage) return false
     // Same target → location resolution as every other insert flow: explicit
     // selection acts as the target, no selection drops at root, leaf targets
@@ -49,7 +49,7 @@ export function useInsertInserterItem() {
       item.kind === 'module'
         ? Boolean(insertModule(item.module, target))
         : item.kind === 'savedLayout'
-          ? Boolean(insertLayoutAction(item.id, target))
+          ? Boolean(useEditorStore.getState().insertLayout(item.id, target))
           : item.kind === 'component'
             ? insertVC(item.id, target)
             : false
