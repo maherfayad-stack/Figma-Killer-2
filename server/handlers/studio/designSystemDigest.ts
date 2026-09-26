@@ -42,8 +42,9 @@
  * so this is disposable, regenerable-on-demand output, never committed.
  */
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync, type Dirent } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { readdirSync, statSync, type Dirent } from 'node:fs'
+import { join } from 'node:path'
+import { readStudioStoreText, statStudioStoreFile, writeStudioStoreFile } from './studioStore'
 import { BUILTIN_DESIGN_SYSTEM_DIR } from './builtinDesignSystem'
 import { readTextCapped } from './cappedFileRead'
 import {
@@ -55,8 +56,6 @@ import {
   toPx,
 } from './tokenExtractCssScan'
 import type { DesignSystemRef } from './projectProfileSchema'
-
-const CACHE_DIR_SEGMENTS = ['.studio', 'cache'] as const
 
 // ---------------------------------------------------------------------------
 // CSS discovery — a bounded directory walk, NOT `listWorkspaceFiles`
@@ -392,8 +391,9 @@ export function buildDesignSystemDigest(
 // same convention `styleCompile.ts` uses for `styles-<hash>.{css,json}`.
 // ---------------------------------------------------------------------------
 
-function cacheFilePath(dir: string, cacheKey: string): string {
-  return join(dir, ...CACHE_DIR_SEGMENTS, `design-system-${cacheKey}.md`)
+/** The cache entry as a `.studio` store path (`studioStore.ts`). */
+function cacheFileRel(cacheKey: string): string {
+  return `cache/design-system-${cacheKey}.md`
 }
 
 /**
@@ -432,14 +432,14 @@ export function computeDesignSystemCacheKey(
 }
 
 function readDigestCache(dir: string, cacheKey: string): string | undefined {
-  return readTextCapped(cacheFilePath(dir, cacheKey), 1_000_000)
+  const stat = statStudioStoreFile(dir, cacheFileRel(cacheKey))
+  if (stat === null || stat.size > 1_000_000) return undefined
+  return readStudioStoreText(dir, cacheFileRel(cacheKey)) ?? undefined
 }
 
 function writeDigestCache(dir: string, cacheKey: string, content: string): void {
-  const file = cacheFilePath(dir, cacheKey)
   try {
-    mkdirSync(dirname(file), { recursive: true })
-    writeFileSync(file, content)
+    writeStudioStoreFile(dir, cacheFileRel(cacheKey), content)
   } catch (err) {
     console.error('[studio:designSystemDigest] failed to write cache', err)
   }
@@ -470,11 +470,11 @@ export function getOrBuildDesignSystemDigest(
   return built
 }
 
-/** Test seam only — lets `designSystemDigest.test.ts` assert cache-file existence without depending on `existsSync` import order in the module under test. */
+/** Test seam only — lets `designSystemDigest.test.ts` assert cache-file existence through the same store read the digest itself uses. */
 export function designSystemCacheFileExists(
   dir: string,
   designSystems: readonly DesignSystemRef[],
   builtinDir: string = BUILTIN_DESIGN_SYSTEM_DIR,
 ): boolean {
-  return existsSync(cacheFilePath(dir, computeDesignSystemCacheKey(dir, designSystems, builtinDir)))
+  return statStudioStoreFile(dir, cacheFileRel(computeDesignSystemCacheKey(dir, designSystems, builtinDir))) !== null
 }

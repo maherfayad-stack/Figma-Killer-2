@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createBoard, createBoardsFile, upsertBoard, upsertFrame } from '@core/studio-board'
-import { writeBoardsFile } from '../../../../handlers/studio/boardFrames'
+import { writeBoardsFile } from '../../../../handlers/studio/boardGeometry'
 import { archetypesFor } from '../../../../handlers/studio/compositionAudit'
 import { resolveArchetypeSurface, studioVariantMcpTools } from './variantTools'
 

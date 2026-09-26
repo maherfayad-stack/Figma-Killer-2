@@ -20,7 +20,7 @@
  * working and the writeback path still has one front door.
  */
 import { join } from 'node:path'
-import { INLINE_ID_SEPARATOR, realWorkspaceRel, unwritableWorkspaceSegment } from '@core/page-parser'
+import { INLINE_ID_SEPARATOR, isUnlinkedWorkspacePath, realWorkspaceRel, unwritableWorkspaceSegment } from '@core/page-parser'
 import { isInlinedNodeId, isRouteChromeNodeId } from '@core/page-tree'
 import { CANVAS_LAYER_REL_PATTERN } from '@core/studio-board'
 import { cssCreateImportTarget } from './studioCssWriteback'
@@ -140,6 +140,7 @@ export function studioEditLocation(
  */
 export function canonicalSourceRel(dir: string, rel: string, scope: SourceTargetScope = NO_AUTHORED_TARGETS): string | null {
   if (!isWritableSourceRel(rel, scope)) return null
+  if (!isStudioOwnedTargetUnlinked(dir, rel)) return null
 
   // `realWorkspaceRel` (`@core/page-parser`'s shared write scope) resolves
   // symlinks and junctions through the deepest ancestor that exists, so a
@@ -151,6 +152,23 @@ export function canonicalSourceRel(dir: string, rel: string, scope: SourceTarget
   // that really lands in `.studio/` comes back as a `.studio/…` rel, and the
   // directory check refuses it.
   return canonical !== null && isWritableSourceRel(canonical, scope) ? canonical : null
+}
+
+/**
+ * A target inside a directory Studio owns — only ever one of
+ * {@link STUDIO_AUTHORED_SOURCE_PATTERNS}' files, the free canvas's
+ * `.studio/canvas/<id>.tsx` (P5-G) — is Studio's own record, so the `.studio`
+ * store rule applies to it (`studioStore.ts`), not the user-source rule: no
+ * link ANYWHERE on the way, whether it leads out of the project or back in.
+ * The user-source rule would judge `.studio/canvas -> ../pages` by where it
+ * lands, a writable page, and turn a scratch layer's edit into a page write;
+ * a cloned repository can ship exactly that link. Every other target is the
+ * user's own source, which may be reached through a link that stays inside
+ * the project, so this answers `true` for it without looking.
+ */
+export function isStudioOwnedTargetUnlinked(dir: string, rel: string): boolean {
+  if (unwritableWorkspaceSegment(rel) === null) return true
+  return isUnlinkedWorkspacePath(dir, join(dir, ...rel.split(/[/\\]+/)))
 }
 
 /** Files a writeback may touch. Never a `.env`, a lockfile, or anything else that isn't app source. */

@@ -280,9 +280,9 @@
  * `studioProjects.ts`, `studioFramework.ts`, `studioDownload.ts`, and
  * `studioGithubImport.ts`.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join, relative, sep } from 'node:path'
-import { createBoardsFile, parseBoardsFile, serializeBoardsFile, type BoardsFile } from '@core/studio-board'
+import { relative, sep } from 'node:path'
+import { parseBoardsFile, type BoardsFile } from '@core/studio-board'
+import { readBoardsFile, writeBoardsFile } from './studio/boardGeometry'
 import { badRequest, jsonResponse, ndjsonResponse, readValidatedBody, internalServerError } from '../http'
 import {
   mergeProjectFrameDefaults,
@@ -555,8 +555,7 @@ export async function tryServeStudio(
   if (pathname === '/admin/api/studio/boards' && req.method === 'GET') {
     try {
       const dir = resolveProjectDir(url.searchParams.get('dir'))
-      const file = join(dir, '.studio', 'boards.json')
-      const boards = existsSync(file) ? parseBoardsFile(readFileSync(file, 'utf8')) : createBoardsFile()
+      const boards = readBoardsFile(dir)
       return jsonResponse({ dir, boards })
     } catch (err) {
       return studioRouteFailure(err)
@@ -574,11 +573,9 @@ export async function tryServeStudio(
       const body = await readValidatedBody(req, BoardsPostBodySchema)
       if (!body) return badRequest('invalid boards body')
       const dir = resolveProjectDir(body.dir)
-      const file = join(dir, '.studio', 'boards.json')
       // Re-parse the incoming payload so we only ever write a valid, normalized file.
       const boards: BoardsFile = parseBoardsFile(body.boards)
-      mkdirSync(dirname(file), { recursive: true })
-      writeFileSync(file, serializeBoardsFile(boards))
+      writeBoardsFile(dir, boards)
       return jsonResponse({ ok: true, boards })
     } catch (err) {
       return studioRouteFailure(err)

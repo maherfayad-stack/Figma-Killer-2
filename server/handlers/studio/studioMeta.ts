@@ -36,8 +36,8 @@
  * keeps the graph one-directional, the same way `@core/framework-schema` works
  * for persisted framework settings.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, isAbsolute, join } from 'node:path'
+import { readStudioStoreText, studioStorePath, writeStudioStoreJson } from './studioStore'
+import { isAbsolute } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { parseJsonWithFallback } from '@core/utils/jsonValidate'
 import { ProjectProfileSchema } from './projectProfileSchema'
@@ -444,9 +444,12 @@ export const StudioMetaSchema = Type.Object({
 })
 export type StudioMeta = Static<typeof StudioMetaSchema>
 
-/** `<dir>/.studio/meta.json` — exported so a cache keyed on what it reads (the preview shell's input stamp) names the same file. */
+/** The store path of this record (`.studio/meta.json`), for the one door `studioStore.ts`. */
+export const STUDIO_META_FILE = 'meta.json'
+
+/** `<dir>/.studio/meta.json` as a path — for a cache keyed on what it reads (the preview shell's input stamp) to NAME the same file; reading it is `readStudioMeta`'s job. */
 export function studioMetaFile(dir: string): string {
-  return join(dir, '.studio', 'meta.json')
+  return studioStorePath(dir, STUDIO_META_FILE)
 }
 
 /**
@@ -461,15 +464,14 @@ export function isSafePagesDirOverride(value: string): boolean {
 }
 
 /**
- * Reads `.studio/meta.json`, tolerantly. Absent file → `{}`. Unparsable JSON
+ * Reads `.studio/meta.json`, tolerantly. Absent file, or one reached through a link (`studioStore.ts`) → `{}`. Unparsable JSON
  * or a shape `StudioMetaSchema` rejects outright → `{}` (soft fallback, never
  * throws — see module doc). An otherwise-valid file whose `pagesDir` fails
  * the containment guard has just that field stripped, not the whole object.
  */
 export function readStudioMeta(dir: string): StudioMeta {
-  const file = studioMetaFile(dir)
-  if (!existsSync(file)) return {}
-  const raw = readFileSync(file, 'utf8')
+  const raw = readStudioStoreText(dir, STUDIO_META_FILE)
+  if (raw === null) return {}
 
   // `parseJsonWithFallback` is all-or-nothing: one bad field fails the whole
   // object. That is the right default for user intent, but `profile` is not
@@ -534,9 +536,7 @@ function rawWithoutProfile(raw: string): string {
 
 /** Writes `.studio/meta.json` verbatim, creating the `.studio/` sidecar dir if needed. Callers that must not clobber sibling fields use `mergeStudioMeta` instead. */
 export function writeStudioMeta(dir: string, meta: StudioMeta): void {
-  const file = studioMetaFile(dir)
-  mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, JSON.stringify(meta, null, 2))
+  writeStudioStoreJson(dir, STUDIO_META_FILE, meta, { pretty: true })
 }
 
 /**

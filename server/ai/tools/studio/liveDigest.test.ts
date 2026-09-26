@@ -183,22 +183,18 @@ describe('buildStudioLiveDigest — capabilities', () => {
     expect(digest.capabilities.figma.loopbackAssetFetchBlocked).toBe(false)
   })
 
-  it('figma + typecheck: both degrade to "unknown" rather than throwing when .studio/meta.json cannot be read as a file', () => {
-    // `readStudioMeta` has no try/catch of its own around this read — making
-    // the path a DIRECTORY forces a real EISDIR throw, which both
-    // `listRegisteredMcpServers` (figma probe) and the typecheck probe call
-    // directly and must catch. Exercised through `buildStudioCapabilityDigest`
-    // directly (not the full `buildStudioLiveDigest` pipeline): the pipeline
-    // resolves the project's pages directory through this SAME
-    // `readStudioMeta(dir)` first (`loadStudioPages` -> `projectPagesDir`),
-    // so a fixture broken this way never reaches the capability probes under
-    // the full pipeline at all — that earlier, pre-existing gap is not this
-    // task's to fix, and is unrelated to whether these two probes themselves
-    // degrade honestly.
+  it('figma + typecheck: a .studio/meta.json that is not a file reads as no meta at all, never a throw', () => {
+    // It used to be a real EISDIR throw out of `readStudioMeta`, which both
+    // probes had to catch. The `.studio` store door (`studioStore.ts`) now
+    // answers "absent" for anything at a store name that is not a plain file
+    // — a directory, or a link a cloned repository planted — so both probes
+    // see exactly what a project with no meta shows them. Exercised through
+    // `buildStudioCapabilityDigest` directly, as before.
+    const baseline = buildStudioCapabilityDigest(dir)
     mkdirSync(join(dir, '.studio', 'meta.json'), { recursive: true })
     const capabilities = buildStudioCapabilityDigest(dir)
-    expect(capabilities.figma).toEqual({ status: 'unknown', loopbackAssetFetchBlocked: false })
-    expect(capabilities.typecheck).toEqual({ available: false, reason: 'unknown' })
+    expect(capabilities.figma).toEqual(baseline.figma)
+    expect(capabilities.typecheck).toEqual(baseline.typecheck)
   })
 
   it('typecheck: unavailable with reason "trust-tier" on a project explicitly demoted to static', async () => {

@@ -44,7 +44,7 @@ import { studioAgentUserKey } from '../../../../handlers/studio/agentUserScope'
 import { getVariantSet, listVariantSets, recordVariantSet } from '../../../../handlers/studio/variantStore'
 import type { ArchetypeSurface } from '../../../../handlers/studio/compositionAudit'
 import { readStudioMeta } from '../../../../handlers/studio/studioMeta'
-import { readBoardsFile } from '../../../../handlers/studio/boardFrames'
+import { readBoardsFile } from '../../../../handlers/studio/boardGeometry'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 
 /** Below this frame width a board is a phone/tablet app, not a web page. */

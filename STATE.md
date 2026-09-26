@@ -46,6 +46,25 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Landmines:** two different entries are both `perf-10` (#195 and #196); cite them by title. `04f92846` commits Studio's generated prototype shell into `__board-perf-fixture` and edits `test4`: owner to decide whether to revert it.
 - **Next:** once #217 merges, close #192, #195 and #198–#210 as included.
 
+### sec-25 — Studio's own records never follow a link: one `.studio` door, a link-free clone, an atomic writeback
+- **Agent:** security-guard · **Branch:** `fix/studio-stores-never-follow-links` (off trunk `69397b64`) · **Updated:** 2026-09-25
+- **Stage:** done, draft PR #277 against `feat/canvas-excellence`; a separate security re-review follows. Long form (threat | fix | test table, the full checklist) is the PR body.
+- **Goal:** close three "Found, not fixed" items: `.studio` stores read/written with plain fs and no link check; a clone keeps the repo's own `.studio/` (links included); the page/CSS writeback is not atomic. Plus: P5-G's `.studio/canvas/*.tsx` must follow the same rule.
+- **Done:**
+  - `server/handlers/studio/studioStore.ts` — the ONE door to `.studio/`. Refuses a link anywhere from `.studio` down (read = absent, write = `StudioStoreLinkError`), validates reads (TypeBox, or the store's own `@core` parser), writes via `writeFileAtomic`. Every store moved onto it: meta, boards (one owner now, `boardGeometry.ts`; three duplicate readers deleted), comments, prototype, shares + snapshots, framework, fonts, variables, references, variants, install job, thumbnail, agent turn log, turn-write log, page verification, design-system and shell manifests, the component-bundle, style and design-system-digest caches. Gate: `studio-store-single-door.test.ts` (no `.studio` literal outside the door + 6 named exceptions).
+  - `gitClone.ts` — **replace, not refuse**: `stripStudioStoreLinks` removes a linked `.studio` and every link inside a real one (as links, nothing followed), before the first record is written; plain files kept so a Studio project round-trips its board.
+  - `writeFileAtomic` moved to `@core/page-parser`; the disk-backed `EolPreservingFileSystem` (every codemod `saveSync`) and CSS writeback now write through it. `studioWriteback.ts` itself untouched (689 lines, budget intact); P4-F's checkpoint-before-write order unchanged (that path is `agentWriteSupport.ts`, not modified).
+  - `studioEditRouting.canonicalSourceRel` — `isStudioOwnedTargetUnlinked`: a Studio-owned target (P5-G's layer module) must be link-free, not merely "lands somewhere writable".
+  - **Coordinator add-on (review of #269):** `studio_apply_edits` now runs inside `runAgentSourceEdits` (`agentWriteSupport.ts`). Every write the edit engine makes goes through `@core/page-parser`'s `writeSourceFile`, and an agent batch's hook puts it through the agent write gate, `currentText`, `checkContent` (no added `@plugin`/`@config`) and the checkpoint pre-image BEFORE it lands; the turn log follows. A refused write is a per-edit `needs-user`/`protected-path` refusal.
+- **Exploits closed (repo-shipped links):** `.studio/thumbnail.png -> ~/.ssh/id_rsa` served by the thumbnail route; `.studio/boards.json -> ~/.bashrc` overwritten by a board drag; `.studio -> dir` with `meta.json {trust:'run-project'}` read as the project's trust tier; `.studio/shares/<token> -> dir` served by the PUBLIC share route (old guard checked the file against the folder's own real path).
+- **Tests (each proved failing with its fix disabled in place):** `studioStoreLinks.test.ts` (6/12 fail without the check), `shareStore.test.ts` share-folder link, `studioWritebackAtomic.test.ts` (3/3, inode + CRLF), `studioOwnedTargetLinks.test.ts` (2/4), `gitRemote.test.ts` linked-`.studio` clone, `editToolsAgentGate.test.ts` (2/2: `@plugin` is `needs-user` and never lands; the turn log records the batch's writes).
+- **Landmines:**
+  - **P5-G merge (PR #260):** its `canonicalSourceRel(dir, rel, scope)` must keep the `isStudioOwnedTargetUnlinked` call, and `canvasLayerFiles.ts` should move onto `studioStore.ts` (or join the gate's exception list with a reason) — the gate fails on its `.studio` path otherwise. Both PRs edit `studioEditRouting.ts`.
+  - A linked store now makes the write route answer the generic 500 (nothing echoed); the message names the fix, only the log shows it.
+- **Review nits (APPROVE-WITH-NITS) fixed:** a clone now drops `shares.json`/`shares/`; the door refuses hard links and bounds reads (32 MiB); the gate scans template parts, backslashes, `src/core` and polices `studioStorePath` + core `.studio` names; agent-gate test covers text/prop/svg-attr/list-item/restore/canvas-layer.
+- **Found, not fixed:** `git pull` can bring a new `.studio/meta.json` (links are refused, contents are not); `translationWrite.ts`/`extractStringsToDictionary.ts` still write non-atomically; `studio_codemod` still bypasses the agent write steps (no gate, turn log or checkpoint).
+- **Next:** security re-review; orchestrator reconciles with #260.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*

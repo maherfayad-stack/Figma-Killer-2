@@ -41,8 +41,10 @@
  * `moduleClassMaps`, which a `.css` file alone cannot carry).
  */
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { basename, dirname, isAbsolute, join, relative } from 'node:path'
+import { existsSync, statSync } from 'node:fs'
+import { basename, isAbsolute, join, relative } from 'node:path'
+import { Type } from '@core/utils/typeboxHelpers'
+import { readStudioStoreJson, writeStudioStoreFile, writeStudioStoreJson } from './studioStore'
 import { isDesignSystemPath, listWorkspaceFiles } from '@core/page-parser'
 import { splitLines } from '@core/utils/lineEndings'
 import { joinAppRoot } from './appRoot'
@@ -126,8 +128,6 @@ export function splitCompiledStyleChunks(concatenated: string): StyleChunk[] {
   flush()
   return chunks
 }
-
-const CACHE_DIR_SEGMENTS = ['.studio', 'cache'] as const
 
 // ---------------------------------------------------------------------------
 // CSS Modules — Tier 0, our own code, executes nothing (§2.2 of the plan)
@@ -376,9 +376,9 @@ function collectVendorCss(appRootAbs: string, specifiers: ReadonlySet<string>, w
 // Cache — content-hash keyed, `.studio/cache/styles-<hash>.{css,json}`
 // ---------------------------------------------------------------------------
 
-function cacheFilePaths(dir: string, cacheKey: string): { css: string; json: string } {
-  const cacheDir = join(dir, ...CACHE_DIR_SEGMENTS)
-  return { css: join(cacheDir, `styles-${cacheKey}.css`), json: join(cacheDir, `styles-${cacheKey}.json`) }
+/** The cache entry as `.studio` store paths (`studioStore.ts`). */
+function cacheFileRels(cacheKey: string): { css: string; json: string } {
+  return { css: `cache/styles-${cacheKey}.css`, json: `cache/styles-${cacheKey}.json` }
 }
 
 /**
@@ -429,35 +429,24 @@ function computeStyleCacheKey(dir: string, profile: ProjectProfile, trust: Trust
   return hash.digest('hex').slice(0, 16)
 }
 
+const StyleCacheEntrySchema = Type.Object({
+  css: Type.String(),
+  moduleClassMaps: Type.Record(Type.String(), Type.Record(Type.String(), Type.String())),
+  // Older cache entries (written before WS-2.3) have no `vendorCss` key —
+  // read as empty rather than invalidating every existing cache file.
+  vendorCss: Type.Optional(Type.String()),
+})
+
 function readStyleCache(dir: string, cacheKey: string): CompiledStyles | undefined {
-  const { json } = cacheFilePaths(dir, cacheKey)
-  if (!existsSync(json)) return undefined
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(json, 'utf8'))
-    if (!parsed || typeof parsed !== 'object') return undefined
-    const css = (parsed as Record<string, unknown>).css
-    const moduleClassMaps = (parsed as Record<string, unknown>).moduleClassMaps
-    const vendorCss = (parsed as Record<string, unknown>).vendorCss
-    if (typeof css !== 'string' || !moduleClassMaps || typeof moduleClassMaps !== 'object') return undefined
-    // Older cache entries (written before WS-2.3) have no `vendorCss` key —
-    // treat as empty rather than invalidating every existing cache file.
-    if (vendorCss !== undefined && typeof vendorCss !== 'string') return undefined
-    return {
-      css,
-      moduleClassMaps: moduleClassMaps as Record<string, Record<string, string>>,
-      vendorCss: typeof vendorCss === 'string' ? vendorCss : '',
-    }
-  } catch {
-    return undefined
-  }
+  const entry = readStudioStoreJson(dir, cacheFileRels(cacheKey).json, StyleCacheEntrySchema, undefined)
+  return entry && { css: entry.css, moduleClassMaps: entry.moduleClassMaps, vendorCss: entry.vendorCss ?? '' }
 }
 
 function writeStyleCache(dir: string, cacheKey: string, styles: CompiledStyles): void {
-  const { css, json } = cacheFilePaths(dir, cacheKey)
+  const rels = cacheFileRels(cacheKey)
   try {
-    mkdirSync(dirname(css), { recursive: true })
-    writeFileSync(css, styles.css)
-    writeFileSync(json, JSON.stringify(styles))
+    writeStudioStoreFile(dir, rels.css, styles.css)
+    writeStudioStoreJson(dir, rels.json, styles)
   } catch (err) {
     console.error('[studio:styleCompile] failed to write style cache', err)
   }

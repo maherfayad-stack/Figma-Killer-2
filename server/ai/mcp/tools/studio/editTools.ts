@@ -41,14 +41,16 @@ import {
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import {
-  applyStudioEditBatchLocked,
+  applyStudioEditBatch,
   StudioEditSchema,
   studioEditLocation,
   type StudioEdit,
 } from '../../../../handlers/studioWriteback'
 import { pushStudioLiveReload } from './liveReloadPush'
 import { touchedFilesToPageIds } from './touchedPageIds'
-import { readBoardsFile, writeBoardsFile } from '../../../../handlers/studio/boardFrames'
+import { readBoardsFile, writeBoardsFile } from '../../../../handlers/studio/boardGeometry'
+import { withProjectWriteLock } from '../../../../handlers/studio/projectWriteLock'
+import { runAgentSourceEdits } from './agentWriteSupport'
 
 const DirField = Type.Optional(
   Type.String({ description: 'Absolute project directory. Defaults to the project currently open in Studio — omit it unless you deliberately mean a DIFFERENT project than the one this conversation is about.' }),
@@ -103,7 +105,12 @@ const applyEditsTool: AiTool = {
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, edits, expect } = input as { dir?: string; edits: StudioEdit[]; expect?: SourceFingerprintExpectations }
     const dir = resolveToolProjectDir(dirInput, ctx)
-    const { touchedFiles, ...result } = await applyStudioEditBatchLocked(dir, edits, expect ?? {})
+    // Every file the engine writes goes through the agent write gate, the
+    // content check and the turn checkpoint BEFORE it lands, and into the
+    // turn log after (`runAgentSourceEdits`) — the same steps as the file tools.
+    const { touchedFiles, ...result } = await withProjectWriteLock(dir, () =>
+      runAgentSourceEdits(dir, ctx, () => applyStudioEditBatch(dir, edits, expect ?? {})),
+    )
     const pageIds = touchedFilesToPageIds(dir, touchedFiles)
     // Best-effort — a failed/absent bridge never affects this tool's own result.
     pushStudioLiveReload(ctx.userId, { dir, pageIds })
