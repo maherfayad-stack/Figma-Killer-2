@@ -1,8 +1,8 @@
 import { defineConfig, type Plugin } from 'vite'
-import react, { reactCompilerPreset } from '@vitejs/plugin-react'
-import babel from '@rolldown/plugin-babel'
+import react from '@vitejs/plugin-react'
 import path from 'path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { reactCompiler } from './scripts/vite/reactCompilerPlugin'
 
 const CMS_DEV_SERVER_ORIGIN = `http://localhost:${process.env.PORT ?? '3001'}`
 const FILE_EXTENSION_RE = /\.[a-zA-Z0-9]+$/
@@ -136,7 +136,9 @@ function vendorChunkName(moduleId: string): string | null {
   return null
 }
 
-// React Compiler — enabled in `infer` mode (the preset default).
+// React Compiler — enabled in `infer` mode (the compiler's default), run on
+// its own Babel 7 by `scripts/vite/reactCompilerPlugin.ts` (under the root
+// Babel 8 it silently skipped every function with a destructured default).
 //
 // `infer` only compiles functions that look like components or hooks
 // (`UpperCamelCase` names returning JSX, or `useFoo` hooks). Plain helpers —
@@ -168,7 +170,7 @@ export default defineConfig({
   plugins: [
     publicSiteDevProxyPlugin(),
     react(),
-    babel({ presets: [reactCompilerPreset()] }),
+    reactCompiler(),
   ],
   resolve: {
     alias: {
