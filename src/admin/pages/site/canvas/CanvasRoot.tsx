@@ -85,8 +85,7 @@ const VisualComponentModeControl = lazy(() =>
   import('./VisualComponentModeControl').then((module) => ({ default: module.default })),
 )
 
-// P5-E — mounted only while a draw tool is armed, so it loads on first arming
-// rather than with the editor body.
+// P5-E / P5-D — mounted only while a draw tool or the pen is armed (loaded on first arming).
 const CanvasArmedToolLayer = lazy(() =>
   import('./CanvasArmedToolLayer').then((m) => ({ default: m.CanvasArmedToolLayer })),
 )

@@ -253,7 +253,12 @@ test.describe('SVG-9 — vector edit mode and the pen, measured', () => {
     const [mid] = await pathPointsOnScreen(frame, ICON_SVG, [{ x: 12, y: 4 }], facts.zoom)
     await page.mouse.dblclick(mid!.x, mid!.y)
     await expect.poll(() => saves.length, { timeout: 10_000 }).toBe(1)
-    await expect.poll(() => /<path d="([^"]+)"/.exec(readPage())?.[1], { timeout: 10_000 }).toBe('M4 4 h8 h8v16H4z')
+    // Split where the pointer landed (mouse coordinates are whole pixels): two
+    // `h` segments summing to the original 16, the rest byte-for-byte.
+    await expect.poll(() => /<path d="([^"]+)"/.exec(readPage())?.[1], { timeout: 10_000 }).toMatch(/^M4 4 h[\d.]+ h[\d.]+v16H4z$/)
+    const split = /^M4 4 h([\d.]+) h([\d.]+)v16H4z$/.exec(/<path d="([^"]+)"/.exec(readPage())![1]!)!
+    expect(Number(split[1]) + Number(split[2])).toBeCloseTo(16, 6)
+    expect(Math.abs(Number(split[1]) - 8)).toBeLessThanOrEqual(0.5)
     await expect.poll(async () => (await overlayAnchors(page)).overlay.length, { timeout: 10_000 }).toBe(5)
 
     // The new point is selected; Delete joins its neighbours again.
