@@ -11,6 +11,10 @@
  * which meant the only way to reach fit-to-screen or zoom-to-selection was to
  * already know `⇧1` / `⇧2`.
  *
+ * It is also the VIEW menu for the two snap toggles (P5-F, IX-5e): "Snap to
+ * objects" and "Snap to ruler guides", checked while on. A toggle a user can
+ * only flip from the keyboard is a toggle they cannot see the state of.
+ *
  * Live mode: the single real-size frame always renders at 100%, so the
  * controls show 100% and are disabled with the reason in their tooltip —
  * never an interactive control that silently does nothing. (Wheel/keyboard
@@ -80,6 +84,8 @@ const ZOOM_PRESETS = [0.5, 1, 2] as const
 const FIT_BINDING = getKeybindingForCommand('canvas.zoomToFit')
 const RESET_BINDING = getKeybindingForCommand('canvas.zoomReset')
 const SELECTION_BINDING = getKeybindingForCommand('canvas.zoomToSelection')
+const SNAP_OBJECTS_BINDING = getKeybindingForCommand('canvas.toggleSnapToObjects')
+const SNAP_GUIDES_BINDING = getKeybindingForCommand('canvas.toggleSnapToGuides')
 
 export function ZoomControls() {
   // Subscribe only to zoom + view — no re-render when other canvas state changes
@@ -92,6 +98,9 @@ export function ZoomControls() {
   // A boolean, not the selection array — this must not re-render the toolbar
   // on every selection change, only when "is anything selected" flips.
   const hasSelection = useEditorStore((s) => s.selectedNodeIds.length > 0)
+  const snapToObjects = useEditorStore((s) => s.snapPreferences.objects)
+  const snapToGuides = useEditorStore((s) => s.snapPreferences.guides)
+  const toggleSnapPreference = useEditorStore((s) => s.toggleSnapPreference)
 
   const [menuOpen, setMenuOpen] = useState(false)
   const pctRef = useRef<HTMLButtonElement>(null)
@@ -226,6 +235,29 @@ export function ZoomControls() {
             }}
           >
             Zoom to selection
+          </ContextMenuItem>
+
+          <ContextMenuSeparator />
+
+          {/* P5-F / IX-5e. Checkbox items: the menu stays open so both can be
+              flipped in one visit, and the check is the state. */}
+          <ContextMenuItem
+            role="menuitemcheckbox"
+            selected={snapToObjects}
+            shortcut={SNAP_OBJECTS_BINDING ? formatShortcut(SNAP_OBJECTS_BINDING.shortcut) : undefined}
+            onClick={() => toggleSnapPreference('objects')}
+            data-testid="toolbar-snap-objects"
+          >
+            Snap to objects
+          </ContextMenuItem>
+          <ContextMenuItem
+            role="menuitemcheckbox"
+            selected={snapToGuides}
+            shortcut={SNAP_GUIDES_BINDING ? formatShortcut(SNAP_GUIDES_BINDING.shortcut) : undefined}
+            onClick={() => toggleSnapPreference('guides')}
+            data-testid="toolbar-snap-guides"
+          >
+            Snap to ruler guides
           </ContextMenuItem>
         </ContextMenu>
       )}

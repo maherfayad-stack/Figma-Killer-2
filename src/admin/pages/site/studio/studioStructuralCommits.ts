@@ -433,9 +433,9 @@ export async function commitStudioInsert(insert: {
   designSystemImport?: true
   props: Record<string, InsertPropValue>
   /**
-   * Literal text written as the element's only child (`<p>Heading</p>`), or
-   * child ELEMENTS (P5-D: a drawn `<svg>`'s `<path>`) — `InsertEditSchema`
-   * already takes both; the server validates every nested tag.
+   * The element's content: literal text (`<p>Heading</p>`), or a nested
+   * subtree written in the SAME splice (`InsertEditSchema.children`) — P5-A's
+   * pasted SVG, P5-D's drawn `<svg><path/></svg>`.
    */
   children?: string | readonly SlotJsxNode[]
   /**

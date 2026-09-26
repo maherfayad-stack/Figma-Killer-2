@@ -103,7 +103,18 @@ import {
 const MAX_NODES = 256
 const MAX_DEPTH = 12
 
-export type SvgToJsxResult = { ok: true; node: SlotJsxNode } | { ok: false; message: string }
+/**
+ * Why a conversion refused. `too-large` is the one a caller may route around —
+ * the SVG is fine, only too big to inline as source (P5-A: a pasted one lands
+ * as an `<img>` file instead). `refused` is everything else — malformed,
+ * unsafe, or a remote reference — and must stay a refusal: the same bytes
+ * are not made acceptable by writing them somewhere else.
+ */
+export type SvgToJsxRefusalReason = 'too-large' | 'refused'
+
+export type SvgToJsxResult =
+  | { ok: true; node: SlotJsxNode }
+  | { ok: false; reason: SvgToJsxRefusalReason; message: string }
 
 /** Attributes whose value is a whitespace-separated list of element ids, with no `#`. */
 const ID_LIST_ATTRIBUTES: ReadonlySet<string> = new Set(['aria-labelledby', 'aria-describedby'])
@@ -194,6 +205,12 @@ function extractStylesheet(root: Element): { ok: true; rules: ClassRule[] } | { 
 
 interface ConversionContext {
   nodes: number
+  /**
+   * Set when an element sat deeper than {@link MAX_DEPTH}. It used to be
+   * dropped without a word — the icon was written with a part missing — and
+   * a conversion must either write what the file drew or say why not.
+   */
+  tooDeep?: true
   /** The first reason this SVG cannot be written, set by whichever element found it. */
   refusal?: string
   /** Stylesheet rules, in source order — the tiebreak between two matching rules. */
@@ -217,7 +234,11 @@ function remoteReferenceRefusal(where: string, value: string): string {
 
 
 function convertElement(element: Element, depth: number, context: ConversionContext): SlotJsxNode | undefined {
-  if (depth > MAX_DEPTH || context.nodes >= MAX_NODES) return undefined
+  if (depth > MAX_DEPTH) {
+    context.tooDeep = true
+    return undefined
+  }
+  if (context.nodes >= MAX_NODES) return undefined
   context.nodes += 1
 
   const classNames = (element.getAttribute('class') ?? '').split(/\s+/).filter(Boolean)
@@ -295,7 +316,7 @@ function convertElement(element: Element, depth: number, context: ConversionCont
  */
 export function convertSanitizedSvg(root: Element): SvgToJsxResult {
   const stylesheet = extractStylesheet(root)
-  if (!stylesheet.ok) return stylesheet
+  if (!stylesheet.ok) return { ok: false, reason: 'refused', message: stylesheet.message }
 
   const context: ConversionContext = {
     nodes: 0,
@@ -304,11 +325,18 @@ export function convertSanitizedSvg(root: Element): SvgToJsxResult {
     ids: buildIdMapping(root),
   }
   const node = convertElement(root, 1, context)
-  if (context.refusal) return { ok: false, message: context.refusal }
-  if (!node) return { ok: false, message: 'That SVG is too deeply nested to write into source.' }
+  if (context.refusal) return { ok: false, reason: 'refused', message: context.refusal }
+  if (!node || context.tooDeep) {
+    return {
+      ok: false,
+      reason: 'too-large',
+      message: `That SVG nests deeper than ${MAX_DEPTH} levels — too deep to inline into your source as an icon.`,
+    }
+  }
   if (context.nodes >= MAX_NODES) {
     return {
       ok: false,
+      reason: 'too-large',
       message: `That SVG has more than ${MAX_NODES} elements — too large to inline into your source as an icon.`,
     }
   }
@@ -322,17 +350,17 @@ export function convertSanitizedSvg(root: Element): SvgToJsxResult {
 export function svgToJsxNode(markup: string): SvgToJsxResult {
   const safe = sanitizeSvg(markup)
   if (!safe.trim()) {
-    return { ok: false, message: 'That file has no SVG content Studio can safely use.' }
+    return { ok: false, reason: 'refused', message: 'That file has no SVG content Studio can safely use.' }
   }
 
   const doc = new DOMParser().parseFromString(safe, 'image/svg+xml')
   if (doc.getElementsByTagName('parsererror').length > 0) {
-    return { ok: false, message: 'That SVG could not be parsed — it is not well-formed XML.' }
+    return { ok: false, reason: 'refused', message: 'That SVG could not be parsed — it is not well-formed XML.' }
   }
 
   const root = doc.documentElement
   if (!root || root.tagName.toLowerCase() !== 'svg') {
-    return { ok: false, message: 'That file does not start with an <svg> element.' }
+    return { ok: false, reason: 'refused', message: 'That file does not start with an <svg> element.' }
   }
   return convertSanitizedSvg(root)
 }

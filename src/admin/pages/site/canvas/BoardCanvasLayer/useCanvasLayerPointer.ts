@@ -26,8 +26,12 @@
  * the surface and its ring on the board by writing the SAME custom properties
  * React renders (`--studio-layer-x/y`, `--ring-x/y`), so when the store commits
  * on release React writes the value that is already on screen and nothing
- * flashes. The only store write mid-gesture is the snap guides, which no-op
- * while the guide list is unchanged (`setBoardSnapGuides`).
+ * flashes. The only store write mid-gesture is the snap guides and spacing
+ * pills, which no-op while unchanged (`setBoardSnapGuides`).
+ *
+ * The snap is the one every board object asks (`snapBoardFurniture`, P5-F):
+ * frames, notes, docs and the other loose layers as peers, the ruler guides,
+ * equal spacing and the user's snap toggles.
  *
  * While a drag is live the surface is lifted above the frames
  * (`data-studio-lifted`), so the layer stays visible while it is aimed at one
@@ -45,8 +49,9 @@ import { canvasLayerPageId, layerPaintOrder, boardLayers } from '@core/studio-bo
 import { lookupCanvasPageById, useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSelectors'
 import { canvasLayerRootNodeId } from '@site/store/slices/canvasLayerGestures'
-import { computeSnap, snapThresholdAtZoom, type SnapRect } from '@core/studio-runtime'
-import { collectPeerRects } from '../boardSnapping'
+import type { Board } from '@core/studio-board'
+import type { SnapRect } from '@core/studio-runtime'
+import { snapBoardFurniture } from '../boardSnapping'
 import { measureBoardDropSurfaces } from '../canvasDragBoard'
 import { paintCanvasDrag } from '../canvasDragPainter'
 import type { ClientPoint } from '../canvasDragSession'
@@ -70,7 +75,10 @@ interface LayerDragSession {
   /** Where each one is now — what a release commits. */
   current: Map<string, { x: number; y: number }>
   primary: CanvasLayerRect
-  peers: SnapRect[]
+  /** The board at the press — frames, notes, docs and the ruler guides snap against it. */
+  board: Board | null
+  /** The OTHER loose layers' measured rects — peers the board does not store. */
+  otherLayers: SnapRect[]
   /** Frame-drop state — a single dragged layer only; several at once only move. */
   drop: CanvasLayerDropState | null
   target: CanvasLayerFrameTarget | null
@@ -172,11 +180,14 @@ export function useCanvasLayerPointer({
       const zoom = transform.zoom > 0 ? transform.zoom : 1
       const dx = (drag.point.x - drag.origin.x) / zoom
       const dy = (drag.point.y - drag.origin.y) / zoom
-      const snapped = computeSnap(
-        { x: drag.primary.x + dx, y: drag.primary.y + dy, width: drag.primary.width, height: drag.primary.height },
-        drag.peers,
-        snapThresholdAtZoom(zoom),
-      )
+      const snapped = snapBoardFurniture({
+        board: drag.board,
+        dragged: { kind: 'layer', id: drag.primary.id },
+        rect: { x: drag.primary.x + dx, y: drag.primary.y + dy, width: drag.primary.width, height: drag.primary.height },
+        preferences: useEditorStore.getState().snapPreferences,
+        zoom,
+        extraPeers: drag.otherLayers,
+      })
       const ox = snapped.x - (drag.primary.x + dx)
       const oy = snapped.y - (drag.primary.y + dy)
 
@@ -203,7 +214,8 @@ export function useCanvasLayerPointer({
         drag.current.set(id, { x: Math.round(start.x + dx + ox), y: Math.round(start.y + dy + oy) })
       }
       writePositions(drag.current)
-      useEditorStore.getState().setBoardSnapGuides(resolution?.layer ? [] : snapped.guides)
+      if (resolution?.layer) useEditorStore.getState().setBoardSnapGuides([])
+      else useEditorStore.getState().setBoardSnapGuides(snapped.guides, snapped.spacings)
       if (drag.paintedLayer && drag.paintedLayer !== resolution?.layer) paintCanvasDrag(drag.paintedLayer, null)
       drag.paintedLayer = resolution?.layer ?? null
       if (resolution?.layer) paintCanvasDrag(resolution.layer, resolution.paint)
@@ -252,7 +264,8 @@ export function useCanvasLayerPointer({
         starts,
         current: new Map(starts),
         primary: hit,
-        peers: [...(board ? collectPeerRects(board, { kind: 'layer', id: hit.id }) : []), ...others],
+        board,
+        otherLayers: others,
         drop: null,
         target: null,
         paintedLayer: null,

@@ -74,17 +74,6 @@
     overflow: hidden;
 }
 
-/* ── Nothing-selected column — the frame's own size strip above the empty
-   state. A flex column that fills the tab so `EmptyState variant="centered"`
-   still centres in whatever room is left below the strip. */
-.emptySelection {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-}
-
 /* ── Node inspector container — holds ClassPicker + StyleSurface (no overflow) */
 .nodeArea {
     flex: 1;

@@ -36,3 +36,44 @@
     width: var(--guide-length);
     height: 1px;
 }
+
+/* P5-F / IX-5d — an equal gap between two pieces of furniture: a hairline
+   from `--spacing-from` for `--spacing-length` board units, at
+   `--spacing-at` on the other axis, with a pill centred on it. */
+.spacing {
+    position: absolute;
+    background: var(--canvas-measure-line-color);
+    pointer-events: none;
+}
+
+.spacing[data-axis='x'] {
+    left: var(--spacing-from);
+    top: var(--spacing-at);
+    width: var(--spacing-length);
+    height: 1px;
+}
+
+.spacing[data-axis='y'] {
+    top: var(--spacing-from);
+    left: var(--spacing-at);
+    width: 1px;
+    height: var(--spacing-length);
+}
+
+/* Centred on the segment and counter-scaled, so the number is one physical
+   size at every zoom (the `CommentPin` pattern). */
+.spacingPill {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(calc(1 / var(--canvas-zoom)));
+    padding: var(--space-px) var(--space-2xs);
+    border-radius: var(--radius-sm);
+    background: var(--canvas-measure-pill-bg);
+    color: var(--canvas-measure-pill-text);
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    font-weight: 600;
+    line-height: 1.4;
+    white-space: nowrap;
+}

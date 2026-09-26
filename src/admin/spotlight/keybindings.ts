@@ -54,7 +54,10 @@
  *   ⇧0         | reset zoom                  | zoom to 100%, alias of ⌘0       | P2-B
  *   ⌘[ / ⌘]    | (unbound)                   | reorder ±1 in flow order        | "Up" = earlier in the DOM (IX-9)
  *   H          | toggle history              | hand tool (latched)             | Figma's
- *   ⇧H / ⇧V    | flip                        | unbound                         | Reserved for flip (IX-misc)
+ *   ⇧H / ⇧V    | flip                        | flip (P5-F): the standalone     | Figma's too. `flipValue.ts`
+ *              |                             | `scale`, one axis's sign        |
+ *   0 – 9      | opacity 100 % / 10–90 %     | the same (P5-F); 0 clears the   | Canvas-scoped: a digit in a field
+ *              |                             | layer's own opacity             | is the field's
  *   ← ↑ → ↓    | nudge / move a flex child   | the same, by what is selected:  | P2-C (IX-1). Canvas-scoped like Tab:
  *              |                             | a frame or note nudges; an      | in a panel the arrows stay the
  *              |                             | absolute layer nudges its       | panel's (a tree, a field)
@@ -96,6 +99,10 @@
  *   ⇧K         | (unbound)                   | place an image (P5-B's picker)  | Figma's; K alone is the scale tool
  *   ⇧-drag on  | axis pair of paddings;      | the same (P5-E, IX-17)          | Pointer modifiers, on the `?` sheet
  *   a padding  | ⌥-drag all four             |                                 | as `canvas.spacingHandles`
+ *   ⌘'         | show / hide guides          | snap to ruler guides on / off   | P5-F (IX-5e). Guides stay visible;
+ *              |                             |                                 | what the user toggles is the pull
+ *   ⌘⇧'        | snap to guides              | snap to objects + equal spacing | P5-F. The ruler-guide half of
+ *              |                             | on / off                        | Penpot's ⌘⇧G is ⌘' here (⌘⇧G ungroups)
  */
 
 import { GESTURE_KEYBINDINGS } from './keybindingGestures'

@@ -58,12 +58,13 @@ import { DRAW_TOOL_SPECS, isDrawTool, type ArmedTool } from './canvasDrawTool'
 import { isTextInputTarget } from './editorKeyGuards'
 import { useEditorKeyScope } from './useEditorKeyDispatcher'
 
-/** The keys that arm a tool — the four box tools and the pen (P5-D) — each a toggle on its own key. */
+/** The keys that arm a tool — the box tools, the board tool (P5-F) and the pen (P5-D) — each a toggle on its own key. */
 const ARMED_TOOL_KEYS: ReadonlyArray<{ commandId: string; tool: ArmedTool }> = [
   { commandId: 'tools.rectangle', tool: 'rectangle' },
   { commandId: 'tools.ellipse', tool: 'ellipse' },
   { commandId: 'tools.text', tool: 'text' },
   { commandId: 'tools.frame', tool: 'frame' },
+  { commandId: 'tools.board', tool: 'board' },
   { commandId: 'tools.pen', tool: 'pen' },
 ]
 

@@ -82,6 +82,15 @@ export const DRAW_TOOL_SPECS: Readonly<Record<DrawTool, DrawToolSpec>> = {
     clickSize: { width: 100, height: 100 },
     keyboardPlacement: 'inside',
   },
+  // P5-F / IX-13 — B. Inside a frame it IS the frame tool; on the empty board
+  // it draws a new board frame instead (`boardDrawTool.ts`).
+  board: {
+    moduleId: 'base.container',
+    label: 'Board',
+    inlineStyles: {},
+    clickSize: { width: 100, height: 100 },
+    keyboardPlacement: 'inside',
+  },
   text: {
     moduleId: 'base.text',
     label: 'Text',

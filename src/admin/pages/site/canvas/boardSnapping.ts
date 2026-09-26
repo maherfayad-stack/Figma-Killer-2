@@ -1,16 +1,36 @@
 /**
  * boardSnapping — what a piece of board furniture (a frame, a sticky note, a
- * doc block) snaps TO. The resolver itself is `@core/studio-runtime`'s
- * `snapRules.ts`, shared with the element-level gestures; this module only
- * turns a `Board` into the flat `SnapRect[]` peer list it wants.
+ * doc block, a loose layer) snaps TO, and the board-side reads the snap
+ * engine needs. The resolver itself is `@core/studio-runtime`'s
+ * `snapRules.ts` (alignment, ruler guides, equal spacing, the toggles),
+ * shared with the element-level gestures; this module only turns a `Board`
+ * into its inputs.
  *
- * `collectPeerRects` excludes whichever object is currently being dragged so
- * it never snaps to itself. Frames without a saved size fall back to
- * `FRAME_WIDTH`/`FRAME_HEIGHT` — the same fallback `BoardFramesLayer` itself
- * uses at render time.
+ *  - `collectPeerRects` excludes whichever object is currently being dragged
+ *    so it never snaps to itself. Frames without a saved size fall back to
+ *    `FRAME_WIDTH`/`FRAME_HEIGHT` — the same fallback `BoardFramesLayer`
+ *    itself uses at render time.
+ *  - `rulerGuideLines` — the persisted ruler guides as snap lines (P5-F,
+ *    IX-5c), in board space.
+ *  - `readBoardScreenOrigin` — where board (0, 0) is on screen, so an
+ *    element inside a frame can convert those lines into its frame's space
+ *    (`guideLinesInSpace`).
+ *  - `snapBoardFurniture` — the whole furniture snap in one call, so every
+ *    board object (frames, notes, docs, P5-G's loose layers) gets guides,
+ *    spacing and the user's toggles without assembling them itself.
  */
 import { FRAME_WIDTH, FRAME_HEIGHT, type Board, type BoardGuide } from '@core/studio-board'
-import type { SnapRect } from '@core/studio-runtime'
+import {
+  computeSnap,
+  snapSourcesFor,
+  snapThresholdAtZoom,
+  type ScreenSpace,
+  type SnapLine,
+  type SnapRect,
+  type SnapResult,
+  type SnapSourceToggles,
+} from '@core/studio-runtime'
+import { canvasTransformLayerOf, canvasZoomOf } from './canvasZoom'
 
 /** Identifies which furniture is currently being dragged, so `collectPeerRects`
  * can exclude it from its own peer list. */
@@ -56,25 +76,53 @@ export function collectPeerRects(board: Board, dragged: DraggedFurniture): SnapR
 }
 
 /**
- * D1 — persisted ruler guides (`@core/studio-board`'s `BoardGuide`, NOT this
- * file's own transient `SnapGuide`) as `computeSnap`-compatible peer rects,
- * so a dragged frame/note/doc can align to them the same way it aligns to
- * other furniture. A guide is a single-coordinate infinite line on ONE axis,
- * not a rect — represented as a zero-size point PLACED FAR OFF-SCREEN on the
- * OTHER axis (`OFF_AXIS_SENTINEL`), so `findClosestMatch`'s distance check on
- * that other axis can never spuriously fall within any real threshold.
- *
- * NOT YET called from `collectPeerRects` or wired into a live drag handler
- * (`BoardFrameView.tsx` etc.) — the caller is expected to concat this with
- * `collectPeerRects`'s own result once one exists. See `STATE.md`'s D1
- * handoff for why this stops at the pure-function level.
+ * D1 — persisted ruler guides (`@core/studio-board`'s `BoardGuide`, NOT the
+ * transient `SnapGuide` a snap draws) as snap lines, in BOARD space. Board
+ * furniture snaps to these as they are; an element inside a frame converts
+ * them into its frame's space first (`guideLinesInSpace`). P5-F wired them
+ * into every snapping gesture (IX-5c); the old off-axis sentinel rects this
+ * replaced were never called.
  */
-const OFF_AXIS_SENTINEL = 1_000_000
+export function rulerGuideLines(guides: readonly BoardGuide[]): SnapLine[] {
+  return guides.map((guide) => ({ axis: guide.axis, position: guide.position }))
+}
 
-export function guideSnapRects(guides: readonly BoardGuide[]): SnapRect[] {
-  return guides.map((guide) =>
-    guide.axis === 'x'
-      ? { x: guide.position, y: OFF_AXIS_SENTINEL, width: 0, height: 0 }
-      : { x: OFF_AXIS_SENTINEL, y: guide.position, width: 0, height: 0 },
+/**
+ * The board's screen space, read off the canvas transform layer `element`
+ * sits in (a frame's viewport or iframe). Its `transform-origin` is `0 0`, so
+ * its rect's top-left IS board (0, 0) at any pan and zoom. `null` outside a
+ * board canvas — a live view, a test — where there are no guides to convert.
+ */
+export function readBoardScreenOrigin(element: Element | null): ScreenSpace | null {
+  if (!(element instanceof HTMLElement)) return null
+  const layer = canvasTransformLayerOf(element)
+  if (!layer) return null
+  const rect = layer.getBoundingClientRect()
+  return { originX: rect.left, originY: rect.top, scale: canvasZoomOf(layer) }
+}
+
+/**
+ * One board-furniture snap, the whole question: every other frame, note and
+ * doc on `board` as peers, the board's ruler guides as lines, the user's
+ * toggles applied, the threshold in screen px. Frames, notes, docs and
+ * loose layers ask this rather than assembling the sources themselves, so a
+ * new snap source or toggle reaches all of them. Peers the board does not
+ * store (a loose layer's measured neighbours) go in `extraPeers`.
+ */
+export function snapBoardFurniture(input: {
+  board: Board | null
+  dragged: DraggedFurniture
+  rect: SnapRect
+  preferences: SnapSourceToggles
+  zoom: number
+  extraPeers?: readonly SnapRect[]
+}): SnapResult {
+  const { board, dragged, rect, preferences, zoom, extraPeers = [] } = input
+  const boardPeers = board ? collectPeerRects(board, dragged) : []
+  const { peers, options } = snapSourcesFor(
+    preferences,
+    [...boardPeers, ...extraPeers],
+    rulerGuideLines(board?.guides ?? []),
   )
+  return computeSnap(rect, peers, snapThresholdAtZoom(zoom), options)
 }

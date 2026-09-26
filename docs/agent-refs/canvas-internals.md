@@ -774,7 +774,7 @@ half (`canvasFileDrop.ts`) touches no DnD API at all, so it is not.
 
 React synthetic events bubble through the **fiber** tree, so React handlers work
 normally. **Native** listeners on the parent `window`/`document` never see iframe
-events. Five cases are bridged explicitly:
+events. Six cases are bridged explicitly:
 
 1. **Wheel** — re-dispatched on the iframe element so pan/zoom works.
 2. **Pointer** — forwarded during space-pan and active reorder drags. The one
@@ -809,6 +809,35 @@ events. Five cases are bridged explicitly:
 5. **Overlay dismiss** — `ContextMenu` attaches dismiss listeners to every
    same-origin document via `collectSameOriginDocuments`. Cross-realm
    `instanceof Node` fails, so use `isNode` (`src/ui/lib/sameOriginDocuments.ts`).
+6. **Clipboard** (P5-A, `canvasClipboardBridge.ts`) — `copy` / `cut` /
+   `paste` are heard in the editor's document (`useCanvasClipboardBridge`)
+   AND each portal frame's (`useIframeEventForwarding`); nowhere else
+   (gated by `keybindings-single-dispatcher.test.ts`). The keyboard clone of
+   ⌘V on the parent document raises **no** paste event — only the original,
+   in the frame, does — so this is its own bridge, not a ride on (3).
+   **⌘C / ⌘X / ⌘V must never `preventDefault` their keydown**: cancelling the
+   keydown cancels the clipboard event, and `ClipboardEvent.clipboardData` is
+   the only prompt-free way to read an image or SVG off the OS clipboard. The
+   `node` rung only ARMS the paste (`armCanvasPaste`); the spotlight's capture
+   listener leaves the three chords alone (`COMPONENT_OWNED_SHORTCUTS`).
+   Copies (any path — the slice's `clipboardEntry` changing) write a Studio
+   MARKER (`copiedAt`) onto the OS clipboard, so a paste can tell "the layers
+   I copied" from "a newer image". What ⌘V then means is one decision
+   (`canvasClipboardData.ts`'s `decideCanvasPaste`): matching marker → layers
+   (P3-D's source paste), SVG → sanitised subtree insert (or an `<img>` when
+   too large), image → the file drop's own insert, nothing readable → layers.
+   **When no event comes** (Safari outside an editable target; a Tier 2
+   bridge frame, whose events are cross-origin) a timer armed at keydown —
+   which a real event, raised in the same task, always beats — reads
+   `navigator.clipboard.read()` / writes with `navigator.clipboard.write()`.
+   Pastes into a text field, a key-owning overlay, or an inline edit are left
+   to the browser. **Only a real keystroke may read the OS clipboard**
+   (review #270): the fallback is armed only when `isUserGestureKeyEvent`
+   says so — a trusted keydown, or a relay whose ORIGINAL native event was
+   trusted (`relayFrameKeyDown(…, { userGesture })`). A Tier 2 frame's `key`
+   message is forgeable by the project's code, so it never arms the read and
+   its ⌘V pastes the copied layers only; a script-dispatched `paste` event
+   (`!isTrusted`) is ignored.
 
 **A drag must survive a release it never hears (ERR-12).** A `pointerup` over
 a frame goes to that frame's document, so any drag listening on the parent can
@@ -1014,6 +1043,27 @@ currently means. Two rules keep it from becoming a second input system:
   (a `display: contents` host) degrades to a free resize instead of dividing by
   zero.
 
+### Snapping, in one place (P5-F)
+
+`@core/studio-runtime`'s `snapRules.ts` `computeSnap` is the ONE snap
+resolver: board furniture, element free move, element resize edges (portal
+and live) and P5-G's loose layers all ask it.
+Per axis the closest of three candidates wins — alignment to a peer's
+edge/centre, a ruler guide (`SnapLine`), or equal spacing
+(`snapSpacingRules.ts`: the same gap as one the row already has, or centred
+between two neighbours). The pills (`SnapResult.spacings`) describe where the
+rect ENDS UP, whichever candidate moved it. The user's two toggles
+(`snapPreferences.ts`, persisted to `localStorage`; ⌘⇧' objects, ⌘' ruler
+guides; also in the zoom menu and the empty-selection panel) take effect in
+exactly one function, `snapSourcesFor` — furniture goes through
+`snapBoardFurniture` (`canvas/boardSnapping.ts`), which applies it — P5-G's
+loose-layer drag included. Ruler guides are BOARD space; an
+element's rects are frame space, so they are converted once per gesture
+through the screen (`guideLinesInSpace`: the transform layer's rect top-left
+IS board (0, 0) because its `transform-origin` is `0 0`). Element pills paint
+in the frame's drag layer (`canvasDragPainter`); furniture pills render from
+the store's `boardSnapSpacings` in `BoardGuidesLayer`.
+
 ### The draw tools (P5-E, IX-12, OD-5)
 
 `R` / `O` (and `E`) / `T` / `F` **arm** a draw tool — `canvasTool` is
@@ -1055,7 +1105,16 @@ free-canvas layer (`createCanvasLayer`) when it started on the empty board.
 **The empty board is P5-G's.** A press outside every frame is offered to
 `registerBoardDrawHandler`'s handler (`canvasDrawTool.ts`) with the drawn
 rectangle in BOARD units; with none registered it is ignored and the ghost
-says "draw inside a frame".
+says "draw inside a frame". The one exception is **B, the board tool** (P5-F,
+IX-13): inside a frame it is the F tool, and on the empty board it never
+reaches that handler — it opens the add-page picker at the release point
+(`BoardDrawPagePicker`, through the store's `boardDrawRequest`), and the pick
+lands at the drawn rect (`boardDrawTool.ts`: a click is a point at the default
+size, a drag its size floored at `MIN_FRAME_SIZE`, a width within 8 units of
+a device preset becomes the preset). A new page is ONE server call —
+`POST /admin/api/studio/page` with a `placement` writes the page files and
+the `boards.json` frame under the project write lock; an existing page is one
+`addFrame(pageId, placement)`.
 
 **`createdNodeFollowUp.ts`** is the seam for "do X to the element this gesture
 creates": it snapshots the node ids at arming time and runs once, on the
@@ -1288,6 +1347,42 @@ a component in a live frame selected the element inside it.
     own rAF. A live frame snaps in its runtime against the tree siblings,
     parent and zoom the parent sends with `setResizeTarget`, and posts its
     guides as `resize:guides` for the parent to paint the same way (canvas-26).
+    The board's ruler guides are snap lines too (P5-F, IX-5c,
+    `resizeGuideLines` in `elementResizeGuides.ts`), and both snap toggles
+    apply — portal frames only: `ResizeSnapContext` carries neither guides
+    nor toggles to a live frame yet, so it snaps to peers with both on.
+  - **Double-click a handle: Hug** (P5-F, IX-6f). `hugPatchForHandle` is the
+    inspector's own `sizingPatch('hug', …)` on the axes the handle owns (an
+    edge one, a corner both), in one `setNodeInlineStyles`. Detected as a
+    SECOND PRESS on the same handle within 400 ms of a press that moved
+    nothing — never from the native `dblclick`, which a real browser did not
+    deliver after the handle's cancelled `pointerdown` (measured by the e2e).
+  - **Rotation** (P5-F, IX-25, `useElementRotateDrag.ts`). Four invisible
+    zones just OUTSIDE the corner handles (`ROTATE_HANDLE_ATTR`, placed by
+    `selectionChromeCss.ts`), so a press on the corner still resizes. The
+    angle is the pointer's turn about the element's bounding-box centre,
+    added to its current rotation; ⇧ snaps to 15°. It writes the STANDALONE
+    `rotate` property — never `transform` — and 0° clears it
+    (`rotateValue.ts`, shared with the inspector's `RotationRow`). Refused,
+    with a toast, when `transform` already rotates or `rotate` is not a plain
+    2D angle. Rings stay axis-aligned: `getBoundingClientRect` is the box the
+    rotated element covers.
+  - **A multi-selection gets ONE set of handles on the union of its rings**
+    (P5-F, IX-6g — `CanvasGroupResizeHandles`, `useGroupResizeDrag.ts`,
+    `groupResize.ts`; placed by `resizeFrameRect`). The union resizes by the
+    single-element rules; each member scales with it about the union's
+    origin and is written through the single-element pipeline (box-sizing,
+    Fixed companions, authored anchors) — size always, offsets only for an
+    `absolute | fixed` member, since a flow member's position is layout's.
+    One `setNodesInlineStylesPerNode`: one undo entry. All or nothing: one
+    member `canOfferResize` refuses draws no group handles. Not yet: group
+    edge snapping, group rotation, double-click Hug on a group.
+  - **One drag session for every handle** (`handleDragSession.ts`): pointer
+    capture, ⇧ / ⌥ read on every move AND key change, Escape, one write per
+    rAF, `guardDragSession` (ERR-12) and the canvas-gesture freeze are
+    written once and shared by the single resize, the group resize and
+    rotation. A new handle gesture supplies `step` / `paint` / `end` and
+    gets all of it; it does not get a second copy.
   - **The W×H badge** (IX-18) is a child of the handle frame, shown by
     `selectionChromeCss.ts` only while the frame carries
     `data-canvas-resizing`; its text is the ring's own measured rect, written
@@ -1787,7 +1882,14 @@ than the one it was dropped in; the refusal carries a one-click "make the
 container `position: relative`" remedy. Studio still does not fake absolute
 placement — an ordinary drag is still a reorder. It snaps to its siblings
 and its parent's padding / content box at the screen-px threshold
-(`snapThresholdAtZoom`, P2-E). See
+(`snapThresholdAtZoom`, P2-E), to the board's ruler guides converted into the
+frame's space (P5-F, IX-5c, `guideLinesInSpace`), and to equal spacing with
+pink distance pills (IX-5d, `snapSpacing.ts`); the ⇧ axis lock leaves the
+held axis unsnapped. A multi-selection moves together (IX-22): every dragged
+layer is a member of one plan, all move by one snapped delta computed on the
+UNION box against the peers that are not moving, and the commit is one
+`setNodesInlineStylesPerNode`. All or nothing — a flow layer in the selection
+without ⌘ makes the whole gesture a reorder. See
 `docs/reference/canvas-dnd.md` → "Free movement (K6)".
 
 **Chrome outside `CanvasRoot` reaches the canvas through the store, not the
