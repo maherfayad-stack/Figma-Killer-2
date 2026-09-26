@@ -28,7 +28,7 @@ import type { OptimisticPreviewHandle } from '@site/store/slices/site/structural
 import type { StructuralCommitRollback } from '@site/store/slices/site/structuralCommitRollback'
 import { commitStructural, type StructuralCommitOptions } from './studioStructuralCommitEngine'
 import { dissolveWrapperTemplate, type StructuralEditPayload, type StructuralWriteOutcome } from './structuralUndoPlan'
-import type { InsertPropValue } from './studioSaveRequests'
+import type { InsertPropValue, SlotJsxNode } from './studioSaveRequests'
 
 /**
  * P3-D — ONE gesture written as several edits applied IN ORDER, each against
@@ -432,8 +432,12 @@ export async function commitStudioInsert(insert: {
    */
   designSystemImport?: true
   props: Record<string, InsertPropValue>
-  /** Literal text written as the element's only child, e.g. `<p>Heading</p>`. */
-  children?: string
+  /**
+   * The element's content: literal text (`<p>Heading</p>`), or — P5-A, a
+   * pasted SVG — a nested subtree written in the SAME splice
+   * (`InsertEditSchema.children`).
+   */
+  children?: string | readonly SlotJsxNode[]
   /**
    * P5-B (IMG-2) — more intrinsic elements written right AFTER this one, in
    * order, in the SAME write (`InsertEditSchema.siblings`): three dropped

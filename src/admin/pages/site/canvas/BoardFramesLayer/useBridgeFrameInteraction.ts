@@ -350,7 +350,9 @@ export function useBridgeFrameInteraction(adapter: FrameDocumentAdapter | null, 
         adapter.startTextEdit(event.nodeId, started, text)
       }),
       adapter.on('key', (event) => {
-        if (event.phase === 'down') relayFrameKeyDown(document, frameKeyInit(event))
+        // Never a user gesture: the project's own code can post this message
+        // (review #270, N1) — so it can never unlock the OS clipboard read.
+        if (event.phase === 'down') relayFrameKeyDown(document, frameKeyInit(event), { userGesture: false })
         else relayFrameKeyUp(document, frameKeyInit(event))
       }),
       adapter.on('blur', () => relayFrameBlur(document)),

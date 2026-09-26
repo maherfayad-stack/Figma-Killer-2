@@ -774,7 +774,7 @@ half (`canvasFileDrop.ts`) touches no DnD API at all, so it is not.
 
 React synthetic events bubble through the **fiber** tree, so React handlers work
 normally. **Native** listeners on the parent `window`/`document` never see iframe
-events. Five cases are bridged explicitly:
+events. Six cases are bridged explicitly:
 
 1. **Wheel** — re-dispatched on the iframe element so pan/zoom works.
 2. **Pointer** — forwarded during space-pan and active reorder drags. The one
@@ -809,6 +809,35 @@ events. Five cases are bridged explicitly:
 5. **Overlay dismiss** — `ContextMenu` attaches dismiss listeners to every
    same-origin document via `collectSameOriginDocuments`. Cross-realm
    `instanceof Node` fails, so use `isNode` (`src/ui/lib/sameOriginDocuments.ts`).
+6. **Clipboard** (P5-A, `canvasClipboardBridge.ts`) — `copy` / `cut` /
+   `paste` are heard in the editor's document (`useCanvasClipboardBridge`)
+   AND each portal frame's (`useIframeEventForwarding`); nowhere else
+   (gated by `keybindings-single-dispatcher.test.ts`). The keyboard clone of
+   ⌘V on the parent document raises **no** paste event — only the original,
+   in the frame, does — so this is its own bridge, not a ride on (3).
+   **⌘C / ⌘X / ⌘V must never `preventDefault` their keydown**: cancelling the
+   keydown cancels the clipboard event, and `ClipboardEvent.clipboardData` is
+   the only prompt-free way to read an image or SVG off the OS clipboard. The
+   `node` rung only ARMS the paste (`armCanvasPaste`); the spotlight's capture
+   listener leaves the three chords alone (`COMPONENT_OWNED_SHORTCUTS`).
+   Copies (any path — the slice's `clipboardEntry` changing) write a Studio
+   MARKER (`copiedAt`) onto the OS clipboard, so a paste can tell "the layers
+   I copied" from "a newer image". What ⌘V then means is one decision
+   (`canvasClipboardData.ts`'s `decideCanvasPaste`): matching marker → layers
+   (P3-D's source paste), SVG → sanitised subtree insert (or an `<img>` when
+   too large), image → the file drop's own insert, nothing readable → layers.
+   **When no event comes** (Safari outside an editable target; a Tier 2
+   bridge frame, whose events are cross-origin) a timer armed at keydown —
+   which a real event, raised in the same task, always beats — reads
+   `navigator.clipboard.read()` / writes with `navigator.clipboard.write()`.
+   Pastes into a text field, a key-owning overlay, or an inline edit are left
+   to the browser. **Only a real keystroke may read the OS clipboard**
+   (review #270): the fallback is armed only when `isUserGestureKeyEvent`
+   says so — a trusted keydown, or a relay whose ORIGINAL native event was
+   trusted (`relayFrameKeyDown(…, { userGesture })`). A Tier 2 frame's `key`
+   message is forgeable by the project's code, so it never arms the read and
+   its ⌘V pastes the copied layers only; a script-dispatched `paste` event
+   (`!isTrusted`) is ignored.
 
 **A drag must survive a release it never hears (ERR-12).** A `pointerup` over
 a frame goes to that frame's document, so any drag listening on the parent can
