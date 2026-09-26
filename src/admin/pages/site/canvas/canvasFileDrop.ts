@@ -363,7 +363,7 @@ export interface CanvasFileDropInput {
  */
 export function planCanvasFileDrop(input: CanvasFileDropInput): CanvasFileDropPlan {
   const { intake } = input
-  if (intake.kind === 'refused') return { ok: false, refusal: intake.refusal }
+  if (intake.kind === 'refused') return { ok: false, refusal: { reason: 'not-an-image', ...intake.refusal } }
   let sources: LandableImageSource[]
   let skipped: File[] = []
   if (intake.kind === 'files') {

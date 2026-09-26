@@ -31,21 +31,31 @@
  * in-flight chip only knows "a link is coming" and shows one image.
  */
 import type { LandableImageSource } from '@site/store/slices/site/imageDropShapes'
-import type { CanvasFileDropRefusal } from './canvasFileDrop'
 
 /** The same per-file ceiling the landing route enforces (`MAX_ASSET_DROP_BYTES`) — refused before a byte is decoded. */
 export const MAX_DATA_URL_IMAGE_BYTES = 25 * 1024 * 1024
 
+/**
+ * Why a dropped link is not an image: the chip's one-line `headline` and the
+ * toast's whole `message`, the two halves of every drop refusal
+ * (`canvasFileDrop.ts` reports it as its `not-an-image` reason). Its own shape
+ * so this leaf imports nothing from the planner that imports it.
+ */
+export interface DroppedLinkRefusal {
+  headline: string
+  message: string
+}
+
 export type DroppedImageIntake =
   | { kind: 'files'; files: readonly File[] }
   | { kind: 'link'; source: LandableImageSource }
-  | { kind: 'refused'; refusal: CanvasFileDropRefusal }
+  | { kind: 'refused'; refusal: DroppedLinkRefusal }
 
 /** Path extensions that make a bare link an image without the dragged HTML saying so. */
 const IMAGE_PATH = /\.(?:png|jpe?g|gif|webp|avif|svg)$/i
 
 function refusedLink(headline: string, message: string): DroppedImageIntake {
-  return { kind: 'refused', refusal: { reason: 'not-an-image', headline, message } }
+  return { kind: 'refused', refusal: { headline, message } }
 }
 
 const LINK_NOT_IMAGE = refusedLink(

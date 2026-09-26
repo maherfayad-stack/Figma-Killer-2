@@ -105,7 +105,7 @@ export default function Page() {
   const hostile: [string, string][] = [
     ['a bare package specifier', 'fs'],
     ['a non-image module', './secrets.ts'],
-    ['a quote that would end the string', "./a'); alert(1); ('.png"],
+    ['a quote that would end the string', "./a'); run(1); ('.png"],
     ['a newline', './a\n.png'],
     ['an absolute path', '/etc/hero.png'],
   ]
