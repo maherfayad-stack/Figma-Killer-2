@@ -55,7 +55,7 @@ a text edit can re-flow children and a style edit can rewrite a multi-line
   \`styles.<local>\` and the import is added after the batch (\`shifted\` is then
   true). A request that changes nothing is a silent no-op, not a refusal.
 
-### Structural kinds: insert, delete, move (+ duplicate, wrap, group, ungroup, transplant, styled, reinsert-source)
+### Structural kinds: insert, delete, move (+ duplicate, wrap, group, ungroup, transplant, styled)
 
 They always change the file's line count.
 
@@ -73,10 +73,9 @@ They always change the file's line count.
   \`siblings\` — an array of more elements of the same shape — writes a RUN
   of new elements right after this one, at the same anchor, in the same
   write; \`createdNodeIds\` then names every one in order.
-- **delete** returns \`removed\` and \`prunedImports\`: exactly what it took out.
-- **reinsert-source** is a delete's undo: \`nodeId\` is the PARENT, \`index\` the
-  child position, \`text\` the bytes a delete returned in \`removed\` (JSX
-  content only; a statement or an unmatched closing tag is refused).
+- **delete** removes the element, and any import it was the last use of.
+  Your own undo is the turn checkpoint; \`restore\` is the editor's and is
+  refused here.
 - **move**: \`nodeId\` is the element moved; \`anchorNodeId\` + \`position\` name
   where it goes.
 - **detach** / **swap** inline or retarget a whole component body: treat them

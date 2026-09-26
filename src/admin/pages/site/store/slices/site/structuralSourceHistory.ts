@@ -48,6 +48,7 @@ import { canvasLayerIdFromRel, canvasLayerPageId, isCanvasLayerEditNodeId } from
 import type { EditorStore } from '@site/store/types'
 import { commitStudioStructuralReissue } from '@site/studio/studioStructuralCommits'
 import {
+  addressesJournalEntry,
   addressesSourceLiteral,
   anchorTransplantBack,
   fileOfNodeId,
@@ -160,9 +161,11 @@ export function reissueStructuralSourceEdits(
     return {
       kind: 'skipped',
       notice:
-        inverseTemplate.kind === 'unsupported'
-          ? inverseTemplate.message
-          : `Studio could not work out how to take “${label}” back out of your project source, so it left the files alone.`,
+        direction === 'redo'
+          ? `“${label}” can’t be redone from here — make the change again.`
+          : inverseTemplate.kind === 'unsupported'
+            ? inverseTemplate.message
+            : `Studio could not work out how to take “${label}” back out of your project source, so it left the files alone.`,
     }
   }
 
@@ -244,7 +247,7 @@ function unresolvedNodeIds(
 ): string[] {
   const missing: string[] = []
   for (const edit of edits) {
-    if (addressesSourceLiteral(edit)) continue
+    if (addressesSourceLiteral(edit) || addressesJournalEntry(edit)) continue
     for (const id of structuralEditNodeIds(edit)) {
       if (!state._nodeIdToPageIds.has(id) && !onFreeCanvas(state, id) && !missing.includes(id)) missing.push(id)
     }

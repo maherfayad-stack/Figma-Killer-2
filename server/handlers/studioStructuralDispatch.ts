@@ -1,7 +1,7 @@
 /**
  * studioStructuralDispatch — how the STRUCTURAL kinds enter their codemods
  * from `studioWriteback.ts`'s dispatcher: `transplant` and the `move` /
- * `delete` / `reinsert-source` / `insert` / `duplicate` / `wrap` / `group` /
+ * `delete` / `insert` / `duplicate` / `wrap` / `group` /
  * `ungroup` / `reparent` family.
  *
  * Their shared job is decoding the ENDS a value edit does not have — an
@@ -21,7 +21,7 @@ import type { StudioEdit, StudioEditApplyOutcome } from './studioEditSchemas'
 
 export type StructuralDispatchEdit = Extract<
   StudioEdit,
-  { kind: 'transplant' | 'move' | 'delete' | 'reinsert-source' | 'insert' | 'duplicate' | 'wrap' | 'group' | 'ungroup' | 'reparent' }
+  { kind: 'transplant' | 'move' | 'delete' | 'insert' | 'duplicate' | 'wrap' | 'group' | 'ungroup' | 'reparent' }
 >
 
 /** Apply one structural edit whose own `nodeId` decoded to `target` (`loc` is its absolute form). */
@@ -71,7 +71,6 @@ export function dispatchStructuralEdit(
     }
     case 'move':
     case 'delete':
-    case 'reinsert-source':
     case 'insert':
     case 'duplicate':
     case 'wrap':
@@ -118,7 +117,6 @@ export function dispatchStructuralEdit(
         applied: true,
         ...(result.created === undefined ? {} : { created: result.created }),
         ...(result.relocated === undefined ? {} : { relocated: result.relocated }),
-        ...(result.removed === undefined ? {} : { removed: [result.removed] }),
       }
     }
   }

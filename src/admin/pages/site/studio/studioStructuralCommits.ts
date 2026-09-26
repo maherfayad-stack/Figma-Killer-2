@@ -356,26 +356,18 @@ export async function commitStudioUngroup(
  * it did not land — refused quietly, because the caller answers a refusal
  * with the one dialog the gesture would have shown anyway.
  *
- * Its undo (`reinsert-detached`) removes the detached markup and writes the
- * call site's own bytes back at the slot it held (`parentNodeId`/`index`,
- * captured before the write), with the import the detach retired.
+ * Its undo is the undo journal's `restore` (P3-F): the page exactly as it was
+ * before the detach, call site and import together.
  */
 export async function commitStudioDetachForInstance(detach: {
   callSiteNodeId: string
-  parentNodeId: string
-  index: number
   label: string
 }): Promise<StructuralWriteOutcome | null> {
   let landed: StructuralWriteOutcome | null = null
   await commitStructural([{ kind: 'detach', nodeId: detach.callSiteNodeId }], 'Detach refused', {
     undo: {
       label: detach.label,
-      template: {
-        kind: 'reinsert-detached',
-        callSiteNodeId: detach.callSiteNodeId,
-        parentNodeId: detach.parentNodeId,
-        index: detach.index,
-      },
+      template: { kind: 'restore-journal' },
     },
     onLanded: (outcome) => {
       landed = outcome

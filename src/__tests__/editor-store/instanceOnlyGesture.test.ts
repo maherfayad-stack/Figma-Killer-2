@@ -8,8 +8,9 @@
  * written.
  *
  * The server is a stand-in: each `/save` answers the way the real batch does
- * for that kind (what it created, the bytes it removed), and each re-read the
- * write triggers hands the board the page as the file now reads.
+ * for that kind (what it created, and — for a journaled delete or detach —
+ * the undo-journal token its ⌘Z restores, P3-F), and each re-read the write
+ * triggers hands the board the page as the file now reads.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { useEditorStore } from '@site/store/store'
@@ -141,7 +142,7 @@ beforeEach(() => {
       posted.push(edits)
       if (holdDeletes && edits.some((edit) => edit.kind === 'delete')) await deleteGate
       const detach = edits.find((edit) => edit.kind === 'detach')
-      const deletes = edits.filter((edit) => edit.kind === 'delete')
+      const journaled = edits.some((edit) => edit.kind === 'detach' || edit.kind === 'delete')
       if (detach && scenario === 'copy') {
         return new Response(
           JSON.stringify({ ok: true, written: 0, skipped: 1, shifted: false, sharedComponents: true, touchedFiles: [FILE], refusals: [{ nodeId: CALL_SITE, kind: 'detach', reason: 'uses-hooks', message: 'Card uses useState.' }] }),
@@ -157,11 +158,7 @@ beforeEach(() => {
           sharedComponents: false,
           touchedFiles: [FILE],
           createdNodeIds: detach ? [scenario === 'shifted' ? SHIFTED_ROOT : DETACHED_ROOT] : [],
-          removed: [
-            ...(detach ? [{ nodeId: CALL_SITE, text: '      <Card />\n', wholeLine: true }] : []),
-            ...deletes.map((edit) => ({ nodeId: edit.nodeId, text: '        <h2>Title</h2>\n', wholeLine: true })),
-          ],
-          prunedImports: detach ? [{ file: FILE, declarations: ["import { Card } from '../ui/Card'"] }] : [],
+          ...(journaled ? { undoToken: tokenFor(posted.length - 1) } : {}),
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       )
@@ -213,6 +210,11 @@ afterEach(() => {
   unregister()
 })
 
+/** The token the stand-in server reports for the batch posted `index`-th. */
+const tokenFor = (index: number) => index.toString(16).padStart(32, '0')
+/** The `restore` edit that takes back the batch posted `index`-th. */
+const restoreOf = (index: number) => ({ kind: 'restore', nodeId: `undo-journal:${tokenFor(index)}`, token: tokenFor(index) })
+
 async function settle() {
   for (let round = 0; round < 6; round++) {
     for (let i = 0; i < 8; i++) await Promise.resolve()
@@ -236,7 +238,7 @@ describe('OD-7 — a gesture inside a shared component applies to this instance 
     expect(store()._historyPast[0]!.linkedToNext).toBe(true)
   })
 
-  it('one ⌘Z undoes the delete AND puts <Card/> back with its import', async () => {
+  it('one ⌘Z undoes the delete AND puts <Card/> back with its import — two journal restores, newest first', async () => {
     store().deleteNode(TITLE)
     await settle()
 
@@ -244,17 +246,8 @@ describe('OD-7 — a gesture inside a shared component applies to this instance 
     await settle()
 
     expect(posted).toHaveLength(4)
-    expect(posted[2]).toEqual([expect.objectContaining({ kind: 'reinsert-source', nodeId: DETACHED_ROOT, index: 0 })])
-    expect(posted[3]).toEqual([
-      { kind: 'delete', nodeId: DETACHED_ROOT },
-      {
-        kind: 'reinsert-source',
-        nodeId: MAIN,
-        index: 0,
-        text: '      <Card />\n',
-        imports: ["import { Card } from '../ui/Card'"],
-      },
-    ])
+    expect(posted[2]).toEqual([restoreOf(1)])
+    expect(posted[3]).toEqual([restoreOf(0)])
     expect(store()._historyPast).toHaveLength(0)
     expect(store()._historyFuture).toHaveLength(2)
   })
@@ -298,7 +291,7 @@ describe('OD-7 — a gesture inside a shared component applies to this instance 
     store().undo()
     await settle()
     // The delete is taken back, then the call site points at Card again.
-    expect(posted[before]).toEqual([expect.objectContaining({ kind: 'reinsert-source' })])
+    expect(posted[before]).toEqual([restoreOf(before - 1)])
     expect(posted[before + 1]).toEqual([
       { kind: 'swap', nodeId: COPY_CALL_SITE, newComponentName: 'Card', newComponentSource: 'local', newComponentFile: 'ui/Card.tsx' },
     ])
@@ -315,10 +308,7 @@ describe('OD-7 — a gesture inside a shared component applies to this instance 
     store().undo()
     releaseDeletes()
     await settle()
-    expect(posted[2]).toEqual([expect.objectContaining({ kind: 'reinsert-source', nodeId: DETACHED_ROOT })])
-    expect(posted[3]).toEqual([
-      { kind: 'delete', nodeId: DETACHED_ROOT },
-      expect.objectContaining({ kind: 'reinsert-source', nodeId: MAIN, text: '      <Card />' + String.fromCharCode(10) }),
-    ])
+    expect(posted[2]).toEqual([restoreOf(1)])
+    expect(posted[3]).toEqual([restoreOf(0)])
   })
 })

@@ -44,22 +44,16 @@
  *  - `bad-index` — an index outside the array, or an order that is not a
  *    permutation of it.
  *  - `duplicate-key` — see above.
- *  - `not-data` / `invalid-import` / `invalid-source` — an `insert`'s texts
- *    (⌘Z of a remove: the one op carrying client bytes). Each text must parse
- *    ON ITS OWN as exactly one array element, and compute nothing when the
- *    file loads: no call, `new`, tagged template, assignment, `await`, class
- *    or dynamic import outside a function body. A literal element in a module
- *    `const` runs the moment Vite imports the file (`sec-22`'s concern one
- *    level up), so bytes that would run code there are never written from the
- *    editor — the user's own undo or `git` is the way back for such a row.
- *    Imports must each be exactly one import declaration; the spliced file
- *    must add no syntax error.
+ *  - `invalid-source` — the spliced file would add a syntax error.
+ *
+ * Nothing here takes source text from the caller: ⌘Z of a `remove` is the
+ * undo journal's `restore` (P3-F), not an insert of the removed bytes.
  */
-import { Node, Project, SyntaxKind, ts, type ArrayLiteralExpression, type Expression, type SourceFile } from 'ts-morph'
+import { Node, SyntaxKind, type Project, ts, type ArrayLiteralExpression, type Expression, type SourceFile } from 'ts-morph'
 import type { ListItemOp, ListRowKey } from '@core/page-tree'
 import { createProject, loadSourceFile } from './locateJsxElement'
 import { applyTextEdits, verbatimSourceText, writeVerbatimSource, type TextEdit } from './jsxChildRange'
-import { buildImportReinsertEdit, introducesSyntaxErrors, parsesAsOneImportDeclaration } from './reinsertJsxSource'
+import { introducesSyntaxErrors } from './syntaxRegression'
 
 export interface EditListItemsParams {
   file: string
@@ -78,8 +72,6 @@ export type ListItemRefusalReason =
   | 'list-changed'
   | 'bad-index'
   | 'duplicate-key'
-  | 'not-data'
-  | 'invalid-import'
   | 'invalid-source'
 
 export interface ListItemRefusal {
@@ -87,12 +79,7 @@ export interface ListItemRefusal {
   message: string
 }
 
-/**
- * `removed` — for a `remove`, each removed element's text in ascending index
- * order, in the form an `insert` takes back (a whole-line block in a one-per-
- * line array, the element's own text in an inline one).
- */
-export type EditListItemsResult = { ok: true; removed: string[] } | { ok: false; refusal: ListItemRefusal }
+export type EditListItemsResult = { ok: true } | { ok: false; refusal: ListItemRefusal }
 
 function refuse(reason: ListItemRefusalReason, message: string): { ok: false; refusal: ListItemRefusal } {
   return { ok: false, refusal: { reason, message } }
@@ -153,23 +140,12 @@ export function editListItems(params: EditListItemsParams): EditListItemsResult 
   const layout = readLayout(verbatim, array)
   const planned = planItems(layout, elements, op, verbatim)
   if (!planned.ok) return planned
-  const edits: TextEdit[] = [renderEdit(layout, planned.items)]
-  if (op.kind === 'insert') {
-    for (const importText of op.imports ?? []) {
-      if (!parsesAsOneImportDeclaration(importText)) {
-        return refuse('invalid-import', 'One of the imports this undo would restore is not valid on its own, so nothing was changed.')
-      }
-    }
-    const importEdit = buildImportReinsertEdit(sourceFile, verbatim, op.imports ?? [])
-    if (importEdit) edits.push(importEdit)
-  }
-  const candidate = applyTextEdits(verbatim, edits)
+  const candidate = applyTextEdits(verbatim, [renderEdit(layout, planned.items)])
   if (introducesSyntaxErrors(file, verbatim, candidate)) {
     return refuse('invalid-source', 'This change would leave the file with a syntax error, so nothing was changed.')
   }
   writeVerbatimSource(sourceFile, file, candidate)
-  const removed = op.kind === 'remove' ? op.indices.map((index) => renderItem(layout, layout.items[index]!, true)) : []
-  return { ok: true, removed }
+  return { ok: true }
 }
 
 /** The array literal whose `[` is at `line:col`, or `undefined`. */
@@ -198,13 +174,6 @@ function checkIndices(op: ListItemOp, length: number): string | null {
       return distinct(op.indices) && op.indices.every((i) => inRange(i, length)) ? null : 'An item to remove is not in this list.'
     case 'copy':
       return op.from.every((i) => inRange(i, length)) && inRange(op.at, length + 1) ? null : 'An item to copy is not in this list.'
-    case 'insert': {
-      const total = length + op.texts.length
-      const ascending = op.at.every((at, k) => k === 0 || at > op.at[k - 1]!)
-      return op.at.length === op.texts.length && ascending && op.at.every((i) => inRange(i, total))
-        ? null
-        : 'The positions to restore do not fit this list.'
-    }
   }
 }
 
@@ -328,15 +297,6 @@ function planItems(layout: ArrayLayout, elements: readonly Expression[], op: Lis
       }
       return { ok: true, items: [...items.slice(0, op.at), ...copies, ...items.slice(op.at)] }
     }
-    case 'insert': {
-      const next = [...items]
-      for (let k = 0; k < op.texts.length; k += 1) {
-        const parsed = parseInsertText(op.texts[k]!, layout)
-        if (!parsed.ok) return parsed
-        next.splice(op.at[k]!, 0, parsed.item)
-      }
-      return { ok: true, items: next }
-    }
   }
 }
 
@@ -428,111 +388,6 @@ function uniqueKey(value: string | number, taken: ReadonlySet<string | number>):
   let candidate = `${value}-copy`
   for (let n = 2; taken.has(candidate); n += 1) candidate = `${value}-copy-${n}`
   return candidate
-}
-
-type ParsedInsert = { ok: true; item: ItemText } | { ok: false; refusal: ListItemRefusal }
-
-/**
- * One `insert` text as an element of THIS array — shape-checked on its own
- * first (see this module's doc), then fitted to the array's layout: a text
- * taken out of a one-per-line array is a whole block and is written as one;
- * anything else is re-spelled for the layout it lands in.
- */
-function parseInsertText(text: string, layout: ArrayLayout): ParsedInsert {
-  const prefix = 'const __studioListItem = [\n'
-  const suffix = '\n]\n'
-  const scratch = new Project({ useInMemoryFileSystem: true, skipAddingFilesFromTsConfig: true })
-  const sourceFile = scratch.createSourceFile('list-item-check.tsx', `${prefix}${text}${suffix}`)
-  const notElement = refuse('not-data', 'What this undo would restore is not one item of this list, so nothing was changed.')
-  if (scratch.getProgram().getSyntacticDiagnostics(sourceFile).length > 0) return notElement
-  const statements = sourceFile.getStatements()
-  const only = statements.length === 1 ? statements[0] : undefined
-  if (!only || !Node.isVariableStatement(only) || only.getDeclarations().length !== 1) return notElement
-  const init = only.getDeclarations()[0]!.getInitializer()
-  if (!init || !Node.isArrayLiteralExpression(init) || init.getElements().length !== 1) return notElement
-  const element = init.getElements()[0]!
-  if (Node.isSpreadElement(element) || Node.isOmittedExpression(element)) return notElement
-  if (computesOnLoad(element)) {
-    return refuse(
-      'not-data',
-      'This row computes something when the file loads (a function call, for example), so Studio will not write it back from the editor. Use your editor’s undo or git to restore it.',
-    )
-  }
-  const full = sourceFile.getFullText()
-  const inner = prefix.length
-  const start = element.getStart() - inner
-  const end = element.getEnd() - inner
-  const leading = ts.getLeadingCommentRanges(full, element.getFullStart()) ?? []
-  const ownStart = (leading[0]?.pos ?? element.getStart()) - inner
-  const body = text.slice(start, end)
-  const comma = elementList(init).find((child) => child.getKind() === SyntaxKind.CommaToken)
-  const afterBody = comma ? comma.getEnd() - inner : end
-  if (!layout.block) return { ok: true, item: { lead: text.slice(Math.max(0, ownStart), start).trimStart(), body, mid: '', trail: '' } }
-  const lead = text.slice(0, start)
-  const isBlock = lead.length > 0 && /^[ \t]/.test(lead) && text.endsWith('\n')
-  if (isBlock) {
-    return { ok: true, item: { lead, body, mid: comma ? text.slice(end, comma.getStart() - inner) : '', trail: text.slice(Math.min(afterBody, text.length)) } }
-  }
-  const comments = text.slice(Math.max(0, ownStart), start).trim()
-  return { ok: true, item: { lead: comments ? `${layout.indent}${comments}\n${layout.indent}` : layout.indent, body, mid: '', trail: '\n' } }
-}
-
-/** Kinds that run code when the expression is EVALUATED — i.e. when the file loads, for a module `const`. */
-const COMPUTING_KINDS = new Set<SyntaxKind>([
-  SyntaxKind.CallExpression,
-  SyntaxKind.NewExpression,
-  SyntaxKind.TaggedTemplateExpression,
-  SyntaxKind.AwaitExpression,
-  SyntaxKind.YieldExpression,
-  SyntaxKind.DeleteExpression,
-  SyntaxKind.ClassExpression,
-  SyntaxKind.Decorator,
-])
-
-const ASSIGNMENT_OPERATORS = new Set<SyntaxKind>([
-  SyntaxKind.EqualsToken,
-  SyntaxKind.PlusEqualsToken,
-  SyntaxKind.MinusEqualsToken,
-  SyntaxKind.AsteriskEqualsToken,
-  SyntaxKind.AsteriskAsteriskEqualsToken,
-  SyntaxKind.SlashEqualsToken,
-  SyntaxKind.PercentEqualsToken,
-  SyntaxKind.LessThanLessThanEqualsToken,
-  SyntaxKind.GreaterThanGreaterThanEqualsToken,
-  SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
-  SyntaxKind.AmpersandEqualsToken,
-  SyntaxKind.BarEqualsToken,
-  SyntaxKind.CaretEqualsToken,
-  SyntaxKind.BarBarEqualsToken,
-  SyntaxKind.AmpersandAmpersandEqualsToken,
-  SyntaxKind.QuestionQuestionEqualsToken,
-])
-
-/** True when evaluating `element` runs anything — a function BODY is not evaluated, so what is inside one is not counted. */
-function computesOnLoad(element: Node): boolean {
-  let computes = false
-  element.forEachDescendant((node, traversal) => {
-    if (
-      Node.isArrowFunction(node) ||
-      Node.isFunctionExpression(node) ||
-      Node.isMethodDeclaration(node) ||
-      Node.isGetAccessorDeclaration(node) ||
-      Node.isSetAccessorDeclaration(node)
-    ) {
-      traversal.skip()
-      return
-    }
-    const kind = node.getKind()
-    const increments =
-      (Node.isPrefixUnaryExpression(node) || Node.isPostfixUnaryExpression(node)) &&
-      (node.getOperatorToken() === SyntaxKind.PlusPlusToken || node.getOperatorToken() === SyntaxKind.MinusMinusToken)
-    const assigns = Node.isBinaryExpression(node) && ASSIGNMENT_OPERATORS.has(node.getOperatorToken().getKind())
-    if (COMPUTING_KINDS.has(kind) || increments || assigns) {
-      computes = true
-      traversal.stop()
-    }
-  })
-  return computes || COMPUTING_KINDS.has(element.getKind())
 }
 
 /** The literal's elements and the commas between them, in order (its `SyntaxList` child). */

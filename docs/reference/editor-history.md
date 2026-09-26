@@ -321,7 +321,7 @@ patches:
 | gesture | undo | redo |
 |---|---|---|
 | `move` (canvas body drag, layers-panel drag, reorder + reparent) | re-issues `moveNodes` back to the captured pre-move `(parentId, index)` — re-planned against the live tree, so it rides every refusal gate and writes to source once | re-issues the original move |
-| `source` (`store-14`/`store-15`) — insert, duplicate, wrap, group, ungroup, paste, cross-frame transplant, OS image drop, **delete** | posts the INVERSE EDITS through the same `/save` route the gesture used (`commitStudioStructuralReissue`) | re-posts the gesture's own `forward` edits |
+| `source` (`store-14`/`store-15`/P3-F) — insert, duplicate, wrap, group, ungroup, paste, cross-frame transplant, OS image drop, **delete**, and the Properties panel's **detach / swap / extract** | posts the INVERSE EDITS through the same `/save` route the gesture used (`commitStudioStructuralReissue`) | re-posts the gesture's own `forward` edits |
 
 ### The `source` gesture — the family whose undo is a WRITE
 
@@ -351,19 +351,15 @@ follow from keeping the eager mutation:
   check (next section) would read that as a stale reference on the very next
   reparse — including this gesture's own resync — and wipe the whole stack
   before the fill below ever lands.
-- The gesture's `label`/`forward`/`inverseTemplate` are decided at TAG time,
-  from the pre-delete tree (`captureDeleteOrigin` — the parent id and the
-  child's position among the parent's own plain JSX-element children, the
-  same count `reinsertJsxSource`'s `index` counts server-side). But `inverse`
-  itself cannot be — the bytes to restore are not known until the delete's own
-  commit answers. So it starts `null`, and a third `PendingStructuralHistory`
-  kind, `fill` (distinct from `push` and `refresh`), asks
-  `recordStructuralSourceWrite` to resolve `inverse` on that SAME top-of-stack
-  entry once the commit's outcome (`removed`/`prunedImports`) is known —
-  never pushing a second entry for a gesture that only happened once.
+- The gesture's `label`/`forward`/`inverseTemplate` (`restore-journal`) are
+  decided at TAG time. But `inverse` itself cannot be — the undo-journal token
+  is not known until the delete's own commit answers. So it starts `null`, and
+  a third `PendingStructuralHistory` kind, `fill` (distinct from `push` and
+  `refresh`), asks `recordStructuralSourceWrite` to resolve `inverse` on that
+  SAME top-of-stack entry once the commit's `undoToken` is known — never
+  pushing a second entry for a gesture that only happened once.
 
-The inverse is expressed in the edit kinds that already exist. There is no
-`revert` kind and no file snapshot:
+Where the protocol can say it, the inverse is an ordinary edit:
 
 | gesture | inverse |
 |---|---|
@@ -372,7 +368,7 @@ The inverse is expressed in the edit kinds that already exist. There is no
 | ungroup | `group` the children it released, into the same container |
 | transplant (move) | `transplant` back to the parent it left |
 | transplant (copy) | `delete` the copy it created |
-| delete | `reinsert-source` each element back where it was (`reinsertJsxSource`) |
+| delete / detach / swap / extract, a `.map` row's delete (OD-8) | `restore` the undo-journal entry the write recorded (P3-F) |
 | vector drag / nudge (P5-D) | `svg-attr` on the same part carrying the previous literals, `remove` for the attributes that were absent — a `known` template, fixed at gesture time (`svgPartCommits.ts`) |
 | pen path (P5-D) | `delete` the `<svg>` it created (an `insert`); on the empty board, the free canvas's own layer delete |
 
@@ -384,34 +380,72 @@ does not move, so the previous values are the whole inverse. The part's
 graphic) refuses `element-moved` server-side (the `partTag` check) and is
 skipped like any stale step.
 
-**`reinsert-source`**, `store-15`'s own edit kind: `nodeId` is the PARENT
-(like `insert`'s), `index` the child position among the parent's plain
-JSX-element children, `text` the exact bytes `deleteJsxElement` discarded
-(`DeletedJsxText`, never re-rendered — a whole-line restore keeps its own
-indentation verbatim), `imports` the standalone declaration texts the
-delete's own `pruneOrphanedImports` pass removed
-(`PrunedImportsResult.declarations`), re-added as their own lines after the
-file's last import. A multi-node delete's restore posts one edit per element,
-ordered ascending by `index` within each shared parent — ties the server's own
-bottom-to-top ordering (by each edit's PARENT position) then resolves.
+### The undo journal — the one-shot writes (P3-F: ERR-2, DET-4)
 
-**One refusal remains for delete, and it is not "no `StudioEdit` kind carries
-source text" any more — it is "no origin was captured".** `captureDeleteOrigin`
-returns `null` when the deleted node's parent has no writable source position
-at all — the synthetic page root, whose only "position" is the page's own
-`return` statement. Deleting the page's sole returned element is already
-refused there by `deleteJsxElement`'s own `no-jsx-parent` (the AST answers a
-question the tree cannot); a delete that reaches this state anyway records an
-`unsupported` inverse template rather than guessing, and ⌘Z skips it the way
-it skips every other `unsupported` `source` template (see "A step that can
-never happen is skipped" below).
+A delete, a detach, a swap and an extract replace source text no edit kind can
+describe: the deleted element's own bytes, the call site a detach inlined, the
+attributes a swap dropped. So their undo is not an inverse edit. It is the
+server's **undo journal** (`server/handlers/studio/undoJournal.ts`): the
+editor's `/save` batch (`journal: true`, `studioBatchUndoJournal.ts`) reads
+every file it is about to change before the first edit runs, and after the
+batch records `{ rel, before, afterSha256 }` per changed file at
+`.studio/undo-journal/<token>.json`. The batch result carries `undoToken`; the
+extract route (`/extract-component`) journals its call site and new file the
+same way.
+
+⌘Z posts ONE edit, `{ kind: 'restore', nodeId: 'undo-journal:<token>', token }`,
+whatever the gesture touched — a multi-select delete across several files is
+still one token. The client never posts file text; the server keeps it. The
+restore is a **compare-and-swap**: it applies only when every file still
+hashes to exactly what the write left, and writes all of them or none.
+Anything else refuses `restore-stale`, naming the file ("`pages/Home.tsx` has
+changed since that edit, so undoing it would overwrite the newer change"), and
+the stack drops the entry rather than sticking on it. A restored entry is
+consumed; a redo re-posts `forward`, which records a fresh entry whose token
+the `refresh` re-resolves into the inverse.
+
+The rules that keep it narrow:
+
+- **Editor-only.** An agent batch (`studio_apply_edits`) journals nothing and
+  a `restore` in it refuses `restore-editor-only`; an agent's undo is its turn
+  checkpoint.
+- **Alone.** A `restore` in a batch with any other edit refuses
+  `restore-not-alone` — the other edit was planned against the files as they
+  are now.
+- **Untrusted on read.** A token is 32 lowercase hex digits before it meets a
+  path; the folder and entry are refused if reached through a link; an entry is
+  size-capped (8 MiB) and TypeBox-validated; every `rel` is re-derived through
+  `canonicalSourceRel`, so an entry naming anything outside app source is
+  `restore-unavailable`, never a write.
+- **All or none, even on failure.** A write that throws part-way puts back
+  the files already restored and refuses `restore-failed`; the entry survives
+  for a retry.
+- **Bounded, and not switch-off-able.** Pruning never removes the entry just
+  written, drops names stamped more than a day ahead (a planted journal or a
+  clock rollback would otherwise evict every new entry), and reads at most
+  1,000 directory names.
+- **One window it does not close.** Studio's writers all hold the project
+  write lock, but a process that doesn't (an external editor, dev-server
+  tooling) could land a change between the hash check and the write. That is
+  inherent to a filesystem compare-and-swap, and that actor already has write
+  access to the file.
+- **Bounded.** The newest 50 entries per project are kept. A write whose
+  pre-image is over the cap, or not valid UTF-8, records nothing — its ⌘Z skips
+  with a notice rather than restoring something close.
+- **Not in git.** `.studio/` is outside Studio's commit staging, and
+  `.studio/undo-journal/` is in this repo's `.gitignore`.
+
+The Properties panel's Detach, Swap and Duplicate-as-copy post outside
+`commitStructural`, so they push their own entry the moment the response lands
+(`studio/journaledUndo.ts`): the inverse names no element, so there is nothing
+for the re-read to resolve first. Duplicate has no `/save` edit to re-post, so
+its redo says it cannot.
 
 Because the inverse addresses elements the write had not made yet (or, for
 `delete`, discarded bytes the write had not yet reported), the gesture records
 a **template** (`structuralUndoPlan.ts`) and `resolveStructuralInverse` fills
 it in from the batch's answer — `createdNodeIds`/`relocatedNodeIds` for the
-first seven, `removed`/`prunedImports` for `delete`'s own `reinsert-deleted`
-template. A template rather than a closure, because a redo has to re-resolve
+first seven, `undoToken` for the journaled ones (`restore-journal`). A template rather than a closure, because a redo has to re-resolve
 it: the gesture has been performed a second time, possibly at a different
 position, and the entry's inverse has to describe THAT one.
 
@@ -572,10 +606,11 @@ The Zustand store is created with `mutative({ enableAutoFreeze: true })`. That k
 - **Board/annotation SELECTION, `activeBoardId` on its own, snap guides,
   `frameDefaults`** — editor-local, same rule as node selection. (Undo does
   PRUNE an annotation selection that points at something the restore removed.)
-- **Undo of a source `delete` whose parent has no writable position** — the
-  page's sole returned root element, matching `deleteJsxElement`'s own
-  `no-jsx-parent` refusal. Every ordinary delete IS undoable, as a
-  `reinsert-source` write, since `store-15` — see "The `source` gesture" above.
+- **Undo of a one-shot write the server could not journal** — a pre-image
+  over the journal's size cap, or not valid UTF-8 (`undoJournal.ts`). ⌘Z skips
+  it with a notice. Every other delete, detach, swap and extract IS undoable,
+  byte for byte, through the undo journal (P3-F) — see "The undo journal"
+  above.
 - `mutateSiteState` — the recipe may write editor fields (e.g. `activeDocument`) alongside a `site` mutation; the editor fields go live but only the `site` patches enter history (parity with the prior snapshot model).
 - History stacks themselves — resetting to `[]` on `clearSite` is a lifecycle operation, not a mutation.
 

@@ -26,14 +26,8 @@
  */
 import { existsSync } from 'node:fs'
 import { createImportPruneSession, isPrunableSourceFile } from '@core/ast-codemods'
-import { studioEditFile, studioEditLocation, type SourceTargetScope } from './studioEditRouting'
+import { studioEditFile, type SourceTargetScope } from './studioEditRouting'
 import type { StudioEdit } from './studioEditSchemas'
-
-/** One file's pruned import declarations, under the workspace-relative `rel` every per-file result field uses. */
-export interface PrunedImports {
-  file: string
-  declarations: string[]
-}
 
 /**
  * The kinds whose write can remove the last use of an import in the file they
@@ -46,8 +40,7 @@ export interface PrunedImports {
  * - `ungroup` (`store-14`): dissolving a container can be the last use of the
  *   binding that named it, and it is what makes ⌘G → ⌘Z byte-exact;
  * - `detach` (P3-D): it replaces the call site, and hands the component's
- *   import to this pass so the declaration is reported for its undo
- *   (`reinsert-detached`).
+ *   import to this pass, which knows what the rest of the batch removed too.
  */
 function removesMarkup(edit: StudioEdit): boolean {
   return (
@@ -62,37 +55,26 @@ function removesMarkup(edit: StudioEdit): boolean {
 
 /**
  * Snapshot, before a batch writes a byte, the bindings each file its
- * markup-removing edits name references. `prune()` runs after the last edit
- * and reports what it took out (`store-15`: the undo of a delete needs it).
+ * markup-removing edits name references. `prune()` runs after the last edit.
  */
 export function snapshotImportsBeforeRemoval(
   dir: string,
   edits: readonly StudioEdit[],
   scope: SourceTargetScope,
-): { prune: () => PrunedImports[] } {
+): { prune: () => void } {
   const session = createImportPruneSession()
   const referencedBefore = new Map<string, ReadonlySet<string>>()
-  const relByFile = new Map<string, string>()
   for (const edit of edits) {
     if (!removesMarkup(edit)) continue
     const file = studioEditFile(dir, edit.nodeId, scope)
     if (!file || referencedBefore.has(file)) continue
-    if (isPrunableSourceFile(file) && existsSync(file)) {
-      referencedBefore.set(file, session.snapshot(file))
-      const rel = studioEditLocation(dir, edit.nodeId, scope)?.rel
-      if (rel) relByFile.set(file, rel)
-    }
+    if (isPrunableSourceFile(file) && existsSync(file)) referencedBefore.set(file, session.snapshot(file))
   }
   return {
     prune: () => {
-      const pruned: PrunedImports[] = []
       for (const [file, wasReferenced] of referencedBefore) {
-        if (!existsSync(file)) continue
-        const { declarations } = session.prune(file, wasReferenced)
-        const rel = relByFile.get(file)
-        if (rel && declarations.length > 0) pruned.push({ file: rel, declarations: [...declarations] })
+        if (existsSync(file)) session.prune(file, wasReferenced)
       }
-      return pruned
     },
   }
 }

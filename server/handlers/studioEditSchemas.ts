@@ -48,10 +48,11 @@ import {
   type StudioPromoteComponentDetail,
 } from './studioSlotWriteback'
 import { StructuralEditSchemas } from './studioStructuralWriteback'
-import { CanvasLayerEditSchemas } from './studioCanvasLayerWriteback'
+import { CanvasLayerEditSchemas, type CanvasLayerRemovedText } from './studioCanvasLayerWriteback'
 import { SvgEditSchemas } from './studioSvgWriteback'
 import { ListItemEditSchema } from './studioListItemWriteback'
-import type { CreatedJsxLocation, DeletedJsxText } from '@core/ast-codemods'
+import { UndoJournalTokenSchema } from './studio/undoJournalToken'
+import type { CreatedJsxLocation } from '@core/ast-codemods'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
 /**
@@ -262,6 +263,24 @@ const SwapEditSchema = Type.Object({
   newComponentFile: Type.String(),
 })
 
+/**
+ * P3-F — put back what a journaled one-shot write (`delete`/`detach`/`swap`/
+ * `promote-component`) changed, by the token its batch reported
+ * (`StudioEditBatchResult.undoToken`). The files are the server's own record
+ * (`studio/undoJournal.ts`); the client never sends file text. Applies only
+ * when every file is still exactly what that write left, else refuses
+ * `restore-stale`. Editor-only and alone in its batch
+ * (`studioBatchUndoJournal.ts`).
+ *
+ * `nodeId` addresses nothing: it is the key a refusal is reported under, by
+ * convention `undo-journal:<token>`, and never decodes to a location.
+ */
+const RestoreEditSchema = Type.Object({
+  kind: Type.Literal('restore'),
+  nodeId: Type.String(),
+  token: UndoJournalTokenSchema,
+})
+
 /** Discriminated union of every studio edit kind — `kind` is the discriminator. */
 export const StudioEditSchema = Type.Union([
   PropEditSchema,
@@ -274,6 +293,7 @@ export const StudioEditSchema = Type.Union([
   AssetEditSchema,
   DetachEditSchema,
   SwapEditSchema,
+  RestoreEditSchema,
   ...StructuralEditSchemas,
   // OD-8 — a `.map` row's structure, written to its array (`studioListItemWriteback.ts`).
   ListItemEditSchema,
@@ -377,14 +397,11 @@ export interface StudioEditApplyOutcome {
    */
   relocatedIn?: string
   /**
-   * `store-15` — populated for a successful `delete` (and `detach`, a
-   * canvas-layer delete): the exact bytes it discarded, so
-   * `applyStudioEditBatch` can report them keyed by the edit's own `nodeId`
-   * for an undo to reinsert later. A LIST since OD-8: a `list-item` remove
-   * discards several array elements in one edit, reported in ascending index
-   * order.
+   * P5-G — populated only for a successful `canvas-layer-delete` (and a
+   * `canvas-layer-place` that moved rather than copied): the layer module's
+   * own bytes, which its undo writes back (`canvas-layer-restore`).
    */
-  removed?: readonly DeletedJsxText[]
+  removed?: readonly CanvasLayerRemovedText[]
 }
 
 /**
@@ -419,6 +436,12 @@ export interface StudioEditRefusal {
  */
 export interface StudioEditBatchOptions {
   canvasLayers?: 'allow'
+  /**
+   * P3-F — record a journaled one-shot write's pre-image and report its
+   * `undoToken`, and accept a `restore`. The editor's `/save` route alone sets
+   * it (`studioBatchUndoJournal.ts`).
+   */
+  journal?: true
 }
 
 /** The result of applying a batch of studio edits — `POST /admin/api/studio/save`'s own response shape. */
@@ -514,12 +537,11 @@ export interface StudioEditBatchResult {
    */
   relocatedNodeIds: string[]
   /**
-   * `store-15` — every `delete` edit in the batch that SUCCEEDED, with the
-   * exact bytes it discarded, keyed by the edit's own `nodeId` (the deleted
-   * element's own id) so a caller can pair a `removed` entry with the edit
-   * that produced it. Empty when the batch deleted nothing.
+   * P5-G — every `canvas-layer-delete` in the batch that SUCCEEDED, with the
+   * module bytes it removed, keyed by the edit's own `nodeId`. Empty when the
+   * batch removed no layer.
    */
-  removed: (DeletedJsxText & { nodeId: string })[]
+  removed: (CanvasLayerRemovedText & { nodeId: string })[]
   /**
    * P1-A — every VALUE edit that landed (`prop`/`text`/`style`/`class`/`tag`/
    * `literal`/`asset`), with its target's identity as it stands after the
@@ -540,18 +562,19 @@ export interface StudioEditBatchResult {
    */
   retargeted: { nodeId: string; to: string }[]
   /**
-   * `store-15` — every import binding the batch's prune pass removed as a
-   * side effect of a `delete`, grouped per FILE (workspace-relative), with
-   * a re-insertable declaration text per binding
-   * (`PrunedImportsResult.declarations`). Empty when nothing was pruned.
+   * P3-F — the undo-journal token for this batch's journaled one-shot write
+   * (`delete`/`detach`/`swap`/`promote-component`): what a `restore` edit
+   * names to put every file it changed back. Present only for a
+   * `journal: true` batch that wrote one and could record it
+   * (`studio/undoJournal.ts` says when it cannot).
    */
-  prunedImports: { file: string; declarations: string[] }[]
+  undoToken?: string
   /**
    * OD-8 — where each `list-item` edit's array literal is after the WHOLE
    * batch: `nodeId` as sent, `to` its `rel:line:col` now. The array's own
    * edits never move its `[`, but a remove's import prune (or any write above
-   * it in the batch) does, and ⌘Z of that remove must address the array where
-   * it now is. Empty when the batch held no `list-item` edit that wrote.
+   * it in the batch) does, and the board re-addresses its rows there. Empty
+   * when the batch held no `list-item` edit that wrote.
    */
   listArrays: { nodeId: string; to: string }[]
 }

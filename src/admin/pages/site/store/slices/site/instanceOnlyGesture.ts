@@ -59,7 +59,6 @@ import { commitStudioDetachForInstance } from '@site/studio/studioStructuralComm
 import { isStructuralCommitInFlight, subscribeStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
 import type { EditorStore } from '@site/store/types'
 import { resolveActiveTreeTarget } from './helpers'
-import { captureDeleteOrigin } from './structuralHistory'
 import type { EditorStoreSetter } from './types'
 
 /** Every id a refused gesture named, re-addressed after the detach — see the module doc. */
@@ -90,14 +89,10 @@ export function applyToThisInstanceOnly(input: {
   const instance = tree.nodes[callSite]
   const [rootId, ...more] = instance?.children ?? []
   if (!instance || rootId === undefined || more.length > 0) return false
-  const origin = captureDeleteOrigin(tree, callSite)
-  if (!origin) return false
 
   void (async () => {
     const outcome = await commitStudioDetachForInstance({
       callSiteNodeId: callSite,
-      parentNodeId: origin.parentId,
-      index: origin.index,
       label: `Change this ${instance.label ?? 'instance'} only`,
     })
     const inlined = outcome?.createdNodeIds[0]
@@ -144,7 +139,10 @@ async function replayInComponentCopy(input: {
   const componentName = tree.nodes[rootId]?.fromComponent
   if (!componentRel || !componentName) return false
   const read = waitForBoardRead(8000)
-  const copy = await extractInstanceCopy(callSite)
+  // Its undo is the swap back below, linked to the replay — not the journal's
+  // restore, which would refuse once the replay's own undo left the copy's
+  // bytes anything but identical.
+  const copy = await extractInstanceCopy(callSite, { undo: 'caller' })
   if (!copy.ok || !copy.newFile) return false
   await read
   const board = resolveActiveTreeTarget(get())?.tree

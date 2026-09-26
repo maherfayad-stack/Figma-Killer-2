@@ -183,9 +183,9 @@ component's root nodes.
 
 **`StudioEdit`** — one typed edit in a save batch (`StudioEditSchema`,
 `server/handlers/studioEditSchemas.ts`): `prop` \| `text` \| `style` \| `class`
-\| `styled` \| `literal` \| `tag` \| `asset` \| `detach` \| `swap` \| `css`, plus
-the structural kinds (`move`, `reparent`, `delete`, `reinsert-source`,
-`duplicate`, `insert`, `wrap`, `group`, `ungroup`, `transplant`) and the slot
+\| `styled` \| `literal` \| `tag` \| `asset` \| `detach` \| `swap` \| `restore` \|
+`css`, plus the structural kinds (`move`, `reparent`, `delete`, `duplicate`,
+`insert`, `wrap`, `group`, `ungroup`, `transplant`) and the slot
 kinds (`insert-slot`, `promote-component`, `add-slot-prop`). Each maps to one
 AST or CSS codemod. An edit that does not write comes back as a **named
 refusal**.

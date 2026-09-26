@@ -272,10 +272,13 @@ function isStudioAuthoredSourceRel(rel: string): boolean {
  * `docs/features/studio-import.md`'s "A save only reloads when a write
  * actually landed") is what keeps a preview-only batch from reloading
  * anything despite this.
+ *
+ * P3-F — `restore` too: it puts whole files back, undoing a write that was
+ * itself one of the kinds above.
  */
 export function isSharedSourceNodeId(nodeId: string, kind?: StudioEdit['kind']): boolean {
   // `list-item` (OD-8): an array another route may import renders there too.
-  if (kind === 'asset' || kind === 'literal' || kind === 'detach' || kind === 'swap' || kind === 'list-item') return true
+  if (kind === 'asset' || kind === 'literal' || kind === 'detach' || kind === 'swap' || kind === 'list-item' || kind === 'restore') return true
   // P5-G — every canvas-layer kind creates, removes or moves a whole element
   // across files, exactly like `transplant`.
   if (kind !== undefined && (isStructuralEditKind(kind) || isSlotEditKind(kind) || isCanvasLayerEditKind(kind))) return true
@@ -377,11 +380,6 @@ export function orderStudioEditsForApply<T extends { nodeId: string }>(edits: re
  * element in a batch (a cross-frame drag resolves one target, and the second
  * would be planned against a tree the first already changed). Collapsing it
  * would silently drop a copy while `written` reported the truth.
- *
- * `reinsert-source` (`store-15`) joins `insert` for the identical reason: its
- * `nodeId` is the PARENT being restored INTO, not a span it overwrites, and a
- * multi-node delete's ⌘Z posts one `reinsert-source` per restored sibling
- * against that same parent — two wanted elements, not a duplicate write.
  */
 export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(
   dir: string,
@@ -407,7 +405,6 @@ export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(
       edit.kind === 'wrap' ||
       edit.kind === 'group' ||
       edit.kind === 'transplant' ||
-      edit.kind === 'reinsert-source' ||
       edit.kind === 'styled' ||
       // P5-D — every part of one `<svg>` shares its host's location; two
       // edits on different parts are two writes, and two on one part apply
