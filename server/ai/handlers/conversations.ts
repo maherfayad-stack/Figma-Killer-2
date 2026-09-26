@@ -39,6 +39,8 @@ import {
 import { conversationProjectKey } from '../conversations/projectScope'
 import { isConversationStreaming } from '../conversations/activeStreams'
 import { endClaudeCliConversation } from '../drivers/claudeCliWarmTurn'
+import { readCredentialForUser } from '../credentials/store'
+import { getDefault } from '../defaults/store'
 
 const CreateBodySchema = Type.Object({
   title: Type.Optional(Type.String()),
@@ -169,11 +171,40 @@ async function handleCreate(req: Request, db: DbClient): Promise<Response> {
   const body = await readValidatedBody(req, CreateBodySchema)
   if (!body) return badRequest('Invalid request body.')
 
+  const model = await liveModelFor(db, userOrResponse.id, body.credentialId, body.modelId)
+  if (!model) return jsonResponse({ error: NO_LIVE_MODEL_MESSAGE }, { status: 409 })
+
   const record = await createConversationForUser(db, userOrResponse.id, {
     ...body,
+    credentialId: model.credentialId,
+    modelId: model.modelId,
+    modelSource: model.fellBack ? 'default' : body.modelSource,
     projectKey: conversationProjectKey(body.dir),
   })
   return jsonResponse({ conversation: toConversationView(record) }, { status: 201 })
+}
+
+const NO_LIVE_MODEL_MESSAGE =
+  'The AI connection this chat asked for no longer exists, and no default model is set. Choose a model in Settings → AI.'
+
+/**
+ * The model a conversation should be created or switched onto. A client can
+ * hold a credential id that has since been deleted (the connection was
+ * removed and added again, which mints a new id), and writing it would fail
+ * the `ai_conversations.credential_id` foreign key as a raw 500. A removed
+ * connection falls back to Studio's default model, when that one is still
+ * accessible; `null` means there is nothing live to use.
+ */
+async function liveModelFor<M extends string | undefined>(
+  db: DbClient,
+  userId: string,
+  credentialId: string,
+  modelId: M,
+): Promise<{ credentialId: string; modelId: M | string; fellBack: boolean } | null> {
+  if (await readCredentialForUser(db, userId, credentialId)) return { credentialId, modelId, fellBack: false }
+  const fallback = await getDefault(db)
+  if (!fallback || !(await readCredentialForUser(db, userId, fallback.credentialId))) return null
+  return { credentialId: fallback.credentialId, modelId: fallback.modelId, fellBack: true }
 }
 
 // ---------------------------------------------------------------------------
@@ -222,7 +253,14 @@ async function handleUpdate(req: Request, db: DbClient, id: string): Promise<Res
   const body = await readValidatedBody(req, UpdateBodySchema)
   if (!body) return badRequest('Invalid request body.')
 
-  const record = await updateConversationForUser(db, userOrResponse.id, id, body)
+  let update = body
+  if (body.credentialId) {
+    const model = await liveModelFor(db, userOrResponse.id, body.credentialId, body.modelId)
+    if (!model) return jsonResponse({ error: NO_LIVE_MODEL_MESSAGE }, { status: 409 })
+    update = { ...body, credentialId: model.credentialId, ...(model.modelId ? { modelId: model.modelId } : {}) }
+  }
+
+  const record = await updateConversationForUser(db, userOrResponse.id, id, update)
   if (!record) return jsonResponse({ error: 'Conversation not found' }, { status: 404 })
   return jsonResponse({ conversation: toConversationView(record) })
 }
