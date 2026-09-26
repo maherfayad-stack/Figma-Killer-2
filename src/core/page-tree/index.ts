@@ -70,6 +70,26 @@ export type {
   StructuralRefusal,
   StructuralRefusalReason,
 } from './sourceStructure'
+// OD-8 — a `.map` row's reorder / delete / duplicate / paste is written to the
+// array literal it maps over: the parser's stamp, the op vocabulary, the plans.
+export {
+  ListItemOpSchema,
+  ListRowKeySchema,
+  ListRowSourceSchema,
+  invertListItemEdit,
+  isListRowNodeId,
+  listItemLengthAfter,
+  listRowArrayOf,
+} from './listRowSource'
+export type { ListItemEdit, ListItemOp, ListRowArraySource, ListRowKey, ListRowRefusalCode, ListRowSource } from './listRowSource'
+export {
+  planListRowCopy,
+  planListRowCopyTo,
+  planListRowMove,
+  planListRowMoveSequence,
+  planListRowRemove,
+} from './listRowPlans'
+export type { ListRowEditPlan, ListRowPlan } from './listRowPlans'
 // The same rule asked of a live tree: which sibling a move lands beside, which
 // element "inside the page" means, and whether a selection is one run (K3).
 export {

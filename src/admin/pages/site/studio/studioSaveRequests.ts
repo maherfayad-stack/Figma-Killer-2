@@ -136,6 +136,13 @@ export const StudioSaveResponseSchema = Type.Object({
    */
   relocatedNodeIds: Type.Optional(Type.Array(Type.String())),
   /**
+   * OD-8 — where each `list-item` edit's array literal is after the batch
+   * (`nodeId` as sent, `to` now): a row delete's import prune can move it,
+   * and the board re-addresses its rows there. `Type.Optional`, same
+   * tolerant-rollout reasoning as the fields above.
+   */
+  listArrays: Type.Optional(Type.Array(Type.Object({ nodeId: Type.String(), to: Type.String() }))),
+  /**
    * P5-G — every `canvas-layer-delete` in the batch that SUCCEEDED, with the
    * module bytes it removed, keyed by the edit's own `nodeId` — its ⌘Z
    * (`canvas-layer-restore`) is built from these once the resync lands.

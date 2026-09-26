@@ -54,6 +54,7 @@ import {
   resolveSourceContainer,
   type EditConstraint,
   type EditConstraintAction,
+  type ListRowEditPlan,
   type NodeTree,
   type PageNode,
   type StructuralMoveCommit,
@@ -118,9 +119,11 @@ export function planSourceMove(
   nodeIds: readonly string[],
   newParentId: string,
   newIndex: number,
-): StructuralPlan<SourceMoveCommit> {
+): StructuralPlan<SourceMoveCommit> & { listRow?: ListRowEditPlan } {
   const preview = previewStructuralMove(tree, nodeIds, newParentId, newIndex)
-  if (preview.ok) return { ok: true, commit: preview.commit }
+  // OD-8 — `listRow` is a reorder of `.map` rows, written to their array:
+  // `commit` is `null` and the caller must NOT mutate the tree.
+  if (preview.ok) return { ok: true, commit: preview.commit, ...(preview.listRow ? { listRow: preview.listRow } : {}) }
   const node = nodeIds[0] === undefined ? undefined : tree.nodes[nodeIds[0]]
   return {
     ok: false,

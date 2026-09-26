@@ -33,7 +33,7 @@
  * so a project with its own component library writes its own components.
  */
 import { registry } from '@core/module-engine'
-import { describeStructuralRefusal, type NodeTree, type PageNode } from '@core/page-tree'
+import { describeStructuralRefusal, planListRowCopy, planListRowCopyTo, type NodeTree, type PageNode } from '@core/page-tree'
 import { broadcastOptimisticInsert } from '@site/canvas/frameAdapter/optimisticStructuralBroadcast'
 import {
   commitStudioDuplicate,
@@ -62,6 +62,7 @@ import {
   previewOptimisticInsert,
   previewOptimisticWrap,
 } from './structuralOptimism'
+import { writeListRowPlan } from './listRowSourceWrites'
 import type { SiteSliceHelpers } from './types'
 
 /**
@@ -280,6 +281,17 @@ export function createStudioSourceWrites(
 
     const retryWithMap = (mapId: (nodeId: string) => string): void => {
       void writeDuplicateToSource(nodeIds.map(mapId), destination ? { ...destination, parentId: mapId(destination.parentId) } : undefined)
+    }
+
+    // OD-8 — `.map` rows are copied in their array: after themselves (⌘D),
+    // or where an Alt-drag drops them inside their own list.
+    const rowNodes = nodeIds.map((id) => tree.nodes[id]).filter((node): node is PageNode => node !== undefined)
+    const rows = destination
+      ? planListRowCopyTo(tree, rowNodes, destination.parentId, destination.index)
+      : planListRowCopy(rowNodes)
+    if (rows) {
+      writeListRowPlan(rows, STRUCTURAL_REFUSAL_TITLE.duplicate, { get, set })
+      return true
     }
 
     // K2 — Alt+drag: the copy lands INSIDE a container the user pointed at,

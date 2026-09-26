@@ -145,7 +145,7 @@ describe('free-canvas gestures', () => {
             authoredCss: '',
             trust: 'static',
             paletteHiddenModuleIds: [],
-            pageCount: pages.length,
+            pageList: pages.map(({ id, slug, title }) => ({ id, slug, title })),
             canvasLayers: lastAnswer.layers ?? [],
           },
           ...pages.map((p, index) => ({ kind: 'page', page: p, index })),

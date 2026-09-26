@@ -90,6 +90,8 @@ export type {
   DeleteJsxRefusal,
   DeleteJsxRefusalReason,
 } from './deleteJsxElement'
+export { editListItems } from './editListItems'
+export type { EditListItemsParams, EditListItemsResult, ListItemRefusal, ListItemRefusalReason } from './editListItems'
 export type { CreatedJsxLocation } from './createdJsxLocation'
 export { insertJsxElement } from './insertJsxElement'
 export type { InsertJsxElementParams, InsertJsxElementResult } from './insertJsxElement'

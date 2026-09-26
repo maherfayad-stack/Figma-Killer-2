@@ -89,12 +89,22 @@ import {
   type ResizeSizingMarkers,
   type ResizeSnapContext,
 } from './resizeMessages'
-import { snapGuidesEqual, type SnapGuide } from './snapRules'
+import { ALL_SNAP_SOURCES, snapGuidesEqual, type SnapGuide } from './snapRules'
 
 /** The attribute the frame element carries — `selectionChromeCss.ts` styles it. */
 export const RESIZE_FRAME_ATTR = 'data-canvas-resize-frame'
 /** The attribute each handle carries, naming the direction it drags — `selectionChromeCss.ts` styles it. */
 export const RESIZE_HANDLE_ATTR = 'data-canvas-resize-handle'
+/**
+ * P5-F / IX-25 — the four rotation zones just outside the corners, naming the
+ * corner each sits by. Rendered by the portal-mode handles only
+ * (`CanvasResizeHandles`); `selectionChromeCss.ts` places and styles them.
+ */
+export const ROTATE_HANDLE_ATTR = 'data-canvas-rotate-handle'
+/** The corners a rotation zone sits outside of. */
+export const ROTATE_CORNERS = ['nw', 'ne', 'se', 'sw'] as const
+/** On the frame for exactly the length of a rotation; `selectionChromeCss.ts` swaps the cursor under it. */
+export const ROTATE_ACTIVE_ATTR = 'data-canvas-rotating'
 /** On the frame for exactly the length of a drag; `selectionChromeCss.ts` shows the size badge under it. */
 export const RESIZE_ACTIVE_ATTR = 'data-canvas-resizing'
 /** The W×H badge inside the frame (IX-18). */
@@ -288,6 +298,11 @@ export function installResizeHandles(options: ResizeHandlesOptions): ResizeHandl
           resolveElement: resolvePeer,
           resolveRect: snapRectOf,
           zoom: snap.zoom,
+          // P5-F — the board's ruler guides and the editor's snap toggles do
+          // not cross the wire yet (`ResizeSnapContext` carries neither): a
+          // live frame snaps to its peers only, with both toggles on.
+          guideLines: [],
+          preferences: ALL_SNAP_SOURCES,
         })
       : null
     const startX = event.clientX

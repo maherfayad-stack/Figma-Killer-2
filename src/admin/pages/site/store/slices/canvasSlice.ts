@@ -6,10 +6,15 @@ import {
   clampPan,
   nearestZoomStep,
 } from '@site/canvas/math'
-import { DEFAULT_PREVIEW_AXES, type PreviewAxes } from '@core/studio-board'
+import { DEFAULT_PREVIEW_AXES, type BoardFramePlacement, type PreviewAxes } from '@core/studio-board'
 // Type-only: the store carries the canvas's published gesture contract but
 // never imports canvas DOM code at runtime.
 import type { CanvasViewportCommands } from '@site/canvas/canvasViewportCommands'
+import {
+  readSnapPreferences,
+  writeSnapPreferences,
+  type SnapPreferences,
+} from '@site/canvas/snapPreferences'
 
 type CanvasMode = 'select' | 'pan' | 'insert'
 
@@ -62,7 +67,18 @@ type CanvasView = 'design' | 'live'
  * a read-only reviewer and is a different kind of arming (it consumes the next
  * click), while these change what an ordinary drag means.
  */
-export type DrawTool = 'rectangle' | 'ellipse' | 'text' | 'frame'
+export type DrawTool = 'rectangle' | 'ellipse' | 'text' | 'frame' | 'board'
+
+/**
+ * P5-F / IX-13 — a board-tool draw on the empty board, waiting for the author
+ * to pick which page the new frame shows (`BoardDrawPagePicker`). Where it
+ * was drawn (board units) and where on screen to open the picker.
+ */
+export interface BoardDrawRequest {
+  placement: BoardFramePlacement
+  clientX: number
+  clientY: number
+}
 export type CanvasTool = 'move' | 'hand' | 'scale' | DrawTool
 
 interface CanvasSlice {
@@ -144,6 +160,16 @@ interface CanvasSlice {
    * disables the toolbar's Fit control instead of letting it silently no-op.
    */
   canvasViewportCommands: CanvasViewportCommands | null
+  /**
+   * P5-F / IX-5e — snap to objects (siblings, parents, furniture, equal
+   * spacing) and snap to ruler guides, independently. A preference of the
+   * person, persisted to `localStorage` (`canvas/snapPreferences.ts`). Every
+   * snapping gesture reads it at its start and applies it through
+   * `snapSourcesFor`.
+   */
+  snapPreferences: SnapPreferences
+  /** P5-F / IX-13 — see {@link BoardDrawRequest}. `null` when no picker is open. */
+  boardDrawRequest: BoardDrawRequest | null
 
   setZoom: (zoom: number) => void
   /** Publish (or, with `null`, retract) the mounted canvas's viewport gestures. */
@@ -183,6 +209,10 @@ interface CanvasSlice {
   zoomIn: (originX?: number, originY?: number) => void
   zoomOut: (originX?: number, originY?: number) => void
   zoomTo: (zoom: number, originX?: number, originY?: number) => void
+  /** Flip one snap toggle (⌘⇧' objects, ⌘' ruler guides) and persist it. */
+  toggleSnapPreference: (which: keyof SnapPreferences) => void
+  /** Open (or, with `null`, close) the board tool's page picker. */
+  setBoardDrawRequest: (request: BoardDrawRequest | null) => void
 }
 
 // Contribute this slice's fields to the combined `EditorStore` type via TS
@@ -207,6 +237,8 @@ export const createCanvasSlice: EditorStoreSliceCreator<CanvasSlice> = (set, get
   agentSnapshotCaptureRequest: null,
   previewAxes: DEFAULT_PREVIEW_AXES,
   canvasViewportCommands: null,
+  snapPreferences: readSnapPreferences(),
+  boardDrawRequest: null,
 
   setZoom: (zoom) => set({ zoom: clampZoom(zoom) }),
 
@@ -315,5 +347,13 @@ export const createCanvasSlice: EditorStoreSliceCreator<CanvasSlice> = (set, get
     const newPanX = clampPan(originX - scale * (originX - panX))
     const newPanY = clampPan(originY - scale * (originY - panY))
     set({ zoom: newZoom, panX: newPanX, panY: newPanY })
+  },
+
+  setBoardDrawRequest: (boardDrawRequest) => set({ boardDrawRequest }),
+
+  toggleSnapPreference: (which) => {
+    const next = { ...get().snapPreferences, [which]: !get().snapPreferences[which] }
+    set({ snapPreferences: next })
+    writeSnapPreferences(next)
   },
 })

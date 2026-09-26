@@ -34,14 +34,16 @@
  * | ungroup | `group` the children it released, back into the same container |
  * | transplant (move) | `transplant` back to the parent it left |
  * | transplant (copy) | `delete` the copy it created |
- * | delete / detach / swap / extract | `restore` the undo-journal entry the write recorded |
+ * | a `.map` row's reorder / copy (OD-8) | the inverse `list-item` edit, known at gesture time |
+ * | delete / detach / swap / extract, a `.map` row's delete | `restore` the undo-journal entry the write recorded |
  *
- * The last row is the exception, and the only one: what those four replace is
- * source text no edit kind describes (the deleted element's bytes, the call
- * site a detach inlined). The server keeps what the files were
- * (`server/handlers/studio/undoJournal.ts`, P3-F) and reports a token; the
- * inverse names that token. It applies only while every file is exactly what
- * the write left, so it can never overwrite a later change.
+ * The last row is the exception, and the only one: what those writes replace
+ * is source text no edit kind describes (the deleted element's bytes, the call
+ * site a detach inlined, the array elements a row delete cut). The server keeps
+ * what the files were (`server/handlers/studio/undoJournal.ts`, P3-F) and
+ * reports a token; the inverse names that token. It applies only while every
+ * file is exactly what the write left, so it can never overwrite a later
+ * change.
  *
  * That is why a codemod reporting the ids it CREATED (`store-13`) and the ids
  * it RELOCATED are both preconditions for undo: the inverse cannot be written
@@ -154,6 +156,8 @@ export interface StructuralWriteOutcome {
   removed: readonly StructuralRemovedText[]
   /** P3-F — the undo-journal token for a journaled one-shot write; `null` when the batch recorded none. */
   undoToken: string | null
+  /** OD-8 — where each `list-item` edit's array literal is after the write (`nodeId` as sent, `to` now). */
+  listArrays: readonly { nodeId: string; to: string }[]
 }
 
 /** The synthetic id a `restore` edit is reported under — it addresses no element (`studioEditSchemas.ts`). */
@@ -276,7 +280,9 @@ const NODE_ID_FIELDS = ['anchorNodeId', 'parentNodeId'] as const
  * `element-moved` when that position now holds something else.
  */
 export function addressesSourceLiteral(edit: StructuralEditPayload): boolean {
-  return edit.kind === 'asset'
+  // OD-8 — a `list-item` edit names an ARRAY LITERAL's `[`, never a node; the
+  // codemod's own `length` check is its guard.
+  return edit.kind === 'asset' || edit.kind === 'list-item'
 }
 
 /**

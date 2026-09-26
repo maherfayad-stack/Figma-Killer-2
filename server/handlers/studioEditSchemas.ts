@@ -47,6 +47,7 @@ import {
 } from './studioSlotWriteback'
 import { StructuralEditSchemas } from './studioStructuralWriteback'
 import { CanvasLayerEditSchemas, type CanvasLayerRemovedText } from './studioCanvasLayerWriteback'
+import { ListItemEditSchema } from './studioListItemWriteback'
 import { UndoJournalTokenSchema } from './studio/undoJournalToken'
 import type { CreatedJsxLocation } from '@core/ast-codemods'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
@@ -291,6 +292,8 @@ export const StudioEditSchema = Type.Union([
   SwapEditSchema,
   RestoreEditSchema,
   ...StructuralEditSchemas,
+  // OD-8 — a `.map` row's structure, written to its array (`studioListItemWriteback.ts`).
+  ListItemEditSchema,
   ...SlotEditSchemas,
   // P5-G — the free canvas's five kinds (`studioCanvasLayerWriteback.ts`).
   ...CanvasLayerEditSchemas,
@@ -389,10 +392,11 @@ export interface StudioEditApplyOutcome {
    */
   relocatedIn?: string
   /**
-   * P5-G — populated only for a successful `canvas-layer-delete`: the layer
-   * module's own bytes, which its undo writes back (`canvas-layer-restore`).
+   * P5-G — populated only for a successful `canvas-layer-delete` (and a
+   * `canvas-layer-place` that moved rather than copied): the layer module's
+   * own bytes, which its undo writes back (`canvas-layer-restore`).
    */
-  removed?: CanvasLayerRemovedText
+  removed?: readonly CanvasLayerRemovedText[]
 }
 
 /**
@@ -560,4 +564,12 @@ export interface StudioEditBatchResult {
    * (`studio/undoJournal.ts` says when it cannot).
    */
   undoToken?: string
+  /**
+   * OD-8 — where each `list-item` edit's array literal is after the WHOLE
+   * batch: `nodeId` as sent, `to` its `rel:line:col` now. The array's own
+   * edits never move its `[`, but a remove's import prune (or any write above
+   * it in the batch) does, and the board re-addresses its rows there. Empty
+   * when the batch held no `list-item` edit that wrote.
+   */
+  listArrays: { nodeId: string; to: string }[]
 }

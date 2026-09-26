@@ -36,7 +36,7 @@ import { useEditorStore } from '@site/store/store'
 import type { CanvasLiftDrop } from './BoardCanvasLayer/canvasLayerLift'
 import type { CanvasDropResolution, CanvasTransplantTarget } from './canvasDnd'
 import {
-  freeMoveStylePatch,
+  freeMoveStylePatches,
   presentFreeMoveRefusal,
   type FreeMoveResolution,
   type FreeMoveStep,
@@ -87,7 +87,11 @@ export function commitCanvasDrag(input: CanvasDragCommitInput): void {
   if (input.free) {
     if (!input.free.ok) presentFreeMoveRefusal(input.free.refusal)
     else if (input.freeStep) {
-      store.setNodeInlineStyles(input.draggedId, freeMoveStylePatch(input.free.plan, input.freeStep))
+      // IX-22 — every moved layer's own patch, in ONE transaction: one undo
+      // entry however many layers moved together.
+      const patches = freeMoveStylePatches(input.free.plan, input.freeStep)
+      if (patches.length === 1) store.setNodeInlineStyles(patches[0]!.nodeId, patches[0]!.patch)
+      else if (patches.length > 1) store.setNodesInlineStylesPerNode(patches)
     }
     return
   }

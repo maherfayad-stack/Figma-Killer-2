@@ -62,6 +62,7 @@ const DRAW_TOOL_KEYS: ReadonlyArray<{ commandId: string; tool: DrawTool }> = [
   { commandId: 'tools.ellipse', tool: 'ellipse' },
   { commandId: 'tools.text', tool: 'text' },
   { commandId: 'tools.frame', tool: 'frame' },
+  { commandId: 'tools.board', tool: 'board' },
 ]
 
 /** `H` and `K` — the two latched tools, each a toggle on its own key. */

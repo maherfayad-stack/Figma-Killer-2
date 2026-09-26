@@ -63,12 +63,31 @@ on those surfaces structurally cannot fail on the thing it is named after
 *computed* layout — measured rects, `scrollHeight`, computed styles after
 layout.
 
-Running the five budget specs by path is usually enough and takes a few
+Running the budget specs by path is usually enough and takes a few
 minutes:
 
 ```sh
-npx playwright test tests/e2e/studio-board-perf.e2e.ts tests/e2e/canvas-feel-budgets.e2e.ts tests/e2e/inspector-panel-measurement.e2e.ts   tests/e2e/inspector-height.e2e.ts tests/e2e/studio-feel.e2e.ts
+npx playwright test tests/e2e/studio-board-perf.e2e.ts tests/e2e/canvas-feel-budgets.e2e.ts tests/e2e/canvas-edit-budgets.e2e.ts tests/e2e/live-frame-budgets.e2e.ts tests/e2e/inspector-panel-measurement.e2e.ts tests/e2e/inspector-height.e2e.ts tests/e2e/studio-feel.e2e.ts
 ```
+
+### The production bundle (`E2E_VITE_MODE=preview`)
+
+Some budgets are stated for a production build — WS-5.6's selection → ring
+< 32 ms, WS-5.5's first frame interactive < 2 s warm. Development React
+renders several times slower (dev-only element validation, owner stacks) and
+the dev server loads the editor as ~2,000 separate modules, so on the default
+stack those budgets can only be ratchets. `E2E_VITE_MODE=preview` makes
+`scripts/e2e-dev.ts` build the admin with `vite build` and serve it with
+`vite preview` (which reuses `server.proxy`, so everything else is the same
+stack). The tests whose target is a production number are tagged
+`@production-bundle` and read the mode to pick their budget:
+
+```sh
+E2E_VITE_MODE=preview npx playwright test tests/e2e/canvas-feel-budgets.e2e.ts tests/e2e/canvas-edit-budgets.e2e.ts tests/e2e/studio-board-perf.e2e.ts --grep @production-bundle
+```
+
+Component names are minified in that bundle, so a budget that counts renders
+by name (`helpers/reactRenderCounter.ts`) asserts on the dev pass only.
 
 ### In CI
 
@@ -86,9 +105,12 @@ cold whole-suite run anyone had ever done (`verify-2`) reported **23 passed /
 "The full-suite baseline" below for what those 64 turned out to be.
 
 `e2e-budgets` runs the narrow budget slice — `studio-board-perf`,
-`canvas-feel-budgets`, `inspector-panel-measurement`, `inspector-height`,
-`studio-feel` — because those five measure **computed layout and frame time**, the one class of
-question happy-dom structurally cannot answer. It stays its own
+`canvas-feel-budgets`, `canvas-edit-budgets`, `live-frame-budgets`,
+`inspector-panel-measurement`, `inspector-height`, `studio-feel` — because
+those measure **computed layout and frame time**, the one class of
+question happy-dom structurally cannot answer — and then runs the
+`@production-bundle` tests a second time against the production build (see
+above). It stays its own
 job so a 40 ms regression is visible in ten minutes instead of at the end of an
 hour-long run, and so the two kinds of failure get the triage they each need.
 

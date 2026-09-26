@@ -33,18 +33,17 @@ interface InsertModuleOptions {
  * tree (page vs. VC) based on `activeDocument.kind`.
  */
 export function useInsertModule() {
-  const canvasPage = useEditorStore(selectActiveCanvasPage)
-  const selectedNodeId = useEditorStore((s) => s.selectedNodeId)
-  const insertNode = useEditorStore((s) => s.insertNode)
-  const selectNode = useEditorStore((s) => s.selectNode)
-  const packageJson = useEditorStore((s) => s.packageJson)
-  const setDependency = useEditorStore((s) => s.setDependency)
-
   return (
     mod: AnyModuleDefinition,
     explicitTarget?: string | InsertLocation,
     options: InsertModuleOptions = {},
   ) => {
+    // Read at the moment of the insert, never subscribed: every consumer of
+    // this hook (the Assets panel, the notch, the draw tools) would otherwise
+    // re-render on every click (the selection) and every keystroke (a new page
+    // object) for state it only needs when something is inserted (P6-C).
+    const { selectedNodeId, insertNode, selectNode, packageJson, setDependency } = useEditorStore.getState()
+    const canvasPage = selectActiveCanvasPage(useEditorStore.getState())
     if (!canvasPage) return null
 
     const location =

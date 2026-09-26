@@ -35,15 +35,14 @@
  * `htmlImport`, and every base module's renderer still read it; only its
  * retired editor UI is gone.
  */
-import { EmptyState } from '@ui/components/EmptyState'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import type { AnyModuleDefinition } from '@core/module-engine'
-import { describeStructuralRefusal, hasWritableSourceLocation, refusePlacement } from '@core/page-tree'
+import { describeStructuralRefusal, hasWritableSourceLocation, listRowArrayOf, refusePlacement } from '@core/page-tree'
 import type { StyleRule, PageNode } from '@core/page-tree'
 import type { VisualComponent } from '@core/visualComponents'
 import type { ActiveDocument } from '../../store/slices/uiSlice'
 import { ClassPicker, type ClassPickerHandle } from './ClassPicker'
-import { FrameSizePanel } from './FrameSizePanel'
+import { EmptySelectionPanel } from './EmptySelectionPanel'
 import { StyleSurface } from './StyleSurface'
 import { ComponentRefView } from './ComponentRefView'
 import { ComponentParamsOverview } from './ComponentParamsOverview'
@@ -131,24 +130,12 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
     if (inEmptyVcCanvas && activeVc) {
       return <ComponentParamsOverview vc={activeVc} />
     }
-    // panel-39 — the frame's own device preset + W/H live HERE, in the
-    // nothing-selected state, and nowhere else. They used to render above
-    // every single-node selection, which put a second, unrelated W/H pair
-    // four rows above `MeasuresSection`'s real one and cost 88px of
-    // permanent chrome on a panel that does not fit a 900px window. Figma
-    // shows a frame's size when the frame is what you are looking at; a
-    // multi-frame selection gets the same controls from
-    // `FrameBulkInspector`. `FrameSizePanel` renders `null` when the active
-    // page is not a board frame, so the empty state stands alone elsewhere.
-    return (
-      <div className={styles.emptySelection}>
-        <FrameSizePanel />
-        <EmptyState
-          variant="centered"
-          title="Select an element on the canvas to view its properties."
-        />
-      </div>
-    )
+    // panel-39 — the frame's own device preset + W/H live in the
+    // nothing-selected state, and nowhere else (a multi-frame selection gets
+    // the same controls from `FrameBulkInspector`). P5-F / UX-9 — the rest of
+    // that state is the screen's own properties rather than one sentence:
+    // see `EmptySelectionPanel`.
+    return <EmptySelectionPanel />
   }
 
   if (selectedNode.moduleId === 'base.visual-component-ref') {
@@ -231,6 +218,7 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
             textOrigin={selectedNode.textOrigin}
             sharedWith={sharedTextOriginCount}
             hasWritableLocation={hasWritableSourceLocation(selectedNode.id)}
+            listRowArray={listRowArrayOf(selectedNode) ?? undefined}
             constraint={structuralConstraint}
             nodeId={selectedNodeId ?? undefined}
           />

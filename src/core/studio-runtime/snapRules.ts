@@ -22,15 +22,29 @@
  * used to be 24 screen px of pull at 400% and 1.5 px at 25%, so snapping felt
  * sticky zoomed in and absent zoomed out. Penpot does the same division
  * (`main/snap.cljs`, `snap-accuracy / zoom`).
+ *
+ * ## Three kinds of snap, one answer per axis (P5-F)
+ *
+ * Per axis, the closest of three candidates within the threshold wins:
+ *
+ *  - **alignment** — a dragged edge or centre on a peer's edge or centre;
+ *  - **a ruler guide** (IX-5c) — a dragged edge or centre on a persisted
+ *    guide line ({@link SnapLine}), converted into the rects' own space by
+ *    the caller;
+ *  - **equal spacing** (IX-5d) — the same gap as one the row already has, or
+ *    centred between two neighbours (`snapSpacingRules.ts`).
+ *
+ * The distance pills ({@link SnapResult.spacings}) describe the rect where it
+ * ENDS UP, whichever candidate moved it. What is offered at all is the
+ * user's choice (IX-5e): objects (peers and spacing) and ruler guides toggle
+ * independently, and {@link snapSourcesFor} is the one place that applies the
+ * toggles, so no gesture can forget one.
  */
+import type { SnapRect } from './snapRectRules'
+import { findSpacingSnap, spacingSegments, type SnapSpacing } from './snapSpacingRules'
 
-/** A rect in board units or frame px (top-left + size) — whichever space the caller snaps in. */
-export interface SnapRect {
-  x: number
-  y: number
-  width: number
-  height: number
-}
+export type { SnapRect } from './snapRectRules'
+export type { SnapSpacing } from './snapSpacingRules'
 
 /**
  * A guide line to draw at board-space `position` on `axis`, spanning
@@ -48,6 +62,35 @@ export interface SnapResult {
   x: number
   y: number
   guides: SnapGuide[]
+  /** IX-5d — the equal gaps the snapped rect now has, drawn as distance pills. */
+  spacings: SnapSpacing[]
+}
+
+/**
+ * An infinite snap line on ONE axis — a ruler guide (IX-5c) in the rects' own
+ * space. `axis: 'x'` is a vertical line at `x = position`.
+ */
+export interface SnapLine {
+  axis: 'x' | 'y'
+  position: number
+}
+
+/** What `computeSnap` may snap to beyond the peers, and how. */
+export interface SnapOptions {
+  /** Ruler guides, already in the rects' space. */
+  lines?: readonly SnapLine[]
+  /**
+   * Equal-spacing snap and its pills (IX-5d). On unless the user turned
+   * object snapping off ({@link snapSourcesFor}).
+   */
+  spacing?: boolean
+  /**
+   * ⇧ axis lock — the axis the drag is NOT moving on. It stays exactly where
+   * the constraint put it: snapping it would pull the element off the line
+   * the user is holding it to (Penpot's `snap-ignore-axis`,
+   * `transforms.cljs:775-790`).
+   */
+  lockedAxis?: 'x' | 'y' | null
 }
 
 /**
@@ -164,33 +207,126 @@ function guideFor(axis: 'x' | 'y', match: AxisMatch, span: { start: number; end:
   }
 }
 
+interface LineMatch {
+  distance: number
+  draggedValue: number
+  position: number
+}
+
+/** The closest line on `axis` to any of the dragged values, within `threshold`. */
+function findClosestLine(
+  axis: 'x' | 'y',
+  draggedValues: readonly number[],
+  lines: readonly SnapLine[],
+  threshold: number,
+): LineMatch | null {
+  let best: LineMatch | null = null
+  for (const line of lines) {
+    if (line.axis !== axis) continue
+    for (const draggedValue of draggedValues) {
+      const distance = Math.abs(draggedValue - line.position)
+      if (distance > threshold) continue
+      if (!best || distance < best.distance) best = { distance, draggedValue, position: line.position }
+    }
+  }
+  return best
+}
+
+/** A ruler-guide snap draws its guide along the dragged extent only: the ruler line itself is already on screen. */
+function lineGuide(axis: 'x' | 'y', position: number, span: { start: number; end: number }): SnapGuide {
+  return { axis, position, start: span.start, end: span.end }
+}
+
+interface AxisCandidate {
+  distance: number
+  /** The dragged rect's new start on this axis. */
+  start: number
+  guide: SnapGuide | null
+}
+
 /**
- * Snaps `dragged` to the closest aligned peer edge/center on each axis
- * independently (at most one snap per axis — "closest wins"), returning the
- * adjusted top-left position and the guide line(s) to draw. No peers, or no
- * match within `threshold` on an axis, leaves that axis's position untouched
- * and emits no guide for it.
+ * One axis of `computeSnap`: the closest of an alignment match, a ruler-guide
+ * match and an equal-spacing match, or `null` when none is within `threshold`.
+ * A tie keeps the earlier kind — alignment, then the guide — because both draw
+ * a line that explains the snap; a spacing snap explains itself with pills.
  */
-export function computeSnap(dragged: SnapRect, peers: readonly SnapRect[], threshold: number): SnapResult {
+function snapAxis(
+  axis: 'x' | 'y',
+  dragged: SnapRect,
+  peers: readonly SnapRect[],
+  threshold: number,
+  options: SnapOptions,
+): AxisCandidate | null {
+  const edges = axis === 'x' ? edgesX(dragged) : edgesY(dragged)
+  const values = [edges.start, edges.center, edges.end]
+  const span = axis === 'x'
+    ? { start: dragged.y, end: dragged.y + dragged.height }
+    : { start: dragged.x, end: dragged.x + dragged.width }
+  const candidates: AxisCandidate[] = []
+
+  const match = findClosestMatch(values, peers, axis === 'x' ? edgesX : edgesY, threshold)
+  if (match) {
+    candidates.push({
+      distance: match.distance,
+      start: edges.start + (match.peerValue - match.draggedValue),
+      guide: guideFor(axis, match, span),
+    })
+  }
+
+  const line = findClosestLine(axis, values, options.lines ?? [], threshold)
+  if (line) {
+    candidates.push({
+      distance: line.distance,
+      start: edges.start + (line.position - line.draggedValue),
+      guide: lineGuide(axis, line.position, span),
+    })
+  }
+
+  if (options.spacing !== false) {
+    const spacing = findSpacingSnap(axis, dragged, peers, threshold)
+    if (spacing) candidates.push({ distance: spacing.distance, start: spacing.start, guide: null })
+  }
+
+  let best: AxisCandidate | null = null
+  for (const candidate of candidates) {
+    if (!best || candidate.distance < best.distance) best = candidate
+  }
+  return best
+}
+
+/**
+ * Snaps `dragged` on each axis independently to the closest alignment, ruler
+ * guide or equal-spacing position (at most one snap per axis — "closest
+ * wins"), returning the adjusted top-left position, the guide line(s) to draw
+ * and the distance pills. No match within `threshold` on an axis leaves that
+ * axis's position untouched and emits no guide for it.
+ */
+export function computeSnap(
+  dragged: SnapRect,
+  peers: readonly SnapRect[],
+  threshold: number,
+  options: SnapOptions = {},
+): SnapResult {
   const guides: SnapGuide[] = []
   let x = dragged.x
   let y = dragged.y
 
-  const draggedX = edgesX(dragged)
-  const xMatch = findClosestMatch([draggedX.start, draggedX.center, draggedX.end], peers, edgesX, threshold)
-  if (xMatch) {
-    x = dragged.x + (xMatch.peerValue - xMatch.draggedValue)
-    guides.push(guideFor('x', xMatch, { start: dragged.y, end: dragged.y + dragged.height }))
+  const xSnap = options.lockedAxis === 'x' ? null : snapAxis('x', dragged, peers, threshold, options)
+  if (xSnap) {
+    x = xSnap.start
+    if (xSnap.guide) guides.push(xSnap.guide)
   }
 
-  const draggedY = edgesY(dragged)
-  const yMatch = findClosestMatch([draggedY.start, draggedY.center, draggedY.end], peers, edgesY, threshold)
-  if (yMatch) {
-    y = dragged.y + (yMatch.peerValue - yMatch.draggedValue)
-    guides.push(guideFor('y', yMatch, { start: dragged.x, end: dragged.x + dragged.width }))
+  const ySnap = options.lockedAxis === 'y' ? null : snapAxis('y', dragged, peers, threshold, options)
+  if (ySnap) {
+    y = ySnap.start
+    if (ySnap.guide) guides.push(ySnap.guide)
   }
 
-  return { x, y, guides }
+  const spacings = options.spacing === false
+    ? []
+    : spacingSegments({ x, y, width: dragged.width, height: dragged.height }, peers)
+  return { x, y, guides, spacings }
 }
 
 /** One moving edge's snap: how far to move it, and the guide to draw there. */
@@ -201,10 +337,10 @@ export interface EdgeSnap {
 
 /**
  * Snaps ONE moving edge — the edge a resize handle drags (IX-6e) — to the
- * closest peer start/center/end on the same axis. `value` is the edge's
- * position on `axis` (an x for a vertical edge); `span` is the element's
- * extent on the OTHER axis, which only sizes the guide. `null` when no peer
- * edge is within `threshold`.
+ * closest peer start/center/end on the same axis, or to a ruler guide
+ * (IX-5c). `value` is the edge's position on `axis` (an x for a vertical
+ * edge); `span` is the element's extent on the OTHER axis, which only sizes
+ * the guide. `null` when nothing is within `threshold`.
  */
 export function computeEdgeSnap(
   axis: 'x' | 'y',
@@ -212,9 +348,44 @@ export function computeEdgeSnap(
   span: { start: number; end: number },
   peers: readonly SnapRect[],
   threshold: number,
+  lines: readonly SnapLine[] = [],
 ): EdgeSnap | null {
   const match = findClosestMatch([value], peers, axis === 'x' ? edgesX : edgesY, threshold)
+  const line = findClosestLine(axis, [value], lines, threshold)
+  if (line && (!match || line.distance < match.distance)) {
+    return { delta: line.position - value, guide: lineGuide(axis, line.position, span) }
+  }
   if (!match) return null
   return { delta: match.peerValue - value, guide: guideFor(axis, match, span) }
 }
 
+/**
+ * The user's snap toggles (IX-5e) — the shape `snapSourcesFor` reads. The
+ * editor persists them (`canvas/snapPreferences.ts`, TypeBox-validated); a
+ * live frame's runtime, which has no toggles of its own yet, passes
+ * {@link ALL_SNAP_SOURCES}.
+ */
+export interface SnapSourceToggles {
+  objects: boolean
+  guides: boolean
+}
+
+/** Both toggles on — the default, and what a caller without toggles snaps with. */
+export const ALL_SNAP_SOURCES: SnapSourceToggles = { objects: true, guides: true }
+
+/**
+ * The snap toggles' effect on one gesture's sources — IX-5e, in one place so
+ * no gesture can honour one toggle and forget the other. Object snapping off
+ * drops the peers AND equal spacing (which is measured against the peers);
+ * guide snapping off drops the ruler lines.
+ */
+export function snapSourcesFor(
+  preferences: SnapSourceToggles,
+  peers: readonly SnapRect[],
+  lines: readonly SnapLine[],
+): { peers: readonly SnapRect[]; options: SnapOptions } {
+  return {
+    peers: preferences.objects ? peers : [],
+    options: { lines: preferences.guides ? lines : [], spacing: preferences.objects },
+  }
+}

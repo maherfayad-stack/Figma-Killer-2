@@ -127,9 +127,16 @@ export function missingStudioLoadPageIds(
  * carries `index`, its position in the project's page order. The client
  * places a page by its `index`, so the line order is the server's to choose —
  * and the server chooses the order a person sees frames in. That is the
- * contract a streaming client needs: once the load itself emits each page as
- * it is parsed, the client applies each line as it arrives and the visible
- * frames fill first, with no change to this wire shape.
+ * contract a streaming client needs: the client (`fsCodemodAdapter.ts`) hands
+ * the board each batch of lines as it arrives, so the visible frames paint
+ * first while the rest are still on the wire, and `meta.pageList` names the
+ * ones still to come.
+ *
+ * What this does NOT do is emit a page before every page is parsed: the
+ * compute behind it is whole-project (the style registry's class ids are
+ * last-wins across every page's stylesheets, in page order), so the first
+ * line of a cold load still waits for the whole parse. See `STATE.md`'s
+ * P6-B entry.
  *
  * `StudioLoadResult['stories']` (W5-3) is `Omit`ted deliberately: it is a
  * byproduct the `/load` ROUTE consumes to place board frames, not part of the
@@ -150,7 +157,11 @@ export async function* studioLoadStreamLines(
   },
 ): AsyncGenerator<Record<string, unknown>> {
   const { pages, ...meta } = result
-  yield { kind: 'meta', ...meta, pageCount: pages.length }
+  // P6-B — every page the stream will carry, in page order, BEFORE any of
+  // them: what lets the client paint the frames that have arrived and hold a
+  // placeholder for the rest, and put the pages back in page order at the end.
+  const pageList = pages.map(({ id, slug, title }) => ({ id, slug, title }))
+  yield { kind: 'meta', ...meta, pageList }
   const indexById = new Map(pages.map((page, index) => [page.id, index]))
   for (const pageId of viewportPriorityOrder(result.dir, pages.map((page) => page.id))) {
     const index = indexById.get(pageId)!

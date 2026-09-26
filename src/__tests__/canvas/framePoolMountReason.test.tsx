@@ -27,10 +27,16 @@ import {
 } from '@site/canvas/BoardFramesLayer/framePool'
 import { useEditorStore } from '@site/store/store'
 import { setStudioTrustTier } from '@site/studio/studioProjectTrust'
+import { __resetDevServerReadinessForTests } from '@site/studio/useDevServerReadiness'
+import { useAdminUi } from '@admin/state/adminUi'
 import { makeNode, makePage, makeSite } from '../fixtures'
 import '@modules/base'
 
 const originalFetch = globalThis.fetch
+const PROJECT_DIR = '/workspace/pool-board'
+
+/** What `/dev-server/status` answers. `'ready'` is what makes a Tier-2 board's frames cost `'live'`. */
+let devServerPhase: 'stopped' | 'ready' = 'stopped'
 
 function resetStore() {
   useEditorStore.setState({
@@ -65,8 +71,12 @@ beforeEach(() => {
   // Stubbed so the assertion under test isn't racing a rejected relative
   // fetch; `null` keeps every frame on its Tier-0 fallback, which is exactly
   // the state a board is in before a dev server answers.
-  globalThis.fetch = (async () =>
-    new Response(JSON.stringify({ liveOrigin: null }), { status: 200 })) as typeof fetch
+  globalThis.fetch = (async (input: RequestInfo | URL) =>
+    String(input).includes('/dev-server/status')
+      ? new Response(JSON.stringify({ phase: devServerPhase, pid: null, startedAt: null, log: '' }), { status: 200 })
+      : new Response(JSON.stringify({ liveOrigin: null }), { status: 200 })) as typeof fetch
+  __resetDevServerReadinessForTests()
+  useAdminUi.setState({ studioProject: { dir: PROJECT_DIR, name: 'pool-board' } })
 })
 
 afterEach(() => {
@@ -74,6 +84,9 @@ afterEach(() => {
   resetStore()
   globalThis.fetch = originalFetch
   setStudioTrustTier('static')
+  __resetDevServerReadinessForTests()
+  useAdminUi.setState({ studioProject: null })
+  devServerPhase = 'stopped'
 })
 
 const FRAME_COUNT = 24
@@ -122,10 +135,18 @@ function sample(container: HTMLElement): PanSample {
   }
 }
 
-function panAcrossBoard(cost: FrameMountCost, zoom: number): PanSample[] {
+/**
+ * A `'live'` board is a Tier-2 board whose dev server answered `ready` — the
+ * layer polls for that, so the pan starts once the poll has landed.
+ */
+async function panAcrossBoard(cost: FrameMountCost, zoom: number): Promise<PanSample[]> {
   setStudioTrustTier(cost === 'live' ? 'run-project' : 'static')
+  devServerPhase = cost === 'live' ? 'ready' : 'stopped'
   seedBoard()
   const { container } = render(<BoardFramesLayer />)
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  })
   const samples: PanSample[] = []
   for (let step = 0; step < FRAME_COUNT; step += 1) {
     act(() => {
@@ -143,8 +164,8 @@ describe('the mounted-frame budget, from the one module that decides it', () => 
     ['live', 1],
     ['live', 0.25],
   ] as const) {
-    it(`[${cost} @ zoom ${zoom}] never mounts more frames than framePoolBudget allows, panning a ${FRAME_COUNT}-frame board`, () => {
-      const samples = panAcrossBoard(cost, zoom)
+    it(`[${cost} @ zoom ${zoom}] never mounts more frames than framePoolBudget allows, panning a ${FRAME_COUNT}-frame board`, async () => {
+      const samples = await panAcrossBoard(cost, zoom)
       expect(samples).toHaveLength(FRAME_COUNT)
       for (const s of samples) {
         const mounted = s.onScreen + s.pooled
@@ -160,12 +181,36 @@ describe('the mounted-frame budget, from the one module that decides it', () => 
     })
   }
 
-  it('a live board never keeps more frames mounted than the same board would as a portal board', () => {
-    const live = Math.max(...panAcrossBoard('live', 0.25).map((s) => s.onScreen + s.pooled))
+  it('a live board never keeps more frames mounted than the same board would as a portal board', async () => {
+    const live = Math.max(...(await panAcrossBoard('live', 0.25)).map((s) => s.onScreen + s.pooled))
     cleanup()
     resetStore()
-    const portal = Math.max(...panAcrossBoard('portal', 0.25).map((s) => s.onScreen + s.pooled))
+    __resetDevServerReadinessForTests()
+    const portal = Math.max(...(await panAcrossBoard('portal', 0.25)).map((s) => s.onScreen + s.pooled))
     expect(live).toBeLessThanOrEqual(portal)
+  })
+
+  it('a Tier-2 board whose dev server is not up keeps the portal headroom, so a departed frame stays mounted for its poster (P6-C)', async () => {
+    // Its frames are same-origin fallbacks until the server is ready. Under
+    // the live budget (no headroom) a frame leaving a full screen was
+    // evicted on the spot, before the poster queue could ever rasterize it.
+    setStudioTrustTier('run-project')
+    devServerPhase = 'stopped'
+    seedBoard()
+    const { container } = render(<BoardFramesLayer />)
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+    let sawPortalHeadroom = false
+    for (let step = 0; step < FRAME_COUNT; step += 1) {
+      act(() => {
+        useEditorStore.setState({ panX: -step * FRAME_STRIDE * 0.25, panY: 0, zoom: 0.25 })
+      })
+      const s = sample(container)
+      expect(s.onScreen + s.pooled).toBeLessThanOrEqual(framePoolBudget('portal', s.onScreen))
+      if (s.onScreen + s.pooled > framePoolBudget('live', s.onScreen)) sawPortalHeadroom = true
+    }
+    expect(sawPortalHeadroom).toBe(true)
   })
 
   it('panning back to a pooled frame reuses its iframe — no new document', () => {

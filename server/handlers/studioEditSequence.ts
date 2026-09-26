@@ -221,6 +221,7 @@ function refused(edits: readonly StudioEdit[], refusals: StudioEditRefusal[], to
     removed: [],
     fingerprints: [],
     retargeted: [],
+    listArrays: [],
   }
 }
 
@@ -269,6 +270,7 @@ export function applyStudioEditSequence(
   // P3-F — a sequence is not a one-shot write: its undo is the gesture's own
   // inverse, so its steps record no journal entry (they would be orphans).
   const stepOptions: StudioEditBatchOptions = { ...options, journal: undefined }
+  const listArrays: StudioEditBatchResult['listArrays'] = []
   let sharedComponents = false
 
   const restore = (): void => {
@@ -313,6 +315,7 @@ export function applyStudioEditSequence(
       ], [...touched, ...originals.keys()])
     }
     for (const entry of result.removed) removed.push({ ...entry, nodeId: edit.nodeId })
+    for (const entry of result.listArrays) listArrays.push({ ...entry, nodeId: edit.nodeId })
 
     // Follow every id the sequence still cares about through this step.
     const placed = [...result.relocatedNodeIds, ...result.createdNodeIds]
@@ -391,6 +394,7 @@ export function applyStudioEditSequence(
     removed,
     fingerprints: [],
     retargeted: identity.retargeted,
+    listArrays,
   }
 }
 

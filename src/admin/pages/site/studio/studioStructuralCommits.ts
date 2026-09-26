@@ -27,8 +27,13 @@
 import type { OptimisticPreviewHandle } from '@site/store/slices/site/structuralOptimism'
 import type { StructuralCommitRollback } from '@site/store/slices/site/structuralCommitRollback'
 import { commitStructural, type StructuralCommitOptions } from './studioStructuralCommitEngine'
-import { dissolveWrapperTemplate, type StructuralEditPayload, type StructuralWriteOutcome } from './structuralUndoPlan'
-import type { InsertPropValue } from './studioSaveRequests'
+import {
+  dissolveWrapperTemplate,
+  type StructuralEditPayload,
+  type StructuralInverseTemplate,
+  type StructuralWriteOutcome,
+} from './structuralUndoPlan'
+import type { InsertPropValue, SlotJsxNode } from './studioSaveRequests'
 
 /**
  * P3-D — ONE gesture written as several edits applied IN ORDER, each against
@@ -424,8 +429,12 @@ export async function commitStudioInsert(insert: {
    */
   designSystemImport?: true
   props: Record<string, InsertPropValue>
-  /** Literal text written as the element's only child, e.g. `<p>Heading</p>`. */
-  children?: string
+  /**
+   * The element's content: literal text (`<p>Heading</p>`), or — P5-A, a
+   * pasted SVG — a nested subtree written in the SAME splice
+   * (`InsertEditSchema.children`).
+   */
+  children?: string | readonly SlotJsxNode[]
   /**
    * P5-B (IMG-2) — more intrinsic elements written right AFTER this one, in
    * order, in the SAME write (`InsertEditSchema.siblings`): three dropped
@@ -480,6 +489,26 @@ export async function commitStudioAssetReplace(originNodeId: string, assetPath: 
       template: { kind: 'known', inverse: [{ kind: 'asset', nodeId: originNodeId, assetPath: previousAssetPath }] },
     },
   })
+}
+
+/**
+ * OD-8 — a `.map` row's reorder, delete, duplicate or paste, written to the
+ * ARRAY LITERAL the `.map` iterates: one `list-item` edit, one write, one
+ * undo entry (`template` — known up front for everything but a delete, whose
+ * inverse needs the bytes the write reports).
+ *
+ * Nothing is mutated on the canvas first: a row's id is its index, so the
+ * board's own re-read is what gives every row its new place. `onLanded` runs
+ * once it has (`listRowSourceWrites.ts` selects the moved/copied rows and
+ * records the rows' remap there).
+ */
+export async function commitStudioListItem(
+  edit: StructuralEditPayload,
+  refusalTitle: string,
+  undo: { label: string; template: StructuralInverseTemplate },
+  onLanded?: (outcome: StructuralWriteOutcome) => void,
+): Promise<void> {
+  await commitStructural([edit], refusalTitle, { undo, select: 'created', ...(onLanded ? { onLanded } : {}) })
 }
 
 /**

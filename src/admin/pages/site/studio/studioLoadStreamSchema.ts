@@ -95,6 +95,15 @@ export const CanvasLayerLoadSchema = Type.Object({
 
 export type CanvasLayerLoad = Static<typeof CanvasLayerLoadSchema>
 
+/** P6-B — one page a load stream announces in its meta line, before the page itself arrives. */
+export const StreamedPageEntrySchema = Type.Object({
+  id: Type.String(),
+  slug: Type.String(),
+  title: Type.String(),
+})
+
+export type StreamedPageEntry = Static<typeof StreamedPageEntrySchema>
+
 export const StudioLoadStreamLineSchema = Type.Union([
   Type.Object({
     kind: Type.Literal('meta'),
@@ -148,7 +157,13 @@ export const StudioLoadStreamLineSchema = Type.Union([
      */
     projectKey: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     paletteHiddenModuleIds: Type.Array(Type.String()),
-    pageCount: Type.Number(),
+    /**
+     * P6-B — every page the `page` lines will carry, in page order, sent
+     * before any of them. The client paints each frame as its page arrives
+     * and holds a placeholder for the rest ({@link StreamedPageEntry}); the
+     * `slug` is what tells it which page opens first (the home page).
+     */
+    pageList: Type.Array(StreamedPageEntrySchema),
     /**
      * mcp-tooling (WS-9's live-reload bridge) — present only on a `?pageIds=`
      * filtered load: every requested id that matched no page (deleted/renamed

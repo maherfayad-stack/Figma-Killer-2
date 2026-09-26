@@ -7,7 +7,9 @@
  * (`useElementResizeDrag.ts`); a live frame posts its guides as
  * `resize:guides` and `useBridgeFrameInteraction.ts` paints them here.
  */
-import type { SnapGuide } from '@core/studio-runtime'
+import type { BoardGuide } from '@core/studio-board'
+import { guideLinesInSpace, type SnapGuide, type SnapLine } from '@core/studio-runtime'
+import { readBoardScreenOrigin, rulerGuideLines } from './boardSnapping'
 import { clientRectToViewportRect, getViewportZoom } from './canvasDomGeometry'
 import { paintCanvasDrag } from './canvasDragPainter'
 import { listCanvasDropSurfaces } from './canvasDropSurfaceRegistry'
@@ -37,6 +39,25 @@ export function resolveResizeGuideSurface(iframe: Element | null): ResizeGuideSu
   if (!surface || !layer) return null
   const origin = clientRectToViewportRect(surface.viewport, iframe.getBoundingClientRect())
   return { layer, originX: origin.left, originY: origin.top, zoom: getViewportZoom(surface.viewport) }
+}
+
+/**
+ * P5-F / IX-5c — the board's ruler guides in a frame document's own px, for a
+ * portal resize to snap its moving edge to: the iframe's screen origin and
+ * zoom are that document's screen space. One rect read of the iframe and one
+ * of the transform layer, at pointerdown.
+ */
+export function resizeGuideLines(iframe: Element | null, guides: readonly BoardGuide[]): SnapLine[] {
+  if (guides.length === 0 || !(iframe instanceof HTMLElement)) return []
+  const board = readBoardScreenOrigin(iframe)
+  if (!board) return []
+  const rect = iframe.getBoundingClientRect()
+  const scale = iframeZoom(iframe)
+  return guideLinesInSpace(rulerGuideLines(guides), board, {
+    originX: rect.left + iframe.clientLeft * scale,
+    originY: rect.top + iframe.clientTop * scale,
+    scale,
+  })
 }
 
 /** The canvas zoom a frame is drawn at, from its iframe element alone (no drop surface). */

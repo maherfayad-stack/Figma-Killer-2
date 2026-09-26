@@ -30,6 +30,14 @@
  * drag reads it once, at pointerdown (`probeFlexCascade`), and hands it to the
  * resolver.
  *
+ * ## Double-click a handle: Hug (P5-F, IX-6f)
+ *
+ * Figma's gesture: double-clicking an edge handle sets that axis to Hug
+ * contents, a corner both axes. {@link hugPatchForHandle} is that write, and
+ * it is the inspector's own `sizingPatch('hug', …)` for each axis, against
+ * the same parent layout the drag reads — so the canvas and the W/H mode
+ * menu can never write different CSS for "Hug".
+ *
  * ## Previewing a clear
  *
  * The portal previews on the element's own `style` and can simply remove a
@@ -48,7 +56,7 @@ import {
   type SizingParentLayout,
   type SizingPatch,
 } from './elementSizingRules'
-import { resizeStylePatch, type ResizeBoxStart, type ResizeStep } from './elementResizeRules'
+import { resizeAxes, resizeStylePatch, type ResizeBoxStart, type ResizeHandle, type ResizeStep } from './elementResizeRules'
 
 /** One inline-style write: a value sets the property, `undefined` clears it. */
 export type ResizeInlinePatch = Record<string, string | undefined>
@@ -219,4 +227,23 @@ export function stylesheetPreviewDeclarations(patch: ResizeInlinePatch, cleared:
     }
   }
   return declarations
+}
+
+/**
+ * IX-6f — what a double-click on `handle` writes: Hug on every axis the
+ * handle owns (an edge one axis, a corner both), through the inspector's own
+ * resolver. `null` when the parent layout is unknown — Hug has no honest
+ * write there (`sizingUnavailableReason`), and the caller says so.
+ */
+export function hugPatchForHandle(
+  handle: ResizeHandle,
+  parent: SizingParentLayout | null,
+  stored: Record<string, unknown>,
+): ResizeInlinePatch | null {
+  if (!parent) return null
+  const axes = resizeAxes(handle)
+  const patch: ResizeInlinePatch = {}
+  if (axes.width) Object.assign(patch, sizingPatch('hug', 'width', parent, stored, undefined))
+  if (axes.height) Object.assign(patch, sizingPatch('hug', 'height', parent, stored, undefined))
+  return Object.keys(patch).length > 0 ? patch : null
 }

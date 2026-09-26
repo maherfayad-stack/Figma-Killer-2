@@ -1,15 +1,14 @@
 import { expect, test, type Frame, type Locator, type Page } from '@playwright/test'
 import { profileGesture, readBoardCounts } from './helpers/canvasPerf'
-import { largeBoardPageId, writeLargeBoardCorpus } from './helpers/largeBoardCorpus'
+import { largeBoardPageId, openLargeBoardAtWorkingZoom, writeLargeBoardCorpus } from './helpers/largeBoardCorpus'
 import {
   SELECTION_RING,
   clickInFrame,
-  frameForPage,
-  openFixtureBoard,
   removeFixtureProject,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
 import { visibleCanvasIframe } from './helpers/canvasIframe'
+import { E2E_VITE_MODE } from '../../scripts/lib/e2eStack'
 
 /**
  * The feel budgets on a LARGE board — ROADMAP P2-A, audit `01-perf.md` §3
@@ -81,13 +80,31 @@ const BUDGET_IDLE_RAF_PER_SECOND = 0
 
 /**
  * **Warm click -> selection ring painted, mean over the samples.** WS-5.6's
- * target is 32 ms in a production build; this runs the dev build. Measured
- * (P2-I): trunk 292–440 ms, because every click re-rendered all ~2,800
- * mounted `NodeRenderer`s through an unstable `CanvasSelectionContext` value;
- * after P2-I 78–85 ms. Set at ~1.4× the worst P2-I mean.
+ * target is 32 ms in a production build.
+ *
+ * Dev build: trunk 292–440 ms before P2-I (every click re-rendered all ~2,800
+ * mounted `NodeRenderer`s through an unstable `CanvasSelectionContext`), 78–85
+ * ms after it on a quiet box; 144–152 ms on this loaded box at the start of
+ * P6-C, 74.9 ms (61–88) after it. 120 is ~1.4× the worst P2-I mean.
+ *
+ * Production bundle (`E2E_VITE_MODE=preview`, the `@production-bundle` pass):
+ * 61.6 ms (55–67) at the start of P6-C, **47.1 ms (41–55)** after it. P6-C's
+ * cuts, in order of size: a canvas click made two store writes that changed
+ * nothing, each sweeping every mounted node's selectors
+ * (`skipUnchangedSets`); `CanvasRoot` was silently skipped by the React
+ * Compiler, so all nine mounted frames re-rendered their selection chrome on
+ * every click; the Assets panel re-rendered 46 cards per click.
+ *
+ * **WS-5.6's 32 ms is NOT met.** 75 is a ratchet at ~1.35× the worst
+ * production run, not the target. What remains in a click, from the
+ * production profile: the one real store write's selector sweep over ~2,800
+ * `NodeRenderer`s (~8 ms), the inspector's re-render for the new node (~45
+ * buttons and tooltips — `Button` and `Tooltip` are among the ~170 files the
+ * compiler skips, P6-C's "Found, not fixed"), the owning frame's uncompiled
+ * `BreakpointSelectionOverlay`, and style/layout of the frame.
  */
 const WARM_CLICK_SAMPLES = 8
-const BUDGET_WARM_CLICK_TO_RING_MEAN_MS = 120
+const BUDGET_WARM_CLICK_TO_RING_MEAN_MS = E2E_VITE_MODE === 'preview' ? 75 : 120
 
 /**
  * **Post-edit pause** — how long the board is watched after an edit commits:
@@ -101,8 +118,6 @@ const POSTER_CAPTURE_MEASURE = 'studio:poster-capture'
 
 /** The frame every case works in: the first one, which `Ctrl+0` brings on screen. */
 const TARGET_PAGE_ID = largeBoardPageId(0)
-/** A frame renders about this wide at the working zoom — ~4 columns of the 5-column board on screen. */
-const WORKING_FRAME_WIDTH_PX = 420
 
 test.use({ viewport: { width: 1920, height: 1080 } })
 
@@ -121,38 +136,9 @@ function annotate(label: string, value: string): void {
   console.log(`[p2-a] ${label}: ${value}`)
 }
 
-/** Ctrl+wheel out until the target frame renders at most `maxWidthPx` wide. */
-async function zoomOutUntil(page: Page, canvasRoot: Locator, target: Locator, maxWidthPx: number): Promise<void> {
-  for (let attempt = 0; attempt < 16; attempt += 1) {
-    const box = await target.boundingBox()
-    if (box && box.width <= maxWidthPx) return
-    const rootBox = await canvasRoot.boundingBox()
-    if (!rootBox) throw new Error('zoomOutUntil: the canvas root has no bounding box')
-    await page.mouse.move(rootBox.x + rootBox.width / 2, rootBox.y + rootBox.height / 2)
-    await page.keyboard.down('Control')
-    await page.mouse.wheel(0, 120)
-    await page.keyboard.up('Control')
-    await page.waitForTimeout(120)
-  }
-}
-
-/**
- * Open the corpus, zoom out to the working zoom with the first frame centred,
- * and let the mount pool fill. Returns the first frame's content `Frame`.
- */
-async function openAtWorkingZoom(page: Page): Promise<{ canvasRoot: Locator; frameEl: Locator; content: Frame }> {
-  const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
-  const frameEl = await frameForPage(page, canvasRoot, TARGET_PAGE_ID)
-  await zoomOutUntil(page, canvasRoot, frameEl, WORKING_FRAME_WIDTH_PX)
-  // Recentre on the frame at the new zoom, then let staged mounts, the poster
-  // queue (700 ms quiet + ~120 ms per frame) and the first settle passes run.
-  await frameForPage(page, canvasRoot, TARGET_PAGE_ID)
-  await page.waitForTimeout(4000)
-  const handle = await visibleCanvasIframe(frameEl).elementHandle()
-  const content = await handle?.contentFrame()
-  if (!content) throw new Error('the target frame never attached a content document')
-  await expect(content.locator('.row__label').first()).toBeVisible({ timeout: 30_000 })
-  return { canvasRoot, frameEl, content }
+/** Open the corpus at the working zoom — see `openLargeBoardAtWorkingZoom`. */
+function openAtWorkingZoom(page: Page): Promise<{ canvasRoot: Locator; frameEl: Locator; content: Frame }> {
+  return openLargeBoardAtWorkingZoom(page, fixture, TARGET_PAGE_ID)
 }
 
 test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
@@ -367,7 +353,7 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
     expect(drift).toBeLessThanOrEqual(BUDGET_PAN_TOOLBAR_DRIFT_PX)
   })
 
-  test('warm click -> selection ring: the ring is on screen within budget', async ({ page }) => {
+  test('warm click -> selection ring: the ring is on screen within budget', { tag: '@production-bundle' }, async ({ page }) => {
     // WS-5.6's "selection -> ring paint", never built until P2-I (PERF-14):
     // pointerdown in the frame to the first animation frame after the ring
     // for THAT node exists, on the same clock (the frame's own document).

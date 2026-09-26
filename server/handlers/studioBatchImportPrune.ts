@@ -47,6 +47,8 @@ function removesMarkup(edit: StudioEdit): boolean {
     edit.kind === 'delete' ||
     edit.kind === 'ungroup' ||
     edit.kind === 'detach' ||
+    // OD-8 — a removed array element can be the last reader of an import (`{ icon: HomeIcon }`).
+    (edit.kind === 'list-item' && edit.op.kind === 'remove') ||
     ((edit.kind === 'transplant' || edit.kind === 'canvas-layer-lift') && edit.copy !== true)
   )
 }

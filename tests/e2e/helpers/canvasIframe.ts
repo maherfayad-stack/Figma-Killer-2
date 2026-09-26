@@ -78,9 +78,11 @@ const STOPPED_GRACE_MS = 5_000
  * which one it is.
  *
  * A Tier-2 board frame shows the portal fallback while its live frame boots,
- * then swaps to the live (bridge) iframe the moment it is `ready`. In the e2e
- * workspace a fixture's Vite resolves from this repository's own
- * `node_modules`, so the swap really happens, some seconds into a spec. A spec
+ * then swaps to the live (bridge) iframe the moment it is `ready`. Studio runs
+ * only the project's OWN Vite (`projectPackageBin.ts`, never one above the
+ * project), so the tracked fixtures, which carry no `node_modules`, stay on the
+ * fallback; a fixture that copies this checkout's Vite into itself
+ * (`liveAnimatedFixture.ts`) really swaps, some seconds into a spec. A spec
  * that clicks before it acts on one document and asserts after it on the
  * other: the selection ring of a portal frame is drawn INSIDE its iframe, a
  * live frame's in the editor document. Waiting for the dev server to settle

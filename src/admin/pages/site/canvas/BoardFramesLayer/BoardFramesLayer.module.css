@@ -323,3 +323,23 @@
     inset: 0;
     z-index: 1;
 }
+
+/* P6-B — a frame whose page is still arriving (`PendingBoardFrame.tsx`). The
+   header wears the real one's geometry but is inert (no grab cursor: there is
+   nothing to drag yet), and the body is a flat surface the page replaces. */
+.pendingHeader {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-2xs) var(--space-s);
+    background: var(--bg-surface-2);
+    border-radius: var(--radius) var(--radius) 0 0;
+    user-select: none;
+}
+
+.pendingBody {
+    width: 100%;
+    height: 100%;
+    background: var(--bg-surface);
+    border-radius: 0 0 var(--radius) var(--radius);
+}
