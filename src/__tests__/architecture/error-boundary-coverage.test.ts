@@ -236,7 +236,7 @@ const CHROME_BOUNDARY_PATH = 'admin/pages/site/ui/ChromeBoundary/ChromeBoundary.
 /** Every chrome seam, by mount site and `id`. */
 const CHROME_BOUNDARY_MOUNTS: Array<{ file: string; ids: string[] }> = [
   { file: 'admin/layouts/AdminCanvasLayout/AdminCanvasLayout.tsx', ids: ['toolbar'] },
-  { file: 'admin/pages/site/SitePage.tsx', ids: ['refusal-dialog'] },
+  { file: 'admin/pages/site/SitePage.tsx', ids: ['refusal-dialog', 'detach-confirm-dialog'] },
   {
     file: 'admin/layouts/AdminCanvasLayout/AdminCanvasEditorBody.tsx',
     ids: ['left-sidebar', 'right-sidebar', 'code-editor', 'layout-name-dialog', 'import-html'],

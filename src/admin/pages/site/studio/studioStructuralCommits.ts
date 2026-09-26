@@ -33,7 +33,7 @@ import {
   type StructuralInverseTemplate,
   type StructuralWriteOutcome,
 } from './structuralUndoPlan'
-import type { InsertPropValue, SlotJsxNode } from './studioSaveRequests'
+import type { InsertPropValue, SlotJsxNode, StudioSaveResponse } from './studioSaveRequests'
 
 /**
  * P3-D — ONE gesture written as several edits applied IN ORDER, each against
@@ -347,6 +347,33 @@ export async function commitStudioUngroup(
           },
     },
   })
+}
+
+/**
+ * P5-C (DET-5) — the user's Detach: one call site, or a multi-selection
+ * written as ONE `sequence` (each detach against the file the previous one
+ * left, all or nothing). Resolves with the server's answer — its refusals and
+ * `detachDetails`, which `detachInstances` presents itself (`quiet`) — or
+ * `null` when no answer came back (already reported).
+ *
+ * Selects what the write created: the markup that replaced each call site.
+ * ⌘Z is the undo journal's `restore` — one entry for the whole gesture.
+ */
+export async function commitStudioDetach(
+  edits: readonly StructuralEditPayload[],
+  label: string,
+): Promise<StudioSaveResponse | null> {
+  let answer: StudioSaveResponse | null = null
+  await commitStructural(edits, 'Detach refused', {
+    undo: { label, template: { kind: 'restore-journal' } },
+    select: 'created',
+    quiet: true,
+    ...(edits.length > 1 ? { sequence: true as const } : {}),
+    onAnswer: (received) => {
+      answer = received
+    },
+  })
+  return answer
 }
 
 /**

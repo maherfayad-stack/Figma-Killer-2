@@ -16,6 +16,7 @@
  *   - `./site/pageActions`      — page CRUD + template conversions
  *   - `./site/explorerActions`  — Site Explorer folder/order organization
  *   - `./site/nodeActions`      — the 11 named tree mutations + multi-select variants + dynamic bindings
+ *   - `./site/instanceActions`  — P5-C's one Detach action (`detachInstances`) and its confirm
  *   - `./site/breakpointActions`— breakpoint CRUD
  *   - `./site/settingsActions`  — site-level settings patch
  *   - `./site/fontActions`      — font library CRUD
@@ -30,6 +31,7 @@ import { createLifecycleActions } from './site/lifecycleActions'
 import { createPageActions } from './site/pageActions'
 import { createExplorerActions } from './site/explorerActions'
 import { createNodeActions } from './site/nodeActions'
+import { createInstanceActions } from './site/instanceActions'
 import { createBreakpointActions } from './site/breakpointActions'
 import { createSettingsActions } from './site/settingsActions'
 import { createFontActions } from './site/fontActions'
@@ -74,6 +76,9 @@ export const createSiteSlice: EditorStoreSliceCreator<SiteSlice> = (set, get) =>
     // helpers.ts/undoRedoActions.ts. See nodeIndex.ts.
     ...nodeIndexState(emptyNodeIndexes()),
 
+    // P5-C — the Detach verb's pre-commit confirm (`instanceActions.ts`).
+    instanceDetachConfirm: null,
+
     // mutateAllPagesAndSite is the public entry point for the Super Import
     // wizard — one Cmd+Z reverts the entire import.
     mutateAllPagesAndSite: helpers.mutateAllPagesAndSite,
@@ -85,6 +90,7 @@ export const createSiteSlice: EditorStoreSliceCreator<SiteSlice> = (set, get) =>
     ...createPageActions(helpers),
     ...createExplorerActions(helpers),
     ...createNodeActions(helpers),
+    ...createInstanceActions(helpers),
     ...createBreakpointActions(helpers),
     ...createSettingsActions(helpers),
     ...createFontActions(helpers),

@@ -20,8 +20,9 @@
  * Wired today:
  *   - anything carrying a `target` (`jump-to-source`, `edit-array`) → opens
  *     that file in the code panel, through the caller's `openSource`
- *   - `detach` / `extract` → the real `studio.instance` codemods the
- *     Properties panel's Component section already dispatches
+ *   - `detach` → the ONE Detach action, `detachInstances` (P5-C), injected by
+ *     the caller like `openSource`
+ *   - `extract` → the component-copy codemod (`extractInstanceCopy`)
  *
  * Deliberately NOT wired: `select-container` (three different refusals share
  * that kind and only one of them means "select something"), `promote-tier1`
@@ -41,8 +42,9 @@
 import type { EditConstraint, EditConstraintAction } from '@core/page-tree'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { pushToast } from '@ui/components/Toast'
-import { detachInstance, extractInstanceCopy } from '@site/studio/studioSaveRequests'
+import { extractInstanceCopy } from '@site/studio/studioSaveRequests'
 import type { SourceOrigin } from './openSourceFile'
+import type { DetachInstancesOutcome } from './slices/site/instanceDetachTypes'
 
 /** What a runnable action needs beyond the action itself. */
 export interface ConstraintActionContext {
@@ -57,6 +59,13 @@ export interface ConstraintActionContext {
    * — the same honesty rule as every other unwireable kind.
    */
   openSource?: (origin: SourceOrigin) => void
+  /**
+   * P5-C — the store's `detachInstances`, the one Detach action. Injected for
+   * `openSource`'s reason: this module sits inside the store's own import
+   * graph and may not import the composed store back. Absent, `detach` stays
+   * un-runnable and renders as advice text.
+   */
+  detachInstances?: (nodeIds: readonly string[]) => Promise<DetachInstancesOutcome>
   /**
    * Fired once an action has run to completion — `detach`/`extract` call it
    * `true`/`false` once their codemod actually settles; a target-carrying
@@ -132,10 +141,13 @@ export function resolveConstraintAction(
       onSettled?.(true)
     }
   }
-  if (action.kind === 'detach' && context.nodeId !== undefined) {
+  if (action.kind === 'detach' && context.nodeId !== undefined && context.detachInstances) {
     const nodeId = context.nodeId
+    const detach = context.detachInstances
     const onSettled = context.onSettled
-    return () => void runInstanceCodemod('Detach', () => detachInstance(nodeId), onSettled)
+    // The action presents its own confirm and refusal; this only reports
+    // whether the instance is gone, which is what `RefusalDialog` waits on.
+    return () => void detach([nodeId]).then((outcome) => onSettled?.(outcome === 'detached' || outcome === 'handed-off'))
   }
   if (action.kind === 'extract' && context.nodeId !== undefined) {
     const nodeId = context.nodeId
@@ -206,12 +218,11 @@ export function constraintToastBody(
 }
 
 /**
- * Both instance codemods answer the same three ways — threw, refused with its
- * own sentence, or landed — and all three are the user's business, so they
- * share one reporting shape instead of two near-identical try/catch blocks.
+ * The component copy answers three ways — threw, refused with its own
+ * sentence, or landed — and all three are the user's business.
  */
 async function runInstanceCodemod(
-  gesture: 'Detach' | 'Duplicate',
+  gesture: 'Duplicate',
   run: () => Promise<{ ok: boolean; message?: string }>,
   onSettled?: (ok: boolean) => void,
 ): Promise<void> {

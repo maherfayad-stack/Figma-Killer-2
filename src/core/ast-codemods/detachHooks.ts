@@ -193,7 +193,7 @@ function isFunctionComponent(fn: Node): boolean {
   }
   if (!Node.isArrowFunction(fn) && !Node.isFunctionExpression(fn)) return false
   if (Node.isFunctionExpression(fn) && /^[A-Z]/.test(fn.getName() ?? '')) return true
-  let holder = fn.getParent()
+  let holder: Node | undefined = fn.getParent()
   while (
     holder &&
     (Node.isParenthesizedExpression(holder) ||
@@ -273,27 +273,22 @@ export class DetachHookPlan {
   private readonly byDecl = new Map<Node, { hook: ComponentHook; key?: string }>()
   private readonly placed = new Map<ComponentHook, (key: string | undefined) => PageRead>()
   private readonly component: FunctionLike | undefined
+  private readonly page: SourceFile
+  private readonly names: DetachNameResolver
+  private readonly componentName: string
   private pageCalls: PageHookCall[] | undefined
   private takenNames: Set<string> | undefined
   private concise: { newStatements: string[] } | undefined
 
-  constructor(
-    hooks: readonly ComponentHook[],
-    private readonly page: SourceFile,
-    private readonly callSite: Node,
-    private readonly names: DetachNameResolver,
-    private readonly componentName: string,
-  ) {
+  constructor(hooks: readonly ComponentHook[], page: SourceFile, callSite: Node, names: DetachNameResolver, componentName: string) {
+    this.page = page
+    this.names = names
+    this.componentName = componentName
     for (const hook of hooks) {
       if (hook.binding.kind === 'whole') this.byDecl.set(hook.binding.decl, { hook })
       else for (const key of hook.binding.keys) this.byDecl.set(key.decl, { hook, key: key.key })
     }
     this.component = enclosingFunctionComponent(callSite)
-  }
-
-  /** The start of the enclosing component — the gate finds it again by this after the page is rewritten. */
-  get componentStart(): number | undefined {
-    return this.component?.getStart()
   }
 
   owns(decl: Node): boolean {

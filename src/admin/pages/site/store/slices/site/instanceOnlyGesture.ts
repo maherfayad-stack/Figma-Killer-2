@@ -80,6 +80,12 @@ export function applyToThisInstanceOnly(input: {
   retry: (mapId: NodeIdMap) => void
   /** Show the refusal the gesture would have shown without OD-7. */
   onRefused: () => void
+  /**
+   * `false` skips the component-copy fallback when the detach refuses. P5-C's
+   * `detachInstances` sets it: replaying a DETACH inside a copy of a component
+   * whose own detach just refused would ask for another copy, forever.
+   */
+  componentCopy?: false
 }): boolean {
   const { get, set, refusedNodeId, retry, onRefused } = input
   if (!isInlinedNodeId(refusedNodeId)) return false
@@ -98,7 +104,7 @@ export function applyToThisInstanceOnly(input: {
     const inlined = outcome?.createdNodeIds[0]
     const detached = resolveActiveTreeTarget(get())?.tree
     if (!outcome) {
-      const copied = await replayInComponentCopy({ get, set, tree, callSite, rootId, retry })
+      const copied = input.componentCopy === false ? false : await replayInComponentCopy({ get, set, tree, callSite, rootId, retry })
       if (!copied) onRefused()
       return
     }

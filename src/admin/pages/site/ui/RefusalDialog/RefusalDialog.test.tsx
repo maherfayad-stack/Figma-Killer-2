@@ -3,7 +3,8 @@
  * adds beyond rendering `ConstraintActionButtons` in a `<Dialog>`: the
  * detach/extract retry-after-reload mechanism.
  *
- * `detachInstance`/`extractInstanceCopy` are mocked so this never touches the
+ * The store's `detachInstances` (P5-C's one Detach action) is replaced with a
+ * spy and `extractInstanceCopy` is mocked, so this never touches the
  * network or a real `.tsx` file — `constraintRefusalSurfaces.test.ts` already
  * covers `presentStructuralRefusal`'s toast-vs-dialog split at the store
  * layer; this suite is the one level up, the actual rendered dialog.
@@ -12,14 +13,17 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { EditConstraint } from '@core/page-tree'
 import { useEditorStore } from '@site/store/store'
+import type { DetachInstancesOutcome } from '@site/store/slices/site/instanceDetachTypes'
 import { makeNode, makePage, makeSite } from '../../../../../__tests__/fixtures'
 
-const detachInstance = mock(() => Promise.resolve({ ok: true as const }))
+let detachOutcome: DetachInstancesOutcome = 'detached'
+const detachInstances = mock((_nodeIds: readonly string[]) => Promise.resolve(detachOutcome))
+const realDetachInstances = useEditorStore.getState().detachInstances
 const extractInstanceCopy = mock(() => Promise.resolve({ ok: true as const }))
 
 // `mock.module` is process-wide and PERMANENT — `mock.restore()` does not undo
 // it, and `bun test --parallel=4` gives each worker a process, not a file. The
-// replacement below publishes TWO of `studioSaveRequests`'s exports; every
+// replacement below publishes one of `studioSaveRequests`'s exports; every
 // later file in the worker that imports any other one would get `undefined`.
 // Snapshot the real namespace as a plain object BEFORE mocking (the namespace
 // object itself is live and gets rewritten). Gated by
@@ -28,7 +32,6 @@ const realStudioSaveRequests = { ...(await import('@site/studio/studioSaveReques
 
 mock.module('@site/studio/studioSaveRequests', () => ({
   ...realStudioSaveRequests,
-  detachInstance,
   extractInstanceCopy,
 }))
 
@@ -40,8 +43,9 @@ const { RefusalDialog } = await import('./RefusalDialog')
 
 afterEach(() => {
   cleanup()
-  detachInstance.mockClear()
+  detachInstances.mockClear()
   extractInstanceCopy.mockClear()
+  useEditorStore.setState({ detachInstances: realDetachInstances })
 })
 
 const CALL_SITE = 'src/pages/Home.tsx:5:1'
@@ -65,9 +69,11 @@ function siteWithNode(nodeId: string) {
 }
 
 beforeEach(() => {
+  detachOutcome = 'detached'
   useEditorStore.setState({
     site: siteWithNode(ORIGINAL_NODE_ID),
     structuralRefusalDialog: null,
+    detachInstances,
   })
 })
 
@@ -80,8 +86,22 @@ describe('RefusalDialog', () => {
     })
     render(<RefusalDialog />)
     fireEvent.click(screen.getByRole('button', { name: /detach this instance/i }))
-    await waitFor(() => expect(detachInstance).toHaveBeenCalledWith(ORIGINAL_NODE_ID))
+    await waitFor(() => expect(detachInstances).toHaveBeenCalledWith([ORIGINAL_NODE_ID]))
     await waitFor(() => expect(useEditorStore.getState().structuralRefusalDialog).toBeNull())
+  })
+
+  it('stays open when the detach is refused or cancelled, so the other remedy is still there (P5-C)', async () => {
+    detachOutcome = 'refused'
+    act(() => {
+      useEditorStore.setState({
+        structuralRefusalDialog: { title: 'Delete refused', constraint: SHARED_COMPONENT, nodeId: ORIGINAL_NODE_ID },
+      })
+    })
+    render(<RefusalDialog />)
+    fireEvent.click(screen.getByRole('button', { name: /detach this instance/i }))
+    await waitFor(() => expect(detachInstances).toHaveBeenCalledTimes(1))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(useEditorStore.getState().structuralRefusalDialog).not.toBeNull()
   })
 
   it('dismisses immediately for a non-detach/extract action — nothing to retry', () => {

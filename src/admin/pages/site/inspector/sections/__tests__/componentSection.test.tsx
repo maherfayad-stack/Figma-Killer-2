@@ -15,9 +15,10 @@
  *
  * P2-G adds the section's shape: one title row naming the instance
  * ("Card · Local") with Detach and Swap as icon buttons (UX-4), no mount at
- * all under a multi-selection (UX-14), and a Detach refusal that offers
+ * all under a multi-selection (UX-14). P5-C: Detach is the store's one
+ * `detachInstances` action, so its refusal is the refusal dialog (with
  * "duplicate it instead" for exactly the reasons `explainDetachConstraint`
- * names — one list, not a second copy here.
+ * names) or a toast — never a second, section-local presentation.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
@@ -28,6 +29,8 @@ import { ComponentSection } from '../ComponentSection'
 import { INSPECTOR_SECTIONS } from '..'
 import { useEditorStore } from '@site/store/store'
 import { invalidateLocalComponentCatalog } from '@site/studio/componentCatalog'
+import { resetStructuralCommitQueue } from '@site/studio/structuralCommitQueue'
+import { __resetToastBusForTests, subscribeToasts, type Toast } from '@ui/components/Toast/toastBus'
 import { makeNode, makePage, makeSite } from '../../../../../../__tests__/fixtures'
 
 const originalFetch = globalThis.fetch
@@ -80,7 +83,10 @@ beforeEach(() => {
     selectedNodeId: null,
     selectedNodeIds: [],
     _nodeIdToPageIds: new Map(),
+    structuralRefusalDialog: null,
   } as Parameters<typeof useEditorStore.setState>[0])
+  __resetToastBusForTests()
+  resetStructuralCommitQueue()
   // See `SlotControl.test.tsx`'s identical reset — the catalog fetch is
   // cached at module scope across test FILES in the same process.
   invalidateLocalComponentCatalog()
@@ -237,34 +243,44 @@ describe('ComponentSection — hidden under multi-select (P2-G, UX-14)', () => {
   })
 })
 
-describe('ComponentSection — Detach refusals surface as before (P1-E1)', () => {
-  it("shows the parser's sentence and offers a duplicate for a reason a copy would fix", async () => {
+describe('ComponentSection — Detach is the one detachInstances action (P5-C)', () => {
+  function currentToasts(): Toast[] {
+    let snapshot: Toast[] = []
+    subscribeToasts((toasts) => {
+      snapshot = toasts
+    })()
+    return snapshot
+  }
+
+  it("a refusal a copy would fix opens the refusal dialog with the parser's sentence and the duplicate remedy", async () => {
     seedInstance()
     detachRefusal = { reason: 'spread-ambiguous', message: 'Card spreads its props, so detach cannot tell which binding wins.' }
     const user = userEvent.setup()
     render(<ComponentSection />)
 
     await user.click(await screen.findByTestId('instance-detach-button'))
-    const refusal = await screen.findByTestId('instance-detach-refusal')
-    expect(refusal.textContent).toContain('Card spreads its props')
-    expect(screen.getByTestId('instance-extract-offer')).toBeTruthy()
+    await waitFor(() => expect(useEditorStore.getState().structuralRefusalDialog).not.toBeNull())
+    const dialog = useEditorStore.getState().structuralRefusalDialog!
+    expect(dialog.constraint.explanation).toContain('Card spreads its props')
+    expect(dialog.constraint.actions.map((action) => action.kind)).toEqual(['extract'])
+    expect(dialog.nodeId).toBe(OWNER_ID)
   })
 
-  it('offers no duplicate where a copy would refuse for the same reason', async () => {
+  it('a refusal a copy would not fix is a toast, with no duplicate offered', async () => {
     seedInstance()
     detachRefusal = { reason: 'unresolvable', message: 'Could not find where Card is declared.' }
     const user = userEvent.setup()
     render(<ComponentSection />)
 
     await user.click(await screen.findByTestId('instance-detach-button'))
-    const refusal = await screen.findByTestId('instance-detach-refusal')
-    expect(refusal.textContent).toContain('Could not find where Card is declared.')
-    expect(screen.queryByTestId('instance-extract-offer')).toBeNull()
+    await waitFor(() => expect(currentToasts().some((toast) => toast.body?.includes('Could not find where Card is declared.'))).toBe(true))
+    expect(useEditorStore.getState().structuralRefusalDialog).toBeNull()
   })
 
-  it('decides the duplicate offer through explainDetachConstraint, not a second copy of its list', () => {
+  it('has no refusal presentation of its own — the action decides the duplicate offer through explainDetachConstraint', () => {
     const source = readFileSync(join(import.meta.dir, '..', 'ComponentSection.tsx'), 'utf8')
-    expect(source).toContain('explainDetachConstraint')
+    expect(source).toContain('detachInstances([nodeId])')
+    expect(source).not.toContain('instance-detach-refusal')
     expect(source).not.toContain('EXTRACT_OFFER_REASONS')
   })
 })
