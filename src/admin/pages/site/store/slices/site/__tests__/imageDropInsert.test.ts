@@ -379,3 +379,24 @@ describe('dropImagesIntoPage — every source, one insert (P5-B3)', () => {
     expect(posted[0]!.edits[0]!.props).toEqual({ src: { __assetImport: 'src/assets/team.jpg' }, alt: 'team', width: 600, height: 400 })
   })
 })
+
+describe('dropImagesIntoPage — the painted progress comes off (P5-B3)', () => {
+  it('clears every ghost it painted once the bytes are up, so no written image stays marked uploading', async () => {
+    landing = (name) => ({
+      status: 200,
+      progress: [0.5],
+      body: { ok: true, mode: 'public', relPath: `public/${name}`, src: `/${name}`, width: 10, height: 10, deduped: false },
+    })
+    const painted: [string, number | null][] = []
+    drop([png('a.png'), png('b.png')], { paintProgress: (nodeId, fraction) => painted.push([nodeId, fraction]) })
+    await settle()
+
+    const ghosts = [...new Set(painted.map(([nodeId]) => nodeId))]
+    expect(ghosts).toHaveLength(2)
+    expect(painted.some(([, fraction]) => fraction === 0.5)).toBe(true)
+    for (const ghost of ghosts) {
+      const last = painted.filter(([nodeId]) => nodeId === ghost).pop()
+      expect(last).toEqual([ghost, null])
+    }
+  })
+})

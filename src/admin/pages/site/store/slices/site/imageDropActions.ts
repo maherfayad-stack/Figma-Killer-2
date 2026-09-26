@@ -309,6 +309,12 @@ async function landAndInsert(
         }),
       ),
     )
+    // Every byte is up: take the painted progress off each ghost. The painter
+    // sets the uploading attribute IMPERATIVELY, which React does not own, so
+    // an element the resync keeps would otherwise stay dimmed as "uploading"
+    // after the image is written. The ghost's own props still mark it until
+    // the resync replaces it.
+    for (const ghostId of ghostIds) drop.paintProgress?.(ghostId, null)
     const landed: { source: ImageDropSource; asset: DroppedStudioAsset; order: number }[] = []
     const failures: { name: string; message: string }[] = []
     settled.forEach((result, i) => {

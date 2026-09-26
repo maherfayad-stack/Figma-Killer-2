@@ -67,6 +67,7 @@ test.beforeEach(() => {
   fixture = createAuthoredFixtureProject('__e2e-assets-images-drag', {
     'pages/Home.jsx': FIXTURE_PAGE,
     'pages/home.css': FIXTURE_CSS,
+    'public/.gitkeep': '',
     'package.json': JSON.stringify({ name: 'assets-images-drag-fixture', private: true, type: 'module' }, null, 2) + '\n',
     '.studio/meta.json':
       JSON.stringify(
@@ -94,8 +95,12 @@ async function openImagesSection(page: Page) {
   await page.getByTestId('panel-rail-assets').click()
   const assets = page.getByTestId('assets-panel')
   await expect(assets).toBeVisible({ timeout: 10_000 })
+  // The Images section sits below the design system's cards; a search for the
+  // file narrows every other section to nothing, the way a user finds it.
+  await assets.getByRole('searchbox', { name: 'Search assets' }).fill('brand-logo')
   const card = assets.locator('[data-testid="assets-image-card"][data-asset-path="public/brand-logo.png"]')
   await expect(card, 'the project image is not listed in the Assets panel Images section').toBeVisible({ timeout: 30_000 })
+  await card.scrollIntoViewIfNeeded()
   return card
 }
 
