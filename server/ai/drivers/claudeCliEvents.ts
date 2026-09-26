@@ -394,6 +394,11 @@ export function translateClaudeCliLine(
         events.push({
           type: 'error',
           message: claudeCliResultErrorMessage(line),
+          // Same signal `verifyClaudeCliCredential` branches on at save time
+          // (`claudeCliVerify.ts`) — here it is the CREDENTIAL rejected
+          // mid-turn, after it once verified fine, which is exactly the
+          // "setup-token got revoked" case this repo has seen for real.
+          ...(line.api_error_status === 401 ? { authFailure: true } : {}),
         })
       } else {
         events.push({ type: 'done' })

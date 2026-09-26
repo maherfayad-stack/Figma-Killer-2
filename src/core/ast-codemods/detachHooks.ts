@@ -42,6 +42,7 @@
  * moved binding binds, at the markup's new position, to the enclosing
  * component's own top-level scope.
  */
+import * as path from 'node:path'
 import {
   Node,
   SyntaxKind,
@@ -111,6 +112,39 @@ function contextReaderIdentity(call: CallExpression): unknown {
   return fn && isContextReaderHook(fn) ? fn.compilerNode : undefined
 }
 
+/**
+ * Best-effort: adds the file `call`'s callee is imported from to `call`'s own
+ * ts-morph project, when it isn't already a member. A single-file (or
+ * two-file) project's checker cannot resolve a cross-file symbol to a real
+ * declaration otherwise — {@link contextReaderIdentity} would see an alias
+ * with nothing behind it and read that as "not a context reader" rather than
+ * "don't know yet". Silently does nothing for a bare specifier (an npm
+ * package — `useState` from `'react'` needs no such help; it is never a
+ * context reader either way) or a relative one that doesn't resolve to a
+ * real file on disk.
+ */
+function preloadImportTarget(call: CallExpression): void {
+  const callee = call.getExpression()
+  if (!Node.isIdentifier(callee)) return
+  const name = callee.getText()
+  const sourceFile = call.getSourceFile()
+  const importDecl = sourceFile
+    .getImportDeclarations()
+    .find(
+      (d) =>
+        d.getDefaultImport()?.getText() === name ||
+        d.getNamedImports().some((n) => (n.getAliasNode() ?? n.getNameNode()).getText() === name),
+    )
+  const specifier = importDecl?.getModuleSpecifierValue()
+  if (!specifier || !specifier.startsWith('.')) return
+  const project = sourceFile.getProject()
+  const base = path.resolve(path.dirname(sourceFile.getFilePath()), specifier)
+  for (const candidate of [base, `${base}.tsx`, `${base}.ts`, `${base}.jsx`, `${base}.js`]) {
+    if (project.getSourceFile(candidate)) return
+    if (project.addSourceFileAtPathIfExists(candidate)) return
+  }
+}
+
 function isLiteralArgument(arg: Node): boolean {
   return (
     Node.isStringLiteral(arg) ||
@@ -159,6 +193,78 @@ export function readComponentHooks(fn: FunctionLike, componentName: string): Com
     hooks.push({ statement, call, label: name, binding: readHookBinding(decl.getNameNode(), componentName, name), identity })
   }
   return hooks
+}
+
+/**
+ * The context-hook binding named `name` in `fn`'s own top-level body, when
+ * there is one — the cross-file transplant's use of this module
+ * (`transplantJsxElement.ts`): a captured free variable that turns out to be
+ * `const { t } = useLanguage()` (or a whole-value binding) can travel by
+ * re-establishing the CALL at the destination, exactly as DET-3 re-establishes
+ * it one component up. `undefined` when nothing in `fn`'s body binds `name` to
+ * a hook call at all — an ordinary prop or local, which stays a refusal.
+ * `'unmovable'` when something DOES bind it to a hook call, but not one this
+ * module's rules allow to move (not a context reader, a non-literal argument,
+ * or a binding shape `readHookBinding` can't move) — the caller keeps its
+ * ordinary captured-scope refusal rather than guessing.
+ *
+ * Deliberately narrower than {@link readComponentHooks}: that function fails
+ * the WHOLE component the moment any one of its hook calls is unmovable,
+ * which is correct when the component's entire body is about to move
+ * (detach). A transplant moves only markup, not the rest of the component, so
+ * an unrelated `useState` elsewhere in the same component is none of its
+ * business — only the ONE hook binding the captured name actually needs.
+ */
+export function findHookBindingForName(fn: FunctionLike, name: string): ComponentHook | 'unmovable' | undefined {
+  const body = fn.getBody()
+  for (const call of fn.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+    // A plain identifier callee only — `transplantJsxElement.ts` carries the
+    // hook's own import by that same name, and re-spells a property-access
+    // callee (`i18n.useTranslation()`) wrong.
+    if (!Node.isIdentifier(call.getExpression())) continue
+    const label = calleeName(call)
+    if (!label || !HOOK_CALL_RE.test(label)) continue
+    const decl = call.getParent()
+    const statement = Node.isVariableDeclaration(decl) ? decl.getVariableStatement() : undefined
+    if (
+      !Node.isVariableDeclaration(decl) ||
+      decl.getInitializer() !== call ||
+      !statement ||
+      statement.getParent() !== body ||
+      statement.getDeclarationKind() !== VariableDeclarationKind.Const
+    ) {
+      continue
+    }
+    const nameNode = decl.getNameNode()
+    const boundNames = Node.isIdentifier(nameNode)
+      ? [nameNode.getText()]
+      : Node.isObjectBindingPattern(nameNode)
+        ? nameNode
+            .getElements()
+            .flatMap((el) => (Node.isBindingElement(el) && Node.isIdentifier(el.getNameNode()) ? [el.getNameNode().getText()] : []))
+        : []
+    if (!boundNames.includes(name)) continue
+
+    // A cross-file transplant's own ts-morph project loads only the origin
+    // and destination files (`createProject`/`loadSourceFile` in
+    // `transplantJsxElement.ts`, unlike detach's whole-workspace project) —
+    // the hook's OWN declaration file is not a member of it yet, and without
+    // that the checker cannot resolve the callee's symbol to a real function
+    // body for `contextReaderIdentity` to read. Loaded here, once, on the
+    // candidate that actually matters, rather than the whole workspace.
+    preloadImportTarget(call)
+    const identity = contextReaderIdentity(call)
+    if (identity === undefined) return 'unmovable'
+    for (const arg of call.getArguments()) {
+      if (!isLiteralArgument(arg)) return 'unmovable'
+    }
+    try {
+      return { statement, call, label, binding: readHookBinding(nameNode, '', label), identity }
+    } catch {
+      return 'unmovable'
+    }
+  }
+  return undefined
 }
 
 function readHookBinding(nameNode: Node, componentName: string, hookName: string): ComponentHook['binding'] {

@@ -213,9 +213,22 @@ export interface PlannedImportBindings {
   localName: (name: string) => string
 }
 
+export interface PlanImportBindingsOptions {
+  /**
+   * The alias tried FIRST, before the plain `${name}2`, `${name}3`… sequence —
+   * `transplantJsxElement.ts`'s cross-file carry derives one from the
+   * module's own basename (`sheetStyles` beats `styles2` when the collision
+   * is two different CSS modules both locally called `styles`). `undefined`
+   * or already-taken falls through to the numbered sequence unchanged, so
+   * every existing caller that never passes this keeps its exact behaviour.
+   */
+  preferredAlias?: (name: string, requirement: ImportRequirement) => string | undefined
+}
+
 export function planImportBindings(
   sourceFile: SourceFile,
   required: ReadonlyMap<string, ImportRequirement>,
+  options?: PlanImportBindingsOptions,
 ): PlannedImportBindings {
   const planned = new Map<string, ImportRequirement>()
   const renames = new Map<string, string>()
@@ -229,7 +242,7 @@ export function planImportBindings(
       continue
     }
     used ??= new Set(sourceFile.getDescendantsOfKind(SyntaxKind.Identifier).map((identifier) => identifier.getText()))
-    const local = freeAlias(name, used, planned)
+    const local = freeAlias(name, used, planned, options?.preferredAlias?.(name, requirement))
     renames.set(name, local)
     planned.set(local, { ...requirement, imported: name })
   }
@@ -252,9 +265,16 @@ function existingLocalFor(sourceFile: SourceFile, name: string, requirement: Imp
   return undefined
 }
 
-function freeAlias(name: string, used: ReadonlySet<string>, planned: ReadonlyMap<string, ImportRequirement>): string {
+function freeAlias(
+  name: string,
+  used: ReadonlySet<string>,
+  planned: ReadonlyMap<string, ImportRequirement>,
+  preferred?: string,
+): string {
+  if (preferred && preferred !== name && !used.has(preferred) && !planned.has(preferred)) return preferred
+  const base = preferred ?? name
   for (let n = 2; ; n += 1) {
-    const candidate = `${name}${n}`
+    const candidate = `${base}${n}`
     if (!used.has(candidate) && !planned.has(candidate)) return candidate
   }
 }

@@ -42,6 +42,15 @@ export interface TranslationReply {
   translations: Record<string, string>
   /** Keys the model returned that were not in the batch — dropped, never written. */
   unexpected: string[]
+  /**
+   * The reply's own `{…}` never balanced — the object was cut off mid-value,
+   * most plausibly because a large batch (up to `MAX_BATCH` in
+   * `translateContent.ts`) hit the driver's own output-token ceiling. What is
+   * returned is salvaged from the COMPLETE key/value pairs before the cut
+   * (`salvageTruncatedObject`); the caller decides whether the keys still
+   * missing are worth a smaller retry.
+   */
+  truncated: boolean
 }
 
 /**
@@ -70,6 +79,80 @@ function firstJsonObject(text: string): string | undefined {
     }
   }
   return undefined
+}
+
+/**
+ * Salvages the complete `"key": "value"` string pairs out of `text` — which
+ * starts at an UNBALANCED `{` (a reply cut off mid-object) — by walking the
+ * same string-aware scan `firstJsonObject` uses, remembering the last point
+ * at which every open `{`/`[` could be closed without truncating a partial
+ * string. Returns a valid, parseable JSON object text, or `undefined` when
+ * not even one complete pair survived the cut (a reply truncated inside its
+ * very first value).
+ *
+ * Every value the prompt asks for is a translated STRING — `instructionsFor`
+ * (`translateContent.ts`) never asks for anything else — so a "safe cut
+ * point" is exactly "just finished a string that reads as a VALUE (preceded
+ * by `:`, not by a property-name position)". A number/bool/null leaf is not
+ * a shape this reply can produce honestly, so it is not treated as safe.
+ */
+function salvageTruncatedObject(text: string): string | undefined {
+  const stack: ('{' | '[')[] = []
+  let cut: number | undefined
+  let cutStack: ('{' | '[')[] = []
+  let i = 0
+  while (i < text.length) {
+    const ch = text[i]!
+    if (ch === '{' || ch === '[') {
+      stack.push(ch)
+      i += 1
+      continue
+    }
+    if (ch === '}' || ch === ']') {
+      stack.pop()
+      i += 1
+      continue
+    }
+    if (ch === '"') {
+      let j = i + 1
+      let closed = false
+      while (j < text.length) {
+        if (text[j] === '\\') {
+          j += 2
+          continue
+        }
+        if (text[j] === '"') {
+          closed = true
+          j += 1
+          break
+        }
+        j += 1
+      }
+      if (!closed) break // truncated mid-string — nothing from here on is safe
+      let after = j
+      while (after < text.length && /\s/.test(text[after]!)) after += 1
+      if (text[after] === ':') {
+        // This string was a KEY, not a value — keep scanning past the colon.
+        i = after + 1
+        continue
+      }
+      // A completed VALUE. Safe to cut right here — reconstructible into a
+      // valid document by closing every currently-open bracket.
+      if (text[after] === ',' || text[after] === '}' || text[after] === ']' || after >= text.length) {
+        cut = j
+        cutStack = [...stack]
+      }
+      i = after
+      continue
+    }
+    i += 1
+  }
+  if (cut === undefined) return undefined
+  const closing = cutStack
+    .map((open) => (open === '{' ? '}' : ']'))
+    .reverse()
+    .join('')
+  return text.slice(0, cut) + closing
 }
 
 /** Strips a ``` fence if the model added one despite being asked not to. */
@@ -113,8 +196,18 @@ function unwrap(object: Record<string, unknown>, wanted: ReadonlySet<string>): R
  * returned keys are real, and it is what makes the wrapper-unwrapping safe.
  */
 export function parseTranslationReply(raw: string, wantedKeys: readonly string[]): TranslationReply | undefined {
-  const candidate = firstJsonObject(stripCodeFence(raw))
-  if (!candidate) return undefined
+  const fenceStripped = stripCodeFence(raw)
+  const balanced = firstJsonObject(fenceStripped)
+  let truncated = false
+  let candidate = balanced
+
+  if (!candidate) {
+    const start = fenceStripped.indexOf('{')
+    if (start < 0) return undefined
+    candidate = salvageTruncatedObject(fenceStripped.slice(start))
+    if (!candidate) return undefined
+    truncated = true
+  }
 
   let parsed: unknown
   try {
@@ -134,5 +227,5 @@ export function parseTranslationReply(raw: string, wantedKeys: readonly string[]
     if (wanted.has(key)) translations[key] = value
     else unexpected.push(key)
   }
-  return { translations, unexpected }
+  return { translations, unexpected, truncated }
 }

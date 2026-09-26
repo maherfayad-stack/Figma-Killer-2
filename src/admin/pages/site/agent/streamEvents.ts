@@ -133,7 +133,7 @@ export const ServerStreamEventSchema = Type.Union([
     reason: Type.String(),
   }),
   Type.Object({ type: Type.Literal('done') }),
-  Type.Object({ type: Type.Literal('error'), message: Type.String() }),
+  Type.Object({ type: Type.Literal('error'), message: Type.String(), authFailure: Type.Optional(Type.Boolean()) }),
 ])
 
 // ---------------------------------------------------------------------------
@@ -455,11 +455,22 @@ export async function processStreamEvent(
       // boundary). The admin needs the actual reason, not a "Something
       // went wrong" placeholder; this surface is admin-only (capability
       // gated) so info-disclosure concerns don't apply.
+      //
+      // `authFailure` is the one exception to "verbatim": it means the
+      // CREDENTIAL was rejected, not the turn — the CLI's own wording
+      // ("Claude CLI error: Failed to authenticate. API Error: 401 OAuth
+      // access token has been revoked.") names a wire protocol nobody asked
+      // about. What the admin needs to know is what to DO: reconnect in
+      // Settings → AI (the "Log in with Claude" terminal flow, or a fresh
+      // `claude setup-token` paste — `ProvidersTab.tsx`).
+      const message = event.authFailure
+        ? 'Claude needs to be reconnected. Open Settings → AI → Providers and sign in again (or paste a fresh setup-token).'
+        : event.message
       console.error('[AgentSlice] Server error event:', event.message)
       set((state) => {
-        state.agentError = event.message
-        const message = state.agentMessages.find((item) => item.id === assistantId)
-        failPendingToolCalls(message, event.message)
+        state.agentError = message
+        const found = state.agentMessages.find((item) => item.id === assistantId)
+        failPendingToolCalls(found, message)
       })
       break
     }

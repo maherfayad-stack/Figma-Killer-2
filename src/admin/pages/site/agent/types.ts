@@ -82,6 +82,8 @@ interface DoneEvent {
 interface ErrorEvent {
   type: 'error'
   message: string
+  /** The CREDENTIAL was rejected (a Claude CLI setup-token revoked or expired), not merely a turn that failed. See `AiStreamEvent`'s `error` variant. */
+  authFailure?: boolean
 }
 
 /**

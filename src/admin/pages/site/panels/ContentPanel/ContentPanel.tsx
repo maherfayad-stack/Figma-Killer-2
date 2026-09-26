@@ -70,8 +70,17 @@ import { pushToast } from '@ui/components/Toast'
 import { retryWhileUnreachable } from '@core/http'
 import styles from './ContentPanel.module.css'
 
-/** The locale a project is being translated INTO by the AI action. Arabic is the ask; a project declaring more locales still edits all of them by hand. */
-const TARGET_LOCALE = 'ar'
+/**
+ * The locale the AI action prefers to translate INTO. Arabic is the ask, but
+ * this is a PREFERENCE, never an assumption — `runTranslate` only ever asks
+ * the server for a locale `catalog.capability.keys` already declares
+ * (`targetLocale`, computed below). A project whose dictionary predates
+ * Studio (hand-written, English-only) does not get offered a translation
+ * into a locale it never declared: that used to be a 409 the user could not
+ * have known to avoid ("ar" is not a locale this project declares"),
+ * surfaced as a red toast for something the user did nothing to cause.
+ */
+const PREFERRED_TARGET_LOCALE = 'ar'
 
 /** Locales written right-to-left — their cells get `dir="rtl"` so the text reads the way it will render. */
 const RTL_LOCALES: ReadonlySet<string> = new Set(['ar', 'he', 'fa', 'ur'])
@@ -130,12 +139,22 @@ export function ContentPanel() {
         return
       }
       setSnapshot(await readSnapshot())
+      // A string "outside any component" (a shared constant, a list built
+      // once at module load) is not a failure the user needs to act on — it
+      // is information about the shape of their own code, the same way the
+      // hardcoded-strings list below the table is information, not an error.
+      // Only surface the louder `warning` styling when something ELSE also
+      // refused (a name already taken, a key that can't be written).
+      const genuineFailures = result.failures.filter((f) => !f.message.includes('outside any component'))
       pushToast({
-        kind: result.failures.length > 0 ? 'warning' : 'success',
+        kind: genuineFailures.length > 0 ? 'warning' : 'success',
         title: `${result.extracted} strings now translatable`,
         body: [
           `${result.locales.join(' + ')} in ${result.source}, across ${result.filesChanged} ${result.filesChanged === 1 ? 'file' : 'files'}.`,
-          result.failures.length > 0 ? `${result.failures.length} left in place: ${result.failures[0]!.message}` : null,
+          genuineFailures.length > 0 ? `${genuineFailures.length} left in place: ${genuineFailures[0]!.message}` : null,
+          genuineFailures.length === 0 && result.failures.length > 0
+            ? `${result.failures.length} ${result.failures.length === 1 ? 'stays' : 'stay'} as plain text: ${result.failures[0]!.message}`
+            : null,
         ]
           .filter((note): note is string => note !== null)
           .join(' '),
@@ -196,10 +215,10 @@ export function ContentPanel() {
    * write refused are different outcomes and both are named, rather than
    * rounding up to "done".
    */
-  async function runTranslate() {
+  async function runTranslate(targetLocale: string) {
     setTranslating(true)
     try {
-      const result = await translateMissing({ targetLocale: TARGET_LOCALE })
+      const result = await translateMissing({ targetLocale })
       await load()
       const notes = [
         result.skipped.length > 0 ? `${result.skipped.length} skipped by the model` : null,
@@ -240,8 +259,17 @@ export function ContentPanel() {
   // `isUntranslated`. Falling back to the first declared locale mirrors the
   // server's own resolution in `translateContent.ts`.
   const sourceLocale = catalog.capability.defaultKey ?? catalog.capability.keys[0]
+  // The locale the translate action actually targets — `ar` when this
+  // project's OWN dictionary declares it, else the first OTHER declared
+  // locale, else none at all. Never a locale the catalog does not declare:
+  // that is the one thing the AI route refuses with a 409, and offering it
+  // anyway is how "ar is not a locale this project declares" became a red
+  // toast the user had no way to see coming.
+  const targetLocale = locales.includes(PREFERRED_TARGET_LOCALE)
+    ? PREFERRED_TARGET_LOCALE
+    : locales.find((locale) => locale !== sourceLocale)
   const needsTranslating = (entry: { values: Record<string, string> }) =>
-    isUntranslated(sourceLocale ? entry.values[sourceLocale] : undefined, entry.values[TARGET_LOCALE])
+    targetLocale !== undefined && isUntranslated(sourceLocale ? entry.values[sourceLocale] : undefined, entry.values[targetLocale])
   const needle = query.trim().toLowerCase()
   const rows = catalog.entries.filter((entry) => {
     if (untranslatedOnly && !needsTranslating(entry)) return false
@@ -275,12 +303,18 @@ export function ContentPanel() {
           <Button
             variant="primary"
             size="sm"
-            disabled={missing === 0 || translating}
-            tooltip={missing === 0 ? `Every key already has ${TARGET_LOCALE}.` : `Fill in the ${missing} untranslated ${TARGET_LOCALE} strings with AI.`}
-            onClick={() => void runTranslate()}
+            disabled={targetLocale === undefined || missing === 0 || translating}
+            tooltip={
+              targetLocale === undefined
+                ? 'This project declares only one locale — add another to translate into.'
+                : missing === 0
+                  ? `Every key already has ${targetLocale}.`
+                  : `Fill in the ${missing} untranslated ${targetLocale} strings with AI.`
+            }
+            onClick={() => targetLocale !== undefined && void runTranslate(targetLocale)}
             data-testid="content-panel-translate"
           >
-            {translating ? 'Translating…' : `Translate → ${TARGET_LOCALE}`}
+            {translating ? 'Translating…' : `Translate → ${targetLocale ?? PREFERRED_TARGET_LOCALE}`}
           </Button>
         </div>
         <div className={styles.toolbarRow}>
@@ -293,7 +327,7 @@ export function ContentPanel() {
             {/* "Untranslated", not "Missing": a cell holding the English word
                 back is not missing, and calling it that is how four keys stayed
                 invisible. */}
-            Untranslated {TARGET_LOCALE} ({missing})
+            Untranslated {targetLocale ?? PREFERRED_TARGET_LOCALE} ({missing})
           </Button>
           <p className={styles.source}>
             {catalog.entries.length} keys · {catalog.capability.source}

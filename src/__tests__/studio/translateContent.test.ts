@@ -14,7 +14,7 @@
  */
 import { describe, expect, it } from 'bun:test'
 import { selectPendingEntries } from '../../../server/ai/handlers/translateContent'
-import { runOneShotCompletion } from '../../../server/ai/oneShot'
+import { AiOneShotError, runOneShotCompletion } from '../../../server/ai/oneShot'
 import type { AiProvider } from '../../../server/ai/drivers/types'
 
 const ENTRIES = [
@@ -44,7 +44,9 @@ describe('selectPendingEntries', () => {
 })
 
 /** A driver that yields a fixed script of events and records the request it was handed. */
-function fakeDriver(events: { type: 'text'; text: string }[]): { driver: AiProvider; seen: { tools: unknown[] }[] } {
+function fakeDriver(
+  events: ({ type: 'text'; text: string } | { type: 'error'; message: string; authFailure?: boolean })[],
+): { driver: AiProvider; seen: { tools: unknown[] }[] } {
   const seen: { tools: unknown[] }[] = []
   const driver = {
     id: 'anthropic',
@@ -71,7 +73,7 @@ describe('runOneShotCompletion', () => {
       driver,
       credentials: CREDENTIALS,
       modelId: 'm',
-      systemPrompt: 'sys',
+      instructions: 'sys',
       userMessage: 'user',
       signal: new AbortController().signal,
       toolContextBase: { db: null, userId: 'u', capabilities: [], conversationId: 'c', snapshot: null } as never,
@@ -85,11 +87,78 @@ describe('runOneShotCompletion', () => {
       driver,
       credentials: CREDENTIALS,
       modelId: 'm',
-      systemPrompt: 'sys',
+      instructions: 'sys',
       userMessage: 'user',
       signal: new AbortController().signal,
       toolContextBase: { db: null, userId: 'u', capabilities: [], conversationId: 'c', snapshot: null } as never,
     })
     expect(seen[0]!.tools).toEqual([])
+  })
+
+  /**
+   * The Claude CLI's own auth-failure line (`is_error: true`,
+   * `api_error_status: 401`) becomes an `error` stream event — one that used
+   * to be silently DROPPED here (only `text` events were accumulated), so a
+   * revoked setup-token produced an empty string, and `translateContent.ts`
+   * reported "the model replied with no JSON object" for a problem that was
+   * never about JSON at all.
+   */
+  it('throws rather than silently returning empty text on an error event', async () => {
+    const { driver } = fakeDriver([{ type: 'error', message: 'Claude CLI turn failed.' }])
+    await expect(
+      runOneShotCompletion({
+        driver,
+        credentials: CREDENTIALS,
+        modelId: 'm',
+        instructions: 'sys',
+        userMessage: 'user',
+        signal: new AbortController().signal,
+        toolContextBase: { db: null, userId: 'u', capabilities: [], conversationId: 'c', snapshot: null } as never,
+      }),
+    ).rejects.toThrow('Claude CLI turn failed.')
+  })
+
+  it('marks the thrown error authFailure when the driver flags a credential rejection', async () => {
+    const { driver } = fakeDriver([
+      {
+        type: 'error',
+        message: 'Claude CLI error: Failed to authenticate. API Error: 401 OAuth access token has been revoked.',
+        authFailure: true,
+      },
+    ])
+    try {
+      await runOneShotCompletion({
+        driver,
+        credentials: CREDENTIALS,
+        modelId: 'm',
+        instructions: 'sys',
+        userMessage: 'user',
+        signal: new AbortController().signal,
+        toolContextBase: { db: null, userId: 'u', capabilities: [], conversationId: 'c', snapshot: null } as never,
+      })
+      throw new Error('expected a rejection')
+    } catch (err) {
+      expect(err).toBeInstanceOf(AiOneShotError)
+      expect((err as AiOneShotError).authFailure).toBe(true)
+    }
+  })
+
+  it('does not flag authFailure for an ordinary (non-credential) error event', async () => {
+    const { driver } = fakeDriver([{ type: 'error', message: 'The provider is overloaded.' }])
+    try {
+      await runOneShotCompletion({
+        driver,
+        credentials: CREDENTIALS,
+        modelId: 'm',
+        instructions: 'sys',
+        userMessage: 'user',
+        signal: new AbortController().signal,
+        toolContextBase: { db: null, userId: 'u', capabilities: [], conversationId: 'c', snapshot: null } as never,
+      })
+      throw new Error('expected a rejection')
+    } catch (err) {
+      expect(err).toBeInstanceOf(AiOneShotError)
+      expect((err as AiOneShotError).authFailure).toBe(false)
+    }
   })
 })

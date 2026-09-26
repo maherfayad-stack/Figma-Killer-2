@@ -404,8 +404,19 @@ export type AiStreamEvent =
    * follows if every retry is spent.
    */
   | { type: 'retrying'; attempt: number; maxAttempts: number; delayMs: number; reason: string }
-  /** Terminal error — stream is about to end abnormally. */
-  | { type: 'error'; message: string }
+  /**
+   * Terminal error — stream is about to end abnormally.
+   *
+   * `authFailure` is set when the error IS the credential itself being
+   * rejected (the Claude CLI's `api_error_status: 401` — a setup-token that
+   * expired or was revoked after it was saved, not merely a turn that
+   * failed for some other reason). A caller that shows this to a user must
+   * branch on it: the raw CLI text ("Claude CLI error: Failed to
+   * authenticate. API Error: 401 OAuth access token has been revoked.")
+   * names a wire protocol nobody asked about, where "Claude needs to be
+   * reconnected" names the one thing to do about it.
+   */
+  | { type: 'error'; message: string; authFailure?: boolean }
   /** Stream ended cleanly. */
   | { type: 'done' }
 
