@@ -18,7 +18,7 @@
  * (`useCanvasInsertionDrag`), the one every Assets card, notch primitive and
  * inserter uses — never HTML5 drag-and-drop (`single-drag-mechanism`). Its
  * drop line is the one a component gets, and its write is the one a dropped
- * file gets (`insertImageSources` → `dropImagesIntoPage`): the ghost, the
+ * file gets (`insertImagesAtTarget` → `dropImagesIntoPage`): the ghost, the
  * width clamp to the container, one undo step.
  *
  * ## Unused images (IMG-11)
@@ -38,7 +38,7 @@ import { EmptyState } from '@ui/components/EmptyState'
 import { useEditorStore } from '@site/store/store'
 import { useCanvasInsertionDrag } from '@site/canvas/useCanvasInsertionDrag'
 import { CanvasInsertionDragOverlay } from '@site/canvas/CanvasInsertionDragOverlay'
-import { insertImageSources, resolvePickedImageTarget } from '@site/canvas/canvasImagePicker'
+import { insertImagesAtTarget, readSelectionInsertTarget } from '@site/canvas/canvasSelectionInsert'
 import type { ImageDropSource } from '@site/store/slices/site/imageDropShapes'
 import { studioAssetPreviewUrl, useProjectImageAssets, type ProjectImageAsset } from '@site/studio/projectAssets'
 import { pushToast } from '@ui/components/Toast'
@@ -102,21 +102,18 @@ export function ImagesSection({ query, collapsed, onToggle }: ImagesSectionProps
     onDrop: (ghost, location) => {
       const pageId = useEditorStore.getState().activePageId
       if (!pageId) return false
-      insertImageSources({ pageId, parentId: location.parentId, index: location.index }, [sourceOf(ghost)])
+      insertImagesAtTarget({ pageId, parentId: location.parentId, index: location.index }, [sourceOf(ghost)])
       return true
     },
   })
 
   function insertBesideSelection(ghost: ImageDragGhost) {
-    const state = useEditorStore.getState()
-    const pageId = state.activePageId
-    const tree = pageId ? (state.site?.pages.find((page) => page.id === pageId) ?? null) : null
-    const target = resolvePickedImageTarget(pageId, tree, state.selectedNodeId)
+    const target = readSelectionInsertTarget()
     if (!target.ok) {
       pushToast({ kind: 'warning', title: IMAGE_DROP_TITLE, body: target.message, location: 'site-editor' })
       return
     }
-    insertImageSources(target, [sourceOf(ghost)])
+    insertImagesAtTarget(target, [sourceOf(ghost)])
   }
 
   const tokens = queryTokens(query)

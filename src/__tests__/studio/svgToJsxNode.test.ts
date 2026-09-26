@@ -112,7 +112,24 @@ describe('svgToJsxNode', () => {
     const many = '<path d="M0 0"/>'.repeat(300)
     const result = svgToJsxNode(`<svg viewBox="0 0 1 1">${many}</svg>`)
     expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.message).toContain('too large')
+    if (!result.ok) {
+      expect(result.message).toContain('too large')
+      // P5-A — the one refusal a caller may route around (a paste lands it as an <img> instead).
+      expect(result.reason).toBe('too-large')
+    }
+  })
+
+  it('REGRESSION (P5-A): a part nested past the depth cap refuses instead of being dropped without a word', () => {
+    const deep = '<g>'.repeat(14) + '<path d="M0 0h1"/>' + '</g>'.repeat(14)
+    const result = svgToJsxNode(`<svg viewBox="0 0 1 1">${deep}</svg>`)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('too-large')
+  })
+
+  it('every other refusal is `refused`, which a caller must not route around', () => {
+    const result = svgToJsxNode('<div>not an icon</div>')
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toBe('refused')
   })
 
   // The end-to-end proof — a real package icon, the real codemod, real source.

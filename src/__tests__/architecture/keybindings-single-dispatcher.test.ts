@@ -193,6 +193,52 @@ describe('Canvas keyboard — one dispatcher', () => {
     expect(mounts).toEqual(['SitePage.tsx'])
   })
 
+})
+
+/** Any `<something>.addEventListener('copy' | 'cut' | 'paste'`, in either quote style. */
+const CLIPBOARD_LISTENER = /addEventListener\(\s*['"](?:copy|cut|paste)['"]/
+
+/**
+ * P5-A — the clipboard has ONE bridge (`canvasClipboardBridge.ts`), for the
+ * same reason the keyboard has one dispatcher: two `paste` listeners on one
+ * document would each read the clipboard and each insert what they found, and
+ * which one won would depend on mount order. The bridge is installed on the
+ * editor's own document and on every portal frame's, and nowhere else.
+ */
+describe('Canvas clipboard — one bridge', () => {
+  it('only the bridge attaches copy / cut / paste listeners anywhere in the editor workspace', () => {
+    const found = SITE_SOURCES
+      .filter(({ source }) => codeLines(source).some((line) => CLIPBOARD_LISTENER.test(line)))
+      .map(({ rel }) => rel)
+    expect(found).toEqual(['canvas/canvasClipboardBridge.ts'])
+  })
+
+  it('the bridge is installed by the editor-document hook and the per-frame forwarding, and nothing else', () => {
+    const installers = SITE_SOURCES
+      .filter(({ rel, source }) => rel !== 'canvas/canvasClipboardBridge.ts' && /installCanvasClipboardBridge\(/.test(source))
+      .map(({ rel }) => rel)
+      .sort()
+    expect(installers).toEqual(['canvas/useCanvasClipboardBridge.ts', 'canvas/useIframeEventForwarding.ts'])
+  })
+
+  it('⌘C / ⌘X / ⌘V never preventDefault their keydown — that would cancel the clipboard event', () => {
+    const src = readFileSync(join(CANVAS_DIR, 'useCanvasNodeShortcuts.ts'), 'utf8')
+    for (const command of ['layers.copy', 'layers.cut', 'layers.paste']) {
+      const start = src.indexOf(`getKeybindingForCommand('${command}')`)
+      expect(start).toBeGreaterThan(-1)
+      const branch = src.slice(start, src.indexOf('return true', start))
+      expect(codeLines(branch).join(' ')).not.toContain('preventDefault')
+    }
+  })
+
+  it('the spotlight capture listener leaves ⌘C / ⌘X / ⌘V to the node rung', () => {
+    const src = readFileSync(join(SITE_DIR, '../../spotlight/shortcutDispatch.ts'), 'utf8')
+    const owned = src.slice(src.indexOf('COMPONENT_OWNED_SHORTCUTS'), src.indexOf('])'))
+    for (const command of ['layers.copy', 'layers.cut', 'layers.paste']) expect(owned).toContain(`'${command}'`)
+  })
+})
+
+describe('Canvas keyboard — ladder order', () => {
   it('the precedence ladder is the one the plan specifies', () => {
     // The order IS the contract — reordering it silently changes which
     // selection a shared Delete acts on.

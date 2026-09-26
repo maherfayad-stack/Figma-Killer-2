@@ -11,6 +11,7 @@
  * caller (`canvasUploadProgress.ts`) for the same reason.
  */
 import type { InlineOffsetProperty } from '@core/studio-runtime'
+import type { SlotJsxNode } from '@site/studio/studioSaveRequests'
 
 /** The attribute the ghost carries while its bytes upload — `EditorChromeInjector`'s selector. */
 export const UPLOADING_ATTRIBUTE = 'data-studio-uploading'
@@ -98,6 +99,23 @@ export interface ImageDropRequest {
   absolute: AbsoluteImagePlacement | null
   /** Paints each ghost's upload progress; omitted, nothing is painted. */
   paintProgress?: UploadProgressPainter
+}
+
+/**
+ * P5-A — a JSX subtree (a pasted SVG, converted and sanitised by
+ * `svgToJsxNode`) written at the position a gesture named
+ * (`insertJsxSubtreeIntoPage`). Here beside the image drop's request because
+ * both are what the canvas hands the store for a gesture-addressed insert.
+ */
+export interface SubtreeInsertRequest {
+  pageId: string
+  /** The container and index the new element is written at. */
+  parentId: string
+  index: number
+  /** The element and everything under it, written in one splice. */
+  node: SlotJsxNode
+  /** What ⌘Z names this step. */
+  undoLabel: string
 }
 
 /**

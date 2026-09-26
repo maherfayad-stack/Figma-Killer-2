@@ -88,7 +88,7 @@ subscribes to the whole array or to bare `s.site`.
 | `styleRuleSlice.ts` (+ `styleRule/`: `crudActions.ts`, `propertyActions.ts`, `assignmentActions.ts`, `conditionActions.ts`, `registryActions.ts`, `uiStateActions.ts`, `helpers.ts`) | The CSS class registry, split the same way `boardSlice.ts` and `site/` are |
 | `uiSlice.ts` | `activeDocument`, panel open/closed, right sidebar expanded |
 | `sitePanelSlice.ts` | Panel-specific UI state |
-| `clipboardSlice.ts` | Copy/paste of subtrees |
+| `clipboardSlice.ts` | Copy/paste of subtrees. Its `copiedAt` is also the Studio marker ⌘C writes onto the OS clipboard (P5-A, `canvas/canvasClipboardBridge.ts`), which is how ⌘V tells the copied layers from a newer image there |
 | `filesSlice.ts` | Site files / code assets |
 | `saveTrackingSlice.ts` | Dirty tracking, autosave cadence |
 | `commentsSlice.ts` (+ `commentSelectors.ts`) | The editor's view of `<workspace>/.studio/comments.json` and the transient UI state around it (armed tool, open thread, uncommitted pin) — no HTTP here, the round trip lives in `@site/studio/commentActions.ts` |
@@ -522,7 +522,9 @@ not land is taken back".
 (`dropImagesIntoPage`/`replaceImageInPage`/`setBackgroundImageInPage`, D2 G15
 + P5-B — image files dropped from the OS; since P5-B3 any `ImageDropSource`:
 a file, a URL dragged from another tab, or a project file from the Assets
-panel, each landed through `landImageSource` and nothing else) take their page id as an argument
+panel, each landed through `landImageSource` and nothing else;
+`insertJsxSubtreeIntoPage`, P5-A — an SVG pasted from the OS clipboard, one
+`insert` whose `children` carry the whole converted subtree) take their page id as an argument
 instead of trusting `activePageId`, and none goes through `mutateActiveTree`.
 A cross-frame drag ACTIVATES the destination frame on the way
 (`openPageInCanvas` fires from `onPointerDownCapture`), so by commit time the
