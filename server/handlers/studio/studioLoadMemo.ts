@@ -77,11 +77,12 @@
  * running compute's result unchecked: that compute began earlier, and a change
  * in between must still produce a fresh one.
  */
-import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { readStudioStoreText, studioStoreProjectRel } from './studioStore'
+import { STUDIO_META_FILE } from './studioMeta'
 import { listWorkspaceFiles } from '@core/page-parser'
 import { canvasLayerRelPath } from '@core/studio-board'
-import { listCanvasLayerIds } from './canvasLayerFiles'
+import { canvasLayerFilePath, listCanvasLayerIds } from './canvasLayerFiles'
 import { digestOf, fileStamp, stampsUnchanged } from './loadDigest'
 import { onLoadedProjectEvicted, retainLoadedProject, type LoadedProject } from './loadedProjects'
 import type { StudioLoadResult } from './studioLoadContract'
@@ -121,23 +122,24 @@ const NON_PARSE_META_FIELDS = new Set(['lastOpenedAt', 'trustAutoPromotedAt'])
  * framework, trust and stories, so it is compared by CONTENT (minus the fields
  * above) on every load.
  */
-const META_RELATIVE_PATH = '.studio/meta.json'
+const META_RELATIVE_PATH = studioStoreProjectRel(STUDIO_META_FILE)
 
 /**
  * `.studio/meta.json`'s contribution: its parsed content with the fields above
  * removed, re-serialised with sorted keys so a rewrite that only reorders them
  * is not mistaken for a change. Unreadable or malformed falls back to the raw
  * bytes: a file this function cannot understand must still invalidate when it
- * changes.
+ * changes. Absent — or reached through a link, which `readStudioMeta` ignores
+ * too — is `missing`.
  */
 function metaStamp(dir: string): string {
-  const absFile = join(dir, ...META_RELATIVE_PATH.split('/'))
-  let raw: string
+  let raw: string | null
   try {
-    raw = readFileSync(absFile, 'utf8')
+    raw = readStudioStoreText(dir, STUDIO_META_FILE)
   } catch {
-    return 'missing'
+    raw = null
   }
+  if (raw === null) return 'missing'
   try {
     const parsed: unknown = JSON.parse(raw)
     if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return raw
@@ -169,7 +171,8 @@ export function workspaceLoadFingerprint(dir: string): string {
   // page file does, so each one is stamped explicitly, the way meta.json is.
   for (const id of listCanvasLayerIds(dir)) {
     const rel = canvasLayerRelPath(id)
-    parts.push(`${rel}:${fileStamp(join(dir, ...rel.split('/')))}`)
+    const absFile = canvasLayerFilePath(dir, id)
+    parts.push(`${rel}:${absFile === null ? 'linked' : fileStamp(absFile)}`)
   }
   return digestOf(parts)
 }

@@ -44,11 +44,10 @@
  * credential; a byte count carries none of those and answers the only question
  * this log exists to answer.
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
 import { Type, safeParseValue, type Static } from '@core/utils/typeboxHelpers'
 import { FIDELITY_MODES } from './fidelityMode'
 import { DESIGN_POLICIES } from './designPolicy'
+import { appendStudioStoreText, readStudioStoreText, statStudioStoreFile, writeStudioStoreFile } from './studioStore'
 
 /** Past this, the file is trimmed on the next append. ~2 MB is tens of thousands of rounds — far more history than any budget question needs. */
 const MAX_LOG_BYTES = 2_000_000
@@ -117,10 +116,6 @@ export const AgentTurnSummarySchema = Type.Object({
 })
 export type AgentTurnSummary = Static<typeof AgentTurnSummarySchema>
 
-function logFile(dir: string): string {
-  return join(dir, '.studio', AGENT_TURN_LOG_FILE)
-}
-
 /**
  * Keep the tail of an oversized log, cut at a line boundary.
  *
@@ -128,14 +123,15 @@ function logFile(dir: string): string {
  * every reader has to defend against; finding the first `\n` in the retained
  * slice costs one scan and removes the whole class of problem.
  */
-function trimIfOversized(file: string): void {
+function trimIfOversized(dir: string): void {
   try {
-    if (!existsSync(file)) return
-    if (statSync(file).size <= MAX_LOG_BYTES) return
-    const text = readFileSync(file, 'utf8')
+    const size = statStudioStoreFile(dir, AGENT_TURN_LOG_FILE)?.size ?? 0
+    if (size <= MAX_LOG_BYTES) return
+    const text = readStudioStoreText(dir, AGENT_TURN_LOG_FILE)
+    if (text === null) return
     const tail = text.slice(-TRIM_TO_BYTES)
     const firstBreak = tail.indexOf('\n')
-    writeFileSync(file, firstBreak >= 0 ? tail.slice(firstBreak + 1) : '')
+    writeStudioStoreFile(dir, AGENT_TURN_LOG_FILE, firstBreak >= 0 ? tail.slice(firstBreak + 1) : '')
   } catch (err) {
     console.error('[studio/agentTurnLog] could not trim the log — continuing:', err)
   }
@@ -153,10 +149,8 @@ export function appendAgentTurnSummary(dir: string, summary: AgentTurnSummary): 
 
 function appendLine(dir: string, line: AgentTurnLogEntry | AgentTurnSummary): void {
   try {
-    const file = logFile(dir)
-    mkdirSync(dirname(file), { recursive: true })
-    trimIfOversized(file)
-    appendFileSync(file, `${JSON.stringify(line)}\n`)
+    trimIfOversized(dir)
+    appendStudioStoreText(dir, AGENT_TURN_LOG_FILE, `${JSON.stringify(line)}\n`)
   } catch (err) {
     console.error('[studio/agentTurnLog] could not record a turn line — continuing:', err)
   }
@@ -181,10 +175,10 @@ export function readAgentTurnSummaries(dir: string): AgentTurnSummary[] {
 
 function readLines<T extends typeof AgentTurnLogEntrySchema | typeof AgentTurnSummarySchema>(dir: string, schema: T): Static<T>[] {
   try {
-    const file = logFile(dir)
-    if (!existsSync(file)) return []
+    const text = readStudioStoreText(dir, AGENT_TURN_LOG_FILE)
+    if (text === null) return []
     const entries: Static<T>[] = []
-    for (const line of readFileSync(file, 'utf8').split('\n')) {
+    for (const line of text.split('\n')) {
       if (line.trim().length === 0) continue
       let raw: unknown
       try {

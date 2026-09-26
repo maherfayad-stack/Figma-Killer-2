@@ -119,6 +119,8 @@ import { Type } from '@core/utils/typeboxHelpers'
 import { aiToolOk, toolRefusal, type AiToolImage, type ToolRefusal, type ToolRefusalCode } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { syncBoardFramesFromDisk } from '../../../../handlers/studio/boardFrames'
+import { boardsFilePath } from '../../../../handlers/studio/boardGeometry'
+import { studioFrameworkFilePath } from '../../../../handlers/studioFramework'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { authoredFrameWidth } from '../../../../handlers/studio/boardGeometry'
 import { readDesignReferenceBytes } from '../../../../handlers/studio/designReferenceStore'
@@ -248,8 +250,8 @@ function compareCacheDepFiles(
   return [
     absFile,
     ...stylesheetFiles,
-    join(dir, '.studio', 'framework.json'),
-    join(dir, '.studio', 'boards.json'),
+    studioFrameworkFilePath(dir),
+    boardsFilePath(dir),
   ]
 }
 

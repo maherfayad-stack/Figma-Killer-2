@@ -39,7 +39,7 @@ export function runCanvasPaste(snapshot: ClipboardSnapshot): void {
       return
     case 'images': {
       const target = targetOrExplain()
-      if (target) insertImagesAtTarget(target, decision.files)
+      if (target) insertImagesAtTarget(target, decision.files.map((file) => ({ kind: 'file', file })))
       return
     }
     case 'svg': {

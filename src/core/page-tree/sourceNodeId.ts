@@ -168,6 +168,17 @@ export function isInlinedNodeId(nodeId: string): boolean {
 }
 
 /**
+ * How many call sites deep an id is: `0` for a page's own element, `1` for an
+ * element of a component inlined at a page call site (`page~Card`), `2` for
+ * one inside a component that component renders (`page~Card~Icon`) — whose
+ * nearest call site then sits in `Card`'s own, shared, file. P5-C's "Expose
+ * as prop" writes the call site, so it takes depth 1 only.
+ */
+export function inlineDepth(nodeId: string): number {
+  return nodeId.split(INLINE_ID_SEPARATOR).length - 1
+}
+
+/**
  * True when the studio importer minted this id at all — a source location,
  * with or without `.map` iteration suffixes, with or without a call-site
  * prefix. `false` for a CMS node (a nanoid, which has no `:`) and for the

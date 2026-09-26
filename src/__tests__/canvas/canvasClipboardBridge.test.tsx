@@ -95,6 +95,17 @@ function press(key: 'c' | 'v', target: EventTarget = document.body): KeyboardEve
 const V_KEY: FrameKeyInit = { key: 'v', code: 'KeyV', location: 0, repeat: false, ctrlKey: !isPlatformMac(), shiftKey: false, altKey: false, metaKey: isPlatformMac() }
 
 /** A `DataTransfer` stand-in: what the reader touches, and a `setData` recorder for copy. */
+/**
+ * The files a drop request carries. Since P5-B3 the request holds
+ * `ImageDropSource`s; a paste only ever hands over files.
+ */
+function droppedFiles(drop: Parameters<Store['dropImagesIntoPage']>[0]): File[] {
+  return drop.sources.map((source) => {
+    if (source.kind !== 'file') throw new Error(`a paste produced a ${source.kind} source`)
+    return source.file
+  })
+}
+
 function dataTransfer(data: Record<string, string> = {}, files: File[] = []): DataTransfer {
   return {
     getData: (type: string) => data[type] ?? '',
@@ -196,7 +207,7 @@ describe('⌘V — armed by the keydown, answered by the paste event', () => {
     expect(calls.pasteNode).toEqual([])
     expect(calls.dropImagesIntoPage).toHaveLength(1)
     const [drop] = calls.dropImagesIntoPage[0]!
-    expect({ pageId: drop.pageId, parentId: drop.parentId, index: drop.index, files: drop.files, absolute: drop.absolute }).toEqual({
+    expect({ pageId: drop.pageId, parentId: drop.parentId, index: drop.index, files: droppedFiles(drop), absolute: drop.absolute }).toEqual({
       pageId: 'home',
       parentId: MAIN,
       index: 1,
@@ -271,7 +282,7 @@ describe('⌘V of SVG text — sanitised, then ONE subtree insert', () => {
     paste({}, [big])
     await settle()
     expect(read).toBe(false)
-    expect(calls.dropImagesIntoPage[0]![0].files).toEqual([big])
+    expect(droppedFiles(calls.dropImagesIntoPage[0]![0])).toEqual([big])
   })
 
   it('an SVG too large to inline lands as an image FILE through the drop path instead', async () => {
@@ -280,7 +291,7 @@ describe('⌘V of SVG text — sanitised, then ONE subtree insert', () => {
     await settle()
     expect(calls.insertJsxSubtreeIntoPage).toEqual([])
     expect(calls.dropImagesIntoPage).toHaveLength(1)
-    const [file] = calls.dropImagesIntoPage[0]![0].files
+    const [file] = droppedFiles(calls.dropImagesIntoPage[0]![0])
     expect([file!.name, file!.type]).toEqual(['pasted.svg', 'image/svg+xml'])
     expect(toasts.map((toast) => toast.title)).toContain('Large SVG added as an image')
   })
@@ -294,7 +305,7 @@ describe('when no paste event comes (Safari, a cross-origin frame)', () => {
     press('v')
     await settle()
     expect(calls.dropImagesIntoPage).toHaveLength(1)
-    expect(calls.dropImagesIntoPage[0]![0].files[0]!.type).toBe('image/png')
+    expect(droppedFiles(calls.dropImagesIntoPage[0]![0])[0]!.type).toBe('image/png')
   })
 
   it('an unreadable clipboard falls back to the copied layers — what ⌘V did before', async () => {

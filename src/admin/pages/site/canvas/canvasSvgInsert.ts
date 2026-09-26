@@ -103,5 +103,5 @@ function landSvgAsImage(file: File, target: SvgInsertTarget, asked: boolean): vo
       location: 'site-editor',
     })
   }
-  insertImagesAtTarget(target, [file])
+  insertImagesAtTarget(target, [{ kind: 'file', file }])
 }

@@ -69,7 +69,7 @@ import {
   type AgentFileTarget,
 } from '../../../../handlers/studio/agentFileAccess'
 import { withProjectWriteLock } from '../../../../handlers/studio/projectWriteLock'
-import { writeFileAtomic } from '../../../../handlers/studio/atomicFileWrite'
+import { writeFileAtomic } from '@core/page-parser'
 
 const EXPECTED_HASH_FIELD = Type.Optional(
   Type.String({

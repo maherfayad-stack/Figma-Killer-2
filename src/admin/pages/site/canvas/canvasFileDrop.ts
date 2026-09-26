@@ -1,6 +1,7 @@
 /**
  * canvasFileDrop — D2 G15, widened by P5-B: what image files dragged in from
- * the operating system mean when they land on a frame.
+ * the operating system — or one image dragged out of another browser tab
+ * (IMG-5, `canvasDropIntake.ts`) — mean when they land on a frame.
  *
  * One gesture, one write, one toast. The whole point of this module is that
  * every way the gesture can fail is decided HERE, before a byte is uploaded:
@@ -67,7 +68,8 @@ import {
   type DropContainerBox,
 } from './canvasImageDropPlacement'
 import { resolvePortalDocument } from './frameAdapter/resolvePortalDocument'
-import type { AbsoluteImagePlacement } from '@site/store/slices/site/imageDropShapes'
+import type { AbsoluteImagePlacement, LandableImageSource } from '@site/store/slices/site/imageDropShapes'
+import type { DroppedImageIntake } from './canvasDropIntake'
 import type { CanvasTransform } from './math'
 
 export type CanvasFileDropRefusalReason =
@@ -133,8 +135,8 @@ export type CanvasFileDropPlan =
       ok: true
       kind: 'frame'
       pageId: string
-      /** The images, in the order they were dropped. */
-      files: File[]
+      /** The images, in the order they were dropped: files, or the one image link (IMG-5). */
+      sources: LandableImageSource[]
       /** Files the browser said are not images, left out — the toast names them. */
       skipped: File[]
       action: CanvasImageDropAction
@@ -151,7 +153,7 @@ export type CanvasFileDropPlan =
    * a loose layer on the free canvas, the first centred on `at` (board units).
    * Never written into a page.
    */
-  | { ok: true; kind: 'canvas'; files: File[]; skipped: File[]; at: { x: number; y: number }; inlineSvg: boolean }
+  | { ok: true; kind: 'canvas'; sources: LandableImageSource[]; skipped: File[]; at: { x: number; y: number }; inlineSvg: boolean }
   | { ok: false; refusal: CanvasFileDropRefusal }
 
 /**
@@ -342,7 +344,8 @@ function deepestCandidateAt(candidates: readonly CanvasDropCandidate[], point: C
 }
 
 export interface CanvasFileDropInput {
-  files: readonly File[]
+  /** What the drop carried (`readDroppedImageIntake`): files, one image link, or a refusal already decided. */
+  intake: DroppedImageIntake
   /** Parent-document client coordinates of the drop. */
   point: ClientPoint
   modifiers: CanvasFileDropModifiers
@@ -366,15 +369,26 @@ export interface CanvasFileDropInput {
  * and nothing else.
  */
 export function planCanvasFileDrop(input: CanvasFileDropInput): CanvasFileDropPlan {
-  const facts: DroppedFileFacts = {
-    types: input.files.map((file) => file.type),
-    names: input.files.map((file) => file.name),
+  const { intake } = input
+  if (intake.kind === 'refused') return { ok: false, refusal: { reason: 'not-an-image', ...intake.refusal } }
+  let sources: LandableImageSource[]
+  let skipped: File[] = []
+  if (intake.kind === 'files') {
+    const facts: DroppedFileFacts = {
+      types: intake.files.map((file) => file.type),
+      names: intake.files.map((file) => file.name),
+    }
+    const refusal = refuseDroppedFile(facts)
+    if (refusal) return { ok: false, refusal }
+    sources = intake.files.filter((file) => looksLikeImage(file.type)).map((file) => ({ kind: 'file', file }))
+    skipped = intake.files.filter((file) => !looksLikeImage(file.type))
+  } else {
+    sources = [intake.source]
   }
-  const refusal = refuseDroppedFile(facts)
-  if (refusal) return { ok: false, refusal }
-  const files = input.files.filter((file) => looksLikeImage(file.type))
-  const skipped = input.files.filter((file) => !looksLikeImage(file.type))
-  const allSvg = files.length > 0 && files.every(isSvgFile) && !input.modifiers.alt
+  // P5-D SVG-5 — dropped `.svg` FILES are written as inline `<svg>` JSX (⌥
+  // keeps them `<img>`s); a dragged URL is never inlined.
+  const allSvg =
+    sources.length > 0 && sources.every((source) => source.kind === 'file' && isSvgFile(source.file)) && !input.modifiers.alt
 
   const board = measureBoardDropSurfaces(input.transform)
   const surface = canvasSurfaceAtPoint(board, input.point)
@@ -383,7 +397,7 @@ export function planCanvasFileDrop(input: CanvasFileDropInput): CanvasFileDropPl
     return {
       ok: true,
       kind: 'canvas',
-      files,
+      sources,
       skipped,
       at: {
         x: (input.point.x - input.freeCanvas.left) / zoom,
@@ -411,14 +425,14 @@ export function planCanvasFileDrop(input: CanvasFileDropInput): CanvasFileDropPl
     candidates: index.candidates,
     point: indexLocalPoint(index, input.point),
     zoom: index.scale,
-    facts: { types: files.map((file) => file.type) },
+    facts: { types: sources.map((source) => (source.kind === 'file' ? source.file.type : '')) },
     modifiers: input.modifiers,
     measureContainer,
   })
   if (!intent.ok) return { ok: false, refusal: intent.refusal }
 
   const action = intent.action
-  if (action.kind !== 'insert') return { ok: true, kind: 'frame', pageId: surface.pageId, files, skipped, action, inlineSvg: false }
+  if (action.kind !== 'insert') return { ok: true, kind: 'frame', pageId: surface.pageId, sources, skipped, action, inlineSvg: false }
 
   // IMG-9 — the width the intrinsic size is clamped to: the container's own
   // content box, read once, now that the drop is certain.
@@ -428,7 +442,7 @@ export function planCanvasFileDrop(input: CanvasFileDropInput): CanvasFileDropPl
     ok: true,
     kind: 'frame',
     pageId: surface.pageId,
-    files,
+    sources,
     skipped,
     action: { ...action, maxWidth: box ? box.contentWidth : null },
     inlineSvg: allSvg && action.absolute === null,

@@ -28,7 +28,7 @@ import {
   AgentCaptureReportSchema,
   type AgentCaptureFrameReport,
 } from '@core/studio-capture'
-import { readBoardsFileOrEmpty } from '../../../handlers/studio/boardGeometry'
+import { readBoardsFile } from '../../../handlers/studio/boardGeometry'
 import { withCapturePage, type CapturePage, type LaunchBrowser } from './browserPool'
 import { captureEntryUrl } from './captureOrigin'
 import { mintCaptureToken, revokeCaptureToken } from './captureToken'
@@ -85,7 +85,7 @@ export interface AuthoredGeometry {
  * — a capture-time breakpoint override, never written back (AI-16).
  */
 export function authoredGeometry(dir: string, pageIds: readonly string[], frameWidth?: number): Map<string, AuthoredGeometry> {
-  const boardsFile = readBoardsFileOrEmpty(dir)
+  const boardsFile = readBoardsFile(dir)
   const byPageId = new Map<string, AuthoredGeometry>()
   for (const board of boardsFile.boards) {
     for (const frame of board.frames) {

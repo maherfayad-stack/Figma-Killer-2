@@ -17,6 +17,7 @@ import { usePreviewAxesHydration } from '@admin/pages/site/studio/usePreviewAxes
 import { useStudioCommentsLoad } from '@admin/pages/site/studio/useStudioCommentsLoad'
 import { useStudioPrototypeLoad } from '@admin/pages/site/studio/useStudioPrototypeLoad'
 import { LayoutNameDialog } from '@admin/pages/site/dialogs/LayoutNameDialog'
+import { DetachConfirmDialog } from '@admin/pages/site/ui/DetachConfirmDialog'
 import { PropertiesPanel } from '@admin/pages/site/panels/PropertiesPanel'
 import { LeftSidebar } from '@admin/pages/site/sidebars/LeftSidebar'
 import { RightSidebar } from '@admin/pages/site/sidebars/RightSidebar'
@@ -189,6 +190,12 @@ export function AdminCanvasEditorBody({
           until a layoutNameDialogRequest is set on the ui slice. */}
       <ChromeBoundary id="layout-name-dialog">
         <LayoutNameDialog />
+      </ChromeBoundary>
+
+      {/* P5-C — the Detach confirm, asked only when a detach loses something.
+          Renders null until `instanceDetachConfirm` is set. */}
+      <ChromeBoundary id="detach-confirm-dialog">
+        <DetachConfirmDialog />
       </ChromeBoundary>
 
       {/* Import HTML modal — opens from Spotlight or right-click "Paste HTML here…".

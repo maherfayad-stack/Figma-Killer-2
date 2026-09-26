@@ -761,8 +761,20 @@ Response: `{ ok: true, mode: 'public', relPath, src, width, height, deduped }`
 gets (`/photo.png` in both cases: the app root is where the app lives on disk
 and the browser never sees it). `width`/`height` are the intrinsic size read
 from the header bytes (PNG, JPEG with EXIF orientation, GIF, WebP, SVG), or
-`null`. `mode` is the discriminant IMG-10's import convention will join with a
-`mode: 'import'` member that has no `src`.
+`null`.
+
+**The import convention (P5-B3, IMG-10, OD-12).** A drop that names the file it
+is written into (`pageRel`, form field) is answered in THAT file's convention
+(`assetImportConvention.ts`): the file is parsed (never run) and its default
+image imports are counted against its site-root `src="/…"` literals. A strict
+majority of imports answers `{ ok: true, mode: 'import', relPath, width,
+height, deduped }` — no `src` — with the file landed in the folder most of
+those imports point at (fallback `src/assets`); the insert then writes
+`src={ __assetImport: relPath }` and the server spells the import (see
+`studio-pipeline.md`). A tie, no images, a Next.js project (where an imported
+image is `StaticImageData`), or a `pageRel` that is not a contained, readable
+project file all answer `public`. The directory is still server-derived and
+still passes `resolveAssetWriteDir`; `pageRel` is only READ.
 
 **One rule turns a file into a URL** (`assetSiteUrl.ts`): relative to the app
 root, `public/x` is `/x` and build-safe; any other file under the app root is
@@ -803,6 +815,39 @@ sits on `STUDIO_SESSION_SUB_ROUTERS`, because its replay record is bound to
 the user the gate authenticated (every `withIdempotentReplay` record stores
 the user id, method and path, and a mismatch is a miss). `asset-upload` and `/save` are declarations in the same
 table now, so the asymmetry `sec-17` recorded is gone.
+
+### An image dragged from another tab: `asset-drop-url` (P5-B3, IMG-5, OD-13)
+
+`POST /admin/api/studio/asset-drop-url { url, dir?, pageRel? }`
+(`assetDropUrl.ts`) — the SERVER fetches the URL and lands the bytes through
+the same `resolveDroppedAssetHome` + `landDroppedBytes` as `asset-drop`, so
+the answer is the same body. It is the MCP tool's transport
+(`fetchRemoteBytes`, `remoteAssetFetch.ts`) reached from a browser gesture,
+and every protection is spelled out in the module doc: `studio.write` + the
+gate's CSRF check; http(s) only; every resolved address checked against the
+SSRF blocklist and the connection pinned to it; no redirect ever followed;
+**loopback refused unconditionally** (`allowLoopback: false`, never the
+operator's `STUDIO_ALLOW_LOOPBACK_ASSET_FETCH`); a 25 MB streamed cap and a
+deadline; an image `content-type` required before the body is read, and the
+bytes must sniff as that image; errors never echo a resolved address; the
+JSON body itself capped at 16 KB. A `data:` URL never reaches it — the
+browser decodes one into a `File` and posts plain `asset-drop`.
+
+### Unused images: `asset-ledger` / `asset-prune` (P5-B3, IMG-11)
+
+`landAssetBytes` appends every file it CREATES (never a dedupe onto an
+existing file, never a design reference) to `.studio/assets.json`
+(`assetLedger.ts`: `{ relPath, sha256, landedAt }`). `GET
+/admin/api/studio/asset-ledger` (`site.read`) reports the ledger files that
+still hold exactly what Studio wrote and whose base name no text file in the
+project mentions (the workspace walk plus `.studio/canvas/*.tsx`), or
+`incomplete: true` when the scan ran out of budget. `POST
+/admin/api/studio/asset-prune { relPaths }` (`studio.write`, `assetPrune.ts`)
+deletes a named path only when, recomputed at request time, it is in the
+ledger, an image path, a regular non-link file contained on its real path,
+unchanged since Studio wrote it, and unreferenced by a completed scan;
+everything else comes back under `kept` with a reason. Nothing calls it on its
+own: the Assets panel's "Delete unused…" confirmation is the only caller.
 
 ---
 

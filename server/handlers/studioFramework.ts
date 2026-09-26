@@ -40,34 +40,38 @@
  * rule. Same directory, same round trip (`/admin/api/studio/framework`
  * carries both), independent files.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
 import { FrameworkSettingsSchema, type FrameworkSettings } from '@core/framework-schema'
 import { SiteFontsSettingsSchema, parseSiteFontsSettings, type SiteFontsSettings } from '@core/fonts'
 import { safeParseValue } from '@core/utils/typeboxHelpers'
+import {
+  readStudioStoreDocument,
+  readStudioStoreJson,
+  readStudioStoreText,
+  studioStorePath,
+  writeStudioStoreJson,
+} from './studio/studioStore'
 
-function frameworkFilePath(dir: string): string {
-  return join(dir, '.studio', 'framework.json')
-}
+const FRAMEWORK_FILE = 'framework.json'
+const FONTS_FILE = 'fonts.json'
 
-function fontsFilePath(dir: string): string {
-  return join(dir, '.studio', 'fonts.json')
+/** Absolute path of `.studio/framework.json` — for a caller that must NAME it (a cache key), never to read or write it. */
+export function studioFrameworkFilePath(dir: string): string {
+  return studioStorePath(dir, FRAMEWORK_FILE)
 }
 
 /**
- * Writes `text` unless the file already holds exactly that (perf-17). Every
- * project open posts the token extraction, whose merge is a no-op once the
- * framework is populated, and it rewrote `framework.json` every time anyway:
- * a disk write, a new mtime for anything watching `.studio/`, for nothing.
+ * {@link writeStudioStoreJson}, skipped when the file already holds exactly
+ * `value`'s serialization (perf-17). Every project open posts the token
+ * extraction, whose merge is a no-op once the framework is populated, and it
+ * rewrote `framework.json` every time anyway: a disk write, a new mtime for
+ * anything watching `.studio/`, for nothing. The comparison goes through
+ * {@link readStudioStoreText} (not a raw `fs.readFileSync`) so it inherits the
+ * same link-safety checks the write path does.
  */
-function writeSidecarIfChanged(file: string, text: string): void {
-  try {
-    if (readFileSync(file, 'utf8') === text) return
-  } catch (_err) {
-    // absent or unreadable: write it
-  }
-  mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, text)
+function writeStudioStoreJsonIfChanged(dir: string, rel: string, value: unknown): void {
+  const text = JSON.stringify(value)
+  if (readStudioStoreText(dir, rel) === text) return
+  writeStudioStoreJson(dir, rel, value)
 }
 
 /**
@@ -77,18 +81,7 @@ function writeSidecarIfChanged(file: string, text: string): void {
  * way, so a missing/corrupt file never blocks loading the project.
  */
 export function readStudioFrameworkFile(dir: string): FrameworkSettings | null {
-  const file = frameworkFilePath(dir)
-  if (!existsSync(file)) return null
-
-  let raw: unknown
-  try {
-    raw = JSON.parse(readFileSync(file, 'utf8'))
-  } catch {
-    return null
-  }
-
-  const result = safeParseValue(FrameworkSettingsSchema, raw)
-  return result.ok ? result.value : null
+  return readStudioStoreJson(dir, FRAMEWORK_FILE, FrameworkSettingsSchema, null)
 }
 
 /** Validates `raw` against `FrameworkSettingsSchema` and writes it to `<dir>/.studio/framework.json`. Returns the validation result so the route can map a failure to 400 with a useful message. */
@@ -100,7 +93,7 @@ export function writeStudioFrameworkFile(
   if (!result.ok) {
     return { ok: false, message: result.errors.map((e) => `${e.path}: ${e.message}`).join('; ') }
   }
-  writeSidecarIfChanged(frameworkFilePath(dir), JSON.stringify(result.value))
+  writeStudioStoreJsonIfChanged(dir, FRAMEWORK_FILE, result.value)
   return { ok: true, value: result.value }
 }
 
@@ -113,16 +106,16 @@ export function writeStudioFrameworkFile(
  * already applies to this bag.
  */
 export function readStudioFontsFile(dir: string): SiteFontsSettings | null {
-  const file = fontsFilePath(dir)
-  if (!existsSync(file)) return null
+  return readStudioStoreDocument(dir, FONTS_FILE, parseFontsText, () => null)
+}
 
+function parseFontsText(text: string): SiteFontsSettings | null {
   let raw: unknown
   try {
-    raw = JSON.parse(readFileSync(file, 'utf8'))
+    raw = JSON.parse(text)
   } catch {
     return null
   }
-
   return parseSiteFontsSettings(raw)
 }
 
@@ -135,6 +128,6 @@ export function writeStudioFontsFile(
   if (!result.ok) {
     return { ok: false, message: result.errors.map((e) => `${e.path}: ${e.message}`).join('; ') }
   }
-  writeSidecarIfChanged(fontsFilePath(dir), JSON.stringify(result.value))
+  writeStudioStoreJsonIfChanged(dir, FONTS_FILE, result.value)
   return { ok: true, value: result.value }
 }

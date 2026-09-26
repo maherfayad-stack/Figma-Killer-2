@@ -45,7 +45,7 @@ import {
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { pushStudioLiveReload } from './liveReloadPush'
-import { readBoardsFile, writeBoardsFile } from '../../../../handlers/studio/boardFrames'
+import { readBoardsFile, writeBoardsFile } from '../../../../handlers/studio/boardGeometry'
 
 /** Frames one call may place — every screen of a real project, bounded. */
 const MAX_FRAMES_PER_CALL = 60

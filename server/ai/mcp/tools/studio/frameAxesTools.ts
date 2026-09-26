@@ -46,7 +46,7 @@ import {
   type PreviewAxes,
 } from '@core/studio-board'
 import type { AiTool, ToolContext } from '../../../runtime/types'
-import { readBoardsFile, writeBoardsFile } from '../../../../handlers/studio/boardFrames'
+import { readBoardsFile, writeBoardsFile } from '../../../../handlers/studio/boardGeometry'
 import { pushStudioLiveReload } from './liveReloadPush'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 

@@ -425,10 +425,11 @@ describe('streamClaudeCli — dynamic system-prompt suffix + turn write log (the
   it('resets the turn write log before spawning, so a stale entry from a previous turn never leaks into this one\'s Stop-hook gate', async () => {
     const { mkdirSync, writeFileSync, readFileSync } = await import('node:fs')
     const { join, dirname } = await import('node:path')
-    const { agentCacheDir, studioAgentUserKey } = await import('../../handlers/studio/agentUserScope')
+    const { agentCacheStoreDir, studioAgentUserKey } = await import('../../handlers/studio/agentUserScope')
+    const { studioStorePath } = await import('../../handlers/studio/studioStore')
     // The log is per (project, ACCOUNT) since W10 — `user-1` is the account
     // every `baseRequest()` in this file runs as.
-    const logPath = join(agentCacheDir(projectDir, studioAgentUserKey('user-1')), 'turnWrites.json')
+    const logPath = join(studioStorePath(projectDir, agentCacheStoreDir(studioAgentUserKey('user-1'))), 'turnWrites.json')
     mkdirSync(dirname(logPath), { recursive: true })
     writeFileSync(logPath, JSON.stringify([{ file: 'pages/Stale.tsx', atMs: 1 }]))
 

@@ -761,7 +761,30 @@ half (`canvasFileDrop.ts`) touches no DnD API at all, so it is not.
 - The bytes land through `POST /admin/api/studio/asset-drop` in the project's
   own `public/` — the one directory every framework serves from the site root,
   and therefore the only one that can back a literal `<img src>`. See that
-  module's doc for why `src/assets/` cannot.
+  module's doc for why `src/assets/` cannot. **Unless the page imports its
+  images** (P5-B3, IMG-10): an insert names its file (`pageRel`), and a page
+  whose image imports outnumber its public literals gets the file beside them
+  and `src={ __assetImport }` — see `server.md`.
+- **The intake** (P5-B3, `canvasDropIntake.ts`) turns a drop into ONE list of
+  `ImageDropSource`s before the plan runs: `Files` first; else ONE link — the
+  dragged HTML's `<img src>`, or a `text/uri-list` URL whose path is an image —
+  becomes a `url` source the SERVER fetches (`asset-drop-url`, IMG-5, OD-13);
+  a `data:image/…` URL is decoded to a `File` in the browser. A link to a page,
+  `javascript:`/`file:`/`blob:`, or non-image `data:` is refused with a toast
+  and no request. The frame relay therefore relays link drags too (still
+  cancelling every drop in the frame first); before release only "a link is
+  coming" is knowable, so the chip shows one image of unknown type. A URL
+  dropped onto an import-bound `<img>` refuses (the fetch route takes no
+  directory); onto a literal one it replaces.
+- **Assets → Images** (P5-B3, IMG-6, `ImagesSection.tsx`): every project image
+  as a card, dragged with the SAME pointer gesture every Assets card uses
+  (`useCanvasInsertionDrag` — no HTML5 DnD, `single-drag-mechanism` unchanged)
+  or clicked to land beside the selection. Both go through
+  `insertImageSources` → `dropImagesIntoPage` with a `project` source, which is
+  referenced, never uploaded: a build-safe file is written as its literal
+  `src`, any other as an import. The footer (`UnusedImagesFooter`) offers
+  "Delete unused…" for ledger images nothing references (IMG-11), always
+  behind a confirmation.
 - **A portal frame loads that `src` through the asset route (P5-B2).** The
   frame is `about:srcdoc` on the ADMIN origin, so `/x.png` would load from
   Studio's server and show broken (the `width`/`height` box hid it).
@@ -773,7 +796,11 @@ half (`canvasFileDrop.ts`) touches no DnD API at all, so it is not.
   The store keeps `/x.png` — an image replace reads `props.src` to tell a
   literal from an import. Left alone: absolute, `data:`, `blob:` (ghosts),
   relative, the scope's own route, and `/uploads/` (the admin's CMS media,
-  whose responsive variants are already loadable). The capture page sets a
+  whose responsive variants are already loadable). **A project stylesheet's
+  RELATIVE `url(./bg.png)`** (P5-B3) is pinned server-side, when the sheet is
+  read, to a `studio-asset:<workspace-rel>` sentinel
+  (`relativeCssUrlsToAssetSentinels`, `studioCss.ts`'s `authoredCss` only),
+  which `projectAssetUrl` turns into the route's `path=` lookup. The capture page sets a
   token scope instead (`setCaptureProjectAssetScope`). Bridge frames never
   render through here and need nothing: the project's dev server answers.
 
@@ -951,6 +978,12 @@ The rules the ladder replaced prose with:
   `event.code` (⌥A is `'å'` on a Mac). ⌘C / ⌘V reject ⌥ since then: before,
   Ctrl+Alt+V pasted a layer AND a style. The right-click menu and the palette
   run the same functions (`layerCommands.ts`, `layerAlign.ts`).
+- **Detach instance (P5-C):** ⌘⌥B / Ctrl+Alt+B (`layers.detachInstance`, the
+  same `node` rung) calls the store's ONE `detachInstances` action
+  (`store/slices/site/instanceActions.ts`) — the Component section's button,
+  the right-click menu ("Detach instance", shown only when every target is an
+  instance), the palette and the refusal remedy call it too. It confirms only
+  when something is lost (`DetachConfirmDialog`).
 - `canvas.moveSelection` is the only bare-arrow binding in the registry and it
   is scoped by **what is selected**, never globally. Three rungs read it:
   notes/docs (`annotation`), the selected layer (`node`,

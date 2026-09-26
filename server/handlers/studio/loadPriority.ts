@@ -20,7 +20,7 @@
  * proxy it has. Reading `.studio/boards.json` is best-effort: an unreadable
  * file just means discovery order.
  */
-import { readBoardsFile } from './boardFrames'
+import { readBoardsFile } from './boardGeometry'
 
 /** `pageIds` (discovery order) reordered by where their frames sit on the boards. Every id appears exactly once. */
 export function viewportPriorityOrder(dir: string, pageIds: readonly string[]): string[] {

@@ -199,6 +199,7 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
           <SharedComponentNotice
             componentName={selectedNode.fromComponent}
             nodeId={selectedNodeId}
+            node={selectedNode}
             textOrigin={selectedNode.textOrigin}
           />
         ) : null}

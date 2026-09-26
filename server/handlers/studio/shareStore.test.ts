@@ -11,6 +11,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
+import * as os from 'node:os'
 import * as path from 'node:path'
 import { isShareTokenShape } from '@core/studio-share'
 import { projectsRootDir } from '../studioProjects'
@@ -20,7 +21,7 @@ import {
   listShareSummaries,
   mintShareToken,
   resolveActiveShare,
-  resolveShareFile,
+  readShareFile,
   revokeShareRecord,
   shareSnapshotDir,
   upsertShareRecord,
@@ -137,14 +138,14 @@ describe('the share lifecycle', () => {
   })
 })
 
-describe('resolveShareFile containment', () => {
-  it('resolves a plain filename inside the share directory', () => {
+describe('readShareFile containment', () => {
+  it('reads a plain filename inside the share directory', () => {
     const token = mintShareToken()
     const snapshotDir = shareSnapshotDir(dir, token)!
     fs.mkdirSync(snapshotDir, { recursive: true })
     fs.writeFileSync(path.join(snapshotDir, 'board.json'), '{}')
 
-    expect(resolveShareFile(dir, token, 'board.json')).toBe(path.join(snapshotDir, 'board.json'))
+    expect(readShareFile(dir, token, 'board.json')?.toString('utf8')).toBe('{}')
   })
 
   it('refuses every way out of the share directory', () => {
@@ -154,17 +155,17 @@ describe('resolveShareFile containment', () => {
       '../../shares.json',
       '..%2Fboard.json',
       'nested/board.json',
-      'nested\\board.json',
+      'nested\board.json',
       '/etc/passwd',
       'a\0b.png',
     ]) {
-      expect(resolveShareFile(dir, token, candidate)).toBeNull()
+      expect(readShareFile(dir, token, candidate)).toBeNull()
     }
   })
 
   it('refuses a token that is not a token', () => {
     expect(shareSnapshotDir(dir, '../../..')).toBeNull()
-    expect(resolveShareFile(dir, '../../..', 'board.json')).toBeNull()
+    expect(readShareFile(dir, '../../..', 'board.json')).toBeNull()
   })
 
   it('refuses a symlink that points out of the share directory', () => {
@@ -175,6 +176,22 @@ describe('resolveShareFile containment', () => {
     fs.writeFileSync(outside, 'secret')
     fs.symlinkSync(outside, path.join(snapshotDir, 'aaaaaa-0.png'))
 
-    expect(resolveShareFile(dir, token, 'aaaaaa-0.png')).toBeNull()
+    expect(readShareFile(dir, token, 'aaaaaa-0.png')).toBeNull()
+  })
+
+  // The public route's hole: the old guard checked a file against its share
+  // folder's REAL path, so a share folder that is itself a link passed.
+  it('refuses a share folder that is itself a link to somewhere else', () => {
+    const token = mintShareToken()
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'share-outside-'))
+    try {
+      fs.writeFileSync(path.join(outside, 'board.json'), '{"secret":true}')
+      fs.mkdirSync(path.join(dir, '.studio', 'shares'), { recursive: true })
+      fs.symlinkSync(outside, shareSnapshotDir(dir, token)!, 'junction')
+
+      expect(readShareFile(dir, token, 'board.json')).toBeNull()
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true })
+    }
   })
 })

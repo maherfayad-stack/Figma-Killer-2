@@ -32,8 +32,6 @@
  * in practice — but it is a window, and if comments ever move off the local
  * filesystem this is the line that needs a lock.)
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import {
@@ -52,20 +50,21 @@ import {
   type CommentAuthor,
   type CommentsFile,
 } from '@core/studio-comments'
+import { readStudioStoreDocument, studioStorePath, writeStudioStoreFile } from './studioStore'
 
+const COMMENTS_FILE = 'comments.json'
+
+/** Absolute path of `.studio/comments.json` — for a caller that must NAME it; reading and writing go through `studioStore.ts`. */
 export function commentsFilePath(dir: string): string {
-  return join(dir, '.studio', 'comments.json')
+  return studioStorePath(dir, COMMENTS_FILE)
 }
 
 export function readCommentsFile(dir: string): CommentsFile {
-  const file = commentsFilePath(dir)
-  return existsSync(file) ? parseCommentsFile(readFileSync(file, 'utf8')) : createCommentsFile()
+  return readStudioStoreDocument(dir, COMMENTS_FILE, parseCommentsFile, createCommentsFile)
 }
 
 export function writeCommentsFile(dir: string, file: CommentsFile): void {
-  const path = commentsFilePath(dir)
-  mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, serializeCommentsFile(file))
+  writeStudioStoreFile(dir, COMMENTS_FILE, serializeCommentsFile(file))
 }
 
 // ---------------------------------------------------------------------------

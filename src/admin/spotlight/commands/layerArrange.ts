@@ -1,6 +1,6 @@
 /**
  * Layer arrange commands (P5-E) — align, bring to front / send to back, flex
- * layout, copy / paste style, in the palette.
+ * layout, copy / paste style — and P5-C's detach instance, in the palette.
  *
  * Each runs the SAME function its key and its right-click item run
  * (`canvas/layerAlign.ts`, `canvas/layerCommands.ts`), imported lazily like
@@ -68,6 +68,12 @@ export function getLayerArrangeCommands(): Command[] {
     layerCommand('layers.pasteStyle', 'Paste style', 'Paste the copied style onto the selected layers', ['paste', 'style', 'properties'], async () => {
       const { pasteSelectionStyle } = await import('@site/canvas/layerCommands')
       pasteSelectionStyle()
+    }),
+    // P5-C (DET-5) — the store's one Detach action, the same call ⌘⌥B makes.
+    layerCommand('layers.detachInstance', 'Detach instance', 'Write the component’s markup in place of the selected instances', ['detach', 'component', 'instance', 'unlink', 'inline'], async () => {
+      const { useEditorStore } = await import('@site/store/store')
+      const state = useEditorStore.getState()
+      await state.detachInstances(state.selectedNodeIds)
     }),
   ]
 }

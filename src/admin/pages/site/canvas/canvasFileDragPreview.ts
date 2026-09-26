@@ -48,6 +48,7 @@
  * is a sibling of the transform layer in PARENT-document client space. That is
  * the whole reason the two coordinate spaces exist here.
  */
+import { carriesLink } from './canvasDropIntake'
 import type { NodeTree, PageNode } from '@core/page-tree'
 import {
   refreshBoardDropSurfaces,
@@ -250,8 +251,13 @@ export function describeDraggedImage(type: string): string {
  *
  * `items` is the only readable half of a `DataTransfer` before `drop` — `kind`
  * and `type`, never the bytes and never the name. Returns `null` when the drag
- * carries no files at all, which is every ordinary in-page HTML5 drag and must
- * be left completely alone.
+ * carries neither files nor a link, which is every ordinary in-page HTML5 drag
+ * and must be left completely alone.
+ *
+ * A LINK (`text/uri-list`, an image dragged out of another tab — IMG-5) reads
+ * as one image of unknown type: whether it really is one is only knowable at
+ * drop, when `canvasDropIntake.ts` can read the URL, and the drop refuses a
+ * link to a page with a sentence rather than fetching it.
  */
 export function readDraggedFileFacts(transfer: DataTransfer | null): DroppedFileFacts | null {
   if (!transfer) return null
@@ -263,8 +269,8 @@ export function readDraggedFileFacts(transfer: DataTransfer | null): DroppedFile
     // that claims files but enumerates none is still a file drag — with one
     // entry of no declared type, which is the only assumption that does not
     // refuse a real image drop on a browser that told us less.
-    const claimsFiles = Array.from(transfer.types ?? []).includes('Files')
-    return claimsFiles ? { types: [''] } : null
+    const types = Array.from(transfer.types ?? [])
+    return types.includes('Files') || carriesLink(types) ? { types: [''] } : null
   }
   return { types: files.map((item) => item.type) }
 }

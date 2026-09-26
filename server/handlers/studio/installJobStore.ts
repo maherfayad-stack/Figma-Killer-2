@@ -47,10 +47,8 @@
  * orphaned `'running'` record always resolves to `'interrupted'`, never a
  * phantom `'running'` forever).
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { safeParseValue } from '@core/utils/typeboxHelpers'
+import { readStudioStoreJson, writeStudioStoreJson } from './studioStore'
 
 const PackageManagerSchema = Type.Union([
   Type.Literal('bun'),
@@ -91,9 +89,7 @@ export const PersistedInstallJobSchema = Type.Object({
 })
 export type PersistedInstallJob = Static<typeof PersistedInstallJobSchema>
 
-function installJobFile(projectDir: string): string {
-  return join(projectDir, '.studio', 'install-job.json')
-}
+const INSTALL_JOB_FILE = 'install-job.json'
 
 /**
  * Reads `<projectDir>/.studio/install-job.json`. Returns `null` when the file
@@ -102,23 +98,10 @@ function installJobFile(projectDir: string): string {
  * durably known," same as a fresh project with no install history at all.
  */
 export function readInstallJobFile(projectDir: string): PersistedInstallJob | null {
-  const file = installJobFile(projectDir)
-  if (!existsSync(file)) return null
-
-  let raw: unknown
-  try {
-    raw = JSON.parse(readFileSync(file, 'utf8'))
-  } catch {
-    return null
-  }
-
-  const result = safeParseValue(PersistedInstallJobSchema, raw)
-  return result.ok ? result.value : null
+  return readStudioStoreJson(projectDir, INSTALL_JOB_FILE, PersistedInstallJobSchema, null)
 }
 
 /** Writes `job` to `<projectDir>/.studio/install-job.json`, creating the sidecar dir if needed. `projectDir` is passed rather than read off `job.dir`, which is the APP ROOT — see the module doc. Overwrites whatever was there: this file holds only the SINGLE most-recent job for the project (installs are not run concurrently against one project), so there is nothing else to merge with. */
 export function writeInstallJobFile(projectDir: string, job: PersistedInstallJob): void {
-  const file = installJobFile(projectDir)
-  mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, JSON.stringify(job))
+  writeStudioStoreJson(projectDir, INSTALL_JOB_FILE, job)
 }

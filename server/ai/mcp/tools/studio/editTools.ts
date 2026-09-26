@@ -22,10 +22,9 @@
  * (`swapComponentInstance`). All five are real codemods now — none of this
  * tool's verbs return a stub.
  */
-import { join } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
 import { SourceFingerprintSchema, type SourceFingerprintExpectations } from '@core/page-tree'
-import { toolRefusal } from '@core/ai'
+import { toolRefusal, type ToolRefusal } from '@core/ai'
 import {
   resizeFrame,
   type Board,
@@ -41,14 +40,17 @@ import {
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import {
-  applyStudioEditBatchLocked,
+  applyStudioEditBatch,
   StudioEditSchema,
   studioEditLocation,
   type StudioEdit,
 } from '../../../../handlers/studioWriteback'
 import { pushStudioLiveReload } from './liveReloadPush'
 import { touchedFilesToPageIds } from './touchedPageIds'
-import { readBoardsFile, writeBoardsFile } from '../../../../handlers/studio/boardFrames'
+import { readBoardsFile, writeBoardsFile } from '../../../../handlers/studio/boardGeometry'
+import { withProjectWriteLock } from '../../../../handlers/studio/projectWriteLock'
+import { AgentWriteRefusedError, runAgentSourceEdits } from './agentWriteSupport'
+import { resolveAgentFilePath } from '../../../../handlers/studio/agentFileAccess'
 
 const DirField = Type.Optional(
   Type.String({ description: 'Absolute project directory. Defaults to the project currently open in Studio — omit it unless you deliberately mean a DIFFERENT project than the one this conversation is about.' }),
@@ -103,7 +105,12 @@ const applyEditsTool: AiTool = {
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, edits, expect } = input as { dir?: string; edits: StudioEdit[]; expect?: SourceFingerprintExpectations }
     const dir = resolveToolProjectDir(dirInput, ctx)
-    const { touchedFiles, ...result } = await applyStudioEditBatchLocked(dir, edits, expect ?? {})
+    // Every file the engine writes goes through the agent write gate, the
+    // content check and the turn checkpoint BEFORE it lands, and into the
+    // turn log after (`runAgentSourceEdits`) — the same steps as the file tools.
+    const { touchedFiles, ...result } = await withProjectWriteLock(dir, () =>
+      runAgentSourceEdits(dir, ctx, () => applyStudioEditBatch(dir, edits, expect ?? {})),
+    )
     const pageIds = touchedFilesToPageIds(dir, touchedFiles)
     // Best-effort — a failed/absent bridge never affects this tool's own result.
     pushStudioLiveReload(ctx.userId, { dir, pageIds })
@@ -239,63 +246,88 @@ const codemodTool: AiTool = {
         { remedy: 'Edit the source the node is generated FROM — the component or the array literal — not the generated node.' },
       )
     }
-    const target = { file: join(dir, ...loc.rel.split('/')), line: loc.line, col: loc.col }
+    // The call site goes to the agent write gate BEFORE any verb runs: the
+    // hook below refuses each write as it comes, but `extract-component` makes
+    // its new file first, and a refusal on the call site after that would
+    // leave the copy behind.
+    const callSite = resolveAgentFilePath(dir, loc.rel, 'write')
+    if (!callSite.ok) return toolRefusal(callSite.code, callSite.message, { remedy: callSite.remedy })
+    const target = { file: callSite.abs, line: loc.line, col: loc.col }
     // Every verb's call-site target is this one file — computed once, reused
     // by whichever branch below actually succeeds. Pushed only on a WRITTEN
     // outcome (never on a `missing-param`/`refused` early return).
     const pageIds = touchedFilesToPageIds(dir, [target.file])
-    const notifyReload = (): void => pushStudioLiveReload(ctx.userId, { dir, pageIds })
 
-    if (verb === 'rename-tag') {
-      if (!tag) return toolRefusal('missing-param', 'rename-tag requires "tag".')
-      setJsxTagName({ ...target, tag })
-      notifyReload()
-      return { ok: true, verb, nodeId, pageIds }
-    }
-
-    if (verb === 'set-import-specifier') {
-      if (!specifier) return toolRefusal('missing-param', 'set-import-specifier requires "specifier".')
-      setImportSpecifier({ ...target, specifier })
-      notifyReload()
-      return { ok: true, verb, nodeId, pageIds }
-    }
-
-    if (verb === 'detach') {
-      const result = detachComponentInstance({ ...target, workspaceRoot: dir })
-      if (!result.ok) return codemodRefusal(result.refusal)
-      notifyReload()
-      return { ok: true, verb, nodeId, shifted: true, branchNote: result.branchNote, pageIds }
-    }
-
-    if (verb === 'extract-component') {
-      const result = extractComponentCopy({ ...target, workspaceRoot: dir })
-      if (!result.ok) return codemodRefusal(result.refusal)
-      notifyReload()
-      return { ok: true, verb, nodeId, shifted: true, newFile: result.newFile, newComponentName: result.newComponentName, pageIds }
-    }
-
-    if (verb === 'swap') {
-      if (!newComponentName || !newComponentSource || !newComponentFile) {
-        return toolRefusal('missing-param', 'swap requires newComponentName, newComponentSource, and newComponentFile.')
+    const outcome = await runCodemodAsAgent(dir, ctx, (): CodemodOutcome => {
+      if (verb === 'rename-tag') {
+        if (!tag) return toolRefusal('missing-param', 'rename-tag requires "tag".')
+        setJsxTagName({ ...target, tag })
+        return { ok: true, verb, nodeId, pageIds }
       }
-      const result = swapComponentInstance({ ...target, workspaceRoot: dir, newComponentName, newComponentSource, newComponentFile })
-      if (!result.ok) return codemodRefusal(result.refusal)
-      notifyReload()
-      return {
-        ok: true,
-        verb,
-        nodeId,
-        shifted: true,
-        removedProps: result.removedProps,
-        unfilledRequiredProps: result.unfilledRequiredProps,
-        pageIds,
-      }
-    }
 
-    return toolRefusal('unknown-verb', `Unknown codemod verb: ${verb}`, {
-      remedy: 'Use one of: rename-tag, set-import-specifier, detach, extract-component, swap.',
+      if (verb === 'set-import-specifier') {
+        if (!specifier) return toolRefusal('missing-param', 'set-import-specifier requires "specifier".')
+        setImportSpecifier({ ...target, specifier })
+        return { ok: true, verb, nodeId, pageIds }
+      }
+
+      if (verb === 'detach') {
+        const result = detachComponentInstance({ ...target, workspaceRoot: dir })
+        if (!result.ok) return codemodRefusal(result.refusal)
+        return { ok: true, verb, nodeId, shifted: true, branchNote: result.branchNote, pageIds }
+      }
+
+      if (verb === 'extract-component') {
+        const result = extractComponentCopy({ ...target, workspaceRoot: dir })
+        if (!result.ok) return codemodRefusal(result.refusal)
+        return { ok: true, verb, nodeId, shifted: true, newFile: result.newFile, newComponentName: result.newComponentName, pageIds }
+      }
+
+      if (verb === 'swap') {
+        if (!newComponentName || !newComponentSource || !newComponentFile) {
+          return toolRefusal('missing-param', 'swap requires newComponentName, newComponentSource, and newComponentFile.')
+        }
+        const result = swapComponentInstance({ ...target, workspaceRoot: dir, newComponentName, newComponentSource, newComponentFile })
+        if (!result.ok) return codemodRefusal(result.refusal)
+        return {
+          ok: true,
+          verb,
+          nodeId,
+          shifted: true,
+          removedProps: result.removedProps,
+          unfilledRequiredProps: result.unfilledRequiredProps,
+          pageIds,
+        }
+      }
+
+      return toolRefusal('unknown-verb', `Unknown codemod verb: ${verb}`, {
+        remedy: 'Use one of: rename-tag, set-import-specifier, detach, extract-component, swap.',
+      })
     })
+    // Best-effort, and only on a WRITTEN outcome — a failed/absent bridge never affects this tool's own result.
+    if (outcome.ok) pushStudioLiveReload(ctx.userId, { dir, pageIds })
+    return outcome
   },
+}
+
+type CodemodOutcome = ToolRefusal | ({ ok: true } & Record<string, unknown>)
+
+/**
+ * Run one codemod the way every agent source write runs: under the project
+ * write lock, with each write it makes shown first to the agent write gate,
+ * the content check and the turn checkpoint, and recorded in the turn log
+ * after (`runAgentSourceEdits`). A write those steps refuse never lands, and
+ * the refusal is the tool's answer.
+ */
+function runCodemodAsAgent(dir: string, ctx: ToolContext, run: () => CodemodOutcome): Promise<CodemodOutcome> {
+  return withProjectWriteLock(dir, () => {
+    try {
+      return runAgentSourceEdits(dir, ctx, run)
+    } catch (err) {
+      if (err instanceof AgentWriteRefusedError) return err.refusal
+      throw err
+    }
+  })
 }
 
 export const studioEditMcpTools: AiTool[] = [applyEditsTool, setFramesTool, codemodTool]
