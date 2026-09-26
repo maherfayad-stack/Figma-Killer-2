@@ -22,8 +22,15 @@ import { registry } from '@core/module-engine'
 import type { Page } from '@core/page-tree'
 import { useEditorStore } from '@site/store/store'
 import { registerEditorSave } from '@site/hooks/editorSaveRef'
-import { applySitePagesPatch } from '@site/hooks/siteReloadApply'
-import { CMS_SITE_PAGES_PATCH_EVENT, type CmsSitePagesPatchDetail } from '@admin/state/adminEvents'
+import { applySitePagesPatch, applyStructuralWriteOutcome } from '@site/hooks/siteReloadApply'
+import {
+  CMS_SITE_PAGES_PATCH_EVENT,
+  CMS_SITE_RELOAD_EVENT,
+  claimCmsSiteReloadRequests,
+  latestCmsSiteReloadRequest,
+  registerCmsSiteReloader,
+  type CmsSitePagesPatchDetail,
+} from '@admin/state/adminEvents'
 import { __resetToastBusForTests, subscribeToasts, type Toast } from '@ui/components/Toast/toastBus'
 import { makeNode, makePage, makeSite } from '../../../../../__tests__/fixtures'
 import { resetStructuralCommitQueue } from '../structuralCommitQueue'
@@ -111,6 +118,26 @@ describe('a structural source write is one undo step', () => {
   let patchListener: ((evt: Event) => void) | null = null
   let saveCalls: { edits: { kind: string; nodeId: string; siblingNodeIds?: string[]; name?: string }[] }[] = []
   let answers: SaveAnswer[] = []
+  let unmountReloader: (() => void) | null = null
+
+  /**
+   * A stand-in for the mounted editor's full reload, which the Properties
+   * panel's instance rewrites request: it claims the outcome that rode the
+   * request and applies it, as `usePersistence` does after re-reading.
+   */
+  function mountReloader(): () => void {
+    const unregister = registerCmsSiteReloader()
+    const onReload = () => {
+      const claimed = claimCmsSiteReloadRequests(latestCmsSiteReloadRequest())
+      for (const outcome of claimed.structuralOutcomes) applyStructuralWriteOutcome(outcome)
+      claimed.settle()
+    }
+    window.addEventListener(CMS_SITE_RELOAD_EVENT, onReload)
+    return () => {
+      window.removeEventListener(CMS_SITE_RELOAD_EVENT, onReload)
+      unregister()
+    }
+  }
 
   beforeEach(() => {
     __resetToastBusForTests()
@@ -133,6 +160,8 @@ describe('a structural source write is one undo step', () => {
   })
 
   afterEach(() => {
+    unmountReloader?.()
+    unmountReloader = null
     globalThis.fetch = originalFetch
     unregisterSave?.()
     if (patchListener) window.removeEventListener(CMS_SITE_PAGES_PATCH_EVENT, patchListener)
@@ -573,6 +602,7 @@ describe('a structural source write is one undo step', () => {
    * journal entry and whose ⌘⇧Z re-posts the gesture.
    */
   it('panel Detach: ⌘Z posts the journal restore, ⌘⇧Z posts the detach again', async () => {
+    unmountReloader = mountReloader()
     stubFetch([{ undoToken: TOKEN_A }, { pages: [pageBefore()] }, { undoToken: TOKEN_B }])
 
     const result = await detachInstance(ROW_ID)
@@ -590,6 +620,7 @@ describe('a structural source write is one undo step', () => {
   })
 
   it('panel Swap: ⌘Z posts the journal restore, ⌘⇧Z posts the same swap again', async () => {
+    unmountReloader = mountReloader()
     stubFetch([{ undoToken: TOKEN_A }, { pages: [pageBefore()] }, { undoToken: TOKEN_B }])
     const target = { newComponentName: 'Tile', newComponentSource: 'local' as const, newComponentFile: 'components/Tile.tsx' }
 
@@ -605,6 +636,7 @@ describe('a structural source write is one undo step', () => {
   })
 
   it('panel Duplicate-as-copy: ⌘Z restores (call site back, copy gone); ⌘⇧Z says it cannot', async () => {
+    unmountReloader = mountReloader()
     stubFetch([{ pages: [pageBefore()] }], { extractToken: TOKEN_A })
 
     expect((await extractInstanceCopy(ROW_ID)).ok).toBe(true)
@@ -619,6 +651,7 @@ describe('a structural source write is one undo step', () => {
   })
 
   it('an instance rewrite the server could not journal still takes a step: ⌘Z says so instead of passing over it silently', async () => {
+    unmountReloader = mountReloader()
     stubFetch([{}])
     expect((await detachInstance(ROW_ID)).ok).toBe(true)
     expect(useEditorStore.getState().canUndo).toBe(true)

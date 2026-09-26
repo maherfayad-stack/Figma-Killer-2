@@ -37,7 +37,7 @@ import { captureIdentities, expectationsFor, recordOwnWrites, type IdentityCaptu
 import { structuralEditNodeIds, type StructuralEditPayload } from './structuralUndoPlan'
 import { elementMovedNodeIds, retryAfterElementMoved } from './elementMovedRecovery'
 import { recordCreatedStylesheet, ruleIdFromCssCreateNodeId } from './styleRuleWriteback'
-import { recordJournaledWrite } from './journaledUndo'
+import { journaledWriteOutcome } from './journaledUndo'
 
 /**
  * P3-F — an undo-journal token as the server mints it
@@ -306,10 +306,7 @@ export async function detachInstance(nodeId: string): Promise<InstanceCodemodRes
   const result = await postOneEdit(edit)
   const refusal = (result.refusals ?? [])[0]
   if (refusal) return { ok: false, reason: refusal.reason, message: refusal.message }
-  if (result.written > 0) {
-    recordJournaledWrite('Detach instance', [edit], result.undoToken)
-    requestCmsSiteReload()
-  }
+  if (result.written > 0) requestCmsSiteReload({ structuralOutcome: journaledWriteOutcome('Detach instance', [edit], result.undoToken) })
   return { ok: true }
 }
 
@@ -330,8 +327,7 @@ export async function swapInstance(
   const refusal = (result.refusals ?? [])[0]
   if (refusal) return { ok: false, reason: refusal.reason, message: refusal.message }
   if (result.written > 0) {
-    recordJournaledWrite(`Swap to ${target.newComponentName}`, [edit], result.undoToken)
-    requestCmsSiteReload()
+    requestCmsSiteReload({ structuralOutcome: journaledWriteOutcome(`Swap to ${target.newComponentName}`, [edit], result.undoToken) })
   }
   const swapDetail = (result.swapDetails ?? []).find((detail) => detail.nodeId === nodeId)
   return { ok: true, swapDetail }
@@ -447,7 +443,8 @@ export async function extractInstanceCopy(
     schema: ExtractComponentResponseSchema,
   })
   if (!result.ok) return { ok: false, reason: result.reason, message: result.message }
-  if (options.undo !== 'caller') recordJournaledWrite(`Duplicate as ${result.newComponentName}`, [], result.undoToken)
-  requestCmsSiteReload()
+  requestCmsSiteReload(
+    options.undo === 'caller' ? {} : { structuralOutcome: journaledWriteOutcome(`Duplicate as ${result.newComponentName}`, [], result.undoToken) },
+  )
   return { ok: true, newFile: result.newFile, newComponentName: result.newComponentName }
 }
