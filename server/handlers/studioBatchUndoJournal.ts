@@ -9,9 +9,10 @@
  *
  * ## Which writes are journaled
  *
- * {@link JOURNALED_KINDS}: the one-shot rewrites whose undo no other edit kind
- * can express — `delete`, `detach`, `swap`, and `promote-component` (extract a
- * subtree into a new component). A batch holding any of them records ONE
+ * {@link isJournaled}: the one-shot rewrites whose undo no other edit kind
+ * can express — `delete`, `detach`, `swap`, `promote-component` (extract a
+ * subtree into a new component), and a `list-item` remove (OD-8: a `.map`
+ * row's delete cuts array elements whose bytes no op carries back). A batch holding any of them records ONE
  * entry covering every file the batch changed, so one gesture is one token,
  * however many elements a multi-select delete removed and across however
  * many files.
@@ -34,6 +35,10 @@ import { captureUndoPreImage, recordUndoJournal, restoreUndoJournal, undoJournal
 
 /** The kinds a journaled batch records a pre-image for. */
 const JOURNALED_KINDS = new Set<StudioEdit['kind']>(['delete', 'detach', 'swap', 'promote-component'])
+
+function isJournaled(edit: StudioEdit): boolean {
+  return JOURNALED_KINDS.has(edit.kind) || (edit.kind === 'list-item' && edit.op.kind === 'remove')
+}
 
 export interface BatchUndoJournal {
   /** A `restore` that may not run in this batch, as its refusal — `null` for every other edit. */
@@ -58,7 +63,7 @@ export function openBatchUndoJournal(
   for (const edit of edits) {
     if (edit.kind === 'restore' && journaling) for (const file of undoJournalFiles(dir, edit.token)) touchedFiles.add(file)
   }
-  const preImage = journaling && edits.some((edit) => JOURNALED_KINDS.has(edit.kind)) ? captureUndoPreImage(touchedFiles) : null
+  const preImage = journaling && edits.some(isJournaled) ? captureUndoPreImage(touchedFiles) : null
 
   return {
     refuse: (edit) => {

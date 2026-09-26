@@ -98,27 +98,33 @@ describe('OD-8 — list-item edits through the load and the save batch', () => {
     expect(rowsOf(await shelf()).titles).toEqual(['Piranesi', 'Dune', 'Solaris'])
   })
 
-  it('a remove reports the element text and the import only it read; the undo puts both back byte for byte', async () => {
+  it('a remove takes the import only it read, and its journal restore puts both back byte for byte (P3-F)', async () => {
     const { stamp } = rowsOf(await shelf())
-    const removed = applyStudioEditBatch(wsDir, [{ kind: 'list-item', nodeId: stamp.array, length: 3, op: { kind: 'remove', indices: [1] } }])
+    const EDITOR = { canvasLayers: 'allow', journal: true } as const
+    const removed = applyStudioEditBatch(wsDir, [{ kind: 'list-item', nodeId: stamp.array, length: 3, op: { kind: 'remove', indices: [1] } }], {}, EDITOR)
     expect(removed.refusals).toEqual([])
-    expect(removed.removed).toEqual([{ nodeId: stamp.array, text: "  // a re-read\n  { isbn: '222', title: 'Solaris', icon: BookIcon },\n", wholeLine: false }])
-    expect(removed.prunedImports).toEqual([{ file: 'pages/Shelf.tsx', declarations: ["import { BookIcon } from './BookIcon'"] }])
     expect(read('pages/Shelf.tsx')).not.toContain('BookIcon')
     // The prune took the import line above the array, so the array moved up
-    // one line — and the batch says where it is now, which is what ⌘Z addresses.
+    // one line — and the batch says where it is now, which the board re-reads.
     expect(removed.listArrays).toEqual([{ nodeId: stamp.array, to: 'pages/Shelf.tsx:2:15' }])
+    expect(removed.undoToken).toMatch(/^[0-9a-f]{32}$/)
 
-    const back = applyStudioEditBatch(wsDir, [
-      {
-        kind: 'list-item',
-        nodeId: removed.listArrays[0]!.to,
-        length: 2,
-        op: { kind: 'insert', at: [1], texts: [removed.removed[0]!.text], imports: removed.prunedImports[0]!.declarations },
-      },
-    ])
+    const token = removed.undoToken!
+    const back = applyStudioEditBatch(wsDir, [{ kind: 'restore', nodeId: `undo-journal:${token}`, token }], {}, EDITOR)
     expect(back.refusals).toEqual([])
     expect(read('pages/Shelf.tsx')).toBe(SHELF)
+  })
+
+  it('a reorder or copy records no journal entry — its inverse is an ordinary list-item edit', async () => {
+    const { stamp } = rowsOf(await shelf())
+    const result = applyStudioEditBatch(
+      wsDir,
+      [{ kind: 'list-item', nodeId: stamp.array, length: 3, op: { kind: 'reorder', order: [2, 0, 1] } }],
+      {},
+      { canvasLayers: 'allow', journal: true },
+    )
+    expect(result.written).toBe(1)
+    expect(result.undoToken).toBeUndefined()
   })
 
   it('a copy gets a key of its own', async () => {

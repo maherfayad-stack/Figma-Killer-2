@@ -381,10 +381,10 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
     }
     case 'list-item': {
       // OD-8 — `loc` is the array literal's `[`, not an element: a `.map`
-      // row's reorder/delete/duplicate/paste rewrites the array it iterates.
+      // row's reorder/delete/duplicate rewrites the array it iterates.
       const result = applyListItemEdit(loc, edit, project)
       if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
-      return { applied: true, ...(result.removed.length > 0 ? { removed: result.removed } : {}) }
+      return { applied: true }
     }
     case 'detach': {
       // P3-D (OD-7) — the import is retired by this batch's prune pass

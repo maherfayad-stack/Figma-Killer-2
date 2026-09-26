@@ -19,7 +19,6 @@
 import {
   describeStructuralRefusal,
   invertListItemEdit,
-  listItemLengthAfter,
   listRowArrayOf,
   type ListItemEdit,
   type ListRowPlan,
@@ -70,12 +69,10 @@ export function writeListRowPlan(
   })
 }
 
-/** ⌘Z for `edit`: the inverse edit when it is known now, else (a remove) the texts the write will report. */
+/** ⌘Z for `edit`: the inverse edit when it is known now, else (a remove) the undo journal's `restore` of the file (P3-F). */
 function inverseTemplate(edit: ListItemEdit): StructuralInverseTemplate {
   const inverse = invertListItemEdit(edit)
-  if (inverse) return { kind: 'known', inverse: [{ ...inverse }] }
-  const at = edit.op.kind === 'remove' ? [...edit.op.indices].sort((a, b) => a - b) : []
-  return { kind: 'list-item-restore', nodeId: edit.nodeId, length: listItemLengthAfter(edit.length, edit.op), at }
+  return inverse ? { kind: 'known', inverse: [{ ...inverse }] } : { kind: 'restore-journal' }
 }
 
 /** The row root ids of the list whose array is `arrayId`, by index — every frame of the board. */
@@ -107,9 +104,6 @@ function rowRemap(before: readonly string[], after: readonly string[], edit: Lis
       break
     case 'copy':
       order = [...order.slice(0, op.at), ...op.from.map(() => -1), ...order.slice(op.at)]
-      break
-    case 'insert':
-      for (const at of op.at) order.splice(at, 0, -1)
       break
   }
   const remap = new Map<string, string>()

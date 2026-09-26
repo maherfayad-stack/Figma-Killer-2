@@ -17,7 +17,7 @@
  * Returns rather than throws, like its structural siblings; `studioWriteback.ts`
  * turns a refusal into the batch's `StudioEditRefusalError`.
  */
-import { editListItems, type DeletedJsxText } from '@core/ast-codemods'
+import { editListItems } from '@core/ast-codemods'
 import { ListItemOpSchema } from '@core/page-tree'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import type { Project } from 'ts-morph'
@@ -32,9 +32,7 @@ export const ListItemEditSchema = Type.Object({
 })
 export type ListItemEditWire = Static<typeof ListItemEditSchema>
 
-export type ListItemEditOutcome =
-  | { ok: true; removed: readonly DeletedJsxText[] }
-  | { ok: false; reason: string; message: string }
+export type ListItemEditOutcome = { ok: true } | { ok: false; reason: string; message: string }
 
 /** Run one `list-item` edit against its already-decoded, already-guarded location. */
 export function applyListItemEdit(
@@ -43,8 +41,6 @@ export function applyListItemEdit(
   project?: Project,
 ): ListItemEditOutcome {
   const result = editListItems({ ...loc, length: edit.length, op: edit.op, ...(project ? { project } : {}) })
-  if (!result.ok) return { ok: false, ...result.refusal }
-  // A removed element's text is what ⌘Z's `insert` takes back; `wholeLine`
-  // is a JSX-child notion with no meaning for an array element.
-  return { ok: true, removed: result.removed.map((text) => ({ text, wholeLine: false })) }
+  // A remove's ⌘Z is the undo journal's `restore` (P3-F): nothing to report.
+  return result.ok ? { ok: true } : { ok: false, ...result.refusal }
 }

@@ -368,7 +368,7 @@ Where the protocol can say it, the inverse is an ordinary edit:
 | ungroup | `group` the children it released, into the same container |
 | transplant (move) | `transplant` back to the parent it left |
 | transplant (copy) | `delete` the copy it created |
-| delete / detach / swap / extract | `restore` the undo-journal entry the write recorded (P3-F) |
+| delete / detach / swap / extract, a `.map` row's delete (OD-8) | `restore` the undo-journal entry the write recorded (P3-F) |
 
 ### The undo journal — the one-shot writes (P3-F: ERR-2, DET-4)
 

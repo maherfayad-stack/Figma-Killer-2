@@ -58,24 +58,21 @@ function board(): Page {
 }
 
 /** `editListItems`, on element texts. */
-function apply(op: ListItemOp): string[] {
+function apply(op: ListItemOp): void {
   switch (op.kind) {
     case 'reorder':
       items = op.order.map((k) => items[k]!)
-      return []
-    case 'remove': {
-      const removed = op.indices.map((k) => items[k]!)
+      return
+    case 'remove':
       items = items.filter((_, k) => !op.indices.includes(k))
-      return removed
-    }
+      return
     case 'copy':
       items = [...items.slice(0, op.at), ...op.from.map((k) => items[k]!), ...items.slice(op.at)]
-      return []
-    case 'insert':
-      op.at.forEach((at, k) => items.splice(at, 0, op.texts[k]!))
-      return []
   }
 }
+
+/** The stand-in server's undo journal (P3-F): what the array was before each journaled remove. */
+let journal = new Map<string, string[]>()
 
 const store = () => useEditorStore.getState()
 let realFetch: typeof globalThis.fetch
@@ -88,6 +85,7 @@ beforeEach(() => {
   resetListRowRemaps()
   __resetToastBusForTests()
   items = [...START]
+  journal = new Map()
   arraySource = 'here'
   posted = []
   realFetch = globalThis.fetch
@@ -97,13 +95,22 @@ beforeEach(() => {
     if (url.includes('/studio/save')) {
       const edits: Record<string, unknown>[] = body.edits ?? []
       posted.push(edits)
-      const removed: { nodeId: string; text: string; wholeLine: boolean }[] = []
+      let undoToken: string | undefined
       for (const edit of edits) {
+        if (edit.kind === 'restore') {
+          items = journal.get(String(edit.token)) ?? items
+          continue
+        }
         if (edit.kind !== 'list-item' || edit.length !== items.length) continue
-        for (const text of apply(edit.op as ListItemOp)) removed.push({ nodeId: String(edit.nodeId), text, wholeLine: false })
+        const op = edit.op as ListItemOp
+        if (op.kind === 'remove') {
+          undoToken = (journal.size + 1).toString(16).padStart(32, '0')
+          journal.set(undoToken, [...items])
+        }
+        apply(op)
       }
       return new Response(
-        JSON.stringify({ ok: true, written: edits.length, skipped: 0, shifted: true, sharedComponents: true, touchedFiles: [FILE], createdNodeIds: [], relocatedNodeIds: [], removed, prunedImports: [] }),
+        JSON.stringify({ ok: true, written: edits.length, skipped: 0, shifted: true, sharedComponents: true, touchedFiles: [FILE], createdNodeIds: [], relocatedNodeIds: [], removed: [], ...(undoToken ? { undoToken } : {}) }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       )
     }
@@ -158,7 +165,7 @@ describe('OD-8 — a row gesture writes the array, and one ⌘Z takes it back', 
     expect(items).toEqual([`'doing'`, `'done'`, `'todo'`])
   })
 
-  it('delete: the element goes from the array, and ⌘Z writes its own text back at its index', async () => {
+  it('delete: the element goes from the array, and ⌘Z restores the journal entry the remove recorded (P3-F)', async () => {
     store().selectNode(ROW(1))
     store().deleteNode(ROW(1))
     await settle()
@@ -170,7 +177,8 @@ describe('OD-8 — a row gesture writes the array, and one ⌘Z takes it back', 
 
     store().undo()
     await settle()
-    expect(posted[1]).toEqual([{ kind: 'list-item', nodeId: ARRAY, length: 2, op: { kind: 'insert', at: [1], texts: [`'doing'`] } }])
+    const token = (1).toString(16).padStart(32, '0')
+    expect(posted[1]).toEqual([{ kind: 'restore', nodeId: `undo-journal:${token}`, token }])
     expect(items).toEqual(START)
   })
 

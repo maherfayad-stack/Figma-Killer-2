@@ -73,7 +73,7 @@ export type ListRowSource = Static<typeof ListRowSourceSchema>
 export type ListRowArraySource = Extract<ListRowSource, { kind: 'array' }>
 
 /**
- * The four operations on an array literal (`editListItems` in
+ * The three operations on an array literal (`editListItems` in
  * `@core/ast-codemods`), in terms of element indices of the literal AS IT IS
  * when the edit runs.
  *
@@ -81,9 +81,9 @@ export type ListRowArraySource = Extract<ListRowSource, { kind: 'array' }>
  *  - `remove` — those elements go.
  *  - `copy` — copies of `from` (in that order) are written so the first sits
  *    at `at`. `key` names the field a copy rewrites to stay unique.
- *  - `insert` — ⌘Z of a `remove`: `texts[k]` is written so it ends at
- *    `at[k]` (ascending). The one op carrying client bytes, so the codemod
- *    shape-checks every text; `imports` are what the remove's prune took.
+ *
+ * None carries source text: ⌘Z of a `remove` is the undo journal's `restore`
+ * (P3-F), which puts back the server's own pre-image of the file.
  */
 export const ListItemOpSchema = Type.Union([
   Type.Object({ kind: Type.Literal('reorder'), order: Type.Array(Type.Integer({ minimum: 0 }), { minItems: 1 }) }),
@@ -93,12 +93,6 @@ export const ListItemOpSchema = Type.Union([
     from: Type.Array(Type.Integer({ minimum: 0 }), { minItems: 1 }),
     at: Type.Integer({ minimum: 0 }),
     key: Type.Optional(ListRowKeySchema),
-  }),
-  Type.Object({
-    kind: Type.Literal('insert'),
-    at: Type.Array(Type.Integer({ minimum: 0 }), { minItems: 1 }),
-    texts: Type.Array(Type.String(), { minItems: 1 }),
-    imports: Type.Optional(Type.Array(Type.String())),
   }),
 ])
 export type ListItemOp = Static<typeof ListItemOpSchema>
@@ -120,16 +114,13 @@ export function listItemLengthAfter(length: number, op: ListItemOp): number {
       return length - op.indices.length
     case 'copy':
       return length + op.from.length
-    case 'insert':
-      return length + op.texts.length
   }
 }
 
 /**
  * The edit that takes `edit` back, when it is knowable before the write: a
- * reorder by the inverse permutation, a copy or an insert by removing what it
- * wrote. `null` for a `remove` — its inverse needs the bytes the write
- * discarded (`resolveListItemRestore`).
+ * reorder by the inverse permutation, a copy by removing what it wrote. `null`
+ * for a `remove` — its inverse is the undo journal's `restore` of the file.
  */
 export function invertListItemEdit(edit: ListItemEdit): ListItemEdit | null {
   const length = listItemLengthAfter(edit.length, edit.op)
@@ -146,8 +137,6 @@ export function invertListItemEdit(edit: ListItemEdit): ListItemEdit | null {
       const { at, from } = edit.op
       return back({ kind: 'remove', indices: from.map((_, k) => at + k) })
     }
-    case 'insert':
-      return back({ kind: 'remove', indices: [...edit.op.at] })
     case 'remove':
       return null
   }
