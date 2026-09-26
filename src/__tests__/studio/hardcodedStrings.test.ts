@@ -12,7 +12,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { projectsRootDir } from '../../../server/handlers/studioProjects'
-import { findHardcodedStrings } from '../../../server/handlers/studio/hardcodedStrings'
+import { countDesignSystemHardcodedStrings, findHardcodedStrings } from '../../../server/handlers/studio/hardcodedStrings'
 
 let dir: string
 
@@ -285,5 +285,51 @@ describe('a TabBar inserted with its icons', () => {
   it('names the prop the label sits under, so the panel can group it', () => {
     const home = findHardcodedStrings(dir).find((s) => s.text === 'Home')
     expect(home?.prop).toBe('items.label')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Regression: a vendored `design-system/` is a library, not the user's pages.
+// This is the `test4` dogfood bug — "Make translatable" rewrote ~11 built-in
+// ALM design-system components. Fixture is deliberately generic (a bare
+// function component, no design tokens, no ALM naming) so this proves the
+// FOLDER exclusion rather than anything specific to the real corpus.
+// ---------------------------------------------------------------------------
+
+describe('findHardcodedStrings — design-system exclusion', () => {
+  it('never reports copy sitting inside the vendored design-system folder', () => {
+    write(
+      'design-system/components/Banner.jsx',
+      [
+        'export function Banner() {',
+        '  return <div aria-label="Loading">Please wait</div>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    expect(findHardcodedStrings(dir)).toEqual([])
+  })
+
+  it('still reports copy in the project\'s own pages alongside an excluded design system', () => {
+    write(
+      'design-system/components/Banner.jsx',
+      'export function Banner() {\n  return <div aria-label="Loading">Please wait</div>\n}\n',
+    )
+    write('pages/Home.tsx', 'export default function Home() { return <h1>Welcome home</h1> }\n')
+    const found = findHardcodedStrings(dir)
+    expect(found.map((f) => f.text)).toEqual(['Welcome home'])
+  })
+
+  it('countDesignSystemHardcodedStrings counts what findHardcodedStrings deliberately omits', () => {
+    write(
+      'design-system/components/Banner.jsx',
+      'export function Banner() {\n  return <p>Please wait</p>\n}\n',
+    )
+    write(
+      'design-system/components/Callout.jsx',
+      'export function Callout() {\n  return <p>Heads up</p>\n}\n',
+    )
+    expect(findHardcodedStrings(dir)).toEqual([])
+    expect(countDesignSystemHardcodedStrings(dir)).toBe(2)
   })
 })

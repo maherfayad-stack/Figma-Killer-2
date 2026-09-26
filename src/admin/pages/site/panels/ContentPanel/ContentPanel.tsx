@@ -145,7 +145,9 @@ export function ContentPanel() {
       // hardcoded-strings list below the table is information, not an error.
       // Only surface the louder `warning` styling when something ELSE also
       // refused (a name already taken, a key that can't be written).
-      const genuineFailures = result.failures.filter((f) => !f.message.includes('outside any component'))
+      const genuineFailures = result.failures.filter(
+        (f) => !f.message.includes('outside any component') && f.key !== 'design-system',
+      )
       pushToast({
         kind: genuineFailures.length > 0 ? 'warning' : 'success',
         title: `${result.extracted} strings now translatable`,
