@@ -38,7 +38,7 @@ import { getErrorMessage } from '@core/utils/errorMessage'
 import { ImageSolidIcon } from 'pixel-art-icons/icons/image-solid'
 import { CloudUploadSolidIcon } from 'pixel-art-icons/icons/cloud-upload-solid'
 import { uploadStudioAsset } from '@site/studio/uploadStudioAsset'
-import { dropStudioAsset } from '@site/studio/dropStudioAsset'
+import { dropStudioAsset, requirePublicAsset } from '@site/studio/dropStudioAsset'
 import { saveStudioAssetEdit } from '@site/studio/studioAssetEdit'
 import styles from './ImageSourceSection.module.css'
 
@@ -106,7 +106,7 @@ export function ImageSourceSection({ node, prop, value, onChange }: ImageSourceS
         // node's props from freshly parsed source, which supersedes the
         // local object-URL preview — nothing further to do here.
       } else if (writable) {
-        const landed = await dropStudioAsset(file)
+        const landed = requirePublicAsset(await dropStudioAsset(file))
         onChange(prop, landed.src)
       }
     } catch (err) {

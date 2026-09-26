@@ -38,7 +38,8 @@
  *     ever joined into a path, so it can never traverse;
  *   - the folder and the entry must be reached through plain directory
  *     entries only — no symlink or junction from the project root down
- *     (`isUnlinkedWorkspacePath`) — for a read as well as a write;
+ *     (enforced by `.studio`'s one store door, `studioStore.ts`) — for a read, a write,
+ *     a prune and a delete alike;
  *   - an entry is size-capped ({@link MAX_ENTRY_BYTES}) before it is read and
  *     validated with TypeBox after;
  *   - every `rel` it names is re-derived through `canonicalSourceRel`, the
@@ -66,17 +67,26 @@
  * write access to the file; it is documented, not defended.
  */
 import { createHash, randomBytes } from 'node:crypto'
-import { existsSync, lstatSync, mkdirSync, opendirSync, readFileSync, unlinkSync } from 'node:fs'
+import { existsSync, readFileSync, unlinkSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
-import { isUnlinkedWorkspacePath } from '@core/page-parser'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { canonicalSourceRel } from '../studioEditRouting'
-import { writeFileAtomic } from './atomicFileWrite'
-import { readJsonFileSafe } from './cappedFileRead'
+import { writeFileAtomic } from '@core/page-parser'
+import {
+  StudioStoreLinkError,
+  listStudioStoreDir,
+  readStudioStoreJson,
+  removeStudioStoreEntry,
+  studioStoreProjectRel,
+  writeStudioStoreFile,
+} from './studioStore'
 import { isUndoJournalToken } from './undoJournalToken'
 
+/** The journal folder as a `.studio` store path (`studioStore.ts`). */
+const JOURNAL_STORE_DIR = 'undo-journal'
+
 /** Where the entries live, relative to the project root. */
-export const UNDO_JOURNAL_DIR = '.studio/undo-journal'
+export const UNDO_JOURNAL_DIR = studioStoreProjectRel(JOURNAL_STORE_DIR)
 
 /** How many entries one project keeps. Older ones are pruned on every record. */
 export const MAX_ENTRIES = 50
@@ -138,13 +148,9 @@ function readBytes(file: string): Buffer | null {
   return existsSync(file) ? readFileSync(file) : null
 }
 
-function journalDir(dir: string): string {
-  return join(dir, ...UNDO_JOURNAL_DIR.split('/'))
-}
-
-/** The entry's path, or `null` for anything that is not a well-formed token. The ONLY place a token meets a path. */
-function entryPath(dir: string, token: string): string | null {
-  return isUndoJournalToken(token) ? join(journalDir(dir), `${token}.json`) : null
+/** The entry's `.studio` store path, or `null` for anything that is not a well-formed token. The ONLY place a token meets a path. */
+function entryRel(token: string): string | null {
+  return isUndoJournalToken(token) ? `${JOURNAL_STORE_DIR}/${token}.json` : null
 }
 
 /** Read the files a write is about to change. Call it BEFORE the write, under the same lock. */
@@ -184,22 +190,22 @@ export function recordUndoJournal(dir: string, preImage: UndoPreImage, created: 
   const json = JSON.stringify(entry)
   if (Buffer.byteLength(json, 'utf8') > MAX_ENTRY_BYTES) return null
 
-  const folder = journalDir(dir)
-  if (!isUnlinkedWorkspacePath(dir, folder)) return null
-  mkdirSync(folder, { recursive: true })
   const token = mintToken()
-  const path = entryPath(dir, token)!
-  if (!isUnlinkedWorkspacePath(dir, path)) return null
-  writeFileAtomic(path, json)
+  try {
+    writeStudioStoreFile(dir, entryRel(token)!, json)
+  } catch (err) {
+    if (err instanceof StudioStoreLinkError) return null // `.studio` reached through a link: no journal, never a write through it
+    throw err
+  }
   pruneUndoJournal(dir, token)
   return token
 }
 
 /** The entry `token` names, validated — `null` when it is absent, malformed, oversized or reached through a link. */
 function readEntry(dir: string, token: string): UndoJournalEntry | null {
-  const path = entryPath(dir, token)
-  if (!path || !isUnlinkedWorkspacePath(dir, path)) return null
-  return readJsonFileSafe(path, UndoJournalEntrySchema, MAX_ENTRY_BYTES) ?? null
+  const rel = entryRel(token)
+  if (!rel) return null
+  return readStudioStoreJson(dir, rel, UndoJournalEntrySchema, null, { maxBytes: MAX_ENTRY_BYTES })
 }
 
 /** Each file of an entry as an absolute path, or `null` when any `rel` is not a writable source path any more. */
@@ -296,7 +302,7 @@ export function restoreUndoJournal(dir: string, token: string, deps: UndoJournal
       message: `Studio could not write ${entry.files[restored.length]?.rel ?? 'a file'} back, so it left every file as it was.`,
     }
   }
-  unlinkSync(entryPath(dir, token)!)
+  removeStudioStoreEntry(dir, entryRel(token)!)
   return { ok: true, files }
 }
 
@@ -312,28 +318,16 @@ export function restoreUndoJournal(dir: string, token: string, deps: UndoJournal
  * pruned the moment it was written — undo switched off. They are removed.
  */
 function pruneUndoJournal(dir: string, keep?: string): void {
-  const folder = journalDir(dir)
-  if (!existsSync(folder) || !isUnlinkedWorkspacePath(dir, folder)) return
   const futureStamp = Date.now() + FUTURE_SLACK_MS
   const ours: string[] = []
   const future: string[] = []
-  const handle = opendirSync(folder)
-  try {
-    for (let scanned = 0; scanned < MAX_PRUNE_SCAN; scanned += 1) {
-      const dirent = handle.readSync()
-      if (!dirent) break
-      const token = dirent.name.endsWith('.json') ? dirent.name.slice(0, -'.json'.length) : ''
-      if (!dirent.isFile() || !isUndoJournalToken(token) || token === keep) continue
-      ;(parseInt(token.slice(0, 12), 16) > futureStamp ? future : ours).push(dirent.name)
-    }
-  } finally {
-    handle.closeSync()
+  for (const dirent of listStudioStoreDir(dir, JOURNAL_STORE_DIR, { scanLimit: MAX_PRUNE_SCAN })) {
+    const token = dirent.name.endsWith('.json') ? dirent.name.slice(0, -'.json'.length) : ''
+    if (!dirent.isFile() || !isUndoJournalToken(token) || token === keep) continue
+    ;(parseInt(token.slice(0, 12), 16) > futureStamp ? future : ours).push(token)
   }
   ours.sort().reverse()
   // `keep` is one of the newest MAX_ENTRIES by definition, so the rest get one slot fewer.
   const surplus = ours.slice(keep === undefined ? MAX_ENTRIES : MAX_ENTRIES - 1)
-  for (const name of [...future, ...surplus]) {
-    const path = join(folder, name)
-    if (lstatSync(path).isFile()) unlinkSync(path)
-  }
+  for (const token of [...future, ...surplus]) removeStudioStoreEntry(dir, entryRel(token)!)
 }

@@ -239,7 +239,7 @@ const CHROME_BOUNDARY_MOUNTS: Array<{ file: string; ids: string[] }> = [
   { file: 'admin/pages/site/SitePage.tsx', ids: ['refusal-dialog'] },
   {
     file: 'admin/layouts/AdminCanvasLayout/AdminCanvasEditorBody.tsx',
-    ids: ['left-sidebar', 'right-sidebar', 'code-editor', 'layout-name-dialog', 'import-html'],
+    ids: ['left-sidebar', 'right-sidebar', 'code-editor', 'layout-name-dialog', 'detach-confirm-dialog', 'import-html'],
   },
   {
     file: 'admin/pages/site/canvas/CanvasRoot.tsx',

@@ -49,14 +49,14 @@
  *
  * ## Detach / Swap
  *
- * Both dispatch through `studioSaveRequests.ts`'s standalone
- * `detachInstance` / `swapInstance` / `extractInstanceCopy` — direct,
- * one-shot HTTP calls, not the diffed `saveSite` batch. Detach fails closed
- * (P1-E1): its refusal is shown under the title with the parser's own
- * sentence, and `explainDetachConstraint` — the one list of reasons a copy
- * of the component would fix — decides whether "duplicate it instead" is
- * offered. Swap opens a searchable popover of the project's other local
- * components (E1's catalog; package components are not in it).
+ * Detach is the store's ONE Detach action, `detachInstances` (P5-C,
+ * `instanceActions.ts`) — the same call both context menus, ⌘⌥B and the
+ * refusal remedy make, so the confirm (only when something is lost), the undo
+ * entry, the refusal (the dialog, with "Duplicate as a new file" when a copy
+ * would fix it) and the selection afterwards are decided in one place, not
+ * here. Swap dispatches `studioSaveRequests.ts`'s one-shot `swapInstance` and
+ * opens a searchable popover of the project's other local components (E1's
+ * catalog; package components are not in it).
  *
  * `updateInstanceCallSiteProp` is called directly from `useEditorStore`, not
  * through `useInspectorCommit`'s `commitProp`, which only routes to
@@ -65,16 +65,11 @@
  */
 import { useRef, useState } from 'react'
 import { useEditorStore } from '@site/store/store'
-import {
-  explainDetachConstraint,
-  explainPropConstraint,
-  type EditConstraint,
-  type PageNode,
-} from '@core/page-tree'
+import { explainPropConstraint, type PageNode } from '@core/page-tree'
 import { PropertyControlRenderer } from '@site/property-controls/PropertyControlRenderer'
 import { buildComponentCallSiteRows } from '../../panels/PropertiesPanel/componentCallSiteRows'
 import { useLocalComponentCatalog, findLocalComponentSpec } from '@site/studio/componentCatalog'
-import { detachInstance, extractInstanceCopy, swapInstance } from '@site/studio/studioSaveRequests'
+import { swapInstance } from '@site/studio/studioSaveRequests'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { Button } from '@ui/components/Button'
 import { ControlRow } from '@ui/components/ControlRow'
@@ -86,7 +81,6 @@ import { pushToast } from '@ui/components/Toast'
 import { BoxStackSolidIcon } from 'pixel-art-icons/icons/box-stack-solid'
 import { ArrowsHorizontalIcon } from 'pixel-art-icons/icons/arrows-horizontal'
 import { Copy2SolidIcon } from 'pixel-art-icons/icons/copy-2-solid'
-import { WarningDiamondSolidIcon } from 'pixel-art-icons/icons/warning-diamond-solid'
 import { useSelectionModel } from '../selectionModel'
 import { showsComponentSection } from './componentSectionSelection'
 import styles from './ComponentSection.module.css'
@@ -101,26 +95,6 @@ interface InstanceProps {
 interface LocalSwapCandidate {
   componentName: string
   sourceFile: string
-}
-
-/** The toast body after Duplicate. */
-function duplicatedMessage(newComponentName: string | undefined): string {
-  return `Created ${newComponentName ?? 'the copy'} and repointed this instance at it.`
-}
-
-/** The toast after a successful swap: what it changed about the call site's props. */
-function swappedToast(
-  componentName: string,
-  detail: { removedProps: string[]; unfilledRequiredProps: string[] } | undefined,
-): Parameters<typeof pushToast>[0] {
-  const notes: string[] = []
-  if (detail && detail.removedProps.length > 0) notes.push(`removed: ${detail.removedProps.join(', ')}`)
-  if (detail && detail.unfilledRequiredProps.length > 0) notes.push(`needs a value: ${detail.unfilledRequiredProps.join(', ')}`)
-  return {
-    kind: notes.length > 0 ? 'warning' : 'success',
-    title: `Swapped to ${componentName}`,
-    body: notes.length > 0 ? notes.join(' · ') : 'No prop changes were needed.',
-  }
 }
 
 export function ComponentSection() {
@@ -146,6 +120,7 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
   const callSiteProps = instanceProps.callSiteProps ?? {}
 
   const updateCallSiteProp = useEditorStore((s) => s.updateInstanceCallSiteProp)
+  const detachInstances = useEditorStore((s) => s.detachInstances)
 
   // E1/E2.5 — the project-wide component catalog, fetched once (cached per
   // workspace dir) and reused for both the row set below and the Swap
@@ -158,8 +133,6 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
   const rows = buildComponentCallSiteRows(spec, callSiteProps)
 
   const [detaching, setDetaching] = useState(false)
-  const [refusal, setRefusal] = useState<EditConstraint | null>(null)
-  const [extracting, setExtracting] = useState(false)
   const [swapOpen, setSwapOpen] = useState(false)
   const [swapQuery, setSwapQuery] = useState('')
   const [swappingKey, setSwappingKey] = useState<string | null>(null)
@@ -167,34 +140,11 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
 
   async function handleDetach() {
     setDetaching(true)
-    setRefusal(null)
     try {
-      const result = await detachInstance(nodeId)
-      if (!result.ok) setRefusal(explainDetachConstraint(result.reason, result.message))
-    } catch (err) {
-      pushToast({ kind: 'error', title: 'Detach failed', body: getErrorMessage(err, 'Unknown detach error') })
+      await detachInstances([nodeId])
+    } finally {
+      setDetaching(false)
     }
-    setDetaching(false)
-  }
-
-  async function handleExtract() {
-    setExtracting(true)
-    try {
-      const result = await extractInstanceCopy(nodeId)
-      if (!result.ok) {
-        pushToast({ kind: 'error', title: 'Duplicate failed', body: result.message })
-      } else {
-        setRefusal(null)
-        pushToast({
-          kind: 'success',
-          title: 'Duplicated',
-          body: duplicatedMessage(result.newComponentName),
-        })
-      }
-    } catch (err) {
-      pushToast({ kind: 'error', title: 'Duplicate failed', body: getErrorMessage(err, 'Unknown error') })
-    }
-    setExtracting(false)
   }
 
   // Every OTHER local component the catalog knows about — local-only
@@ -221,24 +171,31 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
         newComponentSource: 'local',
         newComponentFile: candidate.sourceFile,
       })
-      if (result.ok) {
-        pushToast(swappedToast(candidate.componentName, result.swapDetail))
-        setSwapOpen(false)
-      } else {
+      if (!result.ok) {
         pushToast({ kind: 'error', title: 'Swap refused', body: result.message })
+        return
       }
+      const detail = result.swapDetail
+      const notes: string[] = []
+      if (detail && detail.removedProps.length > 0) notes.push(`removed: ${detail.removedProps.join(', ')}`)
+      if (detail && detail.unfilledRequiredProps.length > 0) notes.push(`needs a value: ${detail.unfilledRequiredProps.join(', ')}`)
+      pushToast({
+        kind: notes.length > 0 ? 'warning' : 'success',
+        title: `Swapped to ${candidate.componentName}`,
+        body: notes.length > 0 ? notes.join(' · ') : 'No prop changes were needed.',
+      })
+      setSwapOpen(false)
     } catch (err) {
       pushToast({ kind: 'error', title: 'Swap failed', body: getErrorMessage(err, 'Unknown error') })
+    } finally {
+      setSwappingKey(null)
     }
-    setSwappingKey(null)
   }
 
   const query = swapQuery.trim().toLowerCase()
   const filteredCandidates = query
     ? swapCandidates.filter((c) => c.componentName.toLowerCase().includes(query))
     : swapCandidates
-
-  const extractAction = refusal?.actions.find((action) => action.kind === 'extract')
 
   const headerActions = (
     <>
@@ -290,27 +247,6 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
       />
 
       <div className={styles.body}>
-        {/* Detach refusal — the parser's own reason, plus the duplicate offer when a copy would fix it. */}
-        {refusal && (
-          <div className={styles.refusalNotice} role="alert" data-testid="instance-detach-refusal">
-            <WarningDiamondSolidIcon size={13} className={styles.refusalIcon} aria-hidden="true" />
-            <div className={styles.refusalBody}>
-              <p className={styles.refusalText}>{refusal.explanation}</p>
-              {extractAction && (
-                <Button
-                  variant="secondary"
-                  size="xs"
-                  onClick={handleExtract}
-                  loading={extracting}
-                  data-testid="instance-extract-offer"
-                >
-                  {extractAction.label}
-                </Button>
-              )}
-            </div>
-          </div>
-        )}
-
         {/* One row per DECLARED prop (E1/E2.5). */}
         {catalog === null ? (
           <PropRowsLoading keys={rows.map((row) => row.key)} />

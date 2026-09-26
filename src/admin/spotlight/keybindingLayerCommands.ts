@@ -3,7 +3,8 @@
  * ⌥V, IX-20), bring to front / send to back (⌘⇧] ⌘⇧[, IX-9), add flex
  * layout (⇧A, IX-10) and copy / paste style (⌘⌥C ⌘⌥V, IX-props) — and
  * P5-F's quick styles: opacity on the digits and flip on ⇧H / ⇧V (IX-misc,
- * `canvas/layerQuickStyles.ts`).
+ * `canvas/layerQuickStyles.ts`) — and P5-C's detach instance (⌘⌥B, Figma's
+ * key, DET-5: the store's one `detachInstances` action).
  *
  * Its own module because `keybindings.ts` sits at the 700-line ceiling; the
  * shape and the rules are the registry's. Every one of these is
@@ -173,6 +174,20 @@ export const LAYER_COMMAND_KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     shortcut: { mac: '⌘⌥V', win: 'Ctrl+Alt+V' },
     ariaKeyshortcuts: 'Control+Alt+V',
     match: (e) => (e.metaKey || e.ctrlKey) && e.altKey && !e.shiftKey && isLetter(e, 'v'),
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
+  // P5-C (DET-5) — Figma's detach instance. The selected component instances
+  // become the markup they render, in the file; a selection with none does
+  // nothing. The button, both context menus and the refusal remedy run the
+  // same store action (`instanceActions.ts`).
+  {
+    commandId: 'layers.detachInstance',
+    displayName: 'Detach instance',
+    shortcut: { mac: '⌘⌥B', win: 'Ctrl+Alt+B' },
+    ariaKeyshortcuts: 'Control+Alt+B',
+    match: (e) => (e.metaKey || e.ctrlKey) && e.altKey && !e.shiftKey && isLetter(e, 'b'),
     scope: 'canvas',
     ignoreInEditableField: true,
   },

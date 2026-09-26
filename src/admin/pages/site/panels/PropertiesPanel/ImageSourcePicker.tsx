@@ -31,7 +31,7 @@ import { FileUpload } from '@ui/components/FileUpload'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { CloudUploadSolidIcon } from 'pixel-art-icons/icons/cloud-upload-solid'
-import { dropStudioAsset } from '@site/studio/dropStudioAsset'
+import { dropStudioAsset, requirePublicAsset } from '@site/studio/dropStudioAsset'
 import {
   fetchProjectImageAssets,
   invalidateProjectImageAssets,
@@ -66,7 +66,7 @@ export function ImageSourcePicker({ value, onPick }: ImageSourcePickerProps) {
     if (!file) return
     setUploading(true)
     try {
-      const landed = await dropStudioAsset(file)
+      const landed = requirePublicAsset(await dropStudioAsset(file))
       invalidateProjectImageAssets()
       setUploaded(await fetchProjectImageAssets())
       onPick(landed.src)

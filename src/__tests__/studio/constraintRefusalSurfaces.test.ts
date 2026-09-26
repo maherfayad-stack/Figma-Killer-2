@@ -106,9 +106,11 @@ describe('resolveConstraintAction', () => {
     expect(resolveConstraintAction(MULTI_SELECT.actions[0]!)).toBeNull()
   })
 
-  it('will not detach without the node the refusal is about', () => {
-    expect(resolveConstraintAction({ label: 'Detach', kind: 'detach' })).toBeNull()
-    expect(resolveConstraintAction({ label: 'Detach', kind: 'detach' }, { nodeId: 'a.tsx:1:1' })).toBeInstanceOf(Function)
+  it('will not detach without the node the refusal is about, nor without the one detachInstances action (P5-C)', () => {
+    const detachInstances = () => Promise.resolve('detached' as const)
+    expect(resolveConstraintAction({ label: 'Detach', kind: 'detach' }, { detachInstances })).toBeNull()
+    expect(resolveConstraintAction({ label: 'Detach', kind: 'detach' }, { nodeId: 'a.tsx:1:1' })).toBeNull()
+    expect(resolveConstraintAction({ label: 'Detach', kind: 'detach' }, { nodeId: 'a.tsx:1:1', detachInstances })).toBeInstanceOf(Function)
   })
 })
 

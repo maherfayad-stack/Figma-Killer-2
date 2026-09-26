@@ -31,8 +31,9 @@ export function RefusalDialog() {
   const { title, constraint, nodeId, duplicateIntoFrame } = dialogState
 
   function handleActionSettled(action: EditConstraintAction, ok: boolean) {
-    // A Detach/Extract the codemod refused already toasted its reason
-    // (`runInstanceCodemod`) — stay open so the user can try the other one.
+    // A Detach/Extract that refused has already said why (`detachInstances`
+    // presents its own refusal; `runInstanceCodemod` toasts the copy's) —
+    // stay open so the user can try the other one.
     if (!ok && (action.kind === 'detach' || action.kind === 'extract')) return
     dismiss()
   }

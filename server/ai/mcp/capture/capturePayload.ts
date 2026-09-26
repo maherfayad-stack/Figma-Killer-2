@@ -37,7 +37,7 @@ import { AGENT_CAPTURE_ASSET_PATH } from '@core/studio-capture'
 import { loadStudioPages } from '../../../handlers/studioPageLoad'
 import { projectDisplayName } from '../../../handlers/studioProjects'
 import { readStudioFrameworkFile } from '../../../handlers/studioFramework'
-import { readBoardsFileOrEmpty } from '../../../handlers/studio/boardGeometry'
+import { readBoardsFile } from '../../../handlers/studio/boardGeometry'
 import type { CaptureGrant } from './captureToken'
 
 /** The prefix `rewriteStudioAssetSentinels` produces for a resolved local image import. */
@@ -90,7 +90,7 @@ export async function buildCapturePayload(
   const { pages, styleRules, conditions, vendorCss, authoredCss } = await loadStudioPages(grant.dir)
 
   const pageById = new Map(pages.map((page) => [page.id, page]))
-  const boardsFile = readBoardsFileOrEmpty(grant.dir)
+  const boardsFile = readBoardsFile(grant.dir)
   const frameByPageId = new Map<string, { width?: number; height?: number }>()
   for (const board of boardsFile.boards) {
     for (const frame of board.frames) {

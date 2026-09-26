@@ -55,7 +55,10 @@ import { pushToast } from '@ui/components/Toast'
 import { lookupCanvasPageById, useEditorStore } from '@site/store/store'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { IMAGE_DROP_TITLE, altTextFor, reportUnlanded } from '@site/store/slices/site/imageDropActions'
-import { dropStudioAsset, type DroppedStudioAsset } from '@site/studio/dropStudioAsset'
+import { requirePublicAsset, type PublicStudioAsset } from '@site/studio/dropStudioAsset'
+import { landImageSource } from '@site/studio/landImageSource'
+import { imageSourceName, type LandableImageSource } from '@site/store/slices/site/imageDropShapes'
+import { readDroppedImageIntake } from './canvasDropIntake'
 import { svgToJsxNode } from '@site/studio/svgToJsxNode'
 import { INLINE_SVG_MAX_CHARS, insertSvgAtTarget } from './canvasSvgInsert'
 import { measureBoardDropSurfaces } from './canvasDragBoard'
@@ -176,13 +179,14 @@ export function useCanvasFileDrop({
     }
 
     const onDrop = (event: DragEvent) => {
-      const transfer = event.dataTransfer
-      if (!readDraggedFileFacts(transfer)) return
+      // Files first, then one image link (IMG-5) — `canvasDropIntake.ts`.
+      const intake = readDroppedImageIntake(event.dataTransfer)
+      if (!intake) return
       event.preventDefault()
       endPreview()
 
       const plan = planCanvasFileDrop({
-        files: Array.from(transfer?.files ?? []),
+        intake,
         point: { x: event.clientX, y: event.clientY },
         modifiers: dropModifiersOf(event),
         transform: transformRef?.current ?? null,
@@ -254,25 +258,25 @@ export function runCanvasFileDropPlan(plan: CanvasFileDropPlan): void {
   }
 
   if (plan.kind === 'canvas') {
-    if (plan.inlineSvg) void placeSvgsOnCanvas(plan.files, plan.at)
-    else void landOnCanvas(plan.files, plan.at)
+    if (plan.inlineSvg) void placeSvgsOnCanvas(fileSources(plan.sources), plan.at)
+    else void landOnCanvas(plan.sources, plan.at)
     return
   }
 
   const store = useEditorStore.getState()
   const { action } = plan
   if (action.kind === 'replace') {
-    store.replaceImageInPage(plan.pageId, action.nodeId, plan.files[0]!, paintCanvasUploadProgress)
+    store.replaceImageInPage(plan.pageId, action.nodeId, plan.sources[0]!, paintCanvasUploadProgress)
     return
   }
   if (action.kind === 'background') {
-    store.setBackgroundImageInPage(plan.pageId, action.nodeId, plan.files[0]!)
+    store.setBackgroundImageInPage(plan.pageId, action.nodeId, plan.sources[0]!)
     return
   }
   // P5-D SVG-5 — `.svg` files are written as inline `<svg>` JSX, one insert
   // each at the drop line (the paste's own write); ⌥ keeps them `<img>`s.
   if (plan.inlineSvg) {
-    plan.files.forEach((file, offset) => {
+    fileSources(plan.sources).forEach((file, offset) => {
       const target = { ok: true as const, pageId: plan.pageId, parentId: action.target.parentId, index: action.target.index + offset }
       void insertSvgAtTarget({ kind: 'file', file }, target, { undoLabel: 'Add SVG', refusalTitle: IMAGE_DROP_TITLE })
     })
@@ -282,7 +286,7 @@ export function runCanvasFileDropPlan(plan: CanvasFileDropPlan): void {
     pageId: plan.pageId,
     parentId: action.target.parentId,
     index: action.target.index,
-    files: plan.files,
+    sources: plan.sources,
     maxWidth: action.maxWidth,
     absolute: action.absolute,
     paintProgress: paintCanvasUploadProgress,
@@ -312,7 +316,12 @@ async function placeSvgsOnCanvas(files: readonly File[], at: { x: number; y: num
     const offset = index * CANVAS_DROP_CASCADE
     useEditorStore.getState().createCanvasLayer(converted.node, { x: at.x + offset, y: at.y + offset })
   }
-  if (asImages.length > 0) await landOnCanvas(asImages, at)
+  if (asImages.length > 0) await landOnCanvas(asImages.map((file) => ({ kind: 'file', file })), at)
+}
+
+/** The files of an inline-SVG plan — `inlineSvg` is only ever set when every source is a file. */
+function fileSources(sources: readonly LandableImageSource[]): File[] {
+  return sources.flatMap((source) => (source.kind === 'file' ? [source.file] : []))
 }
 
 /** How far each further image of a multi-file free-canvas drop steps from the one before, in board units (IMG-9's cascade). */
@@ -329,16 +338,18 @@ const CANVAS_DROP_CASCADE = 24
  * the frame drop's own `reportUnlanded` (a warning when some landed, an error
  * only when none did), and the rest still land.
  */
-async function landOnCanvas(files: readonly File[], at: { x: number; y: number }): Promise<void> {
+async function landOnCanvas(sources: readonly LandableImageSource[], at: { x: number; y: number }): Promise<void> {
   const failures: { name: string; message: string }[] = []
   let landedCount = 0
-  for (const [index, file] of files.entries()) {
-    let landed: DroppedStudioAsset
+  for (const [index, source] of sources.entries()) {
+    let landed: PublicStudioAsset
     try {
-      landed = await dropStudioAsset(file)
+      // No `pageRel`: a loose layer is Studio's own file, so the image is
+      // always a `public/` literal, never an import into `.studio/`.
+      landed = requirePublicAsset(await landImageSource(source))
     } catch (err) {
       console.error('[canvas-file-drop] landing a dropped image on the free canvas failed:', err)
-      failures.push({ name: file.name, message: getErrorMessage(err, 'The image could not be saved to your project.') })
+      failures.push({ name: imageSourceName(source), message: getErrorMessage(err, 'The image could not be saved to your project.') })
       continue
     }
     const size = landed.width !== null && landed.height !== null && landed.width > 0 && landed.height > 0
@@ -348,7 +359,7 @@ async function landOnCanvas(files: readonly File[], at: { x: number; y: number }
     const offset = index * CANVAS_DROP_CASCADE
     const centre = { x: at.x + offset, y: at.y + offset }
     useEditorStore.getState().createCanvasLayer(
-      { name: 'img', props: { src: landed.src, alt: altTextFor(file), ...(size ? { width: size.width, height: size.height } : {}) } },
+      { name: 'img', props: { src: landed.src, alt: altTextFor(source), ...(size ? { width: size.width, height: size.height } : {}) } },
       size ? { x: centre.x - size.width / 2, y: centre.y - size.height / 2 } : centre,
     )
   }

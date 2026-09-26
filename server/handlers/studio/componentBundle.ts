@@ -10,9 +10,9 @@
  *          for an expected condition, matching `compileProjectStyles`'s own
  *          "never throws, warnings/refusals only" contract.
  *   GET  /admin/api/studio/component-bundle?dir=<abs>&hash=<hash>
- *       Serves the built `.js` file at `url` above — same containment
- *       posture as `studioAsset.ts` (belt-and-braces realpath containment),
- *       applied to `.studio/cache/bundle-<hash>.js` specifically (which
+ *       Serves the built `.js` file at `url` above, and only when nothing
+ *       from `.studio` down to it is a link (`studioStore.ts` — the canvas
+ *       runs this file), applied to `.studio/cache/bundle-<hash>.js` specifically (which
  *       `resolveStudioAssetResponse` itself would REFUSE, since `.studio` is
  *       in `EXCLUDED_WORKSPACE_DIR_NAMES` — this route exists precisely
  *       because that endpoint is deliberately not the right tool for a
@@ -87,21 +87,21 @@
  * gap here rather than an unbounded scope expansion. See the `pkg-01`
  * STATE.md entry for what would need to be true to add it.
  */
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
-import { Type } from '@core/utils/typeboxHelpers'
+import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { sanitizePackageName } from '@core/module-engine'
 import { safeParseJson } from '@core/utils/jsonValidate'
 import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import { serveStaticFile } from '../../static'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
-import { isRealpathContained } from './workspacePackageResolve'
 import { resolveAppRoot } from './appRoot'
 import { buildPackageManifest, resolvePackageDtsEntry, resolvePackageTsxEntry } from './packageManifest'
-import type { ComponentSpec } from './packageManifestSchema'
+import { ComponentSpecSchema, type ComponentSpec } from './packageManifestSchema'
 import { resolveProjectProfile } from './projectProbe'
-import type { ProbeWarning } from './projectProfileSchema'
+import { ProbeWarningSchema, type ProbeWarning } from './projectProfileSchema'
+import { isStudioStorePathUnlinked, makeStudioStoreDir, readStudioStoreJson, statStudioStoreFile, studioStorePath, studioStoreProjectRel, writeStudioStoreJson } from './studioStore'
 import { runCappedSubprocess, minimalSubprocessEnv } from './subprocessRunner'
 import { DEFAULT_TRUST_TIER, readStudioMeta, type TrustTier } from './studioMeta'
 import type { ComponentBundleTask, ComponentBundleWorkerResult } from './componentBundleWorker'
@@ -121,7 +121,8 @@ const WORKER_MAX_STDERR_BYTES = 64 * 1024
 const WORKER_SCRIPT_PATH = join(import.meta.dir, 'componentBundleWorker.ts')
 
 /** `ComponentSpec` itself is package-agnostic (see `packageManifest.ts`'s own contract) — `pkg` is the aggregation this route's response adds on top. */
-export type BundledComponentSpec = ComponentSpec & { pkg: string }
+const BundledComponentSpecSchema = Type.Composite([ComponentSpecSchema, Type.Object({ pkg: Type.String() })])
+export type BundledComponentSpec = Static<typeof BundledComponentSpecSchema>
 
 // ---------------------------------------------------------------------------
 // Demand list — WS-3.1's `ProjectProfile.componentPackages` source only, see module doc
@@ -205,9 +206,11 @@ function workspaceReactMajor(appRootAbs: string): number | undefined {
 // Cache — content-hash keyed, `.studio/cache/bundle-<hash>.{js,json}`
 // ---------------------------------------------------------------------------
 
-function cacheFilePaths(dir: string, hash: string): { js: string; json: string } {
-  const cacheDir = join(dir, '.studio', 'cache')
-  return { js: join(cacheDir, `bundle-${hash}.js`), json: join(cacheDir, `bundle-${hash}.json`) }
+const BUNDLE_CACHE_DIR = 'cache'
+
+/** The artefact and its sidecar as `.studio` store paths (`studioStore.ts`). */
+function cacheFileRels(hash: string): { js: string; json: string } {
+  return { js: `${BUNDLE_CACHE_DIR}/bundle-${hash}.js`, json: `${BUNDLE_CACHE_DIR}/bundle-${hash}.json` }
 }
 
 function readPackageVersion(pkgJsonPath: string): string | undefined {
@@ -243,21 +246,17 @@ export function computeBundleCacheKey(dir: string, trust: TrustTier, demand: rea
   return hash.digest('hex').slice(0, 16)
 }
 
-interface BundleCacheSidecar {
-  components: BundledComponentSpec[]
-  warnings: ProbeWarning[]
-}
+const BundleCacheSidecarSchema = Type.Object({
+  components: Type.Array(BundledComponentSpecSchema),
+  warnings: Type.Array(ProbeWarningSchema),
+})
+type BundleCacheSidecar = Static<typeof BundleCacheSidecarSchema>
 
-function readBundleCacheSidecar(jsonPath: string): BundleCacheSidecar | undefined {
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(jsonPath, 'utf8'))
-    if (!parsed || typeof parsed !== 'object') return undefined
-    const { components, warnings } = parsed as Record<string, unknown>
-    if (!Array.isArray(components) || !Array.isArray(warnings)) return undefined
-    return { components: components as BundledComponentSpec[], warnings: warnings as ProbeWarning[] }
-  } catch {
-    return undefined
-  }
+/** The cached sidecar for `hash`, or `null` when it or its artefact is absent, malformed, or reached through a link. */
+function readBundleCacheSidecar(dir: string, hash: string): BundleCacheSidecar | null {
+  const rels = cacheFileRels(hash)
+  if (statStudioStoreFile(dir, rels.js) === null) return null
+  return readStudioStoreJson(dir, rels.json, BundleCacheSidecarSchema, null)
 }
 
 function bundleUrl(dir: string, hash: string): string {
@@ -331,10 +330,11 @@ export async function tryServeStudioComponentBundle(req: Request, url: URL, path
       const hash = url.searchParams.get('hash')
       if (!hash || !BUNDLE_HASH_RE.test(hash)) return new Response('Not found', { status: 404 })
 
-      const { js } = cacheFilePaths(dir, hash)
-      if (!isRealpathContained(js, dir)) return new Response('Not found', { status: 404 }) // belt-and-braces, same posture as studioAsset.ts
+      // The canvas runs this file: never serve one a link put there (`studioStore.ts`).
+      const { js } = cacheFileRels(hash)
+      if (!isStudioStorePathUnlinked(dir, js)) return new Response('Not found', { status: 404 })
 
-      const served = await serveStaticFile(dir, `/.studio/cache/bundle-${hash}.js`, req)
+      const served = await serveStaticFile(dir, `/${studioStoreProjectRel(js)}`, req)
       return served ?? new Response('Not found', { status: 404 })
     } catch (err) {
       rethrowProjectDirRefusal(err)
@@ -395,11 +395,9 @@ export async function tryServeStudioComponentBundle(req: Request, url: URL, path
       }
 
       const hash = computeBundleCacheKey(appRootAbs, trust, demand)
-      const { js, json } = cacheFilePaths(dir, hash)
-      if (existsSync(js) && existsSync(json)) {
-        const cached = readBundleCacheSidecar(json)
-        if (cached) return jsonResponse({ ok: true, url: bundleUrl(dir, hash), hash, components: cached.components, warnings: cached.warnings })
-      }
+      const rels = cacheFileRels(hash)
+      const cached = readBundleCacheSidecar(dir, hash)
+      if (cached) return jsonResponse({ ok: true, url: bundleUrl(dir, hash), hash, components: cached.components, warnings: cached.warnings })
 
       const warnings: ProbeWarning[] = []
       const manifestsByPkg = new Map<string, ComponentSpec[]>()
@@ -413,8 +411,13 @@ export async function tryServeStudioComponentBundle(req: Request, url: URL, path
         return jsonResponse({ ok: false, code: 'no-components-found', message: 'No demanded package exposed a component this manifest extractor could find.', warnings })
       }
 
-      const cacheDir = join(dir, '.studio', 'cache')
-      mkdirSync(cacheDir, { recursive: true })
+      // Throws `StudioStoreLinkError` for a linked `.studio/cache`; the worker
+      // then writes the artefact to a path this check has approved.
+      makeStudioStoreDir(dir, BUNDLE_CACHE_DIR)
+      if (!isStudioStorePathUnlinked(dir, rels.js) || !isStudioStorePathUnlinked(dir, rels.json)) {
+        return jsonResponse({ ok: false, code: 'component-bundle-failed', message: "This project's .studio/cache contains a link, so Studio will not write a bundle into it.", warnings })
+      }
+      const js = studioStorePath(dir, rels.js)
       // `approot-01` — the generated barrel MUST live inside the app root's
       // own directory tree: `Bun.build` resolves a bare specifier
       // (`from '@acme/ui'`) by walking UP from the entry file's own location
@@ -460,7 +463,7 @@ export async function tryServeStudioComponentBundle(req: Request, url: URL, path
       }
 
       const components = flattenBundledComponents(manifestsByPkg)
-      writeFileSync(json, JSON.stringify({ components, warnings } satisfies BundleCacheSidecar))
+      writeStudioStoreJson(dir, rels.json, { components, warnings } satisfies BundleCacheSidecar)
 
       return jsonResponse({ ok: true, url: bundleUrl(dir, hash), hash, components, warnings })
     } catch (err) {

@@ -35,7 +35,7 @@ import { __resetToastBusForTests, subscribeToasts, type Toast } from '@ui/compon
 import { makeNode, makePage, makeSite } from '../../../../../__tests__/fixtures'
 import { resetStructuralCommitQueue } from '../structuralCommitQueue'
 import { setStudioLoadedDir } from '../studioWorkspaceDir'
-import { detachInstance, extractInstanceCopy, swapInstance } from '../studioSaveRequests'
+import { extractInstanceCopy, swapInstance } from '../studioSaveRequests'
 
 const PAGE_ID = 'home'
 const ROOT_ID = 'pages/Home.tsx:4:5'
@@ -596,29 +596,12 @@ describe('a structural source write is one undo step', () => {
   })
 
   /**
-   * DET-4 — the Properties panel's Detach / Swap / Duplicate post outside
+   * DET-4 — the Properties panel's Swap / Duplicate post outside
    * `commitStructural` and used to push NO entry: ⌘Z after one undid whatever
    * came before it. Each now pushes one, whose ⌘Z restores the write's own
-   * journal entry and whose ⌘⇧Z re-posts the gesture.
+   * journal entry and whose ⌘⇧Z re-posts the gesture. (Detach is P5-C's
+   * `detachInstances`, through `commitStructural`: `instanceActions.test.ts`.)
    */
-  it('panel Detach: ⌘Z posts the journal restore, ⌘⇧Z posts the detach again', async () => {
-    unmountReloader = mountReloader()
-    stubFetch([{ undoToken: TOKEN_A }, { pages: [pageBefore()] }, { undoToken: TOKEN_B }])
-
-    const result = await detachInstance(ROW_ID)
-    expect(result.ok).toBe(true)
-    expect(useEditorStore.getState().canUndo).toBe(true)
-
-    useEditorStore.getState().undo()
-    await waitFor(() => saveCalls.length === 2)
-    expect(lastEdits()).toEqual([{ kind: 'restore', nodeId: `undo-journal:${TOKEN_A}`, token: TOKEN_A }])
-    await waitFor(() => useEditorStore.getState().canRedo)
-
-    useEditorStore.getState().redo()
-    await waitFor(() => saveCalls.length === 3)
-    expect(lastEdits()).toEqual([{ kind: 'detach', nodeId: ROW_ID }])
-  })
-
   it('panel Swap: ⌘Z posts the journal restore, ⌘⇧Z posts the same swap again', async () => {
     unmountReloader = mountReloader()
     stubFetch([{ undoToken: TOKEN_A }, { pages: [pageBefore()] }, { undoToken: TOKEN_B }])
@@ -653,11 +636,12 @@ describe('a structural source write is one undo step', () => {
   it('an instance rewrite the server could not journal still takes a step: ⌘Z says so instead of passing over it silently', async () => {
     unmountReloader = mountReloader()
     stubFetch([{}])
-    expect((await detachInstance(ROW_ID)).ok).toBe(true)
+    const target = { newComponentName: 'Tile', newComponentSource: 'local' as const, newComponentFile: 'components/Tile.tsx' }
+    expect((await swapInstance(ROW_ID, target)).ok).toBe(true)
     expect(useEditorStore.getState().canUndo).toBe(true)
 
     useEditorStore.getState().undo()
-    await waitFor(() => currentToasts().some((toast) => toast.title.includes('Detach instance')))
+    await waitFor(() => currentToasts().some((toast) => toast.title.includes('Swap to Tile')))
     expect(saveCalls).toHaveLength(1)
   })
 })

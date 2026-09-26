@@ -81,6 +81,8 @@ export {
 } from './componentSources'
 export type { ComponentSource, ExportedDeclaration, WorkspaceProjectWarning } from './componentSources'
 export { EolPreservingFileSystem, eolFileSystemOf, projectLineEnding } from './eolFileSystem'
+export { writeFileAtomic } from './atomicFileWrite'
+export { createSourceFileExclusive, withSourceWriteHook, writeSourceFile, type SourceWriteHook } from './sourceWriteHook'
 export { LITERAL_FINGERPRINT_LABEL, jsxElementFingerprint, literalFingerprint } from './sourceFingerprint'
 export { isLiteralJsxAttribute } from './jsxLiteralAttribute'
 export {
@@ -93,7 +95,8 @@ export { applyAsyncServerComponentFinding, composeAppRouterRoute } from './nextA
 export type { ComposeAppRouterRouteOptions, ComposeAppRouterRouteResult } from './nextAppLayout'
 export { createEvalScope, createPageEvalBudget, evaluateExpression } from './staticEval'
 export type { EvalScope, PageEvalBudget, StaticEvalOptions, StaticValue, ValueOrigin } from './staticEval'
-export { CLASS_NAME_JOIN_BUILTIN_NAMES } from './staticEvalCalls'
+export { CLASS_NAME_JOIN_BUILTIN_NAMES, isContextReaderHook } from './staticEvalCalls'
+export { reactExportNameOf } from './reactImports'
 export { CANONICAL_JSX_RULES, canonicalRuleDef, checkCanonicalJsx, summarizeCanonicalFindings } from './canonicalCheck'
 export type {
   CanonicalCheckInput,

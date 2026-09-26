@@ -1,8 +1,9 @@
 /**
  * useCanvasLayerCommandKeys — the `node` rung's handler for P5-E's layer
  * commands: ⌥A ⌥D ⌥W ⌥S ⌥H ⌥V align (IX-20), ⌘⇧] / ⌘⇧[ front / back (IX-9),
- * ⇧A flex layout (IX-10), ⌘⌥C / ⌘⌥V copy / paste style (IX-props), and
- * P5-F's quick styles: 0–9 opacity, ⇧H / ⇧V flip (`layerQuickStyles.ts`).
+ * ⇧A flex layout (IX-10), ⌘⌥C / ⌘⌥V copy / paste style (IX-props),
+ * P5-F's quick styles: 0–9 opacity, ⇧H / ⇧V flip (`layerQuickStyles.ts`),
+ * and P5-C's ⌘⌥B detach instance (the store's `detachInstances`).
  *
  * Scoped by INTENT (a layer is selected), like Delete in
  * `useCanvasNodeShortcuts`, so the keys work after a click into the
@@ -34,6 +35,12 @@ function commandFor(event: KeyboardEvent): (() => void) | null {
   if (getKeybindingForCommand('layers.toggleFlexLayout')?.match(event)) return () => void toggleFlexLayout()
   if (getKeybindingForCommand('layers.copyStyle')?.match(event)) return copySelectionStyle
   if (getKeybindingForCommand('layers.pasteStyle')?.match(event)) return pasteSelectionStyle
+  if (getKeybindingForCommand('layers.detachInstance')?.match(event)) {
+    return () => {
+      const state = useEditorStore.getState()
+      void state.detachInstances(state.selectedNodeIds)
+    }
+  }
   if (getKeybindingForCommand('layers.flipHorizontal')?.match(event)) return () => flipSelection('x')
   if (getKeybindingForCommand('layers.flipVertical')?.match(event)) return () => flipSelection('y')
   if (getKeybindingForCommand('layers.opacity')?.match(event)) {

@@ -122,6 +122,9 @@ const SCRATCH_FILE = /(\.sw[a-p]x?$)|(~$)|(^\.#)|(___jb_(tmp|old)___$)|(^4913$)|
 /** The one directory under an excluded one that is still app content (P5-G — spelled once, in `@core/studio-board`). */
 const STUDIO_CANVAS_DIR = CANVAS_LAYER_DIR
 
+/** Its parent (`.studio`), which the walk enters only to reach it. */
+const STUDIO_CANVAS_PARENT = STUDIO_CANVAS_DIR.slice(0, STUDIO_CANVAS_DIR.lastIndexOf('/'))
+
 /** Whether a change to the FILE at `rel` is reported at all — see this module's doc. */
 export function isWatchedProjectPath(rel: string): boolean {
   if (rel === '') return false
@@ -133,7 +136,7 @@ export function isWatchedProjectPath(rel: string): boolean {
 
 /** Whether the walk enters the DIRECTORY at `rel`. `.studio` is entered only to reach `.studio/canvas`. */
 function isWalkedDirectory(rel: string): boolean {
-  if (rel === '.studio' || rel === STUDIO_CANVAS_DIR) return true
+  if (rel === STUDIO_CANVAS_PARENT || rel === STUDIO_CANVAS_DIR) return true
   const underCanvas = rel.startsWith(`${STUDIO_CANVAS_DIR}/`)
   return !rel
     .split('/')

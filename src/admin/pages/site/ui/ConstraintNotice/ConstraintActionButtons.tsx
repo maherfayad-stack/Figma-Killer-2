@@ -37,6 +37,11 @@ function makeParentRelative(nodeId: string): void {
   useEditorStore.getState().setNodeInlineStyles(nodeId, { position: 'relative' })
 }
 
+/** P5-C — the one Detach action, injected for `makeParentRelative`'s reason. */
+function detachInstances(nodeIds: readonly string[]) {
+  return useEditorStore.getState().detachInstances(nodeIds)
+}
+
 interface ConstraintActionButtonsProps {
   constraint: EditConstraint
   /**
@@ -72,6 +77,7 @@ export function ConstraintActionButtons({ constraint, nodeId, onActionSettled, d
           nodeId,
           openSource: jumpToSource,
           makeParentRelative,
+          detachInstances,
           ...(duplicateIntoFrame ? { duplicateIntoFrame } : {}),
           ...(onActionSettled ? { onSettled: (ok: boolean) => onActionSettled(action, ok) } : {}),
         })

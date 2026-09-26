@@ -1,7 +1,9 @@
 /**
- * dropStudioAsset — the browser half of `POST /admin/api/studio/asset-drop`:
- * land an image that is about to be referenced by a LITERAL URL, and get that
- * URL back. Three callers: a file dropped on a frame (D2 G15), the
+ * dropStudioAsset — the browser half of `POST /admin/api/studio/asset-drop`
+ * (and of its URL twin, `asset-drop-url`, IMG-5): land an image and get back
+ * how the source should reference it — a LITERAL URL, or (IMG-10, when the
+ * page it is dropped into imports its images) the file an import should
+ * name. Callers: every image gesture through `landImageSource.ts`, the
  * inspector's "Replace image" on an `<img>` with a string `src`, and the Fill
  * section's image upload.
  *
@@ -20,32 +22,36 @@
  * answers "which directory in this project can back a literal, and what is
  * the literal" and this call carries that answer back.
  */
-import { apiUploadRequest } from '@core/http'
+import { apiRequest, apiUploadRequest } from '@core/http'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { studioWriteDir } from './studioWorkspaceDir'
 
-/**
- * The landing in `public/`, referenced by `src`. IMG-10's import convention
- * will join this as a union member discriminated by `mode` with no `src`, so
- * every caller that reads `src` without checking `mode` stops compiling then.
- */
-const AssetDropPublicResponseSchema = Type.Object({
-  ok: Type.Literal(true),
-  mode: Type.Literal('public'),
+const LandingFields = {
   /** Workspace-relative POSIX path of the file the image lives in. */
   relPath: Type.String(),
-  /** The literal an `<img src>` or CSS `url()` uses, e.g. `/photo.png`. Written verbatim, never re-derived. */
-  src: Type.String(),
   /** Intrinsic size from the file's header; `null` when the format does not say. */
   width: Type.Union([Type.Number(), Type.Null()]),
   height: Type.Union([Type.Number(), Type.Null()]),
-  /** True when identical bytes were already in `public/` and that file was reused. */
+  /** True when identical bytes were already there and that file was reused. */
   deduped: Type.Boolean(),
-})
+}
 
-const AssetDropResponseSchema = AssetDropPublicResponseSchema
+/**
+ * The two answers a landing can give, discriminated by `mode` (IMG-10,
+ * OD-12). `public`: the file is in `public/` and `src` is the literal an
+ * `<img src>` or CSS `url()` writes verbatim. `import`: the project imports
+ * its images, so the file landed beside the ones it already imports and has
+ * NO literal — the insert writes `src={__assetImport}` and the server spells
+ * the import. A caller that reads `src` has to check `mode` first; that is the
+ * point of the union.
+ */
+const AssetDropResponseSchema = Type.Union([
+  Type.Object({ ok: Type.Literal(true), mode: Type.Literal('public'), src: Type.String(), ...LandingFields }),
+  Type.Object({ ok: Type.Literal(true), mode: Type.Literal('import'), ...LandingFields }),
+])
 
 export type DroppedStudioAsset = Static<typeof AssetDropResponseSchema>
+export type PublicStudioAsset = Extract<DroppedStudioAsset, { mode: 'public' }>
 
 export interface DropStudioAssetOptions {
   /**
@@ -55,6 +61,15 @@ export interface DropStudioAssetOptions {
    */
   onProgress?: (fraction: number) => void
   signal?: AbortSignal
+  /**
+   * IMG-10 — the workspace-relative source file the image is about to be
+   * written INTO. Present only for an element insert: it is what lets the
+   * server read that file's own convention (import vs. `public/`) and answer
+   * `mode: 'import'`. Absent — a replace of a literal `src`, a background
+   * `url()`, the free canvas — the answer is always `public`, because each of
+   * those writes a literal.
+   */
+  pageRel?: string
 }
 
 /**
@@ -70,6 +85,7 @@ export async function dropStudioAsset(file: File, options: DropStudioAssetOption
   const formData = new FormData()
   const dir = studioWriteDir()
   if (dir) formData.append('dir', dir)
+  if (options.pageRel) formData.append('pageRel', options.pageRel)
   formData.append('file', file, file.name)
 
   return apiUploadRequest('/admin/api/studio/asset-drop', {
@@ -78,4 +94,36 @@ export async function dropStudioAsset(file: File, options: DropStudioAssetOption
     ...(options.onProgress ? { onProgress: options.onProgress } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
   })
+}
+
+/**
+ * {@link dropStudioAsset} for an image dragged out of another browser tab
+ * (IMG-5, OD-13): the server fetches `url` through the SSRF guard
+ * (`asset-drop-url.ts`) and lands it exactly as a dropped file lands. The
+ * browser never fetches it — a cross-origin image is unreadable here anyway,
+ * and a fetch from the admin origin would carry nothing the server's does not.
+ */
+export async function dropStudioAssetUrl(
+  url: string,
+  options: Pick<DropStudioAssetOptions, 'signal' | 'pageRel'> = {},
+): Promise<DroppedStudioAsset> {
+  const dir = studioWriteDir()
+  return apiRequest('/admin/api/studio/asset-drop-url', {
+    method: 'POST',
+    body: { url, ...(dir ? { dir } : {}), ...(options.pageRel ? { pageRel: options.pageRel } : {}) },
+    schema: AssetDropResponseSchema,
+    ...(options.signal ? { signal: options.signal } : {}),
+  })
+}
+
+/**
+ * A landing that has to be a literal: the replace of a string `src`, a
+ * background `url()`, a loose layer. Every one of those calls omits
+ * `pageRel`, so the server can only answer `public` — this turns that
+ * contract into a type, and an impossible answer into a loud error instead of
+ * a `src` of `undefined` written into someone's file.
+ */
+export function requirePublicAsset(asset: DroppedStudioAsset): PublicStudioAsset {
+  if (asset.mode !== 'public') throw new Error('The server answered an import landing for a literal write.')
+  return asset
 }

@@ -44,6 +44,7 @@ const SaveResponseSchema = Type.Object({
   touchedFiles: Type.Optional(Type.Array(Type.String())),
   refusals: Type.Optional(Type.Array(Type.Object({ nodeId: Type.String(), reason: Type.String(), message: Type.String() }))),
   fingerprints: Type.Optional(Type.Array(Type.Object({ nodeId: Type.String(), fingerprint: Type.String() }))),
+  detachDetails: Type.Optional(Type.Array(Type.Object({ nodeId: Type.String(), written: Type.Boolean(), lossy: Type.Boolean() }))),
 })
 
 beforeAll(async () => {
@@ -143,6 +144,23 @@ describe('POST /admin/api/studio/save — the undo journal crosses the route (P3
     expect(body.written).toBe(1)
     expect(body.undoToken).toBeUndefined()
     expect(fs.existsSync(path.join(projectDir, '.studio', 'undo-journal'))).toBe(false)
+  })
+})
+
+describe('POST /admin/api/studio/save — a detach dry run crosses the route (P5-C)', () => {
+  it('forwards detachDetails for a held detach, and writes nothing', async () => {
+    fs.writeFileSync(
+      path.join(projectDir, 'pages', 'Status.tsx'),
+      ['export function Status({ busy }: { busy?: boolean }) {', '  if (busy) return <p>Busy</p>', '  return <p>Done</p>', '}', ''].join('\n'),
+      'utf8',
+    )
+    const page = PAGE.replace("import { Badge } from './Badge'", "import { Status } from './Status'").replace('<Badge label="new" />', '<Status />')
+    fs.writeFileSync(homeFile(), page, 'utf8')
+    const nodeId = nodeIdOf(page, 'Status')
+    const body = await save([{ kind: 'detach', nodeId, dryRun: 'if-lossy' }])
+    expect(body.written).toBe(0)
+    expect(body.detachDetails).toEqual([expect.objectContaining({ nodeId, written: false, lossy: true })])
+    expect(fs.readFileSync(homeFile(), 'utf8')).toBe(page)
   })
 })
 

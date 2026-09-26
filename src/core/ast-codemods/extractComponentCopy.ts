@@ -13,9 +13,9 @@
  * diff — only the export/file identity changes.
  */
 import * as path from 'node:path'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { NewLineKind, Node, Project, QuoteKind, type SourceFile } from 'ts-morph'
-import { EolPreservingFileSystem, createWorkspaceProject, isWorkspaceWritablePath } from '@core/page-parser'
+import { EolPreservingFileSystem, createSourceFileExclusive, createWorkspaceProject, isWorkspaceWritablePath } from '@core/page-parser'
 import { findJsxElementAtLocationOrThrow, loadSourceFile } from './locateJsxElement'
 import { resolveComponentCallSite } from './resolveComponentCallSite'
 import { relativeSpecifier, removeImportIfLastUsage } from './importReconcile'
@@ -105,7 +105,7 @@ export function extractComponentCopy(params: ExtractComponentCopyParams): Extrac
   // name, and its `export default`/named export form) inside the COPY only —
   // the original file and every other call site are untouched.
   const originalText = readFileSync(targetPath, 'utf8')
-  writeFileSync(newPath, originalText, { encoding: 'utf8', flag: 'wx' })
+  createSourceFileExclusive(newPath, originalText)
 
   const copyProject = new Project({
     useInMemoryFileSystem: false,

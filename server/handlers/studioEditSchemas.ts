@@ -247,6 +247,36 @@ const AssetEditSchema = Type.Object({
 const DetachEditSchema = Type.Object({
   kind: Type.Literal('detach'),
   nodeId: Type.String(),
+  /**
+   * P5-C (DET-5) — run the whole detach, gate included, and write nothing:
+   * `'always'` (what would it do?) or `'if-lossy'` (write it only when
+   * nothing is lost — see {@link StudioDetachDetail}). The editor's one
+   * `detachInstances` action asks first this way; an agent that omits it
+   * detaches outright, as before.
+   */
+  dryRun: Type.Optional(Type.Union([Type.Literal('always'), Type.Literal('if-lossy')])),
+})
+
+/**
+ * P5-C (DET-7) — "Expose as prop": the literal `target` of an element inside
+ * a component's markup becomes an optional prop of that component whose
+ * default IS the literal (`exposeLiteralAsProp`), so every other instance
+ * renders byte-identical; `value`, when given, is written at this one call
+ * site. `nodeId` is the element's inlined id, exactly one call site deep
+ * (`page~component:line:col`) — the call site is its head, and the codemod
+ * checks the element really is that component's. Two files, one gesture,
+ * journaled (⌘Z is `restore`).
+ */
+const ExposePropEditSchema = Type.Object({
+  kind: Type.Literal('expose-prop'),
+  nodeId: Type.String(),
+  target: Type.Union([
+    Type.Object({ kind: Type.Literal('text') }),
+    Type.Object({ kind: Type.Literal('attribute'), name: Type.String({ pattern: '^[A-Za-z_$][A-Za-z0-9_$:-]*$', maxLength: 64 }) }),
+    Type.Object({ kind: Type.Literal('style'), property: Type.String({ pattern: '^[A-Za-z_$][A-Za-z0-9_$-]*$', maxLength: 64 }) }),
+  ]),
+  propName: Type.String({ pattern: '^[A-Za-z_$][A-Za-z0-9_$]*$', maxLength: 64 }),
+  value: Type.Optional(Type.Union([Type.String(), Type.Number(), Type.Boolean()])),
 })
 
 /**
@@ -292,6 +322,7 @@ export const StudioEditSchema = Type.Union([
   TagEditSchema,
   AssetEditSchema,
   DetachEditSchema,
+  ExposePropEditSchema,
   SwapEditSchema,
   RestoreEditSchema,
   ...StructuralEditSchemas,
@@ -327,6 +358,22 @@ export interface StudioEditSwapDetail {
 }
 
 /**
+ * P5-C (DET-5) — what one `detach` did, or would do: `written` (a `dryRun`
+ * held it back when `false`), and whether it LOSES something the editor asks
+ * about before writing — other rendered states (`branchNote`), a context hook
+ * written into the enclosing component (`movedHooks`, DET-3), or a call site
+ * every `.map` row shares (`perRow`). Reported for every `detach` that did
+ * not refuse.
+ */
+export interface StudioDetachDetail {
+  written: boolean
+  lossy: boolean
+  branchNote?: string
+  movedHooks: string[]
+  perRow: boolean
+}
+
+/**
  * `applyStudioEdit`'s result. `applied: false` means "nothing reached disk"
  * — for most kinds that's "no writable source location, nothing to do" (a
  * synthetic node, an unresolvable asset target), the existing `skipped`
@@ -359,6 +406,8 @@ export interface StudioEditApplyOutcome {
    */
   unwritable?: StudioEditUnwritableReason
   swapDetail?: StudioEditSwapDetail
+  /** P5-C — every `detach` that did not refuse; `written: false` is a held dry run, counted as neither written nor skipped. */
+  detachDetail?: StudioDetachDetail
   createdStylesheet?: { file: string }
   promoteDetail?: StudioPromoteComponentDetail
   addSlotPropDetail?: StudioAddSlotPropDetail
@@ -460,6 +509,8 @@ export interface StudioEditBatchResult {
   refusals: StudioEditRefusal[]
   /** WS-4.5 — every `swap` edit that SUCCEEDED, with what changed on the call site. Empty array when none did. */
   swapDetails: (StudioEditSwapDetail & { nodeId: string })[]
+  /** P5-C (DET-5) — every `detach` edit that did not refuse, written or held by its `dryRun` (`StudioDetachDetail`). Empty when none. */
+  detachDetails: (StudioDetachDetail & { nodeId: string })[]
   /**
    * Track B1 — every `css`/`create` edit that SUCCEEDED, with the
    * workspace-relative stylesheet path the server actually invented.

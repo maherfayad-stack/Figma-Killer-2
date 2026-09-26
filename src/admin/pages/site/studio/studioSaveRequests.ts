@@ -92,6 +92,22 @@ export const StudioSaveResponseSchema = Type.Object({
     unfilledRequiredProps: Type.Array(Type.String()),
   }))),
   /**
+   * P5-C (DET-5) — every `detach` that did not refuse, written or held back
+   * by its `dryRun`: whether it loses other rendered states (`branchNote`),
+   * writes a context hook into the enclosing component (`movedHooks`), or
+   * changes every `.map` row (`perRow`). `detachInstances` builds its
+   * pre-commit confirm from this. `Type.Optional`, same tolerant-rollout
+   * reasoning as the fields above.
+   */
+  detachDetails: Type.Optional(Type.Array(Type.Object({
+    nodeId: Type.String(),
+    written: Type.Boolean(),
+    lossy: Type.Boolean(),
+    branchNote: Type.Optional(Type.String()),
+    movedHooks: Type.Array(Type.String()),
+    perRow: Type.Boolean(),
+  }))),
+  /**
    * Track B1 — every `css`/`create` edit in the batch that SUCCEEDED, with
    * the workspace-relative stylesheet path the server actually invented
    * (mirrors `swapDetails` for the "new file" case). `Type.Optional`, same
@@ -283,7 +299,7 @@ export async function postEdits(
 }
 
 /**
- * instance-ui-01 — the outcome of a single `detach`/`swap` edit, as reported
+ * instance-ui-01 — the outcome of a single `swap` edit, as reported
  * to the Properties panel. Mirrors the server's `StudioEditRefusal` /
  * `StudioEditSwapDetail` shapes (`server/handlers/studioWriteback.ts`)
  * one-for-one, without importing them — same "browser/server agree on the
@@ -292,30 +308,6 @@ export async function postEdits(
 export type InstanceCodemodResult =
   | { ok: true; swapDetail?: { removedProps: string[]; unfilledRequiredProps: string[] } }
   | { ok: false; reason: string; message: string }
-
-/**
- * WS-4.4 — the Properties panel's Detach action. Detach is a deliberate,
- * one-shot structural rewrite (replace the call site with its own inlined
- * JSX), not a value the diff loop's "what did the user type" model fits.
- *
- * A refusal (`uses-hooks`, `maps-over-props`, …) is a NAMED, expected
- * outcome — returned to the caller rather than just toasted, so the panel
- * can offer the `extractInstanceCopy` escape hatch inline for the specific
- * reasons that warrant it. `detach` always shifts lines and is always
- * reported `sharedComponents` by the server, so a successful write always
- * reloads the board — the detached node's OWN id is about to become stale.
- *
- * DET-4 — ⌘Z puts the call site back through the undo journal
- * (`journaledUndo.ts`); ⌘⇧Z detaches again.
- */
-export async function detachInstance(nodeId: string): Promise<InstanceCodemodResult> {
-  const edit = { kind: 'detach', nodeId }
-  const result = await postOneEdit(edit)
-  const refusal = (result.refusals ?? [])[0]
-  if (refusal) return { ok: false, reason: refusal.reason, message: refusal.message }
-  if (result.written > 0) requestCmsSiteReload({ structuralOutcome: journaledWriteOutcome('Detach instance', [edit], result.undoToken) })
-  return { ok: true }
-}
 
 /**
  * WS-4.5 — the Properties panel's Swap action. On success, `swapDetail` names
@@ -357,6 +349,8 @@ export type InsertPropValue =
   | boolean
   | null
   | { __jsx: SlotJsxNode }
+  /** P5-B3 (IMG-10) — an image import by workspace path; the server writes `import x from '…'` and `prop={x}`. */
+  | { __assetImport: string }
   | InsertPropValue[]
   | { [key: string]: InsertPropValue }
 

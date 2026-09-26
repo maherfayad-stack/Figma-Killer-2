@@ -30,39 +30,6 @@
     margin-inline-end: var(--inspector-space-2xs);
 }
 
-/* ── Detach refusal notice — same shape as SharedComponentNotice, danger tone ── */
-
-.refusalNotice {
-    display: flex;
-    gap: var(--inspector-space-2xs);
-    align-items: flex-start;
-    margin-bottom: var(--inspector-space-m);
-    padding: var(--inspector-space-xs) var(--inspector-space-s);
-    border-radius: var(--radius);
-    background: var(--danger-10);
-}
-
-.refusalIcon {
-    flex-shrink: 0;
-    color: var(--danger-light);
-    align-self: baseline;
-}
-
-.refusalBody {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--inspector-space-2xs);
-    min-width: 0;
-}
-
-.refusalText {
-    margin: 0;
-    font-size: var(--text-2xs);
-    line-height: 1.4;
-    color: var(--danger-text);
-}
-
 /* ── Swap picker (inside its InspectorPopover) ───────────────────────────── */
 
 .swapPicker {

@@ -45,10 +45,11 @@
  */
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
-import { canWriteInlineStyleForModule, isSourceDerivedNodeId, styleValueKey, type PageNode } from '@core/page-tree'
+import { canWriteInlineStyleForModule, decodeSourceNodeId, isSourceDerivedNodeId, styleValueKey, type PageNode } from '@core/page-tree'
 import { backgroundModelPatch, insertBackgroundLayer, parseBackgroundLayers } from '@site/panels/PropertiesPanel/backgroundLayers'
 import { wrapUrlPayload } from '@site/panels/PropertiesPanel/gradientValue'
-import { dropStudioAsset, type DroppedStudioAsset } from '@site/studio/dropStudioAsset'
+import { requirePublicAsset, type DroppedStudioAsset } from '@site/studio/dropStudioAsset'
+import { imageSourcePreview, landImageSource, type ImageSourcePreview } from '@site/studio/landImageSource'
 import { studioAssetRelFromPreviewUrl } from '@site/studio/projectAssets'
 import { beginStructuralCommit, deferWhileStructuralCommitInFlight, endStructuralCommit } from '@site/studio/structuralCommitQueue'
 import { commitStudioAssetReplace, commitStudioInsert } from '@site/studio/studioStructuralCommits'
@@ -60,7 +61,9 @@ import {
   UPLOADING_ATTRIBUTE,
   absolutePlacementStyle,
   clampImageSize,
+  imageSourceName,
   type ImageDropRequest,
+  type ImageDropSource,
 } from './imageDropShapes'
 import { activateGesturePage, findGesturePage } from './gesturePage'
 import type { SiteSlice, SiteSliceHelpers } from './types'
@@ -71,13 +74,14 @@ type ImageDropActions = Pick<SiteSlice, 'dropImagesIntoPage' | 'replaceImageInPa
 export const IMAGE_DROP_TITLE = 'Cannot add that image'
 
 /**
- * The `alt` a dropped image starts with: its own file name without the
- * extension. A placeholder the inspector fixes — but an `<img>` with NO `alt`
- * is a real accessibility defect written into someone's repository, and an
- * empty one asserts the image is decorative, which Studio cannot know.
+ * The `alt` a dropped image starts with: its own name without the extension
+ * (`imageSourceName` — a file's name, a URL's last path segment, a project
+ * file's base name). A placeholder the inspector fixes — but an `<img>` with
+ * NO `alt` is a real accessibility defect written into someone's repository,
+ * and an empty one asserts the image is decorative, which Studio cannot know.
  */
-export function altTextFor(file: File): string {
-  const base = file.name.replace(/\.[^./\\]+$/, '').trim()
+export function altTextFor(source: ImageDropSource): string {
+  const base = imageSourceName(source).replace(/\.[^./\\]+$/, '').trim()
   return base.length > 0 ? base : 'Image'
 }
 
@@ -128,7 +132,7 @@ export function createImageDropActions(helpers: SiteSliceHelpers): ImageDropActi
       ) {
         return
       }
-      if (drop.files.length === 0) return
+      if (drop.sources.length === 0) return
 
       const tree = findGesturePage(get, drop.pageId)
       if (!tree) return
@@ -156,12 +160,13 @@ export function createImageDropActions(helpers: SiteSliceHelpers): ImageDropActi
       void landAndInsert(helpers, drop, commit)
     },
 
-    replaceImageInPage: (pageId, nodeId, file, paintProgress) => {
+    replaceImageInPage: (pageId, nodeId, source, paintProgress) => {
       const tree = findGesturePage(get, pageId)
       const node = tree?.nodes[nodeId]
       if (!tree || !node) return
       activateGesturePage(get, pageId)
 
+      const name = imageSourceName(source)
       void (async () => {
         const onProgress = (fraction: number) => paintProgress?.(nodeId, fraction)
         try {
@@ -171,11 +176,19 @@ export function createImageDropActions(helpers: SiteSliceHelpers): ImageDropActi
             // the project's own asset folder stays where it was.
             const previous = typeof node.props.src === 'string' ? studioAssetRelFromPreviewUrl(node.props.src) : null
             if (!previous) {
-              reportUnlanded([{ name: file.name, message: 'Studio could not tell which file this image imports, so it left the import alone.' }], 0)
+              reportUnlanded([{ name, message: 'Studio could not tell which file this image imports, so it left the import alone.' }], 0)
+              return
+            }
+            if (source.kind !== 'file') {
+              // The fetch route lands only where a DROP lands (public/, or the
+              // project's import folder); it takes no directory from the
+              // browser, by design. Repointing this import needs the file
+              // beside the one it names, so the honest answer is to ask for it.
+              reportUnlanded([{ name, message: 'This image is imported from a file, so Studio needs the image itself. Save it from the other tab, then drop the file here.' }], 0)
               return
             }
             const targetDir = previous.includes('/') ? previous.slice(0, previous.lastIndexOf('/')) : undefined
-            const uploaded = await uploadStudioAsset(file, { ...(targetDir ? { targetDir } : {}), onProgress })
+            const uploaded = await uploadStudioAsset(source.file, { ...(targetDir ? { targetDir } : {}), onProgress })
             const origin = node.assetOrigin
             await commitStudioAssetReplace(`${origin.rel}:${origin.line}:${origin.col}`, uploaded.relPath, previous)
             return
@@ -183,18 +196,18 @@ export function createImageDropActions(helpers: SiteSliceHelpers): ImageDropActi
           // A literal `src="/old.png"`: the new file lands in `public/` and
           // its served URL replaces the literal through the ordinary value
           // path — one history entry, one autosaved `prop` write.
-          const landed = await dropStudioAsset(file, { onProgress })
+          const landed = requirePublicAsset(await landImageSource(source, { onProgress }))
           get().updateNodeProps(nodeId, { src: landed.src })
         } catch (err) {
           console.error('[image-drop] replacing an image failed:', err)
-          reportUnlanded([{ name: file.name, message: getErrorMessage(err, 'The image could not be saved to your project.') }], 0)
+          reportUnlanded([{ name, message: getErrorMessage(err, 'The image could not be saved to your project.') }], 0)
         } finally {
           paintProgress?.(nodeId, null)
         }
       })()
     },
 
-    setBackgroundImageInPage: (pageId, nodeId, file) => {
+    setBackgroundImageInPage: (pageId, nodeId, source) => {
       const tree = findGesturePage(get, pageId)
       const node = tree?.nodes[nodeId]
       if (!tree || !node) return
@@ -207,7 +220,7 @@ export function createImageDropActions(helpers: SiteSliceHelpers): ImageDropActi
 
       void (async () => {
         try {
-          const landed = await dropStudioAsset(file)
+          const landed = requirePublicAsset(await landImageSource(source))
           // The same layer model the Fill section writes through: the new
           // image becomes the TOP background layer, every existing layer
           // (a gradient, another image) stays below it.
@@ -223,7 +236,7 @@ export function createImageDropActions(helpers: SiteSliceHelpers): ImageDropActi
           if (Object.keys(patch).length > 0) get().setNodeInlineStyles(nodeId, patch)
         } catch (err) {
           console.error('[image-drop] setting a background image failed:', err)
-          reportUnlanded([{ name: file.name, message: getErrorMessage(err, 'The image could not be saved to your project.') }], 0)
+          reportUnlanded([{ name: imageSourceName(source), message: getErrorMessage(err, 'The image could not be saved to your project.') }], 0)
         }
       })()
     },
@@ -244,20 +257,24 @@ async function landAndInsert(
   drop: ImageDropRequest,
   commit: SourceInsertCommit,
 ): Promise<void> {
-  const previewUrls: string[] = []
+  const previews: ImageSourcePreview[] = []
   let optimistic: OptimisticPreviewHandle | null = null
   let committing = false
+  // IMG-10 — the file the images are written INTO, so the landing can follow
+  // that file's own convention (an import beside its other image imports, or
+  // `public/`). The server reads the file; this only names it.
+  const pageRel = decodeSourceNodeId(commit.parentNodeId)?.rel
   try {
-    for (const file of drop.files) previewUrls.push(URL.createObjectURL(file))
-    const ghostIds = drop.files.map(() => `optimistic:${crypto.randomUUID()}`)
+    for (const source of drop.sources) previews.push(imageSourcePreview(source))
+    const ghostIds = drop.sources.map(() => `optimistic:${crypto.randomUUID()}`)
     optimistic = previewOptimisticInsertRun(
       helpers,
       commit.parentNodeId,
       drop.index,
-      drop.files.map((file, i) => ({
+      drop.sources.map((source, i) => ({
         moduleId: 'base.image',
         ghostId: ghostIds[i]!,
-        props: { src: previewUrls[i]!, alt: altTextFor(file), htmlAttributes: { [UPLOADING_ATTRIBUTE]: '' } },
+        props: { src: previews[i]!.url, alt: altTextFor(source), htmlAttributes: { [UPLOADING_ATTRIBUTE]: '' } },
         // A ghost never overflows its frame while the real size is unknown;
         // a ⌘-drop ghost already sits where the image will.
         inlineStyles: {
@@ -268,18 +285,27 @@ async function landAndInsert(
     )
 
     const settled = await Promise.allSettled(
-      drop.files.map((file, i) =>
-        dropStudioAsset(file, { onProgress: (fraction) => drop.paintProgress?.(ghostIds[i]!, fraction) }),
+      drop.sources.map((source, i) =>
+        landImageSource(source, {
+          ...(pageRel ? { pageRel } : {}),
+          onProgress: (fraction) => drop.paintProgress?.(ghostIds[i]!, fraction),
+        }),
       ),
     )
-    const landed: { file: File; asset: DroppedStudioAsset; order: number }[] = []
+    // Every byte is up: take the painted progress off each ghost. The painter
+    // sets the uploading attribute IMPERATIVELY, which React does not own, so
+    // an element the resync keeps would otherwise stay dimmed as "uploading"
+    // after the image is written. The ghost's own props still mark it until
+    // the resync replaces it.
+    for (const ghostId of ghostIds) drop.paintProgress?.(ghostId, null)
+    const landed: { source: ImageDropSource; asset: DroppedStudioAsset; order: number }[] = []
     const failures: { name: string; message: string }[] = []
     settled.forEach((result, i) => {
-      const file = drop.files[i]!
-      if (result.status === 'fulfilled') landed.push({ file, asset: result.value, order: i })
+      const source = drop.sources[i]!
+      if (result.status === 'fulfilled') landed.push({ source, asset: result.value, order: i })
       else {
         console.error('[image-drop] landing a dropped image failed:', result.reason)
-        failures.push({ name: file.name, message: getErrorMessage(result.reason, 'The image could not be saved to your project.') })
+        failures.push({ name: imageSourceName(source), message: getErrorMessage(result.reason, 'The image could not be saved to your project.') })
       }
     })
 
@@ -289,7 +315,7 @@ async function landAndInsert(
       return
     }
 
-    const elements = landed.map(({ file, asset, order }) => insertedImageProps(file, asset, drop, order))
+    const elements = landed.map(({ source, asset, order }) => insertedImageProps(source, asset, drop, order))
     const [first, ...rest] = elements
     committing = true
     await commitStudioInsert({
@@ -305,26 +331,29 @@ async function landAndInsert(
     console.error('[image-drop] the image drop failed:', err)
     if (!committing) rollbackGhosts(helpers.get, drop.pageId, optimistic)
   } finally {
-    for (const url of previewUrls) URL.revokeObjectURL(url)
+    for (const preview of previews) preview.release()
     if (!committing) endStructuralCommit()
   }
 }
 
 /**
- * The props one landed image is written with: the server's `src`, the file's
- * own name as `alt`, the intrinsic size clamped to the container (IMG-9), and
- * — for a ⌘-drop — K6's absolute placement, cascaded per image.
+ * The props one landed image is written with: the server's `src` — or, when
+ * the landing followed the project's import convention (IMG-10), an
+ * `__assetImport` naming the file, which the server turns into a default
+ * import plus `src={name}` in the same write — the source's own name as
+ * `alt`, the intrinsic size clamped to the container (IMG-9), and — for a
+ * ⌘-drop — K6's absolute placement, cascaded per image.
  */
 function insertedImageProps(
-  file: File,
+  source: ImageDropSource,
   asset: DroppedStudioAsset,
   drop: ImageDropRequest,
   order: number,
 ): Record<string, InsertPropValue> {
   const size = clampImageSize(asset, drop.maxWidth)
   return {
-    src: asset.src,
-    alt: altTextFor(file),
+    src: asset.mode === 'public' ? asset.src : { __assetImport: asset.relPath },
+    alt: altTextFor(source),
     ...(size ? { width: size.width, height: size.height } : {}),
     ...(drop.absolute ? { style: absolutePlacementStyle(drop.absolute, order) } : {}),
   }
