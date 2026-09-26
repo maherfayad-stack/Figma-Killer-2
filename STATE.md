@@ -47,8 +47,8 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Next:** once #217 merges, close #192, #195 and #198–#210 as included.
 
 ### perf-16 — P6-B client half: stream the board in (PERF-7, speed-07)
-- **Agent:** perf-hunter · **Branch:** `perf/stream-the-board-in` off `ef23f78a` · draft PR (base `feat/canvas-excellence`), long form + all runs in its body · **Updated:** 2026-09-26 · (perf-15 left to P6-C, running in parallel)
-- **Stage:** PR open (draft). Gates in the PR body.
+- **Agent:** perf-hunter · **Branch:** `perf/stream-the-board-in` off `ef23f78a` · draft PR #271 (base `feat/canvas-excellence`), long form + all runs in its body · **Updated:** 2026-09-26 · (perf-15 left to P6-C, running in parallel)
+- **Stage:** PR #271 open (draft). tsc, lint, build clean; `bun test` in chunks: only pre-existing failures (agentCheckpoints size, bundle-fresh on Bun 1.3.6) plus two load flakes that pass alone (alm-design-system-fresh, git.test 409); e2e `studio-board-load` passes post-merge (warm first paint 2308 ms on a quiet machine).
 - **Done:** (1) a first open hands the store its pages AS THEY ARRIVE (`studio/studioProjectLoad.ts`, split out of `fsCodemodAdapter.ts`; `LoadSiteOptions.progress` in `@core/persistence/types`; store side `streamedLoadSlice.ts`); frames whose page is still on the wire paint `PendingBoardFrame`; `/load`'s meta line carries `pageList` (replaces `pageCount`). (2) The sidecar read starts WITH `/load`; the token extraction runs AFTER it, unwaited, and is adopted as part of the read (`adoptLoadedFramework`). (3) The board's own chunk (`studioBoardLayersChunk.ts`) is preloaded with the editor body instead of after it. (4) React's dev double-mount now aborts the superseded load request. Timeline marks: `studio:load:first-page|open|complete`.
 - **Numbers** (e2e, Vite DEV server, warm, ms from navigation; before = trunk `ef23f78a` in a side worktree, interleaved; ±15 % machine noise):
 
