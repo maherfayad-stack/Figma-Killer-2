@@ -39,6 +39,18 @@ describe('relativeCssUrlsToAssetSentinels (server)', () => {
     expect(relativeCssUrlsToAssetSentinels(css, 'src/app.css')).toBe(css)
   })
 
+  it('never rewrites a url( inside a CSS string or comment (review of #275, N4)', () => {
+    const css = '.a::before { content: "url(./a.png)" } .b::after { content: \'see url(./b.png)\' } /* url(./c.png) */ .d { background: url(./d.png) }'
+    expect(relativeCssUrlsToAssetSentinels(css, 'src/app.css')).toBe(
+      '.a::before { content: "url(./a.png)" } .b::after { content: \'see url(./b.png)\' } /* url(./c.png) */ .d { background: url("studio-asset:src/d.png") }',
+    )
+  })
+
+  it('does not take a function whose name merely ends in url for url()', () => {
+    const css = '.a { mask: my-url(./a.png) }'
+    expect(relativeCssUrlsToAssetSentinels(css, 'src/app.css')).toBe(css)
+  })
+
   it('leaves a reference that climbs out of the project as written', () => {
     const css = '.a { background: url(../../../outside.png) }'
     expect(relativeCssUrlsToAssetSentinels(css, 'src/app.css')).toBe(css)

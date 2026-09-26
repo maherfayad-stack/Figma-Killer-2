@@ -113,6 +113,13 @@ describe('pruneUnusedAssets — deletes only what it may', () => {
     expect(exists(rel)).toBe(true)
   })
 
+  it('re-checks immediately before deleting: a save during the scan keeps the file (review of #275, N2)', () => {
+    const rel = land('hero.png')
+    const result = pruneUnusedAssets(tmpDir, [rel], { afterScan: () => write(rel, OTHER_PNG) })
+    expect(result).toMatchObject({ deleted: [], kept: [{ relPath: rel }] })
+    expect(fs.readFileSync(path.join(tmpDir, ...rel.split('/')))).toEqual(Buffer.from(OTHER_PNG))
+  })
+
   it('never deletes what the request did not name', () => {
     const a = land('a.png')
     const b = land('b.png', OTHER_PNG)
@@ -151,6 +158,47 @@ describe('pruneUnusedAssets — deletes only what it may', () => {
     } finally {
       fs.rmSync(outside, { recursive: true, force: true })
     }
+  })
+})
+
+describe('a hostile ledger (review of #275, N1)', () => {
+  it('a ledger naming one large file thousands of times reports fast: one hash per path', () => {
+    const big = new Uint8Array(4 * 1024 * 1024)
+    big.set(PNG)
+    write('public/big.png', big)
+    const sha = sha256Hex(big)
+    // 10k entries is over the entry cap, so the whole ledger reads as empty —
+    // and at the cap, one path repeated is hashed once.
+    writeAssetLedger(tmpDir, [])
+    const repeated = Array.from({ length: 10_000 }, () => ({ relPath: 'public/big.png', sha256: sha, landedAt: '2026-01-01T00:00:00.000Z' }))
+    fs.writeFileSync(path.join(tmpDir, '.studio', 'assets.json'), JSON.stringify({ version: 1, entries: repeated }))
+    let started = performance.now()
+    expect(findUnusedLedgerAssets(tmpDir)).toEqual({ unused: [], incomplete: false })
+    expect(performance.now() - started).toBeLessThan(2_000)
+
+    fs.writeFileSync(path.join(tmpDir, '.studio', 'assets.json'), JSON.stringify({ version: 1, entries: repeated.slice(0, 5_000) }))
+    started = performance.now()
+    expect(findUnusedLedgerAssets(tmpDir).unused).toEqual([{ relPath: 'public/big.png', bytes: big.length }])
+    expect(performance.now() - started).toBeLessThan(2_000)
+  })
+
+  it('an entry with a malformed hash or an overlong path makes the ledger read as empty', () => {
+    const rel = land('orphan.png')
+    for (const entry of [
+      { relPath: rel, sha256: 'not-a-hash', landedAt: 'x' },
+      { relPath: `public/${'a'.repeat(2000)}.png`, sha256: sha256Hex(PNG), landedAt: 'x' },
+    ]) {
+      fs.writeFileSync(path.join(tmpDir, '.studio', 'assets.json'), JSON.stringify({ version: 1, entries: [entry] }))
+      expect(readAssetLedger(tmpDir)).toEqual([])
+    }
+  })
+
+  it('never hashes a file larger than any landing accepts', () => {
+    const huge = new Uint8Array(26 * 1024 * 1024)
+    huge.set(PNG)
+    write('public/huge.png', huge)
+    writeAssetLedger(tmpDir, [{ relPath: 'public/huge.png', sha256: sha256Hex(huge), landedAt: '2026-01-01T00:00:00.000Z' }])
+    expect(findUnusedLedgerAssets(tmpDir).unused).toEqual([])
   })
 })
 

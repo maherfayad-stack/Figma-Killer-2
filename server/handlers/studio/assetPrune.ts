@@ -30,11 +30,10 @@
  * `site.read`), so the gate's capability and CSRF checks ran first.
  */
 import { unlinkSync } from 'node:fs'
-import { join } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
 import { RequestBodyTooLargeError, badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
-import { findUnusedLedgerAssets, readAssetLedger, writeAssetLedger } from './assetLedger'
+import { findUnusedLedgerAssets, readAssetLedger, unchangedLedgerFile, writeAssetLedger } from './assetLedger'
 
 const LEDGER_PATH = '/admin/api/studio/asset-ledger'
 const PRUNE_PATH = '/admin/api/studio/asset-prune'
@@ -61,10 +60,18 @@ export type PruneResult = {
  * Delete every requested path that passes the module doc's four conditions,
  * and drop it from the ledger. Exported for its own test.
  */
-export function pruneUnusedAssets(dir: string, requested: readonly string[]): PruneResult | { incomplete: true } {
+export function pruneUnusedAssets(
+  dir: string,
+  requested: readonly string[],
+  deps: { afterScan?: () => void } = {},
+): PruneResult | { incomplete: true } {
   const report = findUnusedLedgerAssets(dir)
   if (report.incomplete) return { incomplete: true }
   const unused = new Set(report.unused.map((asset) => asset.relPath))
+  const entries = new Map(readAssetLedger(dir).map((entry) => [entry.relPath, entry]))
+  // Test seam: the reference scan above can take seconds, which is the window
+  // the re-check below exists for (review of #275, N2).
+  deps.afterScan?.()
 
   const deleted: string[] = []
   const kept: PruneResult['kept'] = []
@@ -73,8 +80,18 @@ export function pruneUnusedAssets(dir: string, requested: readonly string[]): Pr
       kept.push({ relPath, reason: 'Studio did not add this image, it changed since, or something still uses it.' })
       continue
     }
+    // Re-checked IMMEDIATELY before the delete: a save to the image during the
+    // scan makes it the user's again, and the delete targets the REAL path the
+    // check just hashed — never the spelled one, which a directory swapped for
+    // a junction in that window could redirect.
+    const entry = entries.get(relPath)
+    const file = entry ? unchangedLedgerFile(dir, entry) : null
+    if (!file) {
+      kept.push({ relPath, reason: 'The image changed while Studio was checking it, so it was kept.' })
+      continue
+    }
     try {
-      unlinkSync(join(dir, ...relPath.split('/')))
+      unlinkSync(file.real)
       deleted.push(relPath)
     } catch (err) {
       console.error('[studio:asset-prune] could not delete', relPath, err)

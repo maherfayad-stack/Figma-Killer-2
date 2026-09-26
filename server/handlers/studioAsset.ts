@@ -192,7 +192,7 @@ const NOT_SHEET_RELATIVE = /^(?:[a-zA-Z][a-zA-Z0-9+.-]*:|\/|#)/
 export function relativeCssUrlsToAssetSentinels(css: string, sheetRel: string): string {
   if (!/url\(/i.test(css)) return css
   const sheetDir = posix.dirname(sheetRel)
-  return css.replace(CSS_URL_PLAIN, (whole, doubleQuoted?: string, singleQuoted?: string, bare?: string) => {
+  const rewrite = (whole: string, doubleQuoted?: string, singleQuoted?: string, bare?: string): string => {
     const raw = (doubleQuoted ?? singleQuoted ?? bare ?? '').trim()
     if (raw === '' || NOT_SHEET_RELATIVE.test(raw)) return whole
     const pathPart = raw.split(/[?#]/)[0]!
@@ -205,5 +205,42 @@ export function relativeCssUrlsToAssetSentinels(css: string, sheetRel: string): 
     const rel = posix.normalize(posix.join(sheetDir, decoded))
     if (rel === '.' || rel === '..' || rel.startsWith('../') || /["\\\n\r]/.test(rel)) return whole
     return `url("${STUDIO_ASSET_SENTINEL}${rel}")`
-  })
+  }
+
+  // A `url(` inside a comment or a string is TEXT, not a reference: rewriting
+  // `content: "url(./a)"` would break the string (review of #275, N4). So the
+  // sheet is walked token by token and only a bare `url(` is considered.
+  const urlAt = new RegExp(CSS_URL_PLAIN.source, 'iy')
+  let out = ''
+  let i = 0
+  while (i < css.length) {
+    if (css.startsWith('/*', i)) {
+      const end = css.indexOf('*/', i + 2)
+      const next = end === -1 ? css.length : end + 2
+      out += css.slice(i, next)
+      i = next
+      continue
+    }
+    const char = css[i]!
+    if (char === '"' || char === "'") {
+      let j = i + 1
+      while (j < css.length && css[j] !== char && css[j] !== '\n') j += css[j] === '\\' ? 2 : 1
+      const next = Math.min(css.length, j + 1)
+      out += css.slice(i, next)
+      i = next
+      continue
+    }
+    if ((char === 'u' || char === 'U') && !/[\w-]/.test(css[i - 1] ?? '')) {
+      urlAt.lastIndex = i
+      const match = urlAt.exec(css)
+      if (match) {
+        out += rewrite(match[0], match[1], match[2], match[3])
+        i += match[0].length
+        continue
+      }
+    }
+    out += char
+    i += 1
+  }
+  return out
 }

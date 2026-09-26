@@ -52,16 +52,22 @@ export const ASSET_LEDGER_REL = '.studio/assets.json'
 /** Beyond this many entries the oldest are forgotten — which only ever makes a file un-prunable, never deleted. */
 export const MAX_ASSET_LEDGER_ENTRIES = 5000
 
+/**
+ * The ledger is a FILE in the project, so a repository can ship a hostile
+ * one (review of #275, N1). Every bound here is what keeps reading it cheap:
+ * an entry that breaks one makes the whole ledger read as empty
+ * (`parseJsonWithFallback`), which only ever makes files un-prunable.
+ */
 const AssetLedgerEntrySchema = Type.Object({
-  relPath: Type.String(),
-  sha256: Type.String(),
-  landedAt: Type.String(),
+  relPath: Type.String({ minLength: 1, maxLength: 1024 }),
+  sha256: Type.String({ pattern: '^[0-9a-f]{64}$' }),
+  landedAt: Type.String({ maxLength: 64 }),
 })
 export type AssetLedgerEntry = Static<typeof AssetLedgerEntrySchema>
 
 const AssetLedgerSchema = Type.Object({
   version: Type.Literal(1),
-  entries: Type.Array(AssetLedgerEntrySchema),
+  entries: Type.Array(AssetLedgerEntrySchema, { maxItems: MAX_ASSET_LEDGER_ENTRIES }),
 })
 type AssetLedger = Static<typeof AssetLedgerSchema>
 
@@ -134,6 +140,17 @@ export interface UnusedAssetsReport {
   incomplete: boolean
 }
 
+/**
+ * A file larger than any landing route accepts (`MAX_ASSET_DROP_BYTES`, 25 MB)
+ * cannot be one Studio wrote, so it is never read to be hashed. The same
+ * number, spelled here because `assetDrop.ts` → `assetLanding.ts` → this
+ * module would otherwise close an import cycle.
+ */
+export const MAX_LEDGER_FILE_BYTES = 25 * 1024 * 1024
+
+/** At most this many bytes are hashed per report, across all entries; beyond it the report is `incomplete`. */
+export const MAX_LEDGER_HASH_BYTES = 256 * 1024 * 1024
+
 /** What a ledger entry may name: an image, by the landing pipeline's own extensions. */
 const LEDGER_IMAGE_PATH = /\.(?:png|jpg|gif|webp|avif|svg)$/i
 
@@ -148,14 +165,14 @@ const LEDGER_IMAGE_PATH = /\.(?:png|jpg|gif|webp|avif|svg)$/i
  * names `src/App.tsx` with that file's own hash. The image-extension rule is
  * what keeps such an entry from ever being offered for deletion.
  */
-export function unchangedLedgerFile(dir: string, entry: AssetLedgerEntry): number | null {
+export function unchangedLedgerFile(dir: string, entry: AssetLedgerEntry): { size: number; real: string } | null {
   if (!LEDGER_IMAGE_PATH.test(entry.relPath)) return null
   const resolved = resolveWorkspaceReadPath(dir, entry.relPath)
   if (!resolved || resolved.rel !== entry.relPath) return null
   try {
     const stat = lstatSync(resolved.abs)
-    if (!stat.isFile()) return null
-    return sha256Hex(readFileSync(resolved.abs)) === entry.sha256 ? stat.size : null
+    if (!stat.isFile() || stat.size > MAX_LEDGER_FILE_BYTES) return null
+    return sha256Hex(readFileSync(resolved.real)) === entry.sha256 ? { size: stat.size, real: resolved.real } : null
   } catch {
     return null
   }
@@ -192,9 +209,19 @@ function readReferenceTexts(dir: string): string[] | null {
 /** The ledger's files nothing references any more. See the module doc for "unused". */
 export function findUnusedLedgerAssets(dir: string): UnusedAssetsReport {
   const candidates: { relPath: string; bytes: number }[] = []
+  // One hash per PATH (a planted ledger can name one file thousands of
+  // times), within one byte budget for the whole report — this runs every
+  // time the Assets panel opens, on the server's own thread.
+  const seen = new Set<string>()
+  let budget = MAX_LEDGER_HASH_BYTES
   for (const entry of readAssetLedger(dir)) {
-    const bytes = unchangedLedgerFile(dir, entry)
-    if (bytes !== null) candidates.push({ relPath: entry.relPath, bytes })
+    if (seen.has(entry.relPath)) continue
+    seen.add(entry.relPath)
+    const file = unchangedLedgerFile(dir, entry)
+    if (file === null) continue
+    budget -= file.size
+    if (budget < 0) return { unused: [], incomplete: true }
+    candidates.push({ relPath: entry.relPath, bytes: file.size })
   }
   if (candidates.length === 0) return { unused: [], incomplete: false }
 
