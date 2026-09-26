@@ -114,14 +114,18 @@ describe('a clone brings no grants', () => {
   })
 
   // A regression guard, not a fail-first test: `gitClone.ts` already replaced
-  // the cloned `meta.json` outright. (Its share state is covered by the
-  // clone's own share cleanup, and tested there.)
-  it("keeps none of the repository's trust tier or MCP approvals", async () => {
+  // the cloned `meta.json` outright, and now also drops any share state the
+  // repository shipped (`dropAllShareState`) — a hostile `.studio/shares.json`
+  // would otherwise serve this project at `/share/<token>` for tokens the
+  // repository's author already knows, the moment the clone lands.
+  it("keeps none of the repository's trust tier, MCP approvals, or share links", async () => {
     const source = makeDir('__grants_clone_src_')
     await git(source, ['init', '--initial-branch=main'])
     await configure(source)
     write(source, 'pages/Home.tsx', 'export default function Home() {\n  return <div>Hi</div>\n}\n')
     write(source, '.studio/meta.json', JSON.stringify(HOSTILE_META, null, 2))
+    const cloneShareToken = mintShareToken()
+    writeShare(source, cloneShareToken)
     await commitAll(source, 'Initial commit')
     const bare = makeDir('studio-grants-clone-origin-', os.tmpdir())
     await git(bare, ['init', '--bare', '--initial-branch=main'])
@@ -145,6 +149,12 @@ describe('a clone brings no grants', () => {
     expect(meta.approvedMcpServers).toBeUndefined()
     expect(meta.registeredMcpServers).toBeUndefined()
     expect(meta.approvedRegisteredMcpServers).toBeUndefined()
+    // Checked on disk, not via `resolveActiveShare`: that scan is global, and
+    // `source` here is itself a fixture living under `projectsRootDir()` with
+    // its own live copy of the same token — the clone TARGET is what must be
+    // clean.
+    expect(fs.existsSync(path.join(target, '.studio', 'shares.json'))).toBe(false)
+    expect(fs.existsSync(path.join(target, '.studio', 'shares', cloneShareToken))).toBe(false)
     // The rest of the repository came through: a clone is still a clone.
     expect(fs.existsSync(path.join(target, 'pages', 'Home.tsx'))).toBe(true)
   })
