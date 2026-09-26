@@ -62,6 +62,8 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - The frame relay now RELAYS link drags (still cancels every drop in the frame first). Its dragover cannot read the URL (protected mode), so the chip shows "1 image" for any link; the drop is where a page link refuses. Do not make the relay read `getData` in `dragover` — it returns `''` there.
   - `CSS_ASSET_SENTINEL` (browser) duplicates `@core/page-parser`'s `STUDIO_ASSET_SENTINEL` because that barrel is Node-only; `canvasCssRelativeUrl.test.ts` pins them equal. Only `authoredCss` is rewritten — a session-edited overlay rule (`mc-classes`) still carries the raw relative URL.
   - `useProjectImageAssets` now REFETCHES on `invalidateProjectImageAssets()` (listener set); a landing that wrote a new file invalidates.
+  - The upload-progress painter sets `data-studio-uploading` IMPERATIVELY; an insert drop now clears it on every ghost once the landings settle (the P5-B multi-drop e2e caught real images still marked uploading after the trunk's reconcile work). Any new painter caller must clear too.
+  - `insertImagesAtTarget` (`canvasSelectionInsert.ts`, P5-A's) takes `ImageDropSource`s now; paste and ⇧K wrap their files.
 - **Next:** security-guard review; owner dogfood `canvas-41` (Pending dogfood).
 
 ## Blocked
