@@ -56,7 +56,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Landmines (events × keys):**
   - ⌘C/⌘X/⌘V must NEVER `preventDefault` their keydown — that cancels the clipboard event. The spotlight's window CAPTURE listener used to run `layers.copy/cut/paste` on canvas surfaces with `preventDefault` BEFORE the node rung; they are now `COMPONENT_OWNED_SHORTCUTS`. Gated in `keybindings-single-dispatcher.test.ts`.
   - The paste fallback relies on engines raising `paste` synchronously in the keydown's task (all do); a timer armed at keydown runs only when no event came. The annotation rung still `preventDefault`s ⌘V when the annotation clipboard is non-empty — that paste never reaches the bridge.
-  - Tier 2 bridge frames are cross-origin: their `paste` is never heard, so ⌘V there always takes the async-read fallback (first use may prompt).
+  - Tier 2 bridge frames are cross-origin: their `paste` is never heard, and their relayed `key` messages are forgeable by project code, so ⌘V there pastes copied LAYERS only — never the async clipboard read (review #270 N1: `relayFrameKeyDown(…, { userGesture })` + `isUserGestureKeyEvent`). Any new capability unlocked by a key must check that predicate.
 - **Next:** SVG-5 proper (drop inline-vs-img, icon insert, `base.svg` ghost) consumes `insertJsxSubtreeIntoPage`. Owner dogfood: see the PR body.
 
 ## Blocked

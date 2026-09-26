@@ -831,7 +831,13 @@ events. Six cases are bridged explicitly:
    which a real event, raised in the same task, always beats — reads
    `navigator.clipboard.read()` / writes with `navigator.clipboard.write()`.
    Pastes into a text field, a key-owning overlay, or an inline edit are left
-   to the browser.
+   to the browser. **Only a real keystroke may read the OS clipboard**
+   (review #270): the fallback is armed only when `isUserGestureKeyEvent`
+   says so — a trusted keydown, or a relay whose ORIGINAL native event was
+   trusted (`relayFrameKeyDown(…, { userGesture })`). A Tier 2 frame's `key`
+   message is forgeable by the project's code, so it never arms the read and
+   its ⌘V pastes the copied layers only; a script-dispatched `paste` event
+   (`!isTrusted`) is ignored.
 
 **A drag must survive a release it never hears (ERR-12).** A `pointerup` over
 a frame goes to that frame's document, so any drag listening on the parent can
