@@ -4,8 +4,9 @@
  *
  * One gesture, one write, one toast. The whole point of this module is that
  * every way the gesture can fail is decided HERE, before a byte is uploaded:
- * a drop on the empty board, a drop with no image in it, a drop onto nothing
- * that can hold an image, a ⌘-drop into a container that is not positioned.
+ * a drop with no image in it, a drop onto nothing that can hold an image, a
+ * ⌘-drop into a container that is not positioned, and — on a canvas with no
+ * free canvas (the CMS editor) — a drop on the empty board.
  * Each returns a refusal with a sentence, and none of them touches the network
  * or the user's repository.
  *
@@ -24,8 +25,10 @@
  *     files. ⌘/Ctrl places the run ABSOLUTELY at the pointer, K6's rule
  *     (IMG-9, `canvasImageDropPlacement.ts`).
  *
- * The EMPTY BOARD is not a frame: a drop there refuses here (free-canvas
- * placement is P5-G's). This module only answers for drops onto frames.
+ * The EMPTY BOARD of a Studio board is the FREE CANVAS (P5-G): every image
+ * released there becomes a loose layer, never part of a page
+ * (`kind: 'canvas'`), and no modifier changes that. Without a free canvas
+ * (the CMS editor) the empty board refuses.
  *
  * ## Why the position is resolved as an INSERT
  *
@@ -101,7 +104,7 @@ export interface CanvasFileDropRefusal {
 
 /** The keys held at the moment of the drop (or of this preview frame). */
 export interface CanvasFileDropModifiers {
-  /** ⌥ — insert beside an image instead of replacing it. */
+  /** ⌥ — insert beside an image instead of replacing it; and (P5-D) an `.svg` as an `<img>` instead of inline. */
   alt: boolean
   /** ⇧ — set the container's background image instead of inserting. */
   shift: boolean
@@ -128,13 +131,27 @@ export type CanvasImageDropAction =
 export type CanvasFileDropPlan =
   | {
       ok: true
+      kind: 'frame'
       pageId: string
       /** The images, in the order they were dropped. */
       files: File[]
       /** Files the browser said are not images, left out — the toast names them. */
       skipped: File[]
       action: CanvasImageDropAction
+      /**
+       * P5-D SVG-5 — every dropped file is an `.svg` and the drop is a plain
+       * insert: each is written INLINE (`insertSvgAtTarget`), not as an
+       * `<img>`. ⌥ keeps the `<img>`; a ⌘ (absolute) drop is an image's
+       * gesture and keeps it too.
+       */
+      inlineSvg: boolean
     }
+  /**
+   * P5-G — released over the empty board of a Studio board: each image becomes
+   * a loose layer on the free canvas, the first centred on `at` (board units).
+   * Never written into a page.
+   */
+  | { ok: true; kind: 'canvas'; files: File[]; skipped: File[]; at: { x: number; y: number }; inlineSvg: boolean }
   | { ok: false; refusal: CanvasFileDropRefusal }
 
 /**
@@ -333,6 +350,13 @@ export interface CanvasFileDropInput {
   transform: CanvasTransform | null
   /** The page tree a frame renders — the caller's one store read. */
   readPage: (pageId: string) => NodeTree<PageNode> | null
+  /**
+   * P5-G — the free canvas, when this canvas is a Studio board: the board's
+   * client origin and painted zoom (`readBoardOrigin`), which is all it takes
+   * to turn the drop point into a board point. Absent (a CMS canvas),
+   * the empty board still refuses: there is nowhere to put the image.
+   */
+  freeCanvas?: { left: number; top: number; zoom: number } | null
 }
 
 /**
@@ -350,9 +374,24 @@ export function planCanvasFileDrop(input: CanvasFileDropInput): CanvasFileDropPl
   if (refusal) return { ok: false, refusal }
   const files = input.files.filter((file) => looksLikeImage(file.type))
   const skipped = input.files.filter((file) => !looksLikeImage(file.type))
+  const allSvg = files.length > 0 && files.every(isSvgFile) && !input.modifiers.alt
 
   const board = measureBoardDropSurfaces(input.transform)
   const surface = canvasSurfaceAtPoint(board, input.point)
+  if (!surface && input.freeCanvas) {
+    const zoom = input.freeCanvas.zoom > 0 ? input.freeCanvas.zoom : 1
+    return {
+      ok: true,
+      kind: 'canvas',
+      files,
+      skipped,
+      at: {
+        x: (input.point.x - input.freeCanvas.left) / zoom,
+        y: (input.point.y - input.freeCanvas.top) / zoom,
+      },
+      inlineSvg: allSvg,
+    }
+  }
   if (!surface || !surface.pageId) {
     return { ok: false, refusal: CANVAS_FILE_DROP_REFUSAL.noFrame }
   }
@@ -379,7 +418,7 @@ export function planCanvasFileDrop(input: CanvasFileDropInput): CanvasFileDropPl
   if (!intent.ok) return { ok: false, refusal: intent.refusal }
 
   const action = intent.action
-  if (action.kind !== 'insert') return { ok: true, pageId: surface.pageId, files, skipped, action }
+  if (action.kind !== 'insert') return { ok: true, kind: 'frame', pageId: surface.pageId, files, skipped, action, inlineSvg: false }
 
   // IMG-9 — the width the intrinsic size is clamped to: the container's own
   // content box, read once, now that the drop is certain.
@@ -387,11 +426,18 @@ export function planCanvasFileDrop(input: CanvasFileDropInput): CanvasFileDropPl
   const box = container.ok ? measureContainer(container.node.id) : null
   return {
     ok: true,
+    kind: 'frame',
     pageId: surface.pageId,
     files,
     skipped,
     action: { ...action, maxWidth: box ? box.contentWidth : null },
+    inlineSvg: allSvg && action.absolute === null,
   }
+}
+
+/** An SVG file, by its declared type or, when the OS gave none, its name. */
+export function isSvgFile(file: File): boolean {
+  return file.type === 'image/svg+xml' || (file.type === '' && /\.svg$/i.test(file.name))
 }
 
 /** Shared with the in-flight preview so both halves resolve the same containers. */

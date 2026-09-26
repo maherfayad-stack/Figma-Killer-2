@@ -43,7 +43,7 @@ import {
   LOOP_ID_SEPARATOR,
   type ParseContext,
 } from './jsxAttributeReaders'
-import { iterationEvalContext, loopCallbackBody, readStaticLoop } from './staticLoopExpansion'
+import { iterationEvalContext, listRowSourceFor, loopCallbackBody, readStaticLoop, stampListRows } from './staticLoopExpansion'
 import { createCssInJsScope } from './cssInJsExtract'
 import { EolPreservingFileSystem } from './eolFileSystem'
 import { applyStyledAttachment, resolveStyledAttachment } from './cssInJsAttach'
@@ -297,6 +297,8 @@ function expandStaticLoop(expr: Node, ctx: ParseContext): string[] | undefined {
   if (!body) return undefined
 
   const ids: string[] = []
+  // OD-8 — each row's root is stamped with the array element it renders.
+  const listRowOf = listRowSourceFor(loop, evalCtx, ctx.relFile, (ctx.idSuffix ?? '') !== '')
   loop.items.forEach((item, index) => {
     const iterationCtx: ParseContext = {
       ...ctx,
@@ -305,7 +307,10 @@ function expandStaticLoop(expr: Node, ctx: ParseContext): string[] | undefined {
     }
     // Locked with a reason naming the item, not the generic dynamic-surface
     // message: the row IS resolved, it just has no isolated place to write to.
-    ids.push(...collectJsx(body, iterationCtx, true, `item ${index + 1} of ${loop.sourceText}`))
+    const reason = `item ${index + 1} of ${loop.sourceText}`
+    const roots = collectJsx(body, iterationCtx, true, reason)
+    stampListRows(ctx.nodes, roots, listRowOf(index, roots.length), reason)
+    ids.push(...roots)
   })
   return ids
 }
@@ -396,7 +401,8 @@ function processElement(
     // writes real attribute names. Copying the text verbatim, and blanking the
     // whole graphic whenever it contained a `{`, is what left six empty rings on
     // the eSIM corpus.
-    const markup = serializeInlineSvg(element, ctx.eval)
+    // SVG-3 — stamped: each inner element carries where its `svg-attr` write lands.
+    const markup = serializeInlineSvg(element, ctx.eval, { stampParts: true })
     // Nothing usable came back (a spread-driven or oversized graphic). Keep the
     // node so its class/style/position are still visible, but lock it — there is
     // no markup to edit. A `.map`/ternary/spread lock upstream, if any, is

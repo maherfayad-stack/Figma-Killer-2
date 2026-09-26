@@ -54,7 +54,12 @@
  *   - a parent-window resize, which also invalidates the cached parent-document
  *     anchor because the canvas root's own rect moved,
  *   - and the overlay's own React effects (selection change, committed
- *     pan/zoom), which call `schedule()` directly.
+ *     pan/zoom, hover target change), which call `schedule()` directly.
+ *     The hover one is easy to forget and nothing else covers it: hover
+ *     moving straight from one node to another (body → main → an icon)
+ *     mutates nothing but the ring itself, which the mutation observer
+ *     filters as chrome, so without it the ring kept the FIRST node's box
+ *     under the new node's id.
  *
  * ## Why the mutation observer skips `overlayRoot`
  *

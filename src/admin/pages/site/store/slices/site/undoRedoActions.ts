@@ -24,7 +24,7 @@ import { collectDirtyFromSitePatches, mergeDirtyMarks } from './dirtyTracking'
 import { applyNodeIndexPatch, nodeIndexesOf } from './nodeIndex'
 import { isBoardOnlyEntry, restoreBoardSnapshot } from '../boardHistory'
 import { pushToast } from '@ui/components/Toast'
-import { reissueStructuralMove, reissueStructuralSiblings, type StructuralStepOutcome } from './structuralHistory'
+import { reissueStructuralMove, reissueStructuralMoves, type StructuralStepOutcome } from './structuralHistory'
 import { reissueStructuralSourceEdits } from './structuralSourceHistory'
 import { mintPendingCommitId, trackStructuralStackCommit } from './structuralCommitRollback'
 import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
@@ -55,13 +55,8 @@ function runStructuralStep(
   structural: StructuralHistory,
   direction: 'undo' | 'redo',
 ): void {
-  // ERR-4 — a structural undo/redo is a WRITE (a move re-issued through
-  // `moveNodes`, or a source gesture's inverse posted), so it queues behind a
-  // structural write still in flight like every other structural writer. The
-  // whole step is parked, not just its write: when it runs it reads the top
-  // of the stack as the in-flight write's resync (and its history remap) left
-  // it, so ⌘Z pressed during a drag's commit undoes that drag.
-  if (deferWhileStructuralCommitInFlight(() => get()[direction]())) return
+  // ERR-4 — a structural undo/redo is a WRITE, so it queues behind a write
+  // still in flight: `undo`/`redo` defer the whole step before reaching here.
   const from = direction === 'undo' ? '_historyPast' : '_historyFuture'
   const to = direction === 'undo' ? '_historyFuture' : '_historyPast'
   // Both stacks are snapshotted BEFORE the re-issue and assigned wholesale
@@ -77,12 +72,12 @@ function runStructuralStep(
   // through a store action: its inverse is a WRITE, posted through the same
   // `/save` route the gesture used. A move re-issues `moveNodes`, whose own
   // entry (and rollback) the bookkeeping below folds into this one.
-  // P2-C2 — a sibling batch re-issues `moveSiblings`, the same way.
+  // P2-C2 / P3-D — a move sequence re-issues `moveNodesInSequence`, the same way.
   const outcome: StructuralStepOutcome =
     structural.gesture === 'source'
       ? reissueStructuralSourceEdits(get, structural, direction, trackStructuralStackCommit({ get, set }, mintPendingCommitId()))
-      : structural.gesture === 'siblings'
-        ? reissueStructuralSiblings(get, direction === 'undo' ? structural.undo : structural.redo)
+      : structural.gesture === 'moves'
+        ? reissueStructuralMoves(get, direction === 'undo' ? structural.undo : structural.redo)
         : reissueStructuralMove(get, direction === 'undo' ? structural.undo : structural.redo)
   if (outcome.kind === 'skipped') {
     skipStructuralStep({ get, set }, entry, direction, outcome.notice)
@@ -97,6 +92,12 @@ function runStructuralStep(
     state.canUndo = state._historyPast.length > 0
     state.canRedo = state._historyFuture.length > 0
   })
+  // P3-D (OD-7) — a gesture made on one instance of a shared component is two
+  // entries (the detach below, the gesture above) and ONE keystroke: undoing
+  // the gesture carries on to the detach, redoing the detach carries on to
+  // the gesture. Each step queues behind the write before it.
+  if (direction === 'undo' && get()._historyPast.at(-1)?.linkedToNext) get().undo()
+  if (direction === 'redo' && entry.linkedToNext) get().redo()
 }
 
 /**
@@ -175,6 +176,11 @@ function runBoardStep(
 export function createUndoRedoActions({ get, set }: SiteSliceHelpers): UndoRedoActions {
   return {
     undo: () => {
+      // P3-D — a structural write still on the wire may not have pushed its
+      // entry yet (a source gesture's entry lands with its re-read), so the
+      // stack is read only once the write has settled: a ⌘Z pressed right
+      // after a paste used to find it empty and do nothing at all.
+      if (deferWhileStructuralCommitInFlight(() => get().undo())) return
       const { _historyPast, site } = get()
       if (_historyPast.length === 0) return
       const entry = _historyPast[_historyPast.length - 1]!
@@ -221,6 +227,7 @@ export function createUndoRedoActions({ get, set }: SiteSliceHelpers): UndoRedoA
     },
 
     redo: () => {
+      if (deferWhileStructuralCommitInFlight(() => get().redo())) return // see `undo`
       const { _historyFuture, site } = get()
       if (_historyFuture.length === 0) return
       const entry = _historyFuture[_historyFuture.length - 1]!

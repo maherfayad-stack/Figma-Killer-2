@@ -28,6 +28,9 @@ import {
   type ParsedPage,
 } from '@core/page-parser'
 
+/** Test-only: read a stamped parse without its stamps (never used on markup that leaves Studio). */
+const withoutStamps = (markup: string): string => markup.replace(/ data-studio-svg-(?:part|code)="[^"]*"/g, '')
+
 let tmpDir: string
 
 beforeEach(() => {
@@ -239,9 +242,10 @@ describe('assetOrigin (WS-8.3) — the import specifier behind a resolved image'
 })
 
 describe('an inline <svg> written as JSX', () => {
+  // These cases are about the graphic; the part stamps have their own block below.
   const svgOf = (page: ParsedPage): string | undefined => {
     const node = Object.values(page.nodes).find((n) => n.name === 'svg')
-    return typeof node?.props.svg === 'string' ? node.props.svg : undefined
+    return typeof node?.props.svg === 'string' ? withoutStamps(node.props.svg) : undefined
   }
 
   it('converts React attribute names to real markup attribute names', () => {
@@ -265,6 +269,31 @@ describe('an inline <svg> written as JSX', () => {
     expect(svgOf(parse('pages/Icon.jsx'))).toBe(
       '<svg class="icon" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round">'
       + '<path d="M4 12h16" fill-rule="evenodd"/></svg>',
+    )
+  })
+
+  it('writes React aliases of namespaced and lowercase attributes as the markup names a browser reads', () => {
+    // `xlinkHref` is React's spelling of `xlink:href`, not of `xlink-href`;
+    // the parse used to dash every capital, so a sprite's `<use>` pointed at
+    // nothing on the canvas. The name table is now the one `@core/vector`
+    // shares with the SVG importer, so markup → JSX → markup is an identity.
+    write(
+      'pages/Sprite.jsx',
+      [
+        'export default function Sprite() {',
+        '  return (',
+        '    <svg xmlnsXlink="http://www.w3.org/1999/xlink" viewBox="0 0 8 8" tabIndex={-1}>',
+        '      <use xlinkHref="#dot" /><text xmlSpace="preserve">a</text>',
+        '    </svg>',
+        '  )',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    expect(svgOf(parse('pages/Sprite.jsx'))).toBe(
+      '<svg xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 8 8" tabindex="-1">'
+      + '<use xlink:href="#dot"/><text xml:space="preserve">a</text></svg>',
     )
   })
 
@@ -330,6 +359,119 @@ describe('an inline <svg> written as JSX', () => {
 
     const page = parse('pages/Deep.jsx')
     expect(Object.values(page.nodes).map((n) => n.name)).toEqual(['svg'])
+  })
+})
+
+describe('SVG-3: an inline <svg> stamps each inner element with where it is written', () => {
+  const svgNode = (page: ParsedPage): ParsedNode => {
+    const node = Object.values(page.nodes).find((n) => n.name === 'svg')
+    if (!node) throw new Error('no svg node')
+    return node
+  }
+  const markupOf = (page: ParsedPage): string => String(svgNode(page).props.svg)
+
+  it('stamps every element below the root with its own tag-name line:col, and never the root', () => {
+    write(
+      'pages/Parts.jsx',
+      [
+        'export default function Parts() {',
+        '  return (',
+        '    <svg viewBox="0 0 24 24">',
+        '      <g>',
+        '        <path d="M4 4h16" />',
+        '      </g>',
+        '      <circle cx="4" r="2" />',
+        '    </svg>',
+        '  )',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const page = parse('pages/Parts.jsx')
+    // The host keeps its own id; the stamps are in the SAME file, same convention (column of the tag name).
+    expect(svgNode(page).loc).toMatchObject({ line: 3, col: 6 })
+    expect(markupOf(page)).toBe(
+      '<svg viewBox="0 0 24 24">'
+      + '<g data-studio-svg-part="4:8"><path data-studio-svg-part="5:10" d="M4 4h16"/></g>'
+      + '<circle data-studio-svg-part="7:8" cx="4" r="2"/></svg>',
+    )
+  })
+
+  it('lists attributes that came from code, so the canvas never offers to overwrite them', () => {
+    write(
+      'pages/Coded.jsx',
+      [
+        'const D = "M0 0h8"',
+        'export default function Coded({ tone }) {',
+        '  return (',
+        '    <svg viewBox="0 0 8 8">',
+        '      <path d={D} fill={tone} strokeWidth={2} opacity={-1} stroke={"red"} />',
+        '      <rect {...rest} width="4" />',
+        '    </svg>',
+        '  )',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const markup = markupOf(parse('pages/Coded.jsx'))
+    // `{2}`, `{-1}` and `{"red"}` are literals a write may replace; `{D}` and `{tone}` are bindings.
+    expect(markup).toContain('<path data-studio-svg-part="5:8" data-studio-svg-code="d,fill" d="M0 0h8"')
+    // A spread can override anything on the element, so none of it is known to be literal.
+    expect(markup).toContain('<rect data-studio-svg-part="6:8" data-studio-svg-code="*" width="4"/>')
+  })
+
+  it('keeps a stamp on the element it names when the sanitiser drops a sibling (no index to drift)', () => {
+    write(
+      'pages/Dropped.jsx',
+      [
+        'export default function Dropped() {',
+        '  return (',
+        '    <svg viewBox="0 0 8 8">',
+        '      <foreignObject><div /></foreignObject>',
+        '      <path d="M1 1h6" />',
+        '    </svg>',
+        '  )',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const markup = markupOf(parse('pages/Dropped.jsx'))
+    // Whatever removes the foreignObject later, the path still says where IT is.
+    expect(markup).toContain('<path data-studio-svg-part="5:8" d="M1 1h6"/>')
+  })
+
+  it('drops an authored copy of a stamp rather than emitting two', () => {
+    write(
+      'pages/Forged.jsx',
+      [
+        'export default function Forged() {',
+        '  return <svg viewBox="0 0 8 8"><path data-studio-svg-part="1:1" d="M0 0" /></svg>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const markup = markupOf(parse('pages/Forged.jsx'))
+    expect(markup).toBe('<svg viewBox="0 0 8 8"><path data-studio-svg-part="2:34" d="M0 0"/></svg>')
+  })
+
+  it('does not count stamp bytes against the 64 KB markup cap', () => {
+    // 2,800 tiny paths: ~55 KB of graphic, plus ~90 KB of stamps. Without
+    // excluding the stamps this graphic would lock as "SVG built in code".
+    const paths = Array.from({ length: 2800 }, (_, i) => `      <path d="M${i % 97} 1h2" />`)
+    write(
+      'pages/Big.jsx',
+      ['export default function Big() {', '  return (', '    <svg viewBox="0 0 99 9">', ...paths, '    </svg>', '  )', '}', ''].join('\n'),
+    )
+
+    const node = svgNode(parse('pages/Big.jsx'))
+    const markup = String(node.props.svg)
+    expect(withoutStamps(markup).length).toBeLessThan(64 * 1024)
+    expect(markup.length).toBeGreaterThan(64 * 1024)
+    expect(node.locked).toBe(false)
   })
 })
 

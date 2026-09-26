@@ -14,6 +14,7 @@ import { flushEditorSave } from '@site/hooks/editorSaveRef'
 import { settleOrRollbackOptimistic, type OptimisticPreviewHandle } from '@site/store/slices/site/structuralOptimism'
 import type { StructuralCommitRollback } from '@site/store/slices/site/structuralCommitRollback'
 import { isUnreachableFailure } from '@core/http'
+import type { CanvasLayerPlacementChange } from '@core/studio-board'
 import type { PendingStructuralHistory } from './pendingStructuralOutcome'
 import { beginStructuralCommit, endStructuralCommit } from './structuralCommitQueue'
 import {
@@ -46,7 +47,7 @@ export interface StructuralCommitOptions {
    * pushed an entry, and TAGGED it with this same template, before the commit
    * that reveals the answer even started.
    */
-  undo?: { label: string; template: StructuralInverseTemplate }
+  undo?: { label: string; template: StructuralInverseTemplate; placements?: CanvasLayerPlacementChange[] } // P5-G — see `StructuralSourceGesture.placements`
   /**
    * `store-15` — set only by `delete`. Its tree mutation (and history entry)
    * already ran, synchronously, BEFORE this commit — `deleteNodesAction.ts`
@@ -70,6 +71,30 @@ export interface StructuralCommitOptions {
    */
   rollback?: StructuralCommitRollback
   replanned?: true // P1-A — this post IS the one silent re-plan after `element-moved`; a second one warns instead.
+  /**
+   * P3-D — the edits are ONE gesture written in order, each against the files
+   * the previous ones left, all or nothing (`studioEditSequence.ts` on the
+   * server). Re-planning a subset after `element-moved` would break the order
+   * the steps depend on, so a sequence never re-plans: it is taken back and
+   * says so, once.
+   */
+  sequence?: true
+  /**
+   * What the resync selects once the write lands: everything the write
+   * created or moved (the default), or only what it CREATED — a group written
+   * as "bring the members together, then wrap them" selects the wrapper, not
+   * the members the first steps moved.
+   */
+  select?: 'created'
+  /**
+   * P3-D (OD-7) — told what the write made once the board has re-read it
+   * (after the resync, before the queue moves on). Not called when nothing
+   * landed. `instanceOnlyGesture.ts` uses it to find the markup a detach put
+   * where the call site was.
+   */
+  onLanded?: (outcome: StructuralWriteOutcome) => void
+  /** P3-D (OD-7) — say nothing when the write is refused: the caller has its own answer (the refusal dialog). */
+  quiet?: true
 }
 
 /**
@@ -135,14 +160,14 @@ async function commitStructuralBody(
   }
 
   try {
-    const result = await postEditsRetryingUnreachable(edits, identities)
+    const result = await postEditsRetryingUnreachable(edits, identities, options.sequence ? { sequence: true } : {})
     // `element-moved` is never toasted here — it is recovered from below.
     const moved = elementMovedNodeIds(result.refusals)
     const refusals = (result.refusals ?? []).filter((refusal) => !moved.has(refusal.nodeId))
     const willReload = result.written > 0
     // P1-A — an `element-moved` miss is re-planned below, and the re-plan owns
     // the rollback when nothing else landed; every other outcome is known now.
-    const replanning = moved.size > 0 && !options.replanned && !willReload
+    const replanning = moved.size > 0 && !options.replanned && !options.sequence && !willReload
     // `perf-10`; ERR-22 — what the write created is what a Delete queued on
     // the preview acts on once this commit ends.
     settleOrRollbackOptimistic(options.optimistic, willReload ? 'settle' : 'rollback', result.createdNodeIds ?? [])
@@ -155,7 +180,7 @@ async function commitStructuralBody(
     // honestly. (WB-12 made every refusal named, so there is no "skip with no
     // reason" left to report here.)
     const [firstRefusal] = refusals
-    if (firstRefusal) {
+    if (firstRefusal && !options.quiet) {
       const more = refusals.length > 1 ? ` (${refusals.length - 1} more like this.)` : ''
       pushToast({ kind: 'warning', title: refusalTitle, body: `${firstRefusal.message}${more}`, location: 'site-editor' })
     }
@@ -170,21 +195,25 @@ async function commitStructuralBody(
         createdNodeIds: result.createdNodeIds ?? [],
         relocatedNodeIds: result.relocatedNodeIds ?? [],
         removed: result.removed ?? [],
-        prunedImports: result.prunedImports ?? [],
+        undoToken: result.undoToken ?? null,
+        listArrays: result.listArrays ?? [],
       }
       await resyncBoardAfterWrite(result.touchedFiles ?? [], {
         structuralOutcome: {
-          selectNodeIds: [...outcome.createdNodeIds, ...outcome.relocatedNodeIds],
+          selectNodeIds:
+            options.select === 'created' ? [...outcome.createdNodeIds] : [...outcome.createdNodeIds, ...outcome.relocatedNodeIds],
           history: resolvePendingHistory(edits, options, outcome),
         },
       })
+      options.onLanded?.(outcome)
     }
     // P1-A — the file changed under the board. Re-read it and re-plan ONCE,
     // silently (`elementMovedRecovery.ts`); only a second miss says anything.
     // The re-plan inherits `rollback` only when this pass settled nothing.
     if (moved.size > 0) {
       const movedEdits = edits.filter((edit) => moved.has(edit.nodeId))
-      const replan = options.replanned ? null : await replanAfterElementMoved(movedEdits, identities, result.touchedFiles ?? [])
+      const replan =
+        options.replanned || options.sequence ? null : await replanAfterElementMoved(movedEdits, identities, result.touchedFiles ?? [])
       const carried = replanning ? options.rollback : undefined
       if (replan) {
         await commitStructuralBody(replan.edits, refusalTitle, { ...options, optimistic: undefined, rollback: carried, replanned: true }, replan.identities)
@@ -241,8 +270,10 @@ function resolvePendingHistory(
       // holds has to be a plain mutable one the store's Mutative draft can
       // carry (see `StructuralSourceGesture`).
       forward: [...edits],
+      ...(options.sequence ? { sequence: true as const } : {}),
       inverseTemplate: options.undo.template,
       inverse: resolveStructuralInverse(options.undo.template, outcome),
+      ...(options.undo.placements ? { placements: [...options.undo.placements] } : {}),
     },
   }
 }

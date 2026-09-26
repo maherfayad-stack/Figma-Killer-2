@@ -79,9 +79,13 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `panel-44` · `/admin/site` on `test4` · select a component instance: one "<Name> · Local" row with icon Detach/Swap under Measures, props visible even with no class, Esc reverts a text prop, hidden under multi-select. Script: the `panel-44` entry in the archive
 - `panel-45` · `/admin/site` on `test4`, dark AND light · field hover lifts, Layers keyboard ring + selected ≠ hovered, forceOpen headers are plain titles, notice cards on the 12px gutter, skeletons on first open. Script: the `panel-45` entry in the archive
 
+**SVG (P5-D)**
+- `canvas-30` · `/admin/site` on a copy of `test4` with an inline icon svg, zoom 100% / 25% / 400%, 1 frame · double-click the svg → anchors on its points at ~8 px; drag one → one `POST /save`, only that segment changes in the `.tsx`, ⌘Z restores it byte-for-byte; P + clicks + ⏎ inside the frame → one new `<svg stroke="currentColor">`. Script: the PR body
+
 **Images (P5)**
 - `canvas-28` · `/admin/site` on `test4`, Design view, 100% · drop 3 images on a frame (ghosts fill, one ⌘Z removes all), onto an `<img>` (replace), with ⇧ (background) and ⌘ (at the pointer); ⌘K → Insert image…. Script: the `canvas-28` entry
 - `canvas-29` · `/admin/site` on `test4`, SMS, 100% · R-drag draws a box of the drawn size; T-click types; padding/gap bands (⇧ pair, ⌥ all four); ⌥A/⌥D/⌥W align; ⇧A; ⌘⌥C/⌘⌥V; ⌘⇧]; right-click "Select layer"; ⇧K opens the picker. Script: the PR body
+- `canvas-40` · `/admin/site` on `test4`, one frame, 100% · equal-spacing pills on an absolute drag; ⌘' / ⌘⇧' (zoom menu shows them); ⇧-select two → one handle box, drag scales both; double-click an edge → Hug; rotate from outside a corner with ⇧; 5 / 0 / ⇧H; B-drag on the empty board → page picker, frame at the drawn rect. Script: the PR body
 
 **Assistant (P4)**
 - `mcp-28` · the Agent panel with an Anthropic API key (not the CLI) · ask it to build a screen: it reads, writes and edits files; asking it to edit `vite.config.js` or `package.json` is refused as needs-you. Script: the PR #233 body
@@ -112,6 +116,8 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `canvas-25` · `/admin/site` on `test4`, SMS · arrows nudge the absolute banner (one save, one ⌘Z), reorder a code input, stand down in a panel. Script: the `canvas-25` entry in the archive
 - `canvas-26` · `/admin/site` on `test4`, 100% and 50% · snaps feel the same at both zooms (move and resize, parent edges too), the drop's container is outlined, Alt off-node measures to the parent, a Layers click then → moves the layer. Script: the `canvas-26` entry in the archive
 - `canvas-27` · `/admin/site` on `test4`, SMS · two absolute layers nudge together (one save, one ⌘Z), two code inputs step together, ⌥↓ on a pair, a mixed selection nudges only the absolute one. Script: the `canvas-27` entry in the archive
+- `canvas-37` · `/admin/site` on `test4` (live tier), SMS frame, 100% and 50% · a code input's E handle: it follows the pointer and keeps its width after the save; near a sibling's edge it snaps with a guide; the page's `<main>` E handle at the frame bottom: the frame never grows; a refused delete comes back; a double-click on a component's text opens it; child → parent hover keeps the parent's ring. Script: the #265 PR body
+- `store-21` · `/admin/site` on `test4` · a Layers multi-drag writes once and undoes once; ⌥-drag of two; ⌘C/⌘V across frames; Delete inside one instance of a shared component (no dialog, only that instance, one ⌘Z). Script: the `store-21` entry under `## Now`
 
 **Inspector**
 - `panel-39`, `panel-41`, `panel-37`, `panel-36` · a ~900 px window, text layer · the Design tab fits, or ends in one collapsed More row
@@ -172,16 +178,16 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 10 one-liners, newest first: ids — what — PR — date. Everything here is merged into the trunk; full entries are in [`docs/state-archive/2026-09.md`](docs/state-archive/2026-09.md).*
 
-- `perf-13` — P6-B: restart 2.8 s → 0.65 s, warm /load 55 → 18 ms on 40 pages; page edit and cold at baseline (prewarm builds the program, deferred cache writes) — #263 — 2026-09-25
-- `canvas-34` — P5-B2: dropped and every literal public/ image loads in design frames via the hardened asset route (`url=`), media-only MIME gate, normalized rewrite; security approved — #262 — 2026-09-25
-- `mcp-32` — P4-G: `studio_lint`, `studio_delegate` (per-turn caps 2 calls / 8 children / 150 rounds), model routing, short tool descriptions, run-project tools held in plan mode; security approved — #255 — 2026-09-25
-- `canvas-29` — P5-E: armed draw tools, padding/gap handles, align, layer commands, ⇧K insert image, 12 IX/UX items — #261 — 2026-09-25
-- `panel-46` — sweep: style-lock partial writes, dark --text-subtle contrast, icon guide, late component catalog, CLAUDE.md toast rule (owner reviews) — #259 — 2026-09-25
-- `canvas-28` — P5-B: N images = one insert/undo, drop on img replaces (⌥ beside), ⇧ background, upload ghosts, natural size clamped, ⌘ at pointer, Insert image… command — #258 — 2026-09-25
-- `sec-24` — security: SSRF pinning, separate admin CSP, server-side upload asset, link-safe scaffolds, case-folded read guard, Vite spawned directly (no predev), atomic writes, Tailwind @plugin/@config gate; approved after 3 B1 rounds — #256 — 2026-09-25
-- `test-07` — green baseline: 15 of 16 pre-existing unit failures fixed (stub ready, log-file dev server, liveOrigin double subprotocol), canvasIframe e2e helper — #257 — 2026-09-25
-- `store-19` — P3-E: edits rebase over outside writes and queued ⌘D; nothing typed is lost — #254 — 2026-09-25
-- `infra-02` — P0-I: CI runs `bun run test` on Bun 1.3.13 — #253 — 2026-09-25
+- `store-22` — P3-F: one compare-and-swap restore journal for delete, detach, swap, extract and list-row delete; ⌘Z restores exact bytes (~35 ms) or refuses restore-stale; all-or-nothing multi-file restore; reinsert-source deleted; security approved — #274 — 2026-09-25
+- `refactor-ckpt` — agent checkpoints split into store / revert / entry modules (789 → under 700 lines), no behaviour or check changed; the trunk has no red gates left — #276 — 2026-09-25
+- `canvas-30` — P5-D part 2: SVG part stamps (removed inside the sanitizer, never by regex), svg-attr edit on the one allowlist, icon/.svg insert via the paste path, vector edit mode (points, corner/smooth), pen tool; security approved after the stored-XSS fix — #269 — 2026-09-25
+- `perf-16` — P6-B client: pages paint as they arrive with titled placeholders, board code loads with the editor (frames 1–2.3 s sooner), token extraction off the open path; warm first frame 5.3→4.5 s dev (300 ms target not met: one-update frame mount) — #271 — 2026-09-25
+- `perf-15` — P6-C: every audit budget is a gate (plus a production-build e2e pass); warm click→ring 62→47 ms prod, cold 109→69 ms, keystroke→paint 32→26 ms, Tier-2 posters 0/4→2/2; CanvasRoot compiled by the React Compiler again — #272 — 2026-09-25
+- `P3-D2` — P3-D2: drag, ⌥↑/↓, grid-row ↑/↓, ⌘D, ⌥-drag and paste on a .map row write the array literal (comments and commas kept, unique copy keys, one undo); honest refusals for non-literal arrays — #273 — 2026-09-25
+- `canvas-39` — P5-A: ⌘V from the paste event in every frame, copy marker with copiedAt, image paste through the drop pipeline, SVG paste through sanitizeSvg; live-frame keys can never arm clipboard.read; security approved — #270 — 2026-09-25
+- `canvas-40` — P5-F: snap to guides and equal spacing with toggles (one engine in @core/studio-runtime, loose layers too), multi-select resize and free move, double-click edge to Hug, rotation via CSS rotate, opacity keys, flips, board-draw tool — #268 — 2026-09-25
+- `store-21` — P3-D: cross-frame paste and moves write instead of refusing, ⌘Z after a cross-frame paste works, OD-7 fallback undoes in one ⌘Z; import prune moved to studioBatchImportPrune.ts — #250 — 2026-09-25
+- `canvas-38` — P5-D part 1: SVG-0/1/2, inline SVG on the canvas; sanitizer T3 bypass (mid-tree HEAD/BODY) and remote <style> loads closed; hover ring follows the target; security approved after 3 rounds — #264 — 2026-09-25
 
 ---
 

@@ -44,7 +44,7 @@
  * purpose so "this project has no library" compares equal to "never had one"
  * and cannot fire a spurious POST on a project with no fonts.
  */
-import { Type } from '@sinclair/typebox'
+import { Type, type Static } from '@sinclair/typebox'
 import { apiRequest } from '@core/http'
 import { FrameworkSettingsSchema } from '@core/framework-schema'
 import { SiteFontsSettingsSchema } from '@core/fonts'
@@ -69,18 +69,22 @@ const SidecarSaveResponseSchema = Type.Object({
 let lastSyncedFrameworkJson: string | undefined
 let lastSyncedFontsJson: string | undefined
 
+export type SidecarSettings = Static<typeof SidecarLoadResponseSchema>
+
 /**
- * Read both sidecars into `site.settings`, then arm the change baselines.
- * Mutates `site` in place, matching the rest of `loadSite`'s shell assembly.
+ * Read both sidecars. Needs nothing from the page load, so `loadSite` starts
+ * it together with `/load` rather than after it (P6-B): the two used to run
+ * back to back, and opening a project waited for both.
  */
-export async function loadSidecarSettings(
-  site: SiteDocument,
-  overrideDir: string | null,
-): Promise<void> {
-  const { framework, fonts } = await apiRequest('/admin/api/studio/framework', {
+export function fetchSidecarSettings(overrideDir: string | null): Promise<SidecarSettings> {
+  return apiRequest('/admin/api/studio/framework', {
     schema: SidecarLoadResponseSchema,
     query: overrideDir ? { dir: overrideDir } : undefined,
   })
+}
+
+/** Write what {@link fetchSidecarSettings} read into `site.settings`, in place, matching the rest of `loadSite`'s shell assembly. */
+export function applySidecarSettings(site: SiteDocument, { framework, fonts }: SidecarSettings): void {
   if (framework) site.settings.framework = framework
   if (fonts) site.settings.fonts = fonts
 }

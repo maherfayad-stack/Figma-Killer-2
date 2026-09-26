@@ -36,7 +36,7 @@
  * keeps the graph one-directional, the same way `@core/framework-schema` works
  * for persisted framework settings.
  */
-import { readStudioStoreText, writeStudioStoreJson } from './studioStore'
+import { readStudioStoreText, studioStorePath, writeStudioStoreJson } from './studioStore'
 import { isAbsolute } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { parseJsonWithFallback } from '@core/utils/jsonValidate'
@@ -446,6 +446,11 @@ export type StudioMeta = Static<typeof StudioMetaSchema>
 
 /** The store path of this record (`.studio/meta.json`), for the one door `studioStore.ts`. */
 export const STUDIO_META_FILE = 'meta.json'
+
+/** `<dir>/.studio/meta.json` as a path — for a cache keyed on what it reads (the preview shell's input stamp) to NAME the same file; reading it is `readStudioMeta`'s job. */
+export function studioMetaFile(dir: string): string {
+  return studioStorePath(dir, STUDIO_META_FILE)
+}
 
 /**
  * `pagesDir` override guard: a non-empty string, never absolute, never

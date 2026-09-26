@@ -188,6 +188,12 @@ export interface CmsSitePagesPatchDetail {
    * WITH the pages it describes, so no other re-read can claim it.
    */
   structuralOutcome?: PendingStructuralOutcome
+  /**
+   * P5-G — the free canvas's loose layers from the same re-read (always the
+   * full set). Applied before the pages, apart from them: they never enter
+   * `site.pages` (`canvasLayerSlice.ts`).
+   */
+  canvasLayers?: { layerId: string; pageId: string; page: Page }[]
 }
 
 /** Dispatches `CMS_SITE_PAGES_PATCH_EVENT`. No-op (and nothing retained) outside a browser or when nothing is listening — see this event's own doc for why, unlike `requestCmsSiteReload`, there is no "pending" fallback. */

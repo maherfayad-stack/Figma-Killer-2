@@ -22,7 +22,7 @@ import type {
   PageTemplateConfig,
   ConditionDef,
   StyleRule,
-  SiblingMove,
+  SequencedMove,
   StructuralExplorerRowOrder,
   StructuralSiteExplorerSectionId,
 } from '@core/page-tree'
@@ -34,7 +34,7 @@ import type { EditorStore } from '@site/store/types'
 import type { PendingStructuralHistory } from '@site/studio/pendingStructuralOutcome'
 import type { SlotOwnerEntry } from './nodeIndex'
 import type { ImportedNodesResult } from './importedNodesResult'
-import type { ImageDropRequest, UploadProgressPainter } from './imageDropShapes'
+import type { ImageDropRequest, SubtreeInsertRequest, UploadProgressPainter } from './imageDropShapes'
 
 // ---------------------------------------------------------------------------
 // Public action surface — every method below appears as a top-level entry on
@@ -320,9 +320,9 @@ export interface SiteSlice {
   moveNode: (nodeId: string, newParentId: string, newIndex: number) => void
   /** Multi-move: moves every top-level id into newParent at newIndex (single undo step). */
   moveNodes: (nodeIds: string[], newParentId: string, newIndex: number) => void
-  /** P2-C2 — step every layer `steps[parentId]` places among its siblings / apply independent moves: one entry, one save batch. `siblingStepActions.ts`. */
+  /** P2-C2 — step every layer `steps[parentId]` places among its siblings / P3-D: apply moves IN ORDER — one entry, one write. `moveSequenceActions.ts`. */
   stepSiblings: (nodeIds: string[], steps: Readonly<Record<string, number>>) => void
-  moveSiblings: (moves: SiblingMove[]) => void
+  moveNodesInSequence: (moves: SequencedMove[]) => void
   duplicateNode: (nodeId: string) => string
   /** Multi-duplicate: duplicates every id in place (single undo step). Returns the new ids. */
   duplicateNodes: (nodeIds: string[]) => string[]
@@ -354,18 +354,17 @@ export interface SiteSlice {
    */
   transplantNodes: (nodeIds: string[], destination: TransplantDestination) => void
   /**
-   * D2 G15 / P5-B — the `<img>`s image files dropped from the operating
-   * system become: every file landed, then ONE insert of N siblings (one
-   * write, one undo step), with an optimistic ghost per file while the bytes
-   * upload. Names its page, and activates it: a dropped file lands wherever
-   * the pointer was, and that frame was never activated by a pointerdown.
-   * See `imageDropActions.ts`.
+   * D2 G15 / P5-B — dropped image files: every file landed, then ONE insert
+   * of N `<img>` siblings (one write, one undo step), a ghost per file while
+   * it uploads. Names its page and activates it (`gesturePage.ts`).
    */
   dropImagesIntoPage: (drop: ImageDropRequest) => void
   /** P5-B (IMG-3) — a file dropped onto an `<img>` replaces its source: the import it reads, or its literal `src`. */
   replaceImageInPage: (pageId: string, nodeId: string, file: File, paintProgress?: UploadProgressPainter) => void
   /** P5-B (IMG-7) — ⇧-drop: the file becomes the element's top background layer, written to its own inline style. */
   setBackgroundImageInPage: (pageId: string, nodeId: string, file: File) => void
+  /** P5-A — a pasted SVG's converted subtree: ONE `insert`, one undo step. See `subtreeInsertActions.ts`. */
+  insertJsxSubtreeIntoPage: (request: SubtreeInsertRequest) => void
   wrapNode: (nodeId: string, containerModuleId: string, defaults?: Record<string, unknown>) => string
   /**
    * Wrap a multi-selection inside one new container with closest-common-ancestor

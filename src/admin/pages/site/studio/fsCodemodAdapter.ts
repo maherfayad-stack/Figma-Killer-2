@@ -5,11 +5,10 @@
  *
  *   loadSite  → GET  /admin/api/studio/load   → every source-derived Studio
  *               Page in the workspace's `pages/` dir, wrapped in a default
- *               SiteDocument shell (multi-frame board — Phase 1 Increment 1B).
- *               `site.settings.framework` (Colors/Typography/Spacing) is then
- *               overridden from `GET /admin/api/studio/framework`, if the
- *               project has a persisted `.studio/framework.json` — otherwise
- *               the default shell's framework settings stand as-is.
+ *               SiteDocument shell (multi-frame board — Phase 1 Increment 1B),
+ *               with the `.studio/` sidecar settings and extracted tokens.
+ *               Lives in `studioProjectLoad.ts`, which also streams the
+ *               document to the board as its pages arrive (P6-B).
  *   saveSite  → POST /admin/api/studio/save   → a batch of typed edits
  *               (`kind: 'prop' | 'text' | 'style' | ...`) for every source-backed
  *               node (id = `relFile:line:col`), written back to the .tsx via
@@ -36,54 +35,35 @@
  */
 import type { IPersistenceAdapter, SaveSiteOptions } from '@core/persistence/types'
 import { type SiteDocument } from '@core/page-tree'
-import { ndjsonRequest } from '@core/http'
-import { type Static } from '@core/utils/typeboxHelpers'
-import { createDefaultSiteDocument } from '@site/store/slices/site/defaults'
 import { useEditorStore } from '@site/store/store'
-import { useAdminUi } from '@admin/state/adminUi'
 import { requestEditorSave } from '@admin/state/adminEvents'
 import { notifyInlineStyleUnsaved } from '@site/panels/inlineStyleUnsavedNotice'
-import { armSidecarBaselines, loadSidecarSettings, noteFrameworkSynced, saveChangedSidecarSettings } from './sidecarSync'
+import { saveChangedSidecarSettings } from './sidecarSync'
 import { notifyClassAssignmentUnsaved } from '@site/panels/classAssignmentUnsavedNotice'
-import { getStudioWorkspaceDir, setStudioLoadedDir, studioWriteDir } from './studioWorkspaceDir'
-import { fetchExtractedTokens, type TokenExtractionStatus } from './studioTokenStatus'
-import { setStudioProjectKey, setStudioTrustTier } from './studioProjectTrust'
+import { studioWriteDir } from './studioWorkspaceDir'
 import { notifyCreatedStylesheets, postEdits } from './studioSaveRequests'
 import { captureIdentities } from './sourceIdentity'
 import { editOutcomeKey, refusedEditKeys } from './editOutcomes'
 import { elementMovedNodeIds, retryAfterElementMoved, warnElementMoved } from './elementMovedRecovery'
 import { structuralEditNodeIds } from './structuralUndoPlan'
 import { resyncBoardAfterWrite } from './studioBoardResync'
-import { orderStreamedPages, StudioLoadStreamLineSchema, type ComponentSource } from './studioLoadStreamSchema'
-import { commitClassIdsBaseline, commitNodeValuesBaseline, dropNodeValuesBaseline, resetLoadedValues } from './loadedValuesBaseline'
+import { commitClassIdsBaseline, commitNodeValuesBaseline, dropNodeValuesBaseline } from './loadedValuesBaseline'
 import { collectClassNameEdits } from './classNameWriteback'
-import { watchOpenPageForCssDestination } from './openPageWatch'
 import {
   reportClassTokenRefusals,
   reportEditRefusals,
   reportStyleRulePlanRefusals,
-  resetRefusalToasts,
   styleRulePlanTouchedSomething,
 } from './refusalToasts'
 import {
   collectStyleRuleEdits,
   commitBaseline as commitStyleRuleBaseline,
   noteStylesheetWritten,
-  resetCssDestinationMemory,
-  setStudioStyleRuleSources,
 } from './styleRuleWriteback'
-import {
-  collectLocalizedTextEdits,
-  commitLocalizedTextBaseline,
-  resetLocalizedTextBaseline,
-  watchLocalizedPagesForBaseline,
-} from './localizedPageWriteback'
-import { setStudioVendorCss, setStudioAuthoredCss } from './studioRawCssStores'
-import { setStudioLoadWarnings } from './studioLoadWarningsStore'
+import { collectLocalizedTextEdits, commitLocalizedTextBaseline } from './localizedPageWriteback'
 import { collectNodeDiffEdits } from './nodeDiffWriteback'
 import { notifyRowTemplateWrites } from './rowTemplateWrites'
-
-export type { ComponentSource } from './studioLoadStreamSchema'
+import { loadStudioProject } from './studioProjectLoad'
 
 /**
  * Remembered from the last load so saveSite can tell the server which folder
@@ -91,41 +71,6 @@ export type { ComponentSource } from './studioLoadStreamSchema'
  */
 function loadedDir(): string | null {
   return studioWriteDir()
-}
-
-/**
- * Remembered from the last load — local-vs-package classification for every
- * `kind: 'component'` node in the workspace, keyed by node id. Consumed by
- * future inspector/property-panel UI that needs to tell a local (editable)
- * component apart from a read-only npm-package one (Phase 7A only resolves
- * and classifies; rendering local components as their own editable canvas
- * modules is deferred — see V1-CANVAS-PLAN.md's Phase 7A backlog note).
- */
-let componentSources: Record<string, ComponentSource> = {}
-
-/** WS-3.3 — `.studio/meta.json`'s `paletteHiddenModuleIds` override, from the last load. See `getStudioComponentSources` for the same "remembered from last load" shape. */
-let paletteHiddenModuleIds: readonly string[] = []
-
-/** The project the stylesheet-destination memory (`resetCssDestinationMemory`) belongs to. */
-let cssDestinationMemoryDir: string | null = null
-
-/**
- * Every source-backed node's values AS LOADED, keyed by node id, so `saveSite`
- * can write only what the user actually changed. Owned by `loadedValuesBaseline.ts`
- * (a store-agnostic leaf — see that module's own doc for why); read from
- * `nodeDiffWriteback.ts`'s `collectNodeDiffEdits` (`getLoadedNodeValues`,
- * `speed-02` split it out of this file), or replaced wholesale on a fresh
- * `loadSite()` (`resetLoadedValues`, still here).
- */
-
-/** The current workspace's local-vs-package classification for every component node, from the last load. */
-export function getStudioComponentSources(): Record<string, ComponentSource> {
-  return componentSources
-}
-
-/** WS-3.3 — the current project's `paletteHiddenModuleIds` override, from the last load. */
-export function getStudioPaletteHiddenModuleIds(): readonly string[] {
-  return paletteHiddenModuleIds
 }
 
 /**
@@ -146,24 +91,6 @@ export {
   getStudioAuthoredCss,
   subscribeStudioAuthoredCss,
 } from './studioRawCssStores'
-
-/**
- * `tokens-01` — re-runs server-side token extraction for the CURRENTLY
- * loaded project (`studioTokenStatus.ts`'s `fetchExtractedTokens` does the
- * actual fetch + status-store update) and applies the result to the LIVE
- * document (`applyExtractedFrameworkTokens` — undo-able). This is the
- * Framework panel's "Re-scan tokens" action; `loadSite` below calls
- * `fetchExtractedTokens` directly instead (it has no live document yet to
- * apply the result to). Throws `ApiError` on failure so the caller can toast.
- */
-export async function refreshExtractedTokens(): Promise<TokenExtractionStatus> {
-  const dir = loadedDir()
-  if (dir === null) throw new Error('[fsCodemodAdapter] refreshExtractedTokens called before a project loaded')
-  const { framework, status } = await fetchExtractedTokens(dir)
-  useEditorStore.getState().applyExtractedFrameworkTokens(framework)
-  noteFrameworkSynced(framework)
-  return status
-}
 
 /**
  * Studio's idle-commit cadence — how long the canvas waits after the last
@@ -190,126 +117,9 @@ export async function refreshExtractedTokens(): Promise<TokenExtractionStatus> {
 export const STUDIO_AUTOSAVE_DELAY_MS = 250
 
 export const fsCodemodAdapter: IPersistenceAdapter = {
-  async loadSite(): Promise<SiteDocument | undefined> {
-    // The active project is a subfolder of studio-workspace/ (hand-authored or
-    // GitHub-imported) — see studioWorkspaceDir's doc comment for why every
-    // studio client call must agree on the same active dir.
-    const overrideDir = getStudioWorkspaceDir()
-    // WS-5.5 — stream the load response page-by-page (NDJSON) rather than
-    // waiting for one buffered JSON body: the meta line (componentSources,
-    // styleRules, …) plus every page arrive as separate lines, each parsed
-    // and validated as it's received instead of gating on the whole payload.
-    // See the server route's own doc comment (`studio.ts`'s
-    // `studioLoadStreamLines`) for exactly what this does and does not
-    // achieve — server-side parse cost is unchanged, this shortens the time
-    // between "server has an answer" and "client has usable bytes".
-    type StudioLoadStreamLine = Static<typeof StudioLoadStreamLineSchema>
-    let meta: (StudioLoadStreamLine & { kind: 'meta' }) | null = null
-    const pageLines: Array<StudioLoadStreamLine & { kind: 'page' }> = []
-    await ndjsonRequest('/admin/api/studio/load', {
-      lineSchema: StudioLoadStreamLineSchema,
-      query: { ...(overrideDir ? { dir: overrideDir } : {}), stream: 1 },
-      onLine: (line) => {
-        if (line.kind === 'meta') meta = line
-        else pageLines.push(line)
-      },
-    })
-    if (!meta) throw new Error('Studio load stream produced no metadata line.')
-    // P6-B — lines arrive in viewport order; the site keeps page order.
-    const pages = orderStreamedPages(pageLines)
-    const {
-      dir,
-      projectName,
-      componentSources: sources,
-      styleRules,
-      styleRuleSources: loadedStyleRuleSources, styledStyleRuleSources: loadedStyledRuleSources,
-      conditions,
-      vendorCss: loadedVendorCss,
-      authoredCss: loadedAuthoredCss,
-      warnings: loadWarnings,
-      trust,
-      projectKey,
-      paletteHiddenModuleIds: loadedPaletteHiddenModuleIds,
-    } = meta
-    // ERR-14 — the automatic stylesheet choices are this project's; a load of
-    // a DIFFERENT project starts without them (a resync keeps them).
-    const sameProject = dir === cssDestinationMemoryDir
-    if (!sameProject) resetCssDestinationMemory()
-    cssDestinationMemoryDir = dir
-    setStudioLoadedDir(dir)
-    componentSources = sources
-    paletteHiddenModuleIds = loadedPaletteHiddenModuleIds
-    setStudioVendorCss(loadedVendorCss)
-    setStudioAuthoredCss(loadedAuthoredCss)
-    setStudioLoadWarnings(loadWarnings)
-    setStudioTrustTier(trust)
-    setStudioProjectKey(projectKey ?? null)
-    // Baseline for the save-time diff — see `loadedValuesBaseline.ts`. A
-    // re-read of the project already open keeps the baseline it replaces, so
-    // the store can rebase the user's unsaved edits onto these pages (ERR-9).
-    resetLoadedValues(pages, { sameProject })
-    // `style-02` — a fresh document is a fresh set of refusals to report.
-    resetRefusalToasts()
-    // `panel-02` (WS-6.3) — the CSS write-back map + its diff baseline.
-    // `pages` feeds `buildClassPageIndex`, which is how a new class gets
-    // co-located with the page it is used on (`style-02`).
-    setStudioStyleRuleSources(loadedStyleRuleSources, styleRules, { pages, styledSources: loadedStyledRuleSources })
-    // Z8 — and which page is OPEN, the anchor for a class that is on no
-    // element yet. Idempotent; see `openPageWatch.ts`.
-    watchOpenPageForCssDestination(pages)
-    // WS-10 §4.4 (Phase 4) — a fresh project load (or a `requestCmsSiteReload()`
-    // re-load) must not carry a locale-variant page, or its writeback
-    // baseline, over from whatever project was open before: `pageId` is only
-    // unique WITHIN one project, so a stale entry could silently suppress or
-    // misdirect a real diff in the new one. `watchLocalizedPagesForBaseline`
-    // is idempotent — safe to call on every load, only subscribes once.
-    useEditorStore.getState().resetLocalizedPages()
-    resetLocalizedTextBaseline()
-    watchLocalizedPagesForBaseline()
-    // Distinct from `site.name` (the "Studio" product wordmark, unchanged per
-    // project) — this is the per-project display name shown under the brand
-    // in the toolbar (see Toolbar.tsx's StudioProjectLabel).
-    useAdminUi.getState().setStudioProject({ dir, name: projectName })
-    // Wrap the source-derived pages in a valid default site shell (breakpoints,
-    // settings, framework, …) — every workspace page becomes a board frame.
-    const site = createDefaultSiteDocument('Studio')
-    site.pages = pages
-    // §6 — styling imported from the workspace's `.css` files, re-derived
-    // from disk on every load. `panel-02` (WS-6.3) — an edit to a rule
-    // mapped in `styleRuleSources` now reaches disk on the next `saveSite`;
-    // an edit to an unmapped rule (Tailwind/Sass/PostCSS output, a CSS
-    // Modules compile) still only lives in-memory until reload — see
-    // `studioCss.ts`'s "Write-back mapping" doc and `StyleTargetChip`, which
-    // states which tier a given class is in.
-    site.styleRules = styleRules
-    site.conditions = conditions
-
-    // Override the default shell's framework tokens + font library with
-    // whatever this project has persisted in `.studio/`, if anything. See
-    // `sidecarSync.ts` — nothing persisted means the default stands as-is.
-    await loadSidecarSettings(site, overrideDir ?? null)
-
-    // `tokens-01` — populate the Framework panel from the project's OWN
-    // design tokens (`:root` custom properties, a Tailwind theme, or a vendor
-    // design-system package's CSS — see `tokenExtract.ts`). Runs every load:
-    // the server's own merge only ever fills a currently-EMPTY family, so
-    // this is a no-op once populated (by extraction or by the user), and it
-    // means a project whose tokens only became reachable later — e.g. after
-    // "Install dependencies" resolves a vendor CSS import — picks them up on
-    // the very next load, with no separate "re-scan" step required. A
-    // failure here (e.g. the route isn't wired up yet) must not block the
-    // rest of the project from loading — logged, not thrown.
-    try {
-      const tokensResult = await fetchExtractedTokens(dir)
-      site.settings.framework = tokensResult.framework
-    } catch (err) {
-      console.error('[fsCodemodAdapter] token extraction failed', err)
-    }
-
-    armSidecarBaselines(site)
-
-    return site
-  },
+  // `studioProjectLoad.ts` — the stream, the `.studio/` reads beside it, and
+  // (P6-B) the document handed over while its pages are still arriving.
+  loadSite: (_id, options) => loadStudioProject(options),
 
   async saveSite(site: SiteDocument, opts: SaveSiteOptions = {}): Promise<void> {
     // Every source-backed node's literal props + inline styles, DIFFED against

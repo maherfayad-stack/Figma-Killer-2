@@ -138,7 +138,9 @@ function resolveAnchorPlacement(
   const { anchor } = request
   if (!anchor) return null
 
-  const resolved = resolveJsxChildRange(sourceFile, anchor.line, anchor.col)
+  // WB-22 — an anchor the code produces (a `.map` row, a conditional) is
+  // written beside the `{…}` container that produces it.
+  const resolved = resolveJsxChildRange(sourceFile, anchor.line, anchor.col, 'container')
   if (!resolved.ok) return refuse(resolved.reason, resolved.message)
   if (resolved.range.parent !== parentElement) {
     return refuse(
@@ -160,8 +162,13 @@ function resolveAnchorPlacement(
   }
 }
 
-/** The zero-length edit that puts the rendered child immediately before or after an existing child's owned range. */
-function insertBeside(
+/**
+ * The zero-length edit that puts the rendered child immediately before or
+ * after an existing child's owned range. Exported for `moveJsxElement`'s
+ * mixed-indentation reorder (WB-21), which lands the moved element exactly
+ * where an insert beside the same anchor would.
+ */
+export function insertBeside(
   range: { start: number; end: number; wholeLine: boolean },
   position: 'before' | 'after',
   render: RenderJsx,
@@ -208,7 +215,7 @@ export function elementChildren(element: JsxElement | JsxFragment): (JsxElement 
 }
 
 /** The 1-based `line, col` of a JSX element's tag name — the coordinate `resolveJsxChildRange` speaks. */
-export function tagLocation(sourceFile: SourceFile, element: JsxElement | JsxSelfClosingElement): [number, number] {
+function tagLocation(sourceFile: SourceFile, element: JsxElement | JsxSelfClosingElement): [number, number] {
   const opening = Node.isJsxElement(element) ? element.getOpeningElement() : element
   const { line, column } = sourceFile.getLineAndColumnAtPos(opening.getTagNameNode().getStart())
   return [line, column]

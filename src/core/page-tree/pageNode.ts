@@ -10,10 +10,11 @@
  * Constraint #269: no imports from editor / editor-store here.
  */
 
-import { Type, type Static } from '@core/utils/typeboxHelpers'
+import { Type, Value, type Static } from '@core/utils/typeboxHelpers'
 import { BaseNodeSchema, parseBaseNodeFields } from './baseNode'
 import { DynamicPropBindingSchema, parseDynamicBindings } from './dynamicBinding'
 import { asPlainObject } from './parseHelpers'
+import { ListRowSourceSchema, type ListRowSource } from './listRowSource'
 
 // ---------------------------------------------------------------------------
 // PageNodeSchema
@@ -172,6 +173,14 @@ export const PageNodeSchema = Type.Object({
    * `ParsedNode.fromComponent` in `@core/page-parser`.
    */
   fromComponent: Type.Optional(Type.String()),
+  /**
+   * Studio import (OD-8) — on a `.map` row's ROOT node only: the array literal
+   * the row is an element of (its `[` position, this row's index, the length),
+   * or why there is no array in this file to edit. What makes a row's reorder,
+   * delete and duplicate writable — they edit the array, never the JSX. See
+   * `./listRowSource.ts`.
+   */
+  listRow: Type.Optional(ListRowSourceSchema),
 })
 
 export type PageNode = Static<typeof PageNodeSchema>
@@ -299,5 +308,11 @@ export function parsePageNode(raw: unknown, nodePath: string): PageNode {
     ...(typeof r.fromComponent === 'string' && r.fromComponent.length > 0
       ? { fromComponent: r.fromComponent }
       : {}),
+    ...(isListRowSource(r.listRow) ? { listRow: r.listRow } : {}),
   }
+}
+
+/** A raw `listRow` field that is a well-formed stamp — dropped (not thrown) otherwise, like every Studio provenance field. */
+function isListRowSource(raw: unknown): raw is ListRowSource {
+  return Value.Check(ListRowSourceSchema, raw)
 }

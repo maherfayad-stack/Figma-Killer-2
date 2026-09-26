@@ -41,9 +41,14 @@ import {
   upsertPrototypeLink,
   type PrototypeFile,
 } from '@core/studio-prototype'
-import { readStudioStoreDocument, writeStudioStoreFile } from './studioStore'
+import { readStudioStoreDocument, studioStorePath, writeStudioStoreFile } from './studioStore'
 
 const PROTOTYPE_FILE = 'prototype.json'
+
+/** Absolute path of `.studio/prototype.json` — for a caller that must NAME it (the shell's input stamp); reading and writing go through `studioStore.ts`. */
+export function prototypeFilePath(dir: string): string {
+  return studioStorePath(dir, PROTOTYPE_FILE)
+}
 
 export function readPrototypeFile(dir: string): PrototypeFile {
   return readStudioStoreDocument(dir, PROTOTYPE_FILE, parsePrototypeFile, createPrototypeFile)

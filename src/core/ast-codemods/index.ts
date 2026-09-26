@@ -30,13 +30,30 @@ export { setImportSpecifier, ImportSpecifierTargetError } from './setImportSpeci
 export type { SetImportSpecifierParams } from './setImportSpecifier'
 export { rewriteImportSpecifier } from './rewriteImportSpecifier'
 export type { RewriteImportSpecifierParams, RewriteImportSpecifierResult } from './rewriteImportSpecifier'
+export { setSvgPartAttributes } from './setSvgPartAttributes'
+export type {
+  SetSvgPartAttributesParams,
+  SetSvgPartAttributesResult,
+  SvgPartAttributesRefusalReason,
+} from './setSvgPartAttributes'
 export { setJsxTagName, JsxTagNameTargetError } from './setJsxTagName'
 export type { SetJsxTagNameParams } from './setJsxTagName'
 export { moveJsxElement } from './moveJsxElement'
 export type { MoveJsxElementParams, MoveJsxElementResult, MoveJsxRefusal, MoveJsxRefusalReason } from './moveJsxElement'
 // D2 G3 — the cross-FILE move `moveJsxElement` deliberately refuses.
-export { transplantJsxElement } from './transplantJsxElement'
+export {
+  transplantJsxElement,
+  // P5-G — the free canvas's two endpoints: a loose layer placed into a frame,
+  // and an element lifted out of one onto the board.
+  placeCanvasLayerRoot,
+  liftJsxElementToCanvasModule,
+  canvasLayerModuleRoot,
+} from './transplantJsxElement'
+export { buildCanvasLayerModule, canvasLayerModuleFromSpec, type CanvasLayerModule } from './canvasLayerModule'
 export type {
+  LiftJsxElementParams,
+  LiftJsxElementResult,
+  PlaceCanvasLayerRootParams,
   TransplantJsxElementParams,
   TransplantJsxElementResult,
   TransplantJsxRefusal,
@@ -74,19 +91,13 @@ export { deleteJsxElement } from './deleteJsxElement'
 export { createImportPruneSession, isPrunableSourceFile } from './pruneOrphanedImports'
 export type { ImportPruneSession, PrunedImportsResult } from './pruneOrphanedImports'
 export type {
-  DeletedJsxText,
   DeleteJsxElementParams,
   DeleteJsxElementResult,
   DeleteJsxRefusal,
   DeleteJsxRefusalReason,
 } from './deleteJsxElement'
-export { reinsertJsxSource } from './reinsertJsxSource'
-export type {
-  ReinsertJsxRefusal,
-  ReinsertJsxRefusalReason,
-  ReinsertJsxSourceParams,
-  ReinsertJsxSourceResult,
-} from './reinsertJsxSource'
+export { editListItems } from './editListItems'
+export type { EditListItemsParams, EditListItemsResult, ListItemRefusal, ListItemRefusalReason } from './editListItems'
 export type { CreatedJsxLocation } from './createdJsxLocation'
 export { insertJsxElement } from './insertJsxElement'
 export type { InsertJsxElementParams, InsertJsxElementResult } from './insertJsxElement'
@@ -183,3 +194,11 @@ export {
 } from './locateJsxElement'
 export type { JsxLocation, JsxOpeningLikeElement } from './locateJsxElement'
 export { readSourceFingerprintAt } from './sourceFingerprintAt'
+/**
+ * The unit a structural codemod acts on at a `line:col` — exported for the
+ * server's edit SEQUENCE (`studioEditSequence.ts`, P3-D), which has to know
+ * exactly which elements a step moved, removed or created to follow every
+ * other element it names through that step.
+ */
+export { resolveJsxChildRange } from './jsxChildRange'
+export type { JsxChildRange, JsxChildUnit } from './jsxChildRange'

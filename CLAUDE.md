@@ -333,6 +333,7 @@ Deep imports into these engine modules are enforced by `src/__tests__/architectu
 - `@core/studio-anchor` — the comment anchor model. `resolve.ts` is the one place that decides whether a comment still points at anything
 - `@core/studio-prototype` — authored links plus the flow map derived from the project's own navigation code; `codeFlow.ts`'s AST rules are what the connector layer and the panel both read
 - `@core/studio-runtime` — the live-frame runtime bridge. `runtime.ts` is built to one standalone ESM file served to a real browser, and the four rule modules it shares with the portal-mode canvas injectors (`hoverSuppressionRules` / `scrollUnrollRules` / `animationFreezeRules` / `selectionChromeCss`) must stay ONE implementation each
+- `@core/vector` — the pure vector engine behind SVG on the canvas (path data, curve geometry, and the ONE markup ⇄ JSX attribute-name table and same-document-fragment reference policy that the parser, the SVG importer, the sanitizer and the canvas renderer share). A deep import is how a second, drifted copy of either gets made
 
 Note: `@core/framework-schema` is a dependency of both `@core/page-tree` (for `FrameworkSettingsSchema` and `GeneratedClassMetadataSchema`) and `@core/framework` (for the persisted data shapes). This arrangement keeps the module graph one-directional — the engine depends on the schema leaf, not on the page tree. Any other module barrel is still a convention without a gate; treat deep imports in those as drift and migrate them to the barrel as part of whatever change you're making.
 
@@ -370,7 +371,7 @@ bun test
 bun run lint
 ```
 
-**Touched the canvas, a frame, an overlay, geometry, or a panel's height? Run `bun run test:e2e` too — it is the fourth gate, not an optional extra.** The reason: happy-dom has no layout engine, so a unit test on those surfaces structurally cannot fail on the thing it is named after (WS-8.2 shipped a real frame-height bug behind a green one). Assert on *computed* layout — measured rects, `scrollHeight`, computed styles after layout. The budget slice (`studio-board-perf`, `canvas-feel-budgets`, `inspector-panel-measurement`, `inspector-height`, `studio-feel`) also runs in CI as the `e2e-budgets` job; locally it is cheaper to run those five by path than the whole suite.
+**Touched the canvas, a frame, an overlay, geometry, or a panel's height? Run `bun run test:e2e` too — it is the fourth gate, not an optional extra.** The reason: happy-dom has no layout engine, so a unit test on those surfaces structurally cannot fail on the thing it is named after (WS-8.2 shipped a real frame-height bug behind a green one). Assert on *computed* layout — measured rects, `scrollHeight`, computed styles after layout. The budget slice (`studio-board-perf`, `canvas-feel-budgets`, `canvas-edit-budgets`, `live-frame-budgets`, `inspector-panel-measurement`, `inspector-height`, `studio-feel`, `studio-board-load`, `studio-vector`) also runs in CI as the `e2e-budgets` job, and its `@production-bundle` tests run a second time against the production build (`E2E_VITE_MODE=preview`); locally it is cheaper to run those specs by path than the whole suite.
 
 ### When to run
 

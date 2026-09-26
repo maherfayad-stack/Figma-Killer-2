@@ -102,6 +102,8 @@ export interface CanvasFileDragPreviewEnv {
    */
   hintLayer: HTMLElement | null
   hintOrigin: ClientPoint | null
+  /** P5-G — a Studio board, whose empty board takes the image as a loose layer (`planCanvasFileDrop`'s `freeCanvas`). */
+  freeCanvas?: boolean
 }
 
 /** Where the chrome for this frame goes, and what it says. */
@@ -150,9 +152,9 @@ export function resolveCanvasFileDragPaint(
         invalid: null,
         ghost: {
           point: { x: env.point.x - env.hintOrigin.x, y: env.point.y - env.hintOrigin.y },
-          label: (fileRefusal ?? CANVAS_FILE_DROP_REFUSAL.noFrame).headline,
+          label: fileRefusal?.headline ?? (env.freeCanvas ? 'Place on canvas' : CANVAS_FILE_DROP_REFUSAL.noFrame.headline),
           duplicating: false,
-          refusing: true,
+          ...(fileRefusal || !env.freeCanvas ? { refusing: true } : {}),
         },
       },
     }

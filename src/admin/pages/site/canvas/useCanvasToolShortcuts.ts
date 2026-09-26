@@ -1,6 +1,8 @@
 /**
  * useCanvasToolShortcuts — a `board` scope: the bare-letter tool keys
- * `V` `T` `F` `C` `H` `K` `R` `O` (`E`), and ⏎ while a draw tool is armed.
+ * `V` `T` `F` `C` `H` `K` `R` `O` (`E`) `P`, and ⏎ while a draw tool is armed.
+ * `P` arms the pen (P5-D); while a path is being drawn its keys belong to the
+ * higher `vector-edit` rung (`CanvasPenToolLayer`).
  *
  * `C` enters comment mode. `H` latches the hand tool and `K` the scale tool
  * (`K4`). `V` (IX-11) is the move tool: it puts EVERY armed tool away — hand,
@@ -52,16 +54,18 @@ import type { DrawTool } from '@site/store/slices/canvasSlice'
 import { resolveSiblingAfterLocation } from '@site/store/insertLocation'
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
 import { useInsertModule } from '@site/hooks/useInsertModule'
-import { DRAW_TOOL_SPECS, isDrawTool } from './canvasDrawTool'
+import { DRAW_TOOL_SPECS, isDrawTool, type ArmedTool } from './canvasDrawTool'
 import { isTextInputTarget } from './editorKeyGuards'
 import { useEditorKeyScope } from './useEditorKeyDispatcher'
 
-/** The four keys that arm a draw tool — each a toggle on its own key. */
-const DRAW_TOOL_KEYS: ReadonlyArray<{ commandId: string; tool: DrawTool }> = [
+/** The keys that arm a tool — the box tools, the board tool (P5-F) and the pen (P5-D) — each a toggle on its own key. */
+const ARMED_TOOL_KEYS: ReadonlyArray<{ commandId: string; tool: ArmedTool }> = [
   { commandId: 'tools.rectangle', tool: 'rectangle' },
   { commandId: 'tools.ellipse', tool: 'ellipse' },
   { commandId: 'tools.text', tool: 'text' },
   { commandId: 'tools.frame', tool: 'frame' },
+  { commandId: 'tools.board', tool: 'board' },
+  { commandId: 'tools.pen', tool: 'pen' },
 ]
 
 /** `H` and `K` — the two latched tools, each a toggle on its own key. */
@@ -147,7 +151,7 @@ export function useCanvasToolShortcuts(editable: boolean, isLive: boolean): void
 
       if (!editable) return false
 
-      for (const { commandId, tool } of DRAW_TOOL_KEYS) {
+      for (const { commandId, tool } of ARMED_TOOL_KEYS) {
         if (!getKeybindingForCommand(commandId)?.match(event)) continue
         event.preventDefault()
         const store = useEditorStore.getState()

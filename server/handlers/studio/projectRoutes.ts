@@ -98,7 +98,13 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { designSystemImportSpecifier } from '@core/page-parser'
 import { Type } from '@core/utils/typeboxHelpers'
-import { DEFAULT_PAGE_KIND, DEFAULT_PROJECT_PLATFORM, frameDefaultsForPlatform, PageKindSchema } from '@core/studio-board'
+import {
+  BoardFramePlacementSchema,
+  DEFAULT_PAGE_KIND,
+  DEFAULT_PROJECT_PLATFORM,
+  frameDefaultsForPlatform,
+  PageKindSchema,
+} from '@core/studio-board'
 import type { StudioSessionRuntime } from './routeGate'
 import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import { ProjectTrashError, trashStudioProject } from './projectTrash'
@@ -172,6 +178,11 @@ const CreatePageBodySchema = Type.Object({
    * `autoPlaceBoardFrame` has always applied.
    */
   boardId: Type.Optional(Type.String()),
+  /**
+   * P5-F / IX-13 — where the author drew the new frame with the board tool
+   * (B), in board units. Optional: every other caller gets the next grid slot.
+   */
+  placement: Type.Optional(BoardFramePlacementSchema),
 })
 
 /**
@@ -436,7 +447,7 @@ export async function tryServeStudioProjectRoutes(
       try {
         const body = await readValidatedBody(req, CreatePageBodySchema)
         if (!body) return badRequest('invalid page body')
-        const result = await scaffoldPageLocked(resolveProjectDir(body.dir), body.name ?? '', body.kind ?? DEFAULT_PAGE_KIND, body.boardId)
+        const result = await scaffoldPageLocked(resolveProjectDir(body.dir), body.name ?? '', body.kind ?? DEFAULT_PAGE_KIND, body.boardId, body.placement)
         if (!result.ok) return jsonResponse({ error: result.conflict }, { status: 409 })
         return jsonResponse(result)
       } catch (err) {

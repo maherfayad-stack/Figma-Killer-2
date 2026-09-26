@@ -10,7 +10,7 @@
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { apiRequest, retryWhileUnreachable } from '@core/http'
-import type { PageKind } from '@core/studio-board'
+import type { PageKind, BoardFramePlacement } from '@core/studio-board'
 import { getStudioWorkspaceDir } from './studioWorkspaceDir'
 import { studioWriteDir } from './studioWorkspaceDir'
 
@@ -59,14 +59,17 @@ export function createStudioPage(
   name?: string,
   kind?: PageKind,
   boardId?: string,
+  placement?: BoardFramePlacement,
 ): Promise<CreatedStudioPage> {
   const overrideDir = getStudioWorkspaceDir()
-  const body: { name?: string; dir?: string; kind?: PageKind; boardId?: string } = {}
+  const body: { name?: string; dir?: string; kind?: PageKind; boardId?: string; placement?: BoardFramePlacement } = {}
   if (name) body.name = name
   if (kind) body.kind = kind
   // The server places the frame (D5 §11.3); without this it placed it on the
   // FIRST board regardless of which one the author had open.
   if (boardId) body.boardId = boardId
+  // P5-F / IX-13 — where the author drew it with the board tool (B).
+  if (placement) body.placement = placement
   if (overrideDir) body.dir = overrideDir
   const idempotencyKey = crypto.randomUUID()
   return retryWhileUnreachable(() =>

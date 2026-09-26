@@ -537,7 +537,7 @@ unaffected — RTL mirrors the inline axis only, never the block axis.
 
 **Snapping.** The moved rect snaps to its SIBLINGS' edges and centres, and to
 its PARENT's padding box and content box (edges and centre — P2-E / IX-5b,
-`canvasSnapPeers.ts`), through `computeSnap` — the same pure resolver board
+`@core/studio-runtime`'s `snapPeerRules.ts`), through `computeSnap` — the same pure resolver board
 furniture already uses, at the same "closest wins, at most one snap per axis"
 contract. The threshold is **screen px** (IX-5a): `snapThresholdAtZoom(zoom)`,
 `SNAP_THRESHOLD_SCREEN_PX` (8) divided by the session's live zoom, so the pull
@@ -549,13 +549,34 @@ is being positioned. A resize handle snaps its moving edge through the same
 resolver (`computeEdgeSnap`, IX-6e) — see `canvas-internals.md` → "Element
 resize".
 
+P5-F adds the rest of the vocabulary to the same resolver: the board's
+**ruler guides** (IX-5c, converted into the frame's space once per gesture),
+**equal spacing** with pink distance pills (IX-5d — the same gap as one the
+row already has, or centred between two neighbours), the user's two **snap
+toggles** (IX-5e: ⌘⇧' objects and spacing, ⌘' ruler guides; also in the zoom
+menu), and the **⇧ axis lock**, which leaves the held axis unsnapped. See
+`canvas-internals.md` → "Snapping, in one place".
+
+**Several layers (P5-F, IX-22).** A multi-selection moves together: every
+dragged layer is a member of ONE plan (`FreeMovePlan.members`), all move by
+the same snapped delta — so the arrangement is kept — and the snap runs on
+the union of their boxes against the peers that are NOT moving. A layer
+nested inside another member is dropped (it moves with its ancestor). It is
+all or nothing: a flow layer in the selection without ⌘ makes the whole
+gesture a reorder, and one refusal refuses the gesture. The commit is every
+member's own patch in one `setNodesInlineStylesPerNode` — one undo entry.
+
 **Preview, then commit.** The step is written straight onto the element's own
 `style` during the drag — no store round trip, so it tracks the pointer at
 frame rate and the selection ring (which re-measures the real element) follows
 for free. The preview is dropped BEFORE the store commit, never after: they
 are the same DOM property, so clearing it afterwards would delete exactly what
 React just wrote. Same shape, and the same reasoning, as
-`useElementResizeDrag`.
+`useElementResizeDrag`. The clear RESTORES each property the preview touched
+to its pre-drag inline value (`createInlineStylePreview`) rather than removing
+it: a move that wandered sideways and was released straight down commits
+only `top`, and React — which re-applies only what changed — would never put
+back a removed `left` (P5-F, found by the multi-select e2e).
 
 **A free move resolves no drop target and runs no auto-pan.** The two are
 different gestures: one places inside a container, the other looks for a
@@ -777,7 +798,7 @@ Studio-mode board furniture — frames (`BoardFramesLayer`), sticky notes (`Boar
 
 **Snap-to-peer alignment (Phase 6B).** While dragging a frame/note/doc, its move handler snaps the raw new position to the closest aligned edge/center of every OTHER piece of furniture on the active board, and draws the alignment guide(s) it snapped to:
 
-- **`computeSnap(dragged, peers, threshold)`** — the pure core, `src/admin/pages/site/canvas/boardSnapping.ts`. For each axis (x, y) independently, it checks the dragged rect's start/center/end against every peer's start/center/end, picks the closest pair within `threshold` board units (closest wins; at most one snap per axis), and returns the adjusted top-left position plus a `SnapGuide` per matched axis. No peers, or no match within threshold, leaves that axis untouched. Pure — no React, no DOM — unit-tested in `src/__tests__/canvas/boardSnapping.test.ts` the same way `frameResize.ts`/`frameVirtualization.ts` are.
+- **`computeSnap(dragged, peers, threshold)`** — the pure core, `src/core/studio-runtime/snapRules.ts` (shared with the element-level gestures and the live frame's resize; `canvas/boardSnapping.ts` keeps only `collectPeerRects`/`guideSnapRects`). For each axis (x, y) independently, it checks the dragged rect's start/center/end against every peer's start/center/end, picks the closest pair within `threshold` board units (closest wins; at most one snap per axis), and returns the adjusted top-left position plus a `SnapGuide` per matched axis. No peers, or no match within threshold, leaves that axis untouched. Pure — no React, no DOM — unit-tested in `src/__tests__/canvas/boardSnapping.test.ts` the same way `frameResize.ts`/`frameVirtualization.ts` are.
 - **`collectPeerRects(board, dragged)`** — flattens a board's frames/notes/docs into the flat `SnapRect[]` peer list, excluding whichever object is being dragged. Frames without a saved size fall back to `FRAME_WIDTH`/`FRAME_HEIGHT`, mirroring `BoardFramesLayer`'s own render-time fallback.
 - **Threshold:** `snapThresholdAtZoom(zoom)` — `SNAP_THRESHOLD_SCREEN_PX = 8` screen px divided by the canvas zoom (P2-E / IX-5a). It used to be a fixed 8 board units, which was 32 screen px of pull at 400% and 2 px at 25%. Every snapping gesture (furniture, free move, element resize) uses the same constant.
 - **Guides are transient, not persisted.** `boardSnapGuides` (`boardSlice`) is a top-level store field holding the active drag's `SnapGuide[]`, separate from `boards`/`BoardsFile` — it never reaches `serializeBoardsFile` or the boards auto-save effect, and `setBoardSnapGuides` never flips `boardsDirty`. Each move handler calls `setBoardSnapGuides(snapped.guides)`; pointer-up/cancel clears it (`setBoardSnapGuides([])`).
@@ -893,7 +914,7 @@ present on that surface.
   - `src/admin/shared/media/hooks/useMediaDnd.ts` / `src/admin/shared/media/utils/mediaDragDrop.ts` / `src/admin/shared/media/utils/mediaDnd.ts` — the media picker's native HTML5 DnD, incl. the `dragover` protected-mode session mirror
   - `src/admin/pages/site/store/insertLocation.ts` — `InsertLocation` shape
   - `src/core/page-tree/mutations.ts` — `insertNode`, `moveNode`, `moveNodes`, `wrapNode`
-  - `src/admin/pages/site/canvas/boardSnapping.ts` — `computeSnap`, `collectPeerRects` (Studio board furniture snap-to-peer, Phase 6B)
+  - `src/core/studio-runtime/snapRules.ts` — `computeSnap`, `computeEdgeSnap`, `snapThresholdAtZoom`; `src/admin/pages/site/canvas/boardSnapping.ts` — `collectPeerRects` (Studio board furniture snap-to-peer, Phase 6B)
   - `src/admin/pages/site/canvas/BoardGuidesLayer/` — renders the active snap guides
   - `src/admin/pages/site/store/slices/boardSlice.ts` — `boardSnapGuides` / `setBoardSnapGuides` (transient, not persisted)
   - `src/core/page-tree/sourceStructure.ts` — `previewStructuralMove` (G5's pure preview), `refusePlacement`/`refuseStructuralEdit` (the refusal vocabulary)

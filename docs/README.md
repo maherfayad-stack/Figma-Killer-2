@@ -54,6 +54,7 @@ Compressed, agent-facing summaries. Start here for any task; follow their links 
 | [`features/agent.md`](features/agent.md) | the in-canvas AI agent: providers, the tool loop, the Studio tool family, refusals | touching the agent, its prompt or its tools | current |
 | [`features/auth-and-access.md`](features/auth-and-access.md) | sessions, MFA, step-up, lockout, CSRF, capabilities and roles | touching sign-in, sessions or capability checks | current |
 | [`features/board-annotations.md`](features/board-annotations.md) | sticky notes and rich-text doc cards on the board | touching board notes or doc cards | current |
+| [`features/free-canvas.md`](features/free-canvas.md) | loose layers on the empty board: storage, load, render, gestures, exclusion, security | touching the empty board, `.studio/canvas/`, `Board.layers`, or a drag that leaves or enters a frame | current |
 | [`features/canvas-iframe-per-frame.md`](features/canvas-iframe-per-frame.md) | how a static (portal) frame renders in its own iframe | touching frame rendering, injectors or cross-realm events | current |
 | [`features/canvas-rulers-and-guides.md`](features/canvas-rulers-and-guides.md) | canvas rulers, persisted guides and the useCanvas() transform API | touching rulers, guides or canvas transforms | current |
 | [`features/design-system.md`](features/design-system.md) | how Studio's own design system gets from `vendor/` onto the canvas, into a user's project, and into the Assets panel | touching `vendor/alm-design-system/`, the `alm.*` modules, a project's `design-system/` folder, the Assets panel or Add page | current |
@@ -134,7 +135,7 @@ Accurate, and much of it load-bearing for Studio under a CMS-shaped name (see [`
 | [`audits/2026-09-23-studio-audit/`](audits/2026-09-23-studio-audit/README.md) | The ten audits behind `ROADMAP.md`; every bundle's finding IDs resolve here | historical |
 | [`audits/2026-08-06/`](audits/2026-08-06/) | The twelve audits behind the finished parity plan | historical |
 | [`audits/penpot-inspector-baseline/`](audits/penpot-inspector-baseline/README.md) | Measured Penpot inspector geometry; `measurement.test.ts` and the inspector source cite it as evidence | historical |
-| [`audits/2026-09-13-live-frame-memory-baseline.md`](audits/2026-09-13-live-frame-memory-baseline.md) | A placeholder for the live-frame memory baseline, not yet measured | historical |
+| [`audits/2026-09-13-live-frame-memory-baseline.md`](audits/2026-09-13-live-frame-memory-baseline.md) | The live-frame memory baseline: a 2026-09-13 placeholder, then the first measured numbers (2026-09-26, P6-C) | current (last section) |
 | [`assets/`](assets/) | Images the pages above reference | — |
 
 ## Related

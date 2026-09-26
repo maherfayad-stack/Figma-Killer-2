@@ -64,9 +64,10 @@ import { readStudioMeta } from '../studioMeta'
 import { readPrototypeFile } from '../prototypeStore'
 import { generatedShellFiles, hasLanguageContext, type ShellScreen } from './registryFile'
 import { readBoardsFile } from '../boardGeometry'
-import { isStudioStorePathUnlinked, readStudioStoreText, writeStudioStoreFile } from '../studioStore'
+import { isStudioStorePathUnlinked, readStudioStoreText, studioStoreProjectRel, writeStudioStoreFile } from '../studioStore'
 import { playerShellFiles } from './playerTemplate'
 import { staticShellFiles, VITE_CONFIG_REL_PATH } from './shellFiles'
+import { forgetShellRun, rememberShellRun, shellInputPaths, unchangedShellRun } from './shellInputStamp'
 import type { ShellFile } from './shellPaths'
 
 export { PROTOTYPE_SHELL_DIR } from './shellPaths'
@@ -122,6 +123,13 @@ export interface EnsureShellResult {
    * instead of silently wondering why live ids never show up.
    */
   viteConfigEditedByUser: boolean
+  /**
+   * `true` when nothing this run would read has changed since the last run
+   * for this project in this process, so nothing was read or written and the
+   * other fields repeat that run's `viteConfigEditedByUser` with nothing
+   * created or regenerated. See `./shellInputStamp`.
+   */
+  inputsUnchanged: boolean
 }
 
 /** `pages/SignUp.tsx` -> `SignUp`. The title the board and the flow tab row show. */
@@ -224,18 +232,48 @@ export function mergeShellPackageJson(dir: string): boolean {
  * Scaffold the shell into `dir` if it is not there, and bring its generated
  * half up to date with `.studio/`.
  *
- * Idempotent and cheap on the common path: the static files are `existsSync`
- * checks, and the generated ones are only written when their content actually
- * differs — which matters because a rewrite would move `package.json`'s mtime
- * and invalidate caches keyed on it (`compareVerdictCache`).
+ * Runs once per project per process, and again only when one of its inputs
+ * has changed (`./shellInputStamp`): every `/load` calls this, and a real run
+ * reads and compares every shell file — the 2 MB runtime bundle among them —
+ * to conclude, nearly always, that nothing changed. The answer to "did
+ * anything change" is a stat of each input instead.
+ *
+ * A real run is idempotent: generated files are only written when their
+ * content actually differs — which matters because a rewrite would move
+ * `package.json`'s mtime and invalidate caches keyed on it
+ * (`compareVerdictCache`).
  *
  * Never throws. A project this cannot scaffold (an unreadable directory, an
  * escaping `pagesDir`) must still open — the shell is an addition to a
  * workspace, never a precondition for reading one.
  */
 export function ensurePrototypeShell(dir: string): EnsureShellResult {
-  const result: EnsureShellResult = { created: [], regenerated: [], viteConfigEditedByUser: false }
-  if (!existsSync(dir)) return result
+  if (!existsSync(dir)) {
+    forgetShellRun(dir)
+    return { created: [], regenerated: [], viteConfigEditedByUser: false, inputsUnchanged: false }
+  }
+  const lastViteConfigEditedByUser = unchangedShellRun<boolean>(dir)
+  if (lastViteConfigEditedByUser !== null) {
+    return { created: [], regenerated: [], viteConfigEditedByUser: lastViteConfigEditedByUser, inputsUnchanged: true }
+  }
+
+  const startedAt = Date.now()
+  const { result, shellRelPaths } = runPrototypeShell(dir)
+  if (shellRelPaths) {
+    rememberShellRun(dir, shellInputPaths(dir, shellRelPaths, studioStoreProjectRel(SHELL_MANIFEST_FILE)), startedAt, result.viteConfigEditedByUser)
+  } else {
+    forgetShellRun(dir)
+  }
+  return result
+}
+
+/**
+ * One real run of the shell. `shellRelPaths` is every shell file it judged or
+ * wrote — what the input stamp watches — or `null` when the run failed and
+ * must not be remembered.
+ */
+function runPrototypeShell(dir: string): { result: EnsureShellResult; shellRelPaths: string[] | null } {
+  const result: EnsureShellResult = { created: [], regenerated: [], viteConfigEditedByUser: false, inputsUnchanged: false }
 
   try {
     const manifestText = readStudioStoreText(dir, SHELL_MANIFEST_FILE)
@@ -316,11 +354,12 @@ export function ensurePrototypeShell(dir: string): EnsureShellResult {
       const abs = join(dir, ...file.relPath.split('/'))
       if (writeIfDifferent(dir, abs, file.contents)) result.regenerated.push(file.relPath)
     }
+    const shellRelPaths = [...staticShellFiles(), ...playerShellFiles(), ...generated].map((file) => file.relPath)
+    return { result, shellRelPaths }
   } catch (err) {
     // The shell is an addition, never a precondition — a project that cannot
     // be scaffolded still has to open.
     console.error('[studio:prototypeShell]', err)
+    return { result, shellRelPaths: null }
   }
-
-  return result
 }

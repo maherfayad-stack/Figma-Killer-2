@@ -74,8 +74,10 @@ import {
 import { useResponsiveBackgroundStyle } from '@admin/shared/media/hooks/useResponsiveBackgroundStyle'
 import { getCanvasNodeClassIds, getCanvasNodeClassName } from './canvasNodeClassName'
 import { useIsNodeSelected } from './canvasNodeSelection'
+import { nodeRenderKey } from './nodeRenderKeys'
 import { mergePreviewedInlineStyles } from './canvasNodeInlineStyle'
 import { findEnclosingComponentRef, findEnclosingInstance, resolveInstanceEntry, type AnnotatedPageNode } from './canvasSelectionUtils'
+import { canvasNodeIdEnteredOnLeave } from './canvasHoverHandoff'
 import { useLoopPreviewItems } from './useLoopPreviewItems'
 import styles from './NodeRenderer.module.css'
 
@@ -332,7 +334,10 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
     node.moduleId === 'base.loop' && node.children.length > 0 ? (
       <LoopIterationsPreview node={node} baseTemplateContext={templateContext} />
     ) : (
-      node.children.map((childId) => <NodeRenderer key={childId} nodeId={childId} />)
+      // PERF-6 — keyed by the node's CARRIED render key, not its id: a write
+      // that renumbered this child's `rel:line:col` re-renders it in place
+      // rather than remounting it (`nodeRenderKeys.ts`).
+      node.children.map((childId) => <NodeRenderer key={nodeRenderKey(contextPageId, childId)} nodeId={childId} />)
     )
 
   const ComponentType = definition.component
@@ -516,7 +521,9 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
       }
     },
     onMouseEnter: () => handleNodeHover(nodeId),
-    onMouseLeave: () => handleNodeHover(null),
+    // Hand the hover to the node the pointer went INTO — a leave into the
+    // parent brings the parent no `mouseenter` (`canvasHoverHandoff.ts`).
+    onMouseLeave: (e: { relatedTarget: EventTarget | null }) => handleNodeHover(canvasNodeIdEnteredOnLeave(e.relatedTarget)),
   }
 
   // Inline editing: this node's element becomes the contentEditable surface.

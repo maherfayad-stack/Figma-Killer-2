@@ -35,7 +35,7 @@ function stubFetch(saveCalls: Array<{ body: unknown }>, duringSave?: () => void)
     const path = url.split('?')[0]
     if (path === '/admin/api/studio/load') {
       const lines = [
-        { kind: 'meta', dir: '/tmp/studio-test', projectName: 'studio-test', componentSources: {}, styleRules: {}, styleRuleSources: {}, styledStyleRuleSources: {}, conditions: [], vendorCss: '', authoredCss: '', trust: 'static', paletteHiddenModuleIds: [], pageCount: 0 },
+        { kind: 'meta', dir: '/tmp/studio-test', projectName: 'studio-test', componentSources: {}, styleRules: {}, styleRuleSources: {}, styledStyleRuleSources: {}, conditions: [], vendorCss: '', authoredCss: '', trust: 'static', paletteHiddenModuleIds: [], pageList: [] },
       ]
       return new Response(lines.map((l) => JSON.stringify(l)).join('\n') + '\n', {
         status: 200,

@@ -53,6 +53,7 @@ import { ReadOnlyNodeTree } from '@modules/base/utils/ReadOnlyNodeTree'
 import { htmlAttributesForReact } from '@modules/base/shared/htmlAttributes'
 import { useResponsiveBackgroundStyle } from '@admin/shared/media/hooks/useResponsiveBackgroundStyle'
 import { NodeRenderer } from './NodeRenderer'
+import { nodeRenderKey } from './nodeRenderKeys'
 import { resolveEditorWrapperTemplates } from './canvasComposition'
 import { CanvasFrameAdapterContext, CanvasTemplateContext } from './CanvasContexts'
 import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
@@ -87,7 +88,7 @@ export function CanvasComposedTree({ page }: CanvasComposedTreeProps) {
   // dropped just as the publisher drops the inner body when splicing.
   const bodyNode = page.nodes[page.rootNodeId]
   const editableContent = bodyNode
-    ? bodyNode.children.map((childId) => <NodeRenderer key={childId} nodeId={childId} />)
+    ? bodyNode.children.map((childId) => <NodeRenderer key={nodeRenderKey(page.id, childId)} nodeId={childId} />)
     : null
 
   // Nest the read-only wrappers from innermost outward; each wrapper's outlet

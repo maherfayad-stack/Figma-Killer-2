@@ -99,6 +99,30 @@ export function positionOverlayElement(
  * and the badge costs no read of its own. The rect is iframe-local, so the
  * number is in frame px at every zoom.
  */
+/**
+ * Where the resize handles sit: the one selected layer's ring rect, or — for
+ * a multi-selection (P5-F, IX-6g) — the union of every ring, the box a group
+ * resize scales. `null` (no handles placed) when any selected layer has no
+ * rect in this frame: a group box that silently left a member out would
+ * resize a box the user cannot see.
+ */
+export function resizeFrameRect(rects: ReadonlyArray<CanvasOverlayRect | null>): CanvasOverlayRect | null {
+  if (rects.length === 0) return null
+  if (rects.length === 1) return rects[0] ?? null
+  let left = Infinity
+  let top = Infinity
+  let right = -Infinity
+  let bottom = -Infinity
+  for (const rect of rects) {
+    if (!rect) return null
+    left = Math.min(left, rect.x)
+    top = Math.min(top, rect.y)
+    right = Math.max(right, rect.x + rect.width)
+    bottom = Math.max(bottom, rect.y + rect.height)
+  }
+  return { x: left, y: top, width: right - left, height: bottom - top }
+}
+
 export function positionResizeFrame(frame: HTMLElement | null, rect: CanvasOverlayRect | null): void {
   positionOverlayElement(frame, rect)
   if (!frame || !rect || !frame.hasAttribute(RESIZE_ACTIVE_ATTR)) return

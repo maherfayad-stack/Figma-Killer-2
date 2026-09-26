@@ -313,7 +313,12 @@ export function generatedShellFiles(input: ShellRegistryInput): ShellFile[] {
   ]
 }
 
+/** Every place an `i18n/LanguageContext` the shell can mount may live — also what the shell's input stamp watches. */
+export function languageContextPaths(dir: string): string[] {
+  return ['tsx', 'jsx', 'ts', 'js'].map((ext) => join(dir, 'i18n', `LanguageContext.${ext}`))
+}
+
 /** True when the workspace ships an `i18n/LanguageContext` the shell can mount. */
 export function hasLanguageContext(dir: string): boolean {
-  return ['tsx', 'jsx', 'ts', 'js'].some((ext) => existsSync(join(dir, 'i18n', `LanguageContext.${ext}`)))
+  return languageContextPaths(dir).some((file) => existsSync(file))
 }

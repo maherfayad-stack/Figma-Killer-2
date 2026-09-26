@@ -88,7 +88,7 @@ subscribes to the whole array or to bare `s.site`.
 | `styleRuleSlice.ts` (+ `styleRule/`: `crudActions.ts`, `propertyActions.ts`, `assignmentActions.ts`, `conditionActions.ts`, `registryActions.ts`, `uiStateActions.ts`, `helpers.ts`) | The CSS class registry, split the same way `boardSlice.ts` and `site/` are |
 | `uiSlice.ts` | `activeDocument`, panel open/closed, right sidebar expanded |
 | `sitePanelSlice.ts` | Panel-specific UI state |
-| `clipboardSlice.ts` | Copy/paste of subtrees |
+| `clipboardSlice.ts` | Copy/paste of subtrees. Its `copiedAt` is also the Studio marker ⌘C writes onto the OS clipboard (P5-A, `canvas/canvasClipboardBridge.ts`), which is how ⌘V tells the copied layers from a newer image there |
 | `filesSlice.ts` | Site files / code assets |
 | `saveTrackingSlice.ts` | Dirty tracking, autosave cadence |
 | `commentsSlice.ts` (+ `commentSelectors.ts`) | The editor's view of `<workspace>/.studio/comments.json` and the transient UI state around it (armed tool, open thread, uncommitted pin) — no HTTP here, the round trip lives in `@site/studio/commentActions.ts` |
@@ -96,6 +96,7 @@ subscribes to the whole array or to bare `s.site`.
 | `visualComponentsSlice.ts`, `vcTreeOps.ts`, `vcSlotReconcile.ts` | Visual Components |
 | `layoutsSlice.ts`, `settingsSlice.ts` | Layouts, editor settings |
 | `prototypeSlice.ts` | A project's flows (prototype mode) — out of scope for this page; see `docs/features/studio-prototype.md` |
+| `streamedLoadSlice.ts` | P6-B: a project opening while its pages are still arriving — `pendingPages`, `openStreamedLoad`, `receiveStreamedPages`, `finishStreamedLoad`, `abandonStreamedLoad`, `adoptLoadedFramework`. See "Opening a project: the streamed load" below |
 
 ---
 
@@ -133,7 +134,7 @@ rather than mutating a studio-imported tree in a way nothing can write back.
 **Structural actions refuse before they mutate (`struct-01`).** `insertNode`,
 `deleteNode(s)`, `moveNode(s)`, `duplicateNode(s)` and `wrapNode(s)` ask
 `structuralSourceEdits.ts` first. On a studio-imported tree they either commit a
-`move`/`delete`/`insert` edit to the user's `.tsx` (`commitStudioMoves` /
+`move`/`delete`/`insert` edit to the user's `.tsx` (`commitStudioMove` / `commitStudioSequence` /
 `commitStudioDelete` / `commitStudioInsert`) or toast a reason and do nothing —
 never both nothing and nothing said, which is what they used to do.
 
@@ -388,6 +389,37 @@ convert is skipped for every unrequested route — but never the meta: the style
 registry is built from every route's stylesheets together, so it stays a full,
 fresh recompute (`studioPageLoad.ts`'s `options.pageIds` doc).
 
+**A re-read is applied by VALUE, not by object (PERF-6, P6-A).** Everything
+off the wire is a brand-new object graph, and the canvas compares by identity:
+every `NodeRenderer` selects its node, every mounted frame's
+`ClassStyleInjector` regenerates its `<style>` on a new `styleRules` object.
+So `patchPages` puts each re-read page, `styleRules` and `conditions` in
+through `replaceEqualDeep` (`@core/utils/replaceEqualDeep`): a node, rule or
+condition deep-equal to the one the store held keeps its old object, and the
+page or registry itself keeps its identity when all of it is unchanged. A prop
+write therefore re-renders the one node it changed and restyles no frame
+("wholesale" above is about which rules EXIST — a deleted rule is gone — not
+about object identity).
+
+**A renumbered node keeps its React key.** A structural write renumbers every
+`rel:line:col` id below it, and `NodeRenderer` used to key each child by its
+id, so every one of those elements remounted. `site/rereadRenderKeys.ts`
+aligns each re-read page against the page the store held (`alignPageTrees`,
+the alignment the selection follower then reuses via `alignments`) and hands
+it to `canvas/nodeRenderKeys.ts`, an off-store per-page map from node id to
+the key it renders under. `NodeRenderer` and `CanvasComposedTree` key children
+by `nodeRenderKey(pageId, id)`; a moved element re-renders in place (its id
+changed), it does not remount. Rules: keys stay unique among siblings (an
+unaligned node whose id a moved node carries gets a minted key); a node object
+shared from the previous page whose CHILD keys changed is copied, because a
+shared parent would not re-render and would keep the old keys (a move among
+same-size siblings permutes the addresses without changing the parent's
+`children` ids); `loadSite`/`createSite`/`clearSite` clear the map. Only board
+frames (which provide `CanvasPageContext`) carry keys; a frame without a page
+context keys by id, as before. Measured by `bench:editor-store`'s post-write
+re-sync scenario (`scripts/bench/lib/postWriteResync.ts`), whose counts are a
+budget.
+
 A resync triggered by `saveSite` runs as the **last** thing that function does,
 after every diff baseline has advanced, and carries the save's `refusedRuleIds`
 so the reload's own `commitBaseline` does not adopt a value the server refused.
@@ -401,6 +433,41 @@ Both are load-bearing and both have a regression test
   **origin's** `rel:line:col` as its `nodeId` — and that path runs **before** the
   `hasWritableSourceLocation` guard, because that guard is about JSX locations
   and a literal edit has nothing to do with the node's own id.
+
+### Opening a project: the streamed load (P6-B)
+
+The FIRST load of a project (no document in the store yet) hands the board its
+pages as they arrive instead of after the last one. `usePersistence` passes
+`LoadSiteOptions.progress` (`@core/persistence/types`) built by
+`siteReloadApply.ts`'s `streamedOpenProgress`; `studioProjectLoad.ts` (the
+adapter's `loadSite`) calls `progress.open(site, pending)` once the meta line,
+both `.studio/` reads and the page the editor opens on have arrived, then
+`progress.pages(batch)` once per network chunk. The store side is
+`streamedLoadSlice.ts`:
+
+- `openStreamedLoad` = `loadSite` with the pages so far, plus `pendingPages`
+  (id + title) for the rest. `BoardFramesLayer` paints a `PendingBoardFrame`
+  (inert, same box, `data-page-pending`) for a frame whose page is pending.
+- `receiveStreamedPages` **appends** — undo patches and in-flight structural
+  rollbacks address a page by its POSITION in `site.pages`, so nothing already
+  there may move. Indexes via `applyNodeIndexPatch`; no history, no dirty mark.
+- `finishStreamedLoad(pageOrder)` restores page order only when the undo stack
+  is empty; otherwise the arrival order stays until the next load.
+- `loadSite`/`clearSite` clear `pendingPages`; `abandonStreamedLoad` clears it
+  when the load fails after opening. The default-board seed waits for it
+  (`shouldSeedDefaultBoard`'s `pagesArriving`).
+
+A later batch needs what the open document got from `loadSite`: the adapter
+applies `reconcileFrameworkClassesOnPages` against the registry AS LOADED (the
+store's copy is already claimed and pruned) and extends the save-diff baseline
+(`mergeLoadedValuesBaseline`) before handing it over. Every re-read of a
+project already on screen is unchanged: one whole document through `loadSite`.
+
+The token extraction (`POST /tokens`) runs AFTER every load, unwaited
+(`studioProjectLoad.ts`'s `adoptExtractedTokens`); its framework reaches the
+store through `adoptLoadedFramework(loaded, extracted)` — no history, no dirty
+mark, framework classes reconciled, node indexes rebuilt — and is skipped when
+the document no longer holds the framework the load gave it.
 
 ---
 
@@ -440,14 +507,35 @@ saying the opposite. `moveNodes` tags its entry with the pre-move
 `(parentId, index)` (`structuralHistory.ts`) and `undo` re-issues `moveNodes`
 back to it — on the page that OWNS the element, found through
 `_nodeIdToPageIds` and activated silently, not the active page (ERR-3);
-`deleteNodes` tags its entry as a `source` gesture whose undo is a
-`reinsert-source` write (`store-15`). Tagging happens only when a source write
+`deleteNodes` tags its entry as a `source` gesture whose undo is the undo
+journal's `restore` (P3-F — the server's pre-image of the file, compare-and-
+swap; the Properties panel's detach/swap/extract push the same kind of entry
+through `studio/journaledUndo.ts`). Tagging happens only when a source write
 was actually issued — a CMS or Visual Component tree keeps plain patch replay.
-A multi-selection step (`stepSiblings` → `moveSiblings`, P2-C2) is tagged
-`siblings` with the whole batch of independent single-element moves; its undo
-re-issues the inverse batch through `moveSiblings` — again one write and one
-entry (`siblingStepActions.ts`; the independence rule is `@core/page-tree`'s
-`planSiblingSteps`). A batch of one is an ordinary `move` entry.
+Several elements moved as ONE gesture — an arrow step of a selection
+(`stepSiblings`, P2-C2) or a multi-selection drag (`moveNodes` with several
+ids, P3-D) — go through `moveNodesInSequence` (`moveSequenceActions.ts`):
+single-element moves applied IN ORDER, each planned against the scratch tree
+the previous one leaves (`@core/page-tree`'s `moveSequence.ts`), all or
+nothing, posted as ONE `/save` **sequence** (`commitStudioSequence` → the
+server's `studioEditSequence.ts`, which re-addresses every step by document
+order and restores every file if any step refuses). The entry is tagged
+`moves`; its undo is `invertMoveSequence` re-issued through the same action.
+A sequence of one is an ordinary `move` entry.
+
+**P3-D — what used to refuse and now writes.** ⌥-drag and ⌘V of several
+elements (`planSourceDuplicateTo` returns the copies in WRITE order; several
+are one sequence); a wrap of several elements (it is a group); a move or copy
+into a container in ANOTHER file (a `transplant`, `crossFile` on the plan); a
+paste of something copied in another frame, or before an edit renumbered its
+file (`studioPasteWrites.ts` finds it on the board, by id or by unique
+fingerprint). **OD-7** — a gesture refused `shared-component` is taken over
+by `instanceOnlyGesture.ts`: it detaches THIS call site
+(`commitStudioDetachForInstance`), follows every id the gesture named into
+the detached markup by child-index path, replays it (`retry(mapId)` — every
+`retry` closure now takes an id MAP), and marks the detach entry
+`linkedToNext`, so one ⌘Z undoes both (`undoRedoActions.ts` cascades). A
+detach that refuses shows the refusal dialog, as before.
 
 **Undo never jams, and never lies (P1-F).** A structural step that can never
 happen as recorded (an `unsupported` inverse, an element gone from the board, a
@@ -470,7 +558,9 @@ not land is taken back".
 **Two gestures write SOMEONE ELSE'S page, named explicitly.** `transplantNodes`
 (D2 G3 — a drag that crossed a board frame) and the image-drop actions
 (`dropImagesIntoPage`/`replaceImageInPage`/`setBackgroundImageInPage`, D2 G15
-+ P5-B — image files dropped from the OS) take their page id as an argument
++ P5-B — image files dropped from the OS; `insertJsxSubtreeIntoPage`, P5-A — an
+SVG pasted from the OS clipboard, one `insert` whose `children` carry the whole
+converted subtree) take their page id as an argument
 instead of trusting `activePageId`, and none goes through `mutateActiveTree`.
 A cross-frame drag ACTIVATES the destination frame on the way
 (`openPageInCanvas` fires from `onPointerDownCapture`), so by commit time the

@@ -74,6 +74,8 @@ import { join, resolve } from 'node:path'
 import { readStudioStoreText, studioStoreProjectRel } from './studioStore'
 import { STUDIO_META_FILE } from './studioMeta'
 import { listWorkspaceFiles } from '@core/page-parser'
+import { canvasLayerRelPath } from '@core/studio-board'
+import { listCanvasLayerIds } from './canvasLayerFiles'
 import { digestOf, fileStamp, stampsUnchanged } from './loadDigest'
 import { onLoadedProjectEvicted, retainLoadedProject } from './loadedProjects'
 import type { StudioLoadResult } from './studioLoadContract'
@@ -156,6 +158,14 @@ export function workspaceLoadFingerprint(dir: string): string {
     parts.push(`${relPath}:${fileStamp(join(dir, ...relPath.split('/')))}`)
   }
   parts.push(`${META_RELATIVE_PATH}:${metaStamp(dir)}`)
+  // P5-G — the free canvas's layer modules live under `.studio/canvas/`, which
+  // the walk above never enters, and a load returns them (`canvasLayers`). A
+  // layer created, placed or edited outside Studio must invalidate like any
+  // page file does, so each one is stamped explicitly, the way meta.json is.
+  for (const id of listCanvasLayerIds(dir)) {
+    const rel = canvasLayerRelPath(id)
+    parts.push(`${rel}:${fileStamp(join(dir, ...rel.split('/')))}`)
+  }
   return digestOf(parts)
 }
 

@@ -44,6 +44,40 @@ describe('PortalFrameAdapter — overlay stylesheets', () => {
     adapter.removeOverlay('test-overlay')
     expect(doc.querySelector('[data-studio-overlay-id="test-overlay"]')).toBeNull()
   })
+
+  it('re-applying the same CSS leaves the style element untouched (P6-C)', async () => {
+    // A `<style>` whose text is reassigned is re-parsed and invalidates style
+    // for the whole document, even when the text is identical — and every
+    // mounted frame's injectors re-apply on inputs that change nothing they
+    // emit (a click re-runs the forced-state preview in every frame).
+    const doc = freshDoc()
+    const adapter = new PortalFrameAdapter(doc)
+    adapters.push(adapter)
+    adapter.applyOverlay('same', '')
+    adapter.applyOverlay('css', '.x { color: red }')
+    const empty = doc.querySelector('[data-studio-overlay-id="same"]')!
+    const styled = doc.querySelector('[data-studio-overlay-id="css"]')!
+    const records: MutationRecord[] = []
+    const observer = new MutationObserver((batch) => records.push(...batch))
+    observer.observe(empty, { childList: true, characterData: true, subtree: true })
+    observer.observe(styled, { childList: true, characterData: true, subtree: true })
+    const textNode = styled.firstChild
+
+    adapter.applyOverlay('same', '')
+    adapter.applyOverlay('css', '.x { color: red }')
+    await Promise.resolve()
+    records.push(...observer.takeRecords())
+    expect(records).toEqual([])
+    expect(styled.firstChild).toBe(textNode)
+
+    // A real change still lands, and a removed overlay starts over.
+    adapter.applyOverlay('css', '.x { color: blue }')
+    expect(styled.textContent).toBe('.x { color: blue }')
+    adapter.removeOverlay('css')
+    adapter.applyOverlay('css', '.x { color: blue }')
+    expect(doc.querySelector('[data-studio-overlay-id="css"]')?.textContent).toBe('.x { color: blue }')
+    observer.disconnect()
+  })
 })
 
 describe('PortalFrameAdapter — selection / hover rings', () => {

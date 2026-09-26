@@ -42,6 +42,7 @@ import { CanvasNotch } from './CanvasNotch'
 import { CanvasModeToggle } from './CanvasModeToggle'
 import { CanvasContextSelector } from './CanvasContextSelector'
 import { CanvasRulers } from './CanvasRulers/CanvasRulers'
+import { BoardDrawPagePicker } from './BoardFramesLayer/BoardDrawPagePicker'
 import { CanvasSelectionContext, CanvasViewportActionsContext } from './CanvasContexts'
 // Class / user-stylesheet injectors are now mounted per breakpoint frame
 // (inside each iframe's document) by `IframeFrameSurface`. CanvasRoot no
@@ -54,6 +55,7 @@ import { CanvasRenameDialog } from './CanvasRenameDialog'
 import { useCanvasRenameDialog } from './useCanvasRenameDialog'
 import { CanvasLayerContextMenu } from './CanvasLayerContextMenu'
 import { useCanvasLayerContextMenu } from './useCanvasLayerContextMenu'
+import { useCanvasClipboardBridge } from './useCanvasClipboardBridge'
 import { useCanvasNodeShortcuts } from './useCanvasNodeShortcuts'
 import { useCanvasNodeArrowKeys } from './useCanvasNodeArrowKeys'
 import { useEditorHistoryShortcuts } from './useEditorHistoryShortcuts'
@@ -67,7 +69,7 @@ import { useBoardFrameNudge } from './useBoardFrameNudge'
 import { useCanvasToolShortcuts } from './useCanvasToolShortcuts'
 import { useCanvasLayerCommandKeys } from './useCanvasLayerCommandKeys'
 import { useCreatedNodeFollowUp } from './createdNodeFollowUp'
-import { isDrawTool } from './canvasDrawTool'
+import { isArmedTool } from './canvasDrawTool'
 import { SelectionStyleCommandHost } from './SelectionStyleCommandHost'
 import { useCanvasHandTool } from './useCanvasHandTool'
 import { useCanvasFileDrop } from './useCanvasFileDrop'
@@ -83,21 +85,17 @@ const VisualComponentModeControl = lazy(() =>
   import('./VisualComponentModeControl').then((module) => ({ default: module.default })),
 )
 
-// P5-E — mounted only while a draw tool is armed, so it loads on first arming
-// rather than with the editor body.
-const CanvasDrawToolLayer = lazy(() =>
-  import('./CanvasDrawToolLayer').then((m) => ({ default: m.CanvasDrawToolLayer })),
+// P5-E / P5-D — mounted only while a draw tool or the pen is armed (loaded on first arming).
+const CanvasArmedToolLayer = lazy(() =>
+  import('./CanvasArmedToolLayer').then((m) => ({ default: m.CanvasArmedToolLayer })),
 )
 const TemplateModeControl = lazy(() =>
   import('./TemplateModeControl').then((module) => ({ default: module.default })),
 )
 
 /**
- * Stable empty-breakpoints sentinel — used as the `?? fallback` in the
- * breakpoints selector so that `Object.is(prev, next)` returns `true` when
- * the site is null, preventing useSyncExternalStore from entering an
- * infinite re-render loop.  Never use `?? []` inline in a useEditorStore
- * selector — a new array literal has a new identity on every call.
+ * Stable `?? fallback` for the breakpoints selector: an inline `?? []` is a new
+ * array per call, and useSyncExternalStore would re-render forever on it.
  */
 const EMPTY_BREAKPOINTS: Breakpoint[] = []
 
@@ -105,7 +103,9 @@ interface CanvasRootProps {
   editable?: boolean
 }
 
-export function CanvasRoot({ editable = true }: CanvasRootProps) {
+// `props`, not `{ editable = true }`: see compiled-hot-components.test.ts.
+export function CanvasRoot(props: CanvasRootProps) {
+  const editable = props.editable ?? true
   const transformLayerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
 
@@ -291,7 +291,7 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
         lastCenteredKeyRef.current = centerKey
         return
       }
-      if (attempts++ >= MAX_ATTEMPTS) return
+      if ((attempts += 1) > MAX_ATTEMPTS) return // not `++`: see compiled-hot-components.test.ts
       timerId = setTimeout(tryCenter, RETRY_MS)
     }
     tryCenter()
@@ -372,6 +372,11 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // `node`, second handler — Delete / ⌘D / ⌘C / ⌘X / ⌘V / ⌥↑ / ⌥↓.
   useCanvasNodeShortcuts({ editable, isLive, requestDeleteNode })
 
+  // P5-A — ⌘V is answered by the `paste` event that keystroke raises (the
+  // node shortcuts above only arm it), heard here in the editor's own
+  // document and by `useIframeEventForwarding` in every frame's.
+  useCanvasClipboardBridge({ editable: editable && permissions.canEditStructure, isLive })
+
   // `node`, third handler — bare arrows move the selected layer (P2-C): an
   // absolute one nudges, a layout child reorders. Above `board`, so a node
   // selection never nudges a frame.
@@ -407,7 +412,7 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // follow-up that opens a drawn text or lays out a ⇧A group once it lands.
   useCanvasLayerCommandKeys(editable, isLive)
   useCreatedNodeFollowUp()
-  const armedDrawTool = useEditorStore((s) => (isDrawTool(s.canvasTool) ? s.canvasTool : null))
+  const armedDrawTool = useEditorStore((s) => (isArmedTool(s.canvasTool) ? s.canvasTool : null))
 
   // Not a key scope: mirrors the latched hand tool onto the shared space-pan
   // flag, which is what every pan-aware surface already reads.
@@ -627,10 +632,12 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
               inspector's own write target (renders nothing while idle). */}
           {!isLive && editable && armedDrawTool && (
             <Suspense fallback={null}>
-              <CanvasDrawToolLayer tool={armedDrawTool} transformLayerRef={transformLayerRef} />
+              <CanvasArmedToolLayer tool={armedDrawTool} transformLayerRef={transformLayerRef} />
             </Suspense>
           )}
           {!isLive && editable && <SelectionStyleCommandHost />}
+          {/* P5-F / IX-13 — the board tool's page picker, at the release point. */}
+          {!isLive && editable && <BoardDrawPagePicker />}
 
           {/*
           Plugin-registered canvas overlays. Mounted after the transform

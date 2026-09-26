@@ -29,7 +29,7 @@ import { useEffect, useEffectEvent } from 'react'
 import { guardDragSession } from '@core/studio-runtime'
 import { beginCanvasGesture, endCanvasGesture } from './canvasGesture'
 import { presentedElementForNode } from './canvasNodeLookup'
-import { createInlineStylePreview } from './elementResizeSizing'
+import { createInlineStylePreview } from './elementResizeInlinePreview'
 import { runSelectionStyleCommand } from './selectionStyleCommands'
 import { spacingPatch, type SpacingBand, type SpacingGeometry, type SpacingModifiers } from './spacingHandleRules'
 

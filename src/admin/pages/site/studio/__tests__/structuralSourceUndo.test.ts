@@ -22,12 +22,20 @@ import { registry } from '@core/module-engine'
 import type { Page } from '@core/page-tree'
 import { useEditorStore } from '@site/store/store'
 import { registerEditorSave } from '@site/hooks/editorSaveRef'
-import { applySitePagesPatch } from '@site/hooks/siteReloadApply'
-import { CMS_SITE_PAGES_PATCH_EVENT, type CmsSitePagesPatchDetail } from '@admin/state/adminEvents'
+import { applySitePagesPatch, applyStructuralWriteOutcome } from '@site/hooks/siteReloadApply'
+import {
+  CMS_SITE_PAGES_PATCH_EVENT,
+  CMS_SITE_RELOAD_EVENT,
+  claimCmsSiteReloadRequests,
+  latestCmsSiteReloadRequest,
+  registerCmsSiteReloader,
+  type CmsSitePagesPatchDetail,
+} from '@admin/state/adminEvents'
 import { __resetToastBusForTests, subscribeToasts, type Toast } from '@ui/components/Toast/toastBus'
 import { makeNode, makePage, makeSite } from '../../../../../__tests__/fixtures'
 import { resetStructuralCommitQueue } from '../structuralCommitQueue'
 import { setStudioLoadedDir } from '../studioWorkspaceDir'
+import { detachInstance, extractInstanceCopy, swapInstance } from '../studioSaveRequests'
 
 const PAGE_ID = 'home'
 const ROOT_ID = 'pages/Home.tsx:4:5'
@@ -35,15 +43,21 @@ const ROW_ID = 'pages/Home.tsx:5:7'
 const SECOND_ID = 'pages/Home.tsx:6:7'
 /** Where the codemod put whatever the gesture made. */
 const MADE_ID = 'pages/Home.tsx:7:7'
-/** A second container, elsewhere in the SAME file — `store-15`'s multi-parent delete/undo test. */
+/** A second container, elsewhere in the SAME file — the multi-parent delete/undo test. */
 const OTHER_PARENT_ID = 'pages/Home.tsx:20:5'
 const THIRD_ID = 'pages/Home.tsx:21:7'
+/** Undo-journal tokens as the server mints them (P3-F). */
+const TOKEN_A = 'a'.repeat(32)
+const TOKEN_B = 'b'.repeat(32)
 
 interface SaveAnswer {
   createdNodeIds?: string[]
   relocatedNodeIds?: string[]
   removed?: { nodeId: string; text: string; wholeLine: boolean }[]
-  prunedImports?: { file: string; declarations: string[] }[]
+  /** P3-F — the undo-journal token a delete's batch reports. */
+  undoToken?: string
+  /** A refused write: nothing written, and why. */
+  refusals?: { nodeId: string; kind: string; reason: string; message: string }[]
   pages?: Page[]
 }
 
@@ -104,6 +118,26 @@ describe('a structural source write is one undo step', () => {
   let patchListener: ((evt: Event) => void) | null = null
   let saveCalls: { edits: { kind: string; nodeId: string; siblingNodeIds?: string[]; name?: string }[] }[] = []
   let answers: SaveAnswer[] = []
+  let unmountReloader: (() => void) | null = null
+
+  /**
+   * A stand-in for the mounted editor's full reload, which the Properties
+   * panel's instance rewrites request: it claims the outcome that rode the
+   * request and applies it, as `usePersistence` does after re-reading.
+   */
+  function mountReloader(): () => void {
+    const unregister = registerCmsSiteReloader()
+    const onReload = () => {
+      const claimed = claimCmsSiteReloadRequests(latestCmsSiteReloadRequest())
+      for (const outcome of claimed.structuralOutcomes) applyStructuralWriteOutcome(outcome)
+      claimed.settle()
+    }
+    window.addEventListener(CMS_SITE_RELOAD_EVENT, onReload)
+    return () => {
+      window.removeEventListener(CMS_SITE_RELOAD_EVENT, onReload)
+      unregister()
+    }
+  }
 
   beforeEach(() => {
     __resetToastBusForTests()
@@ -126,6 +160,8 @@ describe('a structural source write is one undo step', () => {
   })
 
   afterEach(() => {
+    unmountReloader?.()
+    unmountReloader = null
     globalThis.fetch = originalFetch
     unregisterSave?.()
     if (patchListener) window.removeEventListener(CMS_SITE_PAGES_PATCH_EVENT, patchListener)
@@ -139,7 +175,7 @@ describe('a structural source write is one undo step', () => {
    * can report different results — which is the whole point: the undo's own
    * re-parse is what the redo after it has to address.
    */
-  function stubFetch(scripted: SaveAnswer[]) {
+  function stubFetch(scripted: SaveAnswer[], extract: { extractToken?: string } = {}) {
     answers = scripted
     let call = 0
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -153,16 +189,23 @@ describe('a structural source write is one undo step', () => {
         return new Response(
           JSON.stringify({
             ok: true,
-            written: 1,
-            skipped: 0,
+            written: answer.refusals ? 0 : 1,
+            skipped: answer.refusals?.length ?? 0,
+            refusals: answer.refusals ?? [],
             shifted: true,
             sharedComponents: false,
             touchedFiles: ['pages/Home.tsx'],
             createdNodeIds: answer.createdNodeIds ?? [],
             relocatedNodeIds: answer.relocatedNodeIds ?? [],
             removed: answer.removed ?? [],
-            prunedImports: answer.prunedImports ?? [],
+            ...(answer.undoToken ? { undoToken: answer.undoToken } : {}),
           }),
+          { status: 200 },
+        )
+      }
+      if (path === '/admin/api/studio/extract-component') {
+        return new Response(
+          JSON.stringify({ ok: true, newFile: 'components/Row2.tsx', newComponentName: 'Row2', ...(extract.extractToken ? { undoToken: extract.extractToken } : {}) }),
           { status: 200 },
         )
       }
@@ -186,7 +229,7 @@ describe('a structural source write is one undo step', () => {
             authoredCss: '',
             trust: 'static',
             paletteHiddenModuleIds: [],
-            pageCount: pages.length,
+            pageList: pages.map(({ id, slug, title }) => ({ id, slug, title })),
           },
           ...pages.map((p, index) => ({ kind: 'page', page: p, index })),
         ]
@@ -217,10 +260,9 @@ describe('a structural source write is one undo step', () => {
   }
 
   /**
-   * `store-15` — whether the TOP entry's `inverse` has been filled in.
-   * `delete`'s entry exists (and `canUndo` is already true) the instant the
-   * eager tree mutation lands, well before its commit's `fill` reports what
-   * it discarded — unlike every other gesture in this file, whose `canUndo`
+   * Whether the TOP entry's `inverse` has been filled in. `delete`'s entry
+   * exists (and `canUndo` is already true) the instant the eager tree
+   * mutation lands, well before its commit's `fill` reports its token — unlike every other gesture in this file, whose `canUndo`
    * only flips once the entry is pushed AFTER that answer is already known.
    * Callers that `undo()` a delete must wait for this, not just `canUndo`.
    */
@@ -463,21 +505,23 @@ describe('a structural source write is one undo step', () => {
   })
 
   /**
-   * `store-15` — delete is the one member of this family whose tree mutation
-   * runs EAGERLY (same-tick optimistic removal), unlike every gesture above.
-   * Its entry exists the moment `deleteNode` returns; what these two tests
-   * pin is that it is still exactly ONE undo step, and that its inverse —
-   * `reinsert-source` — only becomes postable once the delete's own commit
-   * has reported what it discarded.
+   * Delete is the one member of this family whose tree mutation runs EAGERLY
+   * (same-tick optimistic removal), unlike every gesture above. Its entry
+   * exists the moment `deleteNode` returns; what these tests pin is that it is
+   * still exactly ONE undo step, and that its inverse — the undo journal's
+   * `restore` (P3-F) — only becomes postable once the delete's own commit has
+   * reported its token. The client never posts the element's bytes.
    */
-  it('delete is undone by reinserting the element back where it was, and redone by deleting it again', async () => {
+  it('delete is undone by restoring its journal entry, and a redo’s fresh token is what the next undo restores', async () => {
     stubFetch([
-      // The delete's own commit — what it discarded, for the undo to restore.
-      { removed: [{ nodeId: ROW_ID, text: '<Row />\n', wholeLine: true }], pages: [pageWithoutRow()] },
-      // The undo's reinsert commit.
-      { createdNodeIds: [ROW_ID], pages: [pageBefore()] },
-      // The redo's delete commit.
-      { removed: [{ nodeId: ROW_ID, text: '<Row />\n', wholeLine: true }], pages: [pageWithoutRow()] },
+      // The delete's own commit.
+      { undoToken: TOKEN_A, pages: [pageWithoutRow()] },
+      // The undo's restore.
+      { pages: [pageBefore()] },
+      // The redo's delete — a new write, a new journal entry.
+      { undoToken: TOKEN_B, pages: [pageWithoutRow()] },
+      // The second undo.
+      { pages: [pageBefore()] },
     ])
 
     useEditorStore.getState().deleteNode(ROW_ID)
@@ -488,7 +532,7 @@ describe('a structural source write is one undo step', () => {
 
     useEditorStore.getState().undo()
     await waitFor(() => saveCalls.length === 2)
-    expect(lastEdits()).toEqual([{ kind: 'reinsert-source', nodeId: ROOT_ID, index: 0, text: '<Row />\n' }])
+    expect(lastEdits()).toEqual([{ kind: 'restore', nodeId: `undo-journal:${TOKEN_A}`, token: TOKEN_A }])
     await waitFor(() => useEditorStore.getState().site?.pages[0]?.nodes[ROW_ID] !== undefined)
     // ONE step: the entry moved to the redo stack, and nothing else was undone.
     expect(useEditorStore.getState().canUndo).toBe(false)
@@ -497,29 +541,22 @@ describe('a structural source write is one undo step', () => {
     useEditorStore.getState().redo()
     await waitFor(() => saveCalls.length === 3)
     expect(lastEdits()).toEqual([{ kind: 'delete', nodeId: ROW_ID }])
+    await waitFor(() => useEditorStore.getState().canUndo && useEditorStore.getState().site?.pages[0]?.nodes[ROW_ID] === undefined)
+
+    useEditorStore.getState().undo()
+    await waitFor(() => saveCalls.length === 4)
+    expect(lastEdits()).toEqual([{ kind: 'restore', nodeId: `undo-journal:${TOKEN_B}`, token: TOKEN_B }])
   })
 
   /**
-   * Two of the three deleted elements share `ROOT_ID`; the third belongs to
-   * `OTHER_PARENT_ID`, a second container in the same file. The restore posts
-   * one `reinsert-source` per element, and `ROOT_ID`'s own two stay in
-   * ASCENDING index order relative to each other — the property
-   * `resolveStructuralInverse`'s `reinsert-deleted` case exists to guarantee,
-   * so the server's own bottom-to-top ordering (by each edit's PARENT
-   * position) never has to guess which of two same-parent restores goes
-   * first.
+   * One gesture, one journal entry: three elements under two parents are one
+   * batch, and its ⌘Z is one `restore` of the whole file as it was — no
+   * per-element positions to get wrong.
    */
-  it('restores siblings under two different parents, each parent’s own children ascending', async () => {
+  it('a multi-select delete across two parents is undone by ONE restore', async () => {
     stubFetch([
-      {
-        removed: [
-          { nodeId: ROW_ID, text: '<Row />\n', wholeLine: true },
-          { nodeId: SECOND_ID, text: '<Second />\n', wholeLine: true },
-          { nodeId: THIRD_ID, text: '<Third />\n', wholeLine: true },
-        ],
-        pages: [pageWithTwoParentsEmptied()],
-      },
-      { createdNodeIds: [ROW_ID, THIRD_ID, SECOND_ID], pages: [pageWithTwoParents()] },
+      { undoToken: TOKEN_A, pages: [pageWithTwoParentsEmptied()] },
+      { pages: [pageWithTwoParents()] },
     ])
 
     useEditorStore.getState().loadSite(makeSite({ pages: [pageWithTwoParents()] }))
@@ -531,10 +568,96 @@ describe('a structural source write is one undo step', () => {
 
     useEditorStore.getState().undo()
     await waitFor(() => saveCalls.length === 2)
-    expect(lastEdits()).toEqual([
-      { kind: 'reinsert-source', nodeId: ROOT_ID, index: 0, text: '<Row />\n' },
-      { kind: 'reinsert-source', nodeId: OTHER_PARENT_ID, index: 0, text: '<Third />\n' },
-      { kind: 'reinsert-source', nodeId: ROOT_ID, index: 1, text: '<Second />\n' },
+    expect(lastEdits()).toEqual([{ kind: 'restore', nodeId: `undo-journal:${TOKEN_A}`, token: TOKEN_A }])
+  })
+
+  /**
+   * The server refuses a restore whose file changed since the delete
+   * (`restore-stale`): the user is told why, in the server's own words, and
+   * the entry is dropped — never left on top for every later ⌘Z to hit.
+   */
+  it('a stale restore is refused honestly and does not jam the stack', async () => {
+    const stale = 'pages/Home.tsx has changed since that edit, so undoing it would overwrite the newer change. Nothing was written.'
+    stubFetch([
+      { undoToken: TOKEN_A, pages: [pageWithoutRow()] },
+      { refusals: [{ nodeId: `undo-journal:${TOKEN_A}`, kind: 'restore', reason: 'restore-stale', message: stale }] },
     ])
+
+    useEditorStore.getState().deleteNode(ROW_ID)
+    await waitFor(() => saveCalls.length === 1)
+    await waitFor(hasResolvedInverse)
+
+    useEditorStore.getState().undo()
+    await waitFor(() => saveCalls.length === 2)
+    await waitFor(() => currentToasts().some((toast) => toast.body?.includes('has changed since that edit')))
+    await waitFor(() => !useEditorStore.getState().canUndo && !useEditorStore.getState().canRedo)
+    expect(useEditorStore.getState().site?.pages[0]?.nodes[ROW_ID]).toBeUndefined()
+    expect(saveCalls).toHaveLength(2)
+  })
+
+  /**
+   * DET-4 — the Properties panel's Detach / Swap / Duplicate post outside
+   * `commitStructural` and used to push NO entry: ⌘Z after one undid whatever
+   * came before it. Each now pushes one, whose ⌘Z restores the write's own
+   * journal entry and whose ⌘⇧Z re-posts the gesture.
+   */
+  it('panel Detach: ⌘Z posts the journal restore, ⌘⇧Z posts the detach again', async () => {
+    unmountReloader = mountReloader()
+    stubFetch([{ undoToken: TOKEN_A }, { pages: [pageBefore()] }, { undoToken: TOKEN_B }])
+
+    const result = await detachInstance(ROW_ID)
+    expect(result.ok).toBe(true)
+    expect(useEditorStore.getState().canUndo).toBe(true)
+
+    useEditorStore.getState().undo()
+    await waitFor(() => saveCalls.length === 2)
+    expect(lastEdits()).toEqual([{ kind: 'restore', nodeId: `undo-journal:${TOKEN_A}`, token: TOKEN_A }])
+    await waitFor(() => useEditorStore.getState().canRedo)
+
+    useEditorStore.getState().redo()
+    await waitFor(() => saveCalls.length === 3)
+    expect(lastEdits()).toEqual([{ kind: 'detach', nodeId: ROW_ID }])
+  })
+
+  it('panel Swap: ⌘Z posts the journal restore, ⌘⇧Z posts the same swap again', async () => {
+    unmountReloader = mountReloader()
+    stubFetch([{ undoToken: TOKEN_A }, { pages: [pageBefore()] }, { undoToken: TOKEN_B }])
+    const target = { newComponentName: 'Tile', newComponentSource: 'local' as const, newComponentFile: 'components/Tile.tsx' }
+
+    expect((await swapInstance(ROW_ID, target)).ok).toBe(true)
+    useEditorStore.getState().undo()
+    await waitFor(() => saveCalls.length === 2)
+    expect(lastEdits()).toEqual([{ kind: 'restore', nodeId: `undo-journal:${TOKEN_A}`, token: TOKEN_A }])
+    await waitFor(() => useEditorStore.getState().canRedo)
+
+    useEditorStore.getState().redo()
+    await waitFor(() => saveCalls.length === 3)
+    expect(lastEdits()).toEqual([{ kind: 'swap', nodeId: ROW_ID, ...target }])
+  })
+
+  it('panel Duplicate-as-copy: ⌘Z restores (call site back, copy gone); ⌘⇧Z says it cannot', async () => {
+    unmountReloader = mountReloader()
+    stubFetch([{ pages: [pageBefore()] }], { extractToken: TOKEN_A })
+
+    expect((await extractInstanceCopy(ROW_ID)).ok).toBe(true)
+    useEditorStore.getState().undo()
+    await waitFor(() => saveCalls.length === 1)
+    expect(lastEdits()).toEqual([{ kind: 'restore', nodeId: `undo-journal:${TOKEN_A}`, token: TOKEN_A }])
+    await waitFor(() => useEditorStore.getState().canRedo)
+
+    useEditorStore.getState().redo()
+    await waitFor(() => currentToasts().some((toast) => toast.body?.includes('can’t be redone')))
+    expect(saveCalls).toHaveLength(1)
+  })
+
+  it('an instance rewrite the server could not journal still takes a step: ⌘Z says so instead of passing over it silently', async () => {
+    unmountReloader = mountReloader()
+    stubFetch([{}])
+    expect((await detachInstance(ROW_ID)).ok).toBe(true)
+    expect(useEditorStore.getState().canUndo).toBe(true)
+
+    useEditorStore.getState().undo()
+    await waitFor(() => currentToasts().some((toast) => toast.title.includes('Detach instance')))
+    expect(saveCalls).toHaveLength(1)
   })
 })

@@ -130,7 +130,7 @@ describe('the element identity guard, on the board', () => {
         const meta = {
           kind: 'meta', dir: '/tmp/studio-test', projectName: 'studio-test', componentSources: {}, styleRules: {},
           styleRuleSources: {}, styledStyleRuleSources: {}, conditions: [], vendorCss: '', authoredCss: '',
-          trust: 'static', paletteHiddenModuleIds: [], pageCount: 1,
+          trust: 'static', paletteHiddenModuleIds: [], pageList: [{ id: disk.page.id, slug: disk.page.slug, title: disk.page.title }],
         }
         return new Response(`${JSON.stringify(meta)}\n${JSON.stringify({ kind: 'page', page: disk.page, index: 0 })}\n`, { status: 200 })
       }

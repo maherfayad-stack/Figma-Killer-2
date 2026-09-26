@@ -59,6 +59,17 @@ panel), and `animation`/`transition` landed on
 where the structured per-entry editor and scrub row still live. See **G12**
 below for the full six-section list.
 
+**Nothing selected (P5-F, UX-9)** is the open screen's own properties, not a
+sentence: `EmptySelectionPanel` shows the frame's size (`FrameSizePanel`),
+a **Screen** section with Copy as PNG (the same run as ⌘⇧C,
+`canvas/copyAsPng.ts`), and a **Snapping** section with the two snap toggles
+(the store preference ⌘⇧' / ⌘' flip). A board background swatch and a
+downloadable board export are not there yet — there is no board background
+in the model, and export of a whole board is a separate capture.
+
+**Collapsed sections show their chevron at rest (P5-F, UX-8)**, so a folded
+section with a body never reads like an empty one (which has no toggle).
+
 ---
 
 ## §1. The five laws
@@ -350,7 +361,9 @@ popover, not the Layout `⚙`.
 #### Hug/Fill is resolved against the real parent (W8-4)
 
 `Fixed`/`Hug`/`Fill` are **intents**, and the CSS that expresses an intent
-depends entirely on how the element's parent lays it out. `elementSizing.ts`
+depends entirely on how the element's parent lays it out. `elementSizingRules.ts`
+(`@core/studio-runtime` — the canvas resize, in a portal frame and inside a
+live frame's runtime, reads the same model)
 classifies each axis against the parent's *computed* `display`/`flex-direction`
 (`sizingAxisRole`) and writes accordingly:
 

@@ -60,6 +60,25 @@
 //     colour stay.
 //   - An attribute separated by `/` instead of whitespace (`<a/onmouseover=…>`),
 //     which an HTML parser accepts when the SVG is inlined into a page.
+//
+// The re-review of #248 (`review-248`) left three more follow-ups, taken by
+// P5-D SVG-2. Each is a way an XML document runs script without ever spelling
+// `<script>`, stopped today only by the sandbox CSP:
+//
+//   - A DOCTYPE. Its internal subset can declare an entity whose replacement
+//     text is markup (`<!ENTITY x "<h:script …>">` then `&x;`), and nested
+//     entities are the billion-laughs expansion. The whole DOCTYPE goes; a
+//     reference to an entity it declared then fails to parse, and an SVG that
+//     fails to parse draws nothing — the safe failure.
+//   - XHTML elements. In an XML document an element in the XHTML namespace IS
+//     an HTML element, rendered or not: `<h:iframe srcdoc="…">` loads and runs
+//     its document even outside `<foreignObject>`. Every embedding element is
+//     removed (whatever its prefix), `srcdoc` is removed from any element, and
+//     an XHTML namespace declaration is removed so no element can join it —
+//     a prefixed element left behind then fails to parse.
+//   - XSLT. `<?xml-stylesheet type="text/xsl" href="…"?>` has the browser
+//     transform the document with a stylesheet that can emit script. Every
+//     processing instruction except the leading `<?xml …?>` declaration goes.
 
 /** An optional XML namespace prefix before an element's local name. */
 const PREFIX = String.raw`(?:[A-Za-z_][\w.-]*:)?`
@@ -102,6 +121,27 @@ const ANIMATION_ELEMENT_RE = new RegExp(
   String.raw`<(${PREFIX}(?:set|animate|animateMotion|animateTransform|animateColor))\b([^>]*?)(?:\/>|>[\s\S]*?<\/\1\s*>)`,
   'gi',
 )
+/**
+ * `<!DOCTYPE …>`, internal subset included. The subset is matched as a
+ * bracketed run so a `>` inside an `<!ENTITY …>` declaration does not end the
+ * match early.
+ */
+const DOCTYPE_RE = /<!DOCTYPE\b[^[>]*(?:\[[\s\S]*?\]\s*)?>/gi
+/** A DOCTYPE opener the pattern above could not close, and a stray entity declaration. */
+const DOCTYPE_OPEN_RE = /<!(?:DOCTYPE|ENTITY)\b[^>]*>?/gi
+/** Every processing instruction except the XML declaration (`<?xml version…?>`), terminated or not. */
+const PROCESSING_INSTRUCTION_RE = /<\?(?!xml[\s?])[\s\S]*?(?:\?>|$)/gi
+/** HTML elements that load or embed another document, or change where this one points, under any prefix. */
+const EMBEDDING_ELEMENTS = ['iframe', 'frame', 'frameset', 'object', 'embed', 'applet', 'portal', 'meta', 'link', 'base', 'form']
+const EMBEDDING_BLOCK_RES = EMBEDDING_ELEMENTS.map(
+  (name) => new RegExp(String.raw`<${PREFIX}${name}\b[\s\S]*?${elementClose(name)}`, 'gi'),
+)
+const EMBEDDING_OPEN_RE = new RegExp(String.raw`<\/?${PREFIX}(?:${EMBEDDING_ELEMENTS.join('|')})\b[^>]*>`, 'gi')
+/** `srcdoc="…"` on any element — an inline document for a frame to run. */
+const SRCDOC_RE = /([\s/"'])(?:[A-Za-z_][\w.-]*:)?srcdoc\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi
+/** A namespace declaration with its value, judged after decoding (`xhtmlNamespace`). */
+const NAMESPACE_DECLARATION_RE = /([\s/"'])(xmlns(?::[A-Za-z_][\w.-]*)?)\s*=\s*("[^"]*"|'[^']*')/gi
+
 /** `<style>…</style>` blocks — CSS can carry `@import url(javascript:…)`. */
 const STYLE_BLOCK_RE = new RegExp(String.raw`<${PREFIX}style\b[\s\S]*?${styleClose}`, 'gi')
 
@@ -137,6 +177,12 @@ function unsafeUrlValue(raw: string): boolean {
   return /(?:javascript|vbscript|livescript):/.test(normalized) || /(?:^|;)data:(?:text\/html|application\/xhtml|image\/svg)/.test(normalized)
 }
 
+/** Whether a namespace declaration's value, decoded the way the XML parser decodes it, is the XHTML namespace. */
+function xhtmlNamespace(raw: string): boolean {
+  const value = withoutControlAndSpace(decodeEntities(raw.replace(/^["']|["']$/g, ''))).toLowerCase()
+  return value === 'http://www.w3.org/1999/xhtml'
+}
+
 /** A SMIL element that animates a link or an event handler, judged on its decoded `attributeName`. */
 function dangerousAnimation(attributes: string): boolean {
   const target = /attributeName\s*=\s*("[^"]*"|'[^']*'|[^\s>/]+)/i.exec(attributes)
@@ -147,7 +193,15 @@ function dangerousAnimation(attributes: string): boolean {
 }
 
 function stripVectorsOnce(svg: string): string {
-  return svg
+  let out = svg
+    .replace(DOCTYPE_RE, '')
+    .replace(DOCTYPE_OPEN_RE, '')
+    .replace(PROCESSING_INSTRUCTION_RE, '')
+  for (const block of EMBEDDING_BLOCK_RES) out = out.replace(block, '')
+  return out
+    .replace(EMBEDDING_OPEN_RE, '')
+    .replace(SRCDOC_RE, '$1')
+    .replace(NAMESPACE_DECLARATION_RE, (whole, lead: string, _name: string, value: string) => (xhtmlNamespace(value) ? lead : whole))
     .replace(SCRIPT_BLOCK_RE, '')
     .replace(SCRIPT_OPEN_RE, '')
     .replace(SCRIPT_CLOSE_RE, '')

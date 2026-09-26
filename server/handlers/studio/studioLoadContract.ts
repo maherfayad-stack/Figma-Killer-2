@@ -19,6 +19,14 @@ import type { StyledStyleRuleSource } from './styledStyleRuleSources'
 /** Result of the load pipeline: every parsed page, the merged component classification (keyed by node id), and the merged imported-CSS registry. */
 export interface StudioLoadResult {
   pages: Page[]
+  /**
+   * P5-G — the free canvas's loose layers: one parsed `.studio/canvas/<id>.tsx`
+   * each, keyed `canvas:<id>`. NEVER merged into `pages` — that separation is
+   * what keeps them out of every page list, publish, preview and share by
+   * construction (`studio/canvasLayerLoad.ts`). Always the full set, even for
+   * a narrowed load: the list is small and the canvas replaces it wholesale.
+   */
+  canvasLayers: CanvasLayerLoad[]
   componentSources: Record<string, ComponentSource>
   /**
    * §6 — imported `.css` parsed into style rules, keyed by rule id. Edits in
@@ -86,6 +94,14 @@ export interface StudioLoadResult {
    * mirror of `StudioLoadWarning`).
    */
   warnings: StudioLoadWarning[]
+}
+
+/** One loose layer as a load returns it (P5-G). */
+export interface CanvasLayerLoad {
+  layerId: string
+  /** `canvas:<layerId>` — never a route-derived page id. */
+  pageId: string
+  page: Page
 }
 
 /**

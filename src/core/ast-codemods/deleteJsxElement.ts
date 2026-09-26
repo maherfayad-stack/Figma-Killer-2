@@ -30,22 +30,29 @@
  *    outermost thing the component returns. Deleting it leaves `return ;`, a
  *    file that no longer parses.
  *
+ * ## A conditional element goes with its condition (WB-20)
+ *
+ * `{cond && <X/>}` renders `<X/>` or nothing, so deleting `<X/>` removes the
+ * whole `{…}` container: what is left would otherwise be `{cond && }`, which
+ * does not parse, and there is no other state to keep. A ternary BRANCH
+ * (`{cond ? <X/> : <Y/>}`) is replaced with `null` instead, because the other
+ * branch is a state the user did not delete. Either way the element is gone in
+ * every state, which is what deleting it on the canvas means. A `.map` row
+ * still refuses `expression-child` — see `resolveJsxChildRange`'s
+ * `'conditional'` unit.
+ *
  * ## Deliberately does NOT tidy up after itself
  *
  * A codemod that collapses a now-empty parent or reformats the gap it left is
  * a codemod that changes bytes the user never pointed at. What is left behind
  * is exactly the file minus one element.
  *
- * ## `removed` — the bytes it just discarded, on purpose, given back
+ * ## Its undo is not its business
  *
- * `store-15` — a delete used to throw away exactly the bytes an undo would
- * need: `verbatim.slice(target.range.start, target.range.end)` was computed
- * and dropped in the same line. Every caller that wants ⌘Z to put the element
- * back verbatim needs those bytes AND whether they owned a whole line (so
- * `reinsertJsxSource.ts` knows whether to re-indent or splice inline) — both
- * of which only exist here, at the moment of removal. Nothing here decides
- * WHERE they get written back to; that is `reinsertJsxSource`'s question,
- * asked later, against whatever the parent's children look like by then.
+ * ⌘Z after a delete is the editor's undo journal (P3-F,
+ * `server/handlers/studio/undoJournal.ts`), which records the whole file
+ * before the batch runs and puts it back byte for byte. So nothing here hands
+ * back the bytes it cut.
  */
 import { type Project } from 'ts-morph'
 import { createProject, loadSourceFile } from './locateJsxElement'
@@ -73,20 +80,14 @@ export interface DeleteJsxRefusal {
   message: string
 }
 
-/** The exact bytes a delete removed — `reinsertJsxSource`'s own `text`/`wholeLine` input, unchanged. */
-export interface DeletedJsxText {
-  text: string
-  wholeLine: boolean
-}
-
-export type DeleteJsxElementResult = { ok: true; removed: DeletedJsxText } | { ok: false; refusal: DeleteJsxRefusal }
+export type DeleteJsxElementResult = { ok: true } | { ok: false; refusal: DeleteJsxRefusal }
 
 export function deleteJsxElement(params: DeleteJsxElementParams): DeleteJsxElementResult {
   const { file, line, col } = params
   const project = params.project ?? createProject()
   const sourceFile = loadSourceFile(project, file)
 
-  const target = resolveJsxChildRange(sourceFile, line, col)
+  const target = resolveJsxChildRange(sourceFile, line, col, 'conditional')
   if (!target.ok) return { ok: false, refusal: { reason: target.reason, message: target.message } }
 
   const verbatim = verbatimSourceText(sourceFile, file)
@@ -100,7 +101,12 @@ export function deleteJsxElement(params: DeleteJsxElementParams): DeleteJsxEleme
     }
   }
 
-  const removed = verbatim.slice(target.range.start, target.range.end)
+  const branch = target.range.ternaryBranch
+  if (branch) {
+    // The other state stays; this one renders nothing from now on.
+    writeVerbatimSource(sourceFile, file, verbatim.slice(0, branch.start) + 'null' + verbatim.slice(branch.end))
+    return { ok: true }
+  }
   writeVerbatimSource(sourceFile, file, verbatim.slice(0, target.range.start) + verbatim.slice(target.range.end))
-  return { ok: true, removed: { text: removed, wholeLine: target.range.wholeLine } }
+  return { ok: true }
 }

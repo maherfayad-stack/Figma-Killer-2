@@ -300,6 +300,7 @@ import { loadStudioPagesShared } from './studioPageLoad'
 import { prewarmCaptureBrowser } from '../ai/mcp/capture/browserPool'
 import { missingStudioLoadPageIds, parseStudioLoadPageIdsParam, studioLoadStreamLines } from './studio/studioLoadResponse'
 import { applyStudioEditBatchLocked } from './studioWriteback'
+import { applyStudioEditSequenceLocked } from './studioEditSequence'
 import { withIdempotentReplay } from './studio/idempotentReplay'
 import { registeredMcpServerProjectKey } from '../ai/drivers/registeredMcpServers'
 import { syncStoryBoardFrames } from './studio/boardFrames'
@@ -356,7 +357,7 @@ export async function tryServeStudio(
       // project-wide result. See `studioLoadResponse.ts`. SHARED, not cloned
       // (P6-B): this route only serialises it — see `loadStudioPagesShared`.
       const loaded = await loadStudioPagesShared(dir, { pageIds: pageIdsParam })
-      const { pages, componentSources, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, warnings } = loaded
+      const { pages, canvasLayers, componentSources, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, warnings } = loaded
       // W5-3 — a story that parsed into a page but has no frame is invisible.
       // Placed here rather than inside `loadStudioPages` so the parse pipeline
       // stays a pure read: opening the board is the moment the board may be
@@ -413,7 +414,7 @@ export async function tryServeStudio(
       // does not attempt.
       if (url.searchParams.get('stream') === '1') {
         return ndjsonResponse(studioLoadStreamLines({
-          dir, projectName, componentSources, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, warnings, trust, projectKey, paletteHiddenModuleIds, pages, missingPageIds,
+          dir, projectName, canvasLayers, componentSources, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, warnings, trust, projectKey, paletteHiddenModuleIds, pages, missingPageIds,
         }))
       }
 
@@ -421,6 +422,7 @@ export async function tryServeStudio(
         dir,
         projectName,
         pages,
+        canvasLayers,
         componentSources,
         styleRules,
         styleRuleSources,
@@ -466,7 +468,8 @@ export async function tryServeStudio(
 
       // Ordering, dedup, per-edit try/catch, and shift/shared-component
       // detection all live in `applyStudioEditBatch` — the single engine both
-      // this route and `studio_apply_edits` (MCP) run through.
+      // this route and `studio_apply_edits` (MCP) run through. A `sequence`
+      // (P3-D) runs each edit as its own batch, in order, all or nothing.
       const {
         written,
         skipped,
@@ -479,10 +482,15 @@ export async function tryServeStudio(
         createdNodeIds,
         relocatedNodeIds,
         removed,
-        prunedImports,
         fingerprints,
         retargeted,
-      } = await applyStudioEditBatchLocked(dir, edits, body.expect ?? {})
+        listArrays,
+        undoToken,
+      } = await (body.sequence ? applyStudioEditSequenceLocked : applyStudioEditBatchLocked)(dir, edits, body.expect ?? {}, {
+        canvasLayers: 'allow',
+        // P3-F — the editor's own batches are the ones ⌘Z can restore.
+        journal: true,
+      })
 
       if (skipped > 0) console.error(`[studio] save: ${written} written, ${skipped} skipped`)
       // WB-12 — `refusals` names WHY each edit that did not write didn't (a
@@ -517,17 +525,15 @@ export async function tryServeStudio(
         // path to strip.
         createdNodeIds,
         relocatedNodeIds,
-        // `store-15` — what a `delete` took out: the element's own bytes and
-        // the imports its prune pass retired, which are the ONLY material ⌘Z
-        // has to put it back with. The same lesson as the two fields above:
-        // the batch computed them, and a route that lists its fields by hand
-        // forwarded neither, so every undo of a delete resolved to "Studio
-        // could not work out how to take this back" while the code that could
-        // sat one layer down. `studioSaveRoute.test.ts` holds this now.
-        // `removed` is keyed by the edit's own workspace-relative node id and
-        // `prunedImports.file` is already workspace-relative — nothing to strip.
+        // P5-G — what a `canvas-layer-delete` took out, for its own undo.
+        // Keyed by the edit's own node id — nothing to strip.
         removed,
-        prunedImports,
+        // P3-F — the undo-journal token for a delete/detach/swap/extract, the
+        // ONLY thing its ⌘Z has to name. The lesson `store-15` learned here:
+        // this route lists its fields by hand, and a field the batch computed
+        // but the route never forwarded made every undo refuse while every
+        // batch test passed. `studioSaveRoute.test.ts` holds it.
+        ...(undoToken ? { undoToken } : {}),
         // P1-A — each landed value write's new identity, keyed by its own
         // workspace-relative node id, so the board's next edit to the same
         // element is not refused `element-moved` by this one.
@@ -535,6 +541,8 @@ export async function tryServeStudio(
         // P1-D — the edits whose element was re-found after its file changed
         // on disk, and where each was written. Plain workspace-relative ids.
         retargeted,
+        // OD-8 — where each `list-item` edit's array is now (⌘Z of a row delete addresses it there).
+        listArrays,
       })
     } catch (err) {
       return studioRouteFailure(err)

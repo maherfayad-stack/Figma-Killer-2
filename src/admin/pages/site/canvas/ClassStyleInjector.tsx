@@ -62,13 +62,14 @@
  * doesn't).
  */
 
-import { useContext, useEffect } from 'react'
-import { useEditorStore } from '@site/store/store'
+import { use, useContext, useEffect } from 'react'
+import { useEditorStore, type EditorStore } from '@site/store/store'
 import { styleRuleSelector, type ConditionDef, type StyleRule } from '@core/page-tree'
 import { collectBackgroundImagePaths } from '@core/publisher'
 import { useResponsiveEditorMediaAssets } from '@admin/shared/media/hooks/useResponsiveBackgroundStyle'
 import { selectorStatePseudo } from '@site/cssStatePseudo'
-import { CanvasFrameAdapterContext } from './CanvasContexts'
+import { CanvasFrameAdapterContext, CanvasFrameContext, CanvasPageContext } from './CanvasContexts'
+import { framePageCanRender } from './useBreakpointOverlaySelectionState'
 import { registryBackgroundImagePaths } from './canvasBackgroundImagePaths'
 import { generateCanvasClassCSS, generateForcedStateCSS, generatePreviewClassCSS } from './canvasClassCss'
 import type { CanvasViewport } from './resolveViewportUnits'
@@ -124,8 +125,6 @@ export function ClassStyleInjector({ viewport }: ClassStyleInjectorProps = {}) {
   const frameworkPreferences = useEditorStore((s) => s.site?.settings.framework?.preferences ?? null)
   const fonts = useEditorStore((s) => s.site?.settings.fonts ?? null)
   const previewClassStyles = useEditorStore((s) => s.previewClassStyles)
-  const activeClassId = useEditorStore((s) => s.activeClassId)
-  const selectedNodeId = useEditorStore((s) => s.selectedNodeId)
   const backgroundPaths = [
     ...registryBackgroundImagePaths(classes ?? EMPTY_STYLE_RULES),
     ...collectBackgroundImagePaths(previewClassStyles?.styles.backgroundImage),
@@ -218,6 +217,57 @@ export function ClassStyleInjector({ viewport }: ClassStyleInjectorProps = {}) {
     )
   }, [adapter, viewport, classes, previewClassStyles, responsiveMediaAssets])
 
+  // Cleanup: remove the overlays when the component unmounts or the adapter
+  // instance changes (a fresh frame document).
+  useEffect(() => {
+    return () => {
+      adapter?.removeOverlay(STYLE_TAG_ID)
+      adapter?.removeOverlay(PREVIEW_STYLE_TAG_ID)
+    }
+  }, [adapter])
+
+  return <ForcedStatePreviewStyle viewport={viewport} mediaAssets={responsiveMediaAssets} />
+}
+
+/**
+ * The selected node's id when THIS frame renders it, else `null` — the same
+ * scoping the selection rings use (`useBreakpointOverlaySelectionState`): a
+ * board frame answers for the selection it originated, and a frame whose page
+ * does not contain the node answers `null`, so a click elsewhere on the board
+ * changes nothing here.
+ */
+function selectedNodeRenderedHere(s: EditorStore, frameId: string | null, framePageId: string | null): string | null {
+  const id = s.selectedNodeId
+  if (!id) return null
+  if (s.selectedNodeFrameId !== null) return s.selectedNodeFrameId === frameId ? id : null
+  return framePageCanRender(s._nodeIdToPageIds, id, framePageId) ? id : null
+}
+
+/**
+ * The forced-state preview, in its own component so that the class-CSS
+ * generator above does not re-render on every click. It is the only part of
+ * this injector that depends on the selection, and it used to be an effect of
+ * the injector itself — which every mounted frame runs — so each click
+ * re-rendered all of them and re-wrote an empty `<style>` in each (P6-C).
+ */
+function ForcedStatePreviewStyle({
+  viewport,
+  mediaAssets,
+}: {
+  viewport: CanvasViewport | undefined
+  mediaAssets: ReturnType<typeof useResponsiveEditorMediaAssets>['mediaAssets']
+}) {
+  const adapter = useContext(CanvasFrameAdapterContext)
+  const frameId = use(CanvasFrameContext)
+  const framePageId = use(CanvasPageContext)
+  const selectedNodeId = useEditorStore((s) => selectedNodeRenderedHere(s, frameId, framePageId))
+  const activeClassId = useEditorStore((s) => (selectedNodeRenderedHere(s, frameId, framePageId) ? s.activeClassId : null))
+  const classes = useEditorStore((s) => s.site?.styleRules ?? null)
+  const breakpoints = useEditorStore((s) => s.site?.breakpoints ?? EMPTY_BREAKPOINTS)
+  const conditions = useEditorStore((s) => s.site?.conditions ?? EMPTY_CONDITIONS)
+  const previewClassStyles = useEditorStore((s) => s.previewClassStyles)
+  const responsiveMediaAssets = mediaAssets
+
   // Forced state preview — when a state-pseudo selector (`.btn:hover`, …) is the
   // active selector, paint its declarations onto the selected node so the state
   // is visible/editable without physically triggering it (you can't toggle
@@ -261,12 +311,8 @@ export function ClassStyleInjector({ viewport }: ClassStyleInjectorProps = {}) {
     responsiveMediaAssets,
   ])
 
-  // Cleanup: remove the overlays when the component unmounts or the adapter
-  // instance changes (a fresh frame document).
   useEffect(() => {
     return () => {
-      adapter?.removeOverlay(STYLE_TAG_ID)
-      adapter?.removeOverlay(PREVIEW_STYLE_TAG_ID)
       adapter?.removeOverlay(FORCE_STATE_STYLE_TAG_ID)
     }
   }, [adapter])

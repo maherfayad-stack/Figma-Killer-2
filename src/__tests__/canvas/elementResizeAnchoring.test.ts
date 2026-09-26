@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'bun:test'
 import { resizeElementBox, type ResizeBoxStart, type ResizeHandle } from '@core/studio-runtime'
 import { anchorResizePatch, resizeEdgeShifts } from '@site/canvas/elementResizeAnchoring'
-import { resizeInlinePatch } from '@site/canvas/elementResizeSizing'
+import { resizeInlinePatch } from '@core/studio-runtime'
 import { authoredOffsets, planNudge, type ArrowTargetStyle } from '@site/canvas/canvasNodeArrowMove'
 
 const NO_COMPANIONS = { width: {}, height: {} }

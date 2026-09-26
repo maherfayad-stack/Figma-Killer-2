@@ -40,6 +40,7 @@ import type {
   NodeRect,
   NodeRef,
   OptimisticDomOps,
+  ResizeTargetOptions,
   Unsubscribe,
 } from './FrameDocumentAdapter'
 
@@ -115,6 +116,16 @@ class SyntheticEventBus {
 export class PortalFrameAdapter implements FrameDocumentAdapter {
   private readonly doc: Document
   private readonly overlayStyles = new Map<string, HTMLStyleElement>()
+  /**
+   * The CSS text each overlay last received. Assigning a `<style>`'s
+   * `textContent` replaces its text node and makes the browser re-parse the
+   * sheet and invalidate style for the WHOLE document — even when the text is
+   * identical. Every mounted frame's injectors re-apply on inputs that change
+   * nothing they emit (a click re-runs the forced-state preview in every
+   * frame, and it writes the same empty string each time), so an unchanged
+   * write is skipped here, once, for every injector (P6-C).
+   */
+  private readonly overlayCss = new Map<string, string>()
   private readonly selectionRings = new Map<string, HTMLDivElement>()
   private hoverRing: HTMLDivElement | null = null
   private hoverNodeId: string | null = null
@@ -156,6 +167,9 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
     // for skipping portal adapters on insert/delete/move.
     style: () => {},
     clearStyle: () => {},
+    // store-17 — a documented no-op: a portal frame's DOM is React's render of
+    // the tree, and the rollback that calls this already replayed the tree.
+    revert: () => {},
   }
 
   constructor(doc: Document) {
@@ -222,12 +236,15 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
       this.doc.head?.appendChild(el)
       this.overlayStyles.set(id, el)
     }
+    if (this.overlayCss.get(id) === css) return
+    this.overlayCss.set(id, css)
     el.textContent = css
   }
 
   removeOverlay(id: string): void {
     this.overlayStyles.get(id)?.remove()
     this.overlayStyles.delete(id)
+    this.overlayCss.delete(id)
   }
 
   private ensureOverlayRoot(): HTMLDivElement | null {
@@ -353,7 +370,7 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
    * in-frame handles this call drives exist for the cross-origin bridge; a
    * second set here would be two sets of handles on one element.
    */
-  setResizeTarget(_ref: NodeRef | null, _options: { proportional: boolean }): void {}
+  setResizeTarget(_ref: NodeRef | null, _options: ResizeTargetOptions): void {}
 
   /**
    * `live-18` — a documented no-op. Nothing in portal mode ever emits
@@ -448,6 +465,7 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
 
     for (const el of this.overlayStyles.values()) el.remove()
     this.overlayStyles.clear()
+    this.overlayCss.clear()
 
     for (const ring of this.selectionRings.values()) ring.remove()
     this.selectionRings.clear()

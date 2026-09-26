@@ -77,6 +77,7 @@
  * closes it. Keyed by the project's REAL path, like the write lock, so a
  * symlinked spelling of the same project shares one watcher.
  */
+import { CANVAS_LAYER_DIR } from '@core/studio-board'
 import { existsSync, readdirSync, realpathSync, statSync, watch, type Dirent, type FSWatcher } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { EXCLUDED_WORKSPACE_DIR_NAMES } from '@core/page-parser'
@@ -118,8 +119,8 @@ export type ProjectWatchStrategy = 'auto' | 'recursive' | 'per-directory'
 
 const SCRATCH_FILE = /(\.sw[a-p]x?$)|(~$)|(^\.#)|(___jb_(tmp|old)___$)|(^4913$)|(\.crswap$)|(^\.DS_Store$)/i
 
-/** The one directory under an excluded one that is still app content. */
-const STUDIO_CANVAS_DIR = '.studio/canvas'
+/** The one directory under an excluded one that is still app content (P5-G — spelled once, in `@core/studio-board`). */
+const STUDIO_CANVAS_DIR = CANVAS_LAYER_DIR
 
 /** Whether a change to the FILE at `rel` is reported at all — see this module's doc. */
 export function isWatchedProjectPath(rel: string): boolean {

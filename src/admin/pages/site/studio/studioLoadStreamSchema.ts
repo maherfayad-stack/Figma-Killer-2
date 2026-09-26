@@ -19,6 +19,7 @@
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { ConditionDefSchema, PageSchema, StyleRuleSchema, type Page } from '@core/page-tree'
+import { CanvasLayerIdSchema } from '@core/studio-board'
 import { TrustTierSchema } from './studioProjectTrust'
 import { StyleRuleSourceSchema } from './styleRuleWriteback'
 import { StyledRuleSourceSchema } from './styledRuleSources'
@@ -79,6 +80,30 @@ const StudioLoadWarningSchema = Type.Union([
 
 export type StudioLoadWarning = Static<typeof StudioLoadWarningSchema>
 
+/**
+ * P5-G — one loose layer on the free canvas, as `/load` carries it. Mirrors
+ * `CanvasLayerLoad` in `server/handlers/studio/studioLoadContract.ts`. The
+ * layer id is validated against the one id grammar here too, so nothing the
+ * client later builds from it (a page id, a `canvas-layer-*` edit) can carry
+ * a malformed one.
+ */
+export const CanvasLayerLoadSchema = Type.Object({
+  layerId: CanvasLayerIdSchema,
+  pageId: Type.String(),
+  page: PageSchema,
+})
+
+export type CanvasLayerLoad = Static<typeof CanvasLayerLoadSchema>
+
+/** P6-B — one page a load stream announces in its meta line, before the page itself arrives. */
+export const StreamedPageEntrySchema = Type.Object({
+  id: Type.String(),
+  slug: Type.String(),
+  title: Type.String(),
+})
+
+export type StreamedPageEntry = Static<typeof StreamedPageEntrySchema>
+
 export const StudioLoadStreamLineSchema = Type.Union([
   Type.Object({
     kind: Type.Literal('meta'),
@@ -132,7 +157,13 @@ export const StudioLoadStreamLineSchema = Type.Union([
      */
     projectKey: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     paletteHiddenModuleIds: Type.Array(Type.String()),
-    pageCount: Type.Number(),
+    /**
+     * P6-B — every page the `page` lines will carry, in page order, sent
+     * before any of them. The client paints each frame as its page arrives
+     * and holds a placeholder for the rest ({@link StreamedPageEntry}); the
+     * `slug` is what tells it which page opens first (the home page).
+     */
+    pageList: Type.Array(StreamedPageEntrySchema),
     /**
      * mcp-tooling (WS-9's live-reload bridge) — present only on a `?pageIds=`
      * filtered load: every requested id that matched no page (deleted/renamed
@@ -142,6 +173,15 @@ export const StudioLoadStreamLineSchema = Type.Union([
      * `meta` rather than as a top-level stream line.
      */
     missingPageIds: Type.Optional(Type.Array(Type.String())),
+    /**
+     * P5-G — the free canvas's loose layers, ALWAYS the full set (a narrowed
+     * load included), each a parsed `.studio/canvas/<id>.tsx`. They ride the
+     * meta line rather than the `page` lines on purpose: the client stores them
+     * apart from `site.pages` (`canvasLayerSlice.ts`), which is what keeps them
+     * out of every page list, publish and preview. `Type.Optional` for the
+     * fixture-lines reason `projectKey` gives.
+     */
+    canvasLayers: Type.Optional(Type.Array(CanvasLayerLoadSchema)),
   }),
   Type.Object({
     kind: Type.Literal('page'),

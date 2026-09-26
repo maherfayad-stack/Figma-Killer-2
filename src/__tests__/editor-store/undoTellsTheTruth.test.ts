@@ -20,6 +20,9 @@ import type { PageNode } from '@core/page-tree'
 import { isStructuralCommitInFlight, resetStructuralCommitQueue } from '@site/studio/structuralCommitQueue'
 import { setUnreachableRetrySleepForTests } from '@core/http'
 import { __resetToastBusForTests, subscribeToasts, type Toast } from '@ui/components/Toast/toastBus'
+import { RUNTIME_MESSAGE_SOURCE, toOutboundEnvelope, type InboundEnvelope } from '@core/studio-runtime'
+import { BridgeFrameAdapter } from '@site/canvas/frameAdapter/BridgeFrameAdapter'
+import { registerFrameAdapter, unregisterFrameAdapter } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
 
 const FILE_A = 'app/a.tsx'
 const FILE_B = 'app/b.tsx'
@@ -289,5 +292,76 @@ describe('ERR-6 — an undo whose re-issued write does not land', () => {
     expect(childrenOf(0, ROOT_A)).toEqual([a(3), a(4), a(5)])
     await settle()
     expect(store()._historyFuture.length).toBe(1)
+  })
+})
+
+// store-17 — a live (bridge) frame hid or moved the element optimistically;
+// a write that does not land produces no HMR, so the rollback itself has to
+// tell the frame to put it back.
+describe('ERR-6 — a live frame is taken back too (store-17)', () => {
+  const FRAME_ORIGIN = 'https://live.studio.test'
+
+  function mountBridgeFrame(): { frameMessages: () => InboundEnvelope['message'][]; dispose: () => void } {
+    const posted: InboundEnvelope[] = []
+    const adapter = new BridgeFrameAdapter({
+      channel: {
+        postMessage: (message) => posted.push(message as InboundEnvelope),
+        addEventListener: (_type, handler) =>
+          handler({ origin: FRAME_ORIGIN, source: undefined, data: toOutboundEnvelope({ type: 'ready' }) } as MessageEvent),
+        removeEventListener: () => {},
+      },
+      frameOrigin: FRAME_ORIGIN,
+      nodeIdsInTreeOrder: [ROOT_A, a(3), a(4), a(5)],
+    })
+    const iframe = document.createElement('iframe')
+    registerFrameAdapter(iframe, adapter, 'desktop')
+    return {
+      frameMessages: () => posted.filter((envelope) => envelope.source === RUNTIME_MESSAGE_SOURCE).map((envelope) => envelope.message),
+      dispose: () => {
+        unregisterFrameAdapter(iframe)
+        adapter.dispose()
+      },
+    }
+  }
+
+  it('a refused delete un-hides the element in every live frame', async () => {
+    const frame = mountBridgeFrame()
+    try {
+      replies = [{ kind: 'refused', nodeId: a(4), message: 'Refused.' }]
+      store().deleteNodes([a(4)])
+      expect(frame.frameMessages().filter((m) => m.type === 'optimistic.delete')).toHaveLength(1)
+      await settle()
+      expect(frame.frameMessages().filter((m) => m.type === 'optimistic.revert')).toEqual([
+        { type: 'optimistic.revert', refs: [{ nodeId: a(4), occurrenceIndex: 0 }] },
+      ])
+    } finally {
+      frame.dispose()
+    }
+  })
+
+  it('a move the server never answered is put back in the live frame', async () => {
+    const frame = mountBridgeFrame()
+    try {
+      replies = [{ kind: 'unreachable' }]
+      store().moveNodes([a(3)], ROOT_A, 3)
+      await settle()
+      expect(childrenOf(0, ROOT_A)).toEqual([a(3), a(4), a(5)])
+      expect(frame.frameMessages().filter((m) => m.type === 'optimistic.revert')).toEqual([
+        { type: 'optimistic.revert', refs: [{ nodeId: a(3), occurrenceIndex: 0 }] },
+      ])
+    } finally {
+      frame.dispose()
+    }
+  })
+
+  it('a write that lands takes nothing back — the HMR reconciles the frame', async () => {
+    const frame = mountBridgeFrame()
+    try {
+      store().deleteNodes([a(4)])
+      await settle()
+      expect(frame.frameMessages().some((m) => m.type === 'optimistic.revert')).toBe(false)
+    } finally {
+      frame.dispose()
+    }
   })
 })

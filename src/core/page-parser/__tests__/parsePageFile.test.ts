@@ -392,7 +392,12 @@ describe('parsePageFile', () => {
     // A `{...}` anywhere used to blank the whole graphic. Now each attribute is
     // resolved on its own: `r`/`strokeWidth` are knowable, and the React-ism
     // becomes the real dashed attribute name.
-    expect(svg.props.svg).toBe('<svg viewBox="0 0 24 24"><circle r="17" stroke-width="2"/></svg>')
+    // SVG-3 — the stamp names the circle's own location, and lists the
+    // attributes that are code (`r={R}` too: a write would delete the binding).
+    expect(svg.props.svg).toBe(
+      '<svg viewBox="0 0 24 24"><circle data-studio-svg-part="5:8" data-studio-svg-code="r,strokeDashoffset"'
+      + ' r="17" stroke-width="2"/></svg>',
+    )
     // `strokeDashoffset` depends on a component PARAM, which has no static
     // value — the one attribute is omitted rather than the whole SVG.
     expect(svg.props.svg).not.toContain('stroke-dashoffset')

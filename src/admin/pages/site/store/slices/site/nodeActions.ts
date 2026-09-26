@@ -29,17 +29,18 @@ import {
   clearBreakpointOverride,
   renameNode,
   moveNodes,
+  planMoveSequence,
   wrapNode,
   wrapNodes,
-  reindexNodeParents,
   isPropPatchWritableToSource,
   isPropWritableToSource,
+  planListRowRemove,
 } from '@core/page-tree'
 import type { NodeTree, PageNode } from '@core/page-tree'
 import { subtreeHasOutlet, treeHasOutlet } from '@core/templates'
 import { wouldCreateCycle, syncSlotInstances, applySlotSyncResult } from '@core/visualComponents'
 import { pushToast } from '@ui/components/Toast'
-import { commitStudioDelete, commitStudioMoves, commitStudioReparent } from '@site/studio/studioStructuralCommits'
+import { commitStudioDelete, commitStudioMove, commitStudioReparent, commitStudioTransplant } from '@site/studio/studioStructuralCommits'
 import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
 import { broadcastOptimisticDelete, broadcastOptimisticMove } from '@site/canvas/frameAdapter/optimisticStructuralBroadcast'
 import { resolveActiveTreeTarget } from './helpers'
@@ -47,17 +48,19 @@ import { createDeleteNodesAction } from './deleteNodesAction'
 import { createGroupActions } from './groupActions'
 import { createTransplantActions } from './transplantActions'
 import { createImageDropActions } from './imageDropActions'
+import { createSubtreeInsertActions } from './subtreeInsertActions'
 import { createInlineStyleActions } from './inlineStyleActions'
 import { createVisibilityActions } from './visibilityActions'
-import { createSiblingStepActions } from './siblingStepActions'
+import { createMoveSequenceActions } from './moveSequenceActions'
 import { duplicateNodeWithScopedClasses } from './duplicateWithScopedClasses'
 import { resolvePreviewTargets } from './structuralOptimism'
 import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, planSourceMove, presentStructuralRefusal } from './structuralSourceEdits'
-import { captureDeleteOrigin, captureMoveOrigin, tagStructuralGesture } from './structuralHistory'
+import { writeListRowPlan } from './listRowSourceWrites'
+import { captureMoveOrigin, tagStructuralGesture } from './structuralHistory'
 import { trackStructuralTreeCommit } from './structuralCommitRollback'
 import { createStudioSourceWrites } from './studioSourceWrites'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
-import { indexStyleRulesByName, linkImportedClassNames, mergeImportedStyleRules } from './importLinking'
+import { createImportedNodesActions } from './importedNodesActions'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 import { coalesceKeyForPatch } from '../../historyCoalesce'
 
@@ -85,7 +88,7 @@ type NodeActions = Pick<
   | 'moveNode'
   | 'moveNodes'
   | 'stepSiblings'
-  | 'moveSiblings'
+  | 'moveNodesInSequence'
   | 'duplicateNode'
   | 'duplicateNodes'
   | 'duplicateNodesTo'
@@ -97,6 +100,7 @@ type NodeActions = Pick<
   | 'dropImagesIntoPage'
   | 'replaceImageInPage'
   | 'setBackgroundImageInPage'
+  | 'insertJsxSubtreeIntoPage'
 >
 
 function recordPatchChanges(
@@ -132,9 +136,33 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
   const readTree = (): NodeTree<PageNode> | null => resolveActiveTreeTarget(get())?.tree ?? null
 
   const sourceWrites = createStudioSourceWrites(helpers, readTree)
+
+  /**
+   * ERR-16 — a move whose new container is written in another file. Posted
+   * as a `transplant` and nothing mutated here: the element that arrives is a
+   * freshly parsed node in the other file, and its undo (`transplant-back`)
+   * rides the write's own history entry — the cross-frame drop's contract.
+   */
+  const writeCrossFileMove = (
+    tree: NodeTree<PageNode>,
+    nodeId: string,
+    parentNodeId: string,
+    anchorNodeId: string | null,
+    position: 'before' | 'after',
+  ): void => {
+    const originParentId = tree.nodes[nodeId]?.parentId ?? tree.rootNodeId
+    const index = tree.nodes[originParentId]?.children.indexOf(nodeId) ?? -1
+    void commitStudioTransplant({
+      nodeId,
+      parentNodeId,
+      anchorNodeId,
+      position,
+      copy: false,
+      origin: { parentNodeId: originParentId, index: index < 0 ? Number.MAX_SAFE_INTEGER : index },
+    })
+  }
   const {
     refuseInsertInto,
-    refuseImportedNodesInto,
     writeInsertToSource,
     writeDuplicateToSource,
     writeWrapToSource,
@@ -181,83 +209,9 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       return inserted ? newNode.id : ''
     },
 
-    // `mcp-21` — the same guard `insertImportedNodes` runs, asked on its own by
-    // the one caller that must destroy something before it can insert. See
-    // `SiteSlice.refuseImportedNodesInto`.
-    refuseImportedNodesInto: (parentId) => refuseImportedNodesInto(parentId),
-
-    insertImportedNodes: (parentId, fragment, opts) => {
-      if (fragment.rootIds.length === 0) return { ok: false, message: 'That HTML carried no elements to insert.' }
-      // `mcp-21` — the studio-tree refusal rides the SAME guard as the
-      // container check, so both reasons reach the caller as one sentence.
-      const refusal = refuseImportedNodesInto(parentId, (newParentId) => {
-        actions.insertImportedNodes(newParentId, fragment, opts)
-      })
-      if (refusal) return { ok: false, message: refusal }
-      const insertedRootIds: string[] = []
-      mutateActiveTreeAndSite((tree, site) => {
-        const parent = tree.nodes[parentId]
-        if (!parent) return false
-        const isRoot = tree.rootNodeId === parentId
-        const definition = registry.get(parent.moduleId)
-        const acceptsChildren = isRoot || definition?.canHaveChildren === true
-        if (!acceptsChildren) return false
-
-        // The HTML importer stamps class *names* onto each fragment node's
-        // classIds (`walkAndMap` copies el.classList verbatim). The engine
-        // keys classes by id and resolves styles by id, so link every imported
-        // name to a real registry class — reusing an existing same-named class
-        // or auto-creating a bare one — as the nodes enter the live tree.
-        // Without this step the names never resolve and styles never apply.
-        //
-        // Nodes already carry fresh nanoid IDs from createNode — no collision
-        // risk on the node map.
-        const classesByName = indexStyleRulesByName(site.styleRules)
-
-        // Commit rules parsed from <style> blocks BEFORE linking class names so
-        // a node's `class="foo"` token binds to the just-added `.foo {}` rule
-        // (rather than auto-creating a bare class). These show in the Selectors
-        // panel like any other rule.
-        if (opts?.styleRules?.length) {
-          mergeImportedStyleRules(opts.styleRules, site.styleRules, classesByName)
-        }
-        // Register any reusable conditions (custom @media / @container /
-        // @supports) the <style> rules reference via contextStyles keys.
-        if (opts?.conditions?.length) {
-          if (!site.conditions) site.conditions = []
-          const existing = new Set(site.conditions.map((c) => c.id))
-          for (const def of opts.conditions) {
-            if (existing.has(def.id)) continue
-            existing.add(def.id)
-            site.conditions.push(def)
-          }
-        }
-
-        for (const [id, node] of Object.entries(fragment.nodes)) {
-          // `node.inlineStyles` (imported inline `style="…"`) rides along on
-          // the `...node` spread — it is a first-class node field.
-          tree.nodes[id] = {
-            ...node,
-            classIds: linkImportedClassNames(node.classIds, site.styleRules, classesByName),
-          }
-        }
-
-        // Wire the imported root nodes as children of the target parent.
-        const insertAt = opts?.index ?? parent.children.length
-        parent.children.splice(insertAt, 0, ...fragment.rootIds)
-        insertedRootIds.push(...fragment.rootIds)
-        // The fragment was bulk-merged into tree.nodes (not via insertNode), so
-        // derive the parentId index across the active tree to keep the inserted
-        // subtree's pointers consistent. Deliberately O(active-tree), not a
-        // targeted O(fragment) update: import is an infrequent path, and a full
-        // reindex is the simplest bulletproof way to stay consistent.
-        reindexNodeParents(tree.nodes)
-        return true
-      })
-      return insertedRootIds.length > 0
-        ? { ok: true, rootIds: insertedRootIds }
-        : { ok: false, message: 'That container does not accept children.' }
-    },
+    // `mcp-21` — an HTML fragment merged into the active tree, or refused on a
+    // studio-imported one. See `importedNodesActions.ts`.
+    ...createImportedNodesActions(helpers, sourceWrites.refuseImportedNodesInto),
 
     insertComponentRef: (parentId, componentId, index) => {
       if (!componentId) return null
@@ -327,6 +281,10 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       // `struct-01` — refuse BEFORE mutating, so a delete the source cannot
       // take never removes the element from the canvas either.
       const tree = readTree()
+      // OD-8 — a `.map` row is deleted from its array, not from the JSX.
+      const rowNode = tree?.nodes[nodeId]
+      const rows = rowNode ? planListRowRemove([rowNode]) : null
+      if (rows) return writeListRowPlan(rows, STRUCTURAL_REFUSAL_TITLE.delete, { get, set })
       const plan = planSourceDelete([tree?.nodes[nodeId]])
       if (!plan.ok) {
         presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.delete, plan.constraint, {
@@ -334,17 +292,12 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
           // Only `detach`/`extract` ever fire this (see `presentStructuralRefusal`'s
           // doc) — a re-issued delete just calls this same action again, against
           // whatever node replaced the shared-component instance.
-          retry: (newNodeId) => actions.deleteNode(newNodeId),
+          retry: (mapId) => actions.deleteNode(mapId(nodeId)),
           getState: get,
           set,
         })
         return
       }
-      // `store-15` — captured against the tree as it is RIGHT NOW, the last
-      // moment before the mutation below removes this node from it.
-      // `planSourceDelete([single node])` only ever pushes one id — see that
-      // function's own loop.
-      const origin = plan.commit && tree ? captureDeleteOrigin(tree, plan.commit[0]!) : null
       const topBefore = get()._historyPast.at(-1)
       const deleted = mutateActiveTree((draft) => {
         if (!draft.nodes[nodeId]) return false
@@ -354,26 +307,22 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       if (deleted && plan.commit) {
         // ERR-6 — taken before the tag below clears the entry's patches: they
         // are what puts the element back if the write does not land.
-        const rollback = trackStructuralTreeCommit(helpers, topBefore)
+        const rollback = trackStructuralTreeCommit(helpers, topBefore, plan.commit)
         void commitStudioDelete(plan.commit, rollback ?? undefined)
         // `live-07` — same-tick paint for a live (bridge) frame; portal
         // frames already got theirs from the tree mutation above.
         broadcastOptimisticDelete(plan.commit[0]!)
-        // `store-15` — folded into the `source` family; see
-        // `deleteNodesAction.ts`'s identical tag for why this tags the entry
-        // the mutation above already pushed rather than pushing a second one.
+        // Folded into the `source` family, its ⌘Z the undo journal's
+        // `restore` (P3-F); see `deleteNodesAction.ts`'s identical tag for why
+        // this tags the entry the mutation above already pushed rather than
+        // pushing a second one. `planSourceDelete([single node])` only ever
+        // commits one id.
         tagStructuralGesture(set, {
           gesture: 'source',
           source: {
             label: 'Delete',
             forward: [{ kind: 'delete', nodeId: plan.commit[0]! }],
-            inverseTemplate: origin
-              ? { kind: 'reinsert-deleted', nodes: [{ nodeId: origin.nodeId, parentNodeId: origin.parentId, index: origin.index }] }
-              : {
-                  kind: 'unsupported',
-                  message:
-                    'This element’s position could not be recorded for undo — its container has no place in the file of its own (it may be the whole of what this page returns). Use your editor’s undo or `git` to bring it back.',
-                },
+            inverseTemplate: { kind: 'restore-journal' },
             inverse: null,
           },
         })
@@ -483,9 +432,10 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
     // source file. See `visibilityActions.ts`.
     ...createVisibilityActions(helpers),
 
-    // P2-C2 — a multi-selection stepped among its siblings as one gesture.
-    // A batch of one is `moveNodes` below. See `siblingStepActions.ts`.
-    ...createSiblingStepActions(helpers, readTree, (ids, parentId, index) => actions.moveNodes(ids, parentId, index)),
+    // P2-C2 / P3-D — several elements moved as ONE gesture (an arrow step of a
+    // selection, a multi-selection drag). A sequence of one is `moveNodes`
+    // below. See `moveSequenceActions.ts`.
+    ...createMoveSequenceActions(helpers, readTree, (ids, parentId, index) => actions.moveNodes(ids, parentId, index)),
 
     moveNode: (nodeId, newParentId, newIndex) => {
       actions.moveNodes([nodeId], newParentId, newIndex)
@@ -507,17 +457,31 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       // user's `.tsx` as "put this element next to that sibling", so the
       // anchor has to be resolved against the tree BEFORE it changes.
       const tree = readTree()
+      // ERR-7 — several elements are several writes, each against the file the
+      // one before left: an ordered sequence, one history entry, one write.
+      if (tree && nodeIds.length > 1) {
+        actions.moveNodesInSequence(planMoveSequence(tree, nodeIds, newParentId, newIndex))
+        return
+      }
       const plan = tree ? planSourceMove(tree, nodeIds, newParentId, newIndex) : null
       if (plan && !plan.ok) {
         presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.move, plan.constraint, {
           nodeId: plan.nodeId,
-          // The refused node in a move plan is always `nodeIds[0]`
-          // (`previewStructuralMove` resolves the commit off it) — re-issue
-          // the same move with that one id swapped for its replacement.
-          retry: (newNodeId) => actions.moveNodes([newNodeId, ...nodeIds.slice(1)], newParentId, newIndex),
+          // Every id the move names — the element and its new parent — goes
+          // through the map: after a detach both may live at new addresses.
+          retry: (mapId) => actions.moveNodes(nodeIds.map(mapId), mapId(newParentId), newIndex),
           getState: get,
           set,
         })
+        return
+      }
+      // OD-8 — rows reorder their array; the board's re-read moves them.
+      if (plan?.ok && plan.listRow) return writeListRowPlan({ ok: true, ...plan.listRow }, STRUCTURAL_REFUSAL_TITLE.move, { get, set })
+      // ERR-16 — the new container is written in another file: a transplant,
+      // which leaves the tree alone (the resync brings the element in) and
+      // records its own undo, exactly as a cross-frame drop does.
+      if (plan?.commit?.crossFile && plan.commit.destinationParentNodeId && tree) {
+        writeCrossFileMove(tree, plan.commit.nodeId, plan.commit.destinationParentNodeId, plan.commit.anchorNodeId, plan.commit.position)
         return
       }
       // `store-08` — where the node is NOW, captured before the mutation, is
@@ -542,7 +506,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       // is taken back through this entry's own inverse patches.
       const rollback =
         moved && (commit?.destinationParentNodeId || commit?.anchorNodeId)
-          ? (trackStructuralTreeCommit(helpers, topBefore) ?? undefined)
+          ? (trackStructuralTreeCommit(helpers, topBefore, [primaryId]) ?? undefined)
           : undefined
       // Tagged only when a SOURCE write is actually issued: a CMS or Visual
       // Component tree has no file to disagree with, so patch-replay undo
@@ -565,7 +529,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
           rollback,
         })
       } else if (commit?.anchorNodeId) {
-        void commitStudioMoves([{ nodeId: commit.nodeId, anchorNodeId: commit.anchorNodeId, position: commit.position }], rollback)
+        void commitStudioMove({ nodeId: commit.nodeId, anchorNodeId: commit.anchorNodeId, position: commit.position }, rollback)
       }
     },
 
@@ -690,6 +654,8 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
     // GESTURE rather than into the active tree, so none of this module's
     // `mutateActiveTree` machinery applies. See `imageDropActions.ts`.
     ...createImageDropActions(helpers),
+    // P5-A — a pasted SVG, for the same reason. See `subtreeInsertActions.ts`.
+    ...createSubtreeInsertActions(helpers),
   }
 
   return actions

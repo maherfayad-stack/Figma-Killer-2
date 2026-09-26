@@ -71,6 +71,10 @@ substituted with the call site's arguments. The Figma verb.
 **`fromComponent`** — set on an inlined node, naming the component whose file
 backs it. Drives `SharedComponentNotice` and its instance count.
 
+**Free canvas** — the empty board around the frames, where loose layers live
+(P5-G, [`free-canvas.md`](../features/free-canvas.md)). Never part of a page,
+the live preview, a publish, a share or a download.
+
 **Frame virtualization** — mounting only frames intersecting the viewport plus a
 margin. `frameVirtualization.ts`, pure board→screen math.
 
@@ -107,6 +111,14 @@ its remedy, never a red toast (`refusalToasts.ts`).
 **literal a resolved value physically came from**. Attached at the single place a
 literal is read, so passing a value along carries it for free and computing a
 value cannot. `textOrigin` is the text-scoped one.
+
+**Loose layer** — one item on the free canvas: a **layer module**
+(`.studio/canvas/<id>.tsx`, one default-exported component returning one root
+element, written only by Studio) plus its **placement** (`Board.layers[]` in
+`boards.json`: x, y, optional host width, z, name, lock, hide). **Lift** = a
+page element dragged out onto the board; **place** = a loose layer dropped into
+a frame. Its parsed tree is the `canvas:<id>` page in `canvasLayerPages`, never
+in `site.pages`.
 
 **Package component** — a JSX component imported from a bare specifier. It
 becomes a `pkg.<sanitized-package>.<ComponentName>` module
@@ -171,9 +183,9 @@ component's root nodes.
 
 **`StudioEdit`** — one typed edit in a save batch (`StudioEditSchema`,
 `server/handlers/studioEditSchemas.ts`): `prop` \| `text` \| `style` \| `class`
-\| `styled` \| `literal` \| `tag` \| `asset` \| `detach` \| `swap` \| `css`, plus
-the structural kinds (`move`, `reparent`, `delete`, `reinsert-source`,
-`duplicate`, `insert`, `wrap`, `group`, `ungroup`, `transplant`) and the slot
+\| `styled` \| `literal` \| `tag` \| `asset` \| `detach` \| `swap` \| `restore` \|
+`css`, plus the structural kinds (`move`, `reparent`, `delete`, `duplicate`,
+`insert`, `wrap`, `group`, `ungroup`, `transplant`) and the slot
 kinds (`insert-slot`, `promote-component`, `add-slot-prop`). Each maps to one
 AST or CSS codemod. An edit that does not write comes back as a **named
 refusal**.

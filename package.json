@@ -60,6 +60,7 @@
     "bench:agent-models": "bun run scripts/bench/index.ts --only=agent-models",
     "bench:browser": "bun run scripts/bench/index.ts --only=browser",
     "bench:studio-board": "bun run scripts/bench/index.ts --only=studio-board",
+    "bench:studio-load": "bun run scripts/bench/index.ts --only=studio-load",
     "bench:browser:install": "bunx playwright install chromium",
     "doctor": "react-doctor"
   },

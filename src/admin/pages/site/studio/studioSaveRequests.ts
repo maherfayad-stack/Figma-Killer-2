@@ -37,6 +37,15 @@ import { captureIdentities, expectationsFor, recordOwnWrites, type IdentityCaptu
 import { structuralEditNodeIds, type StructuralEditPayload } from './structuralUndoPlan'
 import { elementMovedNodeIds, retryAfterElementMoved } from './elementMovedRecovery'
 import { recordCreatedStylesheet, ruleIdFromCssCreateNodeId } from './styleRuleWriteback'
+import { journaledWriteOutcome } from './journaledUndo'
+
+/**
+ * P3-F — an undo-journal token as the server mints it
+ * (`server/handlers/studio/undoJournalToken.ts`): 32 lowercase hex digits.
+ * Mirrored, not imported — the same browser/server wire-shape split every
+ * schema here follows.
+ */
+const UndoTokenSchema = Type.String({ pattern: '^[0-9a-f]{32}$' })
 
 /**
  * POST /admin/api/studio/save response. `shifted` is true when a write changed
@@ -127,22 +136,26 @@ export const StudioSaveResponseSchema = Type.Object({
    */
   relocatedNodeIds: Type.Optional(Type.Array(Type.String())),
   /**
-   * `store-15` — every `delete` edit in the batch that SUCCEEDED, with the
-   * exact bytes it discarded, keyed by the edit's own `nodeId` — `delete`'s
-   * ⌘Z (`reinsert-source`) is built from these once the resync lands.
+   * OD-8 — where each `list-item` edit's array literal is after the batch
+   * (`nodeId` as sent, `to` now): a row delete's import prune can move it,
+   * and the board re-addresses its rows there. `Type.Optional`, same
+   * tolerant-rollout reasoning as the fields above.
+   */
+  listArrays: Type.Optional(Type.Array(Type.Object({ nodeId: Type.String(), to: Type.String() }))),
+  /**
+   * P5-G — every `canvas-layer-delete` in the batch that SUCCEEDED, with the
+   * module bytes it removed, keyed by the edit's own `nodeId` — its ⌘Z
+   * (`canvas-layer-restore`) is built from these once the resync lands.
    * `Type.Optional`, same tolerant-rollout reasoning as the fields above.
    */
   removed: Type.Optional(
     Type.Array(Type.Object({ nodeId: Type.String(), text: Type.String(), wholeLine: Type.Boolean() })),
   ),
   /**
-   * `store-15` — every import binding a `delete`'s own prune pass removed as
-   * a side effect, grouped per workspace-relative file, with a re-insertable
-   * declaration text per binding. `Type.Optional`, same reasoning as above.
+   * P3-F — the undo-journal token for a delete/detach/swap/extract batch: the
+   * one thing its ⌘Z (`restore`) names. Absent when the server recorded none.
    */
-  prunedImports: Type.Optional(
-    Type.Array(Type.Object({ file: Type.String(), declarations: Type.Array(Type.String()) })),
-  ),
+  undoToken: Type.Optional(UndoTokenSchema),
   /**
    * P1-A — each landed value write's target identity AFTER the write, keyed by
    * the edit's own node id. `postEdits` hands it to `sourceIdentity.ts`, so the
@@ -223,8 +236,18 @@ export async function postOneEdit(edit: StructuralEditPayload): Promise<StudioSa
 }
 
 /**
+ * How `/save` applies a batch. `sequence` (P3-D): in the order given, each
+ * edit against the files the previous ones left, all or nothing — the server's
+ * `studioEditSequence.ts`. Without it the edits must be independent, and the
+ * route orders them bottom-to-top.
+ */
+export interface PostEditsOptions {
+  sequence?: true
+}
+
+/**
  * Post a batch of edits to `/save`. The save route orders them bottom-to-top
- * before applying.
+ * before applying (unless `options.sequence` asks for them in order).
  *
  * `identities` (P1-A) is what the writer captured about each node id its edits
  * name — sent as `expect`, so an edit whose position now holds a different
@@ -241,11 +264,17 @@ export async function postEdits(
   edits: readonly Record<string, unknown>[],
   identities?: IdentityCapture,
   idempotencyKey?: string,
+  options: PostEditsOptions = {},
 ): Promise<StudioSaveResponse> {
   const expect = identities ? expectationsFor(identities) : {}
   const result = await apiRequest('/admin/api/studio/save', {
     method: 'POST',
-    body: { dir: studioWriteDir(), edits, ...(Object.keys(expect).length > 0 ? { expect } : {}) },
+    body: {
+      dir: studioWriteDir(),
+      edits,
+      ...(Object.keys(expect).length > 0 ? { expect } : {}),
+      ...(options.sequence ? { sequence: true } : {}),
+    },
     schema: StudioSaveResponseSchema,
     ...(idempotencyKey ? { idempotencyKey } : {}),
   })
@@ -275,12 +304,16 @@ export type InstanceCodemodResult =
  * reasons that warrant it. `detach` always shifts lines and is always
  * reported `sharedComponents` by the server, so a successful write always
  * reloads the board — the detached node's OWN id is about to become stale.
+ *
+ * DET-4 — ⌘Z puts the call site back through the undo journal
+ * (`journaledUndo.ts`); ⌘⇧Z detaches again.
  */
 export async function detachInstance(nodeId: string): Promise<InstanceCodemodResult> {
-  const result = await postOneEdit({ kind: 'detach', nodeId })
+  const edit = { kind: 'detach', nodeId }
+  const result = await postOneEdit(edit)
   const refusal = (result.refusals ?? [])[0]
   if (refusal) return { ok: false, reason: refusal.reason, message: refusal.message }
-  if (result.written > 0) requestCmsSiteReload()
+  if (result.written > 0) requestCmsSiteReload({ structuralOutcome: journaledWriteOutcome('Detach instance', [edit], result.undoToken) })
   return { ok: true }
 }
 
@@ -288,15 +321,21 @@ export async function detachInstance(nodeId: string): Promise<InstanceCodemodRes
  * WS-4.5 — the Properties panel's Swap action. On success, `swapDetail` names
  * the props the new component dropped and the required props it still needs —
  * the codemod's own numbers, never re-derived here.
+ *
+ * DET-4 — ⌘Z puts the call site back exactly as it was, dropped props and
+ * all (`journaledUndo.ts`); ⌘⇧Z swaps again.
  */
 export async function swapInstance(
   nodeId: string,
   target: { newComponentName: string; newComponentSource: 'local' | 'package'; newComponentFile: string },
 ): Promise<InstanceCodemodResult> {
-  const result = await postOneEdit({ kind: 'swap', nodeId, ...target })
+  const edit = { kind: 'swap', nodeId, ...target }
+  const result = await postOneEdit(edit)
   const refusal = (result.refusals ?? [])[0]
   if (refusal) return { ok: false, reason: refusal.reason, message: refusal.message }
-  if (result.written > 0) requestCmsSiteReload()
+  if (result.written > 0) {
+    requestCmsSiteReload({ structuralOutcome: journaledWriteOutcome(`Swap to ${target.newComponentName}`, [edit], result.undoToken) })
+  }
   const swapDetail = (result.swapDetails ?? []).find((detail) => detail.nodeId === nodeId)
   return { ok: true, swapDetail }
 }
@@ -378,7 +417,13 @@ export async function commitStudioInsertSlot(fill: {
 
 /** POST /admin/api/studio/extract-component response — see that route's module doc. */
 const ExtractComponentResponseSchema = Type.Union([
-  Type.Object({ ok: Type.Literal(true), newFile: Type.String(), newComponentName: Type.String() }),
+  Type.Object({
+    ok: Type.Literal(true),
+    newFile: Type.String(),
+    newComponentName: Type.String(),
+    /** P3-F — puts the call site back and removes the copy. */
+    undoToken: Type.Optional(UndoTokenSchema),
+  }),
   Type.Object({ ok: Type.Literal(false), reason: Type.String(), message: Type.String() }),
 ])
 
@@ -389,14 +434,24 @@ const ExtractComponentResponseSchema = Type.Union([
  * THIS call site at the copy; always reloads on success (a brand-new file
  * plus a rewritten import is exactly the shape of edit that invalidates
  * in-memory node ids downstream of it).
+ *
+ * DET-4 — pushes its own undo entry (`journaledUndo.ts`): ⌘Z points the call
+ * site back and deletes the copy. `undo: 'caller'` is for the one caller that
+ * records a different entry for the same write (`instanceOnlyGesture.ts`,
+ * whose replayed gesture is linked to it).
  */
-export async function extractInstanceCopy(nodeId: string): Promise<InstanceCodemodResult & { newFile?: string; newComponentName?: string }> {
+export async function extractInstanceCopy(
+  nodeId: string,
+  options: { undo?: 'caller' } = {},
+): Promise<InstanceCodemodResult & { newFile?: string; newComponentName?: string }> {
   const result = await apiRequest('/admin/api/studio/extract-component', {
     method: 'POST',
     body: { dir: studioWriteDir(), nodeId },
     schema: ExtractComponentResponseSchema,
   })
   if (!result.ok) return { ok: false, reason: result.reason, message: result.message }
-  requestCmsSiteReload()
+  requestCmsSiteReload(
+    options.undo === 'caller' ? {} : { structuralOutcome: journaledWriteOutcome(`Duplicate as ${result.newComponentName}`, [], result.undoToken) },
+  )
   return { ok: true, newFile: result.newFile, newComponentName: result.newComponentName }
 }

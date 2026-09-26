@@ -23,7 +23,7 @@
  * the dispatcher walks the ladder in this fixed order and gives each ACTIVE
  * scope first refusal on the keystroke:
  *
- *   inline-edit > prototype-link > annotation > node > board > global
+ *   inline-edit > vector-edit > prototype-link > annotation > node > board > global
  *
  * `handle` returns `true` when it CLAIMED the keystroke — dispatch stops there.
  * Returning `false` means "not mine", and the next scope down gets it. That
@@ -50,6 +50,15 @@
  * `undo()` while the contentEditable DOM keeps the text — after which the store
  * and the DOM never agree again.
  *
+ * ## `vector-edit` sits right under it (P5-D)
+ *
+ * While an inline `<svg>` is in vector edit mode, or the pen tool is drawing,
+ * the keyboard means POINTS: Escape / ⏎ leave or finish, arrows nudge an
+ * anchor, Delete must not delete the whole svg. That rung has to outrank
+ * `node` (which would move or delete the selected element) and `board`
+ * (whose Escape would put a tool away mid-path). See `useVectorEditKeys.ts`
+ * and `CanvasPenToolLayer.tsx`.
+ *
  * ⌘S (`usePersistence`) and ⌘K (`SpotlightRoot`) are deliberately NOT on this
  * ladder: they are window-level admin-shell shortcuts that must survive an
  * inline edit, and they are not part of the canvas key layer this module owns.
@@ -75,6 +84,7 @@
 /** The precedence ladder, highest first. The order IS the contract. */
 export const EDITOR_KEY_SCOPE_ORDER = [
   'inline-edit',
+  'vector-edit',
   'prototype-link',
   'annotation',
   'node',
