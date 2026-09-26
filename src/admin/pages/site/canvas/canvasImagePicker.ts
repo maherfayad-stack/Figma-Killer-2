@@ -44,7 +44,10 @@ export function pickImagesIntoSelection(): void {
     () => {
       const files = Array.from(input.files ?? [])
       cleanup()
-      insertImagesAtTarget(target, files.filter((file) => looksLikeImage(file.type)))
+      insertImagesAtTarget(
+        target,
+        files.filter((file) => looksLikeImage(file.type)).map((file) => ({ kind: 'file', file })),
+      )
     },
     { once: true },
   )

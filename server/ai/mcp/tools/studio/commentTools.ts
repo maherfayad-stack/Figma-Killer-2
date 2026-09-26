@@ -60,7 +60,7 @@ import type { Page } from '@core/page-tree'
 import type { BoardsFile } from '@core/studio-board'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { readCommentsFile, writeCommentsFile } from '../../../../handlers/studio/commentsStore'
-import { readBoardsFileOrEmpty } from '../../../../handlers/studio/boardGeometry'
+import { readBoardsFile } from '../../../../handlers/studio/boardGeometry'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { pushStudioLiveReload } from './liveReloadPush'
@@ -220,7 +220,7 @@ const studioListCommentsTool: AiTool = {
     const pages = resolveAnchors ? await pagesForThreads(dir, threads) : new Map<string, Page>()
     // One read for the whole call — every thread names a board, and most name
     // the same one.
-    const boards = readBoardsFileOrEmpty(dir)
+    const boards = readBoardsFile(dir)
 
     return {
       ok: true,

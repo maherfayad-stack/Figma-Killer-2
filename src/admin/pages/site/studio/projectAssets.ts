@@ -44,6 +44,8 @@ const ProjectAssetsResponseSchema = Type.Object({
 })
 
 let cache: { dir: string | undefined; promise: Promise<ProjectImageAsset[]> } | null = null
+/** Every mounted {@link useProjectImageAssets}, told when the list went stale. */
+const invalidationListeners = new Set<() => void>()
 
 export function fetchProjectImageAssets(): Promise<ProjectImageAsset[]> {
   const dir = studioWriteDir() ?? undefined
@@ -61,9 +63,14 @@ export function fetchProjectImageAssets(): Promise<ProjectImageAsset[]> {
   return promise
 }
 
-/** Drops the cached list — call after an upload lands a new file. */
+/**
+ * Drops the cached list — call after an upload lands a new file (or a prune
+ * deletes some). Every mounted {@link useProjectImageAssets} refetches, so the
+ * Assets panel's Images section shows an image the moment a drop landed it.
+ */
 export function invalidateProjectImageAssets(): void {
   cache = null
+  for (const listener of invalidationListeners) listener()
 }
 
 /**
@@ -109,11 +116,18 @@ export function useProjectImageAssets(): readonly ProjectImageAsset[] | null {
 
   useEffect(() => {
     let live = true
-    fetchProjectImageAssets().then((next) => {
-      if (live) setAssets(next)
-    })
+    const load = () => {
+      fetchProjectImageAssets().then((next) => {
+        if (live) setAssets(next)
+      })
+    }
+    load()
+    // The previous list stays on screen while the next one loads — a refetch
+    // must not flash the section back to "Loading…".
+    invalidationListeners.add(load)
     return () => {
       live = false
+      invalidationListeners.delete(load)
     }
   }, [])
 

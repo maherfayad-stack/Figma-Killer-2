@@ -852,9 +852,9 @@ copy of and POSTs back when `boardsDirty` next flushes. The browser path was a
 round trip through a mutable copy in order to write a file the server already
 owns, and it refused outright whenever no tab was open.
 
-W9-6 makes both `execution: 'server'`. They write through `boardFrames.ts`'s
-`readBoardsFile`/`writeBoardsFile` — the module whose stated reason to exist is
-that every server-side write to the board's frame list has one owner — then push
+W9-6 makes both `execution: 'server'`. They write through `boardGeometry.ts`'s
+`readBoardsFile`/`writeBoardsFile` — the one owner of `.studio/boards.json`, whose
+writes go through `studioStore.ts` (atomic, and never through a link) — then push
 a live-reload with `boardsChanged: true`, so an open board re-reads the file and
 the user watching sees the frame flip exactly as before. The variant's placement
 (`x = source.x + width + VARIANT_GAP`, same `y`) now comes from a single
