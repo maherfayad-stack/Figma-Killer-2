@@ -28,11 +28,10 @@
  * `private` because the image is a picture of the user's own unpublished work
  * and must not land in a shared proxy cache.
  */
-import { readFileSync } from 'node:fs'
 import { badRequest, jsonResponse } from '../../http'
 import { projectsRootDir } from '../studioProjects'
 import { resolveWorkspaceProjectDir } from './projectDirGuard'
-import { projectThumbnailFile, readProjectThumbnailStat } from './projectThumbnailFile'
+import { readProjectThumbnailBytes, readProjectThumbnailStat } from './projectThumbnailFile'
 
 const CACHE_CONTROL = 'private, max-age=0, must-revalidate'
 
@@ -109,7 +108,8 @@ export function serveProjectThumbnail(req: Request, requestedDir: string | null)
   }
 
   try {
-    const bytes = readFileSync(projectThumbnailFile(resolved.dir))
+    const bytes = readProjectThumbnailBytes(resolved.dir)
+    if (!bytes) throw new Error('The thumbnail disappeared between the stat and the read.')
     return new Response(bytes, {
       headers: { ...validators, 'content-type': 'image/png', 'content-length': String(bytes.byteLength) },
     })

@@ -50,8 +50,9 @@
  * delete primitive.
  */
 import { dirname, join, resolve } from 'node:path'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { WORKSPACE_MAX_FILE_BYTES, WORKSPACE_MAX_FILES, excludedWorkspaceSegment } from '@core/page-parser'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { WORKSPACE_MAX_FILE_BYTES, WORKSPACE_MAX_FILES, excludedWorkspaceSegment, pathEntryExists } from '@core/page-parser'
+import { STUDIO_STORE_DIR } from './studioStore'
 import { toArrayBuffer } from '../../binary'
 import { isRealpathStrictlyInsideAllowingMissing } from './workspacePackageResolve'
 
@@ -217,7 +218,8 @@ export function createArchiveEntryDecider(options: ResolveEntryRelPathOptions): 
  * future caller's derivation can't turn into silent data loss.
  */
 export function refuseIfStudioWorkspace(targetDir: string): void {
-  if (existsSync(join(targetDir, '.studio'))) {
+  // `pathEntryExists`, not `existsSync`: a DANGLING `.studio` link is user state too.
+  if (pathEntryExists(join(targetDir, STUDIO_STORE_DIR))) {
     throw new ArchiveIngestError(
       'Refusing to import: the target already contains an existing studio workspace (has a .studio/ directory). Imports must target a directory with no existing workspace data.',
       400,

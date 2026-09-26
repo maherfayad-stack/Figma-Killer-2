@@ -30,8 +30,6 @@
  * obeyed: it is indistinguishable from a caller that failed to load its pages,
  * and obeying it would wipe every flow in the project.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import {
   PrototypeLinkSchema,
@@ -43,20 +41,21 @@ import {
   upsertPrototypeLink,
   type PrototypeFile,
 } from '@core/studio-prototype'
+import { readStudioStoreDocument, studioStorePath, writeStudioStoreFile } from './studioStore'
 
+const PROTOTYPE_FILE = 'prototype.json'
+
+/** Absolute path of the prototype document — for a caller that must NAME it (a cache key), never to read or write it. */
 export function prototypeFilePath(dir: string): string {
-  return join(dir, '.studio', 'prototype.json')
+  return studioStorePath(dir, PROTOTYPE_FILE)
 }
 
 export function readPrototypeFile(dir: string): PrototypeFile {
-  const file = prototypeFilePath(dir)
-  return existsSync(file) ? parsePrototypeFile(readFileSync(file, 'utf8')) : createPrototypeFile()
+  return readStudioStoreDocument(dir, PROTOTYPE_FILE, parsePrototypeFile, createPrototypeFile)
 }
 
 export function writePrototypeFile(dir: string, file: PrototypeFile): void {
-  const path = prototypeFilePath(dir)
-  mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, serializePrototypeFile(file))
+  writeStudioStoreFile(dir, PROTOTYPE_FILE, serializePrototypeFile(file))
 }
 
 export const PrototypeOpSchema = Type.Union([

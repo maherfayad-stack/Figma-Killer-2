@@ -43,6 +43,28 @@
  *   the route and handed over through `runGit`'s one-shot askpass (G2). Never
  *   in argv, never in the URL, never in the environment.
  *
+ * ## A cloned `.studio/`: links are removed, plain files kept
+ *
+ * `.studio/` is where Studio keeps its own records, and most of them are meant
+ * to be committed (`boards.json`, `comments.json`, `prototype.json`), so a
+ * clone of a Studio project brings its `.studio/` along. git stores symlinks,
+ * so a hostile repository can also bring `.studio -> ~` or
+ * `.studio/boards.json -> ~/.bashrc`: every later store write would land
+ * there, and the thumbnail and share routes would serve from there.
+ *
+ * Decision: **replace, not refuse.** Right after the clone and before Studio
+ * writes anything, `stripStudioStoreLinks` removes every link in the clone's
+ * `.studio/` — the folder itself if it is one, and any entry at any depth
+ * inside a real one — as a link, never following it. Every plain file stays,
+ * so cloning your own project back keeps its board. Refusing was the
+ * alternative: it leaves the user unable to import a repository whose only
+ * problem is a stray link, for no safety gain, because nothing a link could
+ * point Studio at survives the removal. And `studioStore.ts` refuses a link
+ * on every read and write anyway, so a link that appears later (a `git pull`)
+ * fails closed instead of being followed. The zipball import never had the
+ * problem: it drops every `.studio/` entry (`archiveIngest.ts`), and an
+ * archive entry lands as bytes, never as a link.
+ *
  * ## Job shape
  *
  * Identical to `githubImportRoutes.ts`'s, deliberately: `POST` returns a
@@ -62,6 +84,7 @@ import { githubProjectFolderName, type GithubRemote } from './gitPaths'
 import { assertWithinWorkspace, clientSafeGitError, runGit, GIT_NETWORK_TIMEOUT_MS } from './gitRunner'
 import { probeProject } from './projectProbe'
 import { mergeStudioMeta } from './studioMeta'
+import { stripStudioStoreLinks } from './studioStore'
 import type { SubprocessSpawnFn } from './subprocessRunner'
 import { isRealpathStrictlyInsideAllowingMissing } from './workspacePackageResolve'
 
@@ -197,11 +220,21 @@ async function runCloneJob(
     const landed = assertWithinWorkspace(target)
     if (!landed.ok) throw new CloneRefusal('That repository cannot be cloned here.')
 
+    // The repository's own `.studio/`, made link-free BEFORE Studio writes a
+    // single record into it — see "A cloned `.studio/`" in the module doc.
+    const stripped = stripStudioStoreLinks(target)
+    if (stripped.rootReplaced || stripped.removed.length > 0) {
+      console.warn(
+        `[studio/gitClone] removed links from the cloned repository's .studio folder (${stripped.rootReplaced ? 'the folder itself' : `${stripped.removed.length} entr${stripped.removed.length === 1 ? 'y' : 'ies'}`})`,
+      )
+    }
+
     job.phase = 'probing'
 
     // Same aftermath as the zipball import, so both paths end on the same
     // summary screen. `writeProjectMeta` is safe to write unconditionally: the
-    // directory did not exist a moment ago.
+    // directory did not exist a moment ago, and it REPLACES any `meta.json`
+    // the repository shipped — trust tier and approved MCP servers included.
     writeProjectMeta(target, { displayName: remote.repo })
     try {
       mergeStudioMeta(target, { profile: probeProject(target) })

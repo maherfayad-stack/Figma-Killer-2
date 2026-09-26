@@ -62,7 +62,9 @@ import { assignPageIds } from '../../studioPageIds'
 import { isDesignSystemBacked } from '../builtinDesignSystem'
 import { readStudioMeta } from '../studioMeta'
 import { readPrototypeFile } from '../prototypeStore'
-import { generatedShellFiles, hasLanguageContext, readBoardsForShell, type ShellScreen } from './registryFile'
+import { generatedShellFiles, hasLanguageContext, type ShellScreen } from './registryFile'
+import { readBoardsFile } from '../boardGeometry'
+import { isStudioStorePathUnlinked, readStudioStoreText, studioStoreProjectRel, writeStudioStoreFile } from '../studioStore'
 import { playerShellFiles } from './playerTemplate'
 import { staticShellFiles, VITE_CONFIG_REL_PATH } from './shellFiles'
 import { forgetShellRun, rememberShellRun, shellInputPaths, unchangedShellRun } from './shellInputStamp'
@@ -90,7 +92,7 @@ const SHELL_SCRIPTS: Record<string, string> = {
 const PackageJsonShape = Type.Object({}, { additionalProperties: true })
 
 /** Where the hashes of Studio-written shell files live. Inside `.studio/`, so it never ships in a download. */
-const SHELL_MANIFEST_REL = '.studio/shell.json'
+const SHELL_MANIFEST_FILE = 'shell.json'
 
 const ShellManifestSchema = Type.Object({
   version: Type.Number(),
@@ -258,7 +260,7 @@ export function ensurePrototypeShell(dir: string): EnsureShellResult {
   const startedAt = Date.now()
   const { result, shellRelPaths } = runPrototypeShell(dir)
   if (shellRelPaths) {
-    rememberShellRun(dir, shellInputPaths(dir, shellRelPaths, SHELL_MANIFEST_REL), startedAt, result.viteConfigEditedByUser)
+    rememberShellRun(dir, shellInputPaths(dir, shellRelPaths, studioStoreProjectRel(SHELL_MANIFEST_FILE)), startedAt, result.viteConfigEditedByUser)
   } else {
     forgetShellRun(dir)
   }
@@ -274,11 +276,11 @@ function runPrototypeShell(dir: string): { result: EnsureShellResult; shellRelPa
   const result: EnsureShellResult = { created: [], regenerated: [], viteConfigEditedByUser: false, inputsUnchanged: false }
 
   try {
-    const manifestPath = join(dir, ...SHELL_MANIFEST_REL.split('/'))
-    const hadManifest = existsSync(manifestPath)
-    const manifest: ShellManifest = hadManifest
-      ? parseJsonWithFallback(readFileSync(manifestPath, 'utf8'), ShellManifestSchema, { version: 1, files: {} })
-      : { version: 1, files: {} }
+    const manifestText = readStudioStoreText(dir, SHELL_MANIFEST_FILE)
+    // A manifest reached through a link is unreadable, not absent: treating it
+    // as absent would adopt (overwrite) every shell file the user has edited.
+    const hadManifest = manifestText !== null || !isStudioStorePathUnlinked(dir, SHELL_MANIFEST_FILE)
+    const manifest: ShellManifest = parseJsonWithFallback(manifestText, ShellManifestSchema, { version: 1, files: {} })
     const nextHashes: Record<string, string> = { ...manifest.files }
     let hashesChanged = false
 
@@ -318,7 +320,8 @@ function runPrototypeShell(dir: string): { result: EnsureShellResult; shellRelPa
     }
 
     if (hashesChanged || !hadManifest) {
-      writeIfDifferent(dir, manifestPath, `${JSON.stringify({ version: 1, files: nextHashes }, null, 2)}\n`)
+      const nextManifest = `${JSON.stringify({ version: 1, files: nextHashes }, null, 2)}\n`
+      if (nextManifest !== manifestText) writeStudioStoreFile(dir, SHELL_MANIFEST_FILE, nextManifest)
     }
 
     if (mergeShellPackageJson(dir)) result.created.push('package.json')
@@ -330,7 +333,7 @@ function runPrototypeShell(dir: string): { result: EnsureShellResult; shellRelPa
       // identically and would make every shell's wordmark the same.
       projectName: basename(dir),
       screens: collectScreens(dir),
-      boards: readBoardsForShell(dir),
+      boards: readBoardsFile(dir),
       frameDefaults: {
         width: meta.frameDefaults?.width ?? 393,
         height: meta.frameDefaults?.height ?? 852,

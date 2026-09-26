@@ -81,6 +81,8 @@ export {
 } from './componentSources'
 export type { ComponentSource, ExportedDeclaration, WorkspaceProjectWarning } from './componentSources'
 export { EolPreservingFileSystem, eolFileSystemOf, projectLineEnding } from './eolFileSystem'
+export { writeFileAtomic } from './atomicFileWrite'
+export { createSourceFileExclusive, withSourceWriteHook, writeSourceFile, type SourceWriteHook } from './sourceWriteHook'
 export { LITERAL_FINGERPRINT_LABEL, jsxElementFingerprint, literalFingerprint } from './sourceFingerprint'
 export { isLiteralJsxAttribute } from './jsxLiteralAttribute'
 export {

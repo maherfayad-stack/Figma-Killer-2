@@ -47,6 +47,12 @@ function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 }
 
+/** Text is written as UTF-8, bytes (a PNG) as they are. */
+function writeContent(fd: number, content: string | Uint8Array): void {
+  if (typeof content === 'string') writeSync(fd, content, null, 'utf8')
+  else writeSync(fd, content)
+}
+
 function isHeldFileError(err: unknown): boolean {
   return HELD_FILE_CODES.has((err as NodeJS.ErrnoException | undefined)?.code ?? '')
 }
@@ -56,7 +62,7 @@ function isHeldFileError(err: unknown): boolean {
  * A missing file is created the same way (a batch may create one); its parent
  * folder must exist.
  */
-export function writeFileAtomic(path: string, content: string, deps: AtomicWriteDeps = {}): void {
+export function writeFileAtomic(path: string, content: string | Uint8Array, deps: AtomicWriteDeps = {}): void {
   const rename = deps.rename ?? renameSync
   let target = path
   let mode = 0o666
@@ -70,7 +76,7 @@ export function writeFileAtomic(path: string, content: string, deps: AtomicWrite
 
   const fd = openSync(temp, 'wx', mode)
   try {
-    writeSync(fd, content, null, 'utf8')
+    writeContent(fd, content)
     fsyncSync(fd)
   } finally {
     closeSync(fd)
@@ -98,7 +104,7 @@ export function writeFileAtomic(path: string, content: string, deps: AtomicWrite
     }
     const held = noFollow === undefined ? openSync(target, 'w') : openSync(target, constants.O_WRONLY | constants.O_TRUNC | noFollow)
     try {
-      writeSync(held, content, null, 'utf8')
+      writeContent(held, content)
     } finally {
       closeSync(held)
     }

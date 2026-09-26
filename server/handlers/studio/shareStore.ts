@@ -36,14 +36,13 @@
  * a revoked share alive.
  */
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join, sep } from 'node:path'
+import { existsSync, readdirSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import { EXCLUDED_WORKSPACE_DIR_NAMES } from '@core/page-parser'
 import { isShareTokenShape, type ShareSummary } from '@core/studio-share'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { parseJsonWithFallback } from '@core/utils/jsonValidate'
 import { projectsRootDir } from '../studioProjects'
-import { isRealpathContainedAllowingMissing } from './workspacePackageResolve'
+import { readStudioStoreBytes, readStudioStoreJson, removeStudioStoreEntry, studioStorePath, writeStudioStoreFile, writeStudioStoreJson } from './studioStore'
 
 /**
  * The persisted record. A superset of the wire `ShareSummary` only in that it
@@ -74,44 +73,54 @@ function emptySharesFile(): SharesFile {
   return { version: 1, shares: [] }
 }
 
-export function sharesFilePath(dir: string): string {
-  return join(dir, '.studio', 'shares.json')
-}
-
-/** The parent of every snapshot directory for a project. */
-export function sharesRootDir(dir: string): string {
-  return join(dir, '.studio', 'shares')
-}
+const SHARES_FILE = 'shares.json'
 
 /**
- * Where one share's snapshot lives. Refuses a token that is not exactly the
- * minted shape — the token is a path segment here, so this is the gate that
- * makes traversal unreachable rather than merely detected. Callers that then
- * touch the filesystem ALSO containment-check the resolved real path
- * (`resolveShareFile` below), because a symlink planted inside `.studio/`
- * would survive a purely lexical check.
+ * One share's snapshot folder as a `.studio` store path, or `null` for a token
+ * that is not exactly the minted shape — the token is a path segment here, so
+ * this is the gate that makes traversal unreachable rather than merely
+ * detected. A link anywhere from `.studio` down is `studioStore.ts`'s to
+ * refuse, on every read and write.
  */
+function snapshotStoreDir(token: string): string | null {
+  return isShareTokenShape(token) ? `shares/${token}` : null
+}
+
+/** Absolute path of one share's snapshot folder — for a caller that must NAME it (tests); reading and writing go through the functions below. */
 export function shareSnapshotDir(dir: string, token: string): string | null {
-  if (!isShareTokenShape(token)) return null
-  return join(sharesRootDir(dir), token)
+  const rel = snapshotStoreDir(token)
+  return rel === null ? null : studioStorePath(dir, rel)
 }
 
 /**
- * A file inside one share's snapshot, or `null` when the token, the file
- * name, or the resolved real path is not acceptable. `fileName` must already
- * have been shape-checked by the caller (`isShareImageFileName`, or the
- * literal `board.json`); this function's job is the containment half.
+ * The bytes of one file of one share's snapshot, or `null` when the token or
+ * the file name is not acceptable, the file is absent, or anything on the way
+ * is a link. `fileName` must already have been shape-checked by the caller
+ * (`isShareImageFileName`, or the literal `board.json`).
  */
-export function resolveShareFile(dir: string, token: string, fileName: string): string | null {
-  const snapshotDir = shareSnapshotDir(dir, token)
-  if (!snapshotDir) return null
-  if (fileName.includes('/') || fileName.includes('\\') || fileName.includes('\0')) return null
-  const target = join(snapshotDir, fileName)
-  // Belt and braces: the lexical checks above already make `..` impossible,
-  // but a symlink inside the snapshot directory would not be lexical.
-  if (!isRealpathContainedAllowingMissing(target, snapshotDir)) return null
-  if (target !== snapshotDir && !target.startsWith(snapshotDir + sep)) return null
-  return target
+export function readShareFile(dir: string, token: string, fileName: string): Buffer<ArrayBuffer> | null {
+  const rel = snapshotStoreDir(token)
+  if (rel === null || !SHARE_FILE_NAME.test(fileName)) return null
+  return readStudioStoreBytes(dir, `${rel}/${fileName}`)
+}
+
+/** `board.json` or a snapshot image — one path segment, nothing that could climb. */
+const SHARE_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*\.(?:json|png)$/
+
+/**
+ * Replace one share's snapshot with `files` (each `{ file, bytes }`, `file` a
+ * bare name). Wipes first: an update must not leave the previous capture's
+ * PNGs behind, where they would be unreferenced bytes of someone's design in
+ * a directory the public route can reach.
+ */
+export function replaceShareSnapshot(dir: string, token: string, files: ReadonlyArray<{ file: string; bytes: string | Uint8Array }>): void {
+  const rel = snapshotStoreDir(token)
+  if (rel === null) throw new Error('Invalid share token.')
+  deleteShareSnapshot(dir, token)
+  for (const entry of files) {
+    if (!SHARE_FILE_NAME.test(entry.file)) throw new Error('Invalid share snapshot file name.')
+    writeStudioStoreFile(dir, `${rel}/${entry.file}`, entry.bytes)
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -126,15 +135,11 @@ export function resolveShareFile(dir: string, token: string, fileName: string): 
  * direction to fail in.
  */
 export function readSharesFile(dir: string): SharesFile {
-  const file = sharesFilePath(dir)
-  if (!existsSync(file)) return emptySharesFile()
-  return parseJsonWithFallback(readFileSync(file, 'utf8'), SharesFileSchema, emptySharesFile())
+  return readStudioStoreJson(dir, SHARES_FILE, SharesFileSchema, emptySharesFile())
 }
 
 export function writeSharesFile(dir: string, file: SharesFile): void {
-  const path = sharesFilePath(dir)
-  mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, `${JSON.stringify(file, null, 2)}\n`)
+  writeStudioStoreJson(dir, SHARES_FILE, file, { pretty: true, trailingNewline: true })
 }
 
 // ---------------------------------------------------------------------------
@@ -304,7 +309,7 @@ export function revokeShareRecord(dir: string, token: string, now: string): Shar
 
 /** Remove a share's snapshot directory. Idempotent; never throws on a missing directory. */
 export function deleteShareSnapshot(dir: string, token: string): void {
-  const snapshotDir = shareSnapshotDir(dir, token)
-  if (!snapshotDir) return
-  rmSync(snapshotDir, { recursive: true, force: true })
+  const rel = snapshotStoreDir(token)
+  if (rel === null) return
+  removeStudioStoreEntry(dir, rel, { recursive: true })
 }

@@ -68,10 +68,9 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { existsSync, lstatSync, mkdirSync, opendirSync, readFileSync, unlinkSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
-import { isUnlinkedWorkspacePath } from '@core/page-parser'
+import { isUnlinkedWorkspacePath, writeFileAtomic } from '@core/page-parser'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { canonicalSourceRel } from '../studioEditRouting'
-import { writeFileAtomic } from './atomicFileWrite'
 import { readJsonFileSafe } from './cappedFileRead'
 import { isUndoJournalToken } from './undoJournalToken'
 
