@@ -11,7 +11,7 @@
  * plugin (analytics, monitoring, etc.) can render a sparkline inside a
  * registered dashboard widget without bundling its own chart code.
  */
-import { useId } from 'react'
+import { useId, type CSSProperties } from 'react'
 import styles from './charts.module.css'
 
 export interface SparklineProps {
@@ -59,7 +59,7 @@ export function Sparkline({
         preserveAspectRatio="none"
         role={ariaLabel ? 'img' : 'presentation'}
         aria-label={ariaLabel}
-        style={{ ['--sparkline-h' as string]: `${height}px` }}
+        style={{ '--sparkline-h': `${height}px` } as CSSProperties}
       />
     )
   }
@@ -82,7 +82,7 @@ export function Sparkline({
       preserveAspectRatio="none"
       role={ariaLabel ? 'img' : 'presentation'}
       aria-label={ariaLabel}
-      style={{ ['--sparkline-h' as string]: `${h}px` }}
+      style={{ '--sparkline-h': `${h}px` } as CSSProperties}
     >
       <defs>
         <linearGradient id={gradId} x1="0" x2="0" y1="0" y2="1">

@@ -79,6 +79,9 @@ export function SharedComponentNotice({ componentName, nodeId, node, textOrigin 
 
   async function exposeText() {
     setExposing(true)
+    // No `finally`: a try/finally (with or without a catch) is a React
+    // Compiler bailout (`react-compiler-bailouts.test.ts`) — catch + rethrow
+    // reproduces the same "reset state either way, then propagate" behavior.
     try {
       await commitStudioExposeProp(
         { kind: 'expose-prop', nodeId, target: { kind: 'text' }, propName: suggestedPropName(node) },
@@ -88,9 +91,11 @@ export function SharedComponentNotice({ componentName, nodeId, node, textOrigin 
           useEditorStore.getState().selectNode(callSitePosition(nodeId))
         },
       )
-    } finally {
+    } catch (err) {
       setExposing(false)
+      throw err
     }
+    setExposing(false)
   }
 
   return (

@@ -150,7 +150,7 @@ export function useBridgeSelectionChrome(adapter: FrameDocumentAdapter | null, o
     let generation = 0
     let disposed = false
     const refresh = () => {
-      const mine = ++generation
+      const mine = (generation += 1)
       bridge
         .measure(selectedNodeIds.map((nodeId) => ({ nodeId })))
         .then((measurements) => {

@@ -77,9 +77,8 @@ export function ImageSourcePicker({ value, onPick }: ImageSourcePickerProps) {
         title: 'Image upload failed',
         body: getErrorMessage(err, 'Unknown upload error'),
       })
-    } finally {
-      setUploading(false)
     }
+    setUploading(false)
   }
 
   const needle = query.trim().toLowerCase()

@@ -62,15 +62,18 @@ export function CommentComposer({
   const submit = async () => {
     if (!canSubmit) return
     setBusy(true)
+    // Not `try … finally`: the React Compiler cannot compile it.
     try {
       await onSubmit(value.trim())
-      // Only cleared on success. A failed post keeps what was typed in the
-      // box — losing someone's paragraph to a dropped request is not a
-      // recoverable error for them.
-      setValue('')
-    } finally {
+    } catch (err) {
       setBusy(false)
+      throw err
     }
+    // Only cleared on success. A failed post keeps what was typed in the box —
+    // losing someone's paragraph to a dropped request is not a recoverable
+    // error for them.
+    setValue('')
+    setBusy(false)
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {

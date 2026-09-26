@@ -88,9 +88,8 @@ export function DesignSystemMigrateBanner() {
         title: 'Could not move the design system into this project',
         body: getErrorMessage(err, 'Unknown error migrating this project'),
       })
-    } finally {
-      setMigrating(false)
     }
+    setMigrating(false)
   }
 
   return (

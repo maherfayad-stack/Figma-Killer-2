@@ -86,6 +86,7 @@ import {
   forwardRef,
   startTransition,
   useEffect,
+  useEffectEvent,
   useImperativeHandle,
   useRef,
   useState,
@@ -169,24 +170,25 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       // {@link IframeInteraction}.
       const isCapture = interaction === 'capture'
       const iframeRef = useRef<HTMLIFrameElement | null>(null)
-      const [iframeDoc, setIframeDoc] = useState<Document | null>(null)
+      // The iframe element travels WITH its document so render reads state,
+      // never `iframeRef.current` (the frame contexts need the element).
+      const [frameDocument, setFrameDocument] = useState<{ iframe: HTMLIFrameElement; doc: Document } | null>(null)
+      const iframeDoc = frameDocument?.doc ?? null
       const [overlayRoot, setOverlayRoot] = useState<HTMLDivElement | null>(null)
       const [adapter, setAdapter] = useState<FrameDocumentAdapter | null>(null)
       // Mount stage 3 — see this module's header. `false` until the injector
       // commit has landed and the transition scheduled below has run.
       const [treeMounted, setTreeMounted] = useState(false)
 
-    // `live-07` (STATE.md) — keeps the freshest `liveFrame` reachable from
-    // inside the construct effect below WITHOUT it being a dependency of
-    // that effect. `liveFrame` is a new object on every render where
-    // `nodeIdsInTreeOrder` changed (every structural resync re-parses and
-    // re-mints the active page's node id list), and the construct effect
-    // below must NOT re-run for that — only for a genuinely different
-    // frame/document. Assigning during render (not inside an effect) is the
-    // standard "always-current ref" pattern: it costs nothing and never
-    // triggers a re-render on its own.
-    const liveFrameRef = useRef(liveFrame)
-    liveFrameRef.current = liveFrame
+    // `live-07` (STATE.md) — the freshest `liveFrame`, readable from inside
+    // the construct effect below WITHOUT being a dependency of it.
+    // `liveFrame` is a new object on every render where `nodeIdsInTreeOrder`
+    // changed (every structural resync re-parses and re-mints the active
+    // page's node id list), and the construct effect must NOT re-run for
+    // that — only for a genuinely different frame/document. An effect event,
+    // not a ref assigned during render: the React Compiler refuses to compile
+    // a component that writes a ref in render.
+    const readLiveFrame = useEffectEvent(() => liveFrame)
 
     // `live-05` (STATE.md) — every canvas frame publishes a `FrameDocumentAdapter`,
     // constructed/disposed with its own lifecycle. `documentMode==='bridge'`
@@ -212,7 +214,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       if (documentMode === 'bridge') {
         const iframe = iframeRef.current
         const frameWindow = iframe?.contentWindow
-        const frame = liveFrameRef.current
+        const frame = readLiveFrame()
         if (!iframe || !frameWindow || !frame) {
           setAdapter(null)
           return
@@ -354,7 +356,28 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
     // contentDocument is often already populated by the time React commits
     // the iframe element; we still listen for `load` as a fallback in case
     // the browser deferred parsing.
-    const attachIframeDoc = (iframe: HTMLIFrameElement | null) => {
+    //
+    // Stable identity via a `useState` lazy initializer (not memoization —
+    // this closure closes over nothing but `iframeRef`/`setFrameDocument`,
+    // both stable forever, so there is no staleness to guard against). This
+    // is load-bearing, not tidiness: an inline ref callback gets a NEW
+    // function identity every render, and React's callback-ref contract
+    // detaches the OLD one (call it with `null`) then attaches the NEW one
+    // (call it with the node) on every such render — even when the
+    // underlying iframe element hasn't changed at all. The detach branch
+    // unconditionally nulls `frameDocument`; the immediately-following
+    // attach's functional updater then sees that null as its `current`
+    // (React reduces a batch's updates sequentially, not against the
+    // pre-batch state), so its `current?.doc === doc` equality check can
+    // never match and it constructs a BRAND NEW `{ iframe, doc }` object
+    // every time — a fresh reference React can't `Object.is`-bail on, so the
+    // state "changes" every render, which redefines this closure again,
+    // which churns the ref again: an infinite render loop (measured: fails
+    // ~106 canvas tests with "Maximum update depth exceeded" via
+    // `attachIframeDoc` → `safelyDetachRef`). A ref callback with a stable
+    // identity is only invoked at real mount/unmount, so the churn — and the
+    // loop — never starts.
+    const [attachIframeDoc] = useState(() => (iframe: HTMLIFrameElement | null) => {
       const previousIframe = iframeRef.current as IframeWithCleanup | null
       if (previousIframe && previousIframe !== iframe) {
         previousIframe._studioCleanup?.()
@@ -362,7 +385,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       }
       iframeRef.current = iframe
       if (!iframe) {
-        setIframeDoc(null)
+        setFrameDocument(null)
         return
       }
       delete iframe.dataset.studioCanvasDocumentLoaded
@@ -376,8 +399,10 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
         // Never portal the canvas tree into the short-lived initial about:blank
         // document. Module effects, media reads, and authored runtime scripts
         // must run once against the final srcDoc document only.
-        setIframeDoc(doc)
+        // Marked before the element is handed to state (the React Compiler
+        // treats a value in state as frozen); nothing renders in between.
         iframe.dataset.studioCanvasDocumentLoaded = 'true'
+        setFrameDocument((current) => (current?.doc === doc && current.iframe === iframe ? current : { iframe, doc }))
       }
       // srcDoc often parses before the ref commits; otherwise its load event
       // retries. The bootstrap sentinel, not event timing or URL heuristics,
@@ -394,7 +419,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
         delete iframe.dataset.studioCanvasDocumentLoaded
         cleanableIframe._studioCleanup = undefined
       }
-    }
+    })
 
     // Tag the iframe body with `data-breakpoint-id` (matches the existing
     // canvasClassCss selector `[data-breakpoint-id="..."] .myClass`) and
@@ -565,7 +590,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
         {iframeDoc &&
           createPortal(
             <CanvasFrameContexts
-              frameElement={iframeRef.current}
+              frameElement={frameDocument?.iframe ?? null}
               adapter={adapter}
               axes={frameAxes}
               interaction={interaction}

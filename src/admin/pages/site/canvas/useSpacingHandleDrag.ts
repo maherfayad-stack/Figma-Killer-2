@@ -104,7 +104,7 @@ export function useSpacingHandleDrag({ layer, iframeDoc, nodeId, readBands, onDr
       }
       const step = () => {
         patch = spacingPatch(band, geometry, pointer.x - startX, pointer.y - startY, modifiers)
-        pendingFrame ??= requestAnimationFrame(applyPending)
+        pendingFrame = pendingFrame ?? requestAnimationFrame(applyPending)
       }
       const onMove = (moveEvent: PointerEvent) => {
         pointer = { x: moveEvent.clientX, y: moveEvent.clientY }

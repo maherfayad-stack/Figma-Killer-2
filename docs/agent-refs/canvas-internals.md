@@ -1638,16 +1638,22 @@ What it found, and the rule each finding became:
   reassigning a `<style>`'s text re-parses it and invalidates style for the
   whole frame document even when the text is identical. Measured: 3 identical
   rewrites per keystroke → 0.
-- **The hot components must actually be compiled.** The React Compiler
-  silently skips a function it cannot lower — with this repo's
-  `babel-plugin-react-compiler` 1.0 on Babel 8, a default inside a
-  destructured parameter (`{ editable = true }`) is enough — and nothing fails.
-  `CanvasRoot` was skipped, so its context values were rebuilt on every
-  render and every frame's selection chrome re-rendered on every click and
-  keystroke. `compiled-hot-components.test.ts` compiles the hot files with the
-  exact Vite pipeline and fails naming the reason. `NodeRenderer`,
-  `BreakpointFrame`, `IframeFrameSurface` and `BreakpointSelectionOverlay`
-  still do not compile (see that test's header).
+- **Every canvas, UI-primitive and inspector function must actually be
+  compiled.** The React Compiler silently skips a function it cannot lower and
+  nothing fails. `CanvasRoot` was skipped, so its context values were rebuilt
+  on every render and every frame's selection chrome re-rendered on every
+  click and keystroke. The biggest cause was the toolchain: compiler 1.0 on the
+  root Babel 8 rejects every destructured default, so the compiler now runs on
+  its own Babel 7 (`scripts/vite/reactCompilerPlugin.ts`). The rest are
+  constructs it cannot lower (`try … finally`, a logical/ternary/loop inside
+  `try`, `??=`, `++` on a captured variable, `import()`, a ref touched in
+  render). `react-compiler-bailouts.test.ts` compiles `canvas/`, `src/ui/components`,
+  `inspector/`, `panels/PropertiesPanel` and `property-controls/` through the
+  exact Vite transform and fails naming each skipped function and the rewrite;
+  `bun run compiler:bailouts` lists what is left in the rest of `src/`.
+  `NodeRenderer` is `memo(NodeRenderer)` over a plain declaration: inside
+  `memo(function NodeRenderer …)` the recursion bound to the unwrapped function,
+  so no child had the memo bailout and the compiler skipped the renderer.
 
 Measured on the 40 × 300 board (dev build / production bundle,
 `E2E_VITE_MODE=preview`): warm click → ring (mean) 144 → 75 ms / 61.6 → 47.1 ms;

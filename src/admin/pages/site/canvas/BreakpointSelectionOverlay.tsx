@@ -407,7 +407,7 @@ export function BreakpointSelectionOverlay({
     let fallbackSession: ReturnType<typeof createCanvasOverlayMeasureSession> | null = null
     const measureRing = (target: CanvasRectSource | null): CanvasOverlayRect | null => {
       if (overlayRoot) return measureIframeLocalRect(target)
-      fallbackSession ??= createCanvasOverlayMeasureSession(iframe, canvasRoot)
+      fallbackSession = fallbackSession ?? createCanvasOverlayMeasureSession(iframe, canvasRoot)
       return fallbackSession.measure(target)
     }
 

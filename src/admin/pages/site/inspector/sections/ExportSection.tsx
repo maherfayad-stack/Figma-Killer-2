@@ -248,9 +248,8 @@ function ExportSectionBody({ nodeId, pageId, node, classSelectors, provenanceByP
         title: `${exportFormatLabel(row.format)} export failed`,
         body: getErrorMessage(err, 'Unknown export error'),
       })
-    } finally {
-      setRunningRowId(null)
     }
+    setRunningRowId(null)
   }
 
   const addButton = (

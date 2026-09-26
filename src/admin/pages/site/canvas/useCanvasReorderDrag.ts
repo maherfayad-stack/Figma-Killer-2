@@ -196,7 +196,7 @@ export function useCanvasReorderDrag({
   }
 
   const scheduleFrame = () => {
-    frameRef.current ??= requestAnimationFrame(runFrame)
+    frameRef.current = frameRef.current ?? requestAnimationFrame(runFrame)
   }
 
   // Exception #1: referenced in the `useEffect(() => resetDrag, [resetDrag])` dep array below.
