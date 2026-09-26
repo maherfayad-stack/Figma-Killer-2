@@ -97,6 +97,27 @@ interface LocalSwapCandidate {
   sourceFile: string
 }
 
+/**
+ * The toast after a successful swap: what it changed about the call site's
+ * props. Factored out of `handleSwap`'s try block on purpose — the React
+ * Compiler bails out of a try/catch that contains a conditional VALUE
+ * (a ternary, here) directly inline (`react-compiler-bailouts.test.ts`); a
+ * plain function call has no such value block.
+ */
+function swappedToast(
+  componentName: string,
+  detail: { removedProps: string[]; unfilledRequiredProps: string[] } | undefined,
+): Parameters<typeof pushToast>[0] {
+  const notes: string[] = []
+  if (detail && detail.removedProps.length > 0) notes.push(`removed: ${detail.removedProps.join(', ')}`)
+  if (detail && detail.unfilledRequiredProps.length > 0) notes.push(`needs a value: ${detail.unfilledRequiredProps.join(', ')}`)
+  return {
+    kind: notes.length > 0 ? 'warning' : 'success',
+    title: `Swapped to ${componentName}`,
+    body: notes.length > 0 ? notes.join(' · ') : 'No prop changes were needed.',
+  }
+}
+
 export function ComponentSection() {
   const model = useSelectionModel()
   const { selectedNodeId, selectedNode } = model
@@ -139,12 +160,13 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
   const swapButtonRef = useRef<HTMLButtonElement>(null)
 
   async function handleDetach() {
+    // No try/finally: `detachInstances` is a `new Promise((resolve) => ...)`
+    // wrapper that always resolves, never rejects (`instanceActions.ts`), so
+    // there is no exception path here to guard against — and a bare
+    // try/finally is a React Compiler bailout (`react-compiler-bailouts.test.ts`).
     setDetaching(true)
-    try {
-      await detachInstances([nodeId])
-    } finally {
-      setDetaching(false)
-    }
+    await detachInstances([nodeId])
+    setDetaching(false)
   }
 
   // Every OTHER local component the catalog knows about — local-only
@@ -165,6 +187,10 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
   async function handleSwap(candidate: LocalSwapCandidate) {
     const key = `${candidate.sourceFile}#${candidate.componentName}`
     setSwappingKey(key)
+    // No `finally`: a try/catch/finally is a React Compiler bailout
+    // (`react-compiler-bailouts.test.ts`) — `setSwappingKey(null)` runs
+    // unconditionally after the try/catch instead, which needs the refusal
+    // branch below to fall through (an `else`) rather than `return` early.
     try {
       const result = await swapInstance(nodeId, {
         newComponentName: candidate.componentName,
@@ -173,23 +199,14 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
       })
       if (!result.ok) {
         pushToast({ kind: 'error', title: 'Swap refused', body: result.message })
-        return
+      } else {
+        pushToast(swappedToast(candidate.componentName, result.swapDetail))
+        setSwapOpen(false)
       }
-      const detail = result.swapDetail
-      const notes: string[] = []
-      if (detail && detail.removedProps.length > 0) notes.push(`removed: ${detail.removedProps.join(', ')}`)
-      if (detail && detail.unfilledRequiredProps.length > 0) notes.push(`needs a value: ${detail.unfilledRequiredProps.join(', ')}`)
-      pushToast({
-        kind: notes.length > 0 ? 'warning' : 'success',
-        title: `Swapped to ${candidate.componentName}`,
-        body: notes.length > 0 ? notes.join(' · ') : 'No prop changes were needed.',
-      })
-      setSwapOpen(false)
     } catch (err) {
       pushToast({ kind: 'error', title: 'Swap failed', body: getErrorMessage(err, 'Unknown error') })
-    } finally {
-      setSwappingKey(null)
     }
+    setSwappingKey(null)
   }
 
   const query = swapQuery.trim().toLowerCase()

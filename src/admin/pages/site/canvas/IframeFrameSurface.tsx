@@ -356,7 +356,28 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
     // contentDocument is often already populated by the time React commits
     // the iframe element; we still listen for `load` as a fallback in case
     // the browser deferred parsing.
-    const attachIframeDoc = (iframe: HTMLIFrameElement | null) => {
+    //
+    // Stable identity via a `useState` lazy initializer (not memoization —
+    // this closure closes over nothing but `iframeRef`/`setFrameDocument`,
+    // both stable forever, so there is no staleness to guard against). This
+    // is load-bearing, not tidiness: an inline ref callback gets a NEW
+    // function identity every render, and React's callback-ref contract
+    // detaches the OLD one (call it with `null`) then attaches the NEW one
+    // (call it with the node) on every such render — even when the
+    // underlying iframe element hasn't changed at all. The detach branch
+    // unconditionally nulls `frameDocument`; the immediately-following
+    // attach's functional updater then sees that null as its `current`
+    // (React reduces a batch's updates sequentially, not against the
+    // pre-batch state), so its `current?.doc === doc` equality check can
+    // never match and it constructs a BRAND NEW `{ iframe, doc }` object
+    // every time — a fresh reference React can't `Object.is`-bail on, so the
+    // state "changes" every render, which redefines this closure again,
+    // which churns the ref again: an infinite render loop (measured: fails
+    // ~106 canvas tests with "Maximum update depth exceeded" via
+    // `attachIframeDoc` → `safelyDetachRef`). A ref callback with a stable
+    // identity is only invoked at real mount/unmount, so the churn — and the
+    // loop — never starts.
+    const [attachIframeDoc] = useState(() => (iframe: HTMLIFrameElement | null) => {
       const previousIframe = iframeRef.current as IframeWithCleanup | null
       if (previousIframe && previousIframe !== iframe) {
         previousIframe._studioCleanup?.()
@@ -398,7 +419,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
         delete iframe.dataset.studioCanvasDocumentLoaded
         cleanableIframe._studioCleanup = undefined
       }
-    }
+    })
 
     // Tag the iframe body with `data-breakpoint-id` (matches the existing
     // canvasClassCss selector `[data-breakpoint-id="..."] .myClass`) and
