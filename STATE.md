@@ -46,15 +46,6 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Landmines:** two different entries are both `perf-10` (#195 and #196); cite them by title. `04f92846` commits Studio's generated prototype shell into `__board-perf-fixture` and edits `test4`: owner to decide whether to revert it.
 - **Next:** once #217 merges, close #192, #195 and #198–#210 as included.
 
-### P3-D2 — `.map` rows: structure edits go to the array (OD-8, WB-15)
-- **Agent:** parser-surgeon · **Branch:** `feat/list-rows-edit-the-array` (cut from trunk `08c429f1`) · **Updated:** 2026-09-26 · **Stage:** implemented, draft PR against `feat/canvas-excellence`.
-- **Goal:** reorder (drag, ⌥↑/↓, grid-row ↑/↓), delete, duplicate and paste on a rendered `.map` row edit the ARRAY literal the `.map` iterates; refuse by name when it is not a same-file literal.
-- **Scope (parser files):** `page-parser/staticLoopExpansion.ts`, `parsePageFile.ts` (3 lines), `types.ts`; `page-tree/listRowSource.ts` (new), `listRowPlans.ts` (new), `pageNode.ts`, `sourceStructure.ts`, `sourceStructurePreview.ts`, `index.ts`; `studio-sync/parsedPageToSitePage.ts`; `ast-codemods/editListItems.ts` (new), `reinsertJsxSource.ts` (two helpers exported), `index.ts`. Server: `studioListItemWriteback.ts` (new), `studioWriteback.ts`, `studioEditSchemas.ts`, `studioEditRouting.ts`, `studioBatchImportPrune.ts`, `studioEditSequence.ts`, `studioCanvasLayerWriteback.ts`, `studio.ts`. Client: `studio/listRowRemap.ts` (new), `structuralUndoPlan.ts`, `studioStructuralCommits.ts`, `studioStructuralCommitEngine.ts`, `studioSaveRequests.ts`, `structuralCommitQueue.ts`; store `listRowSourceWrites.ts` (new) + one intercept each in `nodeActions.ts`, `deleteNodesAction.ts`, `moveSequenceActions.ts`, `studioSourceWrites.ts`, `studioPasteWrites.ts`, `structuralSourceEdits.ts`; panel `SourceConstraintNotice.tsx`, `PropertiesPanelBody.tsx`.
-- **Decisions:** the new resolution is the row→element stamp `ParsedNode.listRow`. **Locks?** It UNLOCKS a row root whose array is editable (the loop was its only lock); what is inside a row stays locked; every gesture the array cannot express still refuses `list-row` by id. **codeProps?** No change. **origin?** None — it names a LOCATION (the array's `[`), not a literal behind a value. **Panel:** `SourceConstraintNotice`'s `list-row` variant also shows for an unlocked row root and says a reorder/duplicate/delete edits the array. The write address is the array's `[` (its own edits never move it); `length` is the identity check. A copy rewrites its key field to stay unique; a key Studio cannot rewrite refuses.
-- **Landmines (not yet in `studio-import.md` → `studio-scribe`: they now are, in "A `.map` row's structure is written to its array"):** a remove's import PRUNE moves the array (new `listArrays` on `/save`, which `studio.ts` forwards by hand — a route that lists fields by hand drops new ones); row ids are positions, so queued gestures need `listRowRemap.ts` (P1-A fingerprints cannot tell rows apart); an `insert` text that computes on load is refused (`not-data`), so such a row's delete has no editor undo; `StudioEditApplyOutcome.removed` is now a LIST.
-- **Gates:** build, lint ✓; whole suite in chunks ✓ except pre-existing `module-size-budgets` (`agentCheckpoints.ts`; `CanvasRoot.tsx` 701 on the trunk) and bundle freshness on Bun 1.3.6. Every new test shown failing with its piece disabled in place; e2e `list-rows-edit-the-array.e2e.ts` 2/2 (ports 52374/32302). Trunk `7df7c563` merged.
-- **Next:** owner dogfood on `test4` (checklist in the PR body). Found, not fixed: `as const` arrays are not expanded by the evaluator at all.
-
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
@@ -166,6 +157,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 10 one-liners, newest first: ids — what — PR — date. Everything here is merged into the trunk; full entries are in [`docs/state-archive/2026-09.md`](docs/state-archive/2026-09.md).*
 
+- `P3-D2` — P3-D2: drag, ⌥↑/↓, grid-row ↑/↓, ⌘D, ⌥-drag and paste on a .map row write the array literal (comments and commas kept, unique copy keys, one undo); honest refusals for non-literal arrays — #273 — 2026-09-25
 - `canvas-39` — P5-A: ⌘V from the paste event in every frame, copy marker with copiedAt, image paste through the drop pipeline, SVG paste through sanitizeSvg; live-frame keys can never arm clipboard.read; security approved — #270 — 2026-09-25
 - `canvas-40` — P5-F: snap to guides and equal spacing with toggles (one engine in @core/studio-runtime, loose layers too), multi-select resize and free move, double-click edge to Hug, rotation via CSS rotate, opacity keys, flips, board-draw tool — #268 — 2026-09-25
 - `store-21` — P3-D: cross-frame paste and moves write instead of refusing, ⌘Z after a cross-frame paste works, OD-7 fallback undoes in one ⌘Z; import prune moved to studioBatchImportPrune.ts — #250 — 2026-09-25
@@ -175,7 +167,6 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `perf-14` — shell: build-tool configs out of the ts program (288 → 86 files), cold load ~3.4 → ~1 s, warm 23 → 3 ms, prototype shell once per project — #267 — 2026-09-25
 - `store-20` — P6-A: a prop edit re-renders 1 node not 300, a move remounts 0 not 297, frames restyle 0 not 12; budget in bench:editor-store — #266 — 2026-09-25
 - `perf-13` — P6-B: restart 2.8 s → 0.65 s, warm /load 55 → 18 ms on 40 pages; page edit and cold at baseline (prewarm builds the program, deferred cache writes) — #263 — 2026-09-25
-- `canvas-34` — P5-B2: dropped and every literal public/ image loads in design frames via the hardened asset route (`url=`), media-only MIME gate, normalized rewrite; security approved — #262 — 2026-09-25
 
 ---
 
