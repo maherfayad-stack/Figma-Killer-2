@@ -11,7 +11,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 8 entries. Only work that is not yet merged into the trunk `feat/canvas-excellence`.*
 
-### perf-17 — frames mount one at a time, centre first; dedupe, memoize, no-op sidecar writes
+### perf-18 — frames mount one at a time, centre first; dedupe, memoize, no-op sidecar writes
 - **Agent:** perf-hunter · **Branch:** `perf/frames-mount-one-by-one` (off trunk, merged `origin/feat/canvas-excellence` `d942376e` at `3abe1bb8`) · **Updated:** 2026-09-26
 - **Stage:** done, gates green, draft PR open against `feat/canvas-excellence`.
 - **Mechanism:** every on-screen frame's node-tree mount was its own `startTransition`, but React groups pending transition lanes into ONE commit — ten frames committed together (`perf-16`'s finding). `frameTreeMountQueue.ts` gates the mount behind a single grant: only the holder renders; the next grant goes to whichever waiting frame is closest to the viewport centre, no timer/rAF/idle-callback (that staging chain was removed once already, see `PROJECT-BRIEF.md`). Alongside it: concurrent `studio/load` requests for one project dedupe onto one in-flight promise (`studioLoadMemo.ts`), token extraction memoizes on the parsed site (`tokenExtractMemo.ts`), and `.studio/framework.json`/`fonts.json` writes skip when byte-identical (`writeStudioStoreJsonIfChanged`).
