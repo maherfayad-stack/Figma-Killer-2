@@ -76,6 +76,16 @@ const BUDGET_REFUSAL_DIALOG_MS = 100
 /** Fixed name, not per-PID: a crashed run's leftovers are visibly overwritten rather than accumulating. */
 const FIXTURE_DIR = path.join(WORKSPACE_ROOT, '__e2e-studio-feel')
 
+/**
+ * `speed-05`'s always-refused delete target — see {@link patchInStructuralRefusalTarget}.
+ * Matched by TEXT, not a `data-testid`: the canvas module renderer (`base.text`
+ * / `base.container`) only forwards a fixed prop vocabulary onto the DOM node
+ * it mounts, so an arbitrary custom attribute authored in the `.tsx` never
+ * reaches the rendered element — measured directly against this exact
+ * fixture (the attribute silently dropped, the text child rendered fine).
+ */
+const STRUCTURAL_REFUSAL_TARGET_TEXT = 'STILL_REFUSED_DELETE_TARGET'
+
 let fixtureReady = false
 let fixture: FixtureProject | undefined
 
@@ -86,7 +96,43 @@ test.beforeAll(() => {
   // `createFixtureProject` overwrites it in place instead.
   fixture = createFixtureProject('test4', path.basename(FIXTURE_DIR))
   fixtureReady = fixture.ready
+  if (fixtureReady) patchInStructuralRefusalTarget()
 })
+
+/**
+ * `speed-05` needs a delete that STAYS refused so the dialog it measures ever
+ * mounts. `shared-component` no longer qualifies: P5-C (OD-7,
+ * `instanceOnlyGesture.ts`) made the store detach a refused instance and
+ * replay the gesture against the detached markup instead of asking — an
+ * async round trip (a `/save`, a reparse) that resolves the delete silently,
+ * with no dialog at all (`RefusalDialog.tsx`'s own doc: "…never reaches this
+ * dialog"). Confirmed empirically against this exact fixture (the iOS status
+ * bar clock): the element is gone from the canvas ~15s after the keydown, and
+ * `[role="alertdialog"]` never once appeared.
+ *
+ * A JSX spread attribute is the one lock `refusePlacement` still answers
+ * unconditionally and synchronously — `code-placed`, no OD-7 remedy exists
+ * for it, so `presentStructuralRefusal` goes straight to `openDialog()`. This
+ * appends one ordinary, always-refused element as the LAST child of `<main>`,
+ * after the existing footer — deliberately not the first: `firstLeafNode`
+ * (the ⌘D test's target) walks the frame in document order, and this element
+ * must not become "the first leaf on the board" for that unrelated test.
+ */
+function patchInStructuralRefusalTarget(): void {
+  const file = path.join(FIXTURE_DIR, 'pages', 'Onboarding.tsx')
+  const source = fs.readFileSync(file, 'utf8')
+  const marker = '    </main>'
+  if (!source.includes(marker)) {
+    throw new Error(
+      "patchInStructuralRefusalTarget: Onboarding.tsx's <main> no longer closes the way this patch expects",
+    )
+  }
+  const injected =
+    `      {/* speed-05 e2e fixture patch — an ordinary element with no honest single writeback target */}\n` +
+    `      <div {...{}}>${STRUCTURAL_REFUSAL_TARGET_TEXT}</div>\n` +
+    marker
+  fs.writeFileSync(file, source.replace(marker, injected), 'utf8')
+}
 
 test.afterAll(() => {
   if (fixture) removeFixtureProject(fixture)
@@ -216,31 +262,20 @@ async function firstLeafNode(contentFrame: FrameLocator): Promise<Locator> {
 
 /**
  * `speed-05` — a leaf node whose delete is REFUSED with a runnable remedy
- * (`RefusalDialog`, not a toast): the iOS status bar's clock, always the
- * first thing painted by `Onboarding.tsx`'s `<IOSStatusBar/>` — a LOCAL
- * component the parser inlines (`inlineLocalComponents.ts`), so its markup
- * carries a composite id (`${callSiteId}~${originalId}`, `INLINE_ID_SEPARATOR`
- * = `~`) in the STORE's page tree and refuses a delete with `shared-component`
- * (`sourceStructure.ts`'s `isInlinedNodeId`), whose remedies table gives it a
- * non-empty `actions` array — the dialog path, not the toast path
- * (`presentStructuralRefusal`'s own doc).
- *
- * Matched by TEXT, not by the id's `~` shape: `test4`'s board runs Tier 2
- * live (bridge) frames, whose DOM is the real React app — `idStamp.ts` stamps
- * `data-node-id` with the element's OWN `rel:line:col` inside
- * `IOSStatusBar.tsx`, not the store's composite id (`liveNodeResolve.ts` does
- * that translation on the parent side, invisibly to the DOM). `9:41` is a
- * literal string in `IOSStatusBar.tsx`, not translated per-locale, so it is
- * stable across the fixture's `lang=ar` board.
+ * (`RefusalDialog`, not a toast), and stays that way: `patchInStructuralRefusalTarget`
+ * writes it into the fixture's `Onboarding.tsx` as a plain element carrying a
+ * JSX spread attribute, which the parser locks `code-placed`
+ * (`parsePageFile.ts`'s `SPREAD_LOCK_REASON`) — a reason `refusePlacement`
+ * answers unconditionally, with no OD-7 (`instanceOnlyGesture.ts`) remedy that
+ * could resolve it silently. See that function's own doc for why the iOS
+ * status bar clock this case used to target no longer belongs here: its
+ * `shared-component` refusal now auto-detaches and replays instead of asking.
  */
-async function firstInlinedLeafNode(contentFrame: FrameLocator): Promise<Locator> {
-  // `.first()`: the cases share one fixture, and the ⌘D case writes five more
-  // `<IOSStatusBar/>` right after the original, so the clock can appear six
-  // times. The first is the original's; every copy refuses the same way.
-  const target = contentFrame.getByText('9:41', { exact: true }).first()
+async function structuralRefusalTarget(contentFrame: FrameLocator): Promise<Locator> {
+  const target = contentFrame.getByText(STRUCTURAL_REFUSAL_TARGET_TEXT, { exact: true })
   await expect(
     target,
-    'the fixture frame never rendered the iOS status bar clock — nothing here would refuse a delete with a remedy',
+    'the fixture frame never rendered the patched-in refusal target — nothing here would refuse a delete',
   ).toBeVisible({ timeout: 30_000 })
   return target
 }
@@ -625,6 +660,16 @@ test.describe('V1: the studio feels like a design tool', () => {
    * dialog branch now opens `structuralRefusalDialog` inside `startTransition`,
    * so the keydown task ends immediately and React mounts the dialog in its
    * own, interruptible, low-priority render.
+   *
+   * This case used to target the iOS status bar clock (a `shared-component`
+   * refusal). P5-C's detach-and-replay (`instanceOnlyGesture.ts`, OD-7) made
+   * that refusal resolve itself — silently, asynchronously, never opening
+   * this dialog at all (confirmed empirically: the clock disappears from the
+   * canvas ~15s after the keydown, no `[role="alertdialog"]` ever appears).
+   * `structuralRefusalTarget` is a `code-placed` refusal instead — a JSX
+   * spread lock with no OD-7 remedy — patched into the fixture's own copy by
+   * `patchInStructuralRefusalTarget` so the budget keeps measuring what it was
+   * built to measure: a refusal with no way to resolve itself.
    */
   test('Delete on a node the source refuses answers with RefusalDialog within budget', async ({ page }) => {
     const canvasRoot = await openFixtureBoard(page)
@@ -640,43 +685,18 @@ test.describe('V1: the studio feels like a design tool', () => {
       'the first board frame never showed exactly one canvas iframe',
     ).toHaveCount(1, { timeout: 30_000 })
 
+    const mode = await settleCanvasFrameMode(page, firstFrame, FIXTURE_DIR)
     const contentFrame = canvasContentFrame(firstFrame)
-    const target = await firstInlinedLeafNode(contentFrame)
+    const target = await structuralRefusalTarget(contentFrame)
     await panIntoView(page, canvasRoot, target, 80)
 
-    // A click inside a component instance selects the INSTANCE (Figma; P2-B
-    // made live frames apply the boundary portal frames always had), and each
-    // double-click opens one level. The clock sits inside `IOSStatusBar`,
-    // itself possibly inside another component, so open levels until the
-    // clock itself is the selection — at most three, never one more than
-    // needed: a double-click on an already-open text node starts an inline
-    // edit instead.
-    //
-    // Confirmed by `SharedComponentNotice`'s own `role="note"` banner
-    // ("Part of IOSStatusBar…"), which only renders for a selection whose id
-    // is `isInlinedNodeId` — exactly the shape `shared-component` needs to
-    // refuse the coming delete with a remedy. More reliable than the in-frame
-    // selection ring here: selecting this node auto-focuses the canvas on it
-    // (`focusActiveBreakpoint`), and the resulting pan/zoom can still be
-    // settling when the ring would otherwise be checked.
-    const sharedComponentNotice = page.getByRole('note').filter({ hasText: 'Part of' })
+    // An ordinary element, not an instance — one click selects it directly,
+    // no level-opening dance needed.
     await clickInFrame(page, target)
-    for (let level = 0; level < 3; level += 1) {
-      if (await sharedComponentNotice.isVisible().catch(() => false)) break
-      // A selection can move the board (`focusActiveBreakpoint`), so the
-      // clock is re-centred before every double-click — measured before,
-      // the point can end up under a side panel.
-      await panIntoView(page, canvasRoot, target, 80)
-      await page.waitForTimeout(400)
-      const box = await target.boundingBox()
-      expect(box, 'the clock has no bounding box').not.toBeNull()
-      await page.mouse.dblclick(box!.x + box!.width / 2, box!.y + box!.height / 2)
-      await page.waitForTimeout(400)
-    }
-    await expect(
-      sharedComponentNotice,
-      'opening the components around the iOS status bar clock never selected the inlined clock itself',
-    ).toBeVisible({ timeout: 15_000 })
+    const rings = selectionRings(page, firstFrame, mode)
+    await expect(rings, 'clicking the refusal target drew no selection ring').toHaveCount(1, {
+      timeout: 15_000,
+    })
 
     // Delete is a `node`-scope keyboard shortcut and needs the canvas to hold
     // DOM focus, same as the ⌘D test above.
@@ -699,12 +719,12 @@ test.describe('V1: the studio feels like a design tool', () => {
         'answer happens outside the keydown task; read docs/archive/plans/STUDIO-SPEED-PLAN.md speed-05 before loosening it',
     ).toBeLessThan(BUDGET_REFUSAL_DIALOG_MS)
 
-    // The dialog answered the RIGHT refusal — `shared-component`'s own
-    // remedies (`STRUCTURAL_ACTIONS` in `structuralConstraint.ts`), not some
-    // other reason a wrong selection would have produced.
+    // The dialog answered the RIGHT refusal — `code-placed`'s own remedy
+    // (`STRUCTURAL_ACTIONS` in `structuralConstraint.ts`: "Open it in code"),
+    // not some other reason a wrong selection would have produced.
     await expect(
-      page.getByTestId('constraint-action-detach'),
-      'RefusalDialog opened without the shared-component remedies — the wrong node was likely selected',
+      page.getByTestId('constraint-action-jump-to-source'),
+      'RefusalDialog opened without the code-placed remedy — the wrong node was likely selected',
     ).toBeVisible()
   })
 })
