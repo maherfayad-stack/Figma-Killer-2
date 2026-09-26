@@ -240,6 +240,35 @@ test.describe('SVG-9 — vector edit mode and the pen, measured', () => {
     await expect.poll(readPage, { timeout: 10_000 }).toBe(before)
   })
 
+  test('double-clicking the outline adds a point ON the path; Delete removes it — one /save each', async ({ page }) => {
+    const before = readPage()
+    const { canvasRoot, frame } = await openBoard(page)
+    const svg = await enterEditMode(page, frame, ICON_SVG)
+    await zoomToPercent(page, canvasRoot, 100)
+    await panIntoView(page, canvasRoot, svg)
+    const saves = savesOn(page)
+
+    // Halfway along the top edge (4,4)→(20,4), measured through the path's own CTM.
+    const facts = await overlayAnchors(page)
+    const [mid] = await pathPointsOnScreen(frame, ICON_SVG, [{ x: 12, y: 4 }], facts.zoom)
+    await page.mouse.dblclick(mid!.x, mid!.y)
+    await expect.poll(() => saves.length, { timeout: 10_000 }).toBe(1)
+    await expect.poll(() => /<path d="([^"]+)"/.exec(readPage())?.[1], { timeout: 10_000 }).toBe('M4 4 h8 h8v16H4z')
+    await expect.poll(async () => (await overlayAnchors(page)).overlay.length, { timeout: 10_000 }).toBe(5)
+
+    // The new point is selected; Delete joins its neighbours again.
+    await page.keyboard.press('Delete')
+    await expect.poll(() => saves.length, { timeout: 10_000 }).toBe(2)
+    await expect.poll(() => /<path d="([^"]+)"/.exec(readPage())?.[1], { timeout: 10_000 }).toBe('M4 4 h16v16H4z')
+    // The svg itself was not deleted.
+    expect(readPage()).toContain('<svg className="icon"')
+    await page.keyboard.press('Escape')
+    await canvasRoot.focus()
+    await page.keyboard.press('Control+z')
+    await page.keyboard.press('Control+z')
+    await expect.poll(readPage, { timeout: 10_000 }).toBe(before)
+  })
+
   test('a 2,000-anchor path drags inside the frame budget at every zoom, with zero React commits', async ({ page }) => {
     const { canvasRoot, frame } = await openBoard(page)
     const svg = await enterEditMode(page, frame, BIG_SVG)

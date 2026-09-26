@@ -57,6 +57,10 @@ describe('removeAnchor', () => {
     expect(removeAnchor(model('M0 0L5 0L10 0L10 10'), 1, 2)).toBe('M0 0 L10 0L10 10')
   })
 
+  it('keeps two joined h segments an h', () => {
+    expect(removeAnchor(model('M4 4 h8 h8v16H4z'), 1, 2)).toBe('M4 4 h16v16H4z')
+  })
+
   it('drops the last point of an open path, and the point before a close', () => {
     expect(removeAnchor(model('M0 0L10 0L10 10'), 2, 2)).toBe('M0 0L10 0')
     expect(removeAnchor(model('M0 0L10 0L10 10L0 10Z'), 3, 2)).toBe('M0 0L10 0L10 10Z')

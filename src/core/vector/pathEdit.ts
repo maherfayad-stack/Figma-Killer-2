@@ -194,7 +194,10 @@ export function removeAnchor(model: PathModel, index: number, decimals: number):
 
   const relative = isRelative(nextSrc.command)
   if (seg.kind === 'line' && next.kind === 'line') {
-    return rebuild(model, index, 2, [{ kind: 'line', from: seg.from, to: next.to, relative }], decimals)
+    // Two `h`s joined stay an `h` (two `v`s a `v`) when the result is still axis-aligned.
+    const upper = nextSrc.command.toUpperCase()
+    const axis = upper === 'H' || upper === 'V' ? upper : undefined
+    return rebuild(model, index, 2, [{ kind: 'line', from: seg.from, to: next.to, relative, ...(axis ? { axis } : {}) }], decimals)
   }
   const inHandles = asCubicHandles(seg)
   const outHandles = asCubicHandles(next)
