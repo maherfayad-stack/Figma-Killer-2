@@ -5,8 +5,9 @@ One line per archived `STATE.md` entry, across every file in this folder: `date 
 
 Two different entries sometimes share an id (for example the two `perf-10` entries of 2026-09-19 and 2026-09-20). Tell them apart by date and title, and cite them by title.
 
-## `2026-09.md` — 266 entries, archived 2026-09-23, newest first
+## `2026-09.md` — 267 entries, archived 2026-09-23, newest first
 
+- 2026-09-25 · `perf-16` · P6-B client half: stream the board in (PR #271) · [`2026-09.md`](2026-09.md)
 - 2026-09-25 · `perf-15` · P6-C: remaining budgets (PR #272) · [`2026-09.md`](2026-09.md)
 - 2026-09-25 · `P3-D2` · P3-D2: .map rows edit the array (OD-8) (PR #273) · [`2026-09.md`](2026-09.md)
 - 2026-09-25 · `canvas-39` · P5-A: one paste pipeline (PR #270) · [`2026-09.md`](2026-09.md)

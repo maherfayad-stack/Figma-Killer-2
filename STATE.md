@@ -46,25 +46,6 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Landmines:** two different entries are both `perf-10` (#195 and #196); cite them by title. `04f92846` commits Studio's generated prototype shell into `__board-perf-fixture` and edits `test4`: owner to decide whether to revert it.
 - **Next:** once #217 merges, close #192, #195 and #198–#210 as included.
 
-### perf-16 — P6-B client half: stream the board in (PERF-7, speed-07)
-- **Agent:** perf-hunter · **Branch:** `perf/stream-the-board-in` off `ef23f78a` · draft PR #271 (base `feat/canvas-excellence`), long form + all runs in its body · **Updated:** 2026-09-26 · (perf-15 left to P6-C, running in parallel)
-- **Stage:** PR #271 open (draft). tsc, lint, build clean; `bun test` in chunks: only pre-existing failures (agentCheckpoints size, bundle-fresh on Bun 1.3.6) plus two load flakes that pass alone (alm-design-system-fresh, git.test 409); e2e `studio-board-load` passes post-merge (warm first paint 2308 ms on a quiet machine).
-- **Done:** (1) a first open hands the store its pages AS THEY ARRIVE (`studio/studioProjectLoad.ts`, split out of `fsCodemodAdapter.ts`; `LoadSiteOptions.progress` in `@core/persistence/types`; store side `streamedLoadSlice.ts`); frames whose page is still on the wire paint `PendingBoardFrame`; `/load`'s meta line carries `pageList` (replaces `pageCount`). (2) The sidecar read starts WITH `/load`; the token extraction runs AFTER it, unwaited, and is adopted as part of the read (`adoptLoadedFramework`). (3) The board's own chunk (`studioBoardLayersChunk.ts`) is preloaded with the editor body instead of after it. (4) React's dev double-mount now aborts the superseded load request. Timeline marks: `studio:load:first-page|open|complete`.
-- **Numbers** (e2e, Vite DEV server, warm, ms from navigation; before = trunk `ef23f78a` in a side worktree, interleaved; ±15 % machine noise):
-
-| | 40-page before → after | 1,000-file before → after |
-|---|---|---|
-| `/load` start → first byte | 178, 152 → 95, 98 | 210 → 161 |
-| board frames after canvas root | 1065, 961 → 0, 0 | 2284 → 0 |
-| first frame painted | 5315, 5602 → 4485, 5190 | 5428 → 4510 |
-| cold first frame painted | 11826, 10275 → 8486, 8100 | 18702 → 14895 |
-
-- **Budgets:** `tests/e2e/studio-board-load.e2e.ts` (added to `e2e-budgets`): warm first paint < 6 s, and board frames ≤ 300 ms after the canvas root (ORDER budget; before = ~1 s, so it fails on the old code).
-- **Decisions:** pages are APPENDED while streaming (undo patches address pages by position); page order is restored at the end only when the undo stack is empty. The first delivery waits for the page `loadSite` opens on (home, else first), so the active page is unchanged. Re-reads of an open project still take one whole document.
-- **Landmines / tried and did NOT help:** (1) running the token POST beside `/load` made it WORSE — its 150–590 ms of synchronous server work held `/load`'s first byte back (152 → 523 ms; 1,000 files 210 → 1940 ms). (2) Streaming alone did not move the dev first paint (5315/5602 → 5287): the critical path was the board chunk and the frame mount. (3) The server cannot emit a page before the whole parse: the registry's class ids are last-wins across all pages' stylesheets.
-- **Found, not fixed:** the ten on-screen frames' trees commit in ONE transition (diag: start 3148 → commits 4465–4521 ms), so the first frame cannot paint before the tenth — canvas-engineer. Token extraction re-runs and rewrites `framework.json` on every open (server-engineer). No in-flight dedupe in `memoizedStudioLoad`.
-- **Next:** orchestrator merge; owner dogfood in the PR body.
-
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
@@ -176,6 +157,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 10 one-liners, newest first: ids — what — PR — date. Everything here is merged into the trunk; full entries are in [`docs/state-archive/2026-09.md`](docs/state-archive/2026-09.md).*
 
+- `perf-16` — P6-B client: pages paint as they arrive with titled placeholders, board code loads with the editor (frames 1–2.3 s sooner), token extraction off the open path; warm first frame 5.3→4.5 s dev (300 ms target not met: one-update frame mount) — #271 — 2026-09-25
 - `perf-15` — P6-C: every audit budget is a gate (plus a production-build e2e pass); warm click→ring 62→47 ms prod, cold 109→69 ms, keystroke→paint 32→26 ms, Tier-2 posters 0/4→2/2; CanvasRoot compiled by the React Compiler again — #272 — 2026-09-25
 - `P3-D2` — P3-D2: drag, ⌥↑/↓, grid-row ↑/↓, ⌘D, ⌥-drag and paste on a .map row write the array literal (comments and commas kept, unique copy keys, one undo); honest refusals for non-literal arrays — #273 — 2026-09-25
 - `canvas-39` — P5-A: ⌘V from the paste event in every frame, copy marker with copiedAt, image paste through the drop pipeline, SVG paste through sanitizeSvg; live-frame keys can never arm clipboard.read; security approved — #270 — 2026-09-25
@@ -185,7 +167,6 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `canvas-37` — live frames: resize, snap, rollback, double-click and hover parity; optimistic.text runtime half removed — #265 — 2026-09-25
 - `canvas-33` — P5-G: loose layers on the empty board (FC-1..5), drop images on the board, decoder refuses layer files by default (only /save opts in); security approved — #260 — 2026-09-25
 - `perf-14` — shell: build-tool configs out of the ts program (288 → 86 files), cold load ~3.4 → ~1 s, warm 23 → 3 ms, prototype shell once per project — #267 — 2026-09-25
-- `store-20` — P6-A: a prop edit re-renders 1 node not 300, a move remounts 0 not 297, frames restyle 0 not 12; budget in bench:editor-store — #266 — 2026-09-25
 
 ---
 
