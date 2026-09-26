@@ -227,7 +227,7 @@ export function elementChildren(element: JsxElement | JsxFragment): (JsxElement 
 }
 
 /** The 1-based `line, col` of a JSX element's tag name — the coordinate `resolveJsxChildRange` speaks. */
-export function tagLocation(sourceFile: SourceFile, element: JsxElement | JsxSelfClosingElement): [number, number] {
+function tagLocation(sourceFile: SourceFile, element: JsxElement | JsxSelfClosingElement): [number, number] {
   const opening = Node.isJsxElement(element) ? element.getOpeningElement() : element
   const { line, column } = sourceFile.getLineAndColumnAtPos(opening.getTagNameNode().getStart())
   return [line, column]

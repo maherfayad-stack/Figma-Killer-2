@@ -22,7 +22,8 @@ export const SvgEditor: React.FC<ModuleComponentProps<SvgStoredProps>> = ({
   mcClassName,
   nodeWrapperProps,
 }) => {
-  const markup = sanitizeSvg(props.svg)
+  // The canvas keeps the SVG part stamps: vector edit mode addresses its writes by them (P5-D).
+  const markup = sanitizeSvg(props.svg, { keepPartStamps: true })
 
   if (!markup) {
     return (

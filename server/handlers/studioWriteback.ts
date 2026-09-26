@@ -7,7 +7,7 @@
  * against temp fixture files without a full Request/Response round trip.
  *
  * The WIRE SHAPE (`StudioEditSchema`/`StudioEdit` — `kind: 'prop' | 'text' |
- * 'style' | 'class' | 'literal' | 'tag' | 'asset' | 'detach' | 'swap' | 'move' |
+ * 'style' | 'class' | 'literal' | 'tag' | 'asset' | 'svg-attr' | 'detach' | 'swap' | 'restore' | 'move' |
  * 'delete' | 'insert' | 'duplicate' | 'wrap' | 'group' | 'ungroup' |
  * 'reparent' | 'transplant' | 'insert-slot' |
  * 'promote-component' | 'add-slot-prop' | 'css'`) lives in
@@ -26,7 +26,9 @@
  *   - `studioCssWriteback.ts` — `css`. Its target is a FILE + SELECTOR rather
  *     than a decoded `line:col`, and it writes through a postcss CST.
  *   - `studioStructuralWriteback.ts` — `move` / `delete` / `insert` /
- *     `duplicate` / `wrap` / `group` / `ungroup` / `reparent` / `transplant`.
+ *     `duplicate` / `wrap` / `group` / `ungroup` / `reparent` / `transplant`,
+ *     entered through `studioStructuralDispatch.ts`, which decodes their extra
+ *     ends.
  *     These change WHERE markup is: they
  *     take a second and sometimes a third location (an anchor sibling, a
  *     destination parent), they change the file's line count (invalidating
@@ -63,7 +65,6 @@ import {
   setStyledDeclaration,
   swapComponentInstance,
   syncProjectWithDisk,
-  type DeletedJsxText,
   type ModuleImportPlan,
 } from '@core/ast-codemods'
 import type { SourceFingerprintExpectations } from '@core/page-tree'
@@ -71,7 +72,7 @@ import type { Project } from 'ts-morph'
 import { applyCssEdit } from './studioCssWriteback'
 import { withProjectWriteLock } from './studio/projectWriteLock'
 import { snapshotImportsBeforeRemoval } from './studioBatchImportPrune'
-import { resolveInsertAssetImports } from './studioInsertAssetImports'
+import { applyRestoreEdit, openBatchUndoJournal } from './studioBatchUndoJournal'
 import { relativeImportSpecifier, resolveClassNameTokens, resolveContainedRefPath } from './studioEditTargets'
 import {
   applySlotEdit,
@@ -79,7 +80,8 @@ import {
   type StudioAddSlotPropDetail,
   type StudioPromoteComponentDetail,
 } from './studioSlotWriteback'
-import { applyStructuralEdit, applyTransplantEdit } from './studioStructuralWriteback'
+import { dispatchStructuralEdit } from './studioStructuralDispatch'
+import { applySvgAttrEdit } from './studioSvgWriteback'
 import { applyListItemEdit } from './studioListItemWriteback'
 import { applyCanvasLayerEdit, isCanvasLayerEdit } from './studioCanvasLayerWriteback'
 import { createCanvasLayerScope } from './studioCanvasLayerScope'
@@ -205,6 +207,8 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
     }
   }
 
+  // P3-F — a restore names a journal entry, never a location.
+  if (edit.kind === 'restore') return applyRestoreEdit(dir, edit)
   // P5-G — the free canvas's kinds address a layer by id (three never decode).
   if (isCanvasLayerEdit(edit)) return applyCanvasLayerEdit(dir, edit, (nodeId) => studioEditLocation(dir, nodeId, scope))
   const target = studioEditLocation(dir, edit.nodeId, scope)
@@ -292,113 +296,35 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
     case 'tag':
       setJsxTagName({ ...loc, tag: edit.tag, project })
       return { applied: true }
-    case 'transplant': {
-      // D2 G3 — the ONE structural kind whose destination is deliberately in a
-      // DIFFERENT file, so its ends are decoded WITHOUT the same-file filter
-      // every other kind applies. They still go through `studioEditLocation`,
-      // which is where the containment and app-source guards live, so a
-      // hand-crafted `parentNodeId` still cannot name a file outside the
-      // workspace or one that is not app source.
-      //
-      // The ANCHOR belongs to the destination's file, not the origin's: it
-      // names an existing child of the container the element is landing in. A
-      // foreign anchor is therefore dropped (append is an honest position),
-      // exactly as `insert`/`reparent` treat theirs.
-      const destination = studioEditLocation(dir, edit.parentNodeId, scope)
-      const anchorId = edit.anchorNodeId
-      const anchor = anchorId ? studioEditLocation(dir, anchorId, scope) : null
-      const result = applyTransplantEdit(
-        loc,
-        edit,
-        destination ? { file: join(dir, destination.rel), line: destination.line, col: destination.col } : null,
-        anchor && destination && anchor.rel === destination.rel
-          ? { file: join(dir, anchor.rel), line: anchor.line, col: anchor.col }
-          : null,
-      )
-      if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
-      // `store-13`/`store-14` — a transplant writes markup into the
-      // DESTINATION, so the position it reports is pinned to
-      // `edit.parentNodeId`'s file, not to this edit's own.
-      // `applyStudioEditBatch` reads `createdIn`/`relocatedIn` for that.
-      return {
-        applied: true,
-        ...(result.created === undefined ? {} : { created: result.created, createdIn: edit.parentNodeId }),
-        ...(result.relocated === undefined
-          ? {}
-          : { relocated: result.relocated, relocatedIn: edit.parentNodeId }),
-      }
-    }
+    case 'transplant':
     case 'move':
     case 'delete':
-    case 'reinsert-source':
     case 'insert':
     case 'duplicate':
     case 'wrap':
     case 'group':
     case 'ungroup':
-    case 'reparent': {
-      // Every end decodes through the same guard, so a hand-crafted
-      // `anchorNodeId`/`parentNodeId` cannot name a file outside the workspace
-      // or a file that is not app source — and a cross-file anchor or
-      // destination is dropped here rather than reaching a codemod that would
-      // need an AST to notice. What each kind does with a missing one is
-      // `applyStructuralEdit`'s call (a reparent refuses `cross-file`; an
-      // insert appends).
-      const anchorId = 'anchorNodeId' in edit ? edit.anchorNodeId : undefined
-      const anchor = anchorId ? studioEditLocation(dir, anchorId, scope) : null
-      const parentId = 'parentNodeId' in edit ? edit.parentNodeId : undefined
-      const destination = parentId ? studioEditLocation(dir, parentId, scope) : null
-      // K3 — a `group` names the REST of its run. Same decoder, same guard,
-      // same same-file filter as the anchor above; `applyStructuralEdit`
-      // refuses when the filter dropped any of them, because a group that
-      // quietly wrapped the subset that happened to be in this file would be
-      // a write the user never asked for.
-      const siblings = ('siblingNodeIds' in edit ? edit.siblingNodeIds : [])
-        .map((nodeId) => studioEditLocation(dir, nodeId, scope))
-        .filter((location): location is StudioEditLocation => location !== null && location.rel === target.rel)
-      // IMG-10 — an insert's image imports name workspace FILES; the specifier
-      // is spelled here, from the file being written, after the path guard.
-      const assets = edit.kind === 'insert' ? resolveInsertAssetImports(dir, target.rel, edit) : null
-      if (assets && !assets.ok) throw new StudioEditRefusalError(assets.reason, assets.message)
-      const result = applyStructuralEdit(
-        loc,
-        assets ? assets.value : edit,
-        anchor && anchor.rel === target.rel ? anchor : null,
-        destination && destination.rel === target.rel ? destination : null,
-        // The workspace-relative path of the file being written — what a
-        // `designSystemImport` needs to become a real relative specifier. It
-        // comes from the SAME decoder every other path here goes through, so
-        // it inherits `studioEditLocation`'s containment guard.
-        target.rel,
-        siblings,
-      )
+    case 'reparent':
+      return dispatchStructuralEdit(dir, edit, loc, target, scope)
+    case 'svg-attr': {
+      // P5-D SVG-4 — one element inside an inline `<svg>` (`studioSvgWriteback.ts`).
+      const result = applySvgAttrEdit(loc, edit, project)
       if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
-      // `store-13`/`store-14` — `created`/`relocated` ride straight through;
-      // only the kinds that make or move markup set them, and
-      // `applyStudioEditBatch` is what turns a position into a node id (it
-      // alone knows the batch's final line count).
-      return {
-        applied: true,
-        ...(result.created === undefined ? {} : { created: result.created }),
-        ...(result.relocated === undefined ? {} : { relocated: result.relocated }),
-        ...(result.removed === undefined ? {} : { removed: [result.removed] }),
-      }
+      return { applied: true }
     }
     case 'list-item': {
       // OD-8 — `loc` is the array literal's `[`, not an element: a `.map`
-      // row's reorder/delete/duplicate/paste rewrites the array it iterates.
+      // row's reorder/delete/duplicate rewrites the array it iterates.
       const result = applyListItemEdit(loc, edit, project)
       if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
-      return { applied: true, ...(result.removed.length > 0 ? { removed: result.removed } : {}) }
+      return { applied: true }
     }
     case 'detach': {
-      // P3-D (OD-7) — the import is retired by this batch's prune pass (see
-      // `removesMarkup` below), which also REPORTS it; with the call site's
-      // own bytes (`removed`) and what replaced it (`created`) that is the
-      // whole of ⌘Z (`reinsert-detached`).
+      // P3-D (OD-7) — the import is retired by this batch's prune pass
+      // (`studioBatchImportPrune.ts`); ⌘Z is the undo journal's `restore`.
       const result = detachComponentInstance({ ...loc, workspaceRoot: dir, retireImport: false })
       if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
-      return { applied: true, ...(result.created ? { created: [result.created] } : {}), removed: [result.removed] }
+      return { applied: true, ...(result.created ? { created: [result.created] } : {}) }
     }
     case 'swap': {
       const result = swapComponentInstance({
@@ -489,6 +415,8 @@ export function applyStudioEditBatch(
   // A refused edit's file is still reported: the caller re-reads exactly these
   // to recover from an `element-moved` refusal.
   const touchedFiles = studioEditsTouchedFiles(dir, [...ordered, ...identity.moved.map((entry) => entry.edit)], scope)
+  // P3-F — before any byte is written: a one-shot write's pre-image, and a restore's own files.
+  const journal = openBatchUndoJournal(dir, edits, touchedFiles, options)
   const lineCountBefore = new Map<string, number>()
   for (const file of touchedFiles) {
     lineCountBefore.set(file, countLines(file))
@@ -509,10 +437,8 @@ export function applyStudioEditBatch(
   const createdPositions: CreatedNodePosition[] = []
   // `store-14` — the same, for the elements a batch MOVED rather than made.
   const relocatedPositions: CreatedNodePosition[] = []
-  // `store-15` — every `delete` edit's own discarded bytes, keyed by the
-  // edit's own `nodeId` so a caller can pair a `removed` entry with the edit
-  // that produced it.
-  const removed: (DeletedJsxText & { nodeId: string })[] = []
+  // P5-G — every `canvas-layer-delete`'s module bytes, keyed by the edit's own `nodeId`.
+  const removed: StudioEditBatchResult['removed'] = []
   // OD-8 — each written `list-item` edit's array, pinned from the file's end.
   const listArrayPositions: { nodeId: string; position: CreatedNodePosition[] }[] = []
   // WB-24 — no edit writes into a file that does not parse (`studioSyntaxGuard.ts`).
@@ -523,7 +449,7 @@ export function applyStudioEditBatch(
   // after the loop for the same reason the import prune runs there.
   const moduleImports = createModuleImportPlan()
   for (const edit of ordered) {
-    const brokenTarget = canvasLayerScope(edit) ?? syntaxRefusal(edit)
+    const brokenTarget = canvasLayerScope(edit) ?? journal.refuse(edit) ?? syntaxRefusal(edit)
     if (brokenTarget) {
       refusals.push(brokenTarget)
       continue
@@ -587,7 +513,9 @@ export function applyStudioEditBatch(
     }
   }
 
-  const prunedImports = importPrune.prune()
+  importPrune.prune()
+  // P3-F — after the prune and the module imports: the entry is what the files are NOW.
+  const undoToken = journal.commit(written, promoteDetails.map((detail) => detail.newFile))
 
   // A re-found edit means the caller's ids for its file were already stale
   // before this batch wrote anything — `shifted` is how every caller learns
@@ -632,7 +560,6 @@ export function applyStudioEditBatch(
     addSlotPropDetails: asSent(addSlotPropDetails),
     touchedFiles: [...touchedFiles],
     removed: asSent(removed),
-    prunedImports,
     fingerprints: asSent(fingerprints),
     retargeted: identity.retargeted,
     createdNodeIds: resolveCreatedNodeIds(createdPositions, lineCountAfter),
@@ -640,6 +567,7 @@ export function applyStudioEditBatch(
     listArrays: listArrayPositions.flatMap(({ nodeId, position }) =>
       resolveCreatedNodeIds(position, lineCountAfter).map((to) => ({ nodeId: sentId.get(nodeId) ?? nodeId, to })),
     ),
+    ...(undoToken ? { undoToken } : {}),
   }
 }
 

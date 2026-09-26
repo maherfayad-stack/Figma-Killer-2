@@ -10,7 +10,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import type { ListItemOp } from '@core/page-tree'
+import { ListItemOpSchema, type ListItemOp } from '@core/page-tree'
+import { Value } from '@core/utils/typeboxHelpers'
 import { editListItems } from '../editListItems'
 
 let tmpDir: string
@@ -74,7 +75,7 @@ export default function Recipes() {
 describe('editListItems — one element per line', () => {
   it('reorders whole blocks: comments and the blank line after an element travel with it, the last keeps no comma', () => {
     const { result, text } = run(RECIPES, 'const RECIPES', 3, { kind: 'reorder', order: [2, 0, 1] })
-    expect(result).toEqual({ ok: true, removed: [] })
+    expect(result).toEqual({ ok: true })
     expect(text).toBe(`import { Card } from './Card'
 
 // Weeknight rotation — keep the fish first.
@@ -117,10 +118,8 @@ export default function Recipes() {
 
   it('removes a middle element with its own lines and nothing else', () => {
     const { result, text } = run(RECIPES, 'const RECIPES', 3, { kind: 'remove', indices: [1] })
-    expect(result).toEqual({
-      ok: true,
-      removed: [`  {\n    slug: 'dal',\n    title: 'Red lentil dal',\n    minutes: 35,\n  },\n\n`],
-    })
+    expect(result).toEqual({ ok: true })
+    expect(text).not.toContain('Red lentil dal')
     expect(text).toContain(`  { slug: 'miso-salmon', title: 'Miso salmon', minutes: 20 }, // family favourite\n  { slug: 'tacos'`)
   })
 
@@ -148,23 +147,15 @@ export default function Recipes() {
     expect(text).toBe(`const CARDS = [\n  { id: 7, title: 'Write brief' },\n  { id: 10, title: 'Write brief' },\n  { id: 9, title: 'Review' },\n]\n`)
   })
 
-  it('a remove and the insert its undo sends put the file back byte for byte', () => {
-    const { file, result } = run(RECIPES, 'const RECIPES', 3, { kind: 'remove', indices: [0, 2] })
-    if (!result.ok) throw new Error(result.refusal.message)
-    const after = read(file)
-    const back = editListItems({ file, ...arrayAt(after, 'const RECIPES'), length: 1, op: { kind: 'insert', at: [0, 2], texts: result.removed } })
-    expect(back.ok).toBe(true)
-    expect(read(file)).toBe(RECIPES)
-  })
-
-  it('removing every element leaves an empty array, and the undo fills it again exactly', () => {
-    const source = `const LANES = [\n  'todo',\n  'doing',\n]\n`
-    const { file, result, text } = run(source, 'const LANES', 2, { kind: 'remove', indices: [0, 1] })
-    expect(text).toBe(`const LANES = [\n]\n`)
-    if (!result.ok) throw new Error(result.refusal.message)
-    const back = editListItems({ file, ...arrayAt(text, 'const LANES'), length: 0, op: { kind: 'insert', at: [0, 1], texts: result.removed } })
-    expect(back.ok).toBe(true)
-    expect(read(file)).toBe(source)
+  it('removing every element leaves an empty array', () => {
+    const source = `const LANES = [
+  'todo',
+  'doing',
+]
+`
+    expect(run(source, 'const LANES', 2, { kind: 'remove', indices: [0, 1] }).text).toBe(`const LANES = [
+]
+`)
   })
 })
 
@@ -186,14 +177,6 @@ describe('editListItems — inline arrays', () => {
     expect(run(INLINE, 'nav>{', 3, { kind: 'copy', from: [1], at: 2 }).text).toContain(`{['Board', 'List', 'List', 'Calendar'].map`)
   })
 
-  it('round-trips a remove through its undo', () => {
-    const { file, result, text } = run(INLINE, 'nav>{', 3, { kind: 'remove', indices: [1] })
-    if (!result.ok) throw new Error(result.refusal.message)
-    expect(result.removed).toEqual([`'List'`])
-    const back = editListItems({ file, ...arrayAt(text, 'nav>{'), length: 2, op: { kind: 'insert', at: [1], texts: result.removed } })
-    expect(back.ok).toBe(true)
-    expect(read(file)).toBe(INLINE)
-  })
 })
 
 describe('editListItems — refusals leave the file byte-identical', () => {
@@ -225,31 +208,7 @@ describe('editListItems — refusals leave the file byte-identical', () => {
     expect(refusal(`const T = ['a']\n`, 'const T', 1, { kind: 'copy', from: [0], at: 1, key: { kind: 'item' } })).toBe('duplicate-key')
   })
 
-  it('an undo text that would run code when the file loads', () => {
-    const insert = (text: string): ListItemOp => ({ kind: 'insert', at: [0], texts: [text] })
-    expect(refusal(`const X = [1]\n`, 'const X', 1, insert(`fetch('https://evil.example')`))).toBe('not-data')
-    expect(refusal(`const X = [1]\n`, 'const X', 1, insert(`{ a: new Worker('x') }`))).toBe('not-data')
-    expect(refusal(`const X = [1]\n`, 'const X', 1, insert(`{ get x() { return 1 }, y: (globalThis.z = 1) }`))).toBe('not-data')
-    expect(refusal(`const X = [1]\n`, 'const X', 1, insert('tag`x`'))).toBe('not-data')
-  })
-
-  it('an undo text that is not exactly one element', () => {
-    const insert = (text: string): ListItemOp => ({ kind: 'insert', at: [0], texts: [text] })
-    expect(refusal(`const X = [1]\n`, 'const X', 1, insert(`1, 2`))).toBe('not-data')
-    expect(refusal(`const X = [1]\n`, 'const X', 1, insert(`1]; steal(); [2`))).toBe('not-data')
-    expect(refusal(`const X = [1]\n`, 'const X', 1, insert(`1], y = [2`))).toBe('not-data')
-    expect(refusal(`const X = [1]\n`, 'const X', 1, insert(`/* 1`))).toBe('not-data')
-  })
-
-  it('an undo import that is not one import declaration', () => {
-    const op: ListItemOp = { kind: 'insert', at: [0], texts: ['2'], imports: [`import a from 'a'; run()`] }
-    expect(refusal(`const X = [1]\n`, 'const X', 1, op)).toBe('invalid-import')
-  })
-
-  it('a function in an undo text is data: its body does not run when the file loads', () => {
-    const file = writeFixture(`const X = [1]\n`)
-    const result = editListItems({ file, line: 1, col: 11, length: 1, op: { kind: 'insert', at: [1], texts: [`{ onPick: () => track('x') }`] } })
-    expect(result.ok).toBe(true)
-    expect(read(file)).toBe(`const X = [1, { onPick: () => track('x') }]\n`)
+  it('the wire has no op that writes caller-supplied text — a remove is undone by the undo journal (P3-F)', () => {
+    expect(Value.Check(ListItemOpSchema, { kind: 'insert', at: [0], texts: ['2'] })).toBe(false)
   })
 })

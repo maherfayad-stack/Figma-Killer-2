@@ -47,16 +47,12 @@
  * a codemod that changes bytes the user never pointed at. What is left behind
  * is exactly the file minus one element.
  *
- * ## `removed` — the bytes it just discarded, on purpose, given back
+ * ## Its undo is not its business
  *
- * `store-15` — a delete used to throw away exactly the bytes an undo would
- * need: `verbatim.slice(target.range.start, target.range.end)` was computed
- * and dropped in the same line. Every caller that wants ⌘Z to put the element
- * back verbatim needs those bytes AND whether they owned a whole line (so
- * `reinsertJsxSource.ts` knows whether to re-indent or splice inline) — both
- * of which only exist here, at the moment of removal. Nothing here decides
- * WHERE they get written back to; that is `reinsertJsxSource`'s question,
- * asked later, against whatever the parent's children look like by then.
+ * ⌘Z after a delete is the editor's undo journal (P3-F,
+ * `server/handlers/studio/undoJournal.ts`), which records the whole file
+ * before the batch runs and puts it back byte for byte. So nothing here hands
+ * back the bytes it cut.
  */
 import { type Project } from 'ts-morph'
 import { createProject, loadSourceFile } from './locateJsxElement'
@@ -84,20 +80,7 @@ export interface DeleteJsxRefusal {
   message: string
 }
 
-/** The exact bytes a delete removed — `reinsertJsxSource`'s own `text`/`wholeLine` input, unchanged. */
-export interface DeletedJsxText {
-  text: string
-  wholeLine: boolean
-}
-
-/**
- * `removed` is `null` for a ternary branch replaced with `null` (WB-20): the
- * delete rewrote an expression rather than cutting a child, so there are no
- * child bytes to hand back.
- */
-export type DeleteJsxElementResult =
-  | { ok: true; removed: DeletedJsxText | null }
-  | { ok: false; refusal: DeleteJsxRefusal }
+export type DeleteJsxElementResult = { ok: true } | { ok: false; refusal: DeleteJsxRefusal }
 
 export function deleteJsxElement(params: DeleteJsxElementParams): DeleteJsxElementResult {
   const { file, line, col } = params
@@ -120,14 +103,10 @@ export function deleteJsxElement(params: DeleteJsxElementParams): DeleteJsxEleme
 
   const branch = target.range.ternaryBranch
   if (branch) {
-    // The other state stays; this one renders nothing from now on. There are
-    // no bytes an undo could re-insert as a CHILD here — the branch is not
-    // one — so `removed` is not reported, and the undo refuses by name
-    // (`reinsert-deleted` needs every deleted element's bytes).
+    // The other state stays; this one renders nothing from now on.
     writeVerbatimSource(sourceFile, file, verbatim.slice(0, branch.start) + 'null' + verbatim.slice(branch.end))
-    return { ok: true, removed: null }
+    return { ok: true }
   }
-  const removed = verbatim.slice(target.range.start, target.range.end)
   writeVerbatimSource(sourceFile, file, verbatim.slice(0, target.range.start) + verbatim.slice(target.range.end))
-  return { ok: true, removed: { text: removed, wholeLine: target.range.wholeLine } }
+  return { ok: true }
 }

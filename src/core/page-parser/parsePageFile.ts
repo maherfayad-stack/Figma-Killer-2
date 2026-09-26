@@ -401,7 +401,8 @@ function processElement(
     // writes real attribute names. Copying the text verbatim, and blanking the
     // whole graphic whenever it contained a `{`, is what left six empty rings on
     // the eSIM corpus.
-    const markup = serializeInlineSvg(element, ctx.eval)
+    // SVG-3 — stamped: each inner element carries where its `svg-attr` write lands.
+    const markup = serializeInlineSvg(element, ctx.eval, { stampParts: true })
     // Nothing usable came back (a spread-driven or oversized graphic). Keep the
     // node so its class/style/position are still visible, but lock it — there is
     // no markup to edit. A `.map`/ternary/spread lock upstream, if any, is

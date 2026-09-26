@@ -124,12 +124,12 @@ export interface StructuralHistoryMove {
  * move, planned against the live tree by the same `moveNodes` action a drag
  * uses, so it rides every refusal gate and writes to source exactly once.
  *
- * `delete` (`store-15`) is folded into `StructuralSourceHistory` rather than
- * getting a bare variant of its own: its tree mutation still runs eagerly
- * (same-tick optimistic removal), but its UNDO — writing the element's
- * original markup back — is a `reinsert-source` edit, resolved the identical
- * way every other `source` gesture's inverse is. See `structuralUndoPlan.ts`'s
- * `reinsert-deleted` template.
+ * `delete` is folded into `StructuralSourceHistory` rather than getting a bare
+ * variant of its own: its tree mutation still runs eagerly (same-tick
+ * optimistic removal), but its UNDO — the file as it was — is the undo
+ * journal's `restore` (P3-F), resolved the identical way every other `source`
+ * gesture's inverse is. See `structuralUndoPlan.ts`'s `restore-journal`
+ * template.
  */
 export type StructuralHistory =
   | { gesture: 'move'; undo: StructuralHistoryMove; redo: StructuralHistoryMove }

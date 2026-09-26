@@ -106,7 +106,7 @@ export interface CanvasFileDropRefusal {
 
 /** The keys held at the moment of the drop (or of this preview frame). */
 export interface CanvasFileDropModifiers {
-  /** ⌥ — insert beside an image instead of replacing it. */
+  /** ⌥ — insert beside an image instead of replacing it; and (P5-D) an `.svg` as an `<img>` instead of inline. */
   alt: boolean
   /** ⇧ — set the container's background image instead of inserting. */
   shift: boolean
@@ -140,13 +140,20 @@ export type CanvasFileDropPlan =
       /** Files the browser said are not images, left out — the toast names them. */
       skipped: File[]
       action: CanvasImageDropAction
+      /**
+       * P5-D SVG-5 — every dropped file is an `.svg` and the drop is a plain
+       * insert: each is written INLINE (`insertSvgAtTarget`), not as an
+       * `<img>`. ⌥ keeps the `<img>`; a ⌘ (absolute) drop is an image's
+       * gesture and keeps it too.
+       */
+      inlineSvg: boolean
     }
   /**
    * P5-G — released over the empty board of a Studio board: each image becomes
    * a loose layer on the free canvas, the first centred on `at` (board units).
    * Never written into a page.
    */
-  | { ok: true; kind: 'canvas'; sources: LandableImageSource[]; skipped: File[]; at: { x: number; y: number } }
+  | { ok: true; kind: 'canvas'; sources: LandableImageSource[]; skipped: File[]; at: { x: number; y: number }; inlineSvg: boolean }
   | { ok: false; refusal: CanvasFileDropRefusal }
 
 /**
@@ -378,6 +385,10 @@ export function planCanvasFileDrop(input: CanvasFileDropInput): CanvasFileDropPl
   } else {
     sources = [intake.source]
   }
+  // P5-D SVG-5 — dropped `.svg` FILES are written as inline `<svg>` JSX (⌥
+  // keeps them `<img>`s); a dragged URL is never inlined.
+  const allSvg =
+    sources.length > 0 && sources.every((source) => source.kind === 'file' && isSvgFile(source.file)) && !input.modifiers.alt
 
   const board = measureBoardDropSurfaces(input.transform)
   const surface = canvasSurfaceAtPoint(board, input.point)
@@ -392,6 +403,7 @@ export function planCanvasFileDrop(input: CanvasFileDropInput): CanvasFileDropPl
         x: (input.point.x - input.freeCanvas.left) / zoom,
         y: (input.point.y - input.freeCanvas.top) / zoom,
       },
+      inlineSvg: allSvg,
     }
   }
   if (!surface || !surface.pageId) {
@@ -420,7 +432,7 @@ export function planCanvasFileDrop(input: CanvasFileDropInput): CanvasFileDropPl
   if (!intent.ok) return { ok: false, refusal: intent.refusal }
 
   const action = intent.action
-  if (action.kind !== 'insert') return { ok: true, kind: 'frame', pageId: surface.pageId, sources, skipped, action }
+  if (action.kind !== 'insert') return { ok: true, kind: 'frame', pageId: surface.pageId, sources, skipped, action, inlineSvg: false }
 
   // IMG-9 — the width the intrinsic size is clamped to: the container's own
   // content box, read once, now that the drop is certain.
@@ -433,7 +445,13 @@ export function planCanvasFileDrop(input: CanvasFileDropInput): CanvasFileDropPl
     sources,
     skipped,
     action: { ...action, maxWidth: box ? box.contentWidth : null },
+    inlineSvg: allSvg && action.absolute === null,
   }
+}
+
+/** An SVG file, by its declared type or, when the OS gave none, its name. */
+export function isSvgFile(file: File): boolean {
+  return file.type === 'image/svg+xml' || (file.type === '' && /\.svg$/i.test(file.name))
 }
 
 /** Shared with the in-flight preview so both halves resolve the same containers. */

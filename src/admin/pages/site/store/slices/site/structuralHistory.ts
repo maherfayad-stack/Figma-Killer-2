@@ -19,16 +19,13 @@
  * drag uses — so an undo rides every refusal gate, resolves its own anchor
  * against the tree as it is NOW, and writes to source exactly once.
  *
- * `captureDeleteOrigin` (`store-15`) is the same idea for a DELETE: the tree
- * is still what it was, one moment before `deleteNode`/`deleteNodes` removes
- * the element, so this is the last chance to record where it sat. Unlike a
- * move, a delete's undo does not re-issue through a store action — it is
- * folded into the `source` gesture family (`tagStructuralGesture(set,
- * {gesture:'source', …})`, built in `deleteNodesAction.ts`/`nodeActions.ts`
- * from what this function returns) and writes a `reinsert-source` edit once
- * the delete's own commit reports the bytes it discarded.
+ * A DELETE is tagged here too, but its undo does not re-issue through a
+ * store action: it is folded into the `source` gesture family
+ * (`tagStructuralGesture(set, {gesture:'source', …})`, in
+ * `deleteNodesAction.ts`/`nodeActions.ts`), and its ⌘Z is the undo journal's
+ * `restore` (P3-F) once the delete's own commit reports the token.
  */
-import { hasWritableSourceLocation, type NodeTree, type PageNode, type SequencedMove } from '@core/page-tree'
+import type { NodeTree, PageNode, SequencedMove } from '@core/page-tree'
 import { resolveActiveTreeTarget } from './helpers'
 import type { SiteSliceHelpers, StructuralHistory, StructuralHistoryMove } from './types'
 
@@ -177,52 +174,4 @@ function owningPageOfMove(
     if (page?.nodes[step.parentId]) return pageId
   }
   return null
-}
-
-/**
- * `store-15` — where `nodeId` sits right now, in the terms a `reinsert-source`
- * edit needs: the parent to write into, and the child position among the
- * parent's PLAIN JSX element siblings only — `reinsertJsxSource`'s own
- * `elementChildren` count, which never sees a `.map` row or a conditional
- * branch's element (those sit inside an expression the parent's direct JSX
- * children list does not contain). Call this BEFORE the delete: it is the
- * last moment the pre-delete tree still has the node to ask about.
- *
- * `null` — no origin an undo could use — for three cases, none of them
- * partial:
- *  - the node has no parent (should not happen; a delete never targets the
- *    tree root);
- *  - the parent has no writable source position at all — the synthetic page
- *    root, whose only "position" is the page's own return statement.
- *    Deleting the page's sole returned element is already refused there by
- *    `deleteJsxElement`'s own `no-jsx-parent` (the AST answers a question the
- *    tree cannot), so a delete that reaches here with such a parent is one
- *    the write is about to refuse anyway — recording no origin for it is
- *    honest, not a gap;
- *  - the node itself does not turn up among its own parent's plain-element
- *    siblings, which cannot happen for a node `refuseStructuralEdit` already
- *    let through as `kind: 'delete'` — checked anyway, because a wrong index
- *    would restore the wrong thing.
- */
-export interface StructuralHistoryDeleteOrigin {
-  nodeId: string
-  parentId: string
-  index: number
-}
-
-export function captureDeleteOrigin(
-  tree: NodeTree<PageNode>,
-  nodeId: string,
-): StructuralHistoryDeleteOrigin | null {
-  const parentId = tree.nodes[nodeId]?.parentId
-  if (parentId === undefined || parentId === null) return null
-  if (!hasWritableSourceLocation(parentId)) return null
-  const siblings = (tree.nodes[parentId]?.children ?? []).filter((id) => isPlainJsxSibling(tree.nodes[id]))
-  const index = siblings.indexOf(nodeId)
-  return index < 0 ? null : { nodeId, parentId, index }
-}
-
-/** A parent's own direct JSX element/self-closing child — never a `.map` row, a conditional branch, or anything else `lockReason` marks as structurally decided elsewhere. */
-function isPlainJsxSibling(node: PageNode | undefined): boolean {
-  return node !== undefined && hasWritableSourceLocation(node.id) && !node.lockReason
 }

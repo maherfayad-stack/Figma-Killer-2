@@ -30,6 +30,12 @@ export { setImportSpecifier, ImportSpecifierTargetError } from './setImportSpeci
 export type { SetImportSpecifierParams } from './setImportSpecifier'
 export { rewriteImportSpecifier } from './rewriteImportSpecifier'
 export type { RewriteImportSpecifierParams, RewriteImportSpecifierResult } from './rewriteImportSpecifier'
+export { setSvgPartAttributes } from './setSvgPartAttributes'
+export type {
+  SetSvgPartAttributesParams,
+  SetSvgPartAttributesResult,
+  SvgPartAttributesRefusalReason,
+} from './setSvgPartAttributes'
 export { setJsxTagName, JsxTagNameTargetError } from './setJsxTagName'
 export type { SetJsxTagNameParams } from './setJsxTagName'
 export { moveJsxElement } from './moveJsxElement'
@@ -85,21 +91,13 @@ export { deleteJsxElement } from './deleteJsxElement'
 export { createImportPruneSession, isPrunableSourceFile } from './pruneOrphanedImports'
 export type { ImportPruneSession, PrunedImportsResult } from './pruneOrphanedImports'
 export type {
-  DeletedJsxText,
   DeleteJsxElementParams,
   DeleteJsxElementResult,
   DeleteJsxRefusal,
   DeleteJsxRefusalReason,
 } from './deleteJsxElement'
-export { reinsertJsxSource } from './reinsertJsxSource'
 export { editListItems } from './editListItems'
 export type { EditListItemsParams, EditListItemsResult, ListItemRefusal, ListItemRefusalReason } from './editListItems'
-export type {
-  ReinsertJsxRefusal,
-  ReinsertJsxRefusalReason,
-  ReinsertJsxSourceParams,
-  ReinsertJsxSourceResult,
-} from './reinsertJsxSource'
 export type { CreatedJsxLocation } from './createdJsxLocation'
 export { insertJsxElement } from './insertJsxElement'
 export type { InsertJsxElementParams, InsertJsxElementResult } from './insertJsxElement'

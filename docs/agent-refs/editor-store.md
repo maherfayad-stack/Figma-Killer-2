@@ -507,8 +507,10 @@ saying the opposite. `moveNodes` tags its entry with the pre-move
 `(parentId, index)` (`structuralHistory.ts`) and `undo` re-issues `moveNodes`
 back to it — on the page that OWNS the element, found through
 `_nodeIdToPageIds` and activated silently, not the active page (ERR-3);
-`deleteNodes` tags its entry as a `source` gesture whose undo is a
-`reinsert-source` write (`store-15`). Tagging happens only when a source write
+`deleteNodes` tags its entry as a `source` gesture whose undo is the undo
+journal's `restore` (P3-F — the server's pre-image of the file, compare-and-
+swap; the Properties panel's detach/swap/extract push the same kind of entry
+through `studio/journaledUndo.ts`). Tagging happens only when a source write
 was actually issued — a CMS or Visual Component tree keeps plain patch replay.
 Several elements moved as ONE gesture — an arrow step of a selection
 (`stepSiblings`, P2-C2) or a multi-selection drag (`moveNodes` with several

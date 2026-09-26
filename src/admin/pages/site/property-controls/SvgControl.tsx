@@ -51,6 +51,7 @@ export function SvgControl({
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
+  // SVG-3 — the default sanitizer profile removes Studio's part stamps.
   const markup = sanitizeSvg(value)
 
   const openEditor = () => {

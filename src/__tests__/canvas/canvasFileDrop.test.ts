@@ -170,6 +170,27 @@ describe('planCanvasFileDrop — a good drop', () => {
   })
 })
 
+describe('planCanvasFileDrop — an .svg is written inline (P5-D SVG-5)', () => {
+  const svgFile = (name = 'logo.svg') => new File(['<svg viewBox="0 0 8 8"><path d="M0 0h8"/></svg>'], name, { type: 'image/svg+xml' })
+
+  it('marks an all-SVG plain insert as inline', () => {
+    mountFrame('home')
+    const result = plan([svgFile(), svgFile('b.svg')])
+    if (!result.ok || result.kind !== 'frame') throw new Error('expected a frame plan')
+    expect(result.inlineSvg).toBe(true)
+  })
+
+  it('keeps an <img> for alt, for a mix with a raster, and for a cmd (absolute) drop', () => {
+    mountFrame('home')
+    const alt = plan([svgFile()], { x: 100, y: 100 }, { ...NO_DROP_MODIFIERS, alt: true })
+    const mixed = plan([svgFile(), imageFile()])
+    for (const result of [alt, mixed]) {
+      if (!result.ok || result.kind !== 'frame') throw new Error('expected a frame plan')
+      expect(result.inlineSvg).toBe(false)
+    }
+  })
+})
+
 describe('planCanvasFileDrop — onto an image (IMG-3)', () => {
   const overImg = { x: 100, y: 300 }
 

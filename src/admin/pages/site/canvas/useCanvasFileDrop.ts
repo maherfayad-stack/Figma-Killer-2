@@ -59,6 +59,8 @@ import { requirePublicAsset, type PublicStudioAsset } from '@site/studio/dropStu
 import { landImageSource } from '@site/studio/landImageSource'
 import { imageSourceName, type LandableImageSource } from '@site/store/slices/site/imageDropShapes'
 import { readDroppedImageIntake } from './canvasDropIntake'
+import { svgToJsxNode } from '@site/studio/svgToJsxNode'
+import { INLINE_SVG_MAX_CHARS, insertSvgAtTarget } from './canvasSvgInsert'
 import { measureBoardDropSurfaces } from './canvasDragBoard'
 import { paintCanvasDrag } from './canvasDragPainter'
 import type { ClientPoint } from './canvasDragSession'
@@ -256,7 +258,8 @@ export function runCanvasFileDropPlan(plan: CanvasFileDropPlan): void {
   }
 
   if (plan.kind === 'canvas') {
-    void landOnCanvas(plan.sources, plan.at)
+    if (plan.inlineSvg) void placeSvgsOnCanvas(fileSources(plan.sources), plan.at)
+    else void landOnCanvas(plan.sources, plan.at)
     return
   }
 
@@ -270,6 +273,15 @@ export function runCanvasFileDropPlan(plan: CanvasFileDropPlan): void {
     store.setBackgroundImageInPage(plan.pageId, action.nodeId, plan.sources[0]!)
     return
   }
+  // P5-D SVG-5 — `.svg` files are written as inline `<svg>` JSX, one insert
+  // each at the drop line (the paste's own write); ⌥ keeps them `<img>`s.
+  if (plan.inlineSvg) {
+    fileSources(plan.sources).forEach((file, offset) => {
+      const target = { ok: true as const, pageId: plan.pageId, parentId: action.target.parentId, index: action.target.index + offset }
+      void insertSvgAtTarget({ kind: 'file', file }, target, { undoLabel: 'Add SVG', refusalTitle: IMAGE_DROP_TITLE })
+    })
+    return
+  }
   store.dropImagesIntoPage({
     pageId: plan.pageId,
     parentId: action.target.parentId,
@@ -279,6 +291,37 @@ export function runCanvasFileDropPlan(plan: CanvasFileDropPlan): void {
     absolute: action.absolute,
     paintProgress: paintCanvasUploadProgress,
   })
+}
+
+/**
+ * P5-D SVG-5 — `.svg` files dropped on the empty board: each becomes a loose
+ * layer whose root IS the inline `<svg>` (converted and sanitised exactly as
+ * a frame drop's), placed at the drop point with the same cascade. One too
+ * large to inline lands as an image layer instead; any other refusal is a
+ * toast naming it.
+ */
+async function placeSvgsOnCanvas(files: readonly File[], at: { x: number; y: number }): Promise<void> {
+  const asImages: File[] = []
+  for (const [index, file] of files.entries()) {
+    const markup = file.size > INLINE_SVG_MAX_CHARS ? null : await file.text().catch(() => null)
+    const converted = markup === null ? null : svgToJsxNode(markup)
+    if (!converted || (!converted.ok && converted.reason === 'too-large')) {
+      asImages.push(file)
+      continue
+    }
+    if (!converted.ok) {
+      pushToast({ kind: 'warning', title: IMAGE_DROP_TITLE, body: converted.message, location: 'site-editor' })
+      continue
+    }
+    const offset = index * CANVAS_DROP_CASCADE
+    useEditorStore.getState().createCanvasLayer(converted.node, { x: at.x + offset, y: at.y + offset })
+  }
+  if (asImages.length > 0) await landOnCanvas(asImages.map((file) => ({ kind: 'file', file })), at)
+}
+
+/** The files of an inline-SVG plan — `inlineSvg` is only ever set when every source is a file. */
+function fileSources(sources: readonly LandableImageSource[]): File[] {
+  return sources.flatMap((source) => (source.kind === 'file' ? [source.file] : []))
 }
 
 /** How far each further image of a multi-file free-canvas drop steps from the one before, in board units (IMG-9's cascade). */

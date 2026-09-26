@@ -56,7 +56,7 @@ import { duplicateNodeWithScopedClasses } from './duplicateWithScopedClasses'
 import { resolvePreviewTargets } from './structuralOptimism'
 import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, planSourceMove, presentStructuralRefusal } from './structuralSourceEdits'
 import { writeListRowPlan } from './listRowSourceWrites'
-import { captureDeleteOrigin, captureMoveOrigin, tagStructuralGesture } from './structuralHistory'
+import { captureMoveOrigin, tagStructuralGesture } from './structuralHistory'
 import { trackStructuralTreeCommit } from './structuralCommitRollback'
 import { createStudioSourceWrites } from './studioSourceWrites'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
@@ -298,11 +298,6 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
         })
         return
       }
-      // `store-15` — captured against the tree as it is RIGHT NOW, the last
-      // moment before the mutation below removes this node from it.
-      // `planSourceDelete([single node])` only ever pushes one id — see that
-      // function's own loop.
-      const origin = plan.commit && tree ? captureDeleteOrigin(tree, plan.commit[0]!) : null
       const topBefore = get()._historyPast.at(-1)
       const deleted = mutateActiveTree((draft) => {
         if (!draft.nodes[nodeId]) return false
@@ -317,21 +312,17 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
         // `live-07` — same-tick paint for a live (bridge) frame; portal
         // frames already got theirs from the tree mutation above.
         broadcastOptimisticDelete(plan.commit[0]!)
-        // `store-15` — folded into the `source` family; see
-        // `deleteNodesAction.ts`'s identical tag for why this tags the entry
-        // the mutation above already pushed rather than pushing a second one.
+        // Folded into the `source` family, its ⌘Z the undo journal's
+        // `restore` (P3-F); see `deleteNodesAction.ts`'s identical tag for why
+        // this tags the entry the mutation above already pushed rather than
+        // pushing a second one. `planSourceDelete([single node])` only ever
+        // commits one id.
         tagStructuralGesture(set, {
           gesture: 'source',
           source: {
             label: 'Delete',
             forward: [{ kind: 'delete', nodeId: plan.commit[0]! }],
-            inverseTemplate: origin
-              ? { kind: 'reinsert-deleted', nodes: [{ nodeId: origin.nodeId, parentNodeId: origin.parentId, index: origin.index }] }
-              : {
-                  kind: 'unsupported',
-                  message:
-                    'This element’s position could not be recorded for undo — its container has no place in the file of its own (it may be the whole of what this page returns). Use your editor’s undo or `git` to bring it back.',
-                },
+            inverseTemplate: { kind: 'restore-journal' },
             inverse: null,
           },
         })

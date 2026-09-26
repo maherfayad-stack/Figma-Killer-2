@@ -32,7 +32,7 @@
  * tool, what it inserts, and the drawn rectangle in BOARD units; it returns
  * whether it created something (which disarms the tool, as a frame draw does).
  */
-import type { DrawTool } from '@site/store/slices/canvasSlice'
+import type { DrawTool, VectorTool } from '@site/store/slices/canvasSlice'
 
 export interface DrawToolSpec {
   moduleId: string
@@ -104,6 +104,18 @@ const DRAW_TOOLS: ReadonlySet<string> = new Set(Object.keys(DRAW_TOOL_SPECS))
 
 export function isDrawTool(tool: string): tool is DrawTool {
   return DRAW_TOOLS.has(tool)
+}
+
+/** P5-D — the pen: an armed tool too, but it draws a path, not a box (`CanvasPenToolLayer`). */
+export function isVectorTool(tool: string): tool is VectorTool {
+  return tool === 'pen'
+}
+
+/** Every tool that mounts an armed surface over the canvas: the box tools and the pen. */
+export type ArmedTool = DrawTool | VectorTool
+
+export function isArmedTool(tool: string): tool is ArmedTool {
+  return isDrawTool(tool) || isVectorTool(tool)
 }
 
 /** Screen px the pointer must travel before a press is a drag rather than a click. */

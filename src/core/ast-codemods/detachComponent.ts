@@ -81,12 +81,10 @@ import { createWorkspaceProject, getReturnedJsxRoots, type FunctionLike } from '
 import { resolveComponentCallSite } from './resolveComponentCallSite'
 import { applyImportBinding, mirrorSideEffectImports, removeImportIfLastUsage } from './importReconcile'
 import { analyzeFreeVariables, bindingKindAt, freeVariablesOutOfScopeAt } from './subtreeFreeVariables'
-import { introducesSyntaxErrors } from './reinsertJsxSource'
+import { introducesSyntaxErrors } from './syntaxRegression'
 import { DetachRefusalSignal, fail, readParamTable, type DetachRefusalReason } from './detachSource'
 import { DetachPlanner, type DetachPlan } from './detachPlanner'
-import { ownedTextRange } from './jsxChildRange'
 import type { CreatedJsxLocation } from './createdJsxLocation'
-import type { DeletedJsxText } from './deleteJsxElement'
 
 export type { DetachRefusalReason } from './detachSource'
 
@@ -102,8 +100,7 @@ export interface DetachComponentParams {
   /**
    * Remove the component's import when this was its last use (the default).
    * `false` (P3-D) leaves it to the caller — the save batch's own prune pass,
-   * which retires it AND reports the declaration it removed, which is what
-   * lets ⌘Z put `<Card/>` back with its import (`reinsert-detached`).
+   * which retires every import the batch's removals orphaned in one place.
    */
   retireImport?: boolean
 }
@@ -125,12 +122,6 @@ export interface DetachSuccess {
    * `null` when the inlined root is a fragment (it has no tag, so no id).
    */
   created: CreatedJsxLocation | null
-  /**
-   * P3-D (OD-7) — the call site's own bytes as they were, with the
-   * indentation and newline it owned: what ⌘Z writes back
-   * (`reinsert-source`) once the detached markup is removed again.
-   */
-  removed: DeletedJsxText
 }
 
 export interface DetachFailure {
@@ -342,8 +333,6 @@ export function detachComponentInstance(params: DetachComponentParams): DetachRe
   }
 
   const original = sourceFile.getFullText()
-  const siteBeforeDetach = Node.isJsxSelfClosingElement(opening) ? opening : opening.getParentOrThrow()
-  const removed = ownedTextRange(original, siteBeforeDetach.getStart(), siteBeforeDetach.getEnd())
   let inserted: Node
   try {
     const plan = new DetachPlanner(project, sourceFile, target.sourceFile, fn, chosen.expr, opening, identifier).plan()
@@ -379,7 +368,6 @@ export function detachComponentInstance(params: DetachComponentParams): DetachRe
   return {
     ok: true,
     created: at ? { line: at.line, col: at.column } : null,
-    removed: { text: original.slice(removed.start, removed.end), wholeLine: removed.wholeLine },
     ...(hadAlternatives
       ? { branchNote: `${identifier} has more than one rendered state — the currently-shown one was inlined.` }
       : {}),

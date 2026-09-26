@@ -395,7 +395,7 @@ describe('deleteJsxElement', () => {
     const span = locateTag(source, 'span')
 
     const result = deleteJsxElement({ file, line: span.line, col: span.col })
-    expect(result).toMatchObject({ ok: true, removed: { text: '      {loading && <span>spinner</span>}\n', wholeLine: true } })
+    expect(result).toEqual({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(source.replace('      {loading && <span>spinner</span>}\n', ''))
   })
 
@@ -416,7 +416,7 @@ describe('deleteJsxElement', () => {
     const b = locateTag(source, 'b')
 
     const result = deleteJsxElement({ file, line: b.line, col: b.col })
-    expect(result).toMatchObject({ ok: true, removed: null })
+    expect(result).toEqual({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(`export default function Page({ open }) {
   return (
     <section>

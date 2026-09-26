@@ -28,6 +28,7 @@ import { collapseSameTargetEdits, type DedupedStudioEdit } from './studioEditMer
 import { isSlotEditKind } from './studioSlotWriteback'
 import { isStructuralEditKind } from './studioStructuralWriteback'
 import { canvasLayerTouchedFiles, isCanvasLayerEditKind } from './studioCanvasLayerWriteback'
+import { svgAttrOrderLocation } from './studioSvgWriteback'
 import type { StudioEdit, StudioEditBatchOptions } from './studioEditSchemas'
 
 /**
@@ -271,10 +272,13 @@ function isStudioAuthoredSourceRel(rel: string): boolean {
  * `docs/features/studio-import.md`'s "A save only reloads when a write
  * actually landed") is what keeps a preview-only batch from reloading
  * anything despite this.
+ *
+ * P3-F — `restore` too: it puts whole files back, undoing a write that was
+ * itself one of the kinds above.
  */
 export function isSharedSourceNodeId(nodeId: string, kind?: StudioEdit['kind']): boolean {
   // `list-item` (OD-8): an array another route may import renders there too.
-  if (kind === 'asset' || kind === 'literal' || kind === 'detach' || kind === 'swap' || kind === 'list-item') return true
+  if (kind === 'asset' || kind === 'literal' || kind === 'detach' || kind === 'swap' || kind === 'list-item' || kind === 'restore') return true
   // P5-G — every canvas-layer kind creates, removes or moves a whole element
   // across files, exactly like `transplant`.
   if (kind !== undefined && (isStructuralEditKind(kind) || isSlotEditKind(kind) || isCanvasLayerEditKind(kind))) return true
@@ -303,9 +307,15 @@ export function isSharedSourceNodeId(nodeId: string, kind?: StudioEdit['kind']):
 export function orderStudioEditsForApply<T extends { nodeId: string }>(edits: readonly T[]): T[] {
   // Ordering names no file to write, so every target the batch may hold sorts
   // by its line — a layer module's edits too (the write decode is scoped).
+  // P5-D — an `svg-attr` edit sorts by its PART, which is inside its host.
+  const orderLocation = (edit: T) => {
+    const host = decodeNodeIdLocation(edit.nodeId, ORDER_ANY_TARGET)
+    const part = host && 'kind' in edit ? svgAttrOrderLocation(edit as { kind: string; part?: unknown }) : null
+    return part && host ? { ...host, ...part } : host
+  }
   return [...edits].sort((a, b) => {
-    const la = decodeNodeIdLocation(a.nodeId, ORDER_ANY_TARGET)
-    const lb = decodeNodeIdLocation(b.nodeId, ORDER_ANY_TARGET)
+    const la = orderLocation(a)
+    const lb = orderLocation(b)
     if (!la) return 1
     if (!lb) return -1
     return lb.line - la.line || lb.col - la.col
@@ -370,11 +380,6 @@ export function orderStudioEditsForApply<T extends { nodeId: string }>(edits: re
  * element in a batch (a cross-frame drag resolves one target, and the second
  * would be planned against a tree the first already changed). Collapsing it
  * would silently drop a copy while `written` reported the truth.
- *
- * `reinsert-source` (`store-15`) joins `insert` for the identical reason: its
- * `nodeId` is the PARENT being restored INTO, not a span it overwrites, and a
- * multi-node delete's ⌘Z posts one `reinsert-source` per restored sibling
- * against that same parent — two wanted elements, not a duplicate write.
  */
 export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(
   dir: string,
@@ -400,8 +405,11 @@ export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(
       edit.kind === 'wrap' ||
       edit.kind === 'group' ||
       edit.kind === 'transplant' ||
-      edit.kind === 'reinsert-source' ||
       edit.kind === 'styled' ||
+      // P5-D — every part of one `<svg>` shares its host's location; two
+      // edits on different parts are two writes, and two on one part apply
+      // in order (each only sets what it names).
+      edit.kind === 'svg-attr' ||
       // OD-8 — never the "same write" as another one at its array: each is
       // planned against the literal the previous left, and refuses honestly
       // (`list-changed`) rather than being dropped.

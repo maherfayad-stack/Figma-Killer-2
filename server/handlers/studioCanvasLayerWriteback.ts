@@ -47,7 +47,6 @@ import {
   liftJsxElementToCanvasModule,
   placeCanvasLayerRoot,
   type CreatedJsxLocation,
-  type DeletedJsxText,
   type InsertJsxNode,
 } from '@core/ast-codemods'
 import { DesignSystemImportSchema, InsertNodeSchema, InsertPropsSchema } from './studioInsertJsxSchemas'
@@ -182,12 +181,19 @@ function locations(created: CreatedJsxLocation | null | undefined): readonly Cre
   return created ? [created] : undefined
 }
 
+/** What a `canvas-layer-delete` took out: the module's whole text, which its undo writes back (`canvas-layer-restore`). */
+export interface CanvasLayerRemovedText {
+  text: string
+  /** Always `false`: a whole file owns no line of anything else's. Kept for the client's shared `removed` shape. */
+  wholeLine: boolean
+}
+
 /** What one canvas-layer edit did — the subset of `StudioEditApplyOutcome` these kinds produce. */
 export interface CanvasLayerEditOutcome {
   applied: true
   created?: readonly CreatedJsxLocation[]
   createdIn?: string
-  removed?: readonly DeletedJsxText[]
+  removed?: readonly CanvasLayerRemovedText[]
 }
 
 /**
