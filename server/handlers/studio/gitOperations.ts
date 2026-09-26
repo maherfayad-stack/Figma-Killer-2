@@ -79,6 +79,7 @@ import { EXCLUDED_WORKSPACE_DIR_NAMES, excludedWorkspaceSegment } from '@core/pa
 import { splitLines } from '@core/utils/lineEndings'
 import { isArgvSafeBranchName, parseGithubRemoteUrl, redactRemoteUrlCredentials } from './gitPaths'
 import { GIT_LOCK_WAIT_MS, ProjectWriteLockBusyError, withProjectWriteLock } from './projectWriteLock'
+import { withStudioGrantsPinned } from './studioGrants'
 import {
   clientSafeGitError,
   runGit,
@@ -359,6 +360,14 @@ export async function readGitLog(dir: string, limit: number): Promise<GitLogEntr
  * would rather be told the project is busy than watch a spinner for the length
  * of a dependency install.
  *
+ * Every verb here also runs with the project's grants pinned
+ * (`studioGrants.ts`'s `withStudioGrantsPinned`): a pull, a branch switch, a
+ * conflict resolved to "theirs" can bring any file the repository tracks,
+ * `.studio/meta.json` and `.studio/shares.json` included, and none of them may
+ * raise the trust tier, approve an MCP server or make a share link live. This
+ * is the one place every tree-changing verb passes, so it is the one place the
+ * rule lives.
+ *
  * READS (`readGitStatus`, `readGitFileDiff`, `readGitLog`, `listGitBranches`)
  * deliberately do NOT go through here: they mutate nothing, the panel re-reads
  * status after every action, and a read that could answer `busy` would turn
@@ -369,7 +378,7 @@ export async function withGitWriteLock<T>(
   run: () => Promise<T | GitOperationFailure>,
 ): Promise<T | GitOperationFailure> {
   try {
-    return await withProjectWriteLock(dir, run, { waitMs: GIT_LOCK_WAIT_MS })
+    return await withProjectWriteLock(dir, () => withStudioGrantsPinned(dir, run), { waitMs: GIT_LOCK_WAIT_MS })
   } catch (err) {
     if (err instanceof ProjectWriteLockBusyError) return gitFailure('busy', err.message)
     throw err

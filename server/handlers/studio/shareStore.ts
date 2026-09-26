@@ -42,7 +42,16 @@ import { EXCLUDED_WORKSPACE_DIR_NAMES } from '@core/page-parser'
 import { isShareTokenShape, type ShareSummary } from '@core/studio-share'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { projectsRootDir } from '../studioProjects'
-import { readStudioStoreBytes, readStudioStoreJson, removeStudioStoreEntry, studioStorePath, writeStudioStoreFile, writeStudioStoreJson } from './studioStore'
+import {
+  listStudioStoreDir,
+  readStudioStoreBytes,
+  readStudioStoreJson,
+  removeStudioStoreEntry,
+  statStudioStoreFile,
+  studioStorePath,
+  writeStudioStoreFile,
+  writeStudioStoreJson,
+} from './studioStore'
 
 /**
  * The persisted record. A superset of the wire `ShareSummary` only in that it
@@ -75,6 +84,9 @@ function emptySharesFile(): SharesFile {
 
 const SHARES_FILE = 'shares.json'
 
+/** The folder every snapshot lives under, as a store path. */
+const SNAPSHOTS_STORE_DIR = 'shares'
+
 /**
  * One share's snapshot folder as a `.studio` store path, or `null` for a token
  * that is not exactly the minted shape — the token is a path segment here, so
@@ -83,7 +95,7 @@ const SHARES_FILE = 'shares.json'
  * refuse, on every read and write.
  */
 function snapshotStoreDir(token: string): string | null {
-  return isShareTokenShape(token) ? `shares/${token}` : null
+  return isShareTokenShape(token) ? `${SNAPSHOTS_STORE_DIR}/${token}` : null
 }
 
 /** Absolute path of one share's snapshot folder — for a caller that must NAME it (tests); reading and writing go through the functions below. */
@@ -319,14 +331,48 @@ export function deleteShareSnapshot(dir: string, token: string): void {
   removeStudioStoreEntry(dir, rel, { recursive: true })
 }
 
+// ---------------------------------------------------------------------------
+// Share state that did not come from this server
+// ---------------------------------------------------------------------------
+
 /**
- * Drop every share record and snapshot a project carries — for a project that
- * just arrived from somewhere else (`gitClone.ts`). A share token is a bearer
- * capability THIS server minted; one that came with a repository is a token
- * its author knows. Never follows a link (`removeStudioStoreEntry`); the
- * clone's links are stripped before this runs.
+ * Drop every share record and snapshot a project carries — the registry and
+ * every snapshot, so no token minted anywhere else resolves here. Used both
+ * for a project that just arrived from somewhere else (`gitClone.ts`) and for
+ * share state a git verb changed in place (`studioGrants.ts`'s
+ * `withStudioGrantsPinned`): a share token is a bearer capability THIS server
+ * minted, and one that came with a repository is a token its author already
+ * knows. Never follows a link (`removeStudioStoreEntry`); a clone's links are
+ * stripped before this runs.
  */
 export function dropShareState(dir: string): void {
   removeStudioStoreEntry(dir, SHARES_FILE)
-  removeStudioStoreEntry(dir, 'shares', { recursive: true })
+  removeStudioStoreEntry(dir, SNAPSHOTS_STORE_DIR, { recursive: true })
+}
+
+/**
+ * A fingerprint of the share state on disk — the registry's bytes plus the
+ * name, size, mtime and inode of every snapshot entry — so a caller can tell
+ * whether anything but this module touched it across one operation. Read
+ * through the store door: a link is not share state and is left out.
+ */
+export function shareStateFingerprint(dir: string): string {
+  const hash = createHash('sha256')
+  hash.update(readStudioStoreBytes(dir, SHARES_FILE) ?? Buffer.from('<absent>'))
+  const walk = (rel: string, depth: number): void => {
+    for (const entry of listStudioStoreDir(dir, rel).sort((a, b) => a.name.localeCompare(b.name))) {
+      const child = `${rel}/${entry.name}`
+      if (entry.isDirectory()) {
+        hash.update(`\0d:${child}`)
+        // Snapshots are `shares/<token>/<file>`; anything deeper is still
+        // counted as present, just not descended into without bound.
+        if (depth < 4) walk(child, depth + 1)
+        continue
+      }
+      const stat = statStudioStoreFile(dir, child)
+      hash.update(`\0f:${child}:${stat ? `${stat.size}:${stat.mtimeMs}:${stat.ino}` : '-'}`)
+    }
+  }
+  walk(SNAPSHOTS_STORE_DIR, 0)
+  return hash.digest('hex')
 }

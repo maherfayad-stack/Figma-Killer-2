@@ -67,7 +67,8 @@
  *
  * Share state is the one committed record that is dropped outright:
  * `shares.json` and `shares/` hold bearer tokens this server minted, so a
- * cloned one is a token its author knows (`dropShareState`).
+ * cloned one is a token its author knows (`dropShareState`) — the same rule
+ * a pull or branch switch enforces after the fact (`studioGrants.ts`).
  *
  * ## Job shape
  *
@@ -88,8 +89,8 @@ import { githubProjectFolderName, type GithubRemote } from './gitPaths'
 import { assertWithinWorkspace, clientSafeGitError, runGit, GIT_NETWORK_TIMEOUT_MS } from './gitRunner'
 import { probeProject } from './projectProbe'
 import { mergeStudioMeta } from './studioMeta'
-import { stripStudioStoreLinks } from './studioStore'
 import { dropShareState } from './shareStore'
+import { stripStudioStoreLinks } from './studioStore'
 import type { SubprocessSpawnFn } from './subprocessRunner'
 import { isRealpathStrictlyInsideAllowingMissing } from './workspacePackageResolve'
 
