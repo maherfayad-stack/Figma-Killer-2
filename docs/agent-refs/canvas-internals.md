@@ -1511,14 +1511,15 @@ What it found, and the rule each finding became:
   canvas click made two such writes, ~8–10 ms each in production.
 - **Per-frame chrome reads per-frame answers.** Every mounted frame runs
   `BreakpointSelectionOverlay`, `ClassStyleInjector` and the tree-ladder hook.
-  Board frames of one width share a breakpoint id, so an id-valued hover read
-  (`hoveredBreakpointOrigin`) changed in all of them at once — it is the
-  per-frame boolean `hoverOriginatesHere` now; the ladder reads the active page
-  only while Alt is held; the forced-state preview is its own component,
-  scoped to the frame that renders the selected node.
+  The ladder reads the active page (a new object after every keystroke) only
+  while Alt is held — subscribed unconditionally it re-rendered all 9 frames'
+  chrome per keystroke (measured 9 → 0). The forced-state preview is its own
+  component, scoped to the frame that renders the selected node
+  (`ClassStyleInjector` renders per click 9 → 0).
 - **An overlay write that changes nothing is skipped** (`PortalFrameAdapter.applyOverlay`):
   reassigning a `<style>`'s text re-parses it and invalidates style for the
-  whole frame document even when the text is identical.
+  whole frame document even when the text is identical. Measured: 3 identical
+  rewrites per keystroke → 0.
 - **The hot components must actually be compiled.** The React Compiler
   silently skips a function it cannot lower — with this repo's
   `babel-plugin-react-compiler` 1.0 on Babel 8, a default inside a

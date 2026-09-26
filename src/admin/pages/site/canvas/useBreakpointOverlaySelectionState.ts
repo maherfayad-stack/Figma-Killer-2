@@ -59,8 +59,7 @@ export function framePageCanRender(
 export interface BreakpointOverlaySelectionState {
   selectedNodeIds: readonly string[]
   hoveredNodeId: string | null
-  /** The hover came from this frame — see `CanvasTreeLadderOverlay`'s `hoverOriginatesHere`. */
-  hoverOriginatesHere: boolean
+  hoveredBreakpointOrigin: string | null
   activeBreakpointId: string | null
   highlightedSelector: string | null
   framePage: Page | null
@@ -111,12 +110,7 @@ export function useBreakpointOverlaySelectionState(
       ? hover.nodeId
       : null,
   )
-  // A per-frame boolean, not the origin id: every board frame of one width
-  // shares a breakpoint id, so an id read changed in EVERY mounted frame each
-  // time the hover entered or left the canvas (P6-C).
-  const hoverOriginatesHere = useCanvasHoverSelect((hover) =>
-    hover !== null && hover.breakpointId === breakpointId && (hover.frameId === null || hover.frameId === frameId),
-  )
+  const hoveredBreakpointOrigin = useCanvasHoverSelect((hover) => hover?.breakpointId ?? null)
   const activeBreakpointId = useEditorStore((s) => s.activeBreakpointId)
 
   // Selector-affinity highlight: the CSS selector of the rule currently hovered
@@ -138,7 +132,7 @@ export function useBreakpointOverlaySelectionState(
   return {
     selectedNodeIds,
     hoveredNodeId,
-    hoverOriginatesHere,
+    hoveredBreakpointOrigin,
     activeBreakpointId,
     highlightedSelector,
     framePage,

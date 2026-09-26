@@ -49,13 +49,7 @@ interface UseCanvasTreeLadderOverlayArgs {
   portalMode: CanvasOverlayPortalMode
   show: boolean
   hoveredNodeId: string | null
-  /**
-   * Whether the current hover came from THIS frame (its breakpoint, and its
-   * board frame when it carries one). A boolean rather than the hover's origin
-   * id: board frames of one width share a breakpoint id, so an id-valued read
-   * changed for every mounted frame at once whenever the hover moved.
-   */
-  hoverOriginatesHere: boolean
+  hoveredBreakpointOrigin: string | null
   /**
    * This frame's selection. Used for ONE thing: deciding whether the OTHER
    * Alt-hover gesture — K5's `MeasureLayer` — owns this hold instead. See
@@ -78,7 +72,7 @@ export function useCanvasTreeLadderOverlay({
   portalMode,
   show,
   hoveredNodeId,
-  hoverOriginatesHere,
+  hoveredBreakpointOrigin,
   selectedNodeIds,
 }: UseCanvasTreeLadderOverlayArgs): CanvasTreeLadderOverlayResult {
   const [inspectActive, setInspectActive] = useState(false)
@@ -208,7 +202,7 @@ export function useCanvasTreeLadderOverlay({
       if (event.key === 'Alt') {
         setInspectActive(true)
         setInspectSuppressed(false)
-        if (hoveredNodeId && hoverOriginatesHere) {
+        if (hoveredNodeId && hoveredBreakpointOrigin === breakpointId) {
           setInspectAnchorNodeId(hoveredNodeId)
           setTreeLadderHighlightedNodeId(null)
         }
@@ -295,7 +289,7 @@ export function useCanvasTreeLadderOverlay({
     commitTreeLadderSelection,
     effectiveTreeLadderHighlightedNodeId,
     explicitHighlightNodeId,
-    hoverOriginatesHere,
+    hoveredBreakpointOrigin,
     hoveredNodeId,
     inspectAnchorNodeId,
     breakpointId,

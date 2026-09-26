@@ -46,6 +46,27 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Landmines:** two different entries are both `perf-10` (#195 and #196); cite them by title. `04f92846` commits Studio's generated prototype shell into `__board-perf-fixture` and edits `test4`: owner to decide whether to revert it.
 - **Next:** once #217 merges, close #192, #195 and #198–#210 as included.
 
+### perf-15 — P6-C: the remaining budgets, and the fixes they forced
+- **Agent:** perf-hunter · **Branch:** `perf/remaining-budgets` · draft PR (base `feat/canvas-excellence`), long form + every run in the body · **Updated:** 2026-09-26
+- **Stage:** PR open (draft). Budgets calibrated and enforced; gates in the PR body.
+- **Budgets added** (browser: `canvas-edit-budgets.e2e.ts`, `live-frame-budgets.e2e.ts`, both now in the `e2e-budgets` slice; server: `bench:studio-load`): keystroke → paint (inspector + inline), ⌘D re-render count + time, no long task after a post-edit click, memory (heap + detached documents), first frame interactive warm, `/load` on 1,000 files (warm median + event-loop block), a booted Tier-2 JS-animated frame (fit resets/s). CI runs the `@production-bundle` tests a second time against `vite build` + `vite preview` (`E2E_VITE_MODE=preview`, new).
+
+| budget (40 × 300 board) | target | before (dev / prod) | after (dev / prod) |
+|---|---|---|---|
+| warm click → ring, mean | 32 ms prod | 144 / 61.6 ms | 74.9 / **47.1** ms — NOT met |
+| cold click → ring | 350 dev / 150 prod | 253–363 / 109 ms | 216 / 69 ms |
+| inspector keystroke → paint, median | 90 / 50 ms | 115 / 32 ms | 42 / 26 ms |
+| ⌘D NodeRenderer renders+mounts | < 450 | 345 + 1 | 345 + 1 (inherent: ids are source positions) |
+| first frame interactive, warm | 2 s prod | 4.0 s / 1.38 s | 3.1 s / 1.29 s |
+| Tier-2 posters (`perf-01`) | all | 0/4 | 2/2 |
+
+- **Fixes (root causes):** (1) insert hooks subscribed to selection + page they only read on insert → Assets panel (46 cards, ~130 buttons) re-rendered per click/keystroke; (2) `skipUnchangedSets` store middleware — a click made two no-op writes, each a full selector sweep; (3) `CanvasRoot` was silently NOT compiled by the React Compiler (`{ editable = true }` + `attempts++`) → its context value changed every render → 9 frames' chrome re-rendered per click/keystroke; gated by `compiled-hot-components.test.ts`; (4) per-frame chrome: the tree ladder reads the page only while Alt is held (overlay renders/keystroke 9 → 0), forced-state preview split + scoped (ClassStyleInjector renders/click 9 → 0); (5) `PortalFrameAdapter.applyOverlay` skips identical CSS (3 rewrites/keystroke → 0); (6) Tier-2 pool is `'portal'` until the dev server is ready + `LiveBoardFrame` paints the poster OVER its clickable fallback (it replaced it → dead frames).
+- **Memory baseline:** filled (`docs/audits/2026-09-13-live-frame-memory-baseline.md`, 2026-09-26 section): ~0.85 MB heap, 1 document, ~112 nodes per live frame; detached documents = 1 constant.
+- **PERF-15:** profiled a zoom on the 12-frame fixture with the toggle / never promoted / always promoted: the post-gesture spikes are identical in all three. Not changed.
+- **Landmines:** (1) Never edit `src/` while a dev-mode e2e runs: Bun 1.3.6 segfaulted Vite twice (HMR + dep re-optimize). (2) `babel-plugin-react-compiler` 1.0 on Babel 8 silently skips ~315 functions in ~170 files (defaults in destructured params) — `NodeRenderer` (internal invariant), `Button`, `Tooltip`, `BreakpointFrame`, `IframeFrameSurface`, `BreakpointSelectionOverlay` among them. The lint plugin does not see it. (3) Name-based render counts only work on the dev bundle (minified names in preview).
+- **Tried, did not help:** the `will-change` A/B above; a per-frame hover-origin boolean (A/B: no render moved — reverted).
+- **Next:** the compiler/Babel 8 fix (own PR: pin the compiler's Babel or upgrade the compiler, then measure) is what the 32 ms click needs next.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*

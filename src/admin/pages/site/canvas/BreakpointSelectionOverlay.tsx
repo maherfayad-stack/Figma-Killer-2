@@ -173,7 +173,7 @@ export function BreakpointSelectionOverlay({
   const {
     selectedNodeIds,
     hoveredNodeId,
-    hoverOriginatesHere,
+    hoveredBreakpointOrigin,
     activeBreakpointId,
     highlightedSelector,
     framePage,
@@ -308,7 +308,7 @@ export function BreakpointSelectionOverlay({
     portalMode: toolbarMode,
     show: showRings,
     hoveredNodeId,
-    hoverOriginatesHere,
+    hoveredBreakpointOrigin,
     // K5 — the ladder stands down while Alt-hover MEASUREMENT owns the
     // gesture. The rule lives in `measurementWinsOverTreeLadder`; the ladder
     // applies it itself so the two can never drift apart.
