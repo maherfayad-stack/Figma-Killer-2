@@ -4,7 +4,6 @@ import { consumePendingAction } from '@admin/spotlight/pendingAction'
 import { useEditorStore } from '@site/store/store'
 import { useMcpWorkspaceBridge } from '@admin/ai/useMcpWorkspaceBridge'
 import { RefusalDialog } from '@site/ui/RefusalDialog'
-import { DetachConfirmDialog } from '@site/ui/DetachConfirmDialog'
 import { ChromeBoundary } from '@site/ui/ChromeBoundary'
 import { useEditorKeyDispatcher } from '@site/canvas/useEditorKeyDispatcher'
 import { agentProjectDir, executeAgentTool } from './agent'
@@ -82,10 +81,6 @@ export function SitePage() {
           would take the whole editor down with it. */}
       <ChromeBoundary id="refusal-dialog">
         <RefusalDialog />
-      </ChromeBoundary>
-      {/* P5-C — the detach confirm, asked only when a detach loses something. */}
-      <ChromeBoundary id="detach-confirm-dialog">
-        <DetachConfirmDialog />
       </ChromeBoundary>
     </>
   )

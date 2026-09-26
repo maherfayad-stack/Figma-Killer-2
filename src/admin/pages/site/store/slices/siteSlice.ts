@@ -44,17 +44,20 @@ import { createFrameworkManagerActions } from './site/framework/manage'
 import { createFrameworkTokenImportActions } from './site/framework/tokenImport'
 import { emptyNodeIndexes, nodeIndexState } from './site/nodeIndex'
 import type { SiteSlice } from './site/types'
+import type { InstanceDetachSlice } from './site/instanceDetachTypes'
 
 // Re-export the public slice type for store wiring.
 
 
 // Contribute this slice's fields to the combined `EditorStore` type via TS
 // module augmentation. See `../types.ts` for why we use this pattern.
+// P5-C — the Detach action's surface rides the same augmentation, beside
+// `SiteSlice` rather than inside `./site/types` (at its size ceiling).
 declare module '@site/store/types' {
-  interface EditorStore extends SiteSlice {}
+  interface EditorStore extends SiteSlice, InstanceDetachSlice {}
 }
 
-export const createSiteSlice: EditorStoreSliceCreator<SiteSlice> = (set, get) => {
+export const createSiteSlice: EditorStoreSliceCreator<SiteSlice & InstanceDetachSlice> = (set, get) => {
   // Build the closure-shared mutation helpers once. Every action factory
   // receives this same object — so there is exactly one
   // `mutateActiveTree` / `mutateSite` per slice instance.

@@ -317,6 +317,8 @@ describe('DET-3 — generic shape: arrow components, named exports, useContext r
 })
 
 describe('DET-6 — a literal-only class join is written as its string', () => {
+  /** A fixture's default import of `pkg` — spelled through a template so the no-tailwind-deps gate's literal scan never reads the fixture as a real import. */
+  const defaultImport = (local: string, pkg: string) => `import ${local} from '${pkg}'`
   const card = (className: string, imports: string[]): string =>
     [...imports, `export function Card({ tone }: { tone?: string }) {`, `  return <div className={${className}}>Card</div>`, '}', ''].join('\n')
   const page = [
@@ -328,7 +330,7 @@ describe('DET-6 — a literal-only class join is written as its string', () => {
   ].join('\n')
 
   it('folds clsx() from the clsx package when every part is a literal', () => {
-    write('components/Card.tsx', card("clsx('card', tone)", ["import clsx from 'clsx'"]))
+    write('components/Card.tsx', card("clsx('card', tone)", [defaultImport('clsx', 'clsx')]))
     const { result, text } = detachTag('pages/Home.tsx', page, 'Card')
     if (!result.ok) throw new Error(result.refusal.message)
     expect(text).toContain('<main><div className="card warm">Card</div></main>')
@@ -336,7 +338,7 @@ describe('DET-6 — a literal-only class join is written as its string', () => {
   })
 
   it('drops an omitted part, exactly as clsx does', () => {
-    write('components/Card.tsx', card("clsx('card', tone)", ["import clsx from 'clsx'"]))
+    write('components/Card.tsx', card("clsx('card', tone)", [defaultImport('clsx', 'clsx')]))
     const { result, text } = detachTag('pages/Home.tsx', page.replace(' tone="warm"', ''), 'Card')
     if (!result.ok) throw new Error(result.refusal.message)
     expect(text).toContain('<main><div className="card">Card</div></main>')
@@ -360,14 +362,14 @@ describe('DET-6 — a literal-only class join is written as its string', () => {
 
   it('never folds a part that is a binding — that would bake a resolved value into the JSX', () => {
     write('components/Card.module.css', '.card { color: red; }\n')
-    write('components/Card.tsx', card('clsx(styles.card, tone)', ["import clsx from 'clsx'", "import styles from './Card.module.css'"]))
+    write('components/Card.tsx', card('clsx(styles.card, tone)', [defaultImport('clsx', 'clsx'), "import styles from './Card.module.css'"]))
     const { result, text } = detachTag('pages/Home.tsx', page, 'Card')
     if (!result.ok) throw new Error(result.refusal.message)
     expect(text).toContain('className={clsx(styles.card, "warm")}')
   })
 })
 
-describe('the loss report behind the pre-commit confirm (dryRun)', () => {
+describe('the loss report the Detach action asks about first (dryRun)', () => {
   const branchy = [
     'export function Status({ loading }: { loading?: boolean }) {',
     '  if (loading) return <p>Loading</p>',

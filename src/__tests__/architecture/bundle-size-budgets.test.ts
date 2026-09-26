@@ -197,7 +197,14 @@ const BUDGETS: ChunkBudget[] = [
     // (`snapSpacing`, `handleDragSession`, `groupResize`, `copyAsPng`,
     // `EmptySelectionPanel`, ...) appears in its `__vite__mapDeps` table.
     // Measured 41,629 B (+329 B over the old cap).
-    maxBytes: 41_700,
+    //
+    // Raised 41.7 KB -> 42.0 KB for P5-C: `RefusalDialog` (eager, in this
+    // shell) renders `ConstraintActionButtons`, whose "Detach this instance"
+    // remedy now calls the store's one `detachInstances` action through an
+    // injected handler (`constraintActions.ts`'s `context.detachInstances`)
+    // instead of the removed one-shot `detachInstance`. The confirm dialog
+    // itself mounts in `AdminCanvasEditorBody`, not here. Measured 41,713 B.
+    maxBytes: 42_000,
     rationale:
       'site route shell (current ~34 KB raw / ~12 KB gzipped). Must not ' +
       'pull the visual editor body, DnD, canvas, first-party modules, or ' +

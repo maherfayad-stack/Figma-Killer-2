@@ -92,7 +92,6 @@ import type {
  * door — every consumer already imports them from `./types`.
  */
 import type { HistoryEntry } from './historyTypes'
-import type { InstanceDetachSlice } from './instanceDetachTypes'
 
 export type {
   HistoryEntry,
@@ -104,7 +103,7 @@ export type {
   PendingStructuralCommit,
 } from './historyTypes'
 
-export interface SiteSlice extends InstanceDetachSlice {
+export interface SiteSlice {
   site: SiteDocument | null
 
   // SiteDocument lifecycle
