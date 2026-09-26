@@ -103,9 +103,7 @@ interface CanvasRootProps {
   editable?: boolean
 }
 
-// `props`, not `{ editable = true }`: see compiled-hot-components.test.ts.
-export function CanvasRoot(props: CanvasRootProps) {
-  const editable = props.editable ?? true
+export function CanvasRoot({ editable = true }: CanvasRootProps) {
   const transformLayerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
 
@@ -291,7 +289,7 @@ export function CanvasRoot(props: CanvasRootProps) {
         lastCenteredKeyRef.current = centerKey
         return
       }
-      if ((attempts += 1) > MAX_ATTEMPTS) return // not `++`: see compiled-hot-components.test.ts
+      if ((attempts += 1) > MAX_ATTEMPTS) return // not `++`: see react-compiler-bailouts.test.ts
       timerId = setTimeout(tryCenter, RETRY_MS)
     }
     tryCenter()
