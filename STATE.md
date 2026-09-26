@@ -47,7 +47,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Next:** once #217 merges, close #192, #195 and #198–#210 as included.
 
 ### parser-19 — P5-C detach: one action, context hooks move, class-join fold, expose as prop (DET-2/3/5/6/7)
-- **Agent:** parser-surgeon · **Branch:** `feat/detach-instances` (from trunk `cabadf7c`, trunk `9f746500` merged) · **Stage:** draft PR open · **Updated:** 2026-09-26
+- **Agent:** parser-surgeon · **Branch:** `feat/detach-instances` (from trunk `cabadf7c`, trunk `9f746500` merged) · **Stage:** draft PR #279 open, awaiting owner dogfood · **Updated:** 2026-09-26
 - **Scope (parser/codemod files):** `src/core/ast-codemods/{detachComponent,detachPlanner,detachNames,detachHooks (new),detachClassNameFold (new),exposeLiteralAsProp (new),componentPropSignature (new),addSlotPropToComponent,subtreeFreeVariables,index}.ts`, `src/core/page-parser/{staticEvalCalls,index}.ts`, `src/core/page-tree/{sourceNodeId,index}.ts`. Server: `studioEditSchemas`, `studioWriteback`, `studioEditSequence`, `studioEditRouting`, `studioBatchUndoJournal`, `studio.ts`. Client: `store/slices/site/{instanceActions,instanceDetachTypes}.ts` (new), `DetachConfirmDialog` (new), ComponentSection, LayerNodeContextMenu, constraintActions, ConstraintActionButtons, SharedComponentNotice, keybindingLayerCommands (⌘⌥B), layerArrange, commit engine (`onAnswer`).
 - **DET-2** was already shipped by P1-E (spread/rest tests exist); nothing new.
 - **Decisions (per new resolution):**
