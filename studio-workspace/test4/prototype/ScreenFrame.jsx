@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { applyColorSchemeGate } from './registry.generated'
 import { linkForClick } from './Player'
+import { useLanguage } from '../i18n/LanguageContext'
 
 /**
  * Enough to stop the iframe's own document adding a body margin, and to take
@@ -58,6 +59,7 @@ function mirrorStyles(doc) {
  * the viewport, which is the entire point.
  */
 export default function ScreenFrame({ width, height, dir, lang, theme, title, links, onFollow, children }) {
+  const { t } = useLanguage()
   const ref = useRef(null)
   const [doc, setDoc] = useState(null)
 
@@ -114,7 +116,7 @@ export default function ScreenFrame({ width, height, dir, lang, theme, title, li
   return (
     <iframe
       ref={ref}
-      title={title || 'Screen preview'}
+      title={title || t.screenFrame.screenPreview}
       style={{ display: 'block', width: width, height: height, border: 0, colorScheme: theme || 'normal' }}
     >
       {doc && doc.body ? createPortal(children, doc.body) : null}

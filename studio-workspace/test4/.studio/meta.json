@@ -7,7 +7,7 @@
   },
   "profile": {
     "probeVersion": 2,
-    "framework": "unknown",
+    "framework": "vite",
     "appRoot": "",
     "pagesDir": "pages",
     "routeStyle": "flat",
@@ -20,14 +20,12 @@
       "postcssConfigPath": null,
       "cssInJs": null
     },
-    "componentPackages": [
-      "@alm-design/design-system"
-    ],
+    "componentPackages": [],
     "designSystems": [
       {
-        "name": "@alm-design/design-system",
-        "source": "node-modules",
-        "root": "node_modules/@alm-design/design-system"
+        "name": "alm",
+        "source": "builtin",
+        "root": "design-system"
       },
       {
         "name": "alm-design-design-system-1-1-3",
@@ -38,14 +36,24 @@
     "colorScheme": {
       "mechanism": "class",
       "selector": "[data-theme='dark']",
-      "source": "styles/imported/alm-design-design-system-1-1-3/src/components/GlassButton.css"
+      "source": "components/OnboardingHero.module.css"
     },
     "aliases": {},
     "warnings": [
       {
+        "code": "vite-entry-not-found",
+        "message": "vite.config was found but no entry module (index.html's <script type=\"module\" src=\"...\">, or a conventional src/main.* file) could be located.",
+        "fix": "Check that index.html's module script tag points at a real file."
+      },
+      {
         "code": "pages-dir-heuristic",
         "message": "No routing framework convention matched; guessed the pages directory \"pages\" by ranking directories on the fraction of files with a JSX-returning default export.",
         "fix": "Confirm the pages directory in the import dialog, or set \"pagesDir\" explicitly in .studio/meta.json."
+      },
+      {
+        "code": "dependencies-not-installed",
+        "message": "package.json lists dependencies but node_modules is missing, so package-component detection was skipped.",
+        "fix": "Run dependency install (WS-1.4), then re-run the project probe."
       }
     ],
     "pagesDirCandidates": [
@@ -75,9 +83,9 @@
   ],
   "previewAxes": {
     "colorScheme": "dark",
-    "direction": "rtl",
-    "locale": "ar"
+    "direction": "ltr",
+    "locale": "en"
   },
-  "lastOpenedAt": 1789897257220,
+  "lastOpenedAt": 1790458824745,
   "designSystem": "alm"
 }

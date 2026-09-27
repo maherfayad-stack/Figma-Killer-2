@@ -5,6 +5,7 @@ import Player from './Player'
 import { BOARDS, FRAME_DEFAULTS, PREVIEW_AXES, PROJECT_NAME, SCREENS, applyColorSchemeGate } from './registry.generated'
 import { Providers, useShellLanguage } from './providers.generated'
 import { getUrlParams, setUrlParams } from './urlState'
+import { useLanguage } from '../i18n/LanguageContext'
 
 const SCREEN_BY_ID = Object.fromEntries(SCREENS.map((screen) => [screen.key, screen]))
 
@@ -117,6 +118,7 @@ function ScreenRoute({ screenKey }) {
  * read the language context — same reason `Shell` below needs the split.
  */
 function ScreenRouteInner({ dir, theme, lang, screen, screenKey }) {
+  const { t } = useLanguage()
   const { setLang, locales } = useShellLanguage()
   // Apply '?lang=' once, same rule Shell already enforces (only a locale the
   // project actually declares). Unlike Shell's own effect, this one does not
@@ -148,7 +150,7 @@ function ScreenRouteInner({ dir, theme, lang, screen, screenKey }) {
   return (
     <>
       <style>{RESET}</style>
-      {screen ? <screen.Component /> : <p className="shell__empty">Unknown screen: {screenKey}</p>}
+      {screen ? <screen.Component /> : <p className="shell__empty">{t.app.unknownScreen} {screenKey}</p>}
     </>
   )
 }
@@ -266,7 +268,7 @@ function Shell({ board, boardId, onBoard, pageId, onPage, view, onView, theme, o
           <button
             type="button"
             className="shell__btn shell__btn--icon"
-            aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+            aria-label={theme === 'dark' ? t.app.switchToLightTheme : t.app.switchToDarkTheme}
             onClick={() => onTheme(theme === 'dark' ? 'light' : 'dark')}
           >
             {theme === 'dark' ? (
@@ -300,8 +302,8 @@ function Shell({ board, boardId, onBoard, pageId, onPage, view, onView, theme, o
               }
             }}
           >
-            Canvas
-          </button>
+            {t.app.canvas}
+                      </button>
         </header>
 
         {/* One tab per board, in `.studio/boards.json` order, in BOTH views.
@@ -312,8 +314,8 @@ function Shell({ board, boardId, onBoard, pageId, onPage, view, onView, theme, o
             Still hidden for a single board: a row offering one option is a
             caption pretending to be a control. */}
         {BOARDS.length > 1 && (
-          <nav className="shell__nav shell__nav--group" aria-label="Boards">
-            <span className="shell__nav-label">Boards</span>
+          <nav className="shell__nav shell__nav--group" aria-label={t.app.boards}>
+            <span className="shell__nav-label">{t.app.boards}</span>
             {BOARDS.map((entry) => (
               <button
                 key={entry.id}
@@ -342,7 +344,7 @@ function Shell({ board, boardId, onBoard, pageId, onPage, view, onView, theme, o
             own falls back to every screen, so an empty tab is still navigable
             rather than a dead end. */}
         {view !== 'canvas' && boardScreens.length > 0 && (
-          <nav className="shell__nav" aria-label="Screens">
+          <nav className="shell__nav" aria-label={t.app.screens}>
             {boardScreens.map((entry) => (
               <button
                 key={entry.key}
@@ -394,7 +396,7 @@ function Shell({ board, boardId, onBoard, pageId, onPage, view, onView, theme, o
               <Player pageId={pageId} onPageChange={onPage} dir={dir} lang={lang} theme={theme} />
             </div>
           ) : (
-            <p className="shell__empty">Pick a screen on the canvas to open it here.</p>
+            <p className="shell__empty">{t.app.pickAScreenOnThe}</p>
           )}
         </div>
       )}
@@ -405,7 +407,7 @@ function Shell({ board, boardId, onBoard, pageId, onPage, view, onView, theme, o
         type="button"
         className="shell__gear"
         aria-expanded={sheetOpen ? 'true' : 'false'}
-        aria-label="Prototype settings"
+        aria-label={t.app.prototypeSettings}
         onClick={() => setSheetOpen(true)}
       >
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -418,11 +420,11 @@ function Shell({ board, boardId, onBoard, pageId, onPage, view, onView, theme, o
           hidden on desktop by the gear's own display rule — one control tree,
           not a phone copy of the bar that has to be kept in step with it. */}
       {sheetOpen && (
-        <div className="shell__sheet" role="dialog" aria-modal="true" aria-label="Prototype settings">
+        <div className="shell__sheet" role="dialog" aria-modal="true" aria-label={t.app.prototypeSettings}>
           <button
             type="button"
             className="shell__sheet-scrim"
-            aria-label="Close settings"
+            aria-label={t.app.closeSettings}
             onClick={() => setSheetOpen(false)}
           />
           <div className="shell__sheet-panel">
@@ -431,27 +433,27 @@ function Shell({ board, boardId, onBoard, pageId, onPage, view, onView, theme, o
               <button
                 type="button"
                 className="shell__sheet-close"
-                aria-label="Close settings"
+                aria-label={t.app.closeSettings}
                 onClick={() => setSheetOpen(false)}
               >
                 {'✕'}
               </button>
               <p className="shell__sheet-title">{titleHead}{titleTail ? ' ' + titleTail : ''}</p>
-              <p className="shell__sheet-sub">Prototype settings</p>
+              <p className="shell__sheet-sub">{t.app.prototypeSettings}</p>
             </div>
 
             <div className="shell__sheet-body">
               <section>
-                <h3 className="shell__sheet-label">Appearance</h3>
+                <h3 className="shell__sheet-label">{t.app.appearance}</h3>
                 <div className="shell__seg">
-                  <button type="button" aria-pressed={theme === 'light' ? 'true' : 'false'} onClick={() => onTheme('light')}>Light</button>
-                  <button type="button" aria-pressed={theme === 'dark' ? 'true' : 'false'} onClick={() => onTheme('dark')}>Dark</button>
+                  <button type="button" aria-pressed={theme === 'light' ? 'true' : 'false'} onClick={() => onTheme('light')}>{t.app.light}</button>
+                  <button type="button" aria-pressed={theme === 'dark' ? 'true' : 'false'} onClick={() => onTheme('dark')}>{t.app.dark}</button>
                 </div>
               </section>
 
               {locales.length > 1 && (
                 <section>
-                  <h3 className="shell__sheet-label">Language</h3>
+                  <h3 className="shell__sheet-label">{t.app.language}</h3>
                   <div className="shell__seg">
                     {locales.map((code) => (
                       <button
@@ -471,9 +473,9 @@ function Shell({ board, boardId, onBoard, pageId, onPage, view, onView, theme, o
                   both destinations, and on a phone this is the only route
                   between them. */}
               <section>
-                <h3 className="shell__sheet-label">View</h3>
+                <h3 className="shell__sheet-label">{t.app.view}</h3>
                 <div className="shell__seg">
-                  <button type="button" aria-pressed={view === 'canvas' ? 'true' : 'false'} onClick={() => onView('canvas')}>Canvas</button>
+                  <button type="button" aria-pressed={view === 'canvas' ? 'true' : 'false'} onClick={() => onView('canvas')}>{t.app.canvas}</button>
                   <button
                     type="button"
                     aria-pressed={view === 'flow' ? 'true' : 'false'}
@@ -483,14 +485,14 @@ function Shell({ board, boardId, onBoard, pageId, onPage, view, onView, theme, o
                       onView('flow')
                     }}
                   >
-                    Flow
-                  </button>
+                    {t.app.flow}
+                                      </button>
                 </div>
               </section>
 
               {SCREENS.length > 0 && (
                 <section>
-                  <h3 className="shell__sheet-label">Screens</h3>
+                  <h3 className="shell__sheet-label">{t.app.screens}</h3>
                   <div className="shell__sheet-list">
                     {SCREENS.map((entry) => (
                       <button
@@ -513,7 +515,7 @@ function Shell({ board, boardId, onBoard, pageId, onPage, view, onView, theme, o
 
               {BOARDS.length > 1 && (
                 <section>
-                  <h3 className="shell__sheet-label">Boards</h3>
+                  <h3 className="shell__sheet-label">{t.app.boards}</h3>
                   <div className="shell__sheet-list">
                     {BOARDS.map((entry) => (
                       <button
