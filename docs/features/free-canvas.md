@@ -104,10 +104,19 @@ never deletes a file.
 | `canvas-layer-lift` `{ nodeId, layerId, copy? }` | a page element into a new module, imports re-specified from `.studio/canvas/` (`liftJsxElementToCanvasModule`); cut from the page unless `copy` (the batch's prune pass takes an orphaned import) | the new root in `createdNodeIds` |
 
 `place` and `lift` reuse the frame-to-frame transplant's destination half and
-scope rule (`transplantJsxElement.ts`): markup that reads a prop, a hook result
-or a `.map` row refuses `captured-scope` by name. A lift then place back into
-the same slot is byte-exact (`transplantJsxElement.canvas.test.ts`,
-`studioCanvasLayers.test.ts`).
+scope rule (`transplantJsxElement.ts`'s `resolveCarriedBindings`, one
+implementation for all three). A name read from a movable context hook
+(`const { t } = useLanguage()`, `detachHooks.ts`'s `findHookBindingForName`)
+travels: a lift writes the call as the layer component's first statement
+(`buildCanvasLayerModule`'s `bodyStatements`) with the hook imported from
+`.studio/canvas/`, and a place reuses the page's own identical call when it
+has one. The layer is parsed like a page, so the static evaluator resolves
+`t.x.y` through the project's single provider at the previewed locale — the
+surface needs no mounted provider, because nothing runs there. Markup that
+reads a prop, any other hook result, a plain body `const` or a `.map` row still
+refuses `captured-scope` by name. A lift then place back into the same slot is
+byte-exact (`transplantJsxElement.canvas.test.ts`,
+`liftCarriesContextHooks.test.ts`, `studioCanvasLayers.test.ts`).
 
 ---
 
