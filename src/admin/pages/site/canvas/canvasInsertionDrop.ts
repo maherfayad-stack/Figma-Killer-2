@@ -12,6 +12,7 @@ import {
   type CanvasDropCandidate,
   type CanvasInsertionTarget,
 } from './canvasDnd'
+import { clientToBoardPoint, findBoardOrigin, isEmptyBoardTarget } from './BoardCanvasLayer/canvasLayerGeometry'
 
 const CANVAS_VIEWPORT_SELECTOR = '[data-breakpoint-id]'
 
@@ -20,7 +21,8 @@ export interface CanvasDropPreview {
   top: number
   width: number
   height: number
-  position: CanvasInsertionTarget['position'] | 'inside'
+  /** `canvas` — the empty board: the element becomes a loose layer at the pointer (P5-G). */
+  position: CanvasInsertionTarget['position'] | 'inside' | 'canvas'
   label: string
 }
 
@@ -181,6 +183,34 @@ export function resolveCanvasPointerInsertionDrop({
     preview: fixedPreviewForTarget(viewport, target, `${label} ${target.position}`),
     breakpointId,
     pageId: tree.id,
+  }
+}
+
+/**
+ * P5-G G1 — a release over the EMPTY board (no frame, no note, no chrome):
+ * where on the free canvas the dropped element's top-left goes, in board
+ * units, plus the preview that says so.
+ *
+ * "Empty" is asked of what is actually under the pointer
+ * (`isEmptyBoardTarget`), never of frame geometry: a frame's drop viewport can
+ * extend past its clipped box, and a note or the notch sits on the board
+ * without being a frame. The drag overlay is `pointer-events: none`, so it is
+ * never what `elementFromPoint` finds. The board point comes from the
+ * board-origin element (`findBoardOrigin`) — its one client rect carries both
+ * the pan and the zoom actually painted, the same reading the file drop and
+ * the pen tool convert through.
+ */
+export function resolveFreeCanvasDrop(
+  clientX: number,
+  clientY: number,
+  label: string,
+): { at: { x: number; y: number }; preview: CanvasDropPreview } | null {
+  if (!isEmptyBoardTarget(document.elementFromPoint(clientX, clientY))) return null
+  const origin = findBoardOrigin()
+  if (!origin) return null
+  return {
+    at: clientToBoardPoint({ x: clientX, y: clientY }, origin, origin.zoom),
+    preview: { left: clientX, top: clientY, width: 0, height: 0, position: 'canvas', label: `${label} on the canvas` },
   }
 }
 

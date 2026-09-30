@@ -41,7 +41,7 @@ A project written before the npm was retired still imports it and no longer buil
 
 ## The Assets panel and Add page
 
-The Assets panel replaces the insert popup. Its sections, the live previews (`AssetPreview.tsx`, a shadow root carrying the vendor sheet so nothing reaches the admin cascade), the ranked search (`rankAssets.ts`), the Colors section and the favourites are described in [`docs/editor.md`](../editor.md) → "Left sidebar". A card inserts on click through `useInsertInserterItem`, and drags onto a frame (static or live) through `useCanvasInsertionDrag.ts`, which shows the drop line before release. The DOM panel's right-click `ModulePicker` reads the same `assetsModel.ts`, so the two surfaces agree about what is insertable.
+The Assets panel replaces the insert popup. Its sections, the live previews (`AssetPreview.tsx`, a shadow root carrying the vendor sheet so nothing reaches the admin cascade), the ranked search (`rankAssets.ts`), the Colors section and the favourites are described in [`docs/editor.md`](../editor.md) → "Left sidebar". A card inserts on click through `useInsertInserterItem`, and drags onto a frame (static or live) through `useCanvasInsertionDrag.ts`, which shows the drop line before release; released on the empty board, a component or element becomes a loose layer on the free canvas (P5-G G1, `hooks/placeModuleOnCanvas.ts`). The DOM panel's right-click `ModulePicker` reads the same `assetsModel.ts`, so the two surfaces agree about what is insertable.
 
 Add page (`AddPagePicker.tsx`) is the one way a page joins the board: **New page** (the `PAGE_KINDS` from `@core/studio-board`) or **From files** (every page on disk that is not on the active board). See [`docs/editor.md`](../editor.md).
 

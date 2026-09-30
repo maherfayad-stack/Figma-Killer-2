@@ -583,6 +583,24 @@ a before/after drop) and a cursor-following ghost, portaled to `document.body`
 so it can paint over an iframe. Its ghost takes children: the notch shows a
 label, the media explorer keeps its own thumbnail card.
 
+**Released on the empty board (P5-G G1).** Outside every frame the gesture used
+to resolve to nothing — no preview and a release that silently did nothing,
+which is what "I can't drag components to the canvas" was whenever the pointer
+was on the board rather than inside a page. A caller that can spell its ghost as
+a loose layer passes `freeCanvas: { accepts, onDrop }`; over the EMPTY board
+(`resolveFreeCanvasDrop` in `canvasInsertionDrop.ts` — asks `isEmptyBoardTarget`
+of `elementFromPoint`, never frame geometry, and converts through the
+board-origin element) the preview is `data-position="canvas"` ("Drop Button on
+the canvas"), and the release calls `onDrop(ghost, boardPoint)`. The Assets
+panel's module cards and the notch's primitives pass it, both through
+`hooks/placeModuleOnCanvas.ts` → `createCanvasLayer`. The element is spelled by
+`store/slices/site/moduleSourceElement.ts`, the SAME function
+`writeInsertToSource` spells a page insert with, so a Button on the board and a
+Button in a frame are the same JSX. An empty intrinsic box (Div, Span,
+Container) gets `100px × 100px` inline, or the layer is zero-size and
+ungrabbable. Saved layouts, Visual Components, images and icons do not pass
+`freeCanvas` yet, so their drag still offers nothing on the board.
+
 ---
 
 ## Dragging an element BETWEEN frames (D2 G3)

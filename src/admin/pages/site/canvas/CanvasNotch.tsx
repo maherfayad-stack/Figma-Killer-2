@@ -40,6 +40,7 @@ import {
 import { UndoRedoButtons } from "./UndoRedoButtons";
 import { CanvasDrawToolButtons } from "./CanvasDrawToolButtons";
 import { useCanvasInsertionDrag } from "./useCanvasInsertionDrag";
+import { canPlaceModuleOnCanvas, placeModuleOnCanvas } from "@site/hooks/placeModuleOnCanvas";
 import { CanvasInsertionDragOverlay } from "./CanvasInsertionDragOverlay";
 import { cn } from "@ui/cn";
 import styles from "./CanvasNotch.module.css";
@@ -202,6 +203,15 @@ function PrimitiveNotchActions() {
       const mod = registry.get(spec.moduleId);
       if (!mod) return false;
       return insertModule(mod, location, { defaults: resolveDefaults(mod, spec) }) !== null;
+    },
+    // P5-G G1 — released on the empty board, the primitive becomes a loose
+    // layer there instead of doing nothing.
+    freeCanvas: {
+      accepts: (spec) => canPlaceModuleOnCanvas(spec.moduleId, spec.defaults),
+      onDrop: (spec, at) => {
+        const mod = registry.get(spec.moduleId);
+        return mod ? placeModuleOnCanvas(spec.moduleId, resolveDefaults(mod, spec), at) : false;
+      },
     },
   });
 

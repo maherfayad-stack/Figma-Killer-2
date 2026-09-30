@@ -62,11 +62,28 @@
  * committing the insert, since every insert action writes through
  * `mutateActiveTree` — the page a resolved node id happens to belong to is
  * not enough on its own.
+ *
+ * ## P5-G G1 — a release over the empty board
+ *
+ * Outside every frame the drag used to resolve to nothing: no preview, and a
+ * release that silently did nothing — the owner's "I can't drag components to
+ * the canvas" whenever the pointer was on the board rather than inside a
+ * page. OD-14's free canvas is that board: a caller that can spell its ghost
+ * as a loose layer passes `freeCanvas`, and a release over the EMPTY board
+ * (`resolveFreeCanvasDrop` — what is under the pointer, not frame geometry)
+ * places it there at the pointer. A caller without `freeCanvas` (images,
+ * icons, saved layouts, Visual Components) keeps the old answer: no preview,
+ * no drop.
  */
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import type { InsertLocation } from '@site/store/insertLocation'
 import { lookupCanvasPageById, selectActiveCanvasPage, useEditorStore } from '@site/store/store'
-import { resolveCanvasPointerInsertionDrop, type CanvasDropPreview } from './canvasInsertionDrop'
+import {
+  resolveCanvasPointerInsertionDrop,
+  resolveFreeCanvasDrop,
+  type CanvasDropPreview,
+  type CanvasPointerInsertionDrop,
+} from './canvasInsertionDrop'
 import { beginInsertionDragSnapshotSession } from './canvasInsertionDragSnapshot'
 import { clearCanvasPointerRelay, markCanvasPointerRelay } from './canvasPointerRelay'
 import { guardDragSession } from '@core/studio-runtime'
@@ -96,11 +113,28 @@ interface UseCanvasInsertionDragOptions<TGhost> {
    * inserter dialog dims its backdrop).
    */
   onDraggingChange?: (dragging: boolean) => void
+  /**
+   * P5-G G1 — the ghost can also land on the EMPTY board as a loose layer.
+   * `accepts` is asked once per drag (a saved layout or a Visual Component
+   * has no loose-layer spelling, so its drag never offers the board);
+   * `onDrop` places it with its top-left at `at`, in board units, and returns
+   * true when something was placed.
+   */
+  freeCanvas?: {
+    accepts: (ghost: TGhost) => boolean
+    onDrop: (ghost: TGhost, at: { x: number; y: number }) => boolean
+  }
 }
+
+/** Where a release lands: a location in one frame's page, or a point on the free canvas. */
+type ResolvedInsertionDrop =
+  | { kind: 'frame'; drop: CanvasPointerInsertionDrop }
+  | { kind: 'canvas'; at: { x: number; y: number }; preview: CanvasDropPreview }
 
 export function useCanvasInsertionDrag<TGhost>({
   onDrop,
   onDraggingChange,
+  freeCanvas,
 }: UseCanvasInsertionDragOptions<TGhost>) {
   const [drag, setDrag] = useState<CanvasInsertionDragState<TGhost> | null>(null)
   // A drag ends on the same pointerup that would otherwise fire a click on the
@@ -132,6 +166,7 @@ export function useCanvasInsertionDrag<TGhost>({
     let lastPoint = { clientX: startX, clientY: startY }
     let started = false
     const snapshot = beginInsertionDragSnapshotSession()
+    const offersFreeCanvas = freeCanvas?.accepts(ghost) === true
 
     // `speed-06` follow-up — the hovered viewport's OWN page, when it
     // differs from `canvasPage`. `data-page-id` is `BoardFrameView.tsx`'s
@@ -150,8 +185,8 @@ export function useCanvasInsertionDrag<TGhost>({
       return site ? lookupCanvasPageById(site, pageId) : null
     }
 
-    const resolveDrop = (clientX: number, clientY: number) =>
-      canvasPage
+    const resolveDrop = (clientX: number, clientY: number): ResolvedInsertionDrop | null => {
+      const drop = canvasPage
         ? resolveCanvasPointerInsertionDrop({
             canvasPage,
             clientX,
@@ -161,6 +196,13 @@ export function useCanvasInsertionDrag<TGhost>({
             resolvePageForViewport,
           })
         : null
+      if (drop) return { kind: 'frame', drop }
+      const onBoard = offersFreeCanvas ? resolveFreeCanvasDrop(clientX, clientY, label) : null
+      return onBoard ? { kind: 'canvas', ...onBoard } : null
+    }
+
+    const previewOf = (resolved: ResolvedInsertionDrop | null): CanvasDropPreview | null =>
+      resolved === null ? null : resolved.kind === 'frame' ? resolved.drop.preview : resolved.preview
 
     // `speed-06` — at most one resolve per animation frame, with the LAST
     // pointer position of whatever moves arrived since the previous one (100
@@ -174,7 +216,7 @@ export function useCanvasInsertionDrag<TGhost>({
       pendingPoint = null
       if (!point) return
       const resolved = resolveDrop(point.x, point.y)
-      setDrag({ ghost, x: point.x, y: point.y, preview: resolved?.preview ?? null })
+      setDrag({ ghost, x: point.x, y: point.y, preview: previewOf(resolved) })
     }
 
     const scheduleResolve = (clientX: number, clientY: number) => {
@@ -227,14 +269,19 @@ export function useCanvasInsertionDrag<TGhost>({
       }, 0)
 
       if (!resolved) return
-      // `speed-06` follow-up — `resolved.location.parentId` is a node id in
-      // `resolved.pageId`'s OWN tree; every insert action writes through
+      if (resolved.kind === 'canvas') {
+        freeCanvas?.onDrop(ghost, resolved.at)
+        return
+      }
+      const { drop } = resolved
+      // `speed-06` follow-up — `drop.location.parentId` is a node id in
+      // `drop.pageId`'s OWN tree; every insert action writes through
       // `mutateActiveTree`, so the active document has to already BE that
       // page before `onDrop` runs, not after.
-      if (resolved.pageId !== canvasPage?.id) {
-        useEditorStore.getState().openPageInCanvas(resolved.pageId)
+      if (drop.pageId !== canvasPage?.id) {
+        useEditorStore.getState().openPageInCanvas(drop.pageId)
       }
-      if (onDrop(ghost, resolved.location)) useEditorStore.getState().setActiveBreakpoint(resolved.breakpointId)
+      if (onDrop(ghost, drop.location)) useEditorStore.getState().setActiveBreakpoint(drop.breakpointId)
     }
 
     const cancel = () => {
