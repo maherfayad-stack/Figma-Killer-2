@@ -37,6 +37,7 @@ const EXEMPT_READERS: Readonly<Record<string, string>> = {
   'src/admin/pages/site/canvas/BoardVectorLayer/vectorEditEntry.ts': 'vector edit mode entry',
   // The inspector's Vector section reads the stamps to address its `svg-attr` writes; nothing it reads is emitted.
   'src/admin/pages/site/inspector/sections/VectorPaintControls.tsx': 'Vector section (paint writes)',
+  'src/admin/pages/site/inspector/sections/vectorPaintModel.ts': 'Vector section model (paint writes)',
 }
 
 /** The one file allowed to keep the stamps through the sanitizer. */

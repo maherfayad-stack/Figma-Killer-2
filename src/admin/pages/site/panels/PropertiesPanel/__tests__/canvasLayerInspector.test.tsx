@@ -34,7 +34,7 @@ beforeEach(() => {
 })
 
 describe('CanvasLayerInspector', () => {
-  it('a root <svg> gets the Vector controls, writing into the layer’s own node', () => {
+  it('a root <svg> gets the Vector controls, writing into the layer’s own node', async () => {
     useEditorStore.setState({
       canvasLayerPages: {
         [`canvas:${LAYER_ID}`]: layer({ props: { svg: '<svg fill="none" stroke="currentColor"><path data-studio-svg-part="7:7" d="M0 0L9 9"/></svg>', tag: '' } }),
@@ -42,7 +42,7 @@ describe('CanvasLayerInspector', () => {
       selectedCanvasLayerIds: [LAYER_ID],
     })
     render(<CanvasLayerInspector />)
-    expect(screen.getByTestId('vector-paint')).toBeTruthy()
+    expect(await screen.findByTestId('vector-paint')).toBeTruthy()
     expect((screen.getByRole('combobox', { name: 'Stroke type' }) as HTMLInputElement).value).toBe('Current colour')
     expect((screen.getByRole('combobox', { name: 'Fill type' }) as HTMLInputElement).value).toBe('None')
   })

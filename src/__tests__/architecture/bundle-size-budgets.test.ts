@@ -216,7 +216,17 @@ const BUDGETS: ChunkBudget[] = [
     // shows no new dependency entering this chunk — every touched file is a
     // manual-memoization removal or a compiler-bailout-pattern fix, not a new
     // import. Measured 42,876 B.
-    maxBytes: 43_000,
+    //
+    // Raised 43,000 -> 43,200 B for the inspector's Vector section
+    // (`fix/svg-inspector-and-paste`), which went behind a lazy boundary
+    // (`LazyVectorPaintControls`) so its ~15 KB stays out of
+    // `AdminCanvasEditorBody` (it mounts only for a selected `<svg>`). Audited
+    // against `d1ce255a` (42,830 B -> 43,015 B, +185 B): the whole delta is
+    // three new `__vite__mapDeps` entries — `ColorValueInput` .js/.css and
+    // `editorPermissionsContext`, split into shared chunks because the lazy
+    // chunk and the body both import them. No component code entered this
+    // chunk ("VectorPaint" occurs 0 times in it).
+    maxBytes: 43_200,
     rationale:
       'site route shell (current ~34 KB raw / ~12 KB gzipped). Must not ' +
       'pull the visual editor body, DnD, canvas, first-party modules, or ' +

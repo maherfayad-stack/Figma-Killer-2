@@ -90,9 +90,10 @@ describe('VectorSection', () => {
     expect(container.textContent).toBe('')
   })
 
-  it('shows the whole graphic’s paint: Mixed fill (the shapes differ), the shared black stroke and weight', () => {
+  it('shows the whole graphic’s paint: Mixed fill (the shapes differ), the shared black stroke and weight', async () => {
     selectSvg()
     render(<VectorSection />)
+    await screen.findByTestId('vector-paint') // the controls load behind a lazy boundary
     expect((screen.getByRole('combobox', { name: 'Stroke type' }) as HTMLInputElement).value).toBe('Colour')
     expect((screen.getByRole('textbox', { name: 'Stroke colour' }) as HTMLInputElement).value).toBe('black')
     expect((screen.getByRole('textbox', { name: 'Fill colour' }) as HTMLInputElement).placeholder).toBe('Mixed')
@@ -102,6 +103,7 @@ describe('VectorSection', () => {
   it('a colour typed and committed is ONE save: the root’s fill set, the circle’s own fill removed', async () => {
     selectSvg()
     render(<VectorSection />)
+    await screen.findByTestId('vector-paint') // the controls load behind a lazy boundary
     const input = screen.getByRole('textbox', { name: 'Fill colour' })
     fireEvent.change(input, { target: { value: '#00ff00' } })
     fireEvent.blur(input)
@@ -123,6 +125,7 @@ describe('VectorSection', () => {
   it('a burst that ends where it started posts nothing', async () => {
     selectSvg()
     render(<VectorSection />)
+    await screen.findByTestId('vector-paint') // the controls load behind a lazy boundary
     const input = screen.getByRole('textbox', { name: 'Stroke colour' })
     fireEvent.change(input, { target: { value: '#00ff00' } })
     fireEvent.blur(input)
@@ -132,16 +135,18 @@ describe('VectorSection', () => {
     expect(posted).toEqual([])
   })
 
-  it('an icon whose markup comes from an .svg file says why nothing here can be written', () => {
+  it('an icon whose markup comes from an .svg file says why nothing here can be written', async () => {
     selectSvg({ svg: ICON, tag: 'span' })
     render(<VectorSection />)
+    await screen.findByTestId('vector-paint') // the controls load behind a lazy boundary
     expect(screen.getByTestId('vector-paint-refusal').textContent).toContain('comes from an .svg file')
     expect((screen.getByRole('textbox', { name: 'Stroke colour' }) as HTMLInputElement).disabled).toBe(true)
   })
 
-  it('a locked graphic names its lock', () => {
+  it('a locked graphic names its lock', async () => {
     selectSvg({ svg: ICON, tag: '' }, { locked: true, lockReason: 'Built from a spread.' })
     render(<VectorSection />)
+    await screen.findByTestId('vector-paint') // the controls load behind a lazy boundary
     expect(screen.getByTestId('vector-paint-refusal').textContent).toBe('This graphic is locked: Built from a spread.')
   })
 })

@@ -45,7 +45,6 @@ import {
 } from '@core/vector'
 import { hasWritableSourceLocation, type PageNode } from '@core/page-tree'
 import type { SvgPartWrite } from '@site/studio/svgPartCommits'
-import type { SelectionModel } from '../selectionModel'
 
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg'
 
@@ -308,11 +307,6 @@ export function viewBoxAspect(viewBox: string | null): number | null {
   if (!numbers || numbers.length !== 4 || numbers.some((n) => !Number.isFinite(n))) return null
   const [, , width, height] = numbers as [number, number, number, number]
   return width > 0 && height > 0 ? width / height : null
-}
-
-/** The Vector section's manifest predicate: one selected node, and it is an inline `<svg>`. */
-export function showsVectorSection(model: SelectionModel): boolean {
-  return !model.isMultiSelect && model.selectedNode?.moduleId === 'base.svg'
 }
 
 /**

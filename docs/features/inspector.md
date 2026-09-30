@@ -664,6 +664,9 @@ and H already follow the viewBox's ratio).
   node disables the section with why (`vectorPaintRefusal`).
 - A `<svg>` drawn on the free canvas gets the same controls from the
   loose-layer inspector (`CanvasLayerInspector.tsx`).
+- The controls load behind a lazy boundary (`LazyVectorPaintControls.tsx`):
+  they mount only for an `<svg>`, and eager they cost the editor body ~17 KB
+  (`bundle-size-budgets.test.ts`).
 
 ### G8 — Effects (F13/F20–F22)
 

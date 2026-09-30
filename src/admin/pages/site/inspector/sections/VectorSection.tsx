@@ -14,8 +14,8 @@
  */
 import { Section } from '@ui/components/Section'
 import { useSelectionModel } from '../selectionModel'
-import { VectorPaintControls } from './VectorPaintControls'
-import { showsVectorSection } from './vectorPaintModel'
+import { LazyVectorPaintControls } from './LazyVectorPaintControls'
+import { showsVectorSection } from './vectorSectionSelection'
 
 export function VectorSection() {
   const model = useSelectionModel()
@@ -24,7 +24,7 @@ export function VectorSection() {
   return (
     <Section title="Vector" forceOpen>
       {/* Keyed by node: a new graphic starts on "Whole graphic" with no burst in flight. */}
-      <VectorPaintControls key={selectedNodeId} nodeId={selectedNodeId} node={selectedNode} />
+      <LazyVectorPaintControls key={selectedNodeId} nodeId={selectedNodeId} node={selectedNode} />
     </Section>
   )
 }

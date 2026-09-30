@@ -19,7 +19,7 @@ import { useEditorStore } from '@site/store/store'
 import { canvasLayerPageId } from '@core/studio-board'
 import { Section } from '@ui/components/Section'
 import { canvasLayerRootNodeId } from '@site/store/slices/canvasLayerGestures'
-import { VectorPaintControls } from '@site/inspector/sections/VectorPaintControls'
+import { LazyVectorPaintControls } from '@site/inspector/sections/LazyVectorPaintControls'
 import styles from './CanvasLayerInspector.module.css'
 
 export function CanvasLayerInspector() {
@@ -48,7 +48,7 @@ export function CanvasLayerInspector() {
     return (
       <div data-testid="canvas-layer-inspector">
         <Section title="Vector" forceOpen>
-          <VectorPaintControls key={rootId} nodeId={rootId} node={root} />
+          <LazyVectorPaintControls key={rootId} nodeId={rootId} node={root} />
         </Section>
       </div>
     )

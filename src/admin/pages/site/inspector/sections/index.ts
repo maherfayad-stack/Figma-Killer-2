@@ -99,7 +99,7 @@ import { AnimationsSection } from './AnimationsSection'
 import { InteractionSection } from './InteractionSection'
 import { CustomPropertiesSection } from './CustomPropertiesSection'
 import { VectorSection } from './VectorSection'
-import { showsVectorSection } from './vectorPaintModel'
+import { showsVectorSection } from './vectorSectionSelection'
 
 export type InspectorSectionTab = 'design' | 'prototype'
 

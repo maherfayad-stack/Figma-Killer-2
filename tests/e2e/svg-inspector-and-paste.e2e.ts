@@ -297,15 +297,12 @@ test.describe('a paste whose source is gone says so, in full', () => {
 
     const toast = page.locator('[data-toast-kind="warning"]').filter({ hasText: 'Cannot add this to imported code' })
     await expect(toast).toBeVisible({ timeout: 15_000 })
-    const body = toast.locator('[data-toast-body]')
-    await expect(body).toContainText('What you copied (<h2>) is not where it was in your project')
-    // Clamped to three lines at first; "Show more" lifts the clamp.
-    const toggle = toast.locator('[data-toast-body-toggle]')
-    await expect(toggle).toBeVisible()
-    expect(await body.evaluate((el) => el.scrollHeight > el.clientHeight + 1)).toBe(true)
-    await toggle.click()
-    await expect.poll(() => body.evaluate((el) => el.scrollHeight <= el.clientHeight + 1)).toBe(true)
-    await expect(body).toBeVisible()
+    await expect(toast).toContainText('What you copied (<h2>) is not where it was in your project')
+    // The whole sentence is readable — the body is no longer clamped mid-word
+    // ("… Copy it…"), so its last words are laid out inside the card.
+    const body = toast.locator('p').filter({ hasText: 'What you copied' })
+    expect(await body.evaluate((el) => el.scrollHeight <= el.clientHeight + 1), 'the refusal is still cut off').toBe(true)
+    await expect(body).toContainText('Copy it again, then paste.')
     expect(read(ABOUT_REL), 'a refused paste wrote to the page').toBe(ABOUT)
   })
 })
