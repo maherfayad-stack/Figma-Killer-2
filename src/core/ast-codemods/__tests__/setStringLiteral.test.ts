@@ -65,7 +65,7 @@ describe('setStringLiteral', () => {
     const file = writeFixture('translations.js', DICTIONARY)
     const { line, col } = locate(DICTIONARY, "'Exclusive rates on hotels'")
 
-    setStringLiteral({ file, line, col, value: 'Members-only hotel rates' })
+    setStringLiteral({ file, line, col, value: 'Members-only hotel rates', expected: 'Exclusive rates on hotels' })
 
     const written = fs.readFileSync(file, 'utf8')
     expect(written).toContain("hotelsTag: 'Members-only hotel rates'")
@@ -78,7 +78,7 @@ describe('setStringLiteral', () => {
     const file = writeFixture('translations.js', DICTIONARY)
     const { line, col } = locate(DICTIONARY, "'Exclusive rates on hotels'")
 
-    setStringLiteral({ file, line, col, value: 'Still single quoted' })
+    setStringLiteral({ file, line, col, value: 'Still single quoted', expected: 'Exclusive rates on hotels' })
 
     // A copy edit that flipped every touched line to double quotes would show up
     // as noise in the user's diff.
@@ -89,19 +89,19 @@ describe('setStringLiteral', () => {
     const file = writeFixture('translations.js', DICTIONARY)
     const { line, col } = locate(DICTIONARY, "'Exclusive rates on hotels'")
 
-    setStringLiteral({ file, line, col, value: "Ramy's pick" })
+    setStringLiteral({ file, line, col, value: "Ramy's pick", expected: 'Exclusive rates on hotels' })
 
     const written = fs.readFileSync(file, 'utf8')
     expect(written).toContain("'Ramy\\'s pick'")
     // Still parses: re-reading the same position finds a literal again.
-    expect(() => setStringLiteral({ file, line, col, value: 'ok' })).not.toThrow()
+    expect(() => setStringLiteral({ file, line, col, value: 'ok', expected: "Ramy's pick" })).not.toThrow()
   })
 
   it('handles newlines and unicode without breaking the file', () => {
     const file = writeFixture('translations.js', DICTIONARY)
     const { line, col } = locate(DICTIONARY, "'Exclusive rates on hotels'")
 
-    setStringLiteral({ file, line, col, value: 'line one\nline two — عربي' })
+    setStringLiteral({ file, line, col, value: 'line one\nline two — عربي', expected: 'Exclusive rates on hotels' })
 
     const written = fs.readFileSync(file, 'utf8')
     expect(written).toContain('line one\\nline two — عربي')
@@ -113,7 +113,7 @@ describe('setStringLiteral', () => {
     const file = writeFixture('labels.ts', source)
     const { line, col } = locate(source, '"Old label"')
 
-    setStringLiteral({ file, line, col, value: 'New label' })
+    setStringLiteral({ file, line, col, value: 'New label', expected: 'Old label' })
 
     expect(fs.readFileSync(file, 'utf8')).toContain('"New label"')
   })
@@ -123,7 +123,7 @@ describe('setStringLiteral', () => {
     const file = writeFixture('labels.ts', source)
     const { line, col } = locate(source, '`Old label`')
 
-    setStringLiteral({ file, line, col, value: 'New label' })
+    setStringLiteral({ file, line, col, value: 'New label', expected: 'Old label' })
 
     expect(fs.readFileSync(file, 'utf8')).toContain('New label')
   })
@@ -133,7 +133,7 @@ describe('setStringLiteral', () => {
     const file = writeFixture('count.ts', source)
     const { line, col } = locate(source, '42')
 
-    expect(() => setStringLiteral({ file, line, col, value: 'nope' })).toThrow(StringLiteralTargetError)
+    expect(() => setStringLiteral({ file, line, col, value: 'nope', expected: 'x' })).toThrow(StringLiteralTargetError)
     expect(fs.readFileSync(file, 'utf8')).toBe(source)
   })
 
@@ -142,7 +142,7 @@ describe('setStringLiteral', () => {
     const file = writeFixture('alias.ts', source)
     const { line, col } = locate(source, 'other\n')
 
-    expect(() => setStringLiteral({ file, line, col, value: 'nope' })).toThrow(StringLiteralTargetError)
+    expect(() => setStringLiteral({ file, line, col, value: 'nope', expected: 'x' })).toThrow(StringLiteralTargetError)
     expect(fs.readFileSync(file, 'utf8')).toBe(source)
   })
 
@@ -152,14 +152,14 @@ describe('setStringLiteral', () => {
     const { line, col } = locate(source, '`count:')
 
     // Rewriting this would silently delete the `${n}` interpolation.
-    expect(() => setStringLiteral({ file, line, col, value: 'nope' })).toThrow(StringLiteralTargetError)
+    expect(() => setStringLiteral({ file, line, col, value: 'nope', expected: 'x' })).toThrow(StringLiteralTargetError)
     expect(fs.readFileSync(file, 'utf8')).toBe(source)
   })
 
   it('refuses a line/column outside the file', () => {
     const file = writeFixture('short.ts', "export const A = 'a'\n")
 
-    expect(() => setStringLiteral({ file, line: 999, col: 1, value: 'nope' })).toThrow(StringLiteralTargetError)
+    expect(() => setStringLiteral({ file, line: 999, col: 1, value: 'nope', expected: 'x' })).toThrow(StringLiteralTargetError)
   })
 
   it('refuses a column that lands inside a literal rather than at its start', () => {
@@ -168,8 +168,43 @@ describe('setStringLiteral', () => {
     const { line, col } = locate(source, "'Old label'")
 
     // Off-by-one on the column must fail closed, not rewrite a neighbour.
-    expect(() => setStringLiteral({ file, line, col: col + 3, value: 'nope' })).toThrow(StringLiteralTargetError)
+    expect(() => setStringLiteral({ file, line, col: col + 3, value: 'nope', expected: 'x' })).toThrow(StringLiteralTargetError)
     expect(fs.readFileSync(file, 'utf8')).toBe(source)
+  })
+})
+
+/**
+ * Compare-and-swap: `expected` is what the caller read at the literal. A file
+ * that moved on since — a hand fix, an agent, another locale's value — wins;
+ * the write is refused and the bytes are left exactly as they are. This is the
+ * guard behind the 2026-09-30 "dictionary edits revert" report.
+ */
+describe('setStringLiteral — compare-and-swap against the disk', () => {
+  it('refuses literal-changed when the literal no longer holds what the caller read', () => {
+    const file = writeFixture('translations.js', DICTIONARY)
+    const { line, col } = locate(DICTIONARY, "'Exclusive rates on hotels'")
+
+    let thrown: unknown
+    try {
+      // The caller read an OLD value (say, the Arabic that was since fixed by hand).
+      setStringLiteral({ file, line, col, value: 'عروض حصرية', expected: 'عروض حصرية قديمة' })
+    } catch (err) {
+      thrown = err
+    }
+    expect(thrown).toBeInstanceOf(StringLiteralTargetError)
+    expect((thrown as StringLiteralTargetError).reason).toBe('literal-changed')
+    expect(fs.readFileSync(file, 'utf8')).toBe(DICTIONARY)
+  })
+
+  it('leaves the file untouched when the literal already holds the new value', () => {
+    const file = writeFixture('translations.js', DICTIONARY)
+    const { line, col } = locate(DICTIONARY, "'Exclusive rates on hotels'")
+    const before = fs.statSync(file).mtimeMs
+
+    setStringLiteral({ file, line, col, value: 'Exclusive rates on hotels', expected: 'something older' })
+
+    expect(fs.readFileSync(file, 'utf8')).toBe(DICTIONARY)
+    expect(fs.statSync(file).mtimeMs).toBe(before)
   })
 })
 
@@ -186,7 +221,7 @@ describe('setStringLiteral — a JSX attribute literal', () => {
 
   function rewrite(value: string, source = PAGE, needle = '"Weeknight dinners"'): string {
     const file = writeFixture('Page.tsx', source)
-    setStringLiteral({ file, ...locate(source, needle), value })
+    setStringLiteral({ file, ...locate(source, needle), value, expected: needle.slice(1, -1) })
     return fs.readFileSync(file, 'utf8')
   }
 

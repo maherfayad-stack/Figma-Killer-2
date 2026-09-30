@@ -214,6 +214,7 @@ describe('applyStudioEdit — the literal kind', () => {
       kind: 'literal',
       nodeId: 'src/i18n/translations.js:3:16',
       text: 'Members-only hotel rates',
+      expected: 'Exclusive rates on hotels',
     })
 
     expect(applied.applied).toBe(true)
@@ -233,6 +234,7 @@ describe('applyStudioEdit — the literal kind', () => {
         kind: 'literal',
         nodeId: `../${path.basename(outside)}:1:18`,
         text: 'overwritten',
+        expected: 'keep me',
       })
 
       expect(applied.applied).toBe(false)
@@ -242,11 +244,25 @@ describe('applyStudioEdit — the literal kind', () => {
     }
   })
 
+  it('refuses `literal-changed` and writes nothing when the entry changed since the board read it', () => {
+    // The board read `en` while it still held the Arabic; the file was fixed
+    // by hand since. Writing what the board remembers would undo the fix.
+    write('src/i18n/translations.js', DICTIONARY)
+
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'literal', nodeId: 'src/i18n/translations.js:3:16', text: 'عروض حصرية', expected: 'عروض' },
+    ])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals).toEqual([expect.objectContaining({ kind: 'literal', reason: 'literal-changed' })])
+    expect(read('src/i18n/translations.js')).toBe(DICTIONARY)
+  })
+
   it('propagates the codemod refusal when the target is not a literal', () => {
     write('src/consts.ts', 'export const COUNT = 42\n')
 
     expect(() =>
-      applyStudioEdit(tmpDir, { kind: 'literal', nodeId: 'src/consts.ts:1:22', text: 'nope' }),
+      applyStudioEdit(tmpDir, { kind: 'literal', nodeId: 'src/consts.ts:1:22', text: 'nope', expected: '42' }),
     ).toThrow()
     expect(read('src/consts.ts')).toContain('42')
   })
@@ -688,7 +704,7 @@ describe('applyStudioEditBatch — every edit that does not write is a named ref
   it('a literal edit whose position holds something other than a string refuses `not-a-literal`', () => {
     write('src/copy.ts', `export const COPY = { title: 42 }\n`)
 
-    const result = applyStudioEditBatch(tmpDir, [{ kind: 'literal', nodeId: 'src/copy.ts:1:30', text: 'Hello' }])
+    const result = applyStudioEditBatch(tmpDir, [{ kind: 'literal', nodeId: 'src/copy.ts:1:30', text: 'Hello', expected: '42' }])
 
     expect(result.refusals).toEqual([expect.objectContaining({ kind: 'literal', reason: 'not-a-literal' })])
   })

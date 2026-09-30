@@ -34,7 +34,7 @@
  * server (same-origin in prod behind Caddy).
  */
 import type { IPersistenceAdapter, SaveSiteOptions } from '@core/persistence/types'
-import { type SiteDocument } from '@core/page-tree'
+import { decodeSourceNodeId, type SiteDocument } from '@core/page-tree'
 import { useEditorStore } from '@site/store/store'
 import { requestEditorSave } from '@admin/state/adminEvents'
 import { notifyInlineStyleUnsaved } from '@site/panels/inlineStyleUnsavedNotice'
@@ -115,6 +115,17 @@ export {
  * even this shorter window.
  */
 export const STUDIO_AUTOSAVE_DELAY_MS = 250
+
+/** The files of every `literal` edit the server refused `literal-changed` — see its use in `saveSite`. */
+function staleLiteralFiles(refusals: readonly { nodeId: string; kind: string; reason: string }[]): string[] {
+  const files = new Set<string>()
+  for (const refusal of refusals) {
+    if (refusal.kind !== 'literal' || refusal.reason !== 'literal-changed') continue
+    const location = decodeSourceNodeId(refusal.nodeId)
+    if (location) files.add(location.rel)
+  }
+  return [...files]
+}
 
 export const fsCodemodAdapter: IPersistenceAdapter = {
   // `studioProjectLoad.ts` — the stream, the `.studio/` reads beside it, and
@@ -332,6 +343,13 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
         resyncTouchedFiles = result.touchedFiles ?? []
         notifyRowTemplateWrites(landedRowWrites)
       }
+
+      // A `literal` the server refused `literal-changed` holds text this board
+      // has not seen (the file changed since it was read). Re-read that file
+      // so the board shows it: the rebase then drops the refused value as
+      // `source-changed` instead of re-sending it on every tick.
+      const staleFiles = staleLiteralFiles(refusals)
+      if (staleFiles.length > 0) resyncTouchedFiles = [...(resyncTouchedFiles ?? []), ...staleFiles]
     }
 
     // WS-10 §4.4 (Phase 4) — advance the locale-variant text baseline to

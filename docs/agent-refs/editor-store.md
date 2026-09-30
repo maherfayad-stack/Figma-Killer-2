@@ -432,7 +432,13 @@ Both are load-bearing and both have a regression test
 - resolved text with a `textOrigin` is emitted as `kind: 'literal'` with the
   **origin's** `rel:line:col` as its `nodeId` — and that path runs **before** the
   `hasWritableSourceLocation` guard, because that guard is about JSX locations
-  and a literal edit has nothing to do with the node's own id.
+  and a literal edit has nothing to do with the node's own id. It carries
+  `expected` (the baseline the board read there); no baseline, no edit. The
+  server refuses `literal-changed` when the file no longer holds `expected`,
+  and `saveSite` re-reads that file (`resyncBoardAfterWrite`).
+- the unsaved-edit rebase (`unsavedEditRebase.ts`) carries a value traced to a
+  literal only onto a fresh node with the SAME literal (`rel:line:col`), never
+  the same file alone — one dictionary module holds every locale.
 
 ### Opening a project: the streamed load (P6-B)
 

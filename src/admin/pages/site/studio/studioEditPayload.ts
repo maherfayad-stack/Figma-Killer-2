@@ -40,7 +40,10 @@ export type StudioEditPayload =
   | { kind: 'text'; nodeId: string; text: string }
   | { kind: 'style'; nodeId: string; style: Record<string, string | number> }
   | { kind: 'class'; nodeId: string; add: StudioClassToken[]; remove: StudioClassToken[] }
-  | { kind: 'literal'; nodeId: string; text: string }
+  // `expected` — the text this board read at the literal (its save-diff
+  // baseline); the server refuses `literal-changed` when the file holds anything
+  // else, so an old read can never be written back over a newer file.
+  | { kind: 'literal'; nodeId: string; text: string; expected: string }
   | { kind: 'tag'; nodeId: string; tag: string }
   | { kind: 'asset'; nodeId: string; assetPath: string }
   | { kind: 'css'; op: 'set'; nodeId: string; file: string; selector: string; property: string; value: string; atRule?: string }

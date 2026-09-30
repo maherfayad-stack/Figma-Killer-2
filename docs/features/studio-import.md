@@ -846,12 +846,16 @@ How each piece knows:
 | Sync | `parsedPageToSitePage` leaves the text prop OUT of `codeProps` when an origin exists — so "writable" needs no special case downstream, it falls out of the one predicate |
 | Store | `updateNodeProps` and `startInlineEdit` both consult `isPropWritableToSource`, so canvas double-click and the panel field agree |
 | Panel | `propLockReason` offers that prop and keeps the genuinely code-valued ones read-only |
-| Save | `saveSite` emits `kind: 'literal'` with the ORIGIN's `rel:line:col` as its `nodeId`, so the server's existing ordering, dedupe, and touched-file logic all apply unchanged |
-| Codemod | `setStringLiteral` replaces the literal at that exact position, preserving the file's quote style |
+| Save | `saveSite` emits `kind: 'literal'` with the ORIGIN's `rel:line:col` as its `nodeId`, so the server's existing ordering, dedupe, and touched-file logic all apply unchanged. It carries `expected` — the save-diff baseline, i.e. what the board READ at that literal — and a node with no baseline for the value emits nothing (no blind write into a dictionary) |
+| Codemod | `setStringLiteral` replaces the literal at that exact position, preserving the file's quote style — only while the literal still holds `expected` (compare-and-swap). A literal that changed since the board read it refuses `literal-changed`, nothing is written, and the client re-reads that file so the board shows the code's value |
 
 **Scoped to text, not hung off `resolution`.** A node can resolve several values (text, `className`, an aria label) and `resolution` keeps only the first — so an origin there could point at the literal behind a *different* prop than the one being edited, and a writeback aimed at the wrong string is worse than none.
 
 **A `.map` row's copy is individually editable.** Each iteration resolved a different array element, so each carries its own origin. The origin path deliberately runs before the `hasWritableSourceLocation` guard in `saveSite`, because that guard is about JSX locations and a literal edit has nothing to do with the node's own id.
+
+**A value is never moved from one literal to another (2026-09-30).** One dictionary module usually holds every locale (`translations.ts`'s `en` and `ar` branches), so a locale switch re-reads each text from a DIFFERENT literal in the SAME file. The unsaved-edit rebase (`unsavedEditRebase.ts`) compares the whole origin (`rel:line:col`), not just the file: a value resolved from `ar` is never carried onto a node whose origin is the `en` literal. It used to compare only the file, and the next autosave wrote Arabic into the source locale for exactly the keys whose `en` text equalled the old `ar` text.
+
+**Every dictionary write is one entry, compared against the disk.** The Content panel (`POST /admin/api/studio/translations`), the AI translate run (`translateContent.ts`'s `applyTranslations`) and "Make translatable" (`i18nSetup.ts`) all go through `writeTranslationEntry(dir, { locale, key, value, expected })`: it reads the file fresh, refuses when the entry is neither `expected` (`null` = absent) nor already `value`, and patches that one `(locale, key)`. A translation writes only its target locale, with `expected` read before the model call; extraction writes only the source (default) locale, from the JSX literal it scanned, as a create (`expected: null`), and never mints a key the dictionary already holds for different text.
 
 **Shared copy says so.** A dictionary key is shared by design, so the notice counts how many nodes resolve to the same literal and warns before the user commits — the same treatment `SharedComponentNotice` gives a shared component.
 

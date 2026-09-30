@@ -109,7 +109,7 @@ describe('WB-2 — a resolved-text edit survives the next load', () => {
     expect(nodeWithText(pageTitled(first.pages, 'About'), 'Hello original')).toBeDefined()
 
     const { rel, line, col } = heading!.textOrigin!
-    const result = applyStudioEditBatch(wsDir, [{ kind: 'literal', nodeId: `${rel}:${line}:${col}`, text: 'Hello edited' }])
+    const result = applyStudioEditBatch(wsDir, [{ kind: 'literal', nodeId: `${rel}:${line}:${col}`, text: 'Hello edited', expected: 'Hello original' }])
     expect(result.written).toBe(1)
     expect(rel).toBe('src/strings.ts')
     expect(fs.readFileSync(path.join(wsDir, 'src', 'strings.ts'), 'utf8')).toContain('Hello edited')
@@ -136,7 +136,7 @@ describe('WB-2 — a resolved-text edit survives the next load', () => {
   it('reports the literal edit as shared, and the resync it triggers narrows to exactly the readers', async () => {
     const first = await loadStudioPages(wsDir)
     const { rel, line, col } = nodeWithText(pageTitled(first.pages, 'Home'), 'Hello original')!.textOrigin!
-    const result = applyStudioEditBatch(wsDir, [{ kind: 'literal', nodeId: `${rel}:${line}:${col}`, text: 'Hello edited' }])
+    const result = applyStudioEditBatch(wsDir, [{ kind: 'literal', nodeId: `${rel}:${line}:${col}`, text: 'Hello edited', expected: 'Hello original' }])
     // Siblings update immediately: the client resyncs on `sharedComponents`.
     expect(result.sharedComponents).toBe(true)
 

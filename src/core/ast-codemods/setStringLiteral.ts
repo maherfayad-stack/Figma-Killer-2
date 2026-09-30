@@ -16,13 +16,20 @@
  * a person editing that copy means. See `ParsedNode.textOrigin`, which is where
  * the (line, col) comes from.
  *
+ * COMPARE-AND-SWAP. `expected` is the value the caller read at this literal.
+ * When the file now holds something else (a hand edit, an agent, a script),
+ * the write is refused `literal-changed` rather than put over it: a caller whose
+ * picture of the file is old must not be able to undo a newer change by
+ * writing what it still remembers. A literal that already holds `value` is
+ * left alone (the write already happened).
+ *
  * FAILS CLOSED. The token at the location must actually be a string literal (or
  * a no-substitution template literal). Anything else — a number, an identifier, a
  * template with `${}` in it, or nothing at that position at all — throws rather
  * than guessing, because a mis-aimed write here corrupts a file the editor never
  * showed the user.
  */
-import { Node, Project } from 'ts-morph'
+import { Node, Project, type NoSubstitutionTemplateLiteral, type StringLiteral } from 'ts-morph'
 import { createProject, loadSourceFile } from './locateJsxElement'
 import { jsStringSpelling, jsxAttributeSpelling, quoteOf } from './stringSpelling'
 
@@ -33,9 +40,13 @@ export interface SetStringLiteralParams {
   /** 1-based column of the literal's opening quote. */
   col: number
   value: string
+  /** The text the caller read at this literal. A literal that no longer holds it refuses `literal-changed`. */
+  expected: string
   /** Optional pre-existing project to reuse (e.g. across multiple edits). */
   project?: Project
 }
+
+export type StringLiteralRefusalReason = 'element-moved' | 'not-a-literal' | 'literal-changed'
 
 /**
  * Thrown when the token at the target location is not a rewritable string
@@ -47,11 +58,12 @@ export class StringLiteralTargetError extends Error {
    * The stable refusal code the writeback batch reports (WB-12):
    * `element-moved` — nothing is at that position any more (the file changed
    * since it was read); `not-a-literal` — something is, and it is not a
-   * literal this codemod may rewrite.
+   * literal this codemod may rewrite; `literal-changed` — it is the literal, but
+   * it no longer holds the text the caller read.
    */
-  readonly reason: 'element-moved' | 'not-a-literal'
+  readonly reason: StringLiteralRefusalReason
 
-  constructor(message: string, path: string, reason: 'element-moved' | 'not-a-literal' = 'not-a-literal') {
+  constructor(message: string, path: string, reason: StringLiteralRefusalReason = 'not-a-literal') {
     super(`[ast-codemods/setStringLiteral] ${path}: ${message}`)
     this.name = 'StringLiteralTargetError'
     this.path = path
@@ -60,7 +72,7 @@ export class StringLiteralTargetError extends Error {
 }
 
 export function setStringLiteral(params: SetStringLiteralParams): void {
-  const { file, line, col, value } = params
+  const { file, line, col, value, expected } = params
   const project = params.project ?? createProject()
   const sourceFile = loadSourceFile(project, file)
   const path = `${file}:${line}:${col}`
@@ -80,7 +92,7 @@ export function setStringLiteral(params: SetStringLiteralParams): void {
   // literal node depending on trivia), but never search wider than that — a
   // broader walk is how a write lands on the wrong string.
   const literal = [token, token.getParent()].find(
-    (candidate): candidate is Node =>
+    (candidate): candidate is StringLiteral | NoSubstitutionTemplateLiteral =>
       candidate !== undefined &&
       candidate.getStart() === pos &&
       (Node.isStringLiteral(candidate) || Node.isNoSubstitutionTemplateLiteral(candidate)),
@@ -90,6 +102,12 @@ export function setStringLiteral(params: SetStringLiteralParams): void {
       `expected a string literal at this position, found ${token.getKindName()}`,
       path,
     )
+  }
+
+  const current = literal.getLiteralValue()
+  if (current === value) return
+  if (current !== expected) {
+    throw new StringLiteralTargetError('the literal no longer holds the text the caller read', path, 'literal-changed')
   }
 
   // Spelled in the quote the file already used, so a copy edit does not show

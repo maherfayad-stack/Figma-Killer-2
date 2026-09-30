@@ -193,12 +193,15 @@ export function ContentPanel() {
     }
   }, [runSetup])
 
-  async function commit(key: string, locale: string, value: string) {
+  /** `expected` is the value this cell showed (`null` for a gap) — the server writes only while the file still holds it. */
+  async function commit(key: string, locale: string, value: string, expected: string | null) {
     setSavingKey(`${locale}:${key}`)
     try {
-      const result = await writeTranslation({ locale, key, value })
+      const result = await writeTranslation({ locale, key, value, expected })
       if (!result.ok) {
         pushToast({ kind: 'error', title: `Could not write ${key}`, body: result.message })
+        // A refusal can mean the file moved on under the panel — show what it holds now.
+        await load()
         return
       }
       // Re-read rather than patching local state: the file is the source of
@@ -371,7 +374,7 @@ export function ContentPanel() {
                     locale={locale}
                     value={entry.values[locale] ?? ''}
                     busy={savingKey === `${locale}:${entry.key}`}
-                    onCommit={(next) => void commit(entry.key, locale, next)}
+                    onCommit={(next) => void commit(entry.key, locale, next, entry.values[locale] ?? null)}
                   />
                 ))}
               </div>

@@ -191,11 +191,20 @@ const StyledEditSchema = Type.Object({
  * ordering / dedupe / touched-file collection all keep working through the one
  * `studioEditLocation` decoder — and two board nodes fed by the same dictionary
  * key dedupe onto one write, which is what shared copy means.
+ *
+ * `expected` is the text the client read at that literal — its save-diff
+ * baseline. The codemod writes only while the literal still holds it and
+ * refuses `literal-changed` otherwise, so a board holding an old read of a
+ * dictionary can never put that read back over a newer file (the lost update
+ * behind "dictionary edits revert", 2026-09-30). Required: a client with no
+ * baseline for a literal has nothing honest to compare against, so it does
+ * not write it.
  */
 const LiteralEditSchema = Type.Object({
   kind: Type.Literal('literal'),
   nodeId: Type.String(),
   text: Type.String(),
+  expected: Type.String(),
 })
 
 /**

@@ -82,7 +82,7 @@ describe('OD-8 — a row style edit writes the template', () => {
       [menu([row(ROW_0), row(ROW_1, { props: { text: 'Pho ga', tag: 'li', title: 'Dish' } })])],
       undefined,
     )
-    expect(edits).toEqual([{ kind: 'literal', nodeId: 'pages/Menu.tsx:3:60', text: 'Pho ga' }])
+    expect(edits).toEqual([{ kind: 'literal', nodeId: 'pages/Menu.tsx:3:60', text: 'Pho ga', expected: 'Pho' }])
     expect(rowTemplateWrites).toEqual([])
   })
 

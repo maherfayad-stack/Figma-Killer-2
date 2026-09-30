@@ -31,6 +31,19 @@
  * place, and replacing it with a string would silently change behaviour —
  * the same posture `insertJsxIntoSlotProp` takes on an ambiguous slot.
  *
+ * ## Compare-and-swap against the disk, one entry at a time
+ *
+ * Every write names the value it believes the entry holds now — `expected`,
+ * `null` for "absent" — and the file is read fresh here, inside the same
+ * synchronous step as the write. When the entry on disk is neither `expected`
+ * nor already the new value, the write is refused and nothing
+ * is written. That is what stops a caller holding an OLD read of the
+ * dictionary from putting it back over a newer one: the Content panel showing
+ * a value someone has since changed, a model call that took thirty seconds
+ * while the file was hand-fixed, an extraction minting a key that another
+ * string already owns. Only the one `(locale, key)` is ever touched; there is
+ * no path here that re-emits a locale, let alone the whole file, from a copy.
+ *
  * ## A locale JSON keeps its own formatting (WB-32)
  *
  * `locales/<locale>.json` is a file in the user's repo too. Changing a key
@@ -48,6 +61,14 @@ import { readTextCapped } from './cappedFileRead'
 import { findLocaleRootLiteral, readTranslationCatalog, MAX_DICTIONARY_BYTES } from './translationCatalog'
 
 export type TranslationWriteResult = { ok: true } | { ok: false; message: string }
+
+/** One `(locale, key)` write. `expected` is the value the caller read for that entry — `null` when it read it as absent. */
+export interface TranslationEntryWrite {
+  locale: string
+  key: string
+  value: string
+  expected: string | null
+}
 
 /** A JS string literal with the file's own quote style — single, matching every other codemod that synthesizes source here. */
 function stringLiteral(value: string): string {
@@ -227,10 +248,7 @@ function writeLocaleJson(absDir: string, locale: string, key: string, value: str
 }
 
 /** Sets one `(locale, key)` in whichever dictionary shape this project uses. Never throws. */
-export function writeTranslationEntry(
-  dir: string,
-  entry: { locale: string; key: string; value: string },
-): TranslationWriteResult {
+export function writeTranslationEntry(dir: string, entry: TranslationEntryWrite): TranslationWriteResult {
   try {
     const catalog = readTranslationCatalog(dir)
     if (!catalog) return { ok: false, message: 'This project has no locale dictionary to write into.' }
@@ -238,6 +256,18 @@ export function writeTranslationEntry(
       return { ok: false, message: `"${entry.locale}" is not a locale this project declares.` }
     }
     if (!entry.key.trim()) return { ok: false, message: 'A translation key is required.' }
+
+    // The compare half of the compare-and-swap (module doc). `catalog` was
+    // read from disk just above, in this same synchronous step as the write
+    // below, so no other writer can land in between.
+    const current = catalog.entries.find((candidate) => candidate.key === entry.key)?.values[entry.locale] ?? null
+    if (current === entry.value) return { ok: true }
+    if (current !== entry.expected) {
+      return {
+        ok: false,
+        message: `"${entry.key}" in ${entry.locale} changed in the dictionary since Studio read it, so nothing was written over it.`,
+      }
+    }
 
     return catalog.perLocaleFiles
       ? writeLocaleJson(catalog.sourceAbs, entry.locale, entry.key, entry.value)

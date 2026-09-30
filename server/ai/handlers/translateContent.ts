@@ -30,7 +30,9 @@
  *
  * Each translation is applied with `writeTranslationEntry`, so a key whose
  * value is code, or a locale the project never declared, refuses exactly as
- * it would if the user had typed the text themselves. Those refusals come
+ * it would if the user had typed the text themselves — and so does an entry
+ * that changed on disk while the model was answering (compare-and-swap
+ * against the value read before the call; see `translationWrite.ts`). Those refusals come
  * back per key in `failures` — a partial success is reported as one, never
  * rounded up to "done".
  */
@@ -115,6 +117,48 @@ export function selectPendingEntries(
     // that is just the source string handed back — see `isUntranslated`.
     return requested ? true : isUntranslated(source, entry.values[options.targetLocale])
   })
+}
+
+/**
+ * Writes a model's reply into the dictionary, one `(targetLocale, key)` at a
+ * time. Exported for its own test: this is the half of the route that touches
+ * the user's file.
+ *
+ * Two guarantees, both from `writeTranslationEntry`:
+ *
+ *  - **Only `targetLocale` is written.** The source locale — the language the
+ *    app is written in — is read to build the prompt and never touched here,
+ *    so a translation cannot put target-language text into it.
+ *  - **Nothing written over a newer file.** Each entry is compared against the
+ *    value `batch` read BEFORE the model call (`expected`), which can take many
+ *    seconds. A target entry someone filled or fixed in the meantime wins; the
+ *    stale translation is reported in `failures`, not written.
+ */
+export function applyTranslations(
+  dir: string,
+  targetLocale: string,
+  batch: readonly { key: string; values: Record<string, string> }[],
+  translations: Readonly<Record<string, string>>,
+): { translated: number; skipped: string[]; failures: { key: string; message: string }[] } {
+  const failures: { key: string; message: string }[] = []
+  const skipped: string[] = []
+  let translated = 0
+  for (const entry of batch) {
+    const value = translations[entry.key]
+    if (value === undefined) {
+      skipped.push(entry.key)
+      continue
+    }
+    const result = writeTranslationEntry(dir, {
+      locale: targetLocale,
+      key: entry.key,
+      value,
+      expected: entry.values[targetLocale] ?? null,
+    })
+    if (result.ok) translated += 1
+    else failures.push({ key: entry.key, message: result.message })
+  }
+  return { translated, skipped, failures }
 }
 
 export function tryHandleAiTranslateContent(req: Request, db: DbClient, url: URL): Promise<Response> | null {
@@ -283,19 +327,7 @@ async function handle(req: Request, db: DbClient): Promise<Response> {
     )
   }
 
-  const failures: { key: string; message: string }[] = []
-  const skipped: string[] = []
-  let translated = 0
-  for (const entry of batch) {
-    const value = reply.translations[entry.key]
-    if (value === undefined) {
-      skipped.push(entry.key)
-      continue
-    }
-    const result = writeTranslationEntry(dir, { locale: body.targetLocale, key: entry.key, value })
-    if (result.ok) translated += 1
-    else failures.push({ key: entry.key, message: result.message })
-  }
+  const { translated, skipped, failures } = applyTranslations(dir, targetLocale, batch, reply.translations)
 
   return jsonResponse({
     ok: true,

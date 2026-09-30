@@ -17,6 +17,7 @@ import { detectLocales } from '../../../server/handlers/studio/localeProbe'
 import { readTranslationCatalog } from '../../../server/handlers/studio/translationCatalog'
 import { scaffoldProjectI18n } from '../../../server/handlers/studio/i18nScaffold'
 import { mintKeys, setUpProjectI18n } from '../../../server/handlers/studio/i18nSetup'
+import { writeTranslationEntry } from '../../../server/handlers/studio/translationWrite'
 
 let dir: string
 
@@ -87,6 +88,23 @@ describe('mintKeys', () => {
     ])
     expect(minted[0]!.key).toBe('home.signInToYourAccount')
     expect(minted[1]!.key).toBe('home.signInToYourAccount2')
+  })
+
+  it('never mints a key the dictionary already holds for DIFFERENT text, and reuses one that holds the same', () => {
+    const existing = new Map<string, string | null>([
+      ['home.label', 'Label (fixed by hand)'],
+      ['home.continue', 'Continue'],
+      ['home.onlyArabic', null],
+    ])
+    const minted = mintKeys(
+      [
+        { ...base, text: 'Label' },
+        { ...base, text: 'Continue' },
+        { ...base, text: 'Only arabic' },
+      ],
+      existing,
+    )
+    expect(minted.map((m) => m.key)).toEqual(['home.label2', 'home.continue', 'home.onlyArabic2'])
   })
 })
 
@@ -193,6 +211,32 @@ describe('setUpProjectI18n', () => {
     const keys = readTranslationCatalog(dir)?.entries.map((entry) => entry.key) ?? []
     expect(keys).toContain('page.profileVerified')
     expect(keys).toContain('later.bookingConfirmed')
+  })
+
+  it('a re-run never changes an existing source-locale value and never touches another locale', () => {
+    // The 2026-09-30 owner report: `en` had been fixed by hand, and a later
+    // write put different text back. Extraction writes the source locale only,
+    // from the SOURCE literal, and only as a create.
+    write('pages/Page.tsx', 'export default function Page() {\n  return <Banner title="Profile verified" />\n}\n')
+    expect(setUpProjectI18n(dir).ok).toBe(true)
+    expect(writeTranslationEntry(dir, { locale: 'ar', key: 'page.profileVerified', value: 'تم التحقق', expected: null })).toEqual({ ok: true })
+    // The owner fixes the English by hand...
+    write('i18n/translations.ts', read('i18n/translations.ts').replace("profileVerified: 'Profile verified'", "profileVerified: 'Profile checked'"))
+    // ...and a new inline string with the ORIGINAL text lands on the page.
+    write('pages/Page.tsx', read('pages/Page.tsx').replace('return <Banner title={t.page.profileVerified} />', 'return <main><Banner title={t.page.profileVerified} /><p>Profile verified</p></main>'))
+    const arBefore = read('i18n/translations.ts').slice(read('i18n/translations.ts').indexOf('  ar: {'))
+
+    const report = setUpProjectI18n(dir)
+    expect(report.ok).toBe(true)
+    if (!report.ok) return
+    expect(report.failures).toEqual([])
+
+    const byKey = new Map(readTranslationCatalog(dir)!.entries.map((entry) => [entry.key, entry.values]))
+    expect(byKey.get('page.profileVerified')).toEqual({ en: 'Profile checked', ar: 'تم التحقق' })
+    expect(byKey.get('page.profileVerified2')).toEqual({ en: 'Profile verified' })
+    expect(read('pages/Page.tsx')).toContain('<p>{t.page.profileVerified2}</p>')
+    const after = read('i18n/translations.ts')
+    expect(after.slice(after.indexOf('  ar: {'))).toBe(arBefore)
   })
 
   it("refuses to extract into a dictionary Studio did not write", () => {
