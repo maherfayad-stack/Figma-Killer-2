@@ -52,9 +52,10 @@
  * ways forward cannot drift between them.
  *
  * P5-C (DET-5) — "Detach instance" when every target is a component
- * instance: the store's one `detachInstances` action, the same call as the
- * Component section's button and ⌘⌥B. A package instance's item is disabled
- * with the reason. The canvas's menu is this component too.
+ * call site: the store's one `detachInstances` action, the same call as the
+ * Component section's button and ⌘⌥B. A design-system or package component's
+ * item is disabled with the reason (`instanceDetachability.ts`). The canvas's
+ * menu is this component too.
  *
  * P5-E (UX-22, IX-27) — every item with a key shows it, right-aligned, read
  * from the keybinding registry (`shortcutLabelFor`), and the arrange block
@@ -98,6 +99,7 @@ import { EyeSolidIcon } from 'pixel-art-icons/icons/eye-solid'
 import { isNarrowEditorChromeViewport } from '@site/layout/responsiveChrome'
 import { ConstraintNotice } from '@site/ui/ConstraintNotice'
 import { shortcutLabelFor } from '@admin/spotlight/keybindings'
+import { detachRefusalFor, isDetachCandidate } from '@site/store/slices/site/instanceDetachability'
 import { LayerArrangeMenuItems } from './LayerArrangeMenuItems'
 import styles from './LayerNodeContextMenu.module.css'
 
@@ -284,10 +286,12 @@ export function LayerNodeContextMenu({
     onClose()
   }
 
-  // P5-C — offered only when every target is an instance; a package one can't be detached yet.
-  const instanceTargets = targetIds.map((id) => activePage?.nodes[id]).filter((node) => node?.moduleId === 'studio.instance')
-  const canDetach = !lockedSlotInstance && targetIds.length > 0 && instanceTargets.length === targetIds.length
-  const detachBlockedByPackage = instanceTargets.some((node) => (node?.props as { source?: unknown } | undefined)?.source === 'package')
+  // P5-C — offered only when every target is a component call site; a
+  // design-system or package one is shown greyed out WITH its reason, never
+  // hidden (hiding it is what read as "detach is broken").
+  const detachTargets = targetIds.map((id) => activePage?.nodes[id]).filter(isDetachCandidate)
+  const canDetach = !lockedSlotInstance && targetIds.length > 0 && detachTargets.length === targetIds.length
+  const detachRefusal = detachTargets.map(detachRefusalFor).find((reason) => reason !== null) ?? null
   const dispatchDetach = () => {
     void useEditorStore.getState().detachInstances(targetIds)
     onClose()
@@ -471,8 +475,8 @@ export function LayerNodeContextMenu({
             <ContextMenuItem
               onClick={dispatchDetach}
               shortcut={shortcutLabelFor('layers.detachInstance')}
-              disabled={detachBlockedByPackage}
-              tooltip={detachBlockedByPackage ? 'Package components cannot be detached yet' : undefined}
+              disabled={detachRefusal !== null}
+              tooltip={detachRefusal ?? undefined}
               data-testid="layer-menu-detach-instance"
             >
               <span aria-hidden="true"><Copy2SolidIcon size={13} /></span>

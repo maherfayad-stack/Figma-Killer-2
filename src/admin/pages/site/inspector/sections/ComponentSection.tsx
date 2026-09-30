@@ -65,6 +65,7 @@
  */
 import { useRef, useState } from 'react'
 import { useEditorStore } from '@site/store/store'
+import { detachRefusalFor } from '@site/store/slices/site/instanceDetachability'
 import { explainPropConstraint, type PageNode } from '@core/page-tree'
 import { PropertyControlRenderer } from '@site/property-controls/PropertyControlRenderer'
 import { buildComponentCallSiteRows } from '../../panels/PropertiesPanel/componentCallSiteRows'
@@ -153,6 +154,7 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
   const spec = catalog === null ? null : findLocalComponentSpec(catalog, componentName, sourceFile)
   const rows = buildComponentCallSiteRows(spec, callSiteProps)
 
+  const detachRefusal = detachRefusalFor(node)
   const [detaching, setDetaching] = useState(false)
   const [swapOpen, setSwapOpen] = useState(false)
   const [swapQuery, setSwapQuery] = useState('')
@@ -221,13 +223,9 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
         size="xs"
         iconOnly
         aria-label="Detach instance"
-        tooltip={
-          source === 'package'
-            ? 'Package components cannot be detached yet'
-            : 'Detach instance — inline its JSX at this call site'
-        }
+        tooltip={detachRefusal ?? 'Detach instance — inline its JSX at this call site'}
         onClick={handleDetach}
-        disabled={source === 'package'}
+        disabled={detachRefusal !== null}
         loading={detaching}
         data-testid="instance-detach-button"
       >

@@ -25,7 +25,9 @@ export interface InstanceDetachSlice {
   /**
    * The Detach verb — the Component section's button, both context menus,
    * ⌘⌥B / Ctrl+Alt+B and the refusal remedy all call this and nothing else.
-   * Non-instances in `nodeIds` are ignored. See `instanceActions.ts`.
+   * Nodes in `nodeIds` that are not component call sites are ignored; a
+   * design-system or package component refuses, saying why. See
+   * `instanceActions.ts` and `instanceDetachability.ts`.
    */
   detachInstances: (nodeIds: readonly string[]) => Promise<DetachInstancesOutcome>
   /** Answer the open confirm: `true` writes the held detach, `false` leaves the file as it is. */

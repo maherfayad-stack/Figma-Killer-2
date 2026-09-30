@@ -23,6 +23,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import '@modules/base'
 import type { Page } from '@core/page-tree'
+import { registry } from '@core/module-engine'
 import { useEditorStore } from '@site/store/store'
 import { registerEditorSave } from '@site/hooks/editorSaveRef'
 import { applySitePagesPatch } from '@site/hooks/siteReloadApply'
@@ -42,6 +43,13 @@ const ROW_TEMPLATE = 'pages/Home.tsx:9:11'
 const ROW_IDS = [`${ROW_TEMPLATE}#0`, `${ROW_TEMPLATE}#1`, `${ROW_TEMPLATE}#2`]
 const NESTED_ID = `${CARD_ID}~components/Card.tsx:3:5`
 const TEXT_ID = 'pages/Home.tsx:12:7'
+/** `<Button/>` from the project's managed `design-system/` folder: opaque, `alm.*`, never inlined. */
+const DS_ID = 'pages/Home.tsx:13:7'
+const DS_MODULE_ID = 'alm.DetachTestButton'
+/** An npm package component: `pkg.*`. */
+const NPM_ID = 'pages/Home.tsx:14:7'
+/** A LOCAL call site inlining declined to expand — `moduleMapping.ts`'s `alm.<Name>` fallback, no registered module. */
+const OPAQUE_LOCAL_ID = 'pages/Home.tsx:15:7'
 /** Where a detach put the markup that replaced a call site. */
 const MADE_ID = 'pages/Home.tsx:6:7'
 const TOKEN_A = 'a'.repeat(32)
@@ -81,7 +89,7 @@ function pageBefore(): Page {
     id: PAGE_ID,
     rootNodeId: ROOT_ID,
     nodes: {
-      [ROOT_ID]: makeNode({ id: ROOT_ID, moduleId: 'base.container', children: [CARD_ID, TILE_ID, PKG_ID, LIST_ID, TEXT_ID] }),
+      [ROOT_ID]: makeNode({ id: ROOT_ID, moduleId: 'base.container', children: [CARD_ID, TILE_ID, PKG_ID, LIST_ID, TEXT_ID, DS_ID, NPM_ID, OPAQUE_LOCAL_ID] }),
       [CARD_ID]: instance(CARD_ID, 'Card', 'local', [cardRoot.id]),
       [cardRoot.id]: cardRoot,
       [NESTED_ID]: nested,
@@ -90,6 +98,9 @@ function pageBefore(): Page {
       [LIST_ID]: makeNode({ id: LIST_ID, moduleId: 'base.container', children: ROW_IDS }),
       ...Object.fromEntries(ROW_IDS.map((id) => [id, instance(id, 'Row')])),
       [TEXT_ID]: makeNode({ id: TEXT_ID, moduleId: 'base.text', props: { text: 'hi' } }),
+      [DS_ID]: makeNode({ id: DS_ID, moduleId: DS_MODULE_ID, props: { label: 'Go' } }),
+      [NPM_ID]: makeNode({ id: NPM_ID, moduleId: 'pkg.acme_ui.Chip', props: {} }),
+      [OPAQUE_LOCAL_ID]: makeNode({ id: OPAQUE_LOCAL_ID, moduleId: 'alm.LegacyPanel', props: {} }),
     },
   })
 }
@@ -372,6 +383,49 @@ describe('detachInstances — what it never posts', () => {
     expect(await store().detachInstances([PKG_ID])).toBe('refused')
     expect(saveCalls).toHaveLength(0)
     expect(currentToasts().some((toast) => toast.body?.includes('comes from a package'))).toBe(true)
+  })
+
+  describe('a component the parser left opaque — it used to do NOTHING here, silently', () => {
+    beforeEach(() => {
+      registry.register({
+        id: DS_MODULE_ID,
+        name: 'Button',
+        category: 'basic',
+        defaults: {},
+        schema: [],
+        render: () => null,
+        sourceImport: { kind: 'design-system', name: 'Button' },
+      } as never)
+    })
+    afterEach(() => registry.unregister(DS_MODULE_ID))
+
+    it('refuses a design-system component before posting anything, and says why', async () => {
+      stubFetch([{}])
+      expect(await store().detachInstances([DS_ID])).toBe('refused')
+      expect(saveCalls).toHaveLength(0)
+      const toast = currentToasts().find((entry) => entry.title === 'Detach refused')
+      expect(toast?.body).toContain('Button is a design-system component')
+      expect(toast?.body).toContain('design-system/ folder Studio manages')
+    })
+
+    it('refuses an npm package component before posting anything, and says why', async () => {
+      stubFetch([{}])
+      expect(await store().detachInstances([NPM_ID])).toBe('refused')
+      expect(saveCalls).toHaveLength(0)
+      expect(currentToasts().some((toast) => toast.body?.includes('Chip comes from a package'))).toBe(true)
+    })
+
+    it('refuses the WHOLE gesture when one of a multi-selection is a design-system component — nothing is posted', async () => {
+      stubFetch([{}])
+      expect(await store().detachInstances([CARD_ID, DS_ID])).toBe('refused')
+      expect(saveCalls).toHaveLength(0)
+    })
+
+    it('posts an opaque LOCAL call site like an instance — the codemod, not the client, decides', async () => {
+      stubFetch([{ written: 1, undoToken: TOKEN_A, createdNodeIds: [MADE_ID] }, { pages: [pageDetached()] }])
+      expect(await store().detachInstances([OPAQUE_LOCAL_ID])).toBe('detached')
+      expect(saveCalls[0]!.edits).toEqual([{ kind: 'detach', nodeId: OPAQUE_LOCAL_ID, dryRun: 'if-lossy' }])
+    })
   })
 
   it('never detaches a nested instance INTO the shared component file: the enclosing instance goes first (OD-7)', async () => {

@@ -167,37 +167,38 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
   const { onNodeClick, onNodeHover, onNodeContextMenu, onNodeDoubleClick, onNodePointerDown, onNodePointerUp } =
     use(CanvasSelectionContext)
 
-  const handleNodeClick = (clickedNodeId: string, e: React.MouseEvent) => {
+  // The node a click (or a right-click) on `clickedNodeId` is ABOUT. Both
+  // gestures resolve through this one function: a right-click that skipped it
+  // opened the menu on the component's inner element instead of the instance
+  // the user had selected — so the menu never offered "Detach instance", and
+  // the right-click itself replaced the selection with that inner element.
+  const resolveClickTarget = (clickedNodeId: string): string => {
     // Imperative store access is correct here (event handler, not render path).
     const state = useEditorStore.getState()
     const page = selectCanvasPageFor(state, contextPageId, frameId)
+    if (!page) return clickedNodeId
 
     // instance-ui-01 — Figma's nesting model for `studio.instance` (WS-4.2): a
     // click anywhere inside a not-yet-entered instance's subtree selects the
     // INSTANCE, not the descendant. Checked before the VC lock-down below —
     // independent mechanisms, a click resolves to at most one in practice.
-    if (page) {
-      const enclosingInstance = findEnclosingInstance(page, clickedNodeId, state.enteredInstanceIds)
-      if (enclosingInstance !== null) {
-        onNodeClick(enclosingInstance, e, breakpointId, frameId)
-        return
-      }
-    }
+    const enclosingInstance = findEnclosingInstance(page, clickedNodeId, state.enteredInstanceIds)
+    if (enclosingInstance !== null) return enclosingInstance
 
-    // B3 — VC lock-down: redirect clicks inside inlined VC bodies to the ref node.
-    if (state.activeDocument?.kind !== 'visualComponent' && page) {
+    // B3 — VC lock-down: a click inside an inlined VC body (not slot content) is the ref node's.
+    if (state.activeDocument?.kind !== 'visualComponent') {
       const enclosing = findEnclosingComponentRef(page.nodes as Record<string, AnnotatedPageNode>, clickedNodeId)
-      if (enclosing !== null && !enclosing.isInsideSlotContent) {
-        // Clicked inside a VC body (not slot content) — route to the ref.
-        onNodeClick(enclosing.refId, e, breakpointId, frameId)
-        return
-      }
+      if (enclosing !== null && !enclosing.isInsideSlotContent) return enclosing.refId
     }
-    onNodeClick(clickedNodeId, e, breakpointId, frameId)
+    return clickedNodeId
+  }
+
+  const handleNodeClick = (clickedNodeId: string, e: React.MouseEvent) => {
+    onNodeClick(resolveClickTarget(clickedNodeId), e, breakpointId, frameId)
   }
 
   const handleNodeContextMenu = (clickedNodeId: string, e: React.MouseEvent) => {
-    onNodeContextMenu(clickedNodeId, e, breakpointId, frameId)
+    onNodeContextMenu(resolveClickTarget(clickedNodeId), e, breakpointId, frameId)
   }
 
   // instance-ui-01 — Figma's "double-click enters it and selects the inner
