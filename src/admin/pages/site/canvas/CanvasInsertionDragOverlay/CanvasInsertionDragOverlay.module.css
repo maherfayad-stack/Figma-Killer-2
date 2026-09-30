@@ -43,7 +43,7 @@
 .dropPreview[data-position="canvas"] {
     width: 8px;
     height: 8px;
-    margin: -4px 0 0 -4px;
+    transform: translate(-50%, -50%);
     border-radius: 50%;
     background: var(--canvas-selection-ring-color);
 }
