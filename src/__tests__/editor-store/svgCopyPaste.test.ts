@@ -153,7 +153,7 @@ describe('a paste with no source says which fact holds', () => {
   })
 
   it('an element with no place in the code: "drawn by code", not "any more"', () => {
-    expect(missingPasteSourceMessage('not-source', el('n1', undefined))).toContain('is drawn by code rather than written as an element')
+    expect(missingPasteSourceMessage('not-source', el('n1', undefined))).toContain('is not an element written in this project')
   })
 
   it('names a bare <svg> as an <svg>, though its `tag` is empty', () => {

@@ -240,7 +240,7 @@ describe('a structural source write selects what it created', () => {
       )
       // And it said so.
       await waitFor(() => toasts.length > 0)
-      expect(toasts[0]!.body).toContain('not in your project')
+      expect(toasts[0]!.body).toContain('no source to copy')
     } finally {
       unsubscribe()
     }

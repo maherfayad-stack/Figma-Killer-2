@@ -28,7 +28,7 @@ function copiedElementLabel(node: PageNode | undefined): string {
 export function missingPasteSourceMessage(missing: MissingPasteSource, copied: PageNode | undefined): string {
   const what = `What you copied${copiedElementLabel(copied)}`
   return missing === 'not-source'
-    ? `${what} is drawn by code rather than written as an element in your files — a component's own markup or a generated row — so Studio has no source to copy. Copy the element that writes it instead.`
+    ? `${what} is not an element written in this project's files — it is drawn by code (a component's own markup or a generated row), or it was copied from another project or an earlier session — so Studio has no source to copy. Copy the element that writes it, in this project, instead.`
     : `${what} is not where it was in your project's code any more — its file changed after the copy — so Studio has no source to copy from, and pasting would put elements on the canvas that the files do not contain. Copy it again, then paste.`
 }
 
