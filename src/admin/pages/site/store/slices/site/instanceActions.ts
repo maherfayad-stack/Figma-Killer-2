@@ -28,6 +28,12 @@
  *   4. **The selection.** The resync selects what replaced each call site
  *      (`select: 'created'`).
  *
+ * Which nodes it is about (`instanceDetachability.ts`): every component call
+ * site — a `studio.instance`, and the opaque `alm.*` / `pkg.*` ones. A
+ * design-system or package component is refused before anything is posted,
+ * with the reason; an opaque LOCAL call site (inlining declined) is posted
+ * like an instance and the codemod decides.
+ *
  * Which call site a node names:
  *   - a plain instance: its own id;
  *   - a `.map` row's instance (`…#2`): the row TEMPLATE (`loopTemplateNodeId`)
@@ -58,12 +64,11 @@ import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommi
 import { postEdits, type StudioSaveResponse } from '@site/studio/studioSaveRequests'
 import { commitStudioDetach } from '@site/studio/studioStructuralCommits'
 import { resolveActiveTreeTarget } from './helpers'
+import { detachComponentLabel, detachRefusalFor, isDetachCandidate } from './instanceDetachability'
 import { applyToThisInstanceOnly } from './instanceOnlyGesture'
 import type { DetachInstancesOutcome, InstanceDetachConfirmState, InstanceDetachSlice } from './instanceDetachTypes'
 import { presentStructuralRefusal, STRUCTURAL_REFUSAL_TITLE } from './structuralSourceEdits'
 import type { SiteSliceHelpers } from './types'
-
-const INSTANCE_MODULE_ID = 'studio.instance'
 
 type InstanceActions = Pick<InstanceDetachSlice, 'detachInstances' | 'resolveInstanceDetachConfirm'>
 
@@ -78,15 +83,6 @@ interface DetachTarget {
   label: string
   /** How many rows the call site renders: 1 unless it is a `.map` template. */
   rows: number
-}
-
-function instanceLabel(node: PageNode): string {
-  const name = (node.props as { componentName?: unknown }).componentName
-  return typeof name === 'string' && name ? name : (node.label ?? 'instance')
-}
-
-function isPackageInstance(node: PageNode): boolean {
-  return (node.props as { source?: unknown }).source === 'package'
 }
 
 /** Rows of one `.map` template on the board — the N in "every row (N)". */
@@ -218,13 +214,17 @@ export function createInstanceActions(helpers: SiteSliceHelpers): InstanceAction
   async function runDetach(nodeIds: readonly string[]): Promise<DetachInstancesOutcome> {
     const tree = resolveActiveTreeTarget(get())?.tree
     if (!tree) return 'nothing'
-    const ids = [...new Set(nodeIds)].filter((id) => tree.nodes[id]?.moduleId === INSTANCE_MODULE_ID)
+    const ids = [...new Set(nodeIds)].filter((id) => isDetachCandidate(tree.nodes[id]))
     if (ids.length === 0) return 'nothing'
 
-    const packaged = ids.find((id) => isPackageInstance(tree.nodes[id]!))
-    if (packaged) {
-      warn('Detach refused', `${instanceLabel(tree.nodes[packaged]!)} comes from a package, and detaching a package component is not available yet.`)
-      return 'refused'
+    // A design-system or package component refuses the whole gesture before
+    // anything is posted — and says why, rather than doing nothing at all.
+    for (const id of ids) {
+      const refusal = detachRefusalFor(tree.nodes[id]!)
+      if (refusal) {
+        warn('Detach refused', refusal)
+        return 'refused'
+      }
     }
 
     const nested = ids.find((id) => isInlinedNodeId(id))
@@ -233,13 +233,13 @@ export function createInstanceActions(helpers: SiteSliceHelpers): InstanceAction
         warn('Detach refused', 'An instance inside another component is detached on its own. Select just that one and detach again.')
         return 'refused'
       }
-      return detachNested(nested, instanceLabel(tree.nodes[nested]!))
+      return detachNested(nested, detachComponentLabel(tree.nodes[nested]!))
     }
 
     const targets = new Map<string, DetachTarget>()
     for (const id of ids) {
       const site = hasWritableSourceLocation(id) ? id : loopTemplateNodeId(id)
-      const label = instanceLabel(tree.nodes[id]!)
+      const label = detachComponentLabel(tree.nodes[id]!)
       if (!site) {
         warn('Detach refused', `This ${label} has no single place in your code to detach.`)
         return 'refused'

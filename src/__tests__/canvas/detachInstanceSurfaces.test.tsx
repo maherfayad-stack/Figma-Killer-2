@@ -3,7 +3,8 @@
  * menu (the Layers panel's, which the canvas's menu renders too) and ⌘⌥B /
  * Ctrl+Alt+B, pressed through the one editor key dispatcher, each call the
  * store's `detachInstances` with the selection — nothing else — and the menu
- * shows the item only when every target is a component instance.
+ * shows the item only when every target is a component call site: greyed out,
+ * with the reason, for a design-system or package component.
  *
  * The action itself (confirm, undo, refusal, selection) is
  * `instanceActions.test.ts`; here it is a spy.
@@ -15,10 +16,12 @@ import { useEditorStore } from '@site/store/store'
 import { useEditorKeyDispatcher } from '@site/canvas/useEditorKeyDispatcher'
 import { useCanvasLayerCommandKeys } from '@site/canvas/useCanvasLayerCommandKeys'
 import { formatShortcut, getKeybindingForCommand } from '@admin/spotlight/keybindings'
+import { registry } from '@core/module-engine'
 import { makeNode, makePage, makeSite } from '../fixtures'
 import '@modules/base/index'
 
 const noop = () => {}
+const DS_MODULE_ID = 'alm.DetachSurfaceButton'
 const detachInstances = mock((_nodeIds: readonly string[]) => Promise.resolve('detached' as const))
 const realDetachInstances = useEditorStore.getState().detachInstances
 
@@ -31,11 +34,14 @@ function seed(selected: string[]) {
     id: 'page-1',
     rootNodeId: 'root',
     nodes: {
-      root: makeNode({ id: 'root', moduleId: 'base.body', children: ['a', 'b', 'pkg', 'text'] }),
+      root: makeNode({ id: 'root', moduleId: 'base.body', children: ['a', 'b', 'pkg', 'text', 'ds', 'npm'] }),
       a: instance('a'),
       b: instance('b'),
       pkg: instance('pkg', 'package'),
       text: makeNode({ id: 'text', moduleId: 'base.text', props: { text: 'Hi', tag: 'p' } }),
+      // A design-system component: opaque `alm.*`, its module declares where it comes from.
+      ds: makeNode({ id: 'ds', moduleId: DS_MODULE_ID, props: { label: 'Go' } }),
+      npm: makeNode({ id: 'npm', moduleId: 'pkg.acme_ui.Chip', props: {} }),
     },
   })
   useEditorStore.setState({
@@ -80,8 +86,20 @@ function press(init: KeyboardEventInit): boolean {
   return event.defaultPrevented
 }
 
-beforeEach(() => detachInstances.mockClear())
+beforeEach(() => {
+  detachInstances.mockClear()
+  registry.register({
+    id: DS_MODULE_ID,
+    name: 'Button',
+    category: 'basic',
+    defaults: {},
+    schema: [],
+    render: () => null,
+    sourceImport: { kind: 'design-system', name: 'Button' },
+  } as never)
+})
 afterEach(() => {
+  registry.unregister(DS_MODULE_ID)
   cleanup()
   useEditorStore.setState({ detachInstances: realDetachInstances })
   document.body.innerHTML = ''
@@ -114,6 +132,26 @@ describe('the layer menu (both the Layers panel\'s and the canvas\'s)', () => {
     seed(['a', 'text'])
     menu('text')
     expect(screen.queryByTestId('layer-menu-detach-instance')).toBeNull()
+  })
+
+  it('is OFFERED on a design-system component — disabled, with the reason — never silently missing', async () => {
+    seed(['ds'])
+    menu('ds')
+    const item = screen.getByTestId('layer-menu-detach-instance') as HTMLButtonElement
+    expect(item.disabled || item.getAttribute('aria-disabled') === 'true').toBe(true)
+    fireEvent.click(item)
+    expect(detachInstances).not.toHaveBeenCalled()
+    fireEvent.pointerEnter(item)
+    fireEvent.mouseEnter(item)
+    fireEvent.focus(item)
+    expect(await screen.findByText(/Button is a design-system component/)).toBeTruthy()
+  })
+
+  it('is offered, disabled, on an npm package component', () => {
+    seed(['npm'])
+    menu('npm')
+    const item = screen.getByTestId('layer-menu-detach-instance') as HTMLButtonElement
+    expect(item.disabled || item.getAttribute('aria-disabled') === 'true').toBe(true)
   })
 
   it('is disabled, with the reason, for a package instance', () => {

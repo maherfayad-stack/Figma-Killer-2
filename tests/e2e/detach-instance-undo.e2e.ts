@@ -23,7 +23,14 @@ import {
  *     is selected; ONE ⌘Z puts the file back byte for byte;
  *   - on an instance whose component has another rendered state, the same key
  *     asks FIRST — the confirm names what is lost and the file is untouched
- *     until "Detach"; then one ⌘Z restores it.
+ *     until "Detach"; then one ⌘Z restores it;
+ *   - a RIGHT-click on the canvas lands on the instance (not the element of
+ *     the component under the pointer), so the menu offers "Detach instance"
+ *     — it used to open on that inner element, replace the selection with it,
+ *     and never offer the item;
+ *   - a design-system component (the project's managed `design-system/`
+ *     folder, an opaque `alm.*` node) refuses and SAYS WHY — ⌘⌥B used to do
+ *     nothing at all and neither menu offered the item.
  *
  * SAFETY — this spec WRITES, so it authors its own fixture under this run's
  * throwaway copy of `studio-workspace/` and removes it afterwards.
@@ -33,6 +40,7 @@ const HOME = 'pages/Home.tsx'
 
 const HOME_PAGE = `import { Badge } from '../components/Badge'
 import { Status } from '../components/Status'
+import { Button } from '../design-system'
 
 export default function Home() {
   return (
@@ -40,9 +48,14 @@ export default function Home() {
       <h1 className="title">Detach</h1>
       <Badge label="new" />
       <Status />
+      <Button variant="primary" label="Continue" />
     </main>
   )
 }
+`
+
+/** The project's copy of the design system: only that it RESOLVES inside `design-system/` matters (`design-system-insert.e2e.ts`). */
+const DESIGN_SYSTEM_INDEX = `export function Button() { return null }
 `
 
 const BADGE = `export function Badge({ label }: { label: string }) {
@@ -62,6 +75,9 @@ const journalEntries = () => {
   const folder = path.join(fixture.dir, '.studio', 'undo-journal')
   return fs.existsSync(folder) ? fs.readdirSync(folder).sort() : []
 }
+
+/** The detach item of the open layer menu (the canvas renders the Layers panel's menu). */
+const detachMenuItem = (page: Page) => page.getByTestId('layer-menu-detach-instance')
 
 async function selectedNodeId(page: Page): Promise<string | null> {
   return page.evaluate(async () => {
@@ -84,6 +100,7 @@ test.beforeEach(() => {
     [HOME]: HOME_PAGE,
     'components/Badge.tsx': BADGE,
     'components/Status.tsx': STATUS,
+    'design-system/index.js': DESIGN_SYSTEM_INDEX,
     '.studio/meta.json': JSON.stringify({ pagesDir: 'pages', trust: 'static' }, null, 2) + '\n',
   })
 })
@@ -158,5 +175,60 @@ test.describe('P5-C — detach an instance, and one ⌘Z puts it back', () => {
     await canvasRoot.focus()
     await page.keyboard.press('Control+z')
     await expect.poll(() => read(HOME), { timeout: 30_000 }).toBe(HOME_PAGE)
+  })
+
+  test('a right-click on the canvas lands on the instance, and its menu detaches it', async ({ page }) => {
+    const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: true })
+    const frame = await frameForPage(page, canvasRoot, 'home')
+    await panIntoView(page, canvasRoot, frame)
+    await expect(visibleCanvasIframe(frame)).toBeVisible({ timeout: 60_000 })
+    const content = canvasContentFrame(frame)
+
+    const badgeId = sourceNodeId(HOME_PAGE, HOME, 'Badge', 1)
+    // The Badge's own <span>: an element of the COMPONENT's markup, not the instance.
+    const inner = content.locator(`[data-node-id^="${badgeId}~"]`).first()
+    await panIntoView(page, canvasRoot, inner, 80)
+    const box = await inner.boundingBox()
+    expect(box, 'the instance rendered no box').not.toBeNull()
+    await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2, { button: 'right' })
+
+    await expect(detachMenuItem(page), 'the canvas menu on an instance did not offer Detach').toBeVisible({ timeout: 15_000 })
+    await expect(detachMenuItem(page)).toBeEnabled()
+    expect(await selectedNodeId(page), 'the right-click selected the element under the pointer, not the instance').toBe(badgeId)
+
+    await detachMenuItem(page).click()
+    await expect.poll(() => read(HOME), { timeout: 30_000 }).not.toContain('<Badge')
+    expect(read(HOME)).toContain('<span className="badge"')
+    expect(journalEntries()).toHaveLength(1)
+  })
+
+  test('a design-system component refuses and says why: ⌘⌥B warns, the menu greys the item out, the file is untouched', async ({ page }) => {
+    const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: true })
+    const frame = await frameForPage(page, canvasRoot, 'home')
+    await panIntoView(page, canvasRoot, frame)
+    await expect(visibleCanvasIframe(frame)).toBeVisible({ timeout: 60_000 })
+    const content = canvasContentFrame(frame)
+
+    const buttonId = sourceNodeId(HOME_PAGE, HOME, 'Button', 1)
+    // The design-system host is `display: contents` — click what it renders.
+    const rendered = content.locator(`[data-node-id="${buttonId}"] button`).first()
+    await panIntoView(page, canvasRoot, rendered, 80)
+    await clickInFrame(page, rendered)
+    await expect.poll(() => selectedNodeId(page)).toBe(buttonId)
+
+    await canvasRoot.focus()
+    await page.keyboard.press('Control+Alt+b')
+    const toast = page.locator('[data-toast-kind]').filter({ hasText: 'Detach refused' })
+    await expect(toast, 'a detach of a design-system component did nothing and said nothing').toBeVisible({ timeout: 15_000 })
+    await expect(toast).toContainText('Button is a design-system component')
+
+    const box = await rendered.boundingBox()
+    await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2, { button: 'right' })
+    await expect(detachMenuItem(page), 'the menu hid Detach instead of saying why it cannot').toBeVisible({ timeout: 15_000 })
+    await expect(detachMenuItem(page)).toHaveAttribute('aria-disabled', 'true')
+    await page.keyboard.press('Escape')
+
+    expect(read(HOME), 'a refused detach wrote').toBe(HOME_PAGE)
+    expect(journalEntries()).toHaveLength(0)
   })
 })
