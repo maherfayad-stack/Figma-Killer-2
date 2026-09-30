@@ -1,6 +1,7 @@
 /**
- * hoverSuppressionRules — rewriting a CSS selector so its `:hover` half can
- * never match, plus the document-wide walk that applies the rewrite. Shared
+ * hoverSuppressionRules — rewriting a CSS selector so its `:hover` half (and
+ * its pressed twin, `:active`) can never match, plus the document-wide walk
+ * that applies the rewrite. Shared
  * by the portal-mode `CanvasHoverSuppressionInjector` (an iframe holding a
  * PORTALED React tree, same-origin, `targetDocument` reachable directly) and
  * the in-frame live runtime (`runtime.ts`, cross-origin — this module ships
@@ -52,21 +53,36 @@
  */
 export const HOVER_DISABLED_CLASS = 'studio-hover-off'
 
-const HOVER_PSEUDO = ':hover'
+/**
+ * The class token `:active` becomes — the PRESSED state, `:hover`'s twin.
+ *
+ * On a design frame a press is the editor's: it selects, or it starts a drag.
+ * A component styled `.btn:active { padding: … }` used to shrink and recolour
+ * under the pointer the moment it was pressed and stay pressed for the whole
+ * drag, so a component with a click state visibly "fired" its state instead of
+ * being picked up. Same rewrite, same reasons as hover.
+ */
+export const ACTIVE_DISABLED_CLASS = 'studio-active-off'
+
+/** Each pseudo-class a design frame disables, and the dead class it becomes. */
+const POINTER_STATE_PSEUDOS: readonly { pseudo: string; token: string }[] = [
+  { pseudo: ':hover', token: `.${HOVER_DISABLED_CLASS}` },
+  { pseudo: ':active', token: `.${ACTIVE_DISABLED_CLASS}` },
+]
 /** Characters that would make `:hover…` a longer identifier, not the pseudo-class. */
 const IDENT_CHAR = /[A-Za-z0-9_-]/
 
 /**
- * Rewrite every `:hover` in one selector so it cannot match. Returns the
- * selector unchanged when there is nothing to do.
+ * Rewrite every `:hover` and `:active` in one selector so it cannot match.
+ * Returns the selector unchanged when there is nothing to do.
  *
  * Operates on a single selector as CSSOM reports it (`CSSStyleRule
  * .selectorText`) — already normalised, with comments stripped — so the only
  * text this has to step around is a quoted string inside an attribute
  * selector, e.g. `[title=":hover"]`.
  */
-export function disableHoverInSelector(selector: string): string {
-  if (!selector.includes(HOVER_PSEUDO)) return selector
+export function disablePointerStatesInSelector(selector: string): string {
+  if (!POINTER_STATE_PSEUDOS.some(({ pseudo }) => selector.includes(pseudo))) return selector
 
   let out = ''
   let quote: string | null = null
@@ -85,7 +101,8 @@ export function disableHoverInSelector(selector: string): string {
       out += char
       continue
     }
-    if (char !== ':' || !selector.startsWith(HOVER_PSEUDO, i)) {
+    const state = char === ':' ? POINTER_STATE_PSEUDOS.find(({ pseudo }) => selector.startsWith(pseudo, i)) : undefined
+    if (!state) {
       out += char
       continue
     }
@@ -96,14 +113,14 @@ export function disableHoverInSelector(selector: string): string {
       out += char
       continue
     }
-    // `:hovercard` / `:hover-thing` would be a different pseudo-class.
-    const after = selector[i + HOVER_PSEUDO.length]
+    // `:hovercard` / `:active-thing` would be a different pseudo-class.
+    const after = selector[i + state.pseudo.length]
     if (after !== undefined && (IDENT_CHAR.test(after) || after === '(')) {
       out += char
       continue
     }
-    out += `.${HOVER_DISABLED_CLASS}`
-    i += HOVER_PSEUDO.length - 1
+    out += state.token
+    i += state.pseudo.length - 1
   }
 
   return out
@@ -131,7 +148,7 @@ function collectRewrites(rules: CSSRuleList, prefix: number[], out: HoverRewrite
     const path = [...prefix, i]
     const styleRule = rule as CSSStyleRule
     if (typeof styleRule.selectorText === 'string') {
-      const next = disableHoverInSelector(styleRule.selectorText)
+      const next = disablePointerStatesInSelector(styleRule.selectorText)
       if (next !== styleRule.selectorText) out.push({ path, selector: next })
     }
     const nested = (rule as CSSGroupingRule).cssRules
@@ -209,7 +226,7 @@ function rewriteHoverInRuleList(rules: CSSRuleList): void {
   for (const rule of Array.from(rules)) {
     const styleRule = rule as CSSStyleRule
     if (typeof styleRule.selectorText === 'string') {
-      const next = disableHoverInSelector(styleRule.selectorText)
+      const next = disablePointerStatesInSelector(styleRule.selectorText)
       // An invalid selector makes the setter a silent no-op, so only write
       // when there is a real change to make.
       if (next !== styleRule.selectorText) styleRule.selectorText = next

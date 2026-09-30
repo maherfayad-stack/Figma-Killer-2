@@ -5,6 +5,7 @@ import type {
   CanvasRect,
 } from './canvasDnd'
 import { resolvePortalDocument } from './frameAdapter/resolvePortalDocument'
+import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
 import { resolveCanvasAxisFromStyle, resolveCanvasInsertionAxis } from '@core/studio-runtime'
 
 // Re-exported verbatim — `speed-06` moved the implementation into
@@ -17,14 +18,11 @@ export type { CanvasAxisResolution, CanvasAxisStyleInput } from '@core/studio-ru
 const CANVAS_NODE_SELECTOR = '[data-node-id]'
 
 /**
- * Bridge-mode drop-candidate enumeration is a genuinely separate, larger
- * design question `measureCanvasDropCandidates` below does NOT attempt:
- * unlike a single-node measurement (`adapter.measure([{nodeId}])`), "every
- * draggable node's rect, for drop-target scoring" has no adapter method
- * shaped for it yet — it would mean calling `adapter.measure` for every node
- * id in the tree, a fundamentally more expensive operation than one DOM scan,
- * not a drop-in replacement. Named here as the concrete blocker, not
- * silently unsupported (`live-05`, STATE.md).
+ * A bridge frame's document is cross-origin, so `measureCanvasDropCandidates`
+ * below (one DOM scan) cannot reach it. Its candidates come over the wire
+ * instead — `FrameDocumentAdapter.measureDropCandidates()` (`speed-06`),
+ * converted into the same frame-space units by
+ * `measureDropCandidatesThroughAdapter` at the bottom of this module.
  */
 
 export function getViewportLocalPoint(
@@ -359,4 +357,36 @@ export function buildDepthMap(tree: NodeTree<PageNode>): Map<string, number> {
   }
 
   return depths
+}
+
+/**
+ * A bridge frame's drop candidates, asked over the wire ONCE and converted into
+ * the frame-space units `measureCanvasDropCandidates` produces for a portal
+ * frame — so every drop resolver downstream reads one shape whichever frame
+ * kind the pointer is over. Shared by the insertion drag's per-drag snapshot
+ * (`canvasInsertionDragSnapshot.ts`) and an element drag's candidate index
+ * (`canvasDragSession.ts`). A node the tree does not know, or has hidden, is
+ * never a candidate — the same filter the portal scan applies.
+ */
+export async function measureDropCandidatesThroughAdapter(
+  adapter: Pick<FrameDocumentAdapter, 'measureDropCandidates'>,
+  viewport: HTMLElement,
+  iframe: HTMLIFrameElement,
+  tree: NodeTree<PageNode>,
+): Promise<CanvasDropCandidate[]> {
+  const geometries = await adapter.measureDropCandidates()
+  const depths = buildDepthMap(tree)
+  const candidates: CanvasDropCandidate[] = []
+  for (const geometry of geometries) {
+    const node = tree.nodes[geometry.nodeId]
+    if (!node || node.hidden) continue
+    candidates.push({
+      nodeId: geometry.nodeId,
+      depth: depths.get(geometry.nodeId) ?? 0,
+      rect: bodyRelativeRectToFrameSpace(viewport, iframe, geometry.rect),
+      axis: geometry.axis,
+      reversed: geometry.reversed,
+    })
+  }
+  return candidates
 }

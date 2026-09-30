@@ -231,11 +231,18 @@ async function panIntoView(
  * into view and the canvas pans via a CSS transform (no scroll container), so
  * it would hang. Same helper shape as `canvas-deselect.e2e.ts`.
  */
-async function clickInFrame(page: Page, target: Locator): Promise<void> {
+async function selectInFrame(page: Page, target: Locator): Promise<void> {
   await expect(target).toBeVisible({ timeout: 15_000 })
   const box = await target.boundingBox()
   expect(box, 'click target has no bounding box').not.toBeNull()
-  await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2)
+  // ⌘/Ctrl: deep select — a plain click selects at the selection DEPTH
+  // (`canvasPressTarget.ts`), and this helper means exactly `target`.
+  await page.keyboard.down('ControlOrMeta')
+  try {
+    await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2)
+  } finally {
+    await page.keyboard.up('ControlOrMeta')
+  }
 }
 
 /**
@@ -417,7 +424,7 @@ test.describe('V1: the studio feels like a design tool', () => {
     const contentFrame = canvasContentFrame(firstFrame)
     const target = await firstLeafNode(contentFrame)
     await panIntoView(page, canvasRoot, target, 80)
-    await clickInFrame(page, target)
+    await selectInFrame(page, target)
 
     const rings = selectionRings(page, firstFrame, mode)
     await expect(rings, 'clicking a leaf node drew no selection ring').toHaveCount(1, {
@@ -497,7 +504,7 @@ test.describe('V1: the studio feels like a design tool', () => {
     const rings = selectionRings(page, firstFrame, mode)
     const target = await firstLeafNode(contentFrame)
     await panIntoView(page, canvasRoot, target, 80)
-    await clickInFrame(page, target)
+    await selectInFrame(page, target)
     await expect(rings, 'clicking a leaf node drew no selection ring').toHaveCount(1, {
       timeout: 15_000,
     })
@@ -692,7 +699,7 @@ test.describe('V1: the studio feels like a design tool', () => {
 
     // An ordinary element, not an instance — one click selects it directly,
     // no level-opening dance needed.
-    await clickInFrame(page, target)
+    await selectInFrame(page, target)
     const rings = selectionRings(page, firstFrame, mode)
     await expect(rings, 'clicking the refusal target drew no selection ring').toHaveCount(1, {
       timeout: 15_000,

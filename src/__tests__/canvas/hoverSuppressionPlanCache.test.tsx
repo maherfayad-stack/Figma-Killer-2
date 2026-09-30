@@ -26,7 +26,7 @@
  * @see src/core/studio-runtime/hoverSuppressionRules.ts
  */
 import { afterEach, describe, expect, it } from 'bun:test'
-import { HOVER_DISABLED_CLASS, disableHoverInSelector, planHoverRewrites } from '@core/studio-runtime'
+import { HOVER_DISABLED_CLASS, disablePointerStatesInSelector, planHoverRewrites } from '@core/studio-runtime'
 
 const SHEET = [
   '.plain { color: red }',
@@ -92,7 +92,7 @@ describe('planHoverRewrites', () => {
     for (const { path, selector } of plan) {
       const rule = ruleAt(other, path)
       expect(rule).toBeDefined()
-      expect(disableHoverInSelector(rule?.selectorText ?? '')).toBe(selector)
+      expect(disablePointerStatesInSelector(rule?.selectorText ?? '')).toBe(selector)
     }
   })
 

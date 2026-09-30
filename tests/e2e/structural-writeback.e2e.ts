@@ -2,7 +2,7 @@ import { expect, test, type FrameLocator, type Locator, type Page } from '@playw
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
-  clickInFrame,
+  selectInFrame,
   createAuthoredFixtureProject,
   openFixtureBoard,
   panIntoView,
@@ -196,7 +196,7 @@ test.describe('struct-01 — a structural edit reaches the .tsx, or says why it 
     // attribute at all. `data-node-id` is what the canvas actually stamps.
     const secondTarget = contentFrame.locator(`[data-node-id="${nodeId('p', 2)}"]`).first()
     await panIntoView(page, canvasRoot, secondTarget, 80)
-    await clickInFrame(page, secondTarget)
+    await selectInFrame(page, secondTarget)
     const tree = await openLayers(page)
 
     const secondId = nodeId('p', 2)
@@ -248,7 +248,7 @@ test.describe('struct-01 — a structural edit reaches the .tsx, or says why it 
 
     const innerTarget = contentFrame.locator(`[data-node-id="${nodeId('em')}"]`).first()
     await panIntoView(page, canvasRoot, innerTarget, 80)
-    await clickInFrame(page, innerTarget)
+    await selectInFrame(page, innerTarget)
     await openLayers(page)
 
     const innerRow = page.getByTestId(`dom-tree-item-${nodeId('em')}`)

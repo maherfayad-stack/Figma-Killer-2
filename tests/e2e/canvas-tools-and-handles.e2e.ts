@@ -2,7 +2,7 @@ import { expect, test, type FrameLocator, type Locator, type Page, type Request 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
-  clickInFrame,
+  selectInFrame,
   createAuthoredFixtureProject,
   openFixtureBoard,
   panIntoView,
@@ -107,7 +107,7 @@ async function openAndSelect(page: Page, divIndex: number): Promise<Opened> {
   const content = canvasContentFrame(frame)
   const element = content.locator(`[data-node-id="${sourceNodeId(FIXTURE_PAGE, REL, 'div', divIndex)}"]`).first()
   await panIntoView(page, canvasRoot, element, 80)
-  await clickInFrame(page, element)
+  await selectInFrame(page, element)
   await expect(page.getByTestId(`dom-tree-item-${sourceNodeId(FIXTURE_PAGE, REL, 'div', divIndex)}`)).toHaveAttribute(
     'aria-selected',
     'true',

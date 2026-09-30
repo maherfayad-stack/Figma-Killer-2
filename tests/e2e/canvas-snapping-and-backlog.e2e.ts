@@ -2,7 +2,7 @@ import { expect, test, type FrameLocator, type Locator, type Page } from '@playw
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
-  clickInFrame,
+  selectInFrame,
   createAuthoredFixtureProject,
   openFixtureBoard,
   panIntoView,
@@ -118,7 +118,7 @@ test.describe('P5-F — snapping, multi-select, Hug and rotation (computed layou
 
   test('IX-5d — a free move lands on equal spacing and paints its pills', async ({ page }) => {
     const { node, zoom } = await open(page)
-    await clickInFrame(page, node('c'))
+    await selectInFrame(page, node('c'))
     // a→b is a 20 px gap. Dragging c left by 77 puts it 3 px from a 20 px gap after b.
     const from = await centre(node('c'))
     await page.mouse.move(from.x, from.y)
@@ -135,9 +135,9 @@ test.describe('P5-F — snapping, multi-select, Hug and rotation (computed layou
 
   test('IX-22 — two absolute layers move together, by one delta', async ({ page }) => {
     const { node, zoom } = await open(page)
-    await clickInFrame(page, node('a'))
+    await selectInFrame(page, node('a'))
     await page.keyboard.down('Shift')
-    await clickInFrame(page, node('b'))
+    await selectInFrame(page, node('b'))
     await page.keyboard.up('Shift')
     const beforeA = await frameRect(node('a'))
     const beforeB = await frameRect(node('b'))
@@ -158,9 +158,9 @@ test.describe('P5-F — snapping, multi-select, Hug and rotation (computed layou
 
   test('IX-6g — two selected layers get ONE handle set on their union, and a drag scales both', async ({ page }) => {
     const { content, node, zoom } = await open(page)
-    await clickInFrame(page, node('a'))
+    await selectInFrame(page, node('a'))
     await page.keyboard.down('Shift')
-    await clickInFrame(page, node('b'))
+    await selectInFrame(page, node('b'))
     await page.keyboard.up('Shift')
     const group = content.locator('[data-canvas-resize-group]')
     await expect(group).toBeAttached({ timeout: 15_000 })
@@ -187,7 +187,7 @@ test.describe('P5-F — snapping, multi-select, Hug and rotation (computed layou
 
   test('IX-6f — double-clicking an edge handle hugs that axis', async ({ page }) => {
     const { content, node } = await open(page)
-    await clickInFrame(page, node('d'))
+    await selectInFrame(page, node('d'))
     const handle = content.locator('[data-canvas-resize-handle="e"]')
     await expect(handle).toBeVisible({ timeout: 15_000 })
     await handle.dblclick()
@@ -198,7 +198,7 @@ test.describe('P5-F — snapping, multi-select, Hug and rotation (computed layou
 
   test('IX-25 — the rotation zones sit outside the corners, and a drag writes `rotate`', async ({ page }) => {
     const { content, node } = await open(page)
-    await clickInFrame(page, node('d'))
+    await selectInFrame(page, node('d'))
     const zone = content.locator('[data-canvas-rotate-handle="se"]')
     const corner = content.locator('[data-canvas-resize-handle="se"]')
     await expect(corner).toBeVisible({ timeout: 15_000 })

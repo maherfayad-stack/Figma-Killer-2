@@ -178,6 +178,16 @@ export function writeLiveAnimatedFixture(): FixtureProject {
     files[`pages/Screen${String(i + 1).padStart(2, '0')}.jsx`] = plainScreenSource(i)
   }
   const fixture = createAuthoredFixtureProject(LIVE_ANIMATED_FIXTURE_NAME, files)
+  giveFixtureARealVite(fixture)
+  return fixture
+}
+
+/**
+ * Copy this checkout's `vite` and `@vitejs/plugin-react` into `fixture`, so its
+ * live frames really boot — see the module doc. Any authored Tier-2 fixture
+ * that needs a REAL bridge frame (rather than the static fallback) calls this.
+ */
+export function giveFixtureARealVite(fixture: FixtureProject): void {
   // `createAuthoredFixtureProject` keeps an existing `node_modules` (a dev
   // server from an earlier run may still hold it), so copy only what is missing.
   for (const pkg of COPIED_PACKAGES) {
@@ -185,7 +195,6 @@ export function writeLiveAnimatedFixture(): FixtureProject {
     if (fs.existsSync(path.join(target, 'package.json'))) continue
     fs.cpSync(path.join(process.cwd(), 'node_modules', pkg), target, { recursive: true, dereference: true })
   }
-  return fixture
 }
 
 /** The page ids on the board, in board order. */

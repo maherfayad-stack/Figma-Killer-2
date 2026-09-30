@@ -3,7 +3,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 import {
-  clickInFrame,
+  selectInFrame,
   createAuthoredFixtureProject,
   frameForPage,
   openFixtureBoard,
@@ -96,7 +96,7 @@ test.describe('P3-F — a delete is undone by the undo journal', () => {
     // selects the outermost instance — the call site (P2-B).
     const badge = content.locator(`[data-node-id^="${badgeId}~"]`).first()
     await panIntoView(page, canvasRoot, badge, 80)
-    await clickInFrame(page, badge)
+    await selectInFrame(page, badge)
     await expect
       .poll(() =>
         page.evaluate(async () => {

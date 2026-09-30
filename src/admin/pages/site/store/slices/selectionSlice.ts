@@ -82,7 +82,8 @@ interface SelectionSlice {
    * - `range`: select every node between the current anchor and `id` (DFS order).
    *
    * The two surfaces read the modifiers differently (OD-3): the CANVAS maps
-   * ⇧-click AND ⌘/Ctrl-click to `toggle` (Figma's and Penpot's canvas), while
+   * ⇧-click to `toggle` (Figma's and Penpot's canvas; ⌘/Ctrl is deep select
+   * there, which picks the layer rather than the mode), while
    * the Layers panel keeps ⇧-click = `range`, where a contiguous run of rows
    * is what a list means. See `canvasClickSelectionMode`.
    */

@@ -225,8 +225,9 @@ export function useCanvasNodeInteraction(options: CanvasNodeInteractionOptions):
         return
       }
     }
-    // Modifier-aware selection (OD-3): ⇧-click and ⌘/Ctrl-click TOGGLE, as on
-    // Figma's canvas; a plain click replaces. Range stays a Layers-panel
+    // Modifier-aware selection (OD-3): ⇧-click TOGGLES, as on Figma's canvas;
+    // a plain click replaces. ⌘/Ctrl already chose WHICH layer `nodeId` is
+    // (deep select, `canvasPressTarget.ts`). Range stays a Layers-panel
     // gesture — see `canvasClickSelectionMode`.
     const mode = canvasClickSelectionMode(e)
     // WS-10 Phase 2 — `frameId` scopes this selection to the originating

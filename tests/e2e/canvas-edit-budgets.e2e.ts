@@ -3,7 +3,7 @@ import { largeBoardPageId, openLargeBoardAtWorkingZoom, writeLargeBoardCorpus } 
 import { installReactRenderCounter, readRenderCounts, resetRenderCounts, topRenders } from './helpers/reactRenderCounter'
 import {
   SELECTION_RING,
-  clickInFrame,
+  selectInFrame,
   removeFixtureProject,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
@@ -145,7 +145,7 @@ test.describe('P6-C edit and load budgets on the 40 x 300 corpus', () => {
   test('keystroke -> paint: the inspector Text field updates the canvas within budget', { tag: '@production-bundle' }, async ({ page }) => {
     const { content } = await open(page)
     const heading = content.locator('.block__heading').nth(1)
-    await clickInFrame(page, heading)
+    await selectInFrame(page, heading)
     await expect(content.locator(SELECTION_RING).first()).toBeAttached({ timeout: 10_000 })
     const nodeId = await heading.getAttribute('data-node-id')
     const field = await inspectorFieldHolding(page, (await heading.textContent())?.trim() ?? '')
@@ -229,7 +229,7 @@ test.describe('P6-C edit and load budgets on the 40 x 300 corpus', () => {
     const before = await headings.count()
     const target = headings.nth(1)
     const nodeId = await target.getAttribute('data-node-id')
-    await clickInFrame(page, target)
+    await selectInFrame(page, target)
     await expect(content.locator(SELECTION_RING).first()).toBeAttached({ timeout: 10_000 })
     await page.waitForTimeout(600)
     const mountedNodes = await page.evaluate(() =>
@@ -301,7 +301,7 @@ test.describe('P6-C edit and load budgets on the 40 x 300 corpus', () => {
     })
     const { content } = await open(page)
     const heading = content.locator('.block__heading').nth(1)
-    await clickInFrame(page, heading)
+    await selectInFrame(page, heading)
     await expect(content.locator(SELECTION_RING).first()).toBeAttached({ timeout: 10_000 })
     const field = await inspectorFieldHolding(page, (await heading.textContent())?.trim() ?? '')
     await field.click()
@@ -369,7 +369,7 @@ test.describe('P6-C edit and load budgets on the 40 x 300 corpus', () => {
     const content = await (await visibleCanvasIframe(frameEl).elementHandle())?.contentFrame()
     if (!content) throw new Error('the target frame has no content document after the pans')
     const heading = content.locator('.block__heading').nth(1)
-    await clickInFrame(page, heading)
+    await selectInFrame(page, heading)
     await expect(content.locator(SELECTION_RING).first()).toBeAttached({ timeout: 10_000 })
     const field = await inspectorFieldHolding(page, (await heading.textContent())?.trim() ?? '')
     await field.click()

@@ -147,7 +147,8 @@ export {
 
 export {
   HOVER_DISABLED_CLASS,
-  disableHoverInSelector,
+  ACTIVE_DISABLED_CLASS,
+  disablePointerStatesInSelector,
   suppressHoverInDocument,
   startHoverSuppression,
   planHoverRewrites,

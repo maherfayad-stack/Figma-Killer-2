@@ -111,7 +111,7 @@ function applyEditorAttrsToBody(
   addListener('keydown', nodeWrapperProps?.onKeyDown as unknown as ((e: KeyboardEvent) => void) | undefined)
   const onMouseEnter = nodeWrapperProps?.onMouseEnter
   if (onMouseEnter) {
-    const wrapped = () => onMouseEnter()
+    const wrapped = (e: MouseEvent) => onMouseEnter(e)
     body.addEventListener('mouseenter', wrapped)
     handlers.push(['mouseenter', wrapped as EventListener])
   }

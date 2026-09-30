@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
-  clickInFrame,
+  selectInFrame,
   createAuthoredFixtureProject,
   openFixtureBoard,
   panIntoView,
@@ -75,7 +75,7 @@ test.describe('P1-A — an outside edit never redirects a canvas gesture', () =>
 
     const three = content.locator(`[data-node-id="${sourceNodeId(FIXTURE_PAGE, 'pages/Home.tsx', 'li', 3)}"]`).first()
     await panIntoView(page, canvasRoot, three, 80)
-    await clickInFrame(page, three)
+    await selectInFrame(page, three)
 
     // The outside writer. The board is not told.
     fs.writeFileSync(pagePath(), AFTER_OUTSIDE_EDIT, 'utf8')

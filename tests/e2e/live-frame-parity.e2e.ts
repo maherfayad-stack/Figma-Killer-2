@@ -4,7 +4,7 @@ import * as path from 'node:path'
 import { WORKSPACE_ROOT } from './helpers/constants'
 import { liveBridgeIframe } from './helpers/canvasIframe'
 import {
-  clickInFrame,
+  selectInFrame,
   createFixtureProject,
   openFixtureBoard,
   panIntoView,
@@ -124,7 +124,7 @@ async function openLiveSms(page: Page): Promise<LiveSms> {
 /** Select `element` in the live frame and wait for the runtime's own handles on it. */
 async function selectWithHandles(page: Page, live: LiveSms, element: Locator): Promise<number> {
   await panIntoView(page, live.canvasRoot, element, 80)
-  await clickInFrame(page, element)
+  await selectInFrame(page, element)
   await expect(live.content.locator('[data-canvas-resize-handle="e"]'), 'the live frame drew no resize handles').toBeVisible({ timeout: 15_000 })
   // Screen px per frame px: the canvas zoom is a transform on the iframe.
   const pageBox = await element.boundingBox()

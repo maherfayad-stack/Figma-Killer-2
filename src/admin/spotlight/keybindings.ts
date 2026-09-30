@@ -46,7 +46,9 @@
  *   ⌘I         | italic                      | AI panel (outside a text edit)  | Inside an edit the element owns keys
  *   ⌘-drag     | marquee over shapes         | free move (feel plan, dec. 6)   | In-frame marquee gets another trigger (OD-6)
  *   ⇧-click    | toggle                      | TOGGLE on the canvas (P2-B)     | Was a tree RANGE; range stays in Layers
- *   ⌘-click    | deep select                 | toggle, an alias of ⇧-click     | Innermost-wins already is deep select
+ *   ⌘-click    | deep select                 | deep select (⌘⇧ deep-toggles)   | A click selects at the selection
+ *              |                             |                                 | depth (`canvasPressTarget.ts`);
+ *              |                             |                                 | ⌘ reaches the innermost layer
  *   Tab / ⇧Tab | next / previous sibling     | the same, canvas-scoped (P2-B)  | Never in a panel: Tab keeps its a11y role
  *   ⌘A         | select all in the parent    | siblings; again climbs a level; | Penpot's set + Figma's climb
  *              |                             | frames when nothing is selected |

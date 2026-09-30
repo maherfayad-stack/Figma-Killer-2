@@ -1,7 +1,7 @@
 import { expect, test, type FrameLocator, type Locator } from '@playwright/test'
 import {
   SELECTION_RING,
-  clickInFrame,
+  selectInFrame,
   createAuthoredFixtureProject,
   openFixtureBoard,
   panIntoView,
@@ -177,6 +177,10 @@ test.describe('SVG-0 — a literal <svg> is the node, with the box the app gives
     const svgBox = await svg.boundingBox()
     expect(svgBox).not.toBeNull()
 
+    // ⌘/Ctrl held: the hover ring shows the INNERMOST layer (deep select). A
+    // plain hover rings what a plain click would select — the top-level `.row`
+    // (`canvasPressTarget.ts`).
+    await page.keyboard.down('ControlOrMeta')
     await page.mouse.move(svgBox!.x + svgBox!.width / 2, svgBox!.y + svgBox!.height / 2)
     // Hover lands on the <svg> node itself (not a Studio wrapper, not its
     // parent), and the ring is the svg's box. The pointer reaches it through
@@ -186,8 +190,9 @@ test.describe('SVG-0 — a literal <svg> is the node, with the box the app gives
     const hoverRing = content.locator('[data-canvas-hover-ring="true"]').first()
     await expect(hoverRing).toHaveAttribute('data-canvas-overlay-node-id', ROW_SVG, { timeout: 10_000 })
     await expectRingOn(hoverRing, svg, 3, 'hover ring')
+    await page.keyboard.up('ControlOrMeta')
 
-    await clickInFrame(page, svg)
+    await selectInFrame(page, svg)
     await expect(svg).toHaveAttribute('data-canvas-selected', 'true', { timeout: 10_000 })
     const selectionRing = content.locator(SELECTION_RING).first()
     await expect(selectionRing).toBeVisible({ timeout: 10_000 })

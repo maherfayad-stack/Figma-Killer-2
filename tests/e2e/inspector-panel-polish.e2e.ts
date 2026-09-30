@@ -148,13 +148,19 @@ async function panIntoView(page: Page, canvasRoot: Locator, target: Locator): Pr
   throw new Error('panIntoView: the target never reached the canvas centre')
 }
 
-/** Select a layer by clicking it on the canvas; returns its node id. */
+/**
+ * Select EXACTLY this layer by ⌘/Ctrl-clicking it on the canvas (deep select —
+ * a plain click selects at the selection depth, `canvasPressTarget.ts`);
+ * returns its node id.
+ */
 async function selectOnCanvas(page: Page, canvasRoot: Locator, target: Locator): Promise<string> {
   await expect(target).toBeVisible({ timeout: 15_000 })
   await panIntoView(page, canvasRoot, target)
   const box = await target.boundingBox()
   expect(box).not.toBeNull()
+  await page.keyboard.down('ControlOrMeta')
   await page.mouse.click(box!.x + box!.width / 2, box!.y + Math.min(8, box!.height / 2))
+  await page.keyboard.up('ControlOrMeta')
   const id = await target.getAttribute('data-node-id')
   expect(id, 'the canvas element carries no data-node-id').toBeTruthy()
   return id!

@@ -1,7 +1,7 @@
 import { expect, test, type FrameLocator, type Locator, type Page } from '@playwright/test'
 import {
   SELECTION_RING,
-  clickInFrame,
+  selectInFrame,
   countSourceOccurrences,
   createFixtureProject,
   decodeNodeSourceLocation,
@@ -730,7 +730,7 @@ test.describe('Phase 0 exit dogfood', () => {
 
     const target = await firstLeafNode(contentFrame)
     await panIntoView(page, canvasRoot, target, 80)
-    await clickInFrame(page, target)
+    await selectInFrame(page, target)
 
     const inspector = page.locator('[data-inspector-tab="design"]:not([hidden])')
     await expect(
@@ -1179,7 +1179,7 @@ function requireSourceLocation(nodeId: string): SourceNodeLocation {
  * gesture wrote the wrong thing".
  */
 async function selectAndConfirm(page: Page, contentFrame: FrameLocator, nodeId: string): Promise<void> {
-  await clickInFrame(page, contentFrame.locator(`[data-node-id="${nodeId}"]`).first())
+  await selectInFrame(page, contentFrame.locator(`[data-node-id="${nodeId}"]`).first())
   const rings = contentFrame.locator(SELECTION_RING)
   await expect(rings, 'clicking the element drew no selection ring').toHaveCount(1, { timeout: 15_000 })
   await expect(

@@ -34,7 +34,7 @@
  * `beginDrag(origin)`.
  */
 import { useEffect, useEffectEvent } from 'react'
-import { useEditorStore } from '@site/store/store'
+import { selectCanvasPageFor, useEditorStore } from '@site/store/store'
 import {
   CANVAS_EDITOR_CONTROL_SELECTOR,
   CANVAS_NODE_SELECTOR,
@@ -42,12 +42,16 @@ import {
 } from './canvasEventTargets'
 import { iframeLocalPointToParentClientPoint } from './iframeEventCoordinates'
 import { isCanvasSpacePanActive, shouldStartCanvasPointerPan } from './canvasPanInput'
+import { beginCanvasPress } from './canvasNodeGestureLatch'
+import { canvasPressContext, planCanvasPressDrag } from './canvasPressTarget'
 import type { CanvasDragOrigin } from './canvasDragSession'
 
 interface CanvasBodyDragTriggerOptions {
   /** True when a press on an element's body may start a drag (structural edit permitted). */
   enabled: boolean
   iframeElement: HTMLIFrameElement | null
+  /** The page this frame renders — the tree a press's depth is resolved against (`canvasPressTarget.ts`). */
+  pageId: string | null
   /**
    * The in-iframe overlay host. Doubles as the DESIGN-FRAME gate (the injector
    * that creates it is design-mode only, so a live frame never has one) and as
@@ -65,6 +69,7 @@ export function useCanvasBodyDragTrigger({
   enabled,
   iframeElement,
   overlayRoot,
+  pageId,
   frameId,
   beginDrag,
 }: CanvasBodyDragTriggerOptions): void {
@@ -86,7 +91,17 @@ export function useCanvasBodyDragTrigger({
     if (!iframe || !doc) return
 
     const onPointerDown = (event: PointerEvent) => {
-      if (event.button !== 0 || event.defaultPrevented) return
+      // Every press in this frame starts a new gesture — whatever the last one
+      // became (a drag whose release click was still owed a swallow) is over.
+      beginCanvasPress()
+      // NOT gated on `defaultPrevented`: `useCanvasFormControlSuppression`
+      // cancels every press on an authored `<button>` / `<input>` / `<select>`
+      // (so it cannot focus or open a picker) before this listener runs, and
+      // gating on that made every component that renders a real button —
+      // exactly the ones with a click state — impossible to drag by its body.
+      // Cancelling a control's native activation is not claiming the gesture;
+      // everything that DOES claim it is excluded by name below.
+      if (event.button !== 0) return
       // Space + left-drag and middle-drag are the canvas's PAN gesture on the
       // same button. `IframeFrameSurface`'s relay claims those; starting a
       // reorder here would make one gesture mean two things.
@@ -115,11 +130,15 @@ export function useCanvasBodyDragTrigger({
       const nodeId = nodeElement?.getAttribute('data-node-id')
       if (!nodeId) return
 
-      // Pressing INSIDE the current selection drags the whole selection —
-      // otherwise a multi-select would silently collapse to one node the
-      // moment you tried to move it. Pressing outside it drags just that node.
-      const selected = state.selectedNodeIds
-      const inSelection = selected.includes(nodeId)
+      // WHICH layer this press drags is the layer it would select
+      // (`canvasPressTarget.ts`): the one at the current selection depth, the
+      // whole selection when the press lands inside it, the innermost with
+      // ⌘/Ctrl held. Resolved against THIS frame's page.
+      const page = selectCanvasPageFor(state, pageId, frameId)
+      if (!page) return
+      const plan = planCanvasPressDrag(page, nodeId, canvasPressContext(state, frameId), {
+        deep: event.metaKey || event.ctrlKey,
+      })
 
       const rect = iframe.getBoundingClientRect()
       const point = iframeLocalPointToParentClientPoint(
@@ -132,9 +151,9 @@ export function useCanvasBodyDragTrigger({
         pointerId: event.pointerId,
         clientX: point.x,
         clientY: point.y,
-        candidateIds: inSelection ? selected : [nodeId],
-        preferredDraggedId: nodeId,
-        selectOnActivate: inSelection ? null : nodeId,
+        candidateIds: plan.candidateIds,
+        preferredDraggedId: plan.preferredDraggedId,
+        selectOnActivate: plan.selectOnActivate,
         frameId,
         altKey: event.altKey,
         freeKey: event.metaKey || event.ctrlKey,
@@ -146,7 +165,7 @@ export function useCanvasBodyDragTrigger({
       // same gesture. Canceling `pointerdown` suppresses the compatibility
       // MOUSE events only; `click` still fires, so `NodeRenderer`'s
       // click-to-select is untouched and a press that never becomes a drag is
-      // still an ordinary click. Focus is not lost either: `NodeRenderer`'s
+      // still an ordinary click, decided on release. Focus is not lost either: `NodeRenderer`'s
       // `onPointerDownCapture` focuses the node explicitly
       // (`focusNodeWithoutScrolling`) rather than relying on the default.
       event.preventDefault()
@@ -154,5 +173,5 @@ export function useCanvasBodyDragTrigger({
 
     doc.addEventListener('pointerdown', onPointerDown, true)
     return () => doc.removeEventListener('pointerdown', onPointerDown, true)
-  }, [enabled, iframeElement, overlayRoot, frameId])
+  }, [enabled, iframeElement, overlayRoot, pageId, frameId])
 }

@@ -300,12 +300,14 @@ describe('IX-2 — ⇧-click toggles on the canvas', () => {
     expect(state().selectedNodeIds).toEqual(['c'])
   })
 
-  it('⌘-click is the same toggle', () => {
+  // ⌘/Ctrl is Figma's DEEP select: it decides which layer the click means
+  // (`canvasPressTarget.ts`, before this handler runs), not whether it toggles.
+  it('⌘-click replaces, like a plain click', () => {
     seed()
     const result = interaction()
     result.current.onFrameNodeClick('a', NONE, 'bp')
     result.current.onFrameNodeClick('b', META, 'bp')
-    expect(state().selectedNodeIds).toEqual(['a', 'b'])
+    expect(state().selectedNodeIds).toEqual(['b'])
   })
 })
 

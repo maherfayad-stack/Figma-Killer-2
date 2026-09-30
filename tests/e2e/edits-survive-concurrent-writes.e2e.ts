@@ -3,7 +3,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 import {
-  clickInFrame,
+  selectInFrame,
   createAuthoredFixtureProject,
   openFixtureBoard,
   panIntoView,
@@ -122,7 +122,7 @@ test.describe('P3-E — an unsaved canvas edit survives the writes that land bef
     // 1. The user duplicates "Three"; its write is held on the wire.
     const save = await holdNextSave(page)
     await panIntoView(page, canvasRoot, nodeAt(3), 80)
-    await clickInFrame(page, nodeAt(3))
+    await selectInFrame(page, nodeAt(3))
     await page.keyboard.press('Control+d')
     await save.held
 

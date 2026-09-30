@@ -18,7 +18,7 @@
  * synthetic `element.click()`, which is why unit tests and a naive browser
  * check both passed.
  *
- * The swallow was never needed: `CanvasRoot`'s `handleCanvasClick` already
+ * The swallow was never needed: `CanvasRoot`'s `useEmptyBoardDeselect` already
  * ignores any target that is not the canvas root or the transform layer, and
  * `useMarqueeSelection`'s pointerdown already ignores any target but the
  * canvas root. Guard by target, not by stopping propagation.

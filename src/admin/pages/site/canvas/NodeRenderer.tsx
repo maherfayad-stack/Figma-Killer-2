@@ -42,11 +42,13 @@ import { WarningDiamondSolidIcon } from 'pixel-art-icons/icons/warning-diamond-s
 import { ErrorBoundary } from '@ui/components/ErrorBoundary'
 import { ModuleSandboxFrame } from './ModuleSandboxFrame'
 import {
+  canvasPressBecameDrag,
+  claimSuppressedPointerActivation,
+  takeCanvasPressDrag,
   isSuppressedPointerTarget,
   markClickActivated,
   setSuppressedPointerTarget,
   takeActivatedClick,
-  takeSuppressedPointerTarget,
 } from './canvasNodeGestureLatch'
 import {
   focusNodeWithoutScrolling,
@@ -76,7 +78,8 @@ import { getCanvasNodeClassIds, getCanvasNodeClassName } from './canvasNodeClass
 import { useIsNodeSelected } from './canvasNodeSelection'
 import { nodeRenderKey } from './nodeRenderKeys'
 import { mergePreviewedInlineStyles } from './canvasNodeInlineStyle'
-import { findEnclosingComponentRef, findEnclosingInstance, resolveInstanceEntry, type AnnotatedPageNode } from './canvasSelectionUtils'
+import { resolveInstanceEntry } from './canvasSelectionUtils'
+import { canvasPressContext, resolveCanvasDrillTarget, resolveCanvasPressTarget } from './canvasPressTarget'
 import { canvasNodeIdEnteredOnLeave } from './canvasHoverHandoff'
 import { useLoopPreviewItems } from './useLoopPreviewItems'
 import styles from './NodeRenderer.module.css'
@@ -167,50 +170,54 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
   const { onNodeClick, onNodeHover, onNodeContextMenu, onNodeDoubleClick, onNodePointerDown, onNodePointerUp } =
     use(CanvasSelectionContext)
 
-  // The node a click (or a right-click) on `clickedNodeId` is ABOUT. Both
-  // gestures resolve through this one function: a right-click that skipped it
-  // opened the menu on the component's inner element instead of the instance
-  // the user had selected — so the menu never offered "Detach instance", and
-  // the right-click itself replaced the selection with that inner element.
-  const resolveClickTarget = (clickedNodeId: string): string => {
-    // Imperative store access is correct here (event handler, not render path).
+  /**
+   * The layer a press on `hitId` means (`canvasPressTarget.ts`): Figma's
+   * selection depth, a closed instance or an inlined VC body as one layer, and
+   * ⌘/Ctrl (`deep`) for the innermost. Depth is an EDITING rule: a live frame
+   * is the page as a visitor gets it, and its clicks (and the prototype
+   * player's links) land on the element actually pressed.
+   */
+  const resolvePressTarget = (hitId: string, deep: boolean): string => {
     const state = useEditorStore.getState()
     const page = selectCanvasPageFor(state, contextPageId, frameId)
-    if (!page) return clickedNodeId
-
-    // instance-ui-01 — Figma's nesting model for `studio.instance` (WS-4.2): a
-    // click anywhere inside a not-yet-entered instance's subtree selects the
-    // INSTANCE, not the descendant. Checked before the VC lock-down below —
-    // independent mechanisms, a click resolves to at most one in practice.
-    const enclosingInstance = findEnclosingInstance(page, clickedNodeId, state.enteredInstanceIds)
-    if (enclosingInstance !== null) return enclosingInstance
-
-    // B3 — VC lock-down: a click inside an inlined VC body (not slot content) is the ref node's.
-    if (state.activeDocument?.kind !== 'visualComponent') {
-      const enclosing = findEnclosingComponentRef(page.nodes as Record<string, AnnotatedPageNode>, clickedNodeId)
-      if (enclosing !== null && !enclosing.isInsideSlotContent) return enclosing.refId
-    }
-    return clickedNodeId
+    const context = canvasPressContext(state, frameId)
+    return page ? resolveCanvasPressTarget(page, hitId, context, { deep: deep || !ownsAuthoredEvents }) : hitId
   }
 
-  const handleNodeClick = (clickedNodeId: string, e: React.MouseEvent) => {
-    onNodeClick(resolveClickTarget(clickedNodeId), e, breakpointId, frameId)
+  /**
+   * A click: deep (the innermost layer) when ⌘/Ctrl is held. The keyboard's
+   * Enter/Space passes `focusedNode` — it activates the node that HAS focus,
+   * which is exactly the one it names.
+   */
+  const handleNodeClick = (clickedNodeId: string, e: React.MouseEvent, focusedNode?: boolean) => {
+    onNodeClick(resolvePressTarget(clickedNodeId, focusedNode === true || e.metaKey || e.ctrlKey), e, breakpointId, frameId)
   }
 
+  // A right-click is ABOUT the same layer a click would be: a right-click that
+  // skipped this opened the menu on a component's inner element instead of the
+  // instance the user had selected — so the menu never offered "Detach
+  // instance", and the right-click itself replaced the selection with that
+  // inner element. Only ⌘ is deep here: ⌃-click IS the right-click on macOS.
   const handleNodeContextMenu = (clickedNodeId: string, e: React.MouseEvent) => {
-    onNodeContextMenu(resolveClickTarget(clickedNodeId), e, breakpointId, frameId)
+    onNodeContextMenu(resolvePressTarget(clickedNodeId, e.metaKey), e, breakpointId, frameId)
   }
 
-  // instance-ui-01 — Figma's "double-click enters it and selects the inner
-  // node under the cursor": a double-click inside a not-yet-entered instance
-  // opens ONE level (pushes `enteredInstanceIds`) and selects what is under
-  // the cursor at the next level down — a nested instance whole, or the exact
-  // node (`resolveInstanceEntry`, P2-B). Bypasses `handleNodeClick`'s
-  // redirect and the module's ordinary double-click (inline edit). Nothing
-  // closed around the node: falls through to ordinary behaviour unchanged.
+  // A double-click steps ONE container level down from what its clicks
+  // selected, toward the element under the cursor — or, on a leaf, straight to
+  // it and on into its edit (`resolveCanvasDrillTarget`, Figma's "select
+  // inside"). Once the clicks already reached the innermost layer it means what
+  // it always did: inside a not-yet-entered instance it opens ONE level
+  // (instance-ui-01, `resolveInstanceEntry`) and selects what is under the
+  // cursor at the next level; otherwise the module's own double-click (an
+  // inline text edit, vector edit).
   const handleNodeDoubleClick = (clickedNodeId: string, e: React.MouseEvent) => {
     const state = useEditorStore.getState()
     const page = selectCanvasPageFor(state, contextPageId, frameId)
+    const drill = page && ownsAuthoredEvents ? resolveCanvasDrillTarget(page, clickedNodeId, canvasPressContext(state, frameId)) : null
+    if (drill) {
+      onNodeClick(drill.select, e, breakpointId, frameId)
+      if (!drill.thenEdit) return
+    }
     const entry = page ? resolveInstanceEntry(page, clickedNodeId, state.enteredInstanceIds) : null
     if (entry) {
       state.enterInstance(entry.enter)
@@ -220,34 +227,10 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
     onNodeDoubleClick(clickedNodeId, e, breakpointId, frameId)
   }
 
-  const handleNodeHover = (hoveredNodeId: string | null) => {
-    if (hoveredNodeId !== null) {
-      const state = useEditorStore.getState()
-      const page = selectCanvasPageFor(state, contextPageId, frameId)
-
-      // instance-ui-01 — clamp the hover ring to the enclosing not-yet-
-      // entered instance, same redirect as click above.
-      if (page) {
-        const enclosingInstance = findEnclosingInstance(page, hoveredNodeId, state.enteredInstanceIds)
-        if (enclosingInstance !== null) {
-          onNodeHover(enclosingInstance, breakpointId, frameId)
-          return
-        }
-      }
-
-      // B3 — VC lock-down: clamp hover ring to the ref node for VC body nodes.
-      if (state.activeDocument?.kind !== 'visualComponent' && page) {
-        const enclosing = findEnclosingComponentRef(
-          page.nodes as Record<string, AnnotatedPageNode>,
-          hoveredNodeId,
-        )
-        if (enclosing !== null && !enclosing.isInsideSlotContent) {
-          onNodeHover(enclosing.refId, breakpointId, frameId)
-          return
-        }
-      }
-    }
-    onNodeHover(hoveredNodeId, breakpointId, frameId)
+  // The hover ring shows what a click WOULD select, so it follows the same
+  // resolution (⌘/Ctrl held shows the innermost layer).
+  const handleNodeHover = (hoveredNodeId: string | null, deep: boolean) => {
+    onNodeHover(hoveredNodeId === null ? null : resolvePressTarget(hoveredNodeId, deep), breakpointId, frameId)
   }
 
   // Subscribe to module registry changes so plugin module packs that activate
@@ -391,10 +374,11 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
         setSuppressedPointerTarget(null)
         return
       }
+      // Cancel the control's own activation (focus, a picker) now; SELECT on
+      // release — the press may still become a drag.
       e.preventDefault()
       e.stopPropagation()
       setSuppressedPointerTarget(e.currentTarget)
-      handleNodeClick(nodeId, e as unknown as React.MouseEvent)
     },
     onMouseDownCapture: (e) => {
       if (!suppressesFormControls || !shouldSuppressAuthoredFormControlEvent(e.target, e.currentTarget)) {
@@ -404,11 +388,10 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
       e.preventDefault()
       e.stopPropagation()
       // The compatibility mousedown for a pointerdown this gesture already
-      // acted on. Deliberately does NOT clear the latch: the click still to
+      // latched. Deliberately does NOT reopen the latch: the release still to
       // come belongs to the same gesture.
       if (isSuppressedPointerTarget(e.currentTarget)) return
       setSuppressedPointerTarget(e.currentTarget)
-      handleNodeClick(nodeId, e as unknown as React.MouseEvent)
     },
     onPointerUpCapture: (e) => {
       // The release half. Reported against THIS node whatever the component
@@ -417,6 +400,12 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
       if (!isClosestCanvasNodeTarget(e.target, e.currentTarget)) return
       if (isCanvasEditorControlTarget(e.target, e.currentTarget)) return
       onNodePointerUp(nodeId)
+      // A suppressed control is activated HERE, once: a disabled control never
+      // raises the `click` that would otherwise do it. Not when the press
+      // turned into a drag — the drag already selected what it moved.
+      if (claimSuppressedPointerActivation(e.currentTarget) && !canvasPressBecameDrag()) {
+        handleNodeClick(nodeId, e as unknown as React.MouseEvent)
+      }
     },
     onFocusCapture: (e) => {
       // A live frame is the page as a visitor gets it: blurring every field
@@ -432,8 +421,17 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
       e.preventDefault()
       // Only on an EDITING surface — see `ownsAuthoredEvents`.
       if (ownsAuthoredEvents) e.stopPropagation()
-      // CLOSES the gesture a suppressed pointerdown opened.
-      if (takeSuppressedPointerTarget(e.currentTarget)) return
+      // The click that ends a DRAG is not a click: it lands on the common
+      // ancestor of where the press started and ended, and would replace the
+      // layer just moved with that ancestor.
+      if (ownsAuthoredEvents && takeCanvasPressDrag()) return
+      // A click CLOSES whatever gesture a suppressed press opened — this node's
+      // was already activated at release, unless the click is the only release
+      // there was.
+      const latched = isSuppressedPointerTarget(e.currentTarget)
+      const unactivated = latched && claimSuppressedPointerActivation(e.currentTarget)
+      setSuppressedPointerTarget(null)
+      if (latched && !unactivated) return
       // The bubble-phase twin below sees the same native event a moment later
       // whenever propagation was left alive — see `canvasNodeGestureLatch`.
       markClickActivated(ownsAuthoredEvents ? null : (e as unknown as React.MouseEvent).nativeEvent)
@@ -516,13 +514,13 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
       }
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault()
-        handleNodeClick(nodeId, e as unknown as React.MouseEvent)
+        handleNodeClick(nodeId, e as unknown as React.MouseEvent, true)
       }
     },
-    onMouseEnter: () => handleNodeHover(nodeId),
+    onMouseEnter: (e) => handleNodeHover(nodeId, e.metaKey || e.ctrlKey),
     // Hand the hover to the node the pointer went INTO — a leave into the
     // parent brings the parent no `mouseenter` (`canvasHoverHandoff.ts`).
-    onMouseLeave: (e: { relatedTarget: EventTarget | null }) => handleNodeHover(canvasNodeIdEnteredOnLeave(e.relatedTarget)),
+    onMouseLeave: (e) => handleNodeHover(canvasNodeIdEnteredOnLeave(e.relatedTarget), e.metaKey || e.ctrlKey),
   }
 
   // Inline editing: this node's element becomes the contentEditable surface.

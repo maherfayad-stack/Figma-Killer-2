@@ -314,15 +314,25 @@ export async function frameForPage(page: Page, canvasRoot: Locator, pageId: stri
 }
 
 /**
- * Click an element rendered INSIDE a canvas iframe with real mouse
- * coordinates. `locator.click()`'s actionability wants to scroll the element
- * into view and the canvas pans via a CSS transform, so it would hang.
+ * Select EXACTLY `target` — an element rendered INSIDE a canvas iframe — with
+ * a real mouse click. `locator.click()`'s actionability wants to scroll the
+ * element into view and the canvas pans via a CSS transform, so it would hang.
+ *
+ * The click is a ⌘/Ctrl-click, Figma's deep select: a plain click selects at
+ * the current selection DEPTH (`canvasPressTarget.ts`) — the top-level layer
+ * around a nested element — which is not what a spec that names one element
+ * means. Specs about the depth rule itself click with `page.mouse` directly.
  */
-export async function clickInFrame(page: Page, target: Locator): Promise<void> {
+export async function selectInFrame(page: Page, target: Locator): Promise<void> {
   await expect(target).toBeVisible({ timeout: 15_000 })
   const box = await target.boundingBox()
   expect(box, 'click target has no bounding box').not.toBeNull()
-  await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2)
+  await page.keyboard.down('ControlOrMeta')
+  try {
+    await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2)
+  } finally {
+    await page.keyboard.up('ControlOrMeta')
+  }
 }
 
 /**

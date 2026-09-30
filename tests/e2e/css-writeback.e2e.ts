@@ -2,7 +2,7 @@ import { expect, test, type FrameLocator, type Locator, type Page } from '@playw
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
-  clickInFrame,
+  selectInFrame,
   createAuthoredFixtureProject,
   openFixtureBoard,
   panIntoView,
@@ -146,7 +146,7 @@ async function selectAndOpenSizeSection(
 ) {
   const target = contentFrame.locator(selector).first()
   await panIntoView(page, canvasRoot, target, 80)
-  await clickInFrame(page, target)
+  await selectInFrame(page, target)
 
   // The write target used to be `StyleTargetChip`'s own Element/Class pair.
   // Wave 3's inspector-density work deleted that row as a duplicate of the

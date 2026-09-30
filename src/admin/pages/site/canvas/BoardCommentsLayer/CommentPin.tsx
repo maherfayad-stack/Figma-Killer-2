@@ -264,7 +264,7 @@ export function CommentPin({ thread, active }: CommentPinProps) {
       // Nothing needed it. While the comment tool is armed,
       // `CommentPlacementLayer` sits above the pin and takes the click, so
       // this can never place a second pin on top of itself; and
-      // `handleCanvasClick` already ignores any target but the canvas root
+      // `useEmptyBoardDeselect` already ignores any target but the canvas root
       // and transform layer, so it cannot clear the selection either.
       onPointerDown={beginDrag}
       onClick={(event) => {

@@ -2,7 +2,7 @@ import { expect, test, type Locator, type Page, type Request } from '@playwright
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
-  clickInFrame,
+  selectInFrame,
   createAuthoredFixtureProject,
   openFixtureBoard,
   panIntoView,
@@ -175,7 +175,7 @@ test.describe('draw and vector tools are reachable from the chrome', () => {
     const icon = canvasContentFrame(frame).locator(`[data-node-id="${ICON_SVG}"]`).first()
     await expect(icon).toBeVisible({ timeout: 30_000 })
     await panIntoView(page, canvasRoot, icon, 80)
-    await clickInFrame(page, icon)
+    await selectInFrame(page, icon)
     await expect(page.getByTestId(`dom-tree-item-${ICON_SVG}`)).toHaveAttribute('aria-selected', 'true')
 
     const editPoints = page.getByTestId('canvas-selection-edit-points')

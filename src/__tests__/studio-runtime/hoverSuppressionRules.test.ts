@@ -7,57 +7,89 @@
  */
 import { afterEach, describe, it, expect } from 'bun:test'
 import {
+  ACTIVE_DISABLED_CLASS,
   HOVER_DISABLED_CLASS,
-  disableHoverInSelector,
+  disablePointerStatesInSelector,
   suppressHoverInDocument,
   startHoverSuppression,
 } from '@core/studio-runtime'
 
 const off = `.${HOVER_DISABLED_CLASS}`
 
-describe('disableHoverInSelector', () => {
+describe('disablePointerStatesInSelector', () => {
   it('leaves a selector with no hover exactly as it was', () => {
-    expect(disableHoverInSelector('.btn')).toBe('.btn')
-    expect(disableHoverInSelector('a > .card .title')).toBe('a > .card .title')
+    expect(disablePointerStatesInSelector('.btn')).toBe('.btn')
+    expect(disablePointerStatesInSelector('a > .card .title')).toBe('a > .card .title')
   })
 
   it('swaps the pseudo-class for a class, so specificity is unchanged', () => {
     // Both are (0,1,0). A rewritten rule keeps its exact cascade position
     // relative to the rules that still match.
-    expect(disableHoverInSelector('.btn:hover')).toBe(`.btn${off}`)
-    expect(disableHoverInSelector('a:hover .icon')).toBe(`a${off} .icon`)
+    expect(disablePointerStatesInSelector('.btn:hover')).toBe(`.btn${off}`)
+    expect(disablePointerStatesInSelector('a:hover .icon')).toBe(`a${off} .icon`)
   })
 
   it('rewrites every occurrence, including inside a functional pseudo', () => {
-    expect(disableHoverInSelector('.a:hover, .b:hover')).toBe(`.a${off}, .b${off}`)
-    expect(disableHoverInSelector(':is(a:hover, button:hover)')).toBe(`:is(a${off}, button${off})`)
+    expect(disablePointerStatesInSelector('.a:hover, .b:hover')).toBe(`.a${off}, .b${off}`)
+    expect(disablePointerStatesInSelector(':is(a:hover, button:hover)')).toBe(`:is(a${off}, button${off})`)
   })
 
   it('keeps :not(:hover) meaning "not hovered" — which is now ALWAYS', () => {
     // The rule this protects: `.btn:not(:hover)` is the author's resting
     // state. Dropping the rule would lose it; anything that always fails
     // would invert it. A never-matched class inside `:not()` always matches.
-    expect(disableHoverInSelector('.btn:not(:hover)')).toBe(`.btn:not(${off})`)
+    expect(disablePointerStatesInSelector('.btn:not(:hover)')).toBe(`.btn:not(${off})`)
   })
 
   it('does not touch a longer pseudo-class that merely starts with hover', () => {
-    expect(disableHoverInSelector('.x:hover-thing')).toBe('.x:hover-thing')
-    expect(disableHoverInSelector('.x:hovercard')).toBe('.x:hovercard')
+    expect(disablePointerStatesInSelector('.x:hover-thing')).toBe('.x:hover-thing')
+    expect(disablePointerStatesInSelector('.x:hovercard')).toBe('.x:hovercard')
   })
 
   it('does not touch an escaped colon inside an identifier', () => {
     // Tailwind writes the class `hover:bg-red` as `.hover\:bg-red`; only the
     // trailing real pseudo-class is ours.
-    expect(disableHoverInSelector('.hover\\:bg-red:hover')).toBe(`.hover\\:bg-red${off}`)
+    expect(disablePointerStatesInSelector('.hover\\:bg-red:hover')).toBe(`.hover\\:bg-red${off}`)
   })
 
   it('does not touch a double colon', () => {
-    expect(disableHoverInSelector('.x::hover')).toBe('.x::hover')
+    expect(disablePointerStatesInSelector('.x::hover')).toBe('.x::hover')
   })
 
   it('leaves a quoted attribute value alone', () => {
-    expect(disableHoverInSelector('[data-state=":hover"]')).toBe('[data-state=":hover"]')
-    expect(disableHoverInSelector('[title=":hover"]:hover')).toBe(`[title=":hover"]${off}`)
+    expect(disablePointerStatesInSelector('[data-state=":hover"]')).toBe('[data-state=":hover"]')
+    expect(disablePointerStatesInSelector('[title=":hover"]:hover')).toBe(`[title=":hover"]${off}`)
+  })
+})
+
+/**
+ * The PRESSED state. A design frame's press belongs to the editor (select or
+ * drag), and `.btn:active { padding: … }` used to shrink the button under the
+ * pointer for the whole drag — the owner's "the click state triggers first".
+ */
+describe('disablePointerStatesInSelector — :active', () => {
+  const pressedOff = `.${ACTIVE_DISABLED_CLASS}`
+
+  it('swaps :active for its own dead class, keeping specificity', () => {
+    expect(disablePointerStatesInSelector('.btn:active')).toBe(`.btn${pressedOff}`)
+    expect(disablePointerStatesInSelector('.btn--primary:active:not(:disabled)')).toBe(
+      `.btn--primary${pressedOff}:not(:disabled)`,
+    )
+  })
+
+  it('rewrites :hover and :active in one selector independently', () => {
+    expect(disablePointerStatesInSelector('.a:hover, .a:active')).toBe(`.a${off}, .a${pressedOff}`)
+    expect(disablePointerStatesInSelector('.a:hover:active')).toBe(`.a${off}${pressedOff}`)
+  })
+
+  it('keeps :not(:active) meaning "not pressed" — which is now ALWAYS', () => {
+    expect(disablePointerStatesInSelector('.btn:not(:active)')).toBe(`.btn:not(${pressedOff})`)
+  })
+
+  it('does not touch a longer pseudo-class or an escaped identifier', () => {
+    expect(disablePointerStatesInSelector('.x:active-descendant')).toBe('.x:active-descendant')
+    expect(disablePointerStatesInSelector('.pressed\\:active')).toBe('.pressed\\:active')
+    expect(disablePointerStatesInSelector('.x::active')).toBe('.x::active')
   })
 })
 
@@ -83,7 +115,7 @@ function styleSheetFor(id: string, css: string): HTMLStyleElement {
  * test asserting either the predicate ran or the rewrite happened would pass
  * for the wrong reason — worse than no test, same posture
  * `canvasScrollUnrollInjector.test.tsx` documents for its own happy-dom gap.
- * `disableHoverInSelector` above is the exhaustive, real coverage of the
+ * `disablePointerStatesInSelector` above is the exhaustive, real coverage of the
  * rewrite LOGIC. What's left, honestly testable here, is that the DOM walk
  * and the lifecycle controller never throw against a real document — the
  * end-to-end rewrite was verified against a real board, the unchanged

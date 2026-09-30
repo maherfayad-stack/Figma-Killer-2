@@ -3,7 +3,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { WORKSPACE_ROOT } from './helpers/constants'
 import {
-  clickInFrame,
+  selectInFrame,
   createAuthoredFixtureProject,
   createFixtureProject,
   openFixtureBoard,
@@ -205,7 +205,7 @@ test.describe('P2-B on a board frame', () => {
     const { content } = await openHome(page)
     const [a, b, c] = [content.locator('.box-a'), content.locator('.box-b'), content.locator('.box-c')]
 
-    await clickInFrame(page, a)
+    await selectInFrame(page, a)
     await expectRingOn(content, a, 'a click on the first box did not ring it')
 
     // IX-3 — focus is inside the frame (the click put it there), so this Tab
@@ -220,11 +220,11 @@ test.describe('P2-B on a board frame', () => {
     // IX-2 — Shift-click toggles: adds `a` (a tree RANGE would also have
     // swept `b` in), and a second Shift-click removes it again.
     await page.keyboard.down('Shift')
-    await clickInFrame(page, a)
+    await selectInFrame(page, a)
     await page.keyboard.up('Shift')
     await expect(selectedLayerRows(page, '.box'), 'Shift-click did not ADD exactly one node').toHaveCount(2)
     await page.keyboard.down('Shift')
-    await clickInFrame(page, a)
+    await selectInFrame(page, a)
     await page.keyboard.up('Shift')
     await expectRingOn(content, c, 'a second Shift-click did not toggle the node back out')
 
@@ -238,7 +238,7 @@ test.describe('P2-B on a board frame', () => {
 
   test('the zoom keys work with focus in a panel', async ({ page }) => {
     const { content } = await openHome(page)
-    await clickInFrame(page, content.locator('.box-a'))
+    await selectInFrame(page, content.locator('.box-a'))
 
     // Put focus in the inspector — the move that used to kill the zoom keys
     // for the session (a React onKeyDown on the canvas div).
@@ -257,7 +257,7 @@ test.describe('P2-B on a board frame', () => {
   test('a click inside nested components selects the outer one; a double-click opens one level', async ({ page }) => {
     const { canvasRoot, content } = await openHome(page)
     const badge = content.locator('.badge')
-    await clickInFrame(page, badge)
+    await selectInFrame(page, badge)
     await expect(componentSection(page), 'a click on the badge did not select the Card instance').toContainText('Card', { timeout: 15_000 })
 
     await dblclickInFrame(page, canvasRoot, badge)
@@ -298,7 +298,7 @@ test.describe('P2-B on a live frame', () => {
     const caption = content.locator('[class*="strongCaption"]')
     await panIntoView(page, canvasRoot, run, 80)
 
-    await clickInFrame(page, run)
+    await selectInFrame(page, run)
     await expectRingOn(content, run, 'a click on the resend text did not ring it')
 
     // Put real DOM focus inside the cross-origin frame, as an inline text
@@ -322,7 +322,7 @@ test.describe('P2-B on a live frame', () => {
     // The status-bar clock: inside IOSStatusBar, inside SheetHeader.
     const clock = content.getByText('9:41', { exact: true })
     await panIntoView(page, canvasRoot, clock, 80)
-    await clickInFrame(page, clock)
+    await selectInFrame(page, clock)
     await expect(componentSection(page), 'a click on the clock did not select SheetHeader').toContainText('SheetHeader', { timeout: 15_000 })
 
     await dblclickInFrame(page, canvasRoot, clock)

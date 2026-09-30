@@ -2,7 +2,7 @@ import { expect, test, type FrameLocator, type Locator, type Page } from '@playw
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
-  clickInFrame,
+  selectInFrame,
   createAuthoredFixtureProject,
   openFixtureBoard,
   panIntoView,
@@ -99,7 +99,7 @@ async function openBoard(page: Page, zoomPct: number): Promise<Board> {
 /** Pan `element` to the middle, click it, and return the screen px per frame px it is drawn at. */
 async function select(page: Page, board: Board, element: Locator): Promise<number> {
   await panIntoView(page, board.canvasRoot, element, 80)
-  await clickInFrame(page, element)
+  await selectInFrame(page, element)
   const screen = await element.boundingBox()
   const frameWidth = await element.evaluate((el) => el.getBoundingClientRect().width)
   return screen!.width / frameWidth

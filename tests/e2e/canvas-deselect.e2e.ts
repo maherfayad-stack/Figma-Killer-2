@@ -84,11 +84,18 @@ async function panIntoView(
  * `locator.click()`'s actionability wants to scroll the element into view and
  * the canvas pans via a CSS transform (no scroll container), so it would hang.
  */
-async function clickInFrame(page: Page, target: Locator): Promise<void> {
+async function selectInFrame(page: Page, target: Locator): Promise<void> {
   await expect(target).toBeVisible({ timeout: 15_000 })
   const box = await target.boundingBox()
   expect(box, 'click target has no bounding box').not.toBeNull()
-  await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2)
+  // ⌘/Ctrl: deep select — a plain click selects at the selection DEPTH
+  // (`canvasPressTarget.ts`), and this helper means exactly `target`.
+  await page.keyboard.down('ControlOrMeta')
+  try {
+    await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2)
+  } finally {
+    await page.keyboard.up('ControlOrMeta')
+  }
 }
 
 /**
@@ -211,7 +218,7 @@ test.describe('select-01: deselect always gets you back to nothing selected', ()
     await panIntoView(page, canvasRoot, priceValue, 60)
 
     // ── 1. Select, then Escape → nothing selected ──────────────────────────
-    await clickInFrame(page, priceValue)
+    await selectInFrame(page, priceValue)
     await expect(rings, 'clicking a node drew no selection ring').toHaveCount(1, { timeout: 10_000 })
 
     await page.keyboard.press('Escape')
@@ -224,7 +231,7 @@ test.describe('select-01: deselect always gets you back to nothing selected', ()
     // Selecting a node auto-opens the Properties panel. One click into it and
     // the canvas no longer holds DOM focus, which is exactly when the old
     // React-`onKeyDown` Escape branch stopped running at all.
-    await clickInFrame(page, priceValue)
+    await selectInFrame(page, priceValue)
     await expect(rings, 'clicking a node drew no selection ring').toHaveCount(1, { timeout: 10_000 })
 
     const propertiesPanel = page.getByTestId('properties-panel')
@@ -255,7 +262,7 @@ test.describe('select-01: deselect always gets you back to nothing selected', ()
     ).toHaveCount(0, { timeout: 10_000 })
 
     // ── 3. Select, then click empty board background → nothing selected ────
-    await clickInFrame(page, priceValue)
+    await selectInFrame(page, priceValue)
     await expect(rings, 'clicking a node drew no selection ring').toHaveCount(1, { timeout: 10_000 })
 
     await waitForCanvasLayoutToSettle(page, canvasRoot)
@@ -267,7 +274,7 @@ test.describe('select-01: deselect always gets you back to nothing selected', ()
     ).toHaveCount(0, { timeout: 10_000 })
 
     // ── 4. Instance ladder: Escape steps OUT first, and only then clears ───
-    await clickInFrame(page, priceValue)
+    await selectInFrame(page, priceValue)
     await expect(
       detachButton,
       'clicking the component did not select its studio.instance',
@@ -301,7 +308,7 @@ test.describe('select-01: deselect always gets you back to nothing selected', ()
     ).toHaveCount(0, { timeout: 10_000 })
 
     // ── 5. A marquee drag that hits no frame ends at nothing selected ──────
-    await clickInFrame(page, priceValue)
+    await selectInFrame(page, priceValue)
     await expect(rings, 'clicking a node drew no selection ring').toHaveCount(1, { timeout: 10_000 })
 
     await waitForCanvasLayoutToSettle(page, canvasRoot)

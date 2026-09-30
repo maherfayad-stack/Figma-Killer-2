@@ -3,7 +3,7 @@ import { profileGesture, readBoardCounts } from './helpers/canvasPerf'
 import { largeBoardPageId, openLargeBoardAtWorkingZoom, writeLargeBoardCorpus } from './helpers/largeBoardCorpus'
 import {
   SELECTION_RING,
-  clickInFrame,
+  selectInFrame,
   removeFixtureProject,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
@@ -224,7 +224,7 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
     const { content } = await openAtWorkingZoom(page)
     // Selecting a node on the canvas expands its page's layer tree, which is
     // what puts rows on screen to hover.
-    await clickInFrame(page, content.locator('.block__heading').nth(1))
+    await selectInFrame(page, content.locator('.block__heading').nth(1))
     const rows = page.locator('[data-testid^="dom-tree-item-"]')
     await expect(rows.nth(8)).toBeVisible({ timeout: 15_000 })
     const boxes: Array<{ x: number; y: number; width: number; height: number }> = []
@@ -294,7 +294,7 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
   test('pan with a selection: the toolbar stays on the ring mid-gesture', async ({ page }) => {
     const { canvasRoot, content } = await openAtWorkingZoom(page)
     const target = content.locator('.block__heading').nth(1)
-    await clickInFrame(page, target)
+    await selectInFrame(page, target)
     await expect(content.locator(SELECTION_RING).first()).toBeAttached({ timeout: 10_000 })
     const toolbar = page.locator('[data-canvas-selection-toolbar="true"]')
     await expect(toolbar).toBeVisible({ timeout: 10_000 })
@@ -363,7 +363,7 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
     const { frameEl, content } = await openAtWorkingZoom(page)
     const warmUp = content.locator('.block__heading').nth(1)
     const warmUpId = await warmUp.getAttribute('data-node-id')
-    await clickInFrame(page, warmUp)
+    await selectInFrame(page, warmUp)
     await expect(content.locator(SELECTION_RING).first()).toBeAttached({ timeout: 10_000 })
     await page.waitForTimeout(500)
 
@@ -410,7 +410,12 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
         state.observer = new MutationObserver(check)
         state.observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['style', 'data-canvas-overlay-node-id'] })
       }, nodeId)
+      // ⌘/Ctrl: deep select — a plain click selects at the selection DEPTH
+      // (`canvasPressTarget.ts`), i.e. the block around this heading, and the
+      // ring this measures is the one for exactly `nodeId`.
+      await page.keyboard.down('ControlOrMeta')
       await page.mouse.click(target.x, target.y)
+      await page.keyboard.up('ControlOrMeta')
       const ms = await content.evaluate(async () => {
         const state = (window as unknown as { __p2iClick: { downAt: number; paintAt: number; observer: MutationObserver | null } }).__p2iClick
         for (let wait = 0; wait < 100 && state.paintAt === 0; wait += 1) await new Promise((r) => setTimeout(r, 10))
@@ -436,7 +441,7 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
     // now refresh only once a frame leaves the screen.
     const { content } = await openAtWorkingZoom(page)
     const heading = content.locator('.block__heading').nth(1)
-    await clickInFrame(page, heading)
+    await selectInFrame(page, heading)
     await expect(content.locator(SELECTION_RING).first()).toBeAttached({ timeout: 10_000 })
     // Edit it the way a user most often does: the inspector's Text field.
     const original = (await heading.textContent())?.trim() ?? ''
@@ -501,7 +506,7 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
       })
     })
     const { content } = await openAtWorkingZoom(page)
-    await clickInFrame(page, content.locator('.block__heading').nth(1))
+    await selectInFrame(page, content.locator('.block__heading').nth(1))
     await expect(content.locator(SELECTION_RING).first()).toBeAttached({ timeout: 10_000 })
     // Let the click's own settle passes and the poster queue finish.
     await page.waitForTimeout(3000)

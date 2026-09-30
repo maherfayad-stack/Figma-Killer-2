@@ -3,7 +3,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 import {
-  clickInFrame,
+  selectInFrame,
   createAuthoredFixtureProject,
   frameForPage,
   openFixtureBoard,
@@ -89,7 +89,7 @@ async function selectRow(page: Page, k: number) {
   await expect(visibleCanvasIframe(frame)).toBeVisible({ timeout: 60_000 })
   const row = canvasContentFrame(frame).locator(`[data-node-id="${ROW(k)}"]`).first()
   await panIntoView(page, canvasRoot, row, 80)
-  await clickInFrame(page, row)
+  await selectInFrame(page, row)
   const selected = () =>
     page.evaluate(async () => {
       const { useEditorStore } = await import('/src/admin/pages/site/store/store.ts' as string)

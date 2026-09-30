@@ -11,6 +11,7 @@ import type { FrameDocumentAdapter, FrameRuntimeEvent } from '@site/canvas/frame
 import { registerFrameAdapter, unregisterFrameAdapter } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
 import { useBridgeFrameInteraction } from '@site/canvas/BoardFramesLayer/useBridgeFrameInteraction'
 import { useEditorStore } from '@site/store/store'
+import { markCanvasPressDragged } from '@site/canvas/canvasNodeGestureLatch'
 
 
 // happy-dom has no `WheelEvent`; the runtime and the hook construct one. A
@@ -124,6 +125,32 @@ describe('useBridgeFrameInteraction', () => {
     expect(seen[0].clientX).toBe(100 + 40 * 0.5)
     expect(seen[0].clientY).toBe(50 + 60 * 0.5)
     unregisterFrameAdapter(iframe)
+  })
+
+  /**
+   * The click a live frame's runtime forwards after a press that became an
+   * element DRAG lands on whatever the pointer was over at release; routed to
+   * selection, it replaced the layer the user had just moved. It is dropped —
+   * once — and the next press starts clean.
+   */
+  it('drops the click that ends an element drag, and only that one', () => {
+    const { adapter, emit } = makeFakeAdapter()
+    const clicks: unknown[] = []
+    render(
+      <CanvasSelectionContext.Provider value={{ ...NO_SELECTION, onFrameNodeClick: (id) => clicks.push(id) }}>
+        <Harness adapter={adapter} />
+      </CanvasSelectionContext.Provider>,
+    )
+    emit({ type: 'pointer', phase: 'down', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 1, clientY: 2, modifiers: MODS, ...MOUSE })
+    // The drag session activates (`useCanvasReorderDrag`) between the press
+    // and the release.
+    markCanvasPressDragged()
+    emit({ type: 'pointer', phase: 'click', nodeId: 'pages/SMS.tsx:12:4', rect: null, clientX: 1, clientY: 2, modifiers: MODS, ...MOUSE })
+    expect(clicks).toEqual([])
+
+    emit({ type: 'pointer', phase: 'down', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 1, clientY: 2, modifiers: MODS, ...MOUSE })
+    emit({ type: 'pointer', phase: 'click', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 1, clientY: 2, modifiers: MODS, ...MOUSE })
+    expect(clicks).toEqual(['pages/SMS.tsx:41:8'])
   })
 
   it('activates an inactive frame on press and on click, before the selection runs', () => {

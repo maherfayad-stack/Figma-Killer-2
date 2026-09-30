@@ -1,6 +1,6 @@
 import { expect, test, type FrameLocator, type Page } from '@playwright/test'
 import {
-  clickInFrame,
+  selectInFrame,
   createFixtureProject,
   frameForPage,
   openFixtureBoard,
@@ -55,7 +55,7 @@ async function ownLeaf(contentFrame: FrameLocator) {
 
 /** Select `nodeId` and wait for the Properties panel to offer its Width field. */
 async function selectForWidth(page: Page, contentFrame: FrameLocator, nodeId: string) {
-  await clickInFrame(page, contentFrame.locator(`[data-node-id="${nodeId}"]`).first())
+  await selectInFrame(page, contentFrame.locator(`[data-node-id="${nodeId}"]`).first())
   const width = page.getByRole('textbox', { name: 'Width', exact: true }).first()
   await expect(width, 'selecting the element showed no Width field in the Properties panel').toBeVisible({ timeout: 15_000 })
   return width

@@ -3,7 +3,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 import {
-  clickInFrame,
+  selectInFrame,
   createAuthoredFixtureProject,
   openFixtureBoard,
   readToastRecorder,
@@ -117,7 +117,7 @@ test.describe('P5-A — ⌘V is driven by the paste event', () => {
 
   test('an image on the OS clipboard pastes as an <img>: bytes in public/, the element after the selection', async ({ page }) => {
     const frame = await openHome(page)
-    await clickInFrame(page, frame.locator(BODY).first())
+    await selectInFrame(page, frame.locator(BODY).first())
     await copyImageToOsClipboard(page)
 
     await page.keyboard.press('Control+v')
@@ -133,7 +133,7 @@ test.describe('P5-A — ⌘V is driven by the paste event', () => {
 
   test('a copied layer pastes as the layer — ⌘C marked the OS clipboard through the copy event', async ({ page }) => {
     const frame = await openHome(page)
-    await clickInFrame(page, frame.locator(TITLE).first())
+    await selectInFrame(page, frame.locator(TITLE).first())
     await page.keyboard.press('Control+c')
 
     // The copy event wrote the Studio marker onto the real OS clipboard.
@@ -145,7 +145,7 @@ test.describe('P5-A — ⌘V is driven by the paste event', () => {
     })
     expect(html, 'the copy wrote no Studio marker to the OS clipboard').toMatch(/data-studio-nodes="\d+"/)
 
-    await clickInFrame(page, frame.locator(BODY).first())
+    await selectInFrame(page, frame.locator(BODY).first())
     await page.keyboard.press('Control+v')
 
     await withToasts(page, () =>
@@ -161,11 +161,11 @@ test.describe('P5-A — ⌘V is driven by the paste event', () => {
 
   test('an image copied AFTER a layer wins the next ⌘V — the clipboard holds something newer', async ({ page }) => {
     const frame = await openHome(page)
-    await clickInFrame(page, frame.locator(TITLE).first())
+    await selectInFrame(page, frame.locator(TITLE).first())
     await page.keyboard.press('Control+c')
     await copyImageToOsClipboard(page)
 
-    await clickInFrame(page, frame.locator(BODY).first())
+    await selectInFrame(page, frame.locator(BODY).first())
     await page.keyboard.press('Control+v')
 
     await withToasts(page, async () => {

@@ -69,6 +69,8 @@ import { paintCanvasDrag } from './canvasDragPainter'
 import { clearFreeMovePreview } from './canvasFreeMove'
 import { beginCanvasGesture, endCanvasGesture } from './canvasGesture'
 import { useCanvasBodyDragTrigger } from './useCanvasBodyDragTrigger'
+import { useBridgeBodyDragTrigger } from './useBridgeBodyDragTrigger'
+import { markCanvasPressDragged } from './canvasNodeGestureLatch'
 import { useInFrameMarquee } from './useInFrameMarquee'
 import { subscribeReparseFollow, type NodeIdFollower } from '@site/store/slices/site/reparseNodeFollow'
 import { clearCanvasPointerRelay, markCanvasPointerRelay } from './canvasPointerRelay'
@@ -262,6 +264,9 @@ export function useCanvasReorderDrag({
       const dy = event.clientY - session.origin.y
       if (Math.hypot(dx, dy) < DRAG_ACTIVATE_PX) return
       session.active = true
+      // The press is a drag now: the click its release raises in the frame
+      // must not select anything (`canvasPressBecameDrag`).
+      markCanvasPressDragged()
       // The single React commit of the whole gesture — see `dragging`.
       setDragging(true)
       // A body drag that started on an UNSELECTED element selects it now, at
@@ -417,7 +422,10 @@ export function useCanvasReorderDrag({
       tree,
       // The one expensive measurement of the whole gesture (G6): every
       // `[data-node-id]` in the frame, translated into frame space, once.
-      index: buildFrameCandidateIndex(viewport, tree, iframeElement, transformRef?.current ?? null),
+      // A bridge frame answers a round trip later; repaint when it does.
+      index: buildFrameCandidateIndex(viewport, tree, iframeElement, transformRef?.current ?? null, () => {
+        if (sessionRef.current?.active) scheduleFrame()
+      }),
       origin: point,
       point,
       axisLocked: false,
@@ -558,6 +566,16 @@ export function useCanvasReorderDrag({
     enabled: bodyDragEnabled,
     iframeElement,
     overlayRoot,
+    pageId,
+    frameId,
+    beginDrag,
+  })
+  // The same entry point for a Tier 2 BRIDGE frame, whose press arrives as a
+  // runtime `pointer` message instead of a DOM event — same plan, same session.
+  useBridgeBodyDragTrigger({
+    enabled: bodyDragEnabled,
+    iframeElement,
+    pageId,
     frameId,
     beginDrag,
   })

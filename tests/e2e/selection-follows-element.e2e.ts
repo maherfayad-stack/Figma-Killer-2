@@ -3,7 +3,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
   SELECTION_RING,
-  clickInFrame,
+  selectInFrame,
   createAuthoredFixtureProject,
   openFixtureBoard,
   panIntoView,
@@ -83,7 +83,7 @@ test.describe('ERR-5 — the selection follows its element across a reparse', ()
 
     const second = contentFrame.locator(`[data-node-id="${SECOND_BEFORE}"]`).first()
     await panIntoView(page, canvasRoot, second, 80)
-    await clickInFrame(page, second)
+    await selectInFrame(page, second)
     await openLayers(page)
     await expect(page.getByTestId(`dom-tree-item-${SECOND_BEFORE}`)).toHaveAttribute('aria-selected', 'true')
 

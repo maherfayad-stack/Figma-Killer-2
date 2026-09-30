@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
-  clickInFrame,
+  selectInFrame,
   createAuthoredFixtureProject,
   openFixtureBoard,
   panIntoView,
@@ -87,7 +87,7 @@ test.describe('P1-D — an edit made outside Studio reaches the canvas by itself
     await expect(three).toHaveText('Three', { timeout: 20_000 })
 
     await panIntoView(page, canvasRoot, three, 80)
-    await clickInFrame(page, three)
+    await selectInFrame(page, three)
     await page.keyboard.press('Delete')
 
     const expected = AFTER_OUTSIDE_EDIT.replace('      <p className="three">Three</p>\n', '')

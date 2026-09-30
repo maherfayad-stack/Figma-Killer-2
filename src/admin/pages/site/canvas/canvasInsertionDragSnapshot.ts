@@ -37,11 +37,7 @@
  */
 import type { NodeTree, PageNode } from '@core/page-tree'
 import type { CanvasDropCandidate } from './canvasDnd'
-import {
-  bodyRelativeRectToFrameSpace,
-  buildDepthMap,
-  measureCanvasDropCandidates,
-} from './canvasDomGeometry'
+import { measureCanvasDropCandidates, measureDropCandidatesThroughAdapter } from './canvasDomGeometry'
 import { listFrameAdapters } from './frameAdapter/canvasFrameAdapterRegistry'
 import { resolvePortalDocument } from './frameAdapter/resolvePortalDocument'
 
@@ -65,24 +61,7 @@ function measureViaAdapter(
 ): Promise<CanvasDropCandidate[]> {
   const adapter = listFrameAdapters().get(iframe)
   if (!adapter) return Promise.resolve(measureCanvasDropCandidates(viewport, tree, iframe))
-  return adapter
-    .measureDropCandidates()
-    .then((geometries) => {
-      const depths = buildDepthMap(tree)
-      const candidates: CanvasDropCandidate[] = []
-      for (const geometry of geometries) {
-        const node = tree.nodes[geometry.nodeId]
-        if (!node || node.hidden) continue
-        candidates.push({
-          nodeId: geometry.nodeId,
-          depth: depths.get(geometry.nodeId) ?? 0,
-          rect: bodyRelativeRectToFrameSpace(viewport, iframe, geometry.rect),
-          axis: geometry.axis,
-          reversed: geometry.reversed,
-        })
-      }
-      return candidates
-    })
+  return measureDropCandidatesThroughAdapter(adapter, viewport, iframe, tree)
     .catch((err: unknown) => {
       // A frame mid-reload (bridge) does not answer — same posture
       // `useBridgeSelectionChrome` takes for a `measure` timeout: this ONE

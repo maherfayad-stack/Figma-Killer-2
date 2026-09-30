@@ -2,7 +2,7 @@ import { expect, test, type FrameLocator, type Locator, type Page } from '@playw
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
-  clickInFrame,
+  selectInFrame,
   createAuthoredFixtureProject,
   openFixtureBoard,
   panIntoView,
@@ -113,7 +113,7 @@ async function openAndSelect(page: Page, divIndex: number): Promise<{ content: F
   const content = canvasContentFrame(frame)
   const element = content.locator(`[data-node-id="${sourceNodeId(FIXTURE_PAGE, REL, 'div', divIndex)}"]`).first()
   await panIntoView(page, canvasRoot, element, 80)
-  await clickInFrame(page, element)
+  await selectInFrame(page, element)
   await expect(content.locator('[data-canvas-resize-handle="e"]')).toBeVisible({ timeout: 15_000 })
   // Screen px per frame px: the canvas zoom is a transform on the iframe.
   const pageBox = await element.boundingBox()

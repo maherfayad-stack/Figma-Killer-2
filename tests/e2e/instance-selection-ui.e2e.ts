@@ -90,11 +90,18 @@ async function panIntoView(
  * into view, and the canvas has no native scroll container to scroll (it pans
  * via a CSS transform), so it would hang instead of failing usefully.
  */
-async function clickInFrame(page: Page, target: Locator): Promise<void> {
+async function selectInFrame(page: Page, target: Locator): Promise<void> {
   await expect(target).toBeVisible({ timeout: 15_000 })
   const box = await target.boundingBox()
   expect(box, 'click target has no bounding box').not.toBeNull()
-  await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2)
+  // ⌘/Ctrl: deep select — a plain click selects at the selection DEPTH
+  // (`canvasPressTarget.ts`), and this helper means exactly `target`.
+  await page.keyboard.down('ControlOrMeta')
+  try {
+    await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2)
+  } finally {
+    await page.keyboard.up('ControlOrMeta')
+  }
 }
 
 /** Open the board with auto-save disabled — see this file's SAFETY note. */
@@ -150,7 +157,7 @@ test.describe('instance-ui-01: click selects the instance, Enter/Esc step in and
     // claim.
     const priceValue = contentFrame.locator('.price__value', { hasText: '69' }).first()
     await panIntoView(page, canvasRoot, priceValue, 60)
-    await clickInFrame(page, priceValue)
+    await selectInFrame(page, priceValue)
 
     // The Properties panel renders `InstanceCallSiteView` only for a
     // `studio.instance` node — its presence IS the assertion that the click
@@ -259,7 +266,7 @@ test.describe('instance-ui-01: click selects the instance, Enter/Esc step in and
     // allowed to press Detach on at all.
     const grabber = contentFrame.locator('.sheet-header__grabber').first()
     await panIntoView(page, canvasRoot, grabber, 60)
-    await clickInFrame(page, grabber)
+    await selectInFrame(page, grabber)
     await expect(
       page.getByTestId('instance-detach-button'),
       'clicking the sheet header did not select the SheetHeader instance',

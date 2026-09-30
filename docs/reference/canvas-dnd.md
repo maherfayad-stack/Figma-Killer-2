@@ -189,7 +189,7 @@ Drag sources (canvas + DOM panel — the media picker is a separate topology, ab
 | Source                              | Origin                           | Drop result                                                                |
 |--------------------------------------|-----------------------------------|-----------------------------------------------------------------------------|
 | Selection toolbar hand-grab button   | Canvas — the selected node/group | Move the node(s) to the drop target (raw pointer, `useCanvasReorderDrag.ts`) |
-| The element's own body               | Canvas — the pressed node, or the whole selection when the press lands inside it | Same move, same session. Selects the pressed node on ACTIVATION (not on pointerdown, so a press that stays a click leaves `NodeRenderer`'s Cmd/Shift-aware click-to-select alone) |
+| The element's own body (portal frame, and — via `useBridgeBodyDragTrigger` — a Tier 2 bridge frame) | Canvas — the layer the press MEANS (`canvasPressTarget.ts`: the selection depth, not the innermost element; ⌘/Ctrl = innermost), or the whole selection when the press lands inside it | Same move, same session. Selects that layer on ACTIVATION (not on pointerdown, so a press that stays a click is decided on release by the click path); the release's own `click` then selects nothing (`takeCanvasPressDrag`) |
 | Notch primitive (Text / Div / Span)  | Canvas notch                      | Insert a new node of that module at the drop target (raw pointer, `useCanvasInsertionDrag.ts`) |
 | DOM panel tree row                   | The DOM panel tree               | Move the node to the drop target (`@dnd-kit/core`, `useDomPanelDnd.ts`)     |
 
@@ -991,6 +991,19 @@ It bails, in this order, on:
 | target inside `[contenteditable]` | The caret is the user's target |
 | no `[data-node-id]` ancestor | Frame background — marquee / body context menu |
 | the node is the tree root, locked, or absent from the ACTIVE tree | Nothing honest to move (`resolveDraggedIds`) |
+
+It deliberately does NOT bail on `event.defaultPrevented`.
+`useCanvasFormControlSuppression` cancels every press on an authored
+`<button>`/`<input>`/`<select>` in the same capture phase (so the control cannot
+focus or open a picker), and reading that as "someone else claimed this press"
+made every component rendering a real button — exactly the ones with a click
+state — undraggable by its body. Everything that does claim the press is
+excluded by name in the table above.
+
+**Which layer moves** is `planCanvasPressDrag` (`canvasPressTarget.ts`), not the
+element under the pointer: with nothing selected, the top-level layer around
+it; with a container selected, pressing any of its children drags the
+container. A bridge frame resolves the runtime's reported node the same way.
 
 Two more properties are load-bearing:
 

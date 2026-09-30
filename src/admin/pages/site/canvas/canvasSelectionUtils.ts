@@ -176,8 +176,11 @@ export function resolveInstanceEntry(
 
 /**
  * What a click on the CANVAS does to the selection, given its modifiers
- * (OD-3, IX-2): ⇧-click and ⌘/Ctrl-click both TOGGLE the node in or out —
- * Figma's and Penpot's canvas (`actions.cljs`: `select-shape id shift?`).
+ * (OD-3, IX-2): ⇧-click TOGGLES the layer in or out — Figma's and Penpot's
+ * canvas (`actions.cljs`: `select-shape id shift?`). ⌘/Ctrl-click is NOT a
+ * toggle: it is Figma's deep select, which picks WHICH layer the click means
+ * (`canvasPressTarget.ts`), not what happens to the selection. ⌘⇧-click is a
+ * deep toggle.
  *
  * The canvas used to read ⇧ as a tree RANGE, the Layers panel's meaning. On
  * a board a range is a depth-first run through the source tree, so ⇧-clicking
@@ -185,14 +188,9 @@ export function resolveInstanceEntry(
  * selection nobody could see the shape of. The Layers panel keeps ⇧ = range
  * (`TreeNode.tsx`), where the rows between the two clicks ARE the range.
  *
- * Every canvas click path calls this — the frame's React click, a bridge
- * frame's forwarded click, and a native `<select>` activation — so the three
- * can never disagree about a modifier.
+ * Every canvas click path calls this — the frame's React click and a bridge
+ * frame's forwarded click — so the two can never disagree about a modifier.
  */
-export function canvasClickSelectionMode(modifiers: {
-  shiftKey: boolean
-  metaKey: boolean
-  ctrlKey: boolean
-}): 'toggle' | 'replace' {
-  return modifiers.shiftKey || modifiers.metaKey || modifiers.ctrlKey ? 'toggle' : 'replace'
+export function canvasClickSelectionMode(modifiers: { shiftKey: boolean }): 'toggle' | 'replace' {
+  return modifiers.shiftKey ? 'toggle' : 'replace'
 }

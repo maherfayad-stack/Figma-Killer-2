@@ -117,6 +117,15 @@
  * component in a live frame selected the element inside it (the runtime
  * stamps the component's own markup), which no portal frame ever did.
  *
+ * Selection depth → a click, a hover and a double-click resolve through
+ * `canvasPressTarget.ts`, the same function a portal frame and both body-drag
+ * triggers call: a click selects at the current selection depth (not the
+ * app's innermost stamped element), ⌘/Ctrl goes to the innermost, and a
+ * double-click steps one level down before it means "enter the instance" or
+ * "edit the text". A press that became an element DRAG
+ * (`useBridgeBodyDragTrigger`) has its release click dropped: the drag
+ * already selected what it moved.
+ *
  * Key / blur (P2-B) → `canvasFrameKeyRelay.ts`, the portal frame's keyboard
  * path: a keydown becomes a clone on the parent `document` for the one key
  * dispatcher, a keyup ends any hold, and the frame losing focus releases
@@ -128,7 +137,9 @@
 import { use, useEffect, useRef } from 'react'
 import { selectCanvasPageFor, useEditorStore } from '@site/store/store'
 import { CanvasSelectionContext } from '../CanvasContexts'
-import { findEnclosingInstance, resolveInstanceEntry } from '../canvasSelectionUtils'
+import { resolveInstanceEntry } from '../canvasSelectionUtils'
+import { canvasPressContext, resolveCanvasDrillTarget, resolveCanvasPressTarget } from '../canvasPressTarget'
+import { beginCanvasPress, takeCanvasPressDrag } from '../canvasNodeGestureLatch'
 import { relayFrameBlur, relayFrameKeyDown, relayFrameKeyUp, type FrameKeyInit } from '../canvasFrameKeyRelay'
 import { isCanvasSpacePanActive, shouldStartCanvasPointerPan } from '../canvasPanInput'
 import { readCanvasPointerRelay } from '../canvasPointerRelay'
@@ -210,10 +221,16 @@ export function useBridgeFrameInteraction(adapter: FrameDocumentAdapter | null, 
       const { options: current } = latest.current
       return selectCanvasPageFor(useEditorStore.getState(), current.pageId, current.frameId)
     }
-    const selectionTarget = (nodeId: string): string => {
+    // The layer a press means — the SAME resolution a portal frame's click,
+    // hover and body drag use (`canvasPressTarget.ts`): Figma's selection
+    // depth, a closed instance as one layer, ⌘/Ctrl for the innermost.
+    const selectionTarget = (nodeId: string, modifiers: { metaKey: boolean; ctrlKey: boolean }): string => {
       const page = framePage()
       if (!page) return nodeId
-      return findEnclosingInstance(page, nodeId, useEditorStore.getState().enteredInstanceIds) ?? nodeId
+      const state = useEditorStore.getState()
+      return resolveCanvasPressTarget(page, nodeId, canvasPressContext(state, latest.current.options.frameId), {
+        deep: modifiers.metaKey || modifiers.ctrlKey,
+      })
     }
     // The pointer whose press started a pan, until its release; and whether
     // the click the runtime forwards after that release is still owed a drop.
@@ -249,6 +266,8 @@ export function useBridgeFrameInteraction(adapter: FrameDocumentAdapter | null, 
         const { selection: handlers, options: current } = latest.current
         switch (event.phase) {
           case 'down':
+            // A new press: whatever the last one became is over.
+            beginCanvasPress()
             if (shouldStartCanvasPointerPan(event, { spaceHeld: isCanvasSpacePanActive(document) })) {
               panPointerId = event.pointerId
               const iframe = frameElementOf(adapter)
@@ -274,7 +293,7 @@ export function useBridgeFrameInteraction(adapter: FrameDocumentAdapter | null, 
               if (iframe) replayPointer('pointermove', event, parentClientPoint(iframe, { x: event.clientX, y: event.clientY }))
               return
             }
-            handlers.onNodeHover(event.nodeId && selectionTarget(event.nodeId), current.breakpointId, current.frameId)
+            handlers.onNodeHover(event.nodeId && selectionTarget(event.nodeId, event.modifiers), current.breakpointId, current.frameId)
             return
           case 'up':
             if (panPointerId === event.pointerId) {
@@ -296,8 +315,11 @@ export function useBridgeFrameInteraction(adapter: FrameDocumentAdapter | null, 
               dropNextClick = false
               return
             }
+            // The click that ends an element DRAG is not a click — the drag
+            // already selected what it moved (`useBridgeBodyDragTrigger`).
+            if (takeCanvasPressDrag()) return
             activateIfNeeded()
-            if (event.nodeId) handlers.onFrameNodeClick(selectionTarget(event.nodeId), event.modifiers, current.breakpointId, current.frameId)
+            if (event.nodeId) handlers.onFrameNodeClick(selectionTarget(event.nodeId, event.modifiers), event.modifiers, current.breakpointId, current.frameId)
             return
         }
       }),
@@ -335,9 +357,21 @@ export function useBridgeFrameInteraction(adapter: FrameDocumentAdapter | null, 
       // `text:commit` — see `inlineTextEdit.ts`'s module doc for why that's safe.
       adapter.on('text:editStart', (event) => {
         const { selection: handlers, options: current } = latest.current
+        // A double-click first steps ONE container level down from what its
+        // clicks selected (`resolveCanvasDrillTarget`) — never a text edit
+        // while there is a container level left to open. On a leaf it selects
+        // the leaf and goes on to edit it.
+        const page = framePage()
+        const drill = page ? resolveCanvasDrillTarget(page, event.nodeId, canvasPressContext(useEditorStore.getState(), current.frameId)) : null
+        if (drill) {
+          handlers.onFrameNodeClick(drill.select, NO_MODIFIERS, current.breakpointId, current.frameId)
+          if (!drill.thenEdit) {
+            adapter.startTextEdit(event.nodeId, false)
+            return
+          }
+        }
         // A double-click inside a closed instance OPENS it (one level) and
         // selects what is under the cursor there — never a text edit.
-        const page = framePage()
         const entry = page ? resolveInstanceEntry(page, event.nodeId, useEditorStore.getState().enteredInstanceIds) : null
         if (entry) {
           useEditorStore.getState().enterInstance(entry.enter)

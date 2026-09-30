@@ -79,6 +79,7 @@ import { useCopyAsPngShortcut } from './useCopyAsPngShortcut'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
 import { useEditorPreference, readEditorSelectPreference } from '@site/preferences/editorPreferences'
 import { useTemplatePreviewContext } from '@site/hooks/useTemplatePreviewContext'
+import { useEmptyBoardDeselect } from './useEmptyBoardDeselect'
 import styles from './CanvasRoot.module.css'
 
 const VisualComponentModeControl = lazy(() =>
@@ -428,27 +429,13 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // notch being hidden and stands down during an inline edit.
   useEditorHistoryShortcuts()
 
-  // ─── Canvas background click → deselect ───────────────────────────────────
-  //
-  // `board-02`: this handler sits on the OUTERMOST canvas div, so a click
-  // anywhere inside it — including one that started on a frame header, a
-  // node, a sticky note — still bubbles here as a native 'click' event
-  // (nothing downstream stops it). Only a click that lands on genuine empty
-  // background is a "deselect" gesture: either directly on this outer div
-  // (studio board mode — `.transformLayer` has no intrinsic size there, see
-  // `BoardFramesLayer`'s module doc, so board background clicks always
-  // target this div) or directly on the transform layer itself (CMS mode —
-  // the gap/padding around `BreakpointFrame`s inside the flex-laid-out
-  // transform layer, which DOES have real size there). Anything deeper
-  // (a frame header, a node, a sticky note) is excluded — without this,
-  // EVERY frame-header click's own trailing 'click' event reached here a
-  // tick after `BoardFrameView`'s pointerdown handler selected it,
-  // immediately clearing the selection it had just made.
-  const handleCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target !== e.currentTarget && e.target !== transformLayerRef.current) return
-    contextMenu.close()
-    useEditorStore.getState().clearAllSelections()
-  }
+  // ─── Empty-board click → deselect everything ─────────────────────────────
+  // Only a click that lands on the empty board itself (`isEmptyBoardTarget`:
+  // this outer div, or the transform layer where it has a size) — never one
+  // that ends a press on a frame header, a node or a note (`board-02`) — and
+  // only a CLICK, decided from its press: a Space-pan across the board is not
+  // one. See `useEmptyBoardDeselect`.
+  useEmptyBoardDeselect({ canvasRootRef: canvasRef, enabled: !isLive, onDeselect: () => contextMenu.close() })
 
   // Resolve the active breakpoint object for the live surface (which wants the
   // full Breakpoint, not just the id, to read .width).
@@ -474,7 +461,6 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // (+ / − / ⇧1 / ⇧2), which are legitimately focus-scoped — they act on the
   // thing under the cursor's canvas, not on a selection. Every selection-acting
   // shortcut moved to the editor key ladder (see the scopes block above).
-  const onCanvasClick = isLive ? undefined : handleCanvasClick
 
   return (
     <CanvasViewportActionsContext.Provider value={viewportActionsContextValue}>
@@ -497,7 +483,6 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
           // (`drag.keys: false`) and the canvas div binds no key handler of
           // its own. Empty in preview mode — see gestureBindings above.
           {...gestureBindings}
-          onClick={onCanvasClick}
           onFocus={() => setFocusedPanel('canvas')}
         >
           {/* CSS for prefers-reduced-motion — no transitions for accessibility */}

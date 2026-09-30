@@ -2,7 +2,7 @@ import { expect, test, type FrameLocator, type Locator, type Page, type Route } 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
-  clickInFrame,
+  selectInFrame,
   createAuthoredFixtureProject,
   openFixtureBoard,
   panIntoView,
@@ -227,7 +227,7 @@ test.describe('Phase 1 exit gate — an outside edit never redirects a canvas wr
     const three = paragraph(content, afterText, 4)
     await expect(three).toHaveText('Three')
     await panIntoView(page, canvasRoot, three, 80)
-    await clickInFrame(page, three)
+    await selectInFrame(page, three)
     await page.keyboard.press('Delete')
     const afterDelete = withoutThree(afterText)
     await expect
@@ -302,7 +302,7 @@ test.describe('Phase 1 exit gate — an outside edit never redirects a canvas wr
     const three = paragraph(content, FIXTURE_PAGE, 3)
     await expect(three).toHaveText('Three')
     await panIntoView(page, canvasRoot, three, 80)
-    await clickInFrame(page, three)
+    await selectInFrame(page, three)
     await page.keyboard.press('Delete')
     await expect.poll(hold.isHeld, { message: 'the Delete never went out as a save', timeout: 30_000 }).toBe(true)
 

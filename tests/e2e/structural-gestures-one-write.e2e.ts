@@ -3,7 +3,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 import {
-  clickInFrame,
+  selectInFrame,
   createAuthoredFixtureProject,
   frameForPage,
   openFixtureBoard,
@@ -139,7 +139,7 @@ test.describe('P3-D — structural refusals become writes', () => {
     const saves = recordSaves(page)
     const a = content.locator(`[data-node-id="${sourceNodeId(HOME_PAGE, HOME, 'p', 1)}"]`).first()
     await panIntoView(page, canvasRoot, a, 80)
-    await clickInFrame(page, a)
+    await selectInFrame(page, a)
 
     // The selection is built in the Layers tree: click A, Ctrl-click C (the
     // tree's toggle), then drag A — the whole selection travels with it.
@@ -182,7 +182,7 @@ test.describe('P3-D — structural refusals become writes', () => {
     const home = await frameForPage(page, canvasRoot, 'home')
     const d = canvasContentFrame(home).locator(`[data-node-id="${sourceNodeId(HOME_PAGE, HOME, 'p', 4)}"]`).first()
     await panIntoView(page, canvasRoot, d, 80)
-    await clickInFrame(page, d)
+    await selectInFrame(page, d)
     await expect(tree.getByTestId(`dom-tree-item-${sourceNodeId(HOME_PAGE, HOME, 'p', 4)}`)).toHaveAttribute('aria-selected', 'true')
     await page.keyboard.press('Control+v')
 
@@ -205,7 +205,7 @@ test.describe('P3-D — structural refusals become writes', () => {
     const rule = `${firstCard}~${sourceNodeId(CARD_COMPONENT, CARD, 'hr', 1)}`
     const title = content.locator(`[data-node-id="${firstCard}~${sourceNodeId(CARD_COMPONENT, CARD, 'h3', 1)}"]`).first()
     await panIntoView(page, canvasRoot, title, 80)
-    await clickInFrame(page, title)
+    await selectInFrame(page, title)
     const selected = () =>
       page.evaluate(async () => {
         const { useEditorStore } = await import('/src/admin/pages/site/store/store.ts' as string)

@@ -2,7 +2,7 @@ import { expect, test, type FrameLocator, type Locator, type Page, type Request 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
-  clickInFrame,
+  selectInFrame,
   createAuthoredFixtureProject,
   openFixtureBoard,
   panIntoView,
@@ -117,7 +117,7 @@ async function openAndSelect(page: Page, divIndex: number): Promise<{ content: F
   const content = canvasContentFrame(frame)
   const element = content.locator(`[data-node-id="${sourceNodeId(FIXTURE_PAGE, REL, 'div', divIndex)}"]`).first()
   await panIntoView(page, canvasRoot, element, 80)
-  await clickInFrame(page, element)
+  await selectInFrame(page, element)
   await expect(page.getByTestId(`dom-tree-item-${sourceNodeId(FIXTURE_PAGE, REL, 'div', divIndex)}`)).toHaveAttribute(
     'aria-selected',
     'true',
@@ -202,7 +202,7 @@ test.describe('P2-C — arrow keys move the selected layer', () => {
     await expect.poll(async () => Math.abs((await boxA.boundingBox())!.x - beforeB!.x)).toBeLessThanOrEqual(2)
 
     // ↓ is across a row's axis: claimed, and nothing moves.
-    await clickInFrame(page, boxA)
+    await selectInFrame(page, boxA)
     const written = readPage()
     await page.keyboard.press('ArrowDown')
     await page.waitForTimeout(QUIET_MS)
@@ -214,7 +214,7 @@ test.describe('P2-C — arrow keys move the selected layer', () => {
 /** ⇧-click adds to the canvas selection (P2-B, OD-3). */
 async function shiftClickInFrame(page: Page, target: Locator): Promise<void> {
   await page.keyboard.down('Shift')
-  await clickInFrame(page, target)
+  await selectInFrame(page, target)
   await page.keyboard.up('Shift')
 }
 

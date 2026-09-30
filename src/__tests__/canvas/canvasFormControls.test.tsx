@@ -67,24 +67,41 @@ describe('canvas form controls', () => {
       event.preventDefault()
     })
 
+    // The PRESS is cancelled (no focus, no picker) but selects nothing yet: it
+    // may still become a drag. The RELEASE decides.
     let inputMouseDown = true
     await act(async () => {
       inputMouseDown = fireEvent.mouseDown(input)
     })
     expect(inputMouseDown).toBe(false)
+    expect(useEditorStore.getState().selectedNodeId).toBeNull()
+    await act(async () => {
+      fireEvent.click(input!)
+    })
     expect(useEditorStore.getState().selectedNodeId).toBe(inputId)
 
-    let selectMouseDown = true
+    // A `<select>`'s press is cancelled before its picker can open, and — like
+    // every control — selects nothing yet. (Its RELEASE is not asserted here:
+    // happy-dom's `HTMLSelectElement.closest()` returns a different object than
+    // the element itself, so `NodeRenderer`'s "innermost node" check can never
+    // match a select under this DOM. A real browser has no such quirk.)
+    let selectPointerDown = true
     await act(async () => {
-      selectMouseDown = fireEvent.pointerDown(select)
+      selectPointerDown = fireEvent.pointerDown(select)
     })
-    expect(selectMouseDown).toBe(false)
-    expect(useEditorStore.getState().selectedNodeId).toBe(selectId)
+    expect(selectPointerDown).toBe(false)
+    expect(useEditorStore.getState().selectedNodeId).toBe(inputId)
+    expect(selectId).toBeTruthy()
 
+    // A pointer press on a control activates on its release.
     await act(async () => {
-      fireEvent.click(select!)
+      fireEvent.pointerDown(submit)
     })
-    expect(useEditorStore.getState().selectedNodeId).toBe(selectId)
+    expect(useEditorStore.getState().selectedNodeId).toBe(inputId)
+    await act(async () => {
+      fireEvent.pointerUp(submit)
+    })
+    expect(useEditorStore.getState().selectedNodeId).toBe(submitId)
 
     await act(async () => {
       fireEvent.click(input!)
@@ -105,9 +122,10 @@ describe('canvas form controls', () => {
    * One press-and-release is ONE activation, however many events the browser
    * raises for it.
    *
-   * A suppressed control activates its node on `pointerdown` (the press has to
-   * be cancelled before the browser focuses the field or opens a picker), and
-   * the `click` that ends the same gesture used to activate it a second time.
+   * A suppressed control's press is cancelled on `pointerdown` (before the
+   * browser focuses the field or opens a picker) and its node is activated on
+   * RELEASE — `pointerup`, which a disabled control still raises — and the
+   * `click` that ends the same gesture must not activate it a second time.
    * That was invisible while activation only meant "select this node" — the
    * same node twice looks like once — and became a real bug the moment the
    * prototype player made a click mean "follow this link": every link authored
@@ -140,6 +158,7 @@ describe('canvas form controls', () => {
     await act(async () => {
       fireEvent.pointerDown(button)
       fireEvent.mouseDown(button)
+      fireEvent.pointerUp(button)
       fireEvent.mouseUp(button)
       fireEvent.click(button)
     })

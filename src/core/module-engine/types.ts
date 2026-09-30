@@ -256,7 +256,7 @@ export interface NodeWrapperProps {
   onContextMenuCapture?: (e: SyntheticMouseEvent) => void
   onContextMenu?: (e: SyntheticMouseEvent) => void
   onKeyDown?: (e: SyntheticKeyboardEvent) => void
-  onMouseEnter?: () => void
+  onMouseEnter?: (e: SyntheticEnterEvent) => void
   /** Carries `relatedTarget`: the canvas hands the hover to the node the pointer went into (`canvasHoverHandoff.ts`). */
   onMouseLeave?: (e: SyntheticLeaveEvent) => void
 }
@@ -264,18 +264,26 @@ export interface NodeWrapperProps {
 // Loose synthetic-event types so plugin module authors aren't forced to
 // import React types at the type level. The shapes match React's
 // SyntheticEvent surface for the methods modules actually need.
-type SyntheticMouseEvent = {
+type SyntheticEvent = {
   target: EventTarget | null
   currentTarget: EventTarget | null
   preventDefault: () => void
   stopPropagation: () => void
 }
-type SyntheticKeyboardEvent = SyntheticMouseEvent & {
+/**
+ * ⌘/Ctrl held means "the innermost layer" to every canvas pointer gesture
+ * (`canvasPressTarget.ts`), so the handlers read the modifiers off the event.
+ */
+type SyntheticModifierState = { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean; altKey: boolean }
+type SyntheticMouseEvent = SyntheticEvent & SyntheticModifierState & { button: number }
+type SyntheticKeyboardEvent = SyntheticEvent & {
   key: string
 }
-type SyntheticFocusEvent = SyntheticMouseEvent
-/** A pointer leaving an element — where it went is the one field a leave handler reads. */
-type SyntheticLeaveEvent = { relatedTarget: EventTarget | null }
+type SyntheticFocusEvent = SyntheticEvent
+/** A pointer entering an element — which layer it rings depends on ⌘/Ctrl. */
+type SyntheticEnterEvent = SyntheticModifierState
+/** A pointer leaving an element — where it went, and the same modifiers. */
+type SyntheticLeaveEvent = SyntheticModifierState & { relatedTarget: EventTarget | null }
 
 // ---------------------------------------------------------------------------
 // Module Definition — the canonical contract every module must satisfy

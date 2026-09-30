@@ -148,9 +148,10 @@ as **chrome-namespaced** aliases (`--chrome-font-sans`, `--chrome-text-*`,
 | Pointer | forwarded for space-pan / drags | not forwarded |
 | Keyboard | keydown cloned onto parent `document` (`Tab` cancelled in the frame, then forwarded); keyup ends holds | not forwarded |
 | Chrome CSS | applied | not applied |
-| Authored form controls | suppressed (a press selects the node) | left alone (focus, type, pick) |
+| Authored form controls | suppressed (the press is cancelled; the RELEASE selects) | left alone (focus, type, pick) |
 | The component's own `onClick` | swallowed — the canvas owns the click | runs, alongside the canvas's own activation |
-| The page's own `:hover` | rewritten so it cannot match | real |
+| The page's own `:hover` and `:active` | rewritten so they cannot match | real |
+| Which layer a click / press-drag means | the selection depth (`canvasPressTarget.ts`); ⌘/Ctrl = innermost | the element pressed |
 | Scrollbars | n/a (frames grow to content) | hidden inside a device mockup |
 
 Both modes are **fully editable**. Neither is a read-only preview.
@@ -162,15 +163,46 @@ was live-aware; the node-level handlers applied the design rule to both, so a
 live frame blurred every field the moment it was focused and nothing in it could
 be typed into.
 
-**One press is one activation.** A suppressed control activates its node on
-`pointerdown` — the press has to be cancelled before the browser focuses a field
-or opens a picker — so the `click` ending that same gesture must not activate it
-again. `NodeRenderer`'s latch is armed by the press and cleared by the click,
-and any press it does NOT suppress clears it too (a gesture that never became a
-click must not swallow the next one). This looked harmless for as long as
-activation only meant "select this node"; it became a visible bug the moment the
-prototype player made a click mean "follow this link", because every link
-authored on a button pushed its target twice.
+**One press is one activation — decided on RELEASE.** A suppressed control's
+press is cancelled on `pointerdown` (before the browser focuses a field or opens
+a picker) but selects nothing there: the press may still become a drag. Its node
+is activated once, on `pointerup` (a disabled control raises no `click`), or on
+the `click` when no pointer events came; the `click` ending the same gesture
+must not activate it again (`canvasNodeGestureLatch.ts`'s
+`claimSuppressedPointerActivation`). Any press it does NOT suppress clears the
+latch, and so does any click. Activating on `pointerdown` used to (a) select the
+button under the pointer before the drag could claim the gesture, and (b) twice
+over with the prototype player, which pushed every button's link target twice.
+
+**A press means a LAYER, at the selection depth (Figma).** The browser reports
+the innermost element; `canvasPressTarget.ts` turns it into the layer the press
+means, and every press path calls it — `NodeRenderer`'s click, hover and
+double-click, a bridge frame's forwarded pointer (`useBridgeFrameInteraction`),
+and both body-drag triggers — so what a press would select and what it would
+drag cannot disagree:
+
+- Nothing selected → the TOP-LEVEL layer: a child of the frame. The page root
+  (`base.body`) and, when it has exactly one child, that child (the page
+  component's own root, i.e. the screen) are the frame and transparent to
+  presses, the way a Figma top-level frame is.
+- A press inside a selected layer → that layer (drag moves it; click keeps it).
+- Otherwise → the child of the deepest node the selection and the pressed
+  element share: the sibling of the selection, at its level.
+- ⌘/Ctrl → the innermost layer (deep select; ⌘⇧ deep-toggles, ⇧ toggles).
+- Double-click → one CONTAINER level down; on a leaf (text, image, graphic)
+  straight to it and on into its edit, so text three containers deep is one
+  double-click from typing.
+- A closed `studio.instance` / an inlined VC body is one layer until entered —
+  clamped before any of the above.
+- The keyboard's Enter/Space activates the FOCUSED node itself (deep).
+- Live mode keeps the element pressed: it is the page as a visitor gets it.
+
+**A press that became a drag is not a click.** Its release raises a `click` on
+the common ancestor of where it started and ended, which used to re-select that
+ancestor over the layer just moved. The drag session marks the press when it
+activates (`markCanvasPressDragged`); the next click in any frame consumes the
+mark and selects nothing (`takeCanvasPressDrag`); the next press clears it
+(`beginCanvasPress`).
 
 **Hover is a MATCH, not a property**, which is why suppressing it is a selector
 rewrite (`@core/studio-runtime`'s `hoverSuppressionRules.ts`, applied by `CanvasHoverSuppressionInjector`) and
@@ -182,7 +214,12 @@ four page-content stylesheets, never a denylist, so the editor's own chrome
 keeps its real hover affordances. The forced-state preview
 (`mc-classes-force-state`) is untouched and is still how you see a hover state:
 it paints a `:hover` rule's declarations onto the selected node keyed by node
-id, with no `:hover` in the selector at all.
+id, with no `:hover` in the selector at all. **`:active` gets the same rewrite**
+(its own dead class, `studio-active-off`): a press on a design frame is the
+editor's, and `.btn:active { padding: … }` used to shrink and recolour a button
+under the pointer for the whole of a press-drag — the owner's "the click state
+triggers first". Same function (`disablePointerStatesInSelector`) in both frame
+kinds; the bridge runtime ships it in its bundle.
 
 **Arriving in live view arms the prototype player and the site's runtime
 scripts; leaving disarms the player.** Live mode is one real-size frame of the
@@ -837,7 +874,13 @@ events. Six cases are bridged explicitly:
    is opened by `useCanvasReorderDrag`'s own native capture listener on that
    frame's `contentDocument`, which then translates the iframe-local point into
    parent client coordinates itself (`iframeLocalPointToParentClientPoint`).
-   Only the moves that follow ride the relay. See `docs/reference/canvas-dnd.md`.
+   Only the moves that follow ride the relay. A Tier 2 BRIDGE frame has no
+   document to listen on: its press arrives as the runtime's `pointer` `down`
+   message and `useBridgeBodyDragTrigger` opens the same session from it (a
+   microtask later, so `useBridgeFrameInteraction` has activated the frame's
+   page first); the moves and the release are the runtime's `move`/`up`,
+   replayed onto the iframe element by the existing relay branch. See
+   `docs/reference/canvas-dnd.md`.
 3. **Keyboard** — one relay for both frame kinds, `canvasFrameKeyRelay.ts`
    (P2-B). A portal frame hears its native events; a Tier 2 bridge frame's
    runtime posts them as `key` / `blur` messages (`keyForwarding.ts`, design
@@ -983,6 +1026,14 @@ The rules the ladder replaced prose with:
 - **V is home (IX-11)** — the move tool, and it disarms the comment tool too.
 - **Escape is "deselect", not "select parent"** — traversal took Figma's own
   Enter/⇧Enter, because re-pointing Escape re-opens the bug `select-01` fixed.
+- **A click on the empty board deselects everything** — what Escape clears
+  (`clearAllSelections`) plus vector edit mode (`useEmptyBoardDeselect`). A
+  CLICK, decided from its press: the release must land on the empty board
+  (`isEmptyBoardTarget`, the one test the drop paths use too), its press must
+  not have been a pan (Space, the hand tool, the middle button), and the
+  pointer must have stayed within 3 screen px — a Space-pan or a marquee
+  across the board keeps the selection. A click on a frame's own page
+  background is not this: it selects the page root, the frame's own model.
 - **Enter (P5-E, IX-7):** on ONE text layer it opens the inline edit, the
   double-click path (`canvasTextEditStart.ts` — portal frames only, because a
   live frame's text edit is started by its runtime and a session opened from

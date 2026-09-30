@@ -267,25 +267,31 @@ async function panIntoView(page: Page, canvasRoot: Locator, target: Locator, tol
 }
 
 /** Same helper shape as `css-writeback.e2e.ts` / `instance-selection-ui.e2e.ts`, panned into view first. */
-async function clickInFrame(page: Page, canvasRoot: Locator, target: Locator): Promise<void> {
+async function selectInFrame(page: Page, canvasRoot: Locator, target: Locator): Promise<void> {
   await expect(target).toBeVisible({ timeout: 15_000 })
   await panIntoView(page, canvasRoot, target)
   const box = await target.boundingBox()
   expect(box, 'click target has no bounding box').not.toBeNull()
-  await page.mouse.click(box!.x + box!.width / 2, box!.y + 4)
+  // ⌘/Ctrl: deep select — see `selectInFrame` in helpers/studioFixtureProject.ts.
+  await page.keyboard.down('ControlOrMeta')
+  try {
+    await page.mouse.click(box!.x + box!.width / 2, box!.y + 4)
+  } finally {
+    await page.keyboard.up('ControlOrMeta')
+  }
 }
 
 const panelScroll = (page: Page) => page.getByTestId('properties-panel-scroll')
 
 async function selectRectangle(page: Page, canvasRoot: Locator, contentFrame: FrameLocator) {
-  await clickInFrame(page, canvasRoot, contentFrame.locator('.rectangle').first())
+  await selectInFrame(page, canvasRoot, contentFrame.locator('.rectangle').first())
   await expect(page.getByTestId('inspector-layer-row'), 'selecting the rectangle did not open Layer').toBeVisible({
     timeout: 15_000,
   })
 }
 
 async function selectTextLayer(page: Page, canvasRoot: Locator, contentFrame: FrameLocator) {
-  await clickInFrame(page, canvasRoot, contentFrame.locator('.text-layer').first())
+  await selectInFrame(page, canvasRoot, contentFrame.locator('.text-layer').first())
   await expect(
     page.locator('[data-section-id="text"]'),
     'selecting the text layer did not mount the Text section',

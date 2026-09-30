@@ -3,7 +3,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 import {
-  clickInFrame,
+  selectInFrame,
   createAuthoredFixtureProject,
   frameForPage,
   openFixtureBoard,
@@ -122,7 +122,7 @@ test.describe('P5-C — detach an instance, and one ⌘Z puts it back', () => {
     const badgeId = sourceNodeId(HOME_PAGE, HOME, 'Badge', 1)
     const badge = content.locator(`[data-node-id^="${badgeId}~"]`).first()
     await panIntoView(page, canvasRoot, badge, 80)
-    await clickInFrame(page, badge)
+    await selectInFrame(page, badge)
     await expect.poll(() => selectedNodeId(page)).toBe(badgeId)
 
     await canvasRoot.focus()
@@ -155,7 +155,7 @@ test.describe('P5-C — detach an instance, and one ⌘Z puts it back', () => {
     const statusId = sourceNodeId(HOME_PAGE, HOME, 'Status', 1)
     const status = content.locator(`[data-node-id^="${statusId}~"]`).first()
     await panIntoView(page, canvasRoot, status, 80)
-    await clickInFrame(page, status)
+    await selectInFrame(page, status)
     await expect.poll(() => selectedNodeId(page)).toBe(statusId)
 
     await canvasRoot.focus()
@@ -213,7 +213,7 @@ test.describe('P5-C — detach an instance, and one ⌘Z puts it back', () => {
     // The design-system host is `display: contents` — click what it renders.
     const rendered = content.locator(`[data-node-id="${buttonId}"] button`).first()
     await panIntoView(page, canvasRoot, rendered, 80)
-    await clickInFrame(page, rendered)
+    await selectInFrame(page, rendered)
     await expect.poll(() => selectedNodeId(page)).toBe(buttonId)
 
     await canvasRoot.focus()
