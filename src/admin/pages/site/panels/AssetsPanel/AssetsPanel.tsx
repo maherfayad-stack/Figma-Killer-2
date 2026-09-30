@@ -26,6 +26,10 @@
  *   - **Colors** — the built-in design system's palette (`ColorsSection`).
  *     Copy a variable, or apply one to the selected layer's fill or text.
  *
+ * Dragging a card drops it into whichever frame the pointer is over, at the
+ * drop line (`useCanvasInsertionDrag`); released on the empty board, a
+ * component or element becomes a loose layer on the free canvas (P5-G G1).
+ *
  * Clicking a card inserts through `useInsertInserterItem` — the same handler
  * every other insert surface uses, so the target resolution (selected
  * container, else the frame root) and every refusal are identical here and in
@@ -39,6 +43,7 @@ import type { VisualComponent } from '@core/visualComponents'
 import { useEditorStore } from '@site/store/store'
 import type { InsertLocation } from '@site/store/insertLocation'
 import { useInsertInserterItem } from '@site/hooks/useInsertInserterItem'
+import { canPlaceModuleOnCanvas, placeModuleOnCanvas } from '@site/hooks/placeModuleOnCanvas'
 import { Panel } from '@admin/shared/Panel'
 import { EmptyState } from '@ui/components/EmptyState'
 import { SearchBar } from '@ui/components/SearchBar'
@@ -175,8 +180,20 @@ export function AssetsPanel() {
   // `speed-06` — one drag session shared by every card: the ghost + drop
   // preview overlay is drawn once for the whole panel (`CanvasInsertionDragOverlay`
   // below), exactly the shape the notch's own primitives already use.
+  // P5-G G1 — a component or element card released on the EMPTY board lands
+  // there as a loose layer. Saved layouts and Visual Components have no
+  // loose-layer spelling, so their drag never offers the board.
   const canvasDrag = useCanvasInsertionDrag<AssetItem>({
     onDrop: (item, location) => handleInsert(item, location),
+    freeCanvas: {
+      accepts: (item) => item.kind === 'module' && !item.disabledReason && canPlaceModuleOnCanvas(item.id),
+      onDrop: (item, at) => {
+        if (item.kind !== 'module' || !placeModuleOnCanvas(item.id, undefined, at)) return false
+        trackAssetInsert(refForAssetItem(item))
+        setRecentRefs(readAssetPrefs().recent)
+        return true
+      },
+    },
   })
 
   function handleInsert(item: AssetItem, target?: InsertLocation) {

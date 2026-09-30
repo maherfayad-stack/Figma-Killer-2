@@ -35,6 +35,19 @@
     top: calc(var(--drop-top) + var(--drop-height));
 }
 
+/*
+ * The empty board (P5-G): the element becomes a loose layer with its top-left
+ * at the pointer. There is no box to outline yet — a small mark where the
+ * corner goes, and the tag saying it lands on the canvas, not in a page.
+ */
+.dropPreview[data-position="canvas"] {
+    width: 8px;
+    height: 8px;
+    margin: -4px 0 0 -4px;
+    border-radius: 50%;
+    background: var(--canvas-selection-ring-color);
+}
+
 /* Names the target, so a drop into a nested element is unambiguous. */
 .dropTag {
     position: absolute;

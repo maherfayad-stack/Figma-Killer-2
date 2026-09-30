@@ -54,7 +54,7 @@ import {
   planSourceWrap,
   presentStructuralRefusal,
 } from './structuralSourceEdits'
-import { insertableJsxProps } from './insertablePropValues'
+import { moduleInsertProps, moduleSourceElement } from './moduleSourceElement'
 import { createStudioSourceRefusals, type StudioSourceRefusals } from './studioSourceRefusals'
 import {
   previewOptimisticDuplicate,
@@ -163,86 +163,62 @@ export function createStudioSourceWrites(
     }
     if (!plan.commit) return false // an ordinary CMS tree — nothing to write
 
-    const mod = registry.get(moduleId)
-    const props = { ...(mod?.defaults ?? {}), ...(defaults ?? {}) }
-    const sourceImport = mod?.sourceImport
-
-    if (sourceImport) {
-      // `live-07`/`perf-10` — same-tick paint for BOTH frame kinds, sharing
-      // ONE placeholder id: a throwaway `optimistic:` id stands in purely as
-      // the bridge ghost's own `data-node-id` (safe because
-      // `BridgeFrameAdapter.optimistic.insert` never looks it up, and
-      // `runtime.ts`'s ghost sweep removes it wholesale on the next Fast
-      // Refresh) AND as the temporary node's real id in the local tree, which
-      // is what makes a PORTAL frame paint too — it renders from that tree,
-      // not from a DOM ghost. `'div'` for the bridge ghost is the
-      // least-disruptive generic placeholder tag; the local preview renders
-      // the actual module with its own defaults instead, since a
-      // design-system component's real ROOT TAG is unknowable without
-      // executing it, but its registered CANVAS appearance is not.
-      const ghostId = `optimistic:${crypto.randomUUID()}`
-      broadcastOptimisticInsert(ghostId, plan.commit.parentNodeId, index ?? Number.MAX_SAFE_INTEGER, 'div')
-      const optimistic =
-        previewOptimisticInsert(helpers, moduleId, props, plan.commit.parentNodeId, index, ghostId) ?? undefined
-      void commitStudioInsert({
-        ...plan.commit,
-        name: sourceImport.name,
-        // The two spellings a registered component can have: a package names
-        // its specifier, the built-in design system names only itself and the
-        // SERVER computes the path relative to the file being written (the
-        // editor does not know where that file sits — see `sourceImport`).
-        ...(sourceImport.kind === 'package'
-          ? { importSpecifier: sourceImport.specifier }
-          : { designSystemImport: true as const }),
-        props: insertableJsxProps(props),
-        ...(optimistic ? { optimistic } : {}),
-      })
+    const element = moduleSourceElement(moduleId, defaults, inlineStyles)
+    if (!element) {
+      // An editor construct with no spelling in a user's repo; the picker
+      // hides those in studio mode, so this is the programmatic path. Always
+      // `actions: []` — always the toast, never the dialog.
+      presentStructuralRefusal(
+        STRUCTURAL_REFUSAL_TITLE.insert,
+        describeStructuralRefusal({
+          refusal: {
+            reason: 'insert',
+            message: `"${registry.get(moduleId)?.name ?? moduleId}" is an editor building block, not a component in your project's code, so there is nothing Studio could write to the file. Add a design-system component instead.`,
+          },
+        }),
+        { getState: get, set },
+      )
       return true
     }
 
-    // Still possibly a real element: `base.container` is a `<div>`/`<span>`,
-    // `base.text` a `<p>` wrapping text. `insertJsxElement` writes those by
-    // omitting `importSpecifier`. See `sourceIntrinsic` on `ModuleDefinition`.
-    const intrinsic = mod?.sourceIntrinsic?.(props)
-    if (intrinsic) {
-      // `live-07`/`perf-10` — same as above, but an honest tag match:
-      // `intrinsic.tag` is exactly what the codemod is about to write, and
-      // `props` (the same merged bag the codemod's `intrinsic.text` was
-      // itself derived from) is what the local preview renders with.
-      const ghostId = `optimistic:${crypto.randomUUID()}`
-      broadcastOptimisticInsert(ghostId, plan.commit.parentNodeId, index ?? Number.MAX_SAFE_INTEGER, intrinsic.tag, intrinsic.text)
-      const optimistic =
-        previewOptimisticInsert(helpers, moduleId, props, plan.commit.parentNodeId, index, ghostId, inlineStyles) ??
-        undefined
-      void commitStudioInsert({
-        ...plan.commit,
-        name: intrinsic.tag,
-        // `K4` — a caller-supplied inline-style bag is written as part of THIS
-        // element, not as a follow-up edit: the node does not exist until the
-        // codemod runs, and its id is the `line:col` that write produces, so
-        // there is nothing to style afterwards until the resync lands. Keys
-        // are React-style camelCase (`borderRadius`), which is the spelling
-        // `renderJsxNode` emits into `style={{ … }}` and the parser reads back.
-        props: inlineStyles && Object.keys(inlineStyles).length > 0 ? { style: { ...inlineStyles } } : {},
-        ...(intrinsic.text === undefined ? {} : { children: intrinsic.text }),
-        ...(optimistic ? { optimistic } : {}),
-      })
-      return true
-    }
-
-    // Everything else is an editor construct with no spelling in a user's repo;
-    // the picker hides those in studio mode, so this is the programmatic path.
-    // Always `actions: []` — always the toast, never the dialog.
-    presentStructuralRefusal(
-      STRUCTURAL_REFUSAL_TITLE.insert,
-      describeStructuralRefusal({
-        refusal: {
-          reason: 'insert',
-          message: `"${mod?.name ?? moduleId}" is an editor building block, not a component in your project's code, so there is nothing Studio could write to the file. Add a design-system component instead.`,
-        },
-      }),
-      { getState: get, set },
+    // `live-07`/`perf-10` — same-tick paint for BOTH frame kinds, sharing ONE
+    // placeholder id: a throwaway `optimistic:` id stands in as the bridge
+    // ghost's own `data-node-id` (safe because
+    // `BridgeFrameAdapter.optimistic.insert` never looks it up, and
+    // `runtime.ts`'s ghost sweep removes it wholesale on the next Fast
+    // Refresh) AND as the temporary node's real id in the local tree, which is
+    // what makes a PORTAL frame paint too — it renders from that tree, not
+    // from a DOM ghost. An intrinsic element's ghost is an honest tag match;
+    // a component's real root tag is unknowable without executing it, so its
+    // bridge ghost is the least-disruptive generic `div` while the local
+    // preview renders the registered module with its own defaults.
+    const ghostId = `optimistic:${crypto.randomUUID()}`
+    broadcastOptimisticInsert(
+      ghostId,
+      plan.commit.parentNodeId,
+      index ?? Number.MAX_SAFE_INTEGER,
+      element.intrinsic ? element.name : 'div',
+      element.intrinsic ? element.children : undefined,
     )
+    const optimistic =
+      previewOptimisticInsert(
+        helpers,
+        moduleId,
+        moduleInsertProps(moduleId, defaults),
+        plan.commit.parentNodeId,
+        index,
+        ghostId,
+        element.intrinsic ? inlineStyles : undefined,
+      ) ?? undefined
+    void commitStudioInsert({
+      ...plan.commit,
+      name: element.name,
+      ...(element.importSpecifier === undefined ? {} : { importSpecifier: element.importSpecifier }),
+      ...(element.designSystemImport === undefined ? {} : { designSystemImport: element.designSystemImport }),
+      props: element.props,
+      ...(element.children === undefined ? {} : { children: element.children }),
+      ...(optimistic ? { optimistic } : {}),
+    })
     return true
   }
 
