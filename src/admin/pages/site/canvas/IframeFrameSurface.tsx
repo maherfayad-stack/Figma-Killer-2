@@ -152,7 +152,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       width,
       className,
       style,
-      onClick,
+      onEmptyAreaClick,
       onCursorMove,
       onCursorLeave,
       children,
@@ -430,24 +430,31 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
     useEffect(() => {
       if (!iframeDoc?.body) return
       applyIframeBodyReset(iframeDoc, breakpointId, interaction)
-      if (!onClick) return
-      // Empty-frame click: ONLY fire when the click target is the body
-      // itself (not a child node bubbling up). Without this guard, every
-      // single click anywhere in the iframe — including clicks that the
+      if (!onEmptyAreaClick || isLive) return
+      // Empty-area click: ONLY fire when the click target is the body or the
+      // `<html>` itself (not a child node bubbling up). Without this guard,
+      // every single click anywhere in the iframe — including clicks that the
       // canvas already routed through NodeRenderer's stopPropagation
       // logic — would re-trigger `onActivate`. React's `stopPropagation()`
       // from the child's onClick reaches React's delegated listener but
       // doesn't stop this native bubble-phase listener (they were
-      // attached in different code paths, in different orders).
-      const handler = (e: MouseEvent) => {
-        if (e.target !== iframeDoc.body) return
-        onClick()
+      // attached in different code paths, in different orders). Two
+      // listeners, because the body's own node handler stops a body click
+      // before it could bubble to `<html>`.
+      const html = iframeDoc.documentElement
+      const onBodyClick = (e: MouseEvent) => {
+        if (e.target === iframeDoc.body) onEmptyAreaClick('body')
       }
-      iframeDoc.body.addEventListener('click', handler)
+      const onHtmlClick = (e: MouseEvent) => {
+        if (e.target === html) onEmptyAreaClick('outside-body')
+      }
+      iframeDoc.body.addEventListener('click', onBodyClick)
+      html.addEventListener('click', onHtmlClick)
       return () => {
-        iframeDoc.body.removeEventListener('click', handler)
+        iframeDoc.body.removeEventListener('click', onBodyClick)
+        html.removeEventListener('click', onHtmlClick)
       }
-    }, [iframeDoc, breakpointId, onClick, interaction])
+    }, [iframeDoc, breakpointId, onEmptyAreaClick, interaction, isLive])
 
     // ── Navigation guard ─────────────────────────────────────────────────
     // The canvas iframe is an EDITING surface, never a browsing surface.

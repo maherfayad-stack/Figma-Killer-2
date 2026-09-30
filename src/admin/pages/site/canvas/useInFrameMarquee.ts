@@ -6,8 +6,9 @@
  * always a move, so a row of layers could only be gathered by ⇧-clicking each.
  * The trigger is OD-6's: a press on the frame's ROOT layer itself — the page
  * background, where no child is under the pointer — that travels past the
- * threshold. A press that does not travel is still an ordinary click (it
- * selects the page), and ⌘-drag stays free move. Which layers the rectangle
+ * threshold. A press that does not travel is still an ordinary click — on
+ * the frame's empty background, which lets go of everything, as on Figma
+ * (`canvasPressTarget.ts`) — and ⌘-drag stays free move. Which layers the rectangle
  * selects is `inFrameMarquee.ts`'s rule.
  *
  * Like `useCanvasBodyDragTrigger`, this is a native capture-phase listener on
@@ -163,8 +164,8 @@ export function useInFrameMarquee({ enabled, overlayRoot, frameId }: InFrameMarq
         box?.remove()
         cleanupGesture?.()
         cleanupGesture = null
-        // The click this release produces lands on the page root and would
-        // select it, wiping the marquee's selection.
+        // The click this release produces lands on the page root, the frame's
+        // empty background, and would deselect the marquee's selection.
         if (wasMarquee) swallowClick = true
       }
 

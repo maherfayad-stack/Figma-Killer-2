@@ -43,6 +43,7 @@ import { clientPointToEditorDoc } from './canvasDomGeometry'
 import { setCanvasHover } from './canvasHover'
 import { tryEnterVectorEdit } from './BoardVectorLayer/vectorEditEntry'
 import { canvasClickSelectionMode } from './canvasSelectionUtils'
+import { deselectEverything } from './canvasDeselect'
 
 export interface CanvasNodeInteractionOptions {
   /** False on a read-only canvas: right-click and double-click stand down. */
@@ -84,6 +85,12 @@ export interface CanvasNodeInteraction {
    * modifiers it carried.
    */
   onFrameNodeClick: (nodeId: string, modifiers: ClickModifiers, breakpointId?: string, frameId?: string | null) => void
+  /**
+   * A click on a frame's own empty background — the page root's area no child
+   * covers (`canvasPressTarget.ts` resolved the press to `null`). Figma's rule:
+   * clicking nothing lets go of everything, inside a frame as on the board.
+   */
+  onFrameBackgroundClick: (breakpointId?: string, frameId?: string | null) => void
   onNodeHover: (nodeId: string | null, breakpointId?: string, frameId?: string | null) => void
   onNodeContextMenu: (nodeId: string, e: ReactMouseEvent, breakpointId?: string, frameId?: string | null) => void
   onNodeDoubleClick: (nodeId: string, e: ReactMouseEvent, breakpointId?: string, frameId?: string | null) => void
@@ -237,6 +244,15 @@ export function useCanvasNodeInteraction(options: CanvasNodeInteractionOptions):
     setFocusedPanel('canvas')
   }
 
+  const onFrameBackgroundClick = (breakpointId?: string) => {
+    // An armed player follows links on the press/release pair (see
+    // `onNodePointerDown`); the page background selects nothing to begin with.
+    if (options.playMode) return
+    if (breakpointId && breakpointId !== options.activeBreakpointId) setActiveBreakpoint(breakpointId)
+    deselectEverything()
+    setFocusedPanel('canvas')
+  }
+
   const onNodeHover = (nodeId: string | null, breakpointId?: string, frameId?: string | null) => {
     // The hover ring is editing chrome, and an armed player is not an editing
     // surface — a visitor clicking through a prototype should see the
@@ -315,6 +331,7 @@ export function useCanvasNodeInteraction(options: CanvasNodeInteractionOptions):
   const handlers: CanvasNodeInteraction = {
     onNodeClick,
     onFrameNodeClick,
+    onFrameBackgroundClick,
     onNodeHover,
     onNodeContextMenu,
     onNodeDoubleClick,
@@ -328,6 +345,7 @@ export function useCanvasNodeInteraction(options: CanvasNodeInteractionOptions):
   const [stable] = useState<CanvasNodeInteraction>(() => ({
     onNodeClick: (...args) => latest.current.onNodeClick(...args),
     onFrameNodeClick: (...args) => latest.current.onFrameNodeClick(...args),
+    onFrameBackgroundClick: (...args) => latest.current.onFrameBackgroundClick(...args),
     onNodeHover: (...args) => latest.current.onNodeHover(...args),
     onNodeContextMenu: (...args) => latest.current.onNodeContextMenu(...args),
     onNodeDoubleClick: (...args) => latest.current.onNodeDoubleClick(...args),

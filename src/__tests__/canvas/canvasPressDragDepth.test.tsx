@@ -26,6 +26,7 @@ import { CanvasFrameAdapterContext } from '@site/canvas/CanvasContexts'
 import { useEditorStore } from '@site/store/store'
 import { useCanvasReorderDrag } from '@site/canvas/useCanvasReorderDrag'
 import { canvasPressBecameDrag, takeCanvasPressDrag } from '@site/canvas/canvasNodeGestureLatch'
+import { setCanvasSpacePanActive } from '@site/canvas/canvasPanInput'
 import type { DropCandidateGeometry, FrameDocumentAdapter, FrameRuntimeEvent } from '@site/canvas/frameAdapter/FrameDocumentAdapter'
 import { registerFrameAdapter, unregisterFrameAdapter } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
 import { makeNode, makePage, makeSite } from '../fixtures'
@@ -239,6 +240,29 @@ describe('a portal frame — the press drags the layer it means', () => {
     act(() => dispatchWindowPointer('pointerup', 121, 70))
     expect(canvasPressBecameDrag()).toBe(false)
     expect(useEditorStore.getState().selectedNodeIds).toEqual([])
+  })
+
+  it('a press on the frame’s own background drags nothing, with or without a selection', () => {
+    selectOnly('card')
+    renderDrag()
+    act(() => pressInFrame(harness.nodes.body!, 20, 290))
+    act(() => dispatchWindowPointer('pointermove', 200, 200))
+    act(() => dispatchWindowPointer('pointerup', 200, 200))
+    expect(canvasPressBecameDrag()).toBe(false)
+    expect(useEditorStore.getState().selectedNodeIds).toEqual(['card'])
+  })
+
+  it('a Space-pan that starts in the frame is not a click: its release deselects (and selects) nothing', () => {
+    renderDrag()
+    setCanvasSpacePanActive(document, 'parentDocument', true)
+    try {
+      act(() => pressInFrame(harness.nodes.body!, 20, 290))
+      expect(canvasPressBecameDrag()).toBe(true)
+    } finally {
+      setCanvasSpacePanActive(document, 'parentDocument', false)
+      // Module state: leave no spent press for the next file's clicks.
+      takeCanvasPressDrag()
+    }
   })
 })
 

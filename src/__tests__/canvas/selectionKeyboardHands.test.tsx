@@ -309,6 +309,18 @@ describe('IX-2 — ⇧-click toggles on the canvas', () => {
     result.current.onFrameNodeClick('b', META, 'bp')
     expect(state().selectedNodeIds).toEqual(['b'])
   })
+
+  // The owner: "clicking on an empty place deselects everything" — a frame's
+  // own empty background is such a place (`canvasPressTarget.ts` → `null`).
+  it('a click on a frame’s empty background lets go of the whole selection', () => {
+    seed()
+    const result = interaction()
+    result.current.onFrameNodeClick('a', NONE, 'bp')
+    result.current.onFrameNodeClick('c', SHIFT, 'bp')
+    result.current.onFrameBackgroundClick('bp', null)
+    expect(state().selectedNodeIds).toEqual([])
+    expect(state().selectedNodeId).toBeNull()
+  })
 })
 
 describe('IX-3 — Tab / ⇧Tab cycle siblings, on the canvas only', () => {
