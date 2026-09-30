@@ -503,7 +503,7 @@ Canvas-internal values are not CSS tokens — they are raw integers intentionall
 | `CanvasTransformLayer.tsx`      | Zoom + pan transform (design view)                              |
 | `CanvasLiveSurface.tsx`         | "Live" view — single real-size editable frame, normal scroll    |
 | `RuntimeScriptInjector.tsx`     | Injects bundled runtime scripts into an editable iframe         |
-| `CanvasNotch.tsx`               | Top-center chrome: history controls + favorite insert shortcuts; peek mode in live view |
+| `CanvasNotch.tsx`               | Top-center chrome: history controls + armed draw tools (Rectangle / Ellipse / Pen, `CanvasDrawToolButtons`) + favorite insert shortcuts; peek mode in live view |
 | `CanvasModeToggle.tsx`          | Design/Live view toggle + Run-scripts toggle + breakpoint switch; peek mode in live view |
 | `CanvasContextSelector.tsx`     | Editing-context switcher: viewports + custom conditions (@media/@container/@supports) |
 | `CanvasLayerContextMenu.tsx`    | Right-click on a layer                                          |

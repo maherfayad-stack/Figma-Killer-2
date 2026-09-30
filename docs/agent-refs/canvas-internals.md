@@ -1124,6 +1124,20 @@ text for typing through `createdNodeFollowUp.ts` → `canvasTextEditStart.ts`.
 ⏎ with a tool armed is the old immediate insert (`T` / `F` inside the
 selection, `R` / `O` after it).
 
+**Visible doors (canvas-44).** The keys are not the only way in: the notch's
+`CanvasDrawToolButtons` group (Rectangle, Ellipse, Pen — design view only)
+writes the same `canvasTool` the key does, toggles off on a second press, is
+`aria-pressed` while armed, and reads its tooltip + shortcut from the
+keybinding registry. Its `onMouseDown` keeps focus off the button: a focused
+button turns the Space-pan release into a click that disarms the tool. T and F
+have no tool button because the notch's Text / Div primitives already name
+those keys. The selection toolbar's **Edit points** (`SelectionToolbar`) is
+vector edit mode's visible door, shown only where `vectorEditVerdict`
+(`BoardVectorLayer/vectorEditEntry.ts`, the double-click's own decision) says
+`editable`. Both tools shipped keyboard-only, which is why the owner had "no
+access" to them; `tests/e2e/canvas-draw-tool-buttons.e2e.ts` drives them
+through the chrome so they cannot silently vanish again.
+
 Everything a draw writes rides the insert itself: the size, `O`'s
 `borderRadius: 50%` and the rectangle / ellipse default fill go in
 `insertNode(…, inlineStyles)`, which `writeInsertToSource` passes to

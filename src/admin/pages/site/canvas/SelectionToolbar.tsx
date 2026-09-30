@@ -1,6 +1,8 @@
 /**
  * SelectionToolbar — the floating action bar for the current canvas selection:
- * drag handle, insert-module, duplicate, delete.
+ * drag handle, insert-module, "Edit points" on an editable inline `<svg>`
+ * (P5-D vector edit mode's visible door — `vectorEditEntry.ts`), duplicate,
+ * delete.
  *
  * Extracted from `BreakpointSelectionOverlay.tsx`, which named this exact
  * split as its own extraction candidate when it was grandfathered over the
@@ -28,7 +30,10 @@ import { CopyPlusSolidIcon } from 'pixel-art-icons/icons/copy-plus-solid'
 import { TrashSolidIcon } from 'pixel-art-icons/icons/trash-solid'
 import { HandGrabSolidIcon } from 'pixel-art-icons/icons/hand-grab-solid'
 import { LinkIcon } from 'pixel-art-icons/icons/link'
+import { PenGlyphIcon } from '@ui/components/ElementIcons'
 import { CanvasInsertModuleButton } from './CanvasInsertModuleButton'
+import { tryEnterVectorEdit, vectorEditVerdict } from './BoardVectorLayer/vectorEditEntry'
+import { useVectorEditTarget } from './BoardVectorLayer/vectorEditState'
 import styles from './BreakpointSelectionOverlay.module.css'
 
 interface SelectionToolbarProps {
@@ -37,6 +42,8 @@ interface SelectionToolbarProps {
   /** `scoped` when portaled into the canvas root, `fixed` in the body fallback. */
   mode: 'scoped' | 'fixed'
   onDragPointerDown: (event: React.PointerEvent<HTMLElement>) => void
+  /** The board frame this toolbar floats over — the frame vector edit mode measures its points in. */
+  frameId: string | null
 }
 
 /**
@@ -70,9 +77,19 @@ function deleteSelectedLayers() {
   state.clearSelection()
 }
 
-export function SelectionToolbar({ toolbarRef, mode, onDragPointerDown }: SelectionToolbarProps) {
+export function SelectionToolbar({ toolbarRef, mode, onDragPointerDown, frameId }: SelectionToolbarProps) {
   const inPrototypeMode = useEditorStore((s) => s.boardMode === 'prototype')
   const picking = useEditorStore((s) => s.linkDraft?.mode === 'pick' || s.pendingLinkSource !== null)
+  // Only where entering would succeed: a refused svg (an `.svg`-file icon, a
+  // list row, a locked node) keeps its explanation on the double-click, and a
+  // button that could only ever refuse is noise on every icon.
+  const vectorNodeId = useEditorStore((s) =>
+    s.selectedNodeIds.length === 1 && vectorEditVerdict(s, s.selectedNodeIds[0]).kind === 'editable'
+      ? s.selectedNodeIds[0]
+      : null,
+  )
+  const vectorEditTarget = useVectorEditTarget()
+  const editingPoints = vectorNodeId !== null && vectorEditTarget?.hostNodeId === vectorNodeId
 
   return (
     <div
@@ -101,6 +118,22 @@ export function SelectionToolbar({ toolbarRef, mode, onDragPointerDown }: Select
         <HandGrabSolidIcon size={13} color="var(--text)" />
       </Button>
       <CanvasInsertModuleButton buttonClassName={styles.selectionToolbarButton} />
+
+      {vectorNodeId && (
+        <Button
+          variant="secondary"
+          size="xs"
+          iconOnly
+          aria-label="Edit points"
+          aria-pressed={editingPoints}
+          tooltip="Edit points (or double-click the graphic)"
+          className={styles.selectionToolbarButton}
+          data-testid="canvas-selection-edit-points"
+          onClick={() => tryEnterVectorEdit(vectorNodeId, frameId)}
+        >
+          <PenGlyphIcon size={13} />
+        </Button>
+      )}
 
       {inPrototypeMode && (
         <Button

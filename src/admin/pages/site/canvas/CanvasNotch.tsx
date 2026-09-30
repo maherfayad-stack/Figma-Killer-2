@@ -38,6 +38,7 @@ import {
   ContextMenuSeparator,
 } from "@ui/components/ContextMenu";
 import { UndoRedoButtons } from "./UndoRedoButtons";
+import { CanvasDrawToolButtons } from "./CanvasDrawToolButtons";
 import { useCanvasInsertionDrag } from "./useCanvasInsertionDrag";
 import { CanvasInsertionDragOverlay } from "./CanvasInsertionDragOverlay";
 import { cn } from "@ui/cn";
@@ -119,6 +120,7 @@ export function CanvasNotch({
             actions.map((action) => renderActionButton(action))
           ) : (
             <>
+              <CanvasDrawToolButtons />
               <PrimitiveNotchActions />
               <div aria-hidden="true" className={styles.divider} />
               <FavoriteNotchActions />

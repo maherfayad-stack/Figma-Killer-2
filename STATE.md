@@ -11,6 +11,18 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 8 entries. Only work that is not yet merged into the trunk `feat/canvas-excellence`.*
 
+### canvas-44 — the SVG draw / edit tools had no visible door; now they do
+- **Agent:** canvas-engineer · **Branch:** `fix/restore-svg-draw-edit-tools` off `tmp/speed-integration` `89add51f` · no PR (orchestrator merges) · **Updated:** 2026-09-30
+- **Stage:** done, committed locally, not pushed.
+- **Owner bug:** "There should be SVG draw/edit tools and I no longer have any access to them at all."
+- **Finding:** nothing was lost. PR #269 (`feat/svg-draw-and-edit` → `feat/canvas-excellence`, merge `026c24ba`) and P5-E's armed tools are fully in `89add51f` (arrived via the studio-shell merge), and `P` / `R` / `O` work on `test4` in the live app. But no commit on ANY branch ever gave them a button: the armed tools and the pen were keyboard-only, vector edit mode double-click-only, and the notch's T / F tooltips were the only hint anything existed. Unreachable by discovery, not by code.
+- **Fix:** `CanvasDrawToolButtons.tsx` (new) — Rectangle / Ellipse / Pen in the notch (`CanvasNotch.tsx`), design view only, same `canvasTool` writes as the keys, pressed state, registry tooltips; `onMouseDown` keeps focus (a focused button turns a Space-pan release into a disarming click). `SelectionToolbar.tsx` gets **Edit points** on an editable literal `<svg>`, gated by `vectorEditVerdict` — the double-click's own decision, extracted in `BoardVectorLayer/vectorEditEntry.ts` so the two doors cannot disagree; `BreakpointSelectionOverlay.tsx` passes `frameId` down (one line). Glyphs in `src/ui/components/ElementIcons` (no vendored rectangle / ellipse / pen mark).
+- **Canvas files touched:** `canvas/CanvasDrawToolButtons.tsx`, `canvas/CanvasNotch.tsx`, `canvas/CanvasNotch.module.css`, `canvas/SelectionToolbar.tsx`, `canvas/BreakpointSelectionOverlay.tsx`, `canvas/BoardVectorLayer/vectorEditEntry.ts`.
+- **Landmines:** a canvas-chrome button that arms a tool must never take focus — the Space-pan keyup over a focused `<button>` is a native click (events × chrome, new). No height or injector interaction.
+- **Gates:** `bun test src/__tests__/canvas` (plus new `canvasDrawToolButtons.test.tsx`, `vectorEditVerdict.test.ts`), build, lint; e2e `canvas-draw-tool-buttons.e2e.ts` 3/3 (new: notch button → drag → one write + 80×30 box; notch pen → 3 clicks + ⏎ → one new `<svg>` rendered; Edit points → anchors), `studio-vector`, `canvas-tools-and-handles`, `svg-renders-as-itself` all green.
+- **Dogfood:** `/admin/site` on `test4`, 100%, one frame: the notch shows three new buttons left of Text/Div/Span; click the square, drag in a frame → grey box of that size, button un-presses; click the nib, click three points, ⏎ → a new stroked path; select an inline JSX `<svg>` (not an `icon=` prop svg — those are unstamped by design) → toolbar pen button → anchors.
+- **Found, not fixed:** T / F (text, frame) still have no armed-tool button — the notch's Text / Div are immediate inserts that only NAME those keys; `test4`'s svgs are all `icon={<svg…>}` props, which vector edit refuses by design.
+
 ### parser-20 — extraction and locale detection must never touch the vendored design system
 - **Agent:** parser-surgeon
 - **Stage:** done, draft PR open against `feat/alm-figma-killer-studio-shell` from `fix/locales-never-touch-the-design-system`.

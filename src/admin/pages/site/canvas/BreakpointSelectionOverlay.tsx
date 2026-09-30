@@ -609,6 +609,7 @@ export function BreakpointSelectionOverlay({
       toolbarRef={toolbarRef}
       mode={toolbarMode}
       onDragPointerDown={reorderDrag.handlePointerDown}
+      frameId={frameId}
     />
   ) : null
 

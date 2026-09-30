@@ -1,1 +1,8 @@
-export { TextGlyphIcon, FrameGlyphIcon, SectionGlyphIcon } from './ElementIcons'
+export {
+  TextGlyphIcon,
+  FrameGlyphIcon,
+  SectionGlyphIcon,
+  RectangleGlyphIcon,
+  EllipseGlyphIcon,
+  PenGlyphIcon,
+} from './ElementIcons'
