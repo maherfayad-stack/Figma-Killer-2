@@ -23,8 +23,16 @@
  *  - **The frame itself is transparent.** The page root (`base.body`) and, when
  *    it has exactly one child, that child — the page component's own root
  *    element, which IS the screen — are the frame, the way a Figma top-level
- *    frame is. Pressing inside them selects their children; pressing their own
- *    background still selects them.
+ *    frame is. Pressing inside them selects their children; pressing the
+ *    screen's own background still selects the screen (it is the user's own
+ *    element, and its padding and fill are edited through it).
+ *  - **The frame's empty area is nothing.** A press whose element IS the page
+ *    root — the frame document's `<body>` (`base.body`), which is no element in
+ *    the user's source: the height below the page's content, the gutter no
+ *    child covers — is a press on no layer: `null`. A click there clears the
+ *    selection exactly as a click on the empty board does
+ *    (`onFrameBackgroundClick` → `deselectEverything`). A selected page root
+ *    keeps meaning itself; ⌘/Ctrl still reaches it.
  *
  * A closed `studio.instance` and an inlined Visual Component body are clamped
  * to their boundary FIRST (`clampToComponentBoundary`): a component is one
@@ -106,6 +114,11 @@ function frameDepthOn(tree: NodeTree<PageNode>, path: readonly string[]): number
   return root.children.length === 1 && path[1] === root.children[0] ? 1 : 0
 }
 
+/** Whether `id` is the tree's root AND the frame document's own `<body>` — never an element of the user's source. */
+function isFrameBody(tree: NodeTree<PageNode>, id: string): boolean {
+  return id === tree.rootNodeId && tree.nodes[id]?.moduleId === 'base.body'
+}
+
 /** Index of the deepest node `a` and `b` share, or -1. */
 function deepestCommonIndex(a: readonly string[], b: readonly string[]): number {
   let index = -1
@@ -115,19 +128,26 @@ function deepestCommonIndex(a: readonly string[], b: readonly string[]): number 
 
 /**
  * The layer a press on `hitId` means — see the module doc. `deep` is ⌘/Ctrl
- * held: the innermost layer (still clamped to a closed component).
+ * held: the innermost layer (still clamped to a closed component). `null` is
+ * the frame's own empty background: a press on no layer at all.
  */
 export function resolveCanvasPressTarget(
   tree: NodeTree<PageNode>,
   hitId: string,
   context: CanvasPressContext,
   { deep }: { deep: boolean },
-): string {
+): string | null {
   const leaf = clampToComponentBoundary(tree, hitId, context)
   if (deep) return leaf
   const path = pathTo(tree, leaf)
   if (path.length === 0) return leaf
   const frameDepth = frameDepthOn(tree, path)
+
+  // The press landed on the frame's empty area: the element under the pointer
+  // IS the page's synthetic `<body>` — see the module doc.
+  if (path.length === 1 && isFrameBody(tree, leaf)) {
+    return context.selectedIds.includes(leaf) ? leaf : null
+  }
 
   // A press inside a selected layer means that layer. The deepest one wins, so
   // a selected child inside a selected parent keeps the child. The frame's own
@@ -181,7 +201,8 @@ export function resolveCanvasDrillTarget(
 ): CanvasDrill | null {
   const leaf = clampToComponentBoundary(tree, hitId, context)
   const current = resolveCanvasPressTarget(tree, hitId, context, { deep: false })
-  if (current === leaf) return null
+  // The frame's background has no level to step into.
+  if (current === null || current === leaf) return null
   if ((tree.nodes[leaf]?.children.length ?? 0) === 0) return { select: leaf, thenEdit: true }
   const path = pathTo(tree, leaf)
   const index = path.indexOf(current)
@@ -203,15 +224,18 @@ export interface CanvasPressDragPlan {
  * the WHOLE selection (a multi-select must not collapse to one layer the
  * moment you move it); pressing anywhere else drags the layer the press means,
  * and selects it only once the gesture stops being a click — a press that
- * stays a click is decided on release, by the click path, never here.
+ * stays a click is decided on release, by the click path, never here. `null`
+ * on the frame's own background: there is nothing to drag, and the press is
+ * the in-frame marquee's (`useInFrameMarquee`).
  */
 export function planCanvasPressDrag(
   tree: NodeTree<PageNode>,
   hitId: string,
   context: CanvasPressContext,
   { deep }: { deep: boolean },
-): CanvasPressDragPlan {
+): CanvasPressDragPlan | null {
   const target = resolveCanvasPressTarget(tree, hitId, context, { deep })
+  if (target === null) return null
   const inSelection = context.selectedIds.includes(target)
   return {
     candidateIds: inSelection ? context.selectedIds : [target],

@@ -57,11 +57,32 @@ describe('resolveCanvasPressTarget — nothing selected', () => {
     expect(resolveCanvasPressTarget(page, 'link', context(), shallow)).toBe('footer')
   })
 
-  it('treats the page root AND its only child (the screen) as the frame, so presses reach through them', () => {
-    // A press on the screen's own background still selects the screen …
+  it('treats the page root AND its only child (the screen) as the frame; the screen’s own background selects the screen', () => {
     expect(resolveCanvasPressTarget(page, 'screen', context(), shallow)).toBe('screen')
-    // … and on the body, the body.
-    expect(resolveCanvasPressTarget(page, 'body', context(), shallow)).toBe('body')
+  })
+
+  it('the frame’s empty area — the synthetic body itself — is no layer', () => {
+    // The owner: "clicking on an empty place deselects everything" — the
+    // height below the page's content is the frame document's `<body>`, no
+    // element of the user's source, and a press there means nothing.
+    expect(resolveCanvasPressTarget(page, 'body', context(), shallow)).toBeNull()
+    // With a selection elsewhere in the frame: still nothing.
+    expect(resolveCanvasPressTarget(page, 'body', context(['title']), shallow)).toBeNull()
+    // A selected body keeps meaning itself; ⌘/Ctrl reaches it directly.
+    expect(resolveCanvasPressTarget(page, 'body', context(['body']), shallow)).toBe('body')
+    expect(resolveCanvasPressTarget(page, 'body', context(), { deep: true })).toBe('body')
+  })
+
+  it('an authored page root (a Visual Component’s own root) is never background', () => {
+    const vc = makePage({
+      id: 'vc',
+      rootNodeId: 'card',
+      nodes: {
+        card: makeNode({ id: 'card', moduleId: 'base.div', children: ['label'] }),
+        label: makeNode({ id: 'label', moduleId: 'base.text' }),
+      },
+    })
+    expect(resolveCanvasPressTarget(vc, 'card', context(), shallow)).toBe('card')
   })
 
   it('⌘/Ctrl (deep) goes straight to the innermost layer', () => {
@@ -150,6 +171,17 @@ describe('planCanvasPressDrag — what a body drag carries', () => {
   })
 
   it('⌘ held drags the innermost layer', () => {
-    expect(planCanvasPressDrag(page, 'ctaLabel', context(['card']), { deep: true }).preferredDraggedId).toBe('ctaLabel')
+    expect(planCanvasPressDrag(page, 'ctaLabel', context(['card']), { deep: true })?.preferredDraggedId).toBe('ctaLabel')
+  })
+
+  it('a press on the frame’s own background drags nothing — it is the in-frame marquee’s', () => {
+    expect(planCanvasPressDrag(page, 'body', context(['card']), shallow)).toBeNull()
+    expect(planCanvasPressDrag(page, 'body', context(), shallow)).toBeNull()
+  })
+})
+
+describe('resolveCanvasDrillTarget — the frame background', () => {
+  it('has no level to step into', () => {
+    expect(resolveCanvasDrillTarget(page, 'body', context())).toBeNull()
   })
 })

@@ -117,6 +117,7 @@ function mountBridge() {
   const value = {
     onNodeClick: () => {},
     onFrameNodeClick: (nodeId: string) => clicks.push(nodeId),
+    onFrameBackgroundClick: () => {},
     onNodeHover: (nodeId: string | null) => hovers.push(nodeId),
     onNodeContextMenu: () => {},
     onNodeDoubleClick: () => {},

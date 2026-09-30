@@ -17,13 +17,14 @@
  * "Run scripts" toggle is on — see `runtimeScripts`.
  */
 
-import { memo, useRef, useState, type CSSProperties } from 'react'
+import { memo, use, useRef, useState, type CSSProperties } from 'react'
 import type { Page, Breakpoint } from '@core/page-tree'
 import type { TemplateRenderDataContext } from '@core/templates/dynamicBindings'
 import type { PreviewAxes } from '@core/studio-board'
 import { CanvasComposedTree } from './CanvasComposedTree'
 import { BreakpointSelectionOverlay } from './BreakpointSelectionOverlay'
-import { CanvasBreakpointContext, CanvasTemplateContext, CanvasFrameAdapterContext } from './CanvasContexts'
+import { CanvasBreakpointContext, CanvasTemplateContext, CanvasFrameAdapterContext, CanvasSelectionContext } from './CanvasContexts'
+import { takeCanvasPressDrag } from './canvasNodeGestureLatch'
 import { IframeFrameSurface, type IframeFrameSurfaceHandle } from './IframeFrameSurface'
 import { useResolvedFrameAxes } from './previewAxesFrameEffect'
 import type { InjectableRuntimeScript } from './useRuntimeScriptBuild'
@@ -146,6 +147,7 @@ export const BreakpointFrame = memo(function BreakpointFrame({
   onContentReadyChange,
   overlayEnabled = true,
 }: BreakpointFrameProps) {
+  const selection = use(CanvasSelectionContext)
   // --bp-width drives both label width and viewport width via CSS (dynamic value)
   const bpStyle = { '--bp-width': `${breakpoint.width}px` } as CSSProperties
   // This wrapper sits OUTSIDE the iframe's portal, so it resolves the frame's
@@ -227,7 +229,12 @@ export const BreakpointFrame = memo(function BreakpointFrame({
     onAdapterChange?.(handle?.adapter ?? null)
   }
 
-  const handleEmptyFrameClick = () => {
+  const handleEmptyAreaClick = (area: 'body' | 'outside-body') => {
+    // Outside the body — its margins, the height below it — no node's click
+    // handler hears the click, so it is the frame's empty background here,
+    // exactly as a click on the body itself is in `NodeRenderer`. The click
+    // ending a drag or a pan is not a click.
+    if (area === 'outside-body' && !takeCanvasPressDrag()) selection.onFrameBackgroundClick(breakpoint.id, frameId)
     if (!breakpointChromeVisible) return
     onActivate(breakpoint.id)
   }
@@ -338,7 +345,7 @@ export const BreakpointFrame = memo(function BreakpointFrame({
           ref={handleIframeRef}
           breakpointId={breakpoint.id}
           width={breakpoint.width}
-          onClick={handleEmptyFrameClick}
+          onEmptyAreaClick={handleEmptyAreaClick}
           onCursorMove={handleFrameCursorMove}
           onCursorLeave={handleFrameCursorLeave}
           onReadonlyOpen={handleReadonlyOpen}

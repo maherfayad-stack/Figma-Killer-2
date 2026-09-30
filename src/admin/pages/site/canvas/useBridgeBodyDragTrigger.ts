@@ -84,6 +84,8 @@ export function useBridgeBodyDragTrigger({
         const plan = planCanvasPressDrag(page, hitId, canvasPressContext(state, frameId), {
           deep: event.modifiers.metaKey || event.modifiers.ctrlKey,
         })
+        // The frame's own background: nothing to move.
+        if (!plan) return
         const point = iframeLocalPointToParentClientPoint(
           iframeElement.getBoundingClientRect(),
           { width: iframeElement.clientWidth, height: iframeElement.clientHeight },

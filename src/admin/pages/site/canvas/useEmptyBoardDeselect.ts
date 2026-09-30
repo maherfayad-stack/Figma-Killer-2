@@ -19,18 +19,16 @@
  *    px, so the rule is the same at every zoom. A marquee that travelled is the
  *    marquee's (`useMarqueeSelection`), and it already swallows its own click.
  *
- * "Everything" is what Escape clears (`clearAllSelections`: nodes, frames,
- * annotations, loose layers, entered instances) plus vector edit mode, which
- * the selection alone does not end. An inline text edit ends on its own: the
- * press blurred it.
+ * "Everything" is `deselectEverything` (`canvasDeselect.ts`). An inline text
+ * edit ends on its own: the press blurred it.
  *
- * A click on a frame's own page background is NOT this: it lands inside the
- * frame's iframe and selects the page root, the frame's existing model.
+ * A click on a frame's own empty background lands inside the frame's iframe,
+ * never here; it reaches the same `deselectEverything` through the press
+ * resolution (`canvasPressTarget.ts` → `onFrameBackgroundClick`).
  */
 import { useEffect, useEffectEvent } from 'react'
-import { useEditorStore } from '@site/store/store'
 import { isEmptyBoardTarget } from './BoardCanvasLayer/canvasLayerGeometry'
-import { exitVectorEdit } from './BoardVectorLayer/vectorEditState'
+import { deselectEverything } from './canvasDeselect'
 import { isCanvasSpacePanActive, shouldStartCanvasPointerPan } from './canvasPanInput'
 
 /** Screen px a press may travel and still be a click. Under the 4 px every canvas drag activates at. */
@@ -67,8 +65,7 @@ export function useEmptyBoardDeselect({ canvasRootRef, enabled, onDeselect }: Em
       if (!started || started.pan) return
       if (Math.hypot(event.clientX - started.x, event.clientY - started.y) > CLICK_SLOP_PX) return
       beforeDeselect()
-      useEditorStore.getState().clearAllSelections()
-      exitVectorEdit()
+      deselectEverything()
     }
 
     // Capture: the press is recorded before any gesture below claims it.
