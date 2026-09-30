@@ -52,15 +52,20 @@ export interface CanvasLayerModule {
 
 /**
  * Build a layer module around `rootJsx` (the root element's source, written
- * at column 0 with its own relative indentation) and the bindings it needs.
+ * at column 0 with its own relative indentation), the bindings it needs, and
+ * the statements its component body runs before returning it — the context
+ * hooks a lifted element reads (`const { t } = useLanguage()`), re-established
+ * by the lift's carry (`transplantJsxElement.ts`).
  */
 export function buildCanvasLayerModule(
   rootJsx: string,
   imports: ReadonlyMap<string, ImportRequirement>,
+  bodyStatements: readonly string[] = [],
 ): CanvasLayerModule {
   const importText = renderImports(imports)
-  const componentName = freeComponentName(imports)
-  const head = `${CANVAS_LAYER_MODULE_HEADER}\n${importText}\nexport default function ${componentName}() {\n  return (\n    `
+  const componentName = freeComponentName(imports, bodyStatements)
+  const body = bodyStatements.map((statement) => `  ${statement}\n`).join('')
+  const head = `${CANVAS_LAYER_MODULE_HEADER}\n${importText}\nexport default function ${componentName}() {\n${body}  return (\n    `
   const text = `${head}${indentBlock(rootJsx, '    ')}\n  )\n}\n`
   // The root's `<` sits right after `head`; the tag name one column later.
   const line = head.split('\n').length
@@ -89,11 +94,13 @@ function renderImports(imports: ReadonlyMap<string, ImportRequirement>): string 
   return resolveImportEdits(empty, '', imports).map((edit) => edit.text).join('')
 }
 
-/** `CanvasLayer`, or `CanvasLayer2`… when a carried binding already has that name. */
-function freeComponentName(imports: ReadonlyMap<string, ImportRequirement>): string {
-  if (!imports.has(LAYER_COMPONENT_NAME)) return LAYER_COMPONENT_NAME
+/** `CanvasLayer`, or `CanvasLayer2`… when a carried binding or a body statement already uses that name. */
+function freeComponentName(imports: ReadonlyMap<string, ImportRequirement>, bodyStatements: readonly string[]): string {
+  const taken = (name: string) =>
+    imports.has(name) || bodyStatements.some((statement) => new RegExp(`\\b${name}\\b`).test(statement))
+  if (!taken(LAYER_COMPONENT_NAME)) return LAYER_COMPONENT_NAME
   for (let n = 2; ; n++) {
     const candidate = `${LAYER_COMPONENT_NAME}${n}`
-    if (!imports.has(candidate)) return candidate
+    if (!taken(candidate)) return candidate
   }
 }

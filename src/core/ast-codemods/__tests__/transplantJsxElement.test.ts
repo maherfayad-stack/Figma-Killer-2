@@ -602,7 +602,7 @@ export default function Home() {
     expect(result.ok).toBe(false)
     if (result.ok) throw new Error('unreachable')
     expect(result.refusal.reason).toBe('captured-scope')
-    expect(result.refusal.message).toContain('`user`')
+    expect(result.refusal.message).toContain('"user"')
     expectUntouched(home, homeText, about, ABOUT)
   })
 

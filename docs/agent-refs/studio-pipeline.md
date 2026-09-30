@@ -442,8 +442,11 @@ subtree's free variables (`analyzeFreeVariables`): a name the ORIGIN file
 resolves at module scope is CARRIED as a mirrored import — following a relative
 specifier to the file it actually names and re-resolving it against the
 destination's own location, and keeping the style the user wrote it in (a
-default import is not re-spelled as a named one). Anything body-local to the
-origin's component refuses as **`captured-scope`**, by name. Both files' next
+default import is not re-spelled as a named one). A name bound by a movable
+context-reader hook (`const { t } = useLanguage()`) re-establishes the call at
+the destination — a page component, or a lift's new layer component. Anything
+else body-local to the origin's component refuses as **`captured-scope`**, by
+name. Both files' next
 contents are computed in full before either is written, so a refusal leaves two
 untouched files and a success writes two complete ones.
 

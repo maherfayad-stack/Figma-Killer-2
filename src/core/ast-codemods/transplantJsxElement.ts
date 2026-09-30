@@ -62,7 +62,7 @@
  */
 import { realpathSync } from 'node:fs'
 import * as path from 'node:path'
-import { Node, Project, SyntaxKind, type CallExpression, type SourceFile } from 'ts-morph'
+import { Node, Project, SyntaxKind, type Block, type CallExpression, type SourceFile } from 'ts-morph'
 import { createProject, findJsxElementAtLocation, loadSourceFile } from './locateJsxElement'
 import {
   applyTextEdits,
@@ -260,13 +260,12 @@ function landInDestination(
 
   // ── The scope question, and the only one that makes a cross-file move
   //    different from a same-file one ────────────────────────────────────
-  const carried = resolveCarriedBindings(
-    origin.element,
-    origin.source,
-    destination.source,
-    destination.destinationFile,
-    container,
-  )
+  const destinationBody = enclosingFunctionComponent(container)?.getBody()
+  const carried = resolveCarriedBindings(origin.element, origin.source, {
+    source: destination.source,
+    file: destination.destinationFile,
+    ...(destinationBody && Node.isBlock(destinationBody) ? { body: destinationBody } : {}),
+  })
   if (!carried.ok) return carried
 
   const rawSubtree = origin.text.slice(origin.element.getStart(), origin.element.getEnd())
@@ -419,9 +418,10 @@ export type LiftJsxElementResult =
  * import resolved from the module's own location. A move then cuts it out of
  * the page; a copy leaves the page alone.
  *
- * The same scope rule as a frame-to-frame move, for the same reason: markup
- * that reads a prop, a hook result or a `.map` row's parameter cannot resolve
- * anywhere else, so it refuses `captured-scope` by name. (Design §7 turns that
+ * The same scope rule as a frame-to-frame move, for the same reason: a
+ * context-hook read (`t` from `useLanguage()`) re-establishes its call in the
+ * layer component, and markup that reads a prop, any other hook result or a
+ * `.map` row's parameter refuses `captured-scope` by name. (Design §7 turns that
  * refusal into an automatic copy with the values baked in; that needs the
  * substitution engine P1-E/P5-C build and is not in this change.)
  */
@@ -450,16 +450,32 @@ export function liftJsxElementToCanvasModule(params: LiftJsxElementParams): Lift
     element = Node.isJsxSelfClosingElement(opening) ? opening : opening.getParentOrThrow()
   }
 
-  // The module does not exist yet, so nothing in it can conflict; an empty
-  // in-memory file answers `conflictingBinding` honestly.
-  const emptyModule = new Project({ useInMemoryFileSystem: true }).createSourceFile('/layer.tsx', '')
-  const carried = resolveCarriedBindings(element, originSource, emptyModule, params.moduleFile)
+  // The module does not exist yet, so nothing in it can conflict: an empty
+  // component answers `conflictingBinding` honestly, and is the body a
+  // context hook the element reads (`const { t } = useLanguage()`) is
+  // re-established in — the SAME carry a frame-to-frame move makes, so a lift
+  // refuses and succeeds for exactly the reasons that move does.
+  const emptyLayer = new Project({ useInMemoryFileSystem: true }).createSourceFile(
+    '/layer.tsx',
+    'export default function CanvasLayer() {}\n',
+  )
+  const carried = resolveCarriedBindings(element, originSource, {
+    source: emptyLayer,
+    file: params.moduleFile,
+    body: emptyLayer.getFunctionOrThrow('CanvasLayer').getBodyOrThrow().asKindOrThrow(SyntaxKind.Block),
+  })
   if (!carried.ok) return carried
 
-  const subtree = originText.slice(element.getStart(), element.getEnd())
+  const subtree = applySubtreeRenames(
+    originText.slice(element.getStart(), element.getEnd()),
+    element.getStart(),
+    element,
+    carried.renames,
+  )
   const built = buildCanvasLayerModule(
     reindentBlock(subtree, lineIndentAt(originText, element.getStart()), ''),
     carried.requirements,
+    carried.hookStatements,
   )
 
   params.writeModule(built.text)
@@ -468,11 +484,6 @@ export function liftJsxElementToCanvasModule(params: LiftJsxElementParams): Lift
   return { ok: true, carriedImports: [...carried.requirements.keys()], root: built.root }
 }
 
-/**
- * One distinct hook call the moved subtree needs re-established at the
- * destination, and which captured names read from it (`undefined` key means
- * "the whole value", not one field of it).
- */
 /**
  * Which of the subtree's free names travel with it, and whether any of them
  * cannot.
@@ -485,9 +496,10 @@ export function liftJsxElementToCanvasModule(params: LiftJsxElementParams): Lift
  *    under one provider every component reads the same value, so the CALL
  *    re-establishes at the destination (reusing one it already makes, else
  *    written as its first statement) and the name resolves to whatever local
- *    that call gives it. `destinationContainer` names where "the
- *    destination" is; with none given (a canvas-layer lift has no enclosing
- *    component to call into) this bucket is skipped entirely.
+ *    that call gives it. `destination.body` is the component the call lands
+ *    in — the enclosing component of a page container, or a lift's new
+ *    layer component; with none (a container outside any component) this
+ *    bucket refuses like the next one.
  *  - **`kind: 'prop'`, anything else** — a destructured prop, a `.map` row's
  *    parameter, a plain body `const`, or a hook binding that is not a
  *    context read. Genuinely body-local: no module the other file could
@@ -507,17 +519,21 @@ export function liftJsxElementToCanvasModule(params: LiftJsxElementParams): Lift
 function resolveCarriedBindings(
   subtree: Node,
   originSource: SourceFile,
-  destinationSource: SourceFile,
-  destinationFile: string,
-  destinationContainer?: Node,
+  destination: { source: SourceFile; file: string; body?: Block },
 ):
-  | { ok: true; requirements: Map<string, ImportRequirement>; renames: Map<string, string>; hookEdits: TextEdit[] }
+  | {
+      ok: true
+      requirements: Map<string, ImportRequirement>
+      renames: Map<string, string>
+      hookEdits: TextEdit[]
+      /** Each NEW hook statement `hookEdits` writes, as text — what a lift's module body is built from. */
+      hookStatements: string[]
+    }
   | { ok: false; refusal: TransplantJsxRefusal } {
+  const { source: destinationSource, file: destinationFile, body: destinationBody } = destination
   const free = analyzeFreeVariables(subtree, originSource)
   const originComponent = enclosingFunctionComponent(subtree)
-  const destinationComponent = destinationContainer ? enclosingFunctionComponent(destinationContainer) : undefined
-  const destinationBody = destinationComponent?.getBody()
-  const canCarryHooks = !!destinationComponent && !!destinationBody && Node.isBlock(destinationBody)
+  const canCarryHooks = destinationBody !== undefined
 
   const requirements = new Map<string, ImportRequirement>()
   const renames = new Map<string, string>()
@@ -547,15 +563,15 @@ function resolveCarriedBindings(
   }
 
   if (captured.length > 0) {
-    const names = captured.map((name) => `\`${name}\``).join(', ')
+    const names = captured.map((name) => `"${name}"`).join(', ')
     const isOne = captured.length === 1
     return {
       ok: false,
       refusal: {
         reason: 'captured-scope',
         message:
-          `This element reads ${names} from the component it is written in, and ${isOne ? 'that name belongs' : 'those names belong'} to that component's own body — there is no module the other file could import ${isOne ? 'it' : 'them'} from. ` +
-          `Move it within its own frame, or lift ${isOne ? 'the value' : 'those values'} into a shared module first.`,
+          `It uses ${names}, which only ${isOne ? 'exists' : 'exist'} inside the component it is written in — a prop, a list item or a value that component works out — so it cannot work anywhere else. ` +
+          `Keep it inside its own frame, or move ${isOne ? 'that value' : 'those values'} into a shared file first.`,
       },
     }
   }
@@ -588,12 +604,14 @@ function resolveCarriedBindings(
   }
 
   const hookEdits: TextEdit[] = []
-  if (destinationBody && Node.isBlock(destinationBody)) {
+  const hookStatements: string[] = []
+  if (destinationBody) {
     for (const group of hookGroups.values()) {
       const calleeLocal = bindings.localName(group.hook.label)
       const materialized = materializeHookGroup(destinationSource, destinationBody, calleeLocal, group)
       for (const [name, text] of materialized.reads) renames.set(name, text)
       hookEdits.push(...materialized.edits)
+      if (materialized.statement) hookStatements.push(materialized.statement)
     }
   }
 
@@ -617,7 +635,7 @@ function resolveCarriedBindings(
     }
   }
 
-  return { ok: true, requirements: bindings.required, renames, hookEdits }
+  return { ok: true, requirements: bindings.required, renames, hookEdits, hookStatements }
 }
 
 /**

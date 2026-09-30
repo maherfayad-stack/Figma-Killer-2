@@ -130,11 +130,12 @@
     font-size: var(--text-xs);
     line-height: 1.45;
     overflow-wrap: anywhere;
-    /* Cap to ~3 lines so a noisy stack trace can't fill the viewport. */
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
+    /* Cap the height so a noisy stack trace can't fill the viewport, but
+       scroll rather than clip: a refusal's reason and its next step are the
+       whole point of the toast, and a clamp cut them off mid-sentence. */
+    max-height: calc(1.45em * 8);
+    overflow-y: auto;
+    overscroll-behavior: contain;
 }
 
 .location {
