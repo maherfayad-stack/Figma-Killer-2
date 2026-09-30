@@ -11,6 +11,19 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 8 entries. Only work that is not yet merged into the trunk `feat/canvas-excellence`.*
 
+### meta-20 — open owner issues after the 2026-09-30 dogfood round on `test4`
+- **Agent:** orchestrator (main session) · **Branch:** `tmp/speed-integration` · **Updated:** 2026-09-30
+- **Landed this round** (all merged into `tmp/speed-integration`, entries below): canvas-44 SVG tool buttons, parser-21 detach, canvas-47 drag onto the free canvas, canvas-46 press-drag depth, canvas-48 arrow keys, canvas-49 click-to-deselect, server-31 dictionary writes, parser-22 lift carries `useLanguage`, canvas-50 SVG Vector section + copy/paste. Build, lint, all 141 architecture gates and 5860 unit tests are green except the two pre-existing board-frame failures (locale-variant frame; selection leak between two frames of one page), which fail identically on `89add51f`. The e2e suite was run per branch only, never on the merged head.
+- **Open, not started:**
+  1. **Live (Tier 2) frames never report ready.** Every agent this round hit it (canvas-46, canvas-47, canvas-48, canvas-49, parser-21): the runtime's `ready` reaches the parent from the right origin but the adapter never flips the wrapper visible; `live-frame-budgets.e2e.ts` fails the same way. So live-frame press-drag, drop, arrow keys, deselect and ⌘⌥B are unit-tested only. Separately, `test4` itself has no installed `node_modules` ("Vite is not installed"), so the owner only ever sees static fallback frames.
+  2. **The project's own components (`test4/components/*`) are not listed in the Assets panel**, so they cannot be dragged into a frame or onto the free canvas (canvas-47).
+  3. **SVGs passed as JSX props (`icon={<svg…/>}` on ALM components) are not selectable**, and nothing in the inspector says why; a local component rendering `{icon}` renders nothing on the canvas (canvas-50).
+  4. **Clipboard gaps:** no ⌘X; ⌘V cannot paste onto the empty board (it always targets a page container); a paste mixing loose layers and page elements is refused (canvas-50, parser-22).
+  5. **Detach vs. a local component with a design-system name** (e.g. a local `Button`): both get the `alm.` id prefix (`moduleMapping.ts`), so the menu greys it out as design-system (parser-21).
+  6. **Dictionary writers skip `withProjectWriteLock`**, so the file watcher sees Content-panel / translate / i18n-setup writes as outside changes (server-31).
+  7. **A loose free-canvas layer is hit-tested by its bounding box**: a click on a transparent part selects it instead of deselecting (canvas-49).
+- **Owner decision pending:** see `## Blocked` (design-system detach).
+
 ### canvas-50 — SVG: fill / stroke in the inspector, and copy / paste of an SVG across files
 - **Agent:** canvas-engineer · **Branch:** `fix/svg-inspector-and-paste` off `tmp/speed-integration` `11904c4d`, merged `d1ce255a` · committed locally, not pushed, no PR · **Updated:** 2026-09-30
 - **Owner bug:** "in svg I can't control the fill and other stuff, and can't paste it in any file" + a "Cannot add this to imported code / not in your project's code any more" toast ×2. Owner's `test4`: its only drawn svg is a pen stroke on the EMPTY board (a loose layer, `.studio/canvas/cl0qjh1t0w5e.tsx`); its page svgs are `icon={<svg…>}` props of ALM `TabBar` (props, not nodes — never selectable).
@@ -170,7 +183,8 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *One line per item: id · question · who decides · since.*
 
-- Nothing is blocked. Owner questions that gate future work are in `ROADMAP.md` §13 → "Open questions for the owner".
+- meta-20 · Should detaching an ALM design-system component (`alm.*`) inline the design-system source into the page, or keep refusing with the explanation parser-21 added? · owner · 2026-09-30
+- Other owner questions that gate future work are in `ROADMAP.md` §13 → "Open questions for the owner".
 
 ## Pending dogfood
 
