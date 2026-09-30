@@ -104,3 +104,12 @@ describe('K4 — the bare tool letters', () => {
     }
   })
 })
+
+describe('P5-E — ⇧K places an image (P5-B asked for it)', () => {
+  it('⇧K is `insert.image`, and K alone stays the scale tool', () => {
+    expect(matches('insert.image', press({ shiftKey: true, key: 'K' }))).toBe(true)
+    expect(matches('insert.image', press({ key: 'k' }))).toBe(false)
+    expect(matches('insert.image', press({ metaKey: true, shiftKey: true, key: 'k' }))).toBe(false)
+    expect(matches('tools.scale', press({ shiftKey: true, key: 'K' }))).toBe(false)
+  })
+})

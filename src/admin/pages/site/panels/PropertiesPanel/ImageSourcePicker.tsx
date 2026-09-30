@@ -6,13 +6,15 @@
  *      (`GET /admin/api/studio/project-assets`). Thumbnails are rendered
  *      through `/admin/api/studio/asset`, the authenticated read endpoint the
  *      canvas already uses for an `<img src>`; the URL WRITTEN is never that
- *      one — see `imageFillValue.ts` for why.
- *   2. **Upload** — lands a new file into the project through the existing
- *      `POST /admin/api/studio/asset-upload` pipeline (magic-number sniffing,
- *      symlink-aware containment, collision-safe naming, SVG sanitisation).
+ *      one. It is the `src` the server computed for each file
+ *      (`assetSiteUrl.ts`) — see `imageFillValue.ts` for why.
+ *   2. **Upload** — lands a new file into the project through
+ *      `POST /admin/api/studio/asset-drop` (`dropStudioAsset`): the same
+ *      pipeline as every landing (magic-number sniffing, symlink-aware
+ *      containment, collision-safe naming, SVG sanitisation, content dedupe),
+ *      into the app's `public/`, and the server returns the `src` to write.
  *      No CMS media library is involved: Studio's state lives on disk, in the
- *      user's repo. The upload targets the project's public root so the URL
- *      it produces survives a production build.
+ *      user's repo.
  *   3. **URL** — a pasted address, written verbatim. Used for a CDN image, or
  *      for a path the user knows their build resolves and this panel does not.
  *
@@ -29,14 +31,15 @@ import { FileUpload } from '@ui/components/FileUpload'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { CloudUploadSolidIcon } from 'pixel-art-icons/icons/cloud-upload-solid'
-import { uploadStudioAsset } from '@site/studio/uploadStudioAsset'
+import { dropStudioAsset, requirePublicAsset } from '@site/studio/dropStudioAsset'
 import {
   fetchProjectImageAssets,
   invalidateProjectImageAssets,
   studioAssetPreviewUrl,
   useProjectImageAssets,
+  type ProjectImageAsset,
 } from '@site/studio/projectAssets'
-import { cssUrlForAssetPath, IMAGE_FILL_UPLOAD_DIR, imageFillFileName } from './imageFillValue'
+import { imageFillFileName } from './imageFillValue'
 import styles from './ImageSourcePicker.module.css'
 
 type PickerTab = 'project' | 'upload' | 'url'
@@ -55,7 +58,7 @@ export function ImageSourcePicker({ value, onPick }: ImageSourcePickerProps) {
   // The shared, workspace-cached list. `uploaded` is this picker's own view of
   // an upload that has just landed, so the new file appears in the grid
   // immediately without a second round trip for every other mounted picker.
-  const [uploaded, setUploaded] = useState<readonly string[] | null>(null)
+  const [uploaded, setUploaded] = useState<readonly ProjectImageAsset[] | null>(null)
   const fetched = useProjectImageAssets()
   const assets = uploaded ?? fetched
 
@@ -63,10 +66,10 @@ export function ImageSourcePicker({ value, onPick }: ImageSourcePickerProps) {
     if (!file) return
     setUploading(true)
     try {
-      const { relPath } = await uploadStudioAsset(file, { targetDir: IMAGE_FILL_UPLOAD_DIR })
+      const landed = requirePublicAsset(await dropStudioAsset(file))
       invalidateProjectImageAssets()
       setUploaded(await fetchProjectImageAssets())
-      onPick(cssUrlForAssetPath(relPath).url)
+      onPick(landed.src)
       setTab('project')
     } catch (err) {
       pushToast({
@@ -74,13 +77,12 @@ export function ImageSourcePicker({ value, onPick }: ImageSourcePickerProps) {
         title: 'Image upload failed',
         body: getErrorMessage(err, 'Unknown upload error'),
       })
-    } finally {
-      setUploading(false)
     }
+    setUploading(false)
   }
 
   const needle = query.trim().toLowerCase()
-  const matches = (assets ?? []).filter((path) => path.toLowerCase().includes(needle))
+  const matches = (assets ?? []).filter((asset) => asset.relPath.toLowerCase().includes(needle))
 
   return (
     <div className={styles.picker}>
@@ -115,11 +117,11 @@ export function ImageSourcePicker({ value, onPick }: ImageSourcePickerProps) {
             </p>
           ) : (
             <ul className={styles.grid} aria-label="Project images">
-              {matches.map((path) => (
+              {matches.map((asset) => (
                 <AssetTile
-                  key={path}
-                  path={path}
-                  selected={cssUrlForAssetPath(path).url === value}
+                  key={asset.relPath}
+                  asset={asset}
+                  selected={asset.src !== null && asset.src === value}
                   onPick={onPick}
                 />
               ))}
@@ -131,8 +133,8 @@ export function ImageSourcePicker({ value, onPick }: ImageSourcePickerProps) {
       {tab === 'upload' && (
         <div className={styles.uploadPane}>
           <p className={styles.note}>
-            The file is written into <code>{IMAGE_FILL_UPLOAD_DIR}/</code> in your project, so the
-            URL works in your production build as well as in dev.
+            The file is written into your app&rsquo;s <code>public/</code> folder, so the URL works
+            in your production build as well as in dev.
           </p>
           <FileUpload
             accept="image/png,image/jpeg,image/gif,image/webp,image/avif,image/svg+xml"
@@ -171,21 +173,28 @@ export function ImageSourcePicker({ value, onPick }: ImageSourcePickerProps) {
 }
 
 /**
- * One image in the grid. The caption carries the build-safety verdict from
- * `cssUrlForAssetPath` — a file outside the public root works on the dev
- * server and usually not in a build, and the picker says which it is rather
- * than letting the user find out after deploying.
+ * One image in the grid. The caption carries the server's build-safety
+ * verdict — a file outside the public root works on the dev server and
+ * usually not in a build, and the picker says which it is rather than letting
+ * the user find out after deploying. A file nothing serves at all (outside
+ * the app root) has no URL to write, so its tile is disabled and says why.
  */
 function AssetTile({
-  path,
+  asset,
   selected,
   onPick,
 }: {
-  path: string
+  asset: ProjectImageAsset
   selected: boolean
   onPick: (url: string) => void
 }) {
-  const { url, buildSafe } = cssUrlForAssetPath(path)
+  const { relPath: path, src: url, buildSafe } = asset
+  const tooltip =
+    url === null
+      ? `${path} — outside your app's folder, so nothing serves it at a URL`
+      : buildSafe
+        ? path
+        : `${path} — outside the public folder, so your production build will not serve this URL`
   return (
     <li className={styles.tile}>
       <Button
@@ -194,17 +203,16 @@ function AssetTile({
         align="start"
         fullWidth
         pressed={selected}
+        disabled={url === null}
         className={styles.tileButton}
-        tooltip={
-          buildSafe
-            ? path
-            : `${path} — outside the public folder, so your production build will not serve this URL`
-        }
-        onClick={() => onPick(url)}
+        tooltip={tooltip}
+        onClick={() => {
+          if (url !== null) onPick(url)
+        }}
       >
         <img className={styles.thumb} src={studioAssetPreviewUrl(path)} alt="" loading="lazy" />
         <span className={styles.tileName}>{imageFillFileName(path)}</span>
-        {!buildSafe && (
+        {url !== null && !buildSafe && (
           <span className={styles.tileWarning} aria-hidden="true">
             dev only
           </span>

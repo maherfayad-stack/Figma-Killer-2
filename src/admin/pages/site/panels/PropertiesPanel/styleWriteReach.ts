@@ -36,6 +36,13 @@
  * can differ without this module growing a mode flag.
  */
 
+/**
+ * The inline target's `reason`: a `style:<prop>` entry in `codeProps` is a
+ * value the parser read from an expression, which a panel edit cannot replace
+ * without destroying the binding.
+ */
+export const INLINE_CODE_VALUE_REASON = 'set from an expression in code'
+
 /** The `codeProps` prefix that marks an inline style entry, e.g. `style:width`. */
 const STYLE_PROP_PREFIX = 'style:'
 

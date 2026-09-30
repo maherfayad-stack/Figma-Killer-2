@@ -78,8 +78,6 @@ beforeEach(() => {
     runScripts: false,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
-    hoveredBreakpointId: null,
   } as Parameters<typeof useEditorStore.setState>[0])
 })
 

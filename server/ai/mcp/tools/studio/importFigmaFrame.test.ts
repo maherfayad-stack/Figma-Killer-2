@@ -15,7 +15,8 @@ import * as path from 'node:path'
 import sharp from 'sharp'
 import { parseValue } from '@core/utils/typeboxHelpers'
 import { detectScreens, studioImportFigmaFrameMcpTools } from './importFigmaFrame'
-import { autoPlaceBoardFrame, readBoardsFile } from '../../../../handlers/studio/boardFrames'
+import { autoPlaceBoardFrame } from '../../../../handlers/studio/boardFrames'
+import { readBoardsFile } from '../../../../handlers/studio/boardGeometry'
 import { listDesignVariableSets } from '../../../../handlers/studio/designVariableStore'
 import { listDesignReferences } from '../../../../handlers/studio/designReferenceStore'
 
@@ -72,7 +73,7 @@ describe('tool shape', () => {
   it('is a headless, capability-gated mutator with an object input schema', () => {
     expect(tool.name).toBe('studio_import_figma_frame')
     expect(tool.execution).toBe('server')
-    expect(tool.mutates).toBe(true)
+    expect(tool.requiresWrite).toBe(true)
     expect(tool.requiredCapabilities).toEqual(['studio.write'])
     expect(tool.inputSchema.type).toBe('object')
     expect((tool.inputSchema as { additionalProperties?: boolean }).additionalProperties).toBe(false)

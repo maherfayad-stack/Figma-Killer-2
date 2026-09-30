@@ -214,7 +214,7 @@ export function CommentsPanel() {
       {loadFailed ? (
         <EmptyState
           title="Comments unavailable"
-          description="The comment file could not be read. Reload the project to try again."
+          description="The comment file could not be read. Studio will try again the next time the project loads."
         />
       ) : threads.length === 0 ? (
         <EmptyState

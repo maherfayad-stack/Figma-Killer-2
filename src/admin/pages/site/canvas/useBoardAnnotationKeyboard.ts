@@ -25,19 +25,9 @@
  * every registered scope regardless of which one is active.
  */
 import { useEditorStore } from '@site/store/store'
+import { getKeybindingForCommand, nudgeDelta } from '@admin/spotlight/keybindings'
 import { isInsideKeyOwningOverlay, isTextInputTarget } from './editorKeyGuards'
 import { useEditorKeyScope } from './useEditorKeyDispatcher'
-
-/** Board units an arrow key moves the selection, and the larger step Shift gives. */
-const NUDGE_STEP = 1
-const NUDGE_STEP_LARGE = 10
-
-const ARROW_DELTAS: Record<string, { dx: number; dy: number }> = {
-  ArrowLeft: { dx: -1, dy: 0 },
-  ArrowRight: { dx: 1, dy: 0 },
-  ArrowUp: { dx: 0, dy: -1 },
-  ArrowDown: { dx: 0, dy: 1 },
-}
 
 /** Registers the scope. Inert while live, read-only, or with nothing to act on. */
 export function useBoardAnnotationKeyboard(editable: boolean, isLive: boolean): void {
@@ -95,11 +85,13 @@ export function useBoardAnnotationKeyboard(editable: boolean, isLive: boolean): 
         return true
       }
 
-      const delta = ARROW_DELTAS[event.key]
+      // The registry's one arrow binding (`canvas.moveSelection`) — it keeps
+      // ⌥↑/⌥↓ out, which this hook's own copy of the arrow table did not.
+      if (!getKeybindingForCommand('canvas.moveSelection')?.match(event)) return false
+      const delta = nudgeDelta(event)
       if (!delta) return false
       event.preventDefault()
-      const step = event.shiftKey ? NUDGE_STEP_LARGE : NUDGE_STEP
-      state.nudgeSelectedAnnotations(delta.dx * step, delta.dy * step)
+      state.nudgeSelectedAnnotations(delta.dx, delta.dy)
       return true
     },
   )

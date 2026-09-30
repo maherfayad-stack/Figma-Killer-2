@@ -84,6 +84,22 @@ export function getEditorBridgeForUser(
   return byUser.get(userId)?.get(scope)?.bridge ?? null
 }
 
+/**
+ * Every live bridge on `scope`, whoever owns it — the tabs that have one
+ * project open. For a push about the PROJECT rather than about one user's
+ * action: a file changed on disk (`outsideEditReload.ts`), which every tab
+ * showing that project must re-read. Never for relaying a tool call, which
+ * belongs to exactly one user's own editor (`getEditorBridgeForUser`).
+ */
+export function getEditorBridgesForScope(scope: EditorBridgeScope): AiBrowserBridge[] {
+  const bridges: AiBrowserBridge[] = []
+  for (const userBridges of byUser.values()) {
+    const entry = userBridges.get(scope)
+    if (entry) bridges.push(entry.bridge)
+  }
+  return bridges
+}
+
 export function hasEditorBridge(userId: string, scope: EditorBridgeScope): boolean {
   return byUser.get(userId)?.has(scope) ?? false
 }
@@ -207,11 +223,16 @@ export async function awaitEditorBridgeForUser(
  * Open the long-lived stream the editor consumes. The server pushes
  * `toolRequest` events down it whenever an MCP browser tool is invoked for this
  * user; the editor runs the tool and POSTs the result to `/tool-result`.
+ *
+ * `onClose` runs exactly once, whichever way the stream ends (the tab closed,
+ * the request aborted, the lease expired) — what a caller holding a resource
+ * for "this tab is open" releases it on.
  */
 export function createEditorBridgeStream(
   userId: string,
   scope: EditorBridgeScope,
   signal: AbortSignal,
+  onClose?: () => void,
 ): ReadableStream<Uint8Array> {
   let closeStream: (() => void) | null = null
 
@@ -232,6 +253,7 @@ export function createEditorBridgeStream(
         if (lease) clearTimeout(lease)
         signal.removeEventListener('abort', cleanup)
         destroyBridge()
+        onClose?.()
 
         // Only evict if we're still the current bridge for this scope.
         const liveUserBridges = byUser.get(userId)

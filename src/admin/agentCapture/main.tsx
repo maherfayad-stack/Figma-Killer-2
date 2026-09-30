@@ -22,6 +22,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import '@site/studio/canvasModuleSet'
 import '../../styles/globals.css'
+import { setCaptureProjectAssetScope } from '@site/canvas/canvasProjectAssetUrl'
 import { CaptureApp } from './CaptureApp'
 import { markCaptureLoading, publishCaptureError } from './captureReadiness'
 import { installFrameInspector } from './frameInspectBridge'
@@ -44,6 +45,11 @@ if (!rootElement) {
 } else if (!token) {
   publishCaptureError('The capture page was opened without a token.')
 } else {
+  // A literal `src="/hero.png"` resolves through the TOKEN-gated asset route:
+  // this headless browser has no session, and the grant already names the
+  // project (`captureRoute.ts`). Set before the first render so no frame ever
+  // asks the session route.
+  setCaptureProjectAssetScope(token)
   createRoot(rootElement, {
     // Every render error becomes the report the driver reads. There is no user
     // here to toast at and no boundary to recover into — a capture that threw

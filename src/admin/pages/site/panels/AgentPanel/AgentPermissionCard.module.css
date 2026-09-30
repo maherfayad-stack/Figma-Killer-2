@@ -47,3 +47,37 @@
   display: flex;
   gap: var(--space-2xs);
 }
+
+/* ── Plan checklist (AI-22) ──────────────────────────────────────────────── */
+.planSteps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.planStep {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  column-gap: var(--space-xs);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.planStepText {
+  color: var(--text);
+}
+
+.planStepRemoved {
+  color: var(--text-subtle);
+  text-decoration: line-through;
+}
+
+.planEmpty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}

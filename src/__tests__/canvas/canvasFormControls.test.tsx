@@ -21,7 +21,6 @@ beforeEach(() => {
     canRedo: false,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     activeDocument: null,
     activePageId: null,
     activeBreakpointId: 'desktop',

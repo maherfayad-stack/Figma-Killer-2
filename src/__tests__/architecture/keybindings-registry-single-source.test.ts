@@ -18,11 +18,12 @@
  *   - SpotlightRow.tsx         — reads from registry, renders <kbd> tags
  *   - usePersistence.ts        — uses getKeybindingForCommand().match(e)
  *   - SpotlightRoot.tsx        — uses getKeybindingForCommand().match(e)
- *   - useCanvas.ts             — canvas-specific zoom/pan shortcuts (not global)
  *   - Spotlight.tsx            — ⌘ symbol appears only in a JSDoc comment
  *
  * `CanvasRoot.tsx` and `UndoRedoButtons.tsx` were on this list until `K1` and
- * have been removed: neither matches a chord any more. CanvasRoot registers
+ * have been removed: neither matches a chord any more. `useCanvas.ts` followed
+ * in P2-B, when its zoom keys moved onto the dispatcher
+ * (`useCanvasViewportKeys.ts`, which matches through the registry). CanvasRoot registers
  * scope handlers, and the undo/redo keystroke moved to
  * `useEditorHistoryShortcuts`. A stale allowlist entry is a hole, not a
  * comment — it silently permits a future inline matcher in that file.
@@ -52,7 +53,6 @@ const ALLOWLIST = new Set([
   'admin/spotlight/SpotlightRoot.tsx',
   // Canvas-specific zoom/pan shortcuts (Ctrl+0, f, 1, 2) — not global commands.
   // These are canvas viewport controls that don't belong in the palette registry.
-  'admin/pages/site/hooks/useCanvas.ts',
 ])
 
 const collectTsFiles = (dir: string): string[] => walkSourceTree(dir, ['.ts', '.tsx'])

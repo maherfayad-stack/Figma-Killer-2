@@ -15,14 +15,19 @@
  * UTF-8 text when possible, base64 otherwise (see `protocol/bodyEncoding.ts`).
  */
 
-import { isIP } from 'node:net'
 import { lookup } from 'node:dns/promises'
 import {
   decodeBodyBytes,
   encodeBodyBytes,
   type BodyEncoding,
 } from '../protocol/bodyEncoding'
-import { isBlockedAddress, stripHostnameBrackets } from '../../util/ssrfGuard'
+import {
+  isBlockedAddress,
+  pinnedRequestInit,
+  pinUrlToAddress,
+  resolvePinnedAddresses,
+  stripHostnameBrackets,
+} from '../../util/ssrfGuard'
 import type { HostPluginRecord } from './types'
 
 // Re-exported for existing callers/tests — the address-range classifier
@@ -75,15 +80,18 @@ export function hostMatchesAllowlist(host: string, allowlist: ReadonlyArray<stri
 
 /**
  * Validate a single outbound target — protocol, host allowlist, and that no
- * resolved address falls in a blocked range — and return the parsed URL.
- * Re-run for the initial URL and every redirect hop, so the allowlist + IP
- * guard remain the kernel-of-correctness across the whole chain.
+ * resolved address falls in a blocked range — and return the parsed URL with
+ * the validated addresses. Re-run for the initial URL and every redirect hop,
+ * so the allowlist + IP guard remain the kernel-of-correctness across the
+ * whole chain. The caller connects to one of those addresses
+ * (`pinUrlToAddress`), never to the name again: letting `fetch` resolve the
+ * name a second time is the window DNS rebinding needs.
  */
 async function assertOutboundAllowed(
   manifest: HostPluginRecord['manifest'],
   urlString: string,
   resolveHost: (host: string) => Promise<string[]>,
-): Promise<URL> {
+): Promise<{ url: URL; addresses: readonly string[] }> {
   let parsed: URL
   try {
     parsed = new URL(urlString)
@@ -100,18 +108,16 @@ async function assertOutboundAllowed(
     )
   }
   const host = stripHostnameBrackets(parsed.hostname)
-  const addresses = isIP(host) ? [host] : await resolveHost(host)
-  if (addresses.length === 0) {
+  const resolution = await resolvePinnedAddresses(host, resolveHost)
+  if (!resolution.ok && resolution.reason === 'unresolved') {
     throw new Error(`Plugin "${manifest.id}" fetch host "${host}" did not resolve to any address.`)
   }
-  for (const address of addresses) {
-    if (isBlockedAddress(address)) {
-      throw new Error(
-        `Plugin "${manifest.id}" requested fetch to "${host}", which resolves to a blocked address (${address}).`,
-      )
-    }
+  if (!resolution.ok) {
+    throw new Error(
+      `Plugin "${manifest.id}" requested fetch to "${host}", which resolves to a blocked address (${resolution.blockedAddress ?? 'unknown'}).`,
+    )
   }
-  return parsed
+  return { url: parsed, addresses: resolution.addresses }
 }
 
 async function defaultResolveHost(host: string): Promise<string[]> {
@@ -170,15 +176,31 @@ export async function performGatedFetch(
       // Re-validate protocol + allowlist + resolved-IP on EVERY hop. Bun is
       // told not to follow redirects, so an allowlisted host can never bounce
       // us to a private/internal target (SSRF).
-      await assertOutboundAllowed(manifest, currentUrl, resolveHost)
+      const target = await assertOutboundAllowed(manifest, currentUrl, resolveHost)
 
-      const response = await fetchImpl(currentUrl, {
-        method,
-        headers,
-        body,
-        signal: controller.signal,
-        redirect: 'manual',
-      })
+      // Connect to a validated address, not the name (see
+      // `assertOutboundAllowed`). Only a transport failure moves on to the
+      // next address; any HTTP response ends the loop.
+      let response: Response | null = null
+      let lastError: unknown
+      for (const address of target.addresses) {
+        if (controller.signal.aborted) break
+        try {
+          response = await fetchImpl(pinUrlToAddress(target.url, address), {
+            method,
+            ...pinnedRequestInit(target.url, headers),
+            body,
+            signal: controller.signal,
+            redirect: 'manual',
+          })
+          break
+        } catch (err) {
+          lastError = err
+        }
+      }
+      if (!response) {
+        throw lastError instanceof Error ? lastError : new Error(`Plugin "${manifest.id}" fetch to "${target.url.host}" failed.`)
+      }
 
       const location = response.headers.get('location')
       if (REDIRECT_STATUSES.has(response.status) && location) {

@@ -33,6 +33,20 @@ import { shouldUseBlurPlaceholder } from './placeholder'
 // initial `src`.
 const CANVAS_CSS_WIDTH = 320
 
+/**
+ * The `width`/`height` ATTRIBUTE a Studio page's source writes on its
+ * `<img>` (`<img src="/hero.png" width={820} height={410}>` — what an image
+ * drop writes, P5-B IMG-9). They are not schema props, so they ride the node's
+ * props as parsed; rendering them is what makes the canvas reserve the same
+ * box, with the same aspect ratio, that the app's browser does. Only a finite
+ * positive number (or a numeric string) counts: anything else is not a size.
+ */
+function authoredDimension(props: object, key: 'width' | 'height'): number | undefined {
+  const value = (props as Record<string, unknown>)[key]
+  const number = typeof value === 'string' && value.trim() !== '' ? Number(value) : value
+  return typeof number === 'number' && Number.isFinite(number) && number > 0 ? number : undefined
+}
+
 export const ImageEditor: React.FC<ModuleComponentProps<ImageStoredProps>> = ({ props, mcClassName, nodeWrapperProps }) => {
   // Resolve the asset row server-side metadata is cached in a module-
   // level map, so dozens of image modules on one page share a single
@@ -65,10 +79,15 @@ export const ImageEditor: React.FC<ModuleComponentProps<ImageStoredProps>> = ({ 
     )
   }
 
-  // Alt text: library asset is the single source of truth. Matches the
-  // published-render behaviour so the canvas preview never disagrees
-  // with the published HTML. Edit alt via the Media viewer.
-  const alt = responsive?.libraryAlt ?? ''
+  // Alt text: what the SOURCE says first. A Studio page's `<img alt="Hero">`
+  // is parsed onto `props.alt`, and the canvas must render the element the
+  // file declares — rendering `alt=""` over it (the old behaviour) told a
+  // screen reader, and the accessibility audit, that an image the user
+  // described was decorative. A CMS image has no authored `alt` prop; its
+  // library asset stays the source of truth there, matching the published
+  // HTML. Placed after `htmlAttrs` below, so it wins over a stray copy too.
+  const authoredAlt = (props as { alt?: unknown }).alt
+  const alt = typeof authoredAlt === 'string' ? authoredAlt : (responsive?.libraryAlt ?? '')
   const htmlAttrs = htmlAttributesForReact(props.htmlAttributes)
 
   // No resolved asset yet (cache loading, external URL, or row missing).
@@ -80,6 +99,8 @@ export const ImageEditor: React.FC<ModuleComponentProps<ImageStoredProps>> = ({ 
         {...htmlAttrs}
         src={props.src}
         alt={alt}
+        width={authoredDimension(props, 'width')}
+        height={authoredDimension(props, 'height')}
         className={mcClassName}
         loading={props.loading}
         decoding="async"

@@ -1,6 +1,8 @@
 /**
  * useCanvasNodeShortcuts — the `node` scope's second handler: Delete, ⌘D,
  * ⌘C / ⌘X / ⌘V, and ⌥↑/⌥↓ reorder, all acting on the current node selection.
+ * (⌘V only ARMS the paste since P5-A — the `paste` event does it; see
+ * `canvasClipboardBridge.ts`.)
  *
  * ## Why this is no longer a React `onKeyDown`
  *
@@ -32,42 +34,26 @@
  * Multi-selection: every branch reads `selectedNodeIds` live from the store and
  * dispatches the `*Nodes` batch action so one press is one undo step.
  */
-import { getParent } from '@core/page-tree'
-import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
+import { useEditorStore } from '@site/store/store'
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
+import { armCanvasPaste } from './canvasClipboardBridge'
+import { isUserGestureKeyEvent } from './canvasFrameKeyRelay'
+import { stepSelectionAmongSiblings } from './canvasNodeArrowMove'
 import { isInsideKeyOwningOverlay, isTextInputTarget } from './editorKeyGuards'
 import { useEditorKeyScope } from './useEditorKeyDispatcher'
 
 /**
  * `Alt+↑`/`Alt+↓` (`layers.moveUp`/`layers.moveDown`, G12), and `⌘]`/`⌘[`
- * since `K4`. Mirrors `spotlight/commands/layers.ts`'s own command bodies
- * exactly (same store call, same sibling-index arithmetic) so the keyboard and
- * palette paths can never disagree about what "move up" means. Deliberately
- * calls the existing `moveNode` store action rather than adding a new one —
- * `moveNode` already runs the same structural write-back gate every other
- * reorder surface does (`struct-01`), so a refused move surfaces the same
- * refusal here as it does from a mouse drag.
+ * since `K4`: one place earlier / later in the child order, through the same
+ * `stepSelectionAmongSiblings` the arrow reorder uses, so the keyboard's two
+ * reorders can never disagree about what "one place" means.
  *
- * Single-node only: a multi-selection has no well-defined "up" (the members may
- * not even share a parent), so this silently no-ops for a multi-select.
+ * The whole selection moves (P2-C2, OD-16): every layer one place along its
+ * own parent's order, as one undo entry and one source write
+ * (`@core/page-tree`'s `planSiblingSteps` says which cases can be).
  */
 function runMoveShortcut(direction: 'up' | 'down', selectedNodeId: string, currentIds: readonly string[]): void {
-  if (currentIds.length > 1) return
-  const store = useEditorStore.getState()
-  const page = selectActiveCanvasPage(store)
-  if (!page) return
-  const parent = getParent(page, selectedNodeId)
-  if (!parent) return
-  const siblings = parent.children
-  const idx = siblings.indexOf(selectedNodeId)
-  if (idx === -1) return
-  if (direction === 'up') {
-    if (idx <= 0) return
-    store.moveNode(selectedNodeId, parent.id, idx - 1)
-  } else {
-    if (idx >= siblings.length - 1) return
-    store.moveNode(selectedNodeId, parent.id, idx + 1)
-  }
+  stepSelectionAmongSiblings(currentIds.length > 0 ? currentIds : [selectedNodeId], direction === 'up' ? -1 : 1)
 }
 
 /**
@@ -165,29 +151,35 @@ export function useCanvasNodeShortcuts({
         return true
       }
 
+      // ⌘C / ⌘X / ⌘V claim the key but NEVER `preventDefault` it (P5-A):
+      // cancelling the keydown cancels the browser's own copy / paste, and
+      // the `copy` / `paste` EVENT that follows is the only place the OS
+      // clipboard can be written or read without a permission prompt. The
+      // copy writes the Studio marker there; the paste reads what is there
+      // and decides what ⌘V means (`canvasClipboardBridge.ts`).
       if (getKeybindingForCommand('layers.copy')?.match(event)) {
-        event.preventDefault()
         if (currentIds.length > 1) store.copyNodes([...currentIds])
         else store.copyNode(selectedNodeId)
         return true
       }
 
       if (getKeybindingForCommand('layers.cut')?.match(event)) {
-        event.preventDefault()
         if (currentIds.length > 1) store.cutNodes([...currentIds])
         else store.cutNode(selectedNodeId)
         return true
       }
 
       if (getKeybindingForCommand('layers.paste')?.match(event)) {
-        event.preventDefault()
-        // `K7` — 'after', not the default 'auto': ⌘V is a gesture about the
-        // SELECTION, and the eye expects the copy beside the selected element
-        // rather than appended to the end of its children (where, on a tall
-        // container, it lands off-screen). The right-click "Paste here" keeps
-        // 'auto' — that one names a container and means "into it".
-        // Anchors to the multi-selection's anchor — same single target.
-        store.pasteNode(selectedNodeId, 'after')
+        // Armed, not performed: the `paste` event this keystroke raises
+        // carries the clipboard, and `canvasPaste.ts` decides between the
+        // copied layers (`K7`'s beside-the-selection paste), an image and an
+        // SVG. If no event comes (Safari) the bridge reads the async
+        // Clipboard API instead — but ONLY for a real keystroke. A key a Tier 2
+        // frame posted (forgeable by its project code, review #270 N1) or a
+        // synthetic one raises no paste event and must never unlock that read:
+        // it pastes the copied layers, what ⌘V did before P5-A.
+        if (isUserGestureKeyEvent(event)) armCanvasPaste()
+        else store.pasteNode(selectedNodeId, 'after')
         return true
       }
 

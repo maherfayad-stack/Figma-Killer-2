@@ -60,7 +60,7 @@ import type { Page } from '@core/page-tree'
 import type { BoardsFile } from '@core/studio-board'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { readCommentsFile, writeCommentsFile } from '../../../../handlers/studio/commentsStore'
-import { readBoardsFileOrEmpty } from '../../../../handlers/studio/boardGeometry'
+import { readBoardsFile } from '../../../../handlers/studio/boardGeometry'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { pushStudioLiveReload } from './liveReloadPush'
@@ -192,12 +192,13 @@ const studioListCommentsTool: AiTool = {
   name: 'studio_list_comments',
   scope: 'shared',
   execution: 'server',
+  sideEffects: 'none',
   // No `requiredCapabilities` — the same posture every other Studio READ tool
   // takes (`projectTools.ts`): reachable by any `ai.chat` caller, since it
   // only reads a file the caller's own workspace already exposes. The two
   // write tools below are gated on `studio.write` like their siblings.
   description:
-    'List review comment threads pinned to the Studio board (.studio/comments.json) — the human feedback on this design, as a work queue. Returns { ok, dir, threads:[{ seq, threadId, resolved, anchorConfidence, agentActionable, location, comments:[{author,kind,body,createdAt}] }] }. `seq` is the number shown on the pin and in the UI — use it when talking to the user ("comment 3"). `location` tells you exactly where the comment is, so you never have to guess which element was meant: { boardId, boardName, frameId, pageId, pageTitle, pageFile, dx, dy, xPercent, yPercent, element:{ nodeId, moduleId, text, trail }, confidence }. `pageFile` is the source file to edit; `dx`/`dy` are the pin\'s position in frame-local pixels from the frame\'s top-left (with xPercent/yPercent as the same point relative to the frame\'s size); `element.trail` is the path of labels from the page root down to the element, so you can find it by structure when the id has gone stale; `element` is null for a pin dropped on empty canvas, where the coordinates are the whole location. CRITICAL: `anchorConfidence` says whether the element the comment points at still exists — "exact"/"moved" mean yes (agentActionable: true), "drifted" means it was edited since the comment was written, "detached" means it is gone and `element` is the stale stored hint. Only act on threads with agentActionable: true; studio_resolve_comment refuses the others. Filter with status ("open" default, "resolved", "all") and pageId. ',
+    'List the board\'s review comment threads (.studio/comments.json) as a work queue. Returns { ok, dir, threads[]: { seq, threadId, resolved, anchorConfidence, agentActionable, location, comments[{ author, kind, body, createdAt }] } }. seq is the number on the pin; use it with the user ("comment 3"). location is { boardId, boardName, frameId, pageId, pageTitle, pageFile, dx, dy, xPercent, yPercent, element:{ nodeId, moduleId, text, trail }, confidence }: pageFile is the file to edit, dx/dy the pin in frame pixels, trail finds the element by structure when its id is stale; element is null for a pin on empty canvas. Act ONLY on agentActionable:true threads (anchorConfidence exact or moved); drifted and detached ones point at an element that changed or is gone, and studio_resolve_comment refuses them. Filter by status (open by default, resolved, all) and pageId.',
   inputSchema: ListInputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, status = 'open', pageId, resolveAnchors = true } = input as {
@@ -219,7 +220,7 @@ const studioListCommentsTool: AiTool = {
     const pages = resolveAnchors ? await pagesForThreads(dir, threads) : new Map<string, Page>()
     // One read for the whole call — every thread names a board, and most name
     // the same one.
-    const boards = readBoardsFileOrEmpty(dir)
+    const boards = readBoardsFile(dir)
 
     return {
       ok: true,
@@ -249,7 +250,8 @@ const studioReplyCommentTool: AiTool = {
   name: 'studio_reply_comment',
   scope: 'shared',
   execution: 'server',
-  mutates: true,
+  sideEffects: 'write',
+  requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
     'Post a reply into a review thread, attributed to the AI (it renders with an "AI" tag — a reviewer must always be able to tell which half of a thread was machine-written). Address the thread by `seq`, the number on its pin. Use this to report what you changed after acting on a comment, or to explain why you did not. Returns { ok, seq, threadId, commentCount }. Requires studio.write.',
@@ -304,7 +306,8 @@ const studioResolveCommentTool: AiTool = {
   name: 'studio_resolve_comment',
   scope: 'shared',
   execution: 'server',
-  mutates: true,
+  sideEffects: 'write',
+  requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
     'Resolve (or reopen) a review thread by `seq`, optionally posting a reply first. REFUSES to resolve when the thread\'s anchorConfidence is "drifted" or "detached" — meaning the element the comment points at was edited or deleted since the comment was written, so you cannot have addressed it reliably. On refusal it posts the reason INTO the thread and returns { ok:false, code:"stale-anchor", anchorConfidence }, leaving the thread open for a human. This is deliberate: acting on a stale anchor edits the wrong element in the user\'s real source. Reopening (resolved:false) is never gated. Returns { ok, seq, threadId, resolved }. Requires studio.write.',

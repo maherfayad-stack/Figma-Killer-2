@@ -20,6 +20,7 @@ import { useEditorStore } from '@site/store/store'
 import { getStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
+import { retryWhileUnreachable } from '@core/http'
 import { captureNodeHint } from '@core/studio-anchor'
 import type { NodeTree } from '@core/page-tree'
 import { DEFAULT_PAGE_KIND, type PageKind } from '@core/studio-board'
@@ -50,18 +51,20 @@ async function run(op: PrototypeOp, failureTitle: string): Promise<boolean> {
   }
 }
 
-/** Re-read the authored links — after a load, a project switch, or an agent push. */
+/**
+ * Re-read the authored links — after a load, a project switch, or an agent push.
+ *
+ * P3-A — a read nobody clicked for: retried quietly while the server is
+ * unreachable, and a failure that outlives the ladder is the prototype panel's
+ * own empty state (`setPrototypeLoadFailed`), never a toast over the board.
+ */
 export async function reloadPrototype(): Promise<void> {
   try {
-    useEditorStore.getState().adoptPrototype(await fetchPrototype(getStudioWorkspaceDir()))
+    const dir = getStudioWorkspaceDir()
+    useEditorStore.getState().adoptPrototype(await retryWhileUnreachable(() => fetchPrototype(dir)))
   } catch (err) {
     console.error('[prototypeActions] failed to load prototype links:', err)
     useEditorStore.getState().setPrototypeLoadFailed(true)
-    pushToast({
-      kind: 'error',
-      title: 'Failed to load prototype links',
-      body: getErrorMessage(err, 'Unknown error loading studio prototype links'),
-    })
   }
 }
 
@@ -112,7 +115,7 @@ export async function saveLink(draft: LinkDraft, tree: NodeTree): Promise<boolea
   const node = captureNodeHint(tree, draft.nodeId)
   if (!node) {
     pushToast({
-      kind: 'error',
+      kind: 'warning',
       title: 'Could not link this element',
       body: 'It is no longer in the page tree — reselect it and try again.',
     })
@@ -166,7 +169,7 @@ export async function commitLinkDraft(
     // drag). Say so rather than storing a link to nothing.
     state.cancelLinkDraft()
     pushToast({
-      kind: 'error',
+      kind: 'warning',
       title: 'Could not create the link',
       body: 'The element it would start from is no longer on the page.',
     })

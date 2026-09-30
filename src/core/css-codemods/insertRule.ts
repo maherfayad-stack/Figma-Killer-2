@@ -13,7 +13,7 @@
  * ## Insert vs. merge
  *
  * If a rule with the EXACT selector already exists in the target scope (top
- * level, or inside the matching `@media` block when `atMedia` is given),
+ * level, or inside the matching conditional block when `atRule` is given),
  * this does NOT create a second, cascade-shadowing block. CLAUDE.md's "one
  * honest target" invariant applies just as much to inserting as to editing —
  * two `.card { }` blocks in one file is precisely the hazard
@@ -35,12 +35,15 @@
  *
  *   - Operates on a SINGLE stylesheet's text; no filesystem access.
  *   - Matches a rule by an EXACT selector string, same as `setDeclaration`.
- *   - `atMedia`, when given, matches an existing `@media` block by its exact
- *     `params` string (trimmed) — same rule `setDeclarationAtMedia` uses —
- *     creating the block at the end of the file when it doesn't exist yet.
+ *   - `atRule` (`"media (max-width: 768px)"`, `"container …"`, `"supports …"`
+ *     — `cssAtRuleScope.ts`), when given, matches an existing block of that
+ *     name by its exact `params` string (trimmed) — the same rule
+ *     `setDeclaration` uses — creating the block at the end of the file when
+ *     it doesn't exist yet.
  */
 import postcss, { type Root, type Rule } from 'postcss'
 import { findRule, applyDeclaration } from './setDeclaration'
+import { findAtRuleBlocks, parseAtRuleScope } from './cssAtRuleScope'
 import { preservingLineEndings } from './preserveLineEndings'
 
 export interface InsertRuleResult {
@@ -52,11 +55,12 @@ export interface InsertRuleResult {
 
 export interface InsertRuleOptions {
   /**
-   * Wrap the new rule in `@media <atMedia>`, matching (or creating) the
-   * block the same way `setDeclarationAtMedia` does. Omit for a plain,
+   * Wrap the new rule in the conditional block `atRule` names
+   * (`"media (max-width: 768px)"` — see `cssAtRuleScope.ts`), matching (or
+   * creating) it the same way `setDeclaration` does. Omit for a plain,
    * top-level rule.
    */
-  atMedia?: string
+  atRule?: string
 }
 
 /** Build a fresh rule node holding every declaration, via a literal-fragment parse — see this module's "Formatting" doc. */
@@ -98,9 +102,12 @@ export function insertRule(
 ): InsertRuleResult {
   return preservingLineEndings(cssText, (source) => {
     const root: Root = postcss.parse(source)
-    const { atMedia } = options
+    const scope = options.atRule === undefined ? null : parseAtRuleScope(options.atRule)
+    if (options.atRule !== undefined && !scope) {
+      throw new Error(`[css-codemods] insertRule: "${options.atRule}" is not a @media, @container or @supports scope`)
+    }
 
-    if (atMedia === undefined) {
+    if (!scope) {
       const existing = findRule(root, selector)
       if (existing) {
         const changed = applyDeclarations(existing, declarations)
@@ -112,17 +119,8 @@ export function insertRule(
       return { css: root.toString(), changed: true }
     }
 
-    const query = atMedia.trim()
-    let mediaAtRule: Root['nodes'][number] | undefined
-    root.each((node) => {
-      if (node.type === 'atrule' && node.name === 'media' && node.params.trim() === query) {
-        mediaAtRule = node
-        return false
-      }
-      return undefined
-    })
-
-    if (mediaAtRule && mediaAtRule.type === 'atrule') {
+    const mediaAtRule = findAtRuleBlocks(root, scope)[0]
+    if (mediaAtRule) {
       const existing = findRule(mediaAtRule, selector)
       if (existing) {
         const changed = applyDeclarations(existing, declarations)
@@ -133,15 +131,15 @@ export function insertRule(
       return { css: root.toString(), changed: true }
     }
 
-    // Neither the @media block nor the rule exists — create both as one
-    // literal fragment (not by re-serializing a separately-built rule node and
-    // re-embedding the string — see `setDeclarationAtMedia`'s identical note on
+    // Neither the block nor the rule exists — create both as one literal
+    // fragment (not by re-serializing a separately-built rule node and
+    // re-embedding the string — see `setDeclaration`'s `appendRule` note on
     // why `Node#toString()` alone silently drops the nested rule's own
     // indentation).
     const bodyLines = Object.entries(declarations)
       .map(([property, value]) => `    ${property}: ${value};`)
       .join('\n')
-    const newMediaFragment = postcss.parse(`@media ${query} {\n  ${selector} {\n${bodyLines}\n  }\n}`)
+    const newMediaFragment = postcss.parse(`@${scope.name} ${scope.params.trim()} {\n  ${selector} {\n${bodyLines}\n  }\n}`)
     const newMedia = newMediaFragment.first
     if (!newMedia || newMedia.type !== 'atrule') {
       throw new Error('[css-codemods] unreachable: parsed fragment did not yield an at-rule node')

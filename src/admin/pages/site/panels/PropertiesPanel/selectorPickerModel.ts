@@ -31,6 +31,15 @@ interface SelectorPickerModel {
   suggestions: SelectorSuggestionItem[]
 }
 
+/**
+ * Whether a just-created ambient `rule` would be offered for `selectedElement`
+ * — i.e. its selector actually matches the element the picker is editing.
+ */
+export function ambientRuleMatchesElement(rule: StyleRule, node: PageNode | null, selectedElement: Element | null): boolean {
+  const suggestion = deriveSelectorPickerModel({ rules: { [rule.id]: rule }, node, selectedElement, activeRuleId: null }).suggestions[0]
+  return suggestion !== undefined && !suggestion.disabled
+}
+
 export function deriveSelectorPickerModel(input: SelectorPickerModelInput): SelectorPickerModel {
   const { rules, node, selectedElement, activeRuleId } = input
   const assignedIds = node?.classIds ?? []
@@ -86,7 +95,6 @@ export function deriveSelectorPickerModel(input: SelectorPickerModelInput): Sele
 const CANVAS_NODE_EDITOR_ATTRS = new Set([
   'data-node-id',
   'data-module-id',
-  'data-hovered',
   'tabindex',
   'role',
   'aria-pressed',

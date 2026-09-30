@@ -61,7 +61,8 @@ import { parseFigmaUrl } from '../../../../handlers/studio/figmaUrl'
 import { registerDesignReference } from '../../../../handlers/studio/designReferenceStore'
 import type { DesignReference } from '../../../../handlers/studio/designReferenceSchema'
 import { ingestDesignVariables } from '../../../../handlers/studio/designVariableStore'
-import { readBoardsFile, syncBoardFramesFromDisk, writeBoardsFile } from '../../../../handlers/studio/boardFrames'
+import { syncBoardFramesFromDisk } from '../../../../handlers/studio/boardFrames'
+import { readBoardsFile, writeBoardsFile } from '../../../../handlers/studio/boardGeometry'
 import { FIDELITY_MODES, type FidelityMode } from '../../../../handlers/studio/fidelityMode'
 import { MAX_VARIABLES_PER_INGEST } from '../../../../handlers/studio/designVariableSchema'
 
@@ -395,10 +396,11 @@ const importFigmaFrameTool: AiTool = {
   name: 'studio_import_figma_frame',
   scope: 'shared',
   execution: 'server',
-  mutates: true,
+  sideEffects: 'write',
+  requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
-    'Import one Figma frame as this page\'s design spec, in ONE call — the six-step ritual (register the export, remember mode:"strict", ingest the variables scoped to the new reference id, find the page, resize the board frame to the design\'s own size) collapsed into one, in the right order. Studio never talks to Figma: fetch everything through YOUR Figma connector first, then hand it over here. Pass pageId (required, from studio_list_pages) plus any of: exportPath (the PNG your connector downloaded, inside this project — registers it as a role:"spec" reference at mode:"strict"), node (the get_metadata JSON, pasted UNEDITED — its absoluteBoundingBox resizes the board frame to the Figma frame\'s own pixel size, which is what makes studio_compare exact instead of resampled, and its visible:false subtrees are counted and named back so you do not build layers the designer turned off), variables (the get_variable_defs table, stored scoped to this page + reference so studio_measure_reference answers by lookup instead of sampling pixels), and url (recorded as provenance; parsed and echoed back as { fileKey, nodeId } in the colon form Figma\'s own tools want). Every leg reports its own status code and, when it is not the happy path, a note saying exactly what to do next — a missing export does not fail the frame resize. If the metadata describes a SECTION holding sibling screen-sized frames, nothing is resized and the result enumerates the screens with their names, node ids and sizes: create one Studio page per screen, then call this tool once per screen with that child\'s own metadata. No Figma token is accepted, stored or returned.',
+    'Arm a page against one Figma frame in ONE call: register the export as its strict spec, store its variables, and size the board frame to the design. Studio never calls Figma — fetch with your Figma connector first. pageId (from studio_list_pages) is required, plus any of: exportPath (the downloaded PNG, inside the project), node (get_metadata JSON, unedited — its absoluteBoundingBox sizes the frame so studio_compare is exact; hidden subtrees are named back), variables (get_variable_defs output, scoped to this page so studio_measure_reference answers by lookup), url (provenance, echoed as { fileKey, nodeId }). Each leg reports its own status and next step; a missing leg never fails the others. A SECTION of screen-sized frames resizes nothing and lists the screens: make one page each and call once per screen. No Figma token is accepted or returned.',
   inputSchema: ImportFigmaFrameInputSchema,
   handler: async (input, ctx: ToolContext) => {
     // Named fields only, never a spread: a field added to the schema later

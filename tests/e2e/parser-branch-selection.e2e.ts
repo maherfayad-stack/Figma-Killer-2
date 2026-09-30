@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * Real-browser coverage for parser-06: a multi-return/ternary/`&&` JSX branch
@@ -17,7 +18,6 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
  */
 
 const HOMEPAGE_ID = 'homepage-screen'
-const CANVAS_FRAME_IFRAME_SELECTOR = 'iframe[title^="Canvas frame"]'
 
 interface StudioProjectSummary {
   dir: string
@@ -93,18 +93,18 @@ test.describe('parser-06 regression: homepage-screen does not stack a multi-stag
 
     // Let the canvas's own "center on open" pass finish before panning
     // ourselves — any live frame appearing is proof it has run at least once.
-    await expect(page.locator(CANVAS_FRAME_IFRAME_SELECTOR).first()).toBeVisible({ timeout: 20_000 })
+    await expect(visibleCanvasIframe(page).first()).toBeVisible({ timeout: 20_000 })
 
     const canvasRoot = page.getByTestId('canvas-root')
     await panIntoView(page, canvasRoot, targetFrame)
 
-    const iframeEl = targetFrame.locator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const iframeEl = visibleCanvasIframe(targetFrame)
     await expect(
       iframeEl,
       'the homepage-screen frame never mounted a live iframe after being panned into view',
     ).toBeVisible({ timeout: 15_000 })
 
-    const contentFrame = targetFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame = canvasContentFrame(targetFrame)
 
     // THE REGRESSION THIS CATCHES: before parser-06, `EsimStatusBanner`'s
     // three `return`s (loading / empty / loaded) each rendered, locked,

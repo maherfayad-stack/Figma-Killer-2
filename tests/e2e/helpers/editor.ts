@@ -1,5 +1,6 @@
 import { expect, type FrameLocator, type Page } from '@playwright/test'
 import { OWNER } from './constants'
+import { canvasContentFrame } from './canvasIframe'
 
 /**
  * Site editor / visual builder helpers. Each one is a small wrapper around the
@@ -50,9 +51,7 @@ export function canvasFrameForBreakpoint(
   page: Page,
   breakpointId: string,
 ): FrameLocator {
-  return page
-    .getByTestId(`canvas-frame-${breakpointId}`)
-    .frameLocator('iframe[title^="Canvas frame"]')
+  return canvasContentFrame(page.getByTestId(`canvas-frame-${breakpointId}`))
 }
 
 /**

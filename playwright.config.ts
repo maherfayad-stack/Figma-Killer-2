@@ -3,6 +3,7 @@ import {
   E2E_ADMIN_ORIGIN,
   E2E_CMS_PORT,
   E2E_PUBLIC_ORIGIN,
+  E2E_VITE_MODE,
   E2E_VITE_PORT,
   E2E_WORKSPACE_DIR,
 } from './scripts/lib/e2eStack'
@@ -88,6 +89,7 @@ export default defineConfig({
     // yourself. Export the same variables in that shell — or just use the
     // defaults, which need nothing.
     env: {
+      E2E_VITE_MODE,
       E2E_VITE_PORT,
       E2E_CMS_PORT,
       E2E_WORKSPACE_DIR,

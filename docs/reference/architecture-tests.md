@@ -1,4 +1,5 @@
 # Architecture Tests
+> **Purpose:** the catalogue of every architecture gate test · **Read when:** a gate fails, or you change a structural rule · **Trust:** current · **Owner:** test-engineer · **Verified:** not yet
 
 Catalog of every test in `src/__tests__/architecture/`. These are structural gates — they run as part of `bun test` and fail the build when a rule is broken. When *your* change drifts a structural rule, fix the matching test in the **same** change.
 
@@ -129,12 +130,14 @@ See [docs/reference/ui-primitives.md](ui-primitives.md).
 | `component-system-placement.test.ts`          | Every VC insertion flow (toolbar picker, context menu) routes through `insertComponentRef`; Site Explorer must not expose a component-to-canvas drag source, and direct `insertNode`/`addNodeToVc` with `'base.visual-component-ref'` is forbidden in placement files. |
 | `task414-wrap-to-container.test.ts`           | Wrap-to-container action creates defaulted wrappers and preserves tree structure. |
 | `task427-preview-class-css.test.ts`           | Preview-class CSS injection matches publisher output.                            |
-| `error-boundary-coverage.test.ts`             | Every workspace page / major surface is wrapped in an `ErrorBoundary` with a unique `location` tag, and every Studio panel / inspector tab / inspector section mounts a `PanelBoundary` (`panel-40`). |
+| `error-boundary-coverage.test.ts`             | Every workspace page / major surface is wrapped in an `ErrorBoundary` with a unique `location` tag, every Studio panel / inspector tab / inspector section mounts a `PanelBoundary` (`panel-40`), and every chrome seam mounts a silent `ChromeBoundary` (ERR-13). |
+| `error-toast-sites.test.ts`                   | Every `kind: 'error'` toast in `src/` is on a reviewed per-file list at its reviewed count (P3-A: 128 sites → 104). A new site, a grown count, or a shrunk-but-unlisted count fails, naming the file. The canvas write path (refusals, structural commits, save requests, persistence) carries none at all. |
+| `server-500-hides-exception-text.test.ts`     | No server route answers a 500 with `err.message` (WB-33); every unnamed exception goes through `server/http.ts`'s `internalServerError`, which logs it and answers one plain sentence. |
 | `canvas-overlay-pointerdown.test.ts`          | No canvas overlay (comment popover, etc.) calls `event.stopPropagation()` in `onPointerDown`. `@use-gesture`'s `filterTaps` suppresses the following `click` for anything it classifies as a drag, at the React root — an overlay that swallows `pointerdown` first leaves use-gesture's tap state stale and it then eats every subsequent click in the canvas. Guard by target instead. |
 | `single-drag-mechanism.test.ts`               | `@dnd-kit/core` and native HTML5 `dataTransfer` DnD are each pinned to an explicit allowlist of the files that already use them (D2, `STUDIO-FIGMA-PARITY-PLAN.md`) — a new surface reaching for either fails the gate. Not yet a "one mechanism" assertion; see [docs/reference/canvas-dnd.md](canvas-dnd.md). |
 | `comment-selector-stability.test.ts`          | Every exported `select*` in `commentSelectors.ts` returns a stored reference or primitive, never a value built in the selector body (source scan for array-builder calls, plus a behavioural `===` re-invocation check) — a selector that mints a new array every read loops Zustand/React into "Maximum update depth exceeded". |
-| `no-full-site-scan-in-selectors.test.ts`      | No file that subscribes via `useEditorStore(` (reactive form, not `.getState()`) contains — or imports a module containing — a `for (const page of X.pages)` loop. Zustand re-runs every subscribed selector on every `set()`, so an O(all-pages) walk inside one is O(pages×nodes) per keystroke. |
-| `per-node-selector-budget.test.ts`            | `NodeRenderer` (mounted once per live canvas node) stays within a fixed budget of direct `useEditorStore(` subscriptions — currently 11. A new per-node subscription must ride an existing one or the budget is raised deliberately, in the same commit, with a note in the test file. |
+| `no-full-site-scan-in-selectors.test.ts`      | No file that subscribes via `useEditorStore(` (reactive form, not `.getState()`) contains — or imports a module containing — a `for (const page of X.pages)` loop. Zustand re-runs every subscribed selector on every `set()`, so an O(all-pages) walk inside one is O(pages×nodes) per keystroke. Also (P2-I, PERF-12): no selector filters/maps `site.pages` (a fresh array per `set()` per subscriber), no selector in `inspector/`, `canvas/`, `layouts/`, `site/hooks/` or the Explorer returns bare `s.site`, and none outside `inspector/` returns the whole `site.pages` array — use `selectPageDirectory` / `selectTemplatePages`. |
+| `per-node-selector-budget.test.ts`            | `NodeRenderer` (mounted once per live canvas node) stays within a fixed budget of direct `useEditorStore(` subscriptions — currently 7 (P2-I; was 11) — and has no `useShallow` object selector. Hover is not store state (`canvasHover.ts`) and the selection is a keyed read (`canvasNodeSelection.ts`). A new per-node subscription must ride an existing one or the budget is raised deliberately, in the same commit, with a note in the test file. |
 | `no-case-only-filename-collisions.test.ts`    | No two files under `src/` or `server/` share a directory and a name differing only by case (or case + extension) — a cross-platform trap: two distinct files on Linux, one silently-wrong resolution on case-insensitive Windows/macOS. |
 
 See [docs/editor.md](../editor.md).
@@ -155,6 +158,7 @@ See [docs/features/spotlight.md](../features/spotlight.md).
 |-----------------------------------------------|----------------------------------------------------------------------------------|
 | `plugin-rpc-target-registry.test.ts`          | Three-part lock on the RPC registry: (1) every `ApiCallSchemas` target has exactly one handler in `apiDispatch.ts`; (2) every key in `TARGET_PERMISSIONS` is a real api-call target; (3) the full target→permission table is frozen to the signed security contract — changing any pairing is a deliberate, visible security decision. |
 | `plugin-bootstrap-fresh.test.ts`              | Generated bootstrap artifacts in `bootstrap/generated/` match a fresh bundle of `bootstrap/src/`. Fails if `bun run bootstrap:sync` is needed. |
+| `bun-version-pinned.test.ts`                  | `engines.bun` in `package.json` is one exact version; every `setup-bun` step in `.github/workflows/` reads it via `bun-version-file: package.json` (no hardcoded `bun-version:`); every Dockerfile `FROM oven/bun:<tag>` equals it. The bundle freshness gates above are only meaningful on that one Bun, and `bun run test`'s `--parallel` does not exist before 1.3.13. See [architecture.md](../architecture.md) → "Bun is pinned to one exact version". |
 | `plugin-sandbox-invariants.test.ts`           | No `node:`, `bun:`, `require(`, `process.binding` in plugin bundles; network permission gate is centralized in `apiDispatch.ts` and driven by `TARGET_PERMISSIONS`. |
 | `plugin-boot-resilience.test.ts`              | One bad plugin doesn't bring the server down. Crashes are isolated.              |
 | `plugin-cms-content-surface.test.ts`          | All five `cms.content.*` permissions are wired across all sync-points (permission values, capability matrix, permission alias builder, SDK type surface, host-side dispatch). |
@@ -213,7 +217,7 @@ See [docs/features/agent.md](../features/agent.md).
 | `media-storage-no-bytes-in-sandbox.test.ts`   | Plugin sandboxes can't read raw media bytes; only host adapters can.             |
 | `media-storage-panel.test.ts`                 | Media storage panel UI matches the registered adapter set.                       |
 
-See docs/features/media.md.
+There is no separate media feature doc: the variant pipeline is `server/handlers/cms/mediaVariants.ts` and its worker pool, listed in [`docs/architecture.md`](../architecture.md) → "Layer responsibilities".
 
 ### Publisher
 
@@ -257,9 +261,7 @@ The following test lives in `src/__tests__/server/` (not `architecture/`) but en
 |-----------------------------------------------|----------------------------------------------------------------------------------|
 | `importPathTraversal.test.ts`                 | `assertPathWithin` blocks `..` traversal and absolute escapes; `MediaAssetExportSchema.storagePath` pattern rejects traversal at the schema boundary (ISS-009). |
 
-See [`docs/features/site-import.md`](../features/site-import.md). (This used to
-point at a `docs/features/site-transfer.md` that was never written; the CMS
-bundle transfer path is described in the import page instead.)
+See [`docs/features/site-import.md`](../features/site-import.md), which also describes the CMS bundle transfer path.
 
 ### Loop sources
 
@@ -288,6 +290,13 @@ The following test lives in `src/__tests__/server/` (not `architecture/`) but en
 | `dockerConfig.test.ts`                        | Dockerfile uses a multi-stage build (build → production-deps → runtime), `ARG STUDIO_VERSION` and OCI version label are present, TypeScript path aliases (`tsconfig*.json`) are copied into the runtime stage, `esbuild` is in `dependencies` (not `devDependencies`) so the runtime script bundler is available in production. `compose.prod.yml` uses the GHCR image, has healthchecks, persistent volumes, and `depends_on: condition: service_healthy`. `POSTGRES_PASSWORD` carries a `CHANGEME` placeholder default (no `:?` guard) so the file loads in SQLite mode without a `.env`. `STUDIO_SECRET_KEY` is documented in `.env.production.example` and referenced in `compose.prod.yml`. |
 
 See [docs/deployment/](../deployment/).
+
+### Docs
+
+| Test                                          | What it enforces                                                                 |
+|-----------------------------------------------|----------------------------------------------------------------------------------|
+| `doc-headers.test.ts`                         | Every maintained doc (the six root docs, `docs/**` outside `archive/`, `audits/` and `state-archive/`, `scripts/bench/README.md`) has the `Purpose · Read when · Trust · Owner · Verified` header on line 2 under a `# Title`; every historical doc declares itself in its first two lines; and no code, maintained doc or root doc names a path in `DEAD_DOC_PATHS` (retired docs agents kept citing). Rules: [`docs/CONVENTIONS.md`](../CONVENTIONS.md) → "The header line". |
+| `css-token-vocabulary.test.ts`, `studio-tool-refusals-are-coded.test.ts`, `no-alm-npm-specifier.test.ts` | Also read docs by path: `docs/design.md`, `docs/reference/design-tokens.md`, `docs/reference/ui-primitives.md`; `docs/features/agent.md`'s refusal table; the agent-refs, features and reference folders plus `PROJECT-BRIEF.md` and `CLAUDE.md`. Move or split those docs and the gate moves with them. `scripts/build-release-bundle.ts` also ships `docs/deployment/*.md` by path. |
 
 ## Anatomy of an architecture test
 

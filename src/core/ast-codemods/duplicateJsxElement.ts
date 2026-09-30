@@ -108,9 +108,6 @@ export type DuplicateJsxRefusalReason =
   | 'not-a-container'
   | 'into-own-descendant'
   | 'out-of-scope'
-  | 'binding-conflict'
-  | 'unsafe-tag'
-  | 'void-element-children'
   | 'not-siblings'
 
 export interface DuplicateJsxRefusal {

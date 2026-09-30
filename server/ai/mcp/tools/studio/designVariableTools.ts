@@ -145,10 +145,11 @@ const ingestDesignVariablesTool: AiTool = {
   name: 'studio_ingest_design_variables',
   scope: 'shared',
   execution: 'server',
-  mutates: true,
+  sideEffects: 'write',
+  requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
-    'Durably store a design\'s OWN declared variable table (e.g. from a Figma MCP connector\'s get_variable_defs) so studio_measure_reference can answer a measurement by LOOKUP instead of inferring it from pixels. Studio never fetches this itself — call the design tool yourself first, then pass what it returned here verbatim; this tool stores it as "what you were given", not something Studio independently verified. Each call creates one new, independently addressable set (studio_list_design_variables / studio_read_design_variable_set / studio_delete_design_variable_set). Colours (any CSS-recognisable hex/rgb/hsl string) and lengths with a knowable unit (px/rem/em/pt suffix, or a bare number — Figma\'s own convention for most FLOAT geometry variables, treated as px and flagged unitAssumed:true since a bare number could also be an opacity, a line-height multiplier, or a font-weight) are normalised for matching; anything else is stored as-is (kind:"other") and still readable, never dropped. Pass pageId and/or referenceId to scope the table to one screen/reference — omit both for a project-wide table, which is the right choice for most whole-file Figma exports. Duplicate names WITHIN one call are collapsed (last wins); duplicatesDropped in the result says how many.',
+    'Store a design\'s own declared variable table (e.g. a Figma connector\'s get_variable_defs output, passed verbatim) so studio_measure_reference answers by lookup instead of from pixels. Studio never fetches it and records it as given. Each call creates one new set, read back with studio_list_design_variables and studio_read_design_variable_set. Colours and lengths with a known unit are normalised; a bare number is taken as px and flagged unitAssumed:true; anything else is kept as kind:\'other\'. pageId and/or referenceId scope it to one screen; omit both for a project-wide table, right for most whole-file exports. Duplicate names in one call collapse, last wins (duplicatesDropped).',
   inputSchema: IngestInputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, source, pageId, referenceId, label, variables } = input as {
@@ -209,6 +210,7 @@ const listDesignVariablesTool: AiTool = {
   name: 'studio_list_design_variables',
   scope: 'shared',
   execution: 'server',
+  sideEffects: 'none',
   description:
     'List design-variable sets ingested for this project (studio_ingest_design_variables). Each entry is a SUMMARY (id, ingestedAt, source, pageId?, referenceId?, label?, variableCount, colorCount, sizeCount, otherCount) — call studio_read_design_variable_set for the actual name/value entries. Pass pageId or referenceId to restrict to sets scoped to one screen/reference; omit both to see everything, including project-wide sets. An empty result means no design-variable table has been ingested — studio_measure_reference is then operating on pixel measurement alone, exactly as it always has.',
   inputSchema: ListInputSchema,
@@ -255,6 +257,7 @@ const readDesignVariableSetTool: AiTool = {
   name: 'studio_read_design_variable_set',
   scope: 'shared',
   execution: 'server',
+  sideEffects: 'none',
   description:
     'Read one ingested design-variable set\'s actual name/value entries by id. Each entry reports the ORIGINAL authored value (raw) alongside how Studio normalised it: kind ("color"/"size"/"other"), hex (colours) or px (sizes, with unitAssumed:true when a bare unit-less number was treated as px). Capped (default 200, max 500) with an honest truncated/omittedCount — use nameContains to narrow a large table instead of paging through it blind. Returns ok:false with a clear reason for an unknown set id.',
   inputSchema: ReadSetInputSchema,
@@ -314,7 +317,8 @@ const deleteDesignVariableSetTool: AiTool = {
   name: 'studio_delete_design_variable_set',
   scope: 'shared',
   execution: 'server',
-  mutates: true,
+  sideEffects: 'write',
+  requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
     'Remove one ingested design-variable set by id. Idempotent — removing an unknown or already-removed id still returns { ok: true, removed: false }, never an error. Requires studio.write.',

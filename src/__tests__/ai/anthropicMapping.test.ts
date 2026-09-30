@@ -32,7 +32,8 @@ describe('Anthropic SSE translate', () => {
     expect(t.translate(frame({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 7 } }))).toEqual([])
 
     const result = t.finish()
-    expect(result.stop).toBe(true)
+    expect(result.toolCalls).toHaveLength(0)
+    expect(result.truncated).toBe(false)
     expect(result.toolCalls).toEqual([])
     expect(result.assistantMessage).toEqual({ role: 'assistant', content: [{ type: 'text', text: 'Hello world' }] })
     expect(result.usage).toEqual({ promptTokens: 10, completionTokens: 7, cacheReadTokens: 4, cacheCreationTokens: 0 })
@@ -51,7 +52,7 @@ describe('Anthropic SSE translate', () => {
     t.translate(frame({ type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 12 } }))
 
     const result = t.finish()
-    expect(result.stop).toBe(false)
+    expect(result.toolCalls.length).toBeGreaterThan(0)
     expect(result.toolCalls).toEqual([{ id: 'toolu_1', name: 'site_insert_html', input: { parentId: 'root' } }])
     expect(result.assistantMessage).toEqual({
       role: 'assistant',
@@ -175,6 +176,7 @@ describe('Anthropic prompt-cache breakpoints', () => {
     description: `${name} description`,
     scope: 'site',
     execution: 'server',
+    sideEffects: 'none',
     inputSchema: Type.Object({}),
   })
 

@@ -24,7 +24,8 @@ describe('Ollama chat/completions SSE translate', () => {
     t.translate(frame({ choices: [], usage: { prompt_tokens: 9, completion_tokens: 4 } }))
 
     const result = t.finish()
-    expect(result.stop).toBe(true)
+    expect(result.toolCalls).toHaveLength(0)
+    expect(result.truncated).toBe(false)
     expect(result.toolCalls).toEqual([])
     expect(result.assistantMessage).toEqual([{ role: 'assistant', content: 'Hello' }])
     expect(result.usage).toEqual({ promptTokens: 9, completionTokens: 4 })
@@ -40,7 +41,7 @@ describe('Ollama chat/completions SSE translate', () => {
     ])
 
     const result = t.finish()
-    expect(result.stop).toBe(false)
+    expect(result.toolCalls.length).toBeGreaterThan(0)
     expect(result.toolCalls).toEqual([{ id: 'call_a', name: 'site_insert_html', input: { parentId: 'root' } }])
     expect(result.assistantMessage).toEqual([
       {
@@ -152,6 +153,7 @@ function makeRequest(serverCalls: unknown[]): AiStreamRequest {
     description: 'echoes its input',
     scope: 'site',
     execution: 'server',
+    sideEffects: 'none',
     inputSchema: Type.Object({ v: Type.Optional(Type.Number()) }),
     async handler(input) {
       serverCalls.push(input)

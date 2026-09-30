@@ -35,7 +35,7 @@
  * half of the product; gating it above the role that does the design work
  * would defeat the point.
  */
-import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import type { StudioSessionRuntime } from './routeGate'
 import { Type } from '@core/utils/typeboxHelpers'
 import {
@@ -80,8 +80,7 @@ export async function tryServeStudioShares(
       return jsonResponse({ dir, shares: listShareSummaries(dir) })
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio-shares]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio-shares]', err)
     }
   }
 
@@ -93,8 +92,7 @@ export async function tryServeStudioShares(
       return await createOrUpdateShare(dir, user.id, body.boardId, body.token)
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio-shares]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio-shares]', err)
     }
   }
 
@@ -108,8 +106,7 @@ export async function tryServeStudioShares(
       return jsonResponse({ ok: true, shares: listShareSummaries(dir) })
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio-shares]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio-shares]', err)
     }
   }
 

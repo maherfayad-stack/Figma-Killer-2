@@ -22,8 +22,6 @@
  * published artifact, so there is no separate publish step or command here.
  */
 
-import { getErrorMessage } from '@core/utils/errorMessage'
-import { pushToast } from '@ui/components/Toast'
 import { flushEditorSave } from '@site/hooks/editorSaveRef'
 import type { Command } from '../types'
 
@@ -50,12 +48,11 @@ export function getEditorCommands(): Command[] {
         try {
           await flushEditorSave()
         } catch (err) {
+          // P3-A — no toast: the toolbar's save chip owns save failure (Z6),
+          // and the persistence layer is already retrying on its ladder. A
+          // second, red report of the same failure is exactly the noise Z6
+          // removed from the autosave path.
           console.error('[spotlight] save failed:', err)
-          pushToast({
-            kind: 'error',
-            title: 'Save failed',
-            body: getErrorMessage(err, 'Could not save your changes'),
-          })
         }
       },
     },

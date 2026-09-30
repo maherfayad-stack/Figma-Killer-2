@@ -76,7 +76,9 @@ Full-suite triage: a known set of failures is pre-existing — `STATE.md` →
 than trusting a number quoted elsewhere. **Do not fix failures outside your `git diff`.**
 Do not comment out a failing test. Do not revert someone else's work.
 
-**Do not run browser or Playwright tests for UI work** — see `standing-02`.
+**Browser runs follow `CLAUDE.md` → "Verification"**: a canvas, frame, overlay,
+geometry or panel-height change also runs its e2e specs; other UI work stops at
+the static gates plus a dogfood line.
 
 ## Handoff — required
 

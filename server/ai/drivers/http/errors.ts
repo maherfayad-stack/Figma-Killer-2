@@ -32,12 +32,33 @@ export function classifyHttpError(
   return classifyHttpFailure(providerLabel, status, bodyText).message
 }
 
+/**
+ * What the tool loop may do about a failed request:
+ *
+ *   - `transient` — the provider was momentarily unable (rate limit, overload,
+ *     a 5xx). The same request can succeed after a pause: retried with backoff
+ *     (AI-8).
+ *   - `replayOverflow` — the conversation is too big for the provider; one
+ *     retry with historical images elided.
+ *   - `unsupportedParameter` — a 400 naming the reasoning parameters
+ *     (`thinking`, `effort`, `reasoning`): this model does not take the ones
+ *     `effort` mapped to. Retried once without them (AI-11).
+ *   - `generic` — nothing a retry changes.
+ */
 export interface ProviderHttpFailure {
-  kind: 'replayOverflow' | 'generic'
+  kind: 'replayOverflow' | 'transient' | 'unsupportedParameter' | 'generic'
   message: string
 }
 
-/** Structured classification lets the tool loop retry only replay overflows. */
+/** Statuses a pause can fix. 529 is Anthropic's "overloaded". */
+const TRANSIENT_STATUSES: ReadonlySet<number> = new Set([408, 429, 500, 502, 503, 504, 529])
+
+/** A 429 that is an exhausted balance rather than a rate limit — waiting does not refill it. */
+function isQuotaExhausted(bodyText: string): boolean {
+  return /insufficient_quota|billing|credit balance/i.test(bodyText)
+}
+
+/** Structured classification lets the tool loop retry only what a retry can fix. */
 export function classifyHttpFailure(
   providerLabel: string,
   status: number,
@@ -51,10 +72,22 @@ export function classifyHttpFailure(
       message: `${providerLabel} authentication failed. Check your API key in Settings → AI → Providers.`,
     }
   }
-  if (status === 402 || status === 429) {
+  if (status === 402 || (status === 429 && isQuotaExhausted(bodyText))) {
     return {
       kind: 'generic',
       message: `${providerLabel} quota or rate limit reached${detail ? `: ${detail}` : ''}. Check your account balance.`,
+    }
+  }
+  if (status === 429) {
+    return {
+      kind: 'transient',
+      message: `${providerLabel} rate limit reached${detail ? `: ${detail}` : ''}. Wait a moment and send the message again.`,
+    }
+  }
+  if (status === 400 && namesReasoningParameter(bodyText)) {
+    return {
+      kind: 'unsupportedParameter',
+      message: `${providerLabel} rejected the reasoning settings for this model${detail ? `: ${detail}` : ''}.`,
     }
   }
   if (requestExceedsProviderContext(status, bodyText, detail)) {
@@ -63,9 +96,9 @@ export function classifyHttpFailure(
       message: `${providerLabel} could not accept this conversation because it exceeds the provider's request or context limit${detail ? `: ${detail}` : ''}. Your history is still saved; start a new conversation or choose a model with a larger context window.`,
     }
   }
-  if (status >= 500) {
+  if (status >= 500 || TRANSIENT_STATUSES.has(status)) {
     return {
-      kind: 'generic',
+      kind: TRANSIENT_STATUSES.has(status) ? 'transient' : 'generic',
       message: `${providerLabel} service error (${status})${detail ? `: ${detail}` : ''}. Please try again.`,
     }
   }
@@ -73,6 +106,11 @@ export function classifyHttpFailure(
     kind: 'generic',
     message: `${providerLabel} error (${status})${detail ? `: ${detail}` : ''}.`,
   }
+}
+
+/** A bad request whose complaint is about the reasoning parameters `effort` maps to. */
+function namesReasoningParameter(bodyText: string): boolean {
+  return /\b(?:thinking|budget_tokens|output_config|effort|reasoning(?:_effort)?)\b/i.test(bodyText)
 }
 
 function requestExceedsProviderContext(

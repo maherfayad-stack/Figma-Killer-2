@@ -24,10 +24,13 @@
  *      existed (so timestamps don't churn on every reconcile).
  */
 
-import type { StyleRule, SiteDocument } from '@core/page-tree'
+import type { Page, StyleRule, SiteDocument } from '@core/page-tree'
 import { generateFrameworkUtilityClasses } from '@core/framework'
 
 const FRAMEWORK_ID_PREFIX = 'framework:'
+
+/** What reconciliation reads and rewrites: the registry and every class-id list in the pages and Visual Components. */
+type ReconcileTarget = Pick<SiteDocument, 'pages' | 'visualComponents' | 'styleRules'>
 
 /**
  * Visit every node-like value in the site that holds a `classIds: string[]`
@@ -35,7 +38,7 @@ const FRAMEWORK_ID_PREFIX = 'framework:'
  * VisualComponent itself, and every VCNode in the VC's flat tree.nodes map.
  */
 function mutateAllClassIdLists(
-  site: SiteDocument,
+  site: ReconcileTarget,
   mutator: (classIds: string[]) => string[],
 ): void {
   const apply = (target: { classIds?: string[] }) => {
@@ -53,14 +56,14 @@ function mutateAllClassIdLists(
   }
 }
 
-function pruneClassIdFromSite(site: SiteDocument, classId: string): void {
+function pruneClassIdFromSite(site: ReconcileTarget, classId: string): void {
   mutateAllClassIdLists(site, (ids) =>
     ids.includes(classId) ? ids.filter((id) => id !== classId) : ids,
   )
 }
 
 function remapClassIdInSite(
-  site: SiteDocument,
+  site: ReconcileTarget,
   fromId: string,
   toId: string,
 ): void {
@@ -86,8 +89,26 @@ export function reconcileFrameworkClasses(site: SiteDocument): void {
   reconcileFrameworkClassRegistry(site, generateFrameworkUtilityClasses(site.settings.framework))
 }
 
+/**
+ * P6-B — the same class-id rewrite for pages that join a document after it was
+ * reconciled (a streamed load's later pages, `studioProjectLoad.ts`). The
+ * document's own registry has already been claimed and pruned, so it no longer
+ * says which ids those were: `loadedStyleRules` is the registry AS THE LOAD
+ * DELIVERED IT, and it is only read — the claim and prune run on a copy.
+ */
+export function reconcileFrameworkClassesOnPages(
+  pages: Page[],
+  loadedStyleRules: Record<string, StyleRule>,
+  framework: SiteDocument['settings']['framework'],
+): void {
+  reconcileFrameworkClassRegistry(
+    { pages, visualComponents: [], styleRules: { ...loadedStyleRules } },
+    generateFrameworkUtilityClasses(framework),
+  )
+}
+
 function reconcileFrameworkClassRegistry(
-  site: SiteDocument,
+  site: ReconcileTarget,
   nextClasses: Record<string, StyleRule>,
 ): void {
   const nextClassIds = new Set(Object.keys(nextClasses))

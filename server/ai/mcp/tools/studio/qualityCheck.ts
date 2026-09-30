@@ -91,9 +91,8 @@ import type { PageStylesheet } from '@core/studio-sync/pageStylesheet'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { resolveProjectProfile } from '../../../../handlers/studio/projectProbe'
-import { compileProjectStyles } from '../../../../handlers/studio/styleCompile'
 import { buildProjectTokenIndex, type ProjectTokenIndex } from '../../../../handlers/studio/projectTokenIndex'
-import { builtinDesignSystemTokenCss } from '../../../../handlers/studio/tokenExtractPackageCss'
+import { collectProjectTokenCss } from '../../../../handlers/studio/projectTokenSources'
 import { auditPageSourceQuality, auditStylesheetQuality, type DesignSystemCatalog, type QualityFinding } from '../../../../handlers/studio/qualityAudit'
 import { findingSeverity, describeDesignPolicy, type DesignPolicy } from '../../../../handlers/studio/designPolicy'
 import { resolveProjectDesignPolicy } from '../../../../handlers/studio/projectDesignPolicy'
@@ -185,8 +184,9 @@ export const studioQualityCheckTool: AiTool = {
   name: 'studio_quality_check',
   scope: 'shared',
   execution: 'server',
+  sideEffects: 'none',
   description:
-    'Reference-free quality signals for one or more screens you built WITHOUT a design to measure against — studio_compare and studio_measure_reference both need a registered reference; this needs none. Statically scans each screen\'s own .css/.module.css (and any inlined local component\'s) AND its own .tsx. Stylesheet checks: raw-hex-color / raw-px-length — a literal value where the project already declares a var(--token) close enough that it is almost certainly the one you meant, so you know exactly which var() to swap in — and low-contrast-pair — a single rule that declares both color and a background whose WCAG contrast falls under the 4.5:1 AA-normal-text floor (this cannot see font-size/font-weight, so a genuinely large/bold rule may still pass WCAG AA\'s looser 3:1 large-text threshold in practice; the finding says so). Page-source checks, the ones that catch the agent hand-rolling something the design system already provides, or shipping an icon that is simply absent: unresolved-asset-import — a `?raw` import naming a file that is NOT on disk, so the element renders empty while still typechecking and still holding its box (the one finding here no screenshot and no `tsc` run will ever tell you); hand-authored-vector-path — a literal <svg> containing a hand-written <path d="..."> instead of a real icon; hardcoded-inline-sizing — style={{ width: 24 }} patching layout inline instead of in the stylesheet (does not flag the legitimate style={{ \'--x\': value }} dynamic-custom-property case, or any genuinely computed value); design-system-unused — this screen imports nothing at all from the project\'s configured design-system package(s), worth checking even though a legitimately plain screen can have zero imports; design-system-coverage-low — this screen DOES use the design system but renders fewer than 4 distinct components from it while the catalog offers 8 or more, and the finding NAMES the ones it did not take (the diagnosed failure: a shipped screen used 2 of 42 available components and hand-rolled the rest, which no other check here can see); font-not-available — the FIRST family in a font-family stack that this project cannot load (no @font-face anywhere it can see, no Google Fonts link, no next/font/google import, no matching font file on disk), so the browser silently renders the screen in a fallback face whose metrics differ and every font-size you then tune against a screenshot is tuned against the wrong typeface. Composition checks, page-wide aggregates rather than one finding per declaration, each graded ONLY against the project\'s own declared tokens (a project that declares no spacing tokens gets no spacing rule, never an invented 4px default): off-scale-spacing — how many padding/margin/gap values are not multiples of the step this project\'s own spacing tokens are built on, with each offender\'s file:line; off-scale-type-size — font-size values sitting on no step of the project\'s type scale, with the scale listed; flat-type-hierarchy — the screen\'s largest type divided by its most common (body) size is under 1.6, i.e. nothing leads and the screen reads as a list of equals. Each finding carries a file:line and a message naming the exact fix. Name screens the way you named the files ("Checkout"), or pass several at once to audit a whole flow in one call, or omit `pages` to audit every screen in the project. This complements studio_screenshot, it does not replace it — a clean audit here says nothing about whether the screen LOOKS right, only whether its source follows the project\'s own rules. Returns { results[] }, each { ok, page, findings[], findingCount, filesScanned, rulesScanned, truncated } — a page whose own source location can\'t be decoded becomes an ok:false entry rather than failing the whole call.',
+    'Reference-free source checks for screens built WITHOUT a design (studio_compare needs one). Scans each screen\'s .tsx and its own stylesheets. Findings: raw-hex-color / raw-px-length (a project token is close enough — use that var()), low-contrast-pair (under 4.5:1), unresolved-asset-import (a ?raw file not on disk), hand-authored-vector-path, hardcoded-inline-sizing, design-system-unused, design-system-coverage-low (names the components not used), font-not-available, and — graded only against the project\'s own tokens — off-scale-spacing, off-scale-type-size, flat-type-hierarchy (largest size under 1.6x body). Each has file:line and the exact fix. Pass pages as named files, or omit for every screen. Returns { results[]: { ok, page, findings[], findingCount, filesScanned, rulesScanned, truncated } }. A clean audit says nothing about how the screen LOOKS; use studio_screenshot for that.',
   inputSchema: InputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, pages: requested, designPolicy: policyArg } = input as { dir?: string; pages?: string[]; designPolicy?: DesignPolicy }
@@ -211,7 +211,7 @@ export const studioQualityCheckTool: AiTool = {
             remedy: `This project has: ${known}.`,
           })
         : toolRefusal('no-such-page', 'This project has no screens to audit yet.', {
-            remedy: 'Create one with studio_create_page before auditing it.',
+            remedy: 'Write the page file first, then audit it.',
           })
     }
 
@@ -219,13 +219,10 @@ export const studioQualityCheckTool: AiTool = {
 
     // Built ONCE for the whole batch and reused per page — see module doc.
     const project = createWorkspaceProject(dir)
-    // Token matching AND design-system-package detection both degrade to
-    // "none" on a probe failure — the audit still runs, it just cannot
-    // suggest a var(--token) swap or check design-system adoption. Same
-    // degrade path `studio_measure_reference` uses for tokens; extended here
-    // to cover the one extra fact the page-source audit needs from the same
-    // profile call, rather than resolving the profile a second time.
-    let cssSources: string[] = []
+    // Design-system-package detection degrades to "none" on a probe failure —
+    // the audit still runs, it just cannot check design-system adoption. The
+    // token CSS degrades per source on its own (`projectTokenSources.ts`), the
+    // same collection every other token reader uses.
     let componentPackages: string[] = []
     let catalog: DesignSystemCatalog | undefined
     try {
@@ -239,11 +236,10 @@ export const studioQualityCheckTool: AiTool = {
       // correctly disables the coverage rule rather than inventing a catalog.
       const guide = resolveDesignSystemGuide(dir, profile)
       if (guide) catalog = { packageName: guide.packageName, componentNames: guide.components.map((c) => c.name) }
-      const compiled = await compileProjectStyles(dir, profile)
-      cssSources = [builtinDesignSystemTokenCss(dir), compiled.styles.vendorCss, compiled.styles.css]
     } catch (err) {
-      console.error('[studio_quality_check] could not resolve the project profile / compile project styles:', err)
+      console.error('[studio_quality_check] could not resolve the project profile:', err)
     }
+    const cssSources = await collectProjectTokenCss(dir)
     const tokens: ProjectTokenIndex = buildProjectTokenIndex(...cssSources)
     // Workspace-level, like the token index above: a font-file disk walk and
     // the project's setup files are the same facts for every page in the

@@ -35,16 +35,36 @@
  * no longer exists therefore refuses by name rather than writing somewhere
  * else.
  *
+ * ## …and the ids it names are re-found, not re-read (P1-A, ERR-4)
+ *
+ * Re-planning against the fresh tree is only honest if the ids handed to the
+ * re-plan still name what the user acted on. They do not, in general: the
+ * commit ahead renumbered the file, so a Delete pressed on `a.tsx:5:5` while a
+ * move was in flight would re-run as "delete whatever is at 5:5 now" — the
+ * element that just MOVED there (the audit reproduced exactly that). So the
+ * queue captures each id's identity when the gesture is made
+ * (`sourceIdentity.ts`), and hands the thunk a `relocate` that re-finds each
+ * one by that identity in the re-read board. When any cannot be found exactly
+ * once, the gesture does not run, and says so once — a guess is how the wrong
+ * element got written.
+ *
  * ## The ceiling
  *
  * A held ⌘D auto-repeats about thirty times a second and each commit is a POST
  * plus a re-parse, so an unbounded queue would keep writing copies for a
  * minute after the key came up — the plan's habit 2 ("loops have no ceilings")
- * wearing a new hat. {@link MAX_DEFERRED_STRUCTURAL_GESTURES} bounds it, and
- * the overflow is REPORTED rather than dropped in silence: one warning card
- * (Z1 collapses repeats onto it) saying the burst outran the writer.
+ * wearing a new hat. {@link MAX_DEFERRED_STRUCTURAL_GESTURES} bounds it.
+ *
+ * ERR-25 — the overflow is dropped WITHOUT a toast. The only way to get past
+ * twenty queued gestures is a held key auto-repeating, and what the person
+ * sees is right: the copies keep appearing while the writer catches up, and
+ * the extra repeats simply do not happen, exactly as a held key past a
+ * program's own limit does anywhere else. "Too many changes at once" blamed
+ * the user for holding a key. Logged for devtools.
  */
 import { pushToast } from '@ui/components/Toast'
+import { captureIdentities, relocateCapturedIds } from './sourceIdentity'
+import { listRowRemapGeneration, remapListRowId } from './listRowRemap'
 
 /**
  * How many gestures may wait behind the one on the wire.
@@ -67,6 +87,9 @@ export const MAX_DEFERRED_STRUCTURAL_GESTURES = 20
 let structuralCommitInFlight = false
 const inFlightListeners = new Set<() => void>()
 const deferred: (() => void)[] = []
+
+/** A parked gesture's view of its own ids after the commit ahead of it re-read the board: where each element it named is NOW. */
+export type RelocateNodeId = (nodeId: string) => string
 
 export function isStructuralCommitInFlight(): boolean {
   return structuralCommitInFlight
@@ -120,18 +143,33 @@ export function endStructuralCommit(): void {
  * that the plan is built when the gesture RUNS, against the tree the previous
  * commit's resync left behind.
  */
-export function deferWhileStructuralCommitInFlight(gesture: () => void): boolean {
+export function deferWhileStructuralCommitInFlight(
+  gesture: (relocate: RelocateNodeId) => void,
+  /** Every node id the gesture will act on — captured now, re-found when it runs. See this module's doc. */
+  nodeIds: readonly string[] = [],
+): boolean {
   if (!structuralCommitInFlight) return false
   if (deferred.length >= MAX_DEFERRED_STRUCTURAL_GESTURES) {
-    pushToast({
-      kind: 'warning',
-      title: 'Too many changes at once',
-      body: `Studio is still writing the last ${MAX_DEFERRED_STRUCTURAL_GESTURES} changes to your project, so this one was not queued. Let it catch up and try again.`,
-      location: 'site-editor',
-    })
+    console.warn(`[structuralCommitQueue] ${MAX_DEFERRED_STRUCTURAL_GESTURES} gestures already queued; dropping a repeat`)
     return true
   }
-  deferred.push(gesture)
+  const identities = captureIdentities(nodeIds)
+  // OD-8 — a `.map` row id is a position; a list write since may have moved
+  // the row it named (`listRowRemap.ts`).
+  const rowGeneration = listRowRemapGeneration()
+  deferred.push(() => {
+    const relocated = relocateCapturedIds(identities, nodeIds)
+    if (!relocated) {
+      pushToast({
+        kind: 'warning',
+        title: 'Not done — the file changed',
+        body: 'An element this change was aimed at moved or changed while Studio was writing your previous change, and it could not be found again with certainty, so nothing was written. Try it again on the board as it is now.',
+        location: 'site-editor',
+      })
+      return
+    }
+    gesture((nodeId) => remapListRowId(relocated.get(nodeId) ?? nodeId, rowGeneration))
+  })
   return true
 }
 

@@ -14,12 +14,12 @@
  * ## Not every drift is writable
  *
  * `hasWritableSourceLocation` is the exact per-node gate every other edit
- * kind asks before emitting a `prop`/`style`/`text` edit — a `.map` row or a
- * synthetic root (`index:body`) has no single JSX location a class token
- * could land on. Those drifts go into `unwritable`: the direct replacement
- * for Phase 0.6's blanket "class changes can't be written yet" toast, now
- * scoped to the genuinely unwritable subset instead of firing for every
- * class change in the project.
+ * kind asks before emitting a `prop`/`style`/`text` edit. A `.map` row has no
+ * JSX location of its own, but since P3-C (OD-8) its class change is written
+ * to the row TEMPLATE, restyling every row (`rowTemplateWrites.ts`). A
+ * synthetic root (`index:body`) has neither, so its drift goes into
+ * `unwritable`: the direct replacement for Phase 0.6's blanket "class changes
+ * can't be written yet" toast, scoped to the genuinely unwritable subset.
  *
  * An INLINED (shared-component) node id IS writable — the write lands on the
  * component's own file, exactly like any other prop/style edit on that node
@@ -37,8 +37,8 @@
  * change to lose. `sourceNodeId.ts` says this in as many words — "callers
  * must not treat it as unwritable, only as 'not our business'" — and names
  * `isSourceDerivedNodeId` as the second question. Both get asked here now:
- * a `.map` row and an imported page's synthetic `<pageId>:body` root still
- * warn, everything else is skipped in silence.
+ * an imported page's synthetic `<pageId>:body` root still warns (a `.map` row
+ * writes its template), everything else is skipped in silence.
  *
  * ## A pure reorder writes nothing
  *
@@ -70,12 +70,15 @@ import {
   isImportedStyleRuleId,
   isSourceDerivedNodeId,
   isStudioPageRootId,
+  loopTemplateNodeId,
   type Page,
   type SiteDocument,
   type StyleRule,
 } from '@core/page-tree'
 import { registry } from '@core/module-engine'
 import { collectClassIdsDrift } from './loadedValuesBaseline'
+import { editOutcomeKey } from './editOutcomes'
+import { rowsOfTemplate, type RowTemplateWrite } from './rowTemplateWrites'
 import { buildClassPageIndex, getStudioStyleRuleSources, resolveCssInsertDestination } from './styleRuleWriteback'
 import { getStudioStyledRuleSources, styledClassRefusal } from './styledRuleSources'
 import type { ClassAssignmentDriftDetail } from '@site/panels/classAssignmentUnsavedNotice'
@@ -118,11 +121,21 @@ export interface ClassNameEditPlan {
   tokenRefusals: ClassTokenRefusal[]
   /** Node ids whose drift was NOT fully sent — their baseline must not advance. */
   refusedNodeIds: string[]
+  /**
+   * ERR-15 — some class waits on a stylesheet this same save is creating. Its
+   * node is in `refusedNodeIds` (held back, never reported); once the create
+   * lands the caller saves again at once, and the class attaches.
+   */
+  awaitingCreatedStylesheet: boolean
+  /** P3-C (OD-8) — the class edits a `.map` row sent to its row template. */
+  rowTemplateWrites: RowTemplateWrite[]
 }
 
 type ClassTokenResult =
-  | { ok: true; token: ClassNameEditToken }
-  | { ok: false; reason: string; message: string }
+  | { kind: 'token'; token: ClassNameEditToken }
+  | { kind: 'refused'; reason: string; message: string }
+  /** The class's stylesheet is being created in this same save — see `resolveClassToken`. */
+  | { kind: 'pending' }
 
 /**
  * The token that ATTACHES this rule's class to an element in the user's real
@@ -160,12 +173,15 @@ type ClassTokenResult =
  *     token that was never there, no-op with `{ ok: true }`, and leave the
  *     canvas showing a change the file does not have. Exactly `style-02`'s
  *     CSS-Modules bug, reachable again through a different door.
- *   - a `create` destination REFUSES: the server picks that file's name and
- *     convention (`detectStylesheetConvention`), so the client cannot yet
+ *   - a `create` destination is PENDING: the server picks that file's name
+ *     and convention (`detectStylesheetConvention`), so the client cannot yet
  *     tell whether the class is reachable as a literal or only as a binding.
- *     One save later `recordCreatedStylesheet` has the answer and the token
- *     resolves normally — which is why a refusal here holds the node's
- *     `classIds` baseline back instead of advancing past it.
+ *     The node's `classIds` baseline is held back, and once the save that
+ *     creates the stylesheet lands (`recordCreatedStylesheet`), `saveSite`
+ *     runs the next save straight away — the token resolves normally and the
+ *     class attaches with no action and no message (ERR-15). This used to
+ *     be a `stylesheet-not-created-yet` warning telling the user to make
+ *     another change.
  */
 function resolveClassToken(
   classId: string,
@@ -179,20 +195,20 @@ function resolveClassToken(
   // regenerated from `.studio/framework.json`, never from a `.css` file, and
   // its NAME is what the DOM carries everywhere it renders. It has no source
   // and never will — resolving a destination for it would be nonsense.
-  if (isGeneratedClass(rule)) return { ok: true, token: { kind: 'literal', token: rule.name } }
+  if (isGeneratedClass(rule)) return { kind: 'token', token: { kind: 'literal', token: rule.name } }
 
   const moduleToken = (file: string, local: string | undefined): ClassTokenResult =>
-    local ? { ok: true, token: { kind: 'module', file, local } } : { ok: true, token: { kind: 'literal', token: rule.name } }
+    local ? { kind: 'token', token: { kind: 'module', file, local } } : { kind: 'token', token: { kind: 'literal', token: rule.name } }
 
   // W4-4 Phase B — checked before every branch below, because a styled rule
   // has no `styleRuleSources` entry and WOULD reach the imported-rule literal
   // fallback. See this function's doc.
   const styled = getStudioStyledRuleSources()[classId]
-  if (styled) return { ok: false, ...styledClassRefusal(styled.componentName) }
+  if (styled) return { kind: 'refused', ...styledClassRefusal(styled.componentName) }
 
   const source = getStudioStyleRuleSources()[classId]
   if (source) {
-    if (!/\.module\.css$/i.test(source.file)) return { ok: true, token: { kind: 'literal', token: rule.name } }
+    if (!/\.module\.css$/i.test(source.file)) return { kind: 'token', token: { kind: 'literal', token: rule.name } }
     // `displayName` is the local name for an IMPORTED module rule; a rule the
     // editor authored into that file carries its local name as `name`. A
     // `:global(...)` class has neither and falls back to the literal.
@@ -201,23 +217,13 @@ function resolveClassToken(
 
   // No source at all. An imported rule that stayed unmapped is Tailwind /
   // compiled output, whose class name IS the DOM name.
-  if (isImportedStyleRuleId(classId)) return { ok: true, token: { kind: 'literal', token: rule.name } }
+  if (isImportedStyleRuleId(classId)) return { kind: 'token', token: { kind: 'literal', token: rule.name } }
 
   const destination = resolveCssInsertDestination(rule, pageIndex)
-  if (!destination.ok) return { ok: false, reason: destination.reason, message: destination.message }
-  if (destination.kind === 'create') {
-    return {
-      ok: false,
-      reason: 'stylesheet-not-created-yet',
-      message:
-        `Studio is creating a stylesheet next to ${destination.pageFile} for this class in this save. Until that ` +
-        'file exists it cannot tell whether the class is reachable by name or only through a CSS-Module binding, ' +
-        'so it will attach the class on your next change rather than guess.',
-    }
-  }
+  if (destination.kind === 'create') return { kind: 'pending' }
   return /\.module\.css$/i.test(destination.file)
     ? moduleToken(destination.file, rule.name)
-    : { ok: true, token: { kind: 'literal', token: rule.name } }
+    : { kind: 'token', token: { kind: 'literal', token: rule.name } }
 }
 
 /**
@@ -236,6 +242,8 @@ export function collectClassNameEdits(
   const unwritable: ClassAssignmentDriftDetail[] = []
   const tokenRefusals: ClassTokenRefusal[] = []
   const refusedNodeIds: string[] = []
+  let awaitingCreatedStylesheet = false
+  const rowTemplateWrites: RowTemplateWrite[] = []
   const pageIndex = buildClassPageIndex(pages)
 
   /** Plain class NAMES, for the honesty toast — which is about what the user sees, not what gets written. */
@@ -253,7 +261,11 @@ export function collectClassNameEdits(
 
     const nodeLabel = getNodeDisplayName(drift.node, registry.get(drift.node.moduleId), visualComponents)
 
-    if (!hasWritableSourceLocation(drift.nodeId)) {
+    // P3-C (OD-8) — a `.map` row's class change is written to its row
+    // template, restyling every row (`rowTemplateWrites.ts`). Only a node with
+    // neither a location nor a template is still unwritable.
+    const templateId = hasWritableSourceLocation(drift.nodeId) ? null : loopTemplateNodeId(drift.nodeId)
+    if (!hasWritableSourceLocation(drift.nodeId) && templateId === null) {
       unwritable.push({
         nodeLabel,
         addedClassNames: displayNames(drift.addedClassIds),
@@ -273,7 +285,12 @@ export function collectClassNameEdits(
       for (const classId of ids) {
         const resolved = resolveClassToken(classId, styleRules, pageIndex)
         if (!resolved) continue
-        if (!resolved.ok) {
+        if (resolved.kind === 'pending') {
+          awaitingCreatedStylesheet = true
+          refused = true
+          continue
+        }
+        if (resolved.kind === 'refused') {
           tokenRefusals.push({
             nodeLabel,
             className: styleRules[classId]?.displayName ?? styleRules[classId]?.name ?? classId,
@@ -297,8 +314,18 @@ export function collectClassNameEdits(
     }
     if (add.length === 0 && remove.length === 0) continue
 
-    edits.push({ kind: 'class', nodeId: drift.nodeId, add, remove })
+    const edit: ClassNameEditPayload = { kind: 'class', nodeId: templateId ?? drift.nodeId, add, remove }
+    edits.push(edit)
+    if (templateId !== null) {
+      const page = pages.find((candidate) => drift.nodeId in candidate.nodes)
+      rowTemplateWrites.push({
+        editKey: editOutcomeKey(edit),
+        nodeId: drift.nodeId,
+        templateId,
+        rowCount: page ? rowsOfTemplate(page, templateId) : 0,
+      })
+    }
   }
 
-  return { edits, unwritable, tokenRefusals, refusedNodeIds }
+  return { edits, unwritable, tokenRefusals, refusedNodeIds, awaitingCreatedStylesheet, rowTemplateWrites }
 }

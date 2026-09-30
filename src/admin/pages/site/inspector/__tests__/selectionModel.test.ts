@@ -125,17 +125,26 @@ describe('useSelectionModel — inline write target', () => {
     })
   })
 
-  it('is unwritable for a `.map` row (no writable source location)', () => {
+  it('P3-C (OD-8) — a `.map` row is writable: its style goes to the row template', () => {
     const nodeId = 'src/pages/Home.tsx:70:21#2'
     loadPageWithNode(
       makeNode({ id: nodeId, moduleId: 'base.div', lockReason: 'part of a repeated .map() row' }),
     )
 
     const { result } = renderHook(() => useSelectionModel())
+    expect(result.current.inlineWritable).toBe(true)
+    expect(result.current.inlineLockReason).toBeNull()
+  })
+
+  it('is unwritable for a source-derived node with neither a location nor a row template', () => {
+    // `loopTemplateNodeId` refuses a row whose template would not decode —
+    // the id grammar is the gate, so no template means no write.
+    const nodeId = 'home:body'
+    loadPageWithNode(makeNode({ id: nodeId, moduleId: 'base.div', lockReason: 'the page root' }))
+
+    const { result } = renderHook(() => useSelectionModel())
     expect(result.current.inlineWritable).toBe(false)
-    expect(result.current.inlineLockReason).toBe(
-      'This element is part of a repeated .map() row, so its style="" layer is written in code.',
-    )
+    expect(result.current.inlineLockReason).toBe('This element is the page root, so its style="" layer is written in code.')
   })
 
   it('folds a code-valued property into the inline branch of the P1 rule, per property', () => {
@@ -322,8 +331,9 @@ describe('useSelectionModel — N nodes', () => {
     // `color` is locked on both -> the control refuses. `width` is locked on
     // one of two -> the write still lands on the other, so it stays offered.
     expect(result.current.selectedNode?.codeProps).toEqual(['style:color'])
-    expect(result.current.blockedPropertyCounts.get('color')).toBe(2)
-    expect(result.current.blockedPropertyCounts.get('width')).toBe(1)
+    expect(result.current.inlineWriteReach?.total).toBe(2)
+    expect(result.current.inlineWriteReach?.blockedByProperty.get('color')).toBe(2)
+    expect(result.current.inlineWriteReach?.blockedByProperty.get('width')).toBe(1)
   })
 
   it('excludes a layer whose module takes no inline style from the write, and names it', () => {

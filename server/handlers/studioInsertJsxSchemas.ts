@@ -57,6 +57,21 @@ const JsxPropElementNodeSchema = Type.Recursive((Self) =>
   }),
 )
 
+/**
+ * P5-B3 (IMG-10) — an image IMPORT in prop position: the WORKSPACE-relative
+ * path of an image file the new element reads through an import. The server
+ * guards the path and spells the specifier from the file being written
+ * (`studioInsertAssetImports.ts`); the codemod writes the default import and
+ * `prop={name}` in the same splice. Honoured on an `insert`'s direct props
+ * only — anywhere else `validateSubtree` refuses it.
+ */
+const AssetImportPropSchema = Type.Object({
+  __assetImport: Type.String({
+    maxLength: 1024,
+    description: 'Workspace-relative path of an image file in this project, written as a default import plus prop={name}.',
+  }),
+})
+
 const JsxPropValueSchema = Type.Recursive((Self) =>
   Type.Union([
     Type.String(),
@@ -64,6 +79,7 @@ const JsxPropValueSchema = Type.Recursive((Self) =>
     Type.Boolean(),
     Type.Null(),
     Type.Object({ __jsx: JsxPropElementNodeSchema }),
+    AssetImportPropSchema,
     Type.Array(Self),
     Type.Record(Type.String(), Self),
   ]),

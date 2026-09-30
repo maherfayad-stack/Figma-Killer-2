@@ -50,9 +50,11 @@
  * delete primitive.
  */
 import { dirname, join, resolve } from 'node:path'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { EXCLUDED_WORKSPACE_DIR_NAMES, WORKSPACE_MAX_FILE_BYTES, WORKSPACE_MAX_FILES } from '@core/page-parser'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { WORKSPACE_MAX_FILE_BYTES, WORKSPACE_MAX_FILES, excludedWorkspaceSegment, pathEntryExists } from '@core/page-parser'
+import { STUDIO_STORE_DIR } from './studioStore'
 import { toArrayBuffer } from '../../binary'
+import { isRealpathStrictlyInsideAllowingMissing } from './workspacePackageResolve'
 
 /**
  * Aggregate *uncompressed* budget across every accepted file in one archive.
@@ -98,7 +100,9 @@ export function isSafeRelPath(relPath: string): boolean {
       segment !== '.' &&
       segment !== '..' &&
       !segment.includes(':') &&
-      !EXCLUDED_WORKSPACE_DIR_NAMES.has(segment),
+      // Case-folded, trailing dots dropped: an entry `.GIT/hooks/…` lands in
+      // `.git/hooks/` on Windows and macOS.
+      excludedWorkspaceSegment(segment) === null,
   )
 }
 
@@ -214,7 +218,8 @@ export function createArchiveEntryDecider(options: ResolveEntryRelPathOptions): 
  * future caller's derivation can't turn into silent data loss.
  */
 export function refuseIfStudioWorkspace(targetDir: string): void {
-  if (existsSync(join(targetDir, '.studio'))) {
+  // `pathEntryExists`, not `existsSync`: a DANGLING `.studio` link is user state too.
+  if (pathEntryExists(join(targetDir, STUDIO_STORE_DIR))) {
     throw new ArchiveIngestError(
       'Refusing to import: the target already contains an existing studio workspace (has a .studio/ directory). Imports must target a directory with no existing workspace data.',
       400,
@@ -236,6 +241,14 @@ export interface ArchiveIngestOutcome {
  * (every `relPath` already passed `isSafeRelPath`, so `join(targetDir, ...)`
  * cannot normalize outside it) are inherited automatically.
  *
+ * `targetDir` must also sit strictly inside `projectsRoot` on the REAL path
+ * (`isRealpathStrictlyInsideAllowingMissing`, the same rule `gitClone.ts`
+ * applies before a clone), checked before anything is cleared. Every caller
+ * derives the target server-side, so this is the second line: the root is
+ * operator-configurable (`STUDIO_WORKSPACE_DIR`), and a symlink planted at
+ * `<root>/<owner>-<repo>` must not turn the clear into a delete elsewhere.
+ * A refusal is a 404 that names no path.
+ *
  * `readEntryBytes` is called ONLY for accepted entries, and only one at a
  * time (never all up front) — for a zip this reads the already-inflated
  * `Unzipped` map; for an uploaded `File` it awaits `.arrayBuffer()`. Either
@@ -243,10 +256,15 @@ export interface ArchiveIngestOutcome {
  */
 export async function writeArchiveToWorkspace(
   targetDir: string,
+  projectsRoot: string,
   accepted: ReadonlyMap<string, string>,
   readEntryBytes: (entryName: string) => Uint8Array | Promise<Uint8Array>,
   skipped: number,
 ): Promise<ArchiveIngestOutcome> {
+  mkdirSync(projectsRoot, { recursive: true })
+  if (!isRealpathStrictlyInsideAllowingMissing(targetDir, projectsRoot)) {
+    throw new ArchiveIngestError('That import target is outside the Studio workspace.', 404)
+  }
   refuseIfStudioWorkspace(targetDir)
 
   // Clearing the target keeps a re-import from leaving stale files behind

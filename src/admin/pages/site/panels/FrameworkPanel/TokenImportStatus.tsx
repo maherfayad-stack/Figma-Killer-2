@@ -16,7 +16,7 @@ import { useState, useSyncExternalStore } from 'react'
 import { Button } from '@ui/components/Button'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
-import { refreshExtractedTokens } from '@site/studio/fsCodemodAdapter'
+import { refreshExtractedTokens } from '@site/studio/studioProjectLoad'
 import {
   getStudioTokenExtractionStatus,
   subscribeStudioTokenExtractionStatus,

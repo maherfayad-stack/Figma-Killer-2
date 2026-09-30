@@ -49,7 +49,6 @@ function resetStore() {
     boardSnapGuides: [],
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     _historyPast: [],
     _historyFuture: [],
     canUndo: false,

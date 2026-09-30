@@ -101,7 +101,7 @@
   "addPropertyConvention": {
     "emptySectionRender": "Title + trailing '+' button, one 32px row, no chevron",
     "onAddClick": "reveals the section's fields AND writes a real default value immediately (e.g. clicking Stroke's '+' writes a visible 1px solid black stroke, not a zero/placeholder value)",
-    "contrastWithStudio": "Studio's own AddablePropertyField (docs/features/inspector-disclosure.md Law 3) explicitly reveals a row and writes NOTHING until the user commits a value -- this is a deliberate, already-decided difference (Studio edits real source files; a silent default write would be a surprising diff), not a gap to close"
+    "contrastWithStudio": "Studio's own AddablePropertyField (docs/features/inspector.md Law 3) explicitly reveals a row and writes NOTHING until the user commits a value -- this is a deliberate, already-decided difference (Studio edits real source files; a silent default write would be a surprising diff), not a gap to close"
   },
   "clickCountsToCommonEdit": {
     "f1_changeFillColor": { "clicks": 2, "steps": ["select the rectangle", "type into the Fill hex field"] },

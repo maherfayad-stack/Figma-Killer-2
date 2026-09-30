@@ -40,7 +40,7 @@
 import { join } from 'node:path'
 import { unzipSync, type Unzipped } from 'fflate'
 import { Type, safeParseValue } from '@core/utils/typeboxHelpers'
-import { badRequest, jsonResponse } from '../../http'
+import { badRequest, jsonResponse, internalServerError } from '../../http'
 import {
   ArchiveIngestError,
   MAX_ARCHIVE_BYTES,
@@ -114,7 +114,7 @@ function deriveUploadTargetDir(rootName: string | undefined, projectsRoot: strin
   return { dir: join(projectsRoot, folder), displayName }
 }
 
-async function ingestZipUpload(file: File, targetDir: string) {
+async function ingestZipUpload(file: File, targetDir: string, projectsRoot: string) {
   const zipBytes = new Uint8Array(await file.arrayBuffer())
   const sharedRoot = detectSharedZipRoot(listZipEntryNames(zipBytes))
   const decider = createArchiveEntryDecider({ stripRootFolder: sharedRoot !== null })
@@ -137,10 +137,10 @@ async function ingestZipUpload(file: File, targetDir: string) {
     throw new ArchiveIngestError('No importable files were found in the uploaded archive.', 422)
   }
 
-  return writeArchiveToWorkspace(targetDir, decider.accepted, (name) => zip[name], decider.skipped)
+  return writeArchiveToWorkspace(targetDir, projectsRoot, decider.accepted, (name) => zip[name], decider.skipped)
 }
 
-async function ingestDirectoryUpload(files: File[], targetDir: string) {
+async function ingestDirectoryUpload(files: File[], targetDir: string, projectsRoot: string) {
   const decider = createArchiveEntryDecider({ stripRootFolder: false })
   const byName = new Map<string, File>()
   for (const file of files) {
@@ -153,6 +153,7 @@ async function ingestDirectoryUpload(files: File[], targetDir: string) {
 
   return writeArchiveToWorkspace(
     targetDir,
+    projectsRoot,
     decider.accepted,
     async (name) => {
       const file = byName.get(name)
@@ -206,9 +207,9 @@ export async function tryServeStudioIngest(
     let result: Awaited<ReturnType<typeof ingestDirectoryUpload>>
     if (parsedFields.value.kind === 'zip') {
       if (files.length !== 1) return badRequest('a zip upload must contain exactly one file')
-      result = await ingestZipUpload(files[0], dir)
+      result = await ingestZipUpload(files[0], dir, projectsRoot)
     } else {
-      result = await ingestDirectoryUpload(files, dir)
+      result = await ingestDirectoryUpload(files, dir, projectsRoot)
     }
 
     // Safe to write unconditionally: a successful ingest means the target had
@@ -233,6 +234,6 @@ export async function tryServeStudioIngest(
     if (err instanceof ArchiveIngestError) {
       return jsonResponse({ error: err.message }, { status: err.status })
     }
-    return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    return internalServerError('[studio]', err)
   }
 }

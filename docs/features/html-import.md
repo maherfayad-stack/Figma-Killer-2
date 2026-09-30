@@ -1,4 +1,5 @@
 # HTML Import
+> **Purpose:** HTML string to page-tree fragment (paste HTML, the agent insertHtml tool) · **Read when:** touching HTML paste or HTML import · **Trust:** current-cms · **Owner:** parser-surgeon · **Verified:** not yet
 
 `src/core/htmlImport` converts an HTML string into a flat fragment of first-class `PageNode`s that callers splice directly into the live page tree.
 

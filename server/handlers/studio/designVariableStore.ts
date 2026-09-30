@@ -42,9 +42,7 @@
  * that apply to THIS measurement".
  */
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { parseJsonWithFallback } from '@core/utils/jsonValidate'
+import { readStudioStoreJson, writeStudioStoreJson } from './studioStore'
 import {
   DesignVariableManifestSchema,
   EMPTY_DESIGN_VARIABLE_MANIFEST,
@@ -57,25 +55,14 @@ import { normalizeDesignVariableValue } from './designVariableNormalize'
 
 const SET_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-function variablesDir(dir: string): string {
-  return join(dir, '.studio', 'variables')
-}
-
-function manifestFile(dir: string): string {
-  return join(variablesDir(dir), 'manifest.json')
-}
+const MANIFEST_FILE = 'variables/manifest.json'
 
 function readManifest(dir: string): DesignVariableManifest {
-  const file = manifestFile(dir)
-  if (!existsSync(file)) return EMPTY_DESIGN_VARIABLE_MANIFEST
-  const raw = readFileSync(file, 'utf8')
-  return parseJsonWithFallback(raw, DesignVariableManifestSchema, EMPTY_DESIGN_VARIABLE_MANIFEST)
+  return readStudioStoreJson(dir, MANIFEST_FILE, DesignVariableManifestSchema, EMPTY_DESIGN_VARIABLE_MANIFEST)
 }
 
 function writeManifest(dir: string, manifest: DesignVariableManifest): void {
-  const file = manifestFile(dir)
-  mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, JSON.stringify(manifest, null, 2))
+  writeStudioStoreJson(dir, MANIFEST_FILE, manifest, { pretty: true })
 }
 
 // ---------------------------------------------------------------------------

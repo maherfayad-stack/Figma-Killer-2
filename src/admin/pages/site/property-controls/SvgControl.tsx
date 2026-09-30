@@ -36,6 +36,13 @@ const MediaPickerModal = lazy(() =>
 
 const SVG_MIME = 'image/svg+xml'
 
+/** The library file's markup, sanitized (empty when nothing valid survives). */
+async function fetchSanitizedSvg(publicPath: string): Promise<string> {
+  const res = await fetch(publicPath)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return sanitizeSvg(await res.text())
+}
+
 export function SvgControl({
   propKey,
   value,
@@ -51,6 +58,7 @@ export function SvgControl({
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
+  // SVG-3 — the default sanitizer profile removes Studio's part stamps.
   const markup = sanitizeSvg(value)
 
   const openEditor = () => {
@@ -67,20 +75,14 @@ export function SvgControl({
     setError('')
     setLoading(true)
     try {
-      const res = await fetch(asset.publicPath)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const clean = sanitizeSvg(await res.text())
-      if (!clean) {
-        setError('Couldn’t read a valid SVG from that file.')
-        return
-      }
-      onChange(propKey, clean)
+      const clean = await fetchSanitizedSvg(asset.publicPath)
+      if (clean) onChange(propKey, clean)
+      else setError('Couldn’t read a valid SVG from that file.')
     } catch (err) {
       console.error('[SvgControl] failed to load SVG from library:', err)
       setError('Couldn’t load that SVG file.')
-    } finally {
-      setLoading(false)
     }
+    setLoading(false)
   }
 
   return (

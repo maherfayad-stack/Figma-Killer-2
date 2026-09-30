@@ -91,7 +91,7 @@ describe('studio_git_commit — capability declaration', () => {
   })
 
   it('is invisible without ai.tools.write, because it mutates', () => {
-    expect(tool.mutates).toBe(true)
+    expect(tool.requiresWrite).toBe(true)
     expect(toolAllowedForCapabilities(tool, ['ai.chat', 'studio.git.write'])).toBe(false)
   })
 
@@ -195,10 +195,10 @@ const openPrTool = toolNamed('studio_git_open_pr')
 describe('the git tool family — capability declarations', () => {
   it('gates every MUTATING tool behind studio.git.write, never studio.write', () => {
     for (const mutating of [branchTool, pushTool, openPrTool, toolNamed('studio_git_commit')]) {
-      expect({ name: mutating.name, caps: mutating.requiredCapabilities, mutates: mutating.mutates }).toEqual({
+      expect({ name: mutating.name, caps: mutating.requiredCapabilities, requiresWrite: mutating.requiresWrite }).toEqual({
         name: mutating.name,
         caps: ['studio.git.write'],
-        mutates: true,
+        requiresWrite: true,
       })
       expect(toolAllowedForCapabilities(mutating, ['ai.chat', 'ai.tools.write', 'studio.write'])).toBe(false)
       expect(toolAllowedForCapabilities(mutating, ['ai.chat', 'studio.git.write'])).toBe(false)
@@ -207,7 +207,8 @@ describe('the git tool family — capability declarations', () => {
   })
 
   it('leaves studio_git_status as an ordinary read — reporting what you changed must not require permission to commit it', () => {
-    expect(statusTool.mutates).toBe(false)
+    expect(statusTool.requiresWrite ?? false).toBe(false)
+    expect(statusTool.sideEffects).toBe('none')
     expect(statusTool.requiredCapabilities ?? []).toEqual([])
     expect(toolAllowedForCapabilities(statusTool, ['ai.chat'])).toBe(true)
   })

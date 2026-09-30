@@ -16,6 +16,7 @@
  *   - `./site/pageActions`      — page CRUD + template conversions
  *   - `./site/explorerActions`  — Site Explorer folder/order organization
  *   - `./site/nodeActions`      — the 11 named tree mutations + multi-select variants + dynamic bindings
+ *   - `./site/instanceActions`  — P5-C's one Detach action (`detachInstances`) and its confirm
  *   - `./site/breakpointActions`— breakpoint CRUD
  *   - `./site/settingsActions`  — site-level settings patch
  *   - `./site/fontActions`      — font library CRUD
@@ -30,6 +31,7 @@ import { createLifecycleActions } from './site/lifecycleActions'
 import { createPageActions } from './site/pageActions'
 import { createExplorerActions } from './site/explorerActions'
 import { createNodeActions } from './site/nodeActions'
+import { createInstanceActions } from './site/instanceActions'
 import { createBreakpointActions } from './site/breakpointActions'
 import { createSettingsActions } from './site/settingsActions'
 import { createFontActions } from './site/fontActions'
@@ -42,17 +44,20 @@ import { createFrameworkManagerActions } from './site/framework/manage'
 import { createFrameworkTokenImportActions } from './site/framework/tokenImport'
 import { emptyNodeIndexes, nodeIndexState } from './site/nodeIndex'
 import type { SiteSlice } from './site/types'
+import type { InstanceDetachSlice } from './site/instanceDetachTypes'
 
 // Re-export the public slice type for store wiring.
 
 
 // Contribute this slice's fields to the combined `EditorStore` type via TS
 // module augmentation. See `../types.ts` for why we use this pattern.
+// P5-C — the Detach action's surface rides the same augmentation, beside
+// `SiteSlice` rather than inside `./site/types` (at its size ceiling).
 declare module '@site/store/types' {
-  interface EditorStore extends SiteSlice {}
+  interface EditorStore extends SiteSlice, InstanceDetachSlice {}
 }
 
-export const createSiteSlice: EditorStoreSliceCreator<SiteSlice> = (set, get) => {
+export const createSiteSlice: EditorStoreSliceCreator<SiteSlice & InstanceDetachSlice> = (set, get) => {
   // Build the closure-shared mutation helpers once. Every action factory
   // receives this same object — so there is exactly one
   // `mutateActiveTree` / `mutateSite` per slice instance.
@@ -74,6 +79,9 @@ export const createSiteSlice: EditorStoreSliceCreator<SiteSlice> = (set, get) =>
     // helpers.ts/undoRedoActions.ts. See nodeIndex.ts.
     ...nodeIndexState(emptyNodeIndexes()),
 
+    // P5-C — the Detach verb's pre-commit confirm (`instanceActions.ts`).
+    instanceDetachConfirm: null,
+
     // mutateAllPagesAndSite is the public entry point for the Super Import
     // wizard — one Cmd+Z reverts the entire import.
     mutateAllPagesAndSite: helpers.mutateAllPagesAndSite,
@@ -85,6 +93,7 @@ export const createSiteSlice: EditorStoreSliceCreator<SiteSlice> = (set, get) =>
     ...createPageActions(helpers),
     ...createExplorerActions(helpers),
     ...createNodeActions(helpers),
+    ...createInstanceActions(helpers),
     ...createBreakpointActions(helpers),
     ...createSettingsActions(helpers),
     ...createFontActions(helpers),

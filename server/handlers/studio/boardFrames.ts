@@ -20,53 +20,23 @@
  * screens ten to one, and why it places each story exactly once instead of
  * reconciling.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync } from 'node:fs'
 import {
   createBoard,
-  createBoardsFile,
   defaultFramePosition,
-  parseBoardsFile,
-  serializeBoardsFile,
   upsertBoard,
   upsertFrame,
   FRAME_GAP,
   FRAME_HEIGHT,
   FRAME_WIDTH,
   type Board,
-  type BoardsFile,
+  type BoardFramePlacement,
 } from '@core/studio-board'
 import { discoverPageFiles, projectPagesDir } from '../studioProjects'
 import { pageIdFromRelPath } from '../studioPageIds'
 import { mergeStudioMeta, readStudioMeta } from './studioMeta'
 import type { StorySummary } from './storyDiscovery'
-
-export function boardsFilePath(dir: string): string {
-  return join(dir, '.studio', 'boards.json')
-}
-
-/** Read the project's boards, or a fresh empty file when none exists yet. */
-export function readBoardsFile(dir: string): BoardsFile {
-  const file = boardsFilePath(dir)
-  return existsSync(file) ? parseBoardsFile(readFileSync(file, 'utf8')) : createBoardsFile()
-}
-
-/**
- * Persist a boards file, creating `.studio/` if this is the project's first
- * board write.
- *
- * Exported alongside {@link readBoardsFile} for the board-mutating MCP tools
- * (`studio_set_frames`, `studio_set_frame_axes`,
- * `studio_duplicate_frame_as_variant`), which had each grown their own copy of
- * these four lines. This module's whole reason to exist is that every
- * server-side write to the board's frame list has one owner — a private write
- * helper here plus two more elsewhere was that ownership in name only.
- */
-export function writeBoardsFile(dir: string, next: BoardsFile): void {
-  const file = boardsFilePath(dir)
-  mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, serializeBoardsFile(next))
-}
+import { readBoardsFile, writeBoardsFile } from './boardGeometry'
 
 /**
  * Places `pageId` on the project's board at the next free grid slot
@@ -92,7 +62,12 @@ export function writeBoardsFile(dir: string, next: BoardsFile): void {
  * or re-positioned — a scaffolded screen gets exactly one frame, never a
  * second "variant" of itself.
  */
-export function autoPlaceBoardFrame(dir: string, pageId: string, boardId?: string): void {
+export function autoPlaceBoardFrame(
+  dir: string,
+  pageId: string,
+  boardId?: string,
+  placement?: BoardFramePlacement,
+): void {
   const existing = readBoardsFile(dir)
   // The board the author had OPEN wins over "the first one". Boards curate
   // subsets of the project's pages on purpose, so a page created while looking
@@ -106,14 +81,18 @@ export function autoPlaceBoardFrame(dir: string, pageId: string, boardId?: strin
   const board = requested ?? existing.boards[0] ?? createBoard(crypto.randomUUID(), 'Board 1')
   if (board.frames.some((f) => f.pageId === pageId)) return
 
-  const { x, y } = defaultFramePosition(board.frames.length)
+  // P5-F / IX-13 — a frame DRAWN with the board tool lands where it was
+  // drawn, at the drawn size; anything else takes the next grid slot.
+  const { x, y } = placement ?? defaultFramePosition(board.frames.length)
   // WS-7.2 — a page scaffolded after "apply to all pages" inherits the
   // project's own frame default instead of the hardcoded FRAME_WIDTH/HEIGHT,
-  // same precedent `boardSlice.ts`'s `addFrame` follows.
+  // same precedent `boardSlice.ts`'s `addFrame` follows. A drawn size wins.
   const frameDefaults = readStudioMeta(dir).frameDefaults ?? {}
   const frame: Parameters<typeof upsertFrame>[1] = { id: crypto.randomUUID(), pageId, x, y }
-  if (frameDefaults.width) frame.width = frameDefaults.width
-  if (frameDefaults.height) frame.height = frameDefaults.height
+  const width = placement?.width ?? frameDefaults.width
+  const height = placement?.height ?? frameDefaults.height
+  if (width) frame.width = width
+  if (height) frame.height = height
 
   writeBoardsFile(dir, upsertBoard(existing, upsertFrame(board, frame)))
 }
@@ -136,7 +115,6 @@ export function autoPlaceBoardFrame(dir: string, pageId: string, boardId?: strin
  * leaves `boards.json`'s mtime alone (`compareVerdictCache.ts` keys on it).
  */
 export function removeBoardFramesForPage(dir: string, pageId: string): number {
-  if (!existsSync(boardsFilePath(dir))) return 0
   const existing = readBoardsFile(dir)
   let removed = 0
   const boards = existing.boards.map((board) => {
@@ -280,6 +258,5 @@ export function syncStoryBoardFrames(dir: string, stories: readonly StorySummary
 
 /** Whether `.studio/boards.json` already carries a frame for `pageId` on any board. */
 function boardHasFrameForPage(dir: string, pageId: string): boolean {
-  if (!existsSync(boardsFilePath(dir))) return false
   return readBoardsFile(dir).boards.some((board) => board.frames.some((frame) => frame.pageId === pageId))
 }

@@ -20,6 +20,7 @@
 
 import { existsSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { resolveStudioDataRoot } from '../../runtimeDirs'
 import { ensurePrivateDirectory } from '../../ai/credentials/privateTempDir'
 import { assertPathWithin } from '../../util/pathWithin'
 import { projectsRootDir } from '../studioProjects'
@@ -44,14 +45,15 @@ export class InvalidClaudeCliUserIdError extends Error {
  * Resolve the root directory all per-user Claude CLI config directories live
  * under. Deliberately NOT `uploadsDir` (that's served over HTTP) and NOT
  * inside any `studio-workspace/<project>` (that's a user's repo). Defaults to
- * `<cwd>/.data/claude-cli`; override with `CLAUDE_CLI_DATA_DIR` for
+ * `<STUDIO_DATA_DIR>/claude-cli` (`<cwd>/.data/claude-cli` when unset; see
+ * `server/runtimeDirs.ts`); override with `CLAUDE_CLI_DATA_DIR` for
  * deployments that want it elsewhere (e.g. a persistent volume).
  */
 export function resolveClaudeCliDataRoot(
   env: Record<string, string | undefined> = process.env,
 ): string {
   const configured = env.CLAUDE_CLI_DATA_DIR
-  return configured ? resolve(configured) : resolve(process.cwd(), '.data', 'claude-cli')
+  return configured ? resolve(configured) : join(resolveStudioDataRoot(env), 'claude-cli')
 }
 
 /**

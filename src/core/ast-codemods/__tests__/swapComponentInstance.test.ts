@@ -1,6 +1,6 @@
 /**
  * swapComponentInstance — WS-4.5. Covers the plan's gate list: tag rename,
- * import resolution, prop diffing, shadowing refusal.
+ * import resolution, prop diffing, and (P3-C WB-19) aliasing instead of a shadowing refusal.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
@@ -209,7 +209,7 @@ describe('swapComponentInstance — prop diffing', () => {
 })
 
 describe('swapComponentInstance — refusals', () => {
-  it('refuses when the new name would shadow an existing binding', () => {
+  it('P3-C (WB-19) — imports under an alias when the new name is already bound, never shadowing it', () => {
     write('components/Card.tsx', 'export function Card() {\n  return <div>Card</div>\n}\n')
     write('components/Tile.tsx', 'export function Tile() {\n  return <div>Tile</div>\n}\n')
     const pageFile = write('pages/Home.tsx', [
@@ -222,8 +222,37 @@ describe('swapComponentInstance — refusals', () => {
     ].join('\n'))
 
     const result = swapAt(pageFile, 4, 11, { newComponentName: 'Tile', newComponentSource: 'local', newComponentFile: 'components/Tile.tsx' })
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.refusal.reason).toBe('name-shadow')
+    expect(result.ok).toBe(true)
+    expect(read('pages/Home.tsx')).toBe(
+      [
+        "import { Tile as Tile2 } from '../components/Tile';",
+        '',
+        "const Tile = 'not a component'",
+        'export default function Home() {',
+        '  return <Tile2 />',
+        '}',
+        '',
+      ].join('\n'),
+    )
+  })
+
+  it('P3-C (WB-19) — reuses an existing import of the new component under its alias', () => {
+    write('components/Card.tsx', 'export function Card() {\n  return <div>Card</div>\n}\n')
+    write('components/Tile.tsx', 'export function Tile() {\n  return <div>Tile</div>\n}\n')
+    const pageFile = write('pages/Home.tsx', [
+      "import { Card } from '../components/Card'",
+      "import { Tile as T } from '../components/Tile'",
+      'export default function Home() {',
+      '  return <><Card /><T /></>',
+      '}',
+      '',
+    ].join('\n'))
+
+    const result = swapAt(pageFile, 4, 13, { newComponentName: 'Tile', newComponentSource: 'local', newComponentFile: 'components/Tile.tsx' })
+    expect(result.ok).toBe(true)
+    expect(read('pages/Home.tsx')).toBe(
+      ["import { Tile as T } from '../components/Tile'", 'export default function Home() {', '  return <><T /><T /></>', '}', ''].join('\n'),
+    )
   })
 
   it('refuses a plain HTML element', () => {

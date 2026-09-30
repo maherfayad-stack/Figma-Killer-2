@@ -94,10 +94,16 @@ import {
 } from '../panels/PropertiesPanel/stylePropertyProvenance'
 import { classCssWriteLockReason, resolveClassCssEditability } from '../panels/PropertiesPanel/classCssWritability'
 import {
+  buildInlineStyleWriteReach,
+  INLINE_CODE_VALUE_REASON,
+  type StyleWriteReach,
+} from '../panels/PropertiesPanel/styleWriteReach'
+import {
   canWriteInlineStyleForModule,
   hasWritableSourceLocation,
   isGeneratedClassLocked,
   isStudioPageRootId,
+  loopTemplateNodeId,
   styleRuleSelector,
   styleValueKey,
   type CSSPropertyBag,
@@ -113,7 +119,6 @@ import {
 
 const EMPTY_CODE_PROPS: readonly string[] = []
 const STYLE_KEY_PREFIX = styleValueKey('')
-const EMPTY_BLOCKED_COUNTS: ReadonlyMap<string, number> = new Map()
 /** Stable empty bag so a node without inline styles doesn't allocate one per render. */
 const EMPTY_STYLES: Record<string, unknown> = {}
 
@@ -128,17 +133,11 @@ function sharedClassIds(nodes: ReadonlyArray<PageNode>): string[] {
   return anchor.classIds.filter((id) => nodes.every((node) => node.classIds.includes(id)))
 }
 
-/** `style:<prop>` keys on one node, with the `style:` prefix sliced off. */
-function lockedStyleKeys(node: PageNode): string[] {
-  return (node.codeProps ?? EMPTY_CODE_PROPS)
-    .filter((name) => name.startsWith(STYLE_KEY_PREFIX))
-    .map((name) => name.slice(STYLE_KEY_PREFIX.length))
-}
-
 interface CollapsedMultiSelection {
   /** The anchor, wearing the whole selection's collapsed inline bag and locks. */
   node: PageNode | null
-  blockedPropertyCounts: ReadonlyMap<string, number>
+  /** How far an inline write reaches, per property — see `styleWriteReach.ts`. */
+  inlineWriteReach: StyleWriteReach
 }
 
 /**
@@ -157,9 +156,8 @@ function collapseMultiSelection(
   styleRules: Record<string, StyleRule> | undefined,
   activeContextId: string | null,
 ): CollapsedMultiSelection {
-  if (anchor === null || nodes.length === 0) {
-    return { node: anchor, blockedPropertyCounts: EMPTY_BLOCKED_COUNTS }
-  }
+  const inlineWriteReach = buildInlineStyleWriteReach(nodes, INLINE_CODE_VALUE_REASON)
+  if (anchor === null || nodes.length === 0) return { node: anchor, inlineWriteReach }
 
   const styleNodes = nodes.map((node) => ({
     inlineStyles: node.inlineStyles ?? EMPTY_STYLES,
@@ -183,19 +181,13 @@ function collapseMultiSelection(
     ...uncuratedPresent,
   ])
 
-  const blockedPropertyCounts = new Map<string, number>()
-  for (const node of nodes) {
-    for (const key of lockedStyleKeys(node)) {
-      blockedPropertyCounts.set(key, (blockedPropertyCounts.get(key) ?? 0) + 1)
-    }
-  }
-  const lockedOnEveryNode = [...blockedPropertyCounts.entries()]
+  const lockedOnEveryNode = [...inlineWriteReach.blockedByProperty.entries()]
     .filter(([, count]) => count === nodes.length)
     .map(([key]) => styleValueKey(key))
 
   return {
     node: { ...anchor, inlineStyles: storedStyles, codeProps: lockedOnEveryNode },
-    blockedPropertyCounts,
+    inlineWriteReach,
   }
 }
 
@@ -237,11 +229,15 @@ export interface SelectionModel {
   /** Selected nodes whose module takes no inline style of its own. */
   inlineUnwritableNodes: ReadonlyArray<PageNode>
   /**
-   * `style:<prop>` properties, and how many selected layers refuse each —
-   * the count a row states instead of a boolean ("writes to 3 of 5"). Empty
-   * for a single selection, which uses `codeProps` directly.
+   * How far an INLINE write reaches across a multi-selection: per
+   * `style:<prop>` property, how many selected layers refuse it — the count a
+   * row states instead of a boolean ("writes to 3 of 5"). `null` for a single
+   * selection (which uses `codeProps` directly) and while a multi-selection
+   * targets its shared class, which is one write that reaches every element
+   * carrying it. `StyleSurface` hands it to the sections through
+   * `StyleWriteLockContext`; `MultiSelectTargetBar` states it once above them.
    */
-  blockedPropertyCounts: ReadonlyMap<string, number>
+  inlineWriteReach: StyleWriteReach | null
   /**
    * The classes EVERY selected node carries, for the multi-selection target
    * chip. Empty for a single selection (which uses `assignedClassRules`).
@@ -333,8 +329,6 @@ export function useSelectionModel(): SelectionModel {
 
   const multi = isMultiSelect ? collapseMultiSelection(selectedNodes, anchorNode, styleRules, activeContextId) : null
   const selectedNode = multi?.node ?? anchorNode
-  const blockedPropertyCounts: ReadonlyMap<string, number> =
-    multi?.blockedPropertyCounts ?? EMPTY_BLOCKED_COUNTS
 
   // The class target, when the user explicitly picked one for a
   // multi-selection and cleared its gate. A target the selection stopped
@@ -343,6 +337,7 @@ export function useSelectionModel(): SelectionModel {
   const multiTargetRule = isMultiSelect
     ? (sharedClassRules.find((rule) => rule.id === multiTarget.classId) ?? null)
     : null
+  const inlineWriteReach = multi !== null && multiTargetRule === null ? multi.inlineWriteReach : null
 
   const assignedClassRules: StyleRule[] = isMultiSelect
     ? multiTargetRule
@@ -387,8 +382,14 @@ export function useSelectionModel(): SelectionModel {
     ? inlineWritableNodeIds.length === 0
     : nodeModuleId !== undefined && !canWriteInlineStyleForModule(nodeModuleId)
   const canToggleElement = canEditStyleHere && selectedNodeId != null && !inlineModuleUnwritable
+  // P3-C (OD-8) — a `.map` row's inline style is written to the row
+  // template, so a row is not locked here; the notice says it restyles every
+  // row. Only a node with neither a location nor a template is.
   const sourceLockReason =
-    !isMultiSelect && selectedNode && !hasWritableSourceLocation(selectedNode.id)
+    !isMultiSelect &&
+    selectedNode &&
+    !hasWritableSourceLocation(selectedNode.id) &&
+    loopTemplateNodeId(selectedNode.id) === null
       ? selectedNode.lockReason
       : undefined
   // Element is the default multi target; picking the class turns inline OFF
@@ -460,7 +461,7 @@ export function useSelectionModel(): SelectionModel {
     selectedNodes,
     inlineWritableNodeIds,
     inlineUnwritableNodes,
-    blockedPropertyCounts,
+    inlineWriteReach,
     sharedClassRules,
 
     activeContextId,

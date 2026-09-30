@@ -35,16 +35,14 @@
  * stale frame.
  */
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { FRAME_HEIGHT, FRAME_WIDTH, type Board } from '@core/studio-board'
 import { Type, safeParseValue } from '@core/utils/typeboxHelpers'
-import type { SharedBoard, SharedFrame } from '@core/studio-share'
+import { isShareTokenShape, type SharedBoard, type SharedFrame } from '@core/studio-share'
 import { captureFrames } from '../../ai/mcp/capture/captureFrames'
-import { readBoardsFileOrEmpty } from './boardGeometry'
+import { readBoardsFile } from './boardGeometry'
 import { loadStudioPages } from '../studioPageLoad'
 import { projectDisplayName } from '../studioProjects'
-import { deleteShareSnapshot, shareSnapshotDir } from './shareStore'
+import { replaceShareSnapshot } from './shareStore'
 
 /**
  * The per-frame entries `studio_export_frames` returns, whichever capture
@@ -104,8 +102,7 @@ export async function writeShareSnapshot(
   input: ShareSnapshotInput,
   overrides: ShareSnapshotOverrides = {},
 ): Promise<ShareSnapshotResult> {
-  const snapshotDir = shareSnapshotDir(input.dir, input.token)
-  if (!snapshotDir) return { ok: false, error: 'Invalid share token.' }
+  if (!isShareTokenShape(input.token)) return { ok: false, error: 'Invalid share token.' }
 
   const frames = input.board.frames
   if (frames.length === 0) {
@@ -177,20 +174,15 @@ export async function writeShareSnapshot(
     frames: sharedFrames,
   }
 
-  // Wipe first: an update must not leave the previous capture's PNGs behind,
-  // where they would be unreferenced bytes of someone's design sitting in a
-  // directory the public route can reach.
-  deleteShareSnapshot(input.dir, input.token)
-  mkdirSync(snapshotDir, { recursive: true })
-  for (const entry of written) writeFileSync(join(snapshotDir, entry.file), entry.bytes)
-  writeFileSync(join(snapshotDir, 'board.json'), `${JSON.stringify(snapshot, null, 2)}\n`)
+  // A full replace, never a merge (`replaceShareSnapshot` wipes first).
+  replaceShareSnapshot(input.dir, input.token, [...written, { file: 'board.json', bytes: `${JSON.stringify(snapshot, null, 2)}\n` }])
 
   return { ok: true, snapshot }
 }
 
 /** The board a share targets, or `null` when the id names no board in this project. */
 export function findBoard(dir: string, boardId: string | undefined): Board | null {
-  const file = readBoardsFileOrEmpty(dir)
+  const file = readBoardsFile(dir)
   if (!boardId) return file.boards[0] ?? null
   return file.boards.find((board) => board.id === boardId) ?? null
 }

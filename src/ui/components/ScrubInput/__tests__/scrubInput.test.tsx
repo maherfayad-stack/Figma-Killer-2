@@ -194,6 +194,67 @@ describe('ScrubInput — typing commits on blur', () => {
 })
 
 /**
+ * ERR-1 — Enter keeps focus (Figma), so the caret is usually PARKED in a field
+ * that has nothing left to commit. The audit's probe: the field is focused at
+ * `24px`, an undo sets the value to `10px`, and click-away used to write
+ * `24px` straight back — undoing the undo and clearing the redo stack.
+ */
+describe('ScrubInput — a parked caret never writes a stale value (ERR-1)', () => {
+  it('Enter, then an external change (⌘Z), then blur: the field follows the change and commits nothing', () => {
+    const onChange = mock((_next: string) => {})
+    const { rerender } = render(
+      <ScrubInput value="10px" onChange={onChange} label="W" aria-label="Width" data-testid="w" />,
+    )
+    const field = screen.getByTestId('w-field') as HTMLInputElement
+
+    fireEvent.focus(field)
+    fireEvent.change(field, { target: { value: '24px' } })
+    fireEvent.keyDown(field, { key: 'Enter' })
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onChange).toHaveBeenLastCalledWith('24px')
+    rerender(<ScrubInput value="24px" onChange={onChange} label="W" aria-label="Width" data-testid="w" />)
+
+    // ⌘Z — the value goes back while the caret is still in the field.
+    rerender(<ScrubInput value="10px" onChange={onChange} label="W" aria-label="Width" data-testid="w" />)
+    expect(field.value).toBe('10px')
+
+    fireEvent.blur(field)
+    expect(onChange).toHaveBeenCalledTimes(1)
+  })
+
+  it('a focused field nobody typed in follows an agent edit, and blur leaves it alone', () => {
+    const onChange = mock((_next: string) => {})
+    const { rerender } = render(
+      <ScrubInput value="24px" onChange={onChange} label="W" aria-label="Width" data-testid="w" />,
+    )
+    const field = screen.getByTestId('w-field') as HTMLInputElement
+
+    fireEvent.focus(field)
+    rerender(<ScrubInput value="10px" onChange={onChange} label="W" aria-label="Width" data-testid="w" />)
+    expect(field.value).toBe('10px')
+    fireEvent.blur(field)
+
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('text the user IS typing is not overwritten by an external change, and still commits on blur', () => {
+    const onChange = mock((_next: string) => {})
+    const { rerender } = render(
+      <ScrubInput value="24px" onChange={onChange} label="W" aria-label="Width" data-testid="w" />,
+    )
+    const field = screen.getByTestId('w-field') as HTMLInputElement
+
+    fireEvent.focus(field)
+    fireEvent.change(field, { target: { value: '300px' } })
+    rerender(<ScrubInput value="10px" onChange={onChange} label="W" aria-label="Width" data-testid="w" />)
+    expect(field.value).toBe('300px')
+    fireEvent.blur(field)
+
+    expect(onChange).toHaveBeenLastCalledWith('300px')
+  })
+})
+
+/**
  * `onPreview` rAF-coalescing (see the ScrubInput file docblock for the
  * defect: an uncoalesced `pointermove` → live-store-write path multiplied by
  * N mounted breakpoint iframes' `ClassStyleInjector`s). `fireEvent.pointerMove`

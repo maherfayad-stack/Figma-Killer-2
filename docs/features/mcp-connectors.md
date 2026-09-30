@@ -1,4 +1,5 @@
 # MCP Connectors
+> **Purpose:** Studio as an MCP server for external agents: connectors, tokens, the live bridge · **Read when:** touching the MCP endpoint, a connector or a studio_* tool · **Trust:** current · **Owner:** mcp-tooling · **Verified:** not yet
 
 MCP connectors let **external AI clients drive this Studio instance** over the [Model Context Protocol](https://modelcontextprotocol.io). Studio acts as an **MCP server**: a local client (Claude Code, Codex, Cursor) or a remote agent connects, lists the available tools, and operates the CMS — reading the site, editing page structure, and managing content — exactly the way the built-in AI panel does.
 
@@ -22,8 +23,10 @@ The server is implemented with the official `@modelcontextprotocol/sdk`. That pa
 - **Studio is an MCP server.** One Streamable-HTTP endpoint at `/_studio/mcp` serves both local and remote clients (local is just `localhost`).
 - **Thin adapter over the existing tool engine.** No tool logic is duplicated. MCP is a new *caller* alongside the built-in agent and the plugin host; tool dispatch reuses `executeAiTool`.
 - **Tool surface = the full catalog, minus the CMS writes.** Server-resolved tools (`site_list_documents`, `site_read_styles`, and explicit `site_publish`) run headless — no editor needed. The browser-execution READS are exposed too, **relayed to the open Site workspace** — the single source of truth for edits. If that workspace is not open, those tools return a clear error; headless tools still work. The CMS `site_*` WRITE tools are withheld from every connector — see "No CMS `site_*` WRITE tool is in the MCP catalog".
-- **Visual verification is headless.** `studio_screenshot`, `studio_export_frames`, `studio_compare`, `studio_computed_styles` and `studio_measure_element` render in a server-side browser against what is on disk — they need no Studio tab open and never disturb one that is. The live editor bridge is their fallback, and stays the deliberate choice for state only an open tab holds (the current selection, an unsaved in-progress edit) — they declare `execution: 'server-with-bridge-fallback'`. **Exactly two Studio tools still REQUIRE an open tab** (`execution: 'bridge'`): `studio_upload_asset`, because it posts as the signed-in user, and `studio_page_diagnostics`, because a frame's console exists only where the frame is mounted. That set — no more, no fewer — is what the Studio system prompt's "these tools need the open board" sentence is generated from. See "Headless capture".
-- **Every mutating tool answers to the canvas.** A `mutates: true` Studio tool is either named by a row in `STUDIO_CANVAS_PARITY_MATRIX` (`server/ai/tools/studio/parityMatrix.ts`) — the editor action it is the agent's version of — or it declares `headlessOnly` on its own definition with the reason there is no such action. `parityMatrix.test.ts` gates both directions and rejects a tool that claims both; the reasons are rendered in [agent.md](agent.md)'s headless-only table. No allowlist lives in the test.
+- **Visual verification is headless.** `studio_screenshot`, `studio_export_frames`, `studio_compare`, `studio_computed_styles` and `studio_measure_element` render in a server-side browser against what is on disk — they need no Studio tab open and never disturb one that is. The live editor bridge is their fallback, and stays the deliberate choice for state only an open tab holds (the current selection, an unsaved in-progress edit) — they declare `execution: 'server-with-bridge-fallback'`. **Exactly one Studio tool still REQUIRES an open tab** (`execution: 'bridge'`): `studio_page_diagnostics`, because a frame's console exists only where the frame is mounted. (`studio_upload_asset` used to be the second; it is a server tool on the agent landing now.) That set — no more, no fewer — is what the Studio system prompt's "these tools need the open board" sentence is generated from. See "Headless capture".
+- **Every write tool answers to the canvas.** A `sideEffects: 'write'` Studio tool is either named by a row in `STUDIO_CANVAS_PARITY_MATRIX` (`server/ai/tools/studio/parityMatrix.ts`) — the editor action it is the agent's version of — or it declares `headlessOnly` on its own definition with the reason there is no such action. `parityMatrix.test.ts` gates both directions and rejects a tool that claims both; the reasons are rendered in [agent.md](agent.md)'s headless-only table. No allowlist lives in the test.
+- **Two fields, two questions.** `requiresWrite` is the capability gate — a connector without `ai.tools.write` never sees such a tool — and is set by the strongest thing a tool can do. `sideEffects` (`none` / `cache` / `write`) says what a call changes, and only the built-in agent's HTTP tool loop reads it, to run observers concurrently and to answer an identical repeat write from its first result until another write lands. `studio_screenshot` is both write-gated and a `cache` observer. `tool-write-gate-unchanged-by-side-effects.test.ts` pins the gated set to exactly what it was when the two were one `mutates` flag.
+- **Schema failures explain themselves.** Arguments that fail a tool's input schema come back as the coded refusal `input-schema-mismatch`: each failing field's path, what was expected there, what arrived, and a minimal valid call built from the schema (validated before it is offered). Same for every tool, on every path — it is produced once, in `executeAiTool`.
 - **Draft, then publish.** Browser writes save the draft and never leak intermediate work to visitors. A connector with `ai.tools.write` + `pages.publish` calls `site_publish` once after its edit sequence; that server-side tool runs the canonical full-site pipeline and atomically swaps the rebuilt static slot.
 - **Bearer-token auth, one secret per connector.** The token is shown once on creation and stored only as a SHA-256 hash. New tokens expire after 90 days by default; admins can choose a custom TTL or explicitly create a non-expiring token. Revocable.
 - **Capability-gated.** A connector carries a granted capability subset; the same gate the built-in agent uses (`toolAllowedForCapabilities`) filters the toolset. An MCP caller can never invoke a tool the granting capabilities couldn't authorize over HTTP.
@@ -66,11 +69,9 @@ repositories (headless reads) / live editor store (`bridge` tools)
 | `tools/publishTool.ts` | `site_publish` — explicit server-side full-site publish through `publishDraftSite`, including the Layer-A static slot and MCP audit metadata. |
 | `tools/studioImportTool.ts` | `studio_import_project` — thin adapter over the Phase 7B GitHub import engine (`server/handlers/studioGithubImport.ts`); fetches a repo into its own `studio-workspace/<owner>-<repo>` project folder and summarizes the discovered pages. |
 | `tools/studio/` | WS-9 Studio tool family — project/board orientation, bulk edits, codemods, and the fidelity report. See "Studio tools (WS-9)" below. |
-| `resources.ts` | Static MCP **resources** (not tools) — `studio://guidelines`. |
+| `resources.ts` | Static MCP **resources** (not tools) — `studio://guidelines`, and `studio://tool-notes` (`toolNotes.ts`): the long-form rules for tools whose descriptions are held to 900 characters (AI-29). |
 | `editorBridge.ts` | Per-user live workspace bridge registry + `createEditorBridgeStream`; `bridge` tools route to the owner's open Site workspace. |
 | `handlers/editorBridge.ts` | `GET /admin/api/ai/editor-bridge?scope=site&dir=<project>` — the capability-gated NDJSON stream the workspace holds open. The bridge registers under `site:${projectKey}` (W10), and the server derives that key from the VALIDATED `dir` — a client that could name its own key could name another project's. A missing or uncontained `dir` yields 400, never a bridge on a guessed project. |
-| `capture/` | **Headless agent capture (W4-2A).** `captureFrames.ts` (headless-first / live-bridge-fallback routing), `headlessCapture.ts` (the driver), `browserPool.ts` (one warm Chromium, N pages — shared with `studio_render_reference`; `prewarmCaptureBrowser` launches it on project open, W9-5), `captureRoute.ts` + `capturePayload.ts` + `captureToken.ts` (the `/admin/agent-capture` surface and its single-purpose grant), `captureOrigin.ts` (which origin to navigate to). See "Headless capture" below. |
-| `handlers/editorBridge.ts` | `GET /admin/api/ai/editor-bridge?scope=site` — the capability-gated NDJSON stream the workspace holds open. |
 | `capture/` | **Headless agent capture (W4-2A, extended by W9-6).** `captureSession.ts` (open + settle + validate one capture page — the five steps both drivers share), `captureFrames.ts` (headless-first / live-bridge-fallback routing), `headlessCapture.ts` (the rasterising driver), `headlessFrameInspect.ts` (the QUESTION-asking driver behind `studio_computed_styles` / `studio_measure_element`), `browserPool.ts` (one warm Chromium, N pages — shared with `studio_render_reference`; `prewarmCaptureBrowser` launches it on project open, W9-5), `captureRoute.ts` + `capturePayload.ts` + `captureToken.ts` (the `/admin/agent-capture` surface and its single-purpose grant), `captureOrigin.ts` (which origin to navigate to). See "Headless capture" below. |
 | `connectors/` | `types.ts` (server-only record), `token.ts` (generate + SHA-256 hash), `store.ts` (CRUD + `toConnectorView`). |
 | `handlers/connectors.ts` | `/admin/api/ai/mcp/connectors` CRUD, gated by `ai.providers.manage`. |
@@ -119,9 +120,22 @@ same files already have, not a new failure mode.
 **9.1 — project + board orientation** (read-only, no `requiredCapabilities`):
 `studio_list_projects`, `studio_project_profile` (the cached/fresh
 `ProjectProfile` + probe warnings), `studio_list_pages`, `studio_get_node_source`
-(node id → `{ file, line, col, snippet }`, decoding `@core/page-tree`'s
+(node id → `{ file, line, col, snippet, hash }`, decoding `@core/page-tree`'s
 `sourceNodeId` grammar), `studio_find_nodes` (query by moduleId/tag/class/text/
-lock state/codeProps presence).
+lock state/codeProps presence), `studio_list_tokens` (P4-A: every CSS custom
+property declared at the document root of a stylesheet the canvas loads,
+assembled by `server/handlers/studio/projectTokenSources.ts`, grouped by family,
+each with its resolved value and the `file:line` of the winning declaration;
+only `origin: "project"` sources are the user's to edit), and the file reads `studio_read_file`,
+`studio_list_files` and `studio_grep` (a literal search, capped and
+byte-budgeted). Every path any of them names — a node id's file part included
+— goes through one containment rule, `server/handlers/studio/agentFileAccess.ts`
+(P4-C): real-path containment, `.studio`/`.git`/`node_modules`/build output
+refused in any case spelling, credential files (`.env*`, `.npmrc`, keys) never
+read. The HTTP drivers' write twins (`studio_write_file`, `studio_edit_file`,
+`studio_edit_files`) are deliberately NOT in this catalog: they write only into
+the project a chat turn is bound to, and no external connector is ever bound
+to one — see `docs/features/agent.md` → "The HTTP drivers' file tools". The same section documents `needs-user`: no agent write, on the CLI path or the HTTP path, touches a file that runs on the host (build-tool config, `package.json`, `.env*`, `.npmrc`, git hooks, `.vscode/`, CI workflows) or `CLAUDE.md` — one predicate, `hostExecutedWorkspaceFile`, behind one gate, `agentWriteRefusal`, because CLAUDE.md's rule is that anything that needs a human to have agreed must ask at the point of use.
 
 **9.1 — mutating:** `studio_install_deps` + `studio_install_status` (the WS-1.4
 polled install job). Requires `studio.write`.
@@ -130,12 +144,34 @@ polled install job). Requires `studio.write`.
 `studio_apply_edits` (a batch of `StudioEdit`s through `applyStudioEditBatch` —
 the SAME engine `POST /admin/api/studio/save` runs, extracted into
 `server/handlers/studioWriteback.ts` so there is exactly one ordering/dedup/
-shift-detection implementation), `studio_set_frames` (bulk `.studio/boards.json`
+shift-detection implementation). An agent's batch
+runs inside `runAgentSourceEdits` (`agentWriteSupport.ts`): every file the
+engine writes first passes the same agent write gate, content check (no added
+Tailwind `@plugin`/`@config`) and turn checkpoint as the file tools, and is
+logged in the turn log after; a refused write is a per-edit `needs-user` or
+`protected-path` refusal and never lands. Also: `studio_set_frames` (bulk `.studio/boards.json`
 geometry), `studio_codemod` (dispatches `rename-tag`/`set-import-specifier` to
 the shipped `@core/ast-codemods`, plus the WS-4 instance-model verbs
-`detach`/`swap`/`extract-component`). `studio_create_page` (9.1, above) rounds
+`detach`/`swap`/`extract-component`; every verb runs under the project write
+lock inside `runAgentSourceEdits`, the same steps as `studio_apply_edits`, with
+the call site put to the agent write gate before any verb runs so
+`extract-component` never leaves its copy behind on a refusal). `studio_create_page` (9.1, above) rounds
 out the write surface with the one operation none of these three cover:
 scaffolding a brand-new page file.
+
+**P4-D — board placement, token values, snippets** (audit 06, AI-14/15/17):
+`studio_arrange_frames` (`studio.write`) moves frames — explicit x/y, a row, a
+column or a grid, with an optional sticky note per frame — in the same
+`.studio/boards.json` `studio_set_frames` resizes, and pushes the same
+`boardsChanged` live reload. `studio_set_tokens` (`studio.write`) changes design
+token values as a formatting-preserving CST edit on each token's one
+declaration, all-or-nothing, through the agent write gate
+(`resolveAgentFilePath` / `agentWriteRefusal`), refusing a token declared twice
+or won by a package, Studio's design system or compiled output.
+`studio_component_snippet` (read, ungated) returns a component's exact import
+for a named file and a prop-checked JSX usage. All three are in this registry
+AND on both in-canvas agent surfaces. `studio_screenshot` also takes `widths`:
+each screen at each breakpoint, headless only, never written to the board.
 
 **The built-in design system (DS-3).** `studio_list_components`/
 `studio_find_component` list Studio's own design system as
@@ -178,7 +214,17 @@ the user's current board. No open workspace (the common case for a headless
 connector) makes this a pure no-op: the disk write already succeeded either
 way, and a stale canvas is the honest, expected outcome until the next reload.
 
-**Asset tools, headless:** `studio_fetch_remote_asset({ dir?, url, targetDir? })` — `execution: 'server'`, requires `studio.write`. Fetches an `http(s)` URL server-side and lands the response as a new image file, the way an asset an external MCP tool already returned as a URL (a connected Figma MCP server's export/download tool, most concretely — see `docs/features/agent.md`'s "Figma asset workflow") reaches the repo WITHOUT its bytes ever transiting the calling model, unlike the browser-relayed `studio_upload_asset` (§ below), whose `imageBase64` input requires the caller to already hold the bytes. Untrusted-URL-safe by construction: `http:`/`https:` scheme only, no redirect ever followed, the response capped at 25 MB by streamed byte count, and the result written through the same magic-number-sniffed, SVG-sanitized, containment-checked pipeline (`server/handlers/studio/assetLanding.ts`) `studio_upload_asset` uses — one write path, two callers.
+The same push carries one more kind of news (P1-D): `diskChanged: { files }`,
+sent by `server/ai/mcp/outsideEditReload.ts` to EVERY tab that has the project
+open when a file changes on disk without Studio writing it (VS Code, `git
+pull`, an external agent's own Edit tool). `server/handlers/studio/projectWatch.ts`
+does the watching; the browser saves anything pending and then re-reads the
+named files through `resyncBoardAfterWrite`. An empty `files` list means the
+watch failed and the board re-reads everything.
+
+**Asset tools, headless:** `studio_fetch_remote_asset({ dir?, url, targetDir? })` — `execution: 'server'`, requires `studio.write`. Fetches an `http(s)` URL server-side and lands the response as a new image file, the way an asset an external MCP tool already returned as a URL (a connected Figma MCP server's export/download tool, most concretely — see `docs/features/agent.md`'s "Figma asset workflow") reaches the repo WITHOUT its bytes ever transiting the calling model, unlike `studio_upload_asset`, whose `imageBase64` input requires the caller to already hold the bytes. Untrusted-URL-safe by construction: `http:`/`https:` scheme only, no redirect ever followed, the response capped at 25 MB by streamed byte count, and the result written through the same magic-number-sniffed, SVG-sanitized, containment-checked pipeline (`server/handlers/studio/assetLanding.ts`), behind the same agent write gate (`landAgentAsset`), that `studio_upload_asset` uses — one write path, several callers.
+
+**Which hosts, and the finders (P4-E).** `studio_fetch_remote_asset` and `studio_register_design_reference({ url })` fetch only from Figma's asset hosts, the stock photo host, the Figma Dev Mode server's `:3845/assets/` path when `STUDIO_ALLOW_LOOPBACK_ASSET_FETCH` is set, or a URL the user typed into the Studio chat turn the connector serves (never one inside text Studio composed, such as the "Address with AI" comment digest) (`remoteFetchPolicy.ts`; `connectorUserUrls.ts` carries those URLs to a bound connector). Any other host refuses `host-not-allowed` before a request is made, so an external, unbound client can fetch from the fixed hosts only. The transport adds a 30 s deadline, an image `content-type` allowlist and a magic-bytes-match check, and the landing goes through the agent write gate under the project lock (`landAgentAsset`). A project file served back on Studio's origin (`/admin/api/studio/asset`) carries `INERT_FILE_CSP` (`default-src 'none'; sandbox`), so a landed SVG never runs script there. Beside it: `studio_find_image` (`studio.write`; licensed Pexels stock, landed and credited in `IMAGE-CREDITS.md`; needs `PEXELS_API_KEY`, otherwise says so), and three reads — `studio_find_icon` (fuzzy search over the design-system icon catalogs, with the `?raw` import per match), `studio_list_assets` (project images with site URL, size and credit) and `studio_list_fonts` (renderable families, font tokens, and a Google family's `@import` line). See `docs/features/agent.md` "Assets — find before you draw".
 
 **9.4 — `studio_fidelity_report(dir, pageId?)`** — the flagship tool. Per page:
 a `score` (`nodes`/`resolved`/`locked`/`codeValued`) and `findings[]`, each
@@ -200,7 +246,7 @@ documentation, not a data source).
 **9.2 — the visual-audit trio** (`mcp-02`), requirement 10 ("audit the frames
 visually by exporting them as images and comparing them to the live one"):
 
-- `studio_export_frames` — `execution:'server'`, `mutates:true` + `studio.write`.
+- `studio_export_frames` — `execution:'server-with-bridge-fallback'`, `requiresWrite` + `studio.write`, `sideEffects:'none'` (an observer: the live path's viewport takeover is restored, so the tool loop runs it beside other looks and never answers a repeat from a stale capture).
   Routes through `capture/captureFrames.ts`: **headless first**, the live
   editor bridge as fallback and as the deliberate choice for state only an open
   tab holds. `source` picks explicitly (`auto` | `headless` | `live`), and the
@@ -218,10 +264,10 @@ visually by exporting them as images and comparing them to the live one"):
     remains the ONLY way to see the user's current selection, an in-progress
     edit not yet saved to disk, or an unpersisted board re-frame.
 
-- `studio_render_reference` — **Tier 2**, `execution:'server'`, `mutates:true`
+- `studio_render_reference` — **Tier 2**, `execution:'server'`, `requiresWrite`, `sideEffects:'cache'`
   + `studio.run.project` **and** the target project at `run-project` trust.
-  This is the only Studio tool that EXECUTES the project's own code, and it is
-  the only one with two independent gates: the capability answers "may this
+  It and `studio_lint` (below) are the two Studio tools that EXECUTE the
+  project's own code, and the two with two independent gates: the capability answers "may this
   caller run project code at all", the project's own `.studio/meta.json` tier
   answers "may THIS project be run". The handler checks the second via
   `checkTrustTier` (`server/handlers/studio/trustGate.ts`) — the same helper
@@ -250,6 +296,18 @@ visually by exporting them as images and comparing them to the live one"):
   reused across calls for the same project and torn down after
   `idleTimeoutMs` of inactivity (default 2 min). A boot failure returns
   `ok:false` with the captured stdout/stderr tail, never a synthetic result.
+
+- `studio_lint` (AI-21) — **Tier 2**, `execution:'server'`, `requiresWrite`, `sideEffects:'none'`
+  + `studio.run.project` **and** the target project at `run-project` trust,
+  checked with the same `checkTrustTier`. It runs the project's own ESLint,
+  whose config is a module the project wrote and whose plugins are packages
+  it installed — loading them runs them. The process is the project's own
+  `eslint` bin run directly (`handlers/studio/projectPackageBin.ts`, the
+  security-hardening bundle's `viteLaunch.ts` rule for the dev server): never
+  `<pm> run lint` (which runs `prelint`), never `npx`; the config pinned with
+  `--config` to one inside the project; no `--fix`/`--cache`/output file;
+  targets contained and passed as absolute paths; minimal env, capped output,
+  120 s. Details: `docs/features/agent.md` → "Reading the built screen".
 - `studio_diff_frames` — headless, `execution:'server'`, no
   `requiredCapabilities` (a pure read/compute over two caller-supplied PNGs).
   Deliberately generic (two base64 PNGs in, not coupled to the other two
@@ -309,7 +367,7 @@ Manifest rows written before `role` existed carry none; `designReferenceRole` de
 **Under `strict` fidelity, tier 2 is refused.** A `spec` with no page scope standing in for a screen that has none of its own is a guess — fine for `balanced`, and the wrong thing to build a 99%-similarity verdict on. `studio_compare` turns that into a named per-page refusal that says to register the screen's own design or pass `referenceId`, and says explicitly that lowering `fidelityMode` is not the fix. A reference's own `mode` is also tier 2 of the fidelity precedence chain — see [`agent.md`](agent.md) → "Fidelity modes".
 - `studio_recommend_export_dpr({ dir?, pageId, referenceId })` — computes the `studio_export_frames` `dpr` that lands its capture on the reference's own pixel WIDTH, using the frame's AUTHORED width from `.studio/boards.json` (before any capture happens). This is the primary path: resampling a registered reference to match a capture is the WORSE option (interpolation artifacts show up as diff noise in exactly the regions being measured, and it degrades a baseline kept lossless on purpose) — matching the export resolution to the reference up front makes an exact, non-resampled `studio_diff_frames` comparison the common case. Height is content-driven (scroll-unroll can make the real capture taller than the frame's nominal height) and is not predicted by this tool.
 
-**Runtime diagnostics — `studio_page_diagnostics({ dir?, pages?, limit? })`.** `execution: 'bridge'` **with** a server handler — the combination that means "dispatched in-process, board genuinely required": the server half resolves screen NAMES to page ids and owns the "no board connected" message, the browser half does the read. It is not `server-with-bridge-fallback` like `studio_screenshot`, because there is no headless path to fall back FROM — a frame's console exists only where the frame is mounted. A pure READ — no `mutates`, no `requiredCapabilities` — and deliberately NOT a board sync: placing a frame would be a mutation, and "this page has no frame" is a real answer this tool reports rather than papers over.
+**Runtime diagnostics — `studio_page_diagnostics({ dir?, pages?, limit? })`.** `execution: 'bridge'` **with** a server handler — the combination that means "dispatched in-process, board genuinely required": the server half resolves screen NAMES to page ids and owns the "no board connected" message, the browser half does the read. It is not `server-with-bridge-fallback` like `studio_screenshot`, because there is no headless path to fall back FROM — a frame's console exists only where the frame is mounted. A pure READ — no `requiresWrite`, no `requiredCapabilities`, `sideEffects:'none'` — and deliberately NOT a board sync: placing a frame would be a mutation, and "this page has no frame" is a real answer this tool reports rather than papers over.
 
 The gap it closes: a frame whose component throws renders as a blank rectangle, `studio_screenshot` returns that rectangle with no error, and every other tool agrees with it — `studio_compare` reports ~100% different, `studio_quality_check` reads a stylesheet that never ran. So the loop after a blank frame was screenshot → edit CSS → screenshot, against a page that never executed, while the one fact that ends it in a step sat unread in the frame's own console.
 
@@ -331,15 +389,14 @@ The code vocabulary — frozen once shipped, same contract as `fidelityCodes.ts`
 Not covered, stated rather than implied: `XMLHttpRequest` and `WebSocket` are not wrapped, and anything the authored code catches itself is invisible here by definition.
 
 **`execution: 'bridge'` (via the live workspace bridge) — require the Site workspace to be open:**
-- `studio_upload_asset` — relayed whole by the runner, because it declares no server handler at all. It posts real `FormData` to `/admin/api/studio/asset-upload` as the signed-in user, and that endpoint's authority is the operator's session — enforced since the Studio route gate landed as a real 401/403 rather than an assumption, since the route declares `studio.write`. A server-side tool has no honest way to hold that session, which is why this one is relayed. `studio_fetch_remote_asset` is the headless alternative when the bytes are already at an `http(s)` URL.
-- `studio_page_diagnostics` — the other Studio tool in this class, and the one that shows why `bridge` is about *requirement* rather than *dispatch*: it declares a server handler, so it is dispatched in-process, and that handler relays and owns the "no board connected" message. Of the four tools that used to be here, `studio_computed_styles`, `studio_set_frame_axes` and `studio_duplicate_frame_as_variant` all moved server-side in W9-6 — see "Headless frame reads" and "Board writes are file writes" below.
+- `studio_page_diagnostics` — the only Studio tool in this class (`studio_upload_asset` left it: it lands through the agent write gate server-side now, review of #248 F6), and the one that shows why `bridge` is about *requirement* rather than *dispatch*: it declares a server handler, so it is dispatched in-process, and that handler relays and owns the "no board connected" message. Of the four tools that used to be here, `studio_computed_styles`, `studio_set_frame_axes` and `studio_duplicate_frame_as_variant` all moved server-side in W9-6 — see "Headless frame reads" and "Board writes are file writes" below.
 - Structure reads — `site_read_document`, `site_get_node_html`, `site_open_document`, `site_list_code_assets`, `site_read_code_asset`, `site_inspect_code_runtime` — and live-DOM reads (`site_render_snapshot`).
 - These have no server implementation — their logic runs in the browser against the live workspace state, routed to `SitePage`. Image attachments (e.g. `site_render_snapshot`'s PNG) come back as MCP image content blocks. No workspace connected → a clear error asking the operator to open the Site editor.
 
 ### No CMS `site_*` WRITE tool is in the MCP catalog
 
 `CMS_SITE_WRITE_TOOLS_WITHHELD` (`server/ai/mcp/registry.ts`) is every tool in
-`siteTools` stamped `mutates` — structure editing (`site_insert_html`,
+`siteTools` stamped `sideEffects: 'write'` — structure editing (`site_insert_html`,
 `site_replace_node_html`, `site_delete_node`, `site_move_node`,
 `site_duplicate_node`, `site_rename_node`, `site_update_node_props`), HTML/CSS
 authoring (`site_apply_css`, `site_assign_class`, `site_remove_class`), page
@@ -402,7 +459,7 @@ editorBridge.callBrowser(name, input)
 
 Of every tool that can arrive down that pipe:
 
-- **`studio_*`** — none of them insert, duplicate or wrap a page-tree node. The only `execution: 'browser'` Studio tool is `studio_upload_asset`; `studio_computed_styles`, `studio_page_diagnostics`, `studio_export_frames` and `studio_live_reload` are `execution: 'server'` handlers that relay a READ (or a refresh push) over the same bridge. Board geometry (`studio_set_frames`, `studio_set_frame_axes`, `studio_duplicate_frame_as_variant`) is a `.studio/boards.json` file write, headless since W9-6 — it never enters the page tree.
+- **`studio_*`** — none of them insert, duplicate or wrap a page-tree node. No Studio tool is relayed whole to the browser any more; `studio_computed_styles`, `studio_page_diagnostics`, `studio_export_frames` and `studio_live_reload` are `execution: 'server'` handlers that relay a READ (or a refresh push) over the same bridge. Board geometry (`studio_set_frames`, `studio_set_frame_axes`, `studio_duplicate_frame_as_variant`) is a `.studio/boards.json` file write, headless since W9-6 — it never enters the page tree.
 - **`site_duplicate_node`** and every other CMS `site_*` write — **no longer reachable over MCP at all.** They are withheld from the catalog (see "No CMS `site_*` WRITE tool is in the MCP catalog"), so nothing arrives down this pipe for them. The in-canvas gesture path is unchanged: a canvas duplicate is still `store.duplicateNode` → `writeDuplicateToSource` → `deferWhileStructuralCommitInFlight()` — QUEUED behind a commit that is still resyncing rather than refused (`store-14`, replacing `store-11`'s guard), so it re-plans against the tree the resync leaves behind.
 - **`site_insert_html` / `site_replace_node_html`** — same: withheld from the MCP catalog. The store-level refusal `store-13` added (`refuseImportedNodesInto`) is still there and still load-bearing for the paste-import modal and the in-canvas agent's CMS path; the MCP surface simply no longer offers a call whose only possible outcome on a Studio project was that refusal. See [agent.md → Structure (HTML-native)](agent.md#structure-html-native) for why a source write is not available to route to instead.
 
@@ -603,9 +660,9 @@ refusal whenever no tab was open.
 
 Both are now `execution: 'server'`
 (`server/ai/mcp/tools/studio/frameAxesTools.ts`). They write through
-`boardFrames.ts`'s `readBoardsFile`/`writeBoardsFile` — the module whose stated
-reason to exist is that every server-side write to the board's frame list has
-one owner — and then `pushStudioLiveReload({ boardsChanged: true })`, so an open
+`boardGeometry.ts`'s `readBoardsFile`/`writeBoardsFile` — the one owner of
+`.studio/boards.json`, whose writes go through `studioStore.ts` (atomic, and
+never through a link) — and then `pushStudioLiveReload({ boardsChanged: true })`, so an open
 board re-reads the file and the user sees the frame flip exactly as before.
 Addressing is by `pageId`, with an optional `frameId`; the server has no notion
 of an "active board", so the rule is the first board carrying a frame for that
@@ -727,11 +784,11 @@ Measured on a real spawn, three stdio MCP servers attached, turn 2 of a conversa
 
 **The cold path remains, and is not a shim.** It is the crash-recovery mechanism: a turn whose warm process is dead, or which dies before producing any output, silently re-runs cold and the user sees a normal (slightly slower) reply rather than an error about a subprocess they never asked for. Once a turn has streamed text, a death degrades to the same honest terminal error the cold path has always produced — never a silent retry that would duplicate the reply.
 
-Module map: `claudeCliStdinProtocol.ts` (the wire format) → `claudeCliWarmSession.ts` (one live process: turns, abort, death detection) → `claudeCliSessionPool.ts` (which conversation gets which process, reuse key, idle/lifetime/pool caps) → `claudeCliWarmTurn.ts` (serving one turn: the connector, the registries, the board-state carry) → `claudeCli.ts` (try warm, else cold).
+Module map: `claudeCliStdinProtocol.ts` (the wire format) → `claudeCliWarmSession.ts` (one live process: turns, abort, death detection) → `claudeCliSessionPool.ts` (which conversation gets which process, reuse key, idle/lifetime/pool caps) → `claudeCliWarmTurn.ts` (serving one turn: the connector, the registries, the reuse fingerprint, the board-state carry) → `claudeCli.ts` (try warm, else cold).
 
 Two consequences worth knowing when reading the driver:
 
-- **The dynamic system-prompt suffix** (board state, per-page write/verify status) rides `--append-system-prompt` at spawn, which a warm process cannot be given again. A later turn carries it **inside the user message**, and only when it has actually changed — re-sending an unchanged board digest every turn would stack a copy into the conversation's permanent history.
+- **Studio's system prompt** (static prefix with the mode and design-policy blocks, then the dynamic suffix) rides `--append-system-prompt-file` at spawn (`claudeCliSystemPrompt.ts` — a file because it exceeds Windows' command-line limit), which a warm process cannot be given again. The static half's sha256 is in the reuse fingerprint, so a mode, policy or prompt change respawns. A later turn carries a changed dynamic suffix (board state, per-page write/verify status) **inside the user message**, and only when it has actually changed — re-sending an unchanged board digest every turn would stack a copy into the conversation's permanent history.
 - **`CLAUDE.md` is read once, at startup.** `generateStudioProjectGuide` is manifest-gated and returns an empty `written` list on the common turn where nothing changed, which makes "the guide was actually rewritten" a free, exact signal that the warm session is stale — and that turn respawns.
 
 ---
@@ -754,7 +811,7 @@ Two consequences worth knowing when reading the driver:
 - `server/ai/mcp/publishTool.test.ts` — explicit MCP publish rebuilds and swaps the real static CSS/HTML slot and records connector audit metadata.
 - `server/ai/mcp/tools/studioImportTool.test.ts` — capability gating, the `dir`-stripping input schema, the imported-pages summary helper, and an end-to-end handler run against a stubbed global `fetch` (no real network calls); `server/handlers/__tests__/studioGithubImport.test.ts` covers the underlying import engine itself.
 - `server/ai/mcp/tools/studio/{projectTools,editTools,fidelityReport}.test.ts` — orientation/edit/fidelity tool handlers against temp fixture projects; `fidelityCodes.test.ts` — doc ⇄ code parity gate against `docs/features/studio-import.md`'s table.
-- `server/ai/mcp/resources.test.ts` — `studio://guidelines` resource listing/read.
+- `server/ai/mcp/resources.test.ts` — `studio://guidelines` resource listing/read; every tool whose description points at `studio://tool-notes` has a section there.
 - `server/ai/mcp/capture/captureToken.test.ts` — grant scoping (project + page set), immediate revocation, expiry, and that a caller cannot widen a grant after minting it.
 - `server/ai/mcp/capture/captureFrames.test.ts` — the routing decision: headless first, bridge fallback, `source:'live'`/`'headless'` overrides, and that a both-paths failure names BOTH reasons instead of blaming a missing board.
 - `server/ai/mcp/capture/headlessFrameInspect.test.ts` — the frame-inspect driver: that the readiness poll happens BEFORE the inspect call, that the request crosses as a JSON string literal the page can parse back, that the grant is revoked however the call ends, and that an unvalidatable response is refused rather than trusted. Chromium is faked; the token, the settle session and both validations are real.

@@ -35,10 +35,8 @@
  * `designReferenceStore.ts`'s `parseJsonWithFallback` posture. Nothing here
  * derives a filesystem path from stored content.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { parseJsonWithFallback } from '@core/utils/jsonValidate'
+import { readStudioStoreJson, writeStudioStoreJson } from './studioStore'
 import {
   EMPTY_VARIANT_MANIFEST,
   VariantManifestSchema,
@@ -50,22 +48,14 @@ import {
 /** Enough to hold the sets of one working session; far below anything that would dominate a turn. */
 const MAX_STORED_VARIANT_SETS = 20
 
-export const VARIANTS_FILE = '.studio/variants.json'
-
-function variantsFile(dir: string): string {
-  return join(dir, ...VARIANTS_FILE.split('/'))
-}
+const VARIANTS_FILE = 'variants.json'
 
 export function readVariantManifest(dir: string): VariantManifest {
-  const file = variantsFile(dir)
-  if (!existsSync(file)) return EMPTY_VARIANT_MANIFEST
-  return parseJsonWithFallback(readFileSync(file, 'utf8'), VariantManifestSchema, EMPTY_VARIANT_MANIFEST)
+  return readStudioStoreJson(dir, VARIANTS_FILE, VariantManifestSchema, EMPTY_VARIANT_MANIFEST)
 }
 
 function writeVariantManifest(dir: string, manifest: VariantManifest): void {
-  const file = variantsFile(dir)
-  mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, JSON.stringify(manifest, null, 2))
+  writeStudioStoreJson(dir, VARIANTS_FILE, manifest, { pretty: true })
 }
 
 /** Newest first — the order every caller wants, since the set under discussion is almost always the last one generated. */

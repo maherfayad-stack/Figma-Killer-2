@@ -37,6 +37,7 @@ import {
 } from 'ts-morph'
 import { resolveCssModuleImport, resolveImageAssetImport, resolveRawTextImport } from './assetImports'
 import { findDefaultLiteralNode } from './defaultLiteralBindings'
+import { collectReads, recordReadFile, recordReadFiles } from './evalReadFiles'
 import { evaluateBinaryOperator, evaluateUnaryOperator } from './staticEvalOperators'
 import {
   comparableValue,
@@ -48,7 +49,7 @@ import {
   unwrapParens,
   withNote,
 } from './staticEvalValues'
-import type { FunctionLike } from './types'
+import type { ComponentBody } from './types'
 
 // ---------------------------------------------------------------------------
 // Public shapes (§7.2)
@@ -66,6 +67,7 @@ export type {
 import type {
   EvalScope,
   LocalBinding,
+  MemoizedValue,
   PageEvalBudget,
   StaticEvalOptions,
   StaticValue,
@@ -99,6 +101,8 @@ export interface Budget {
   /** WS-2.2 — see `StaticEvalOptions.cssModuleClassMaps`. */
   cssModuleClassMaps: Readonly<Record<string, Readonly<Record<string, string>>>> | undefined
   callEvaluator: CallEvaluator
+  /** WB-2 — see `StaticEvalOptions.readFiles`. Swapped for a fresh set while a memoized value is computed (`collectReads`). */
+  readFiles: Set<string> | undefined
   /**
    * Set whenever a guard (depth, per-call steps, page budget, cycle) cut an
    * evaluation short. A truncated result describes the budget that happened to
@@ -129,6 +133,7 @@ export function createBudget(opts: StaticEvalOptions, callEvaluator: CallEvaluat
     workspaceRoot: opts.workspaceRoot,
     cssModuleClassMaps: opts.cssModuleClassMaps,
     callEvaluator,
+    readFiles: opts.readFiles,
     truncated: false,
   }
 }
@@ -156,11 +161,11 @@ export function trackTruncation(budget: Budget, evaluate: () => StaticValue): { 
  * module scope / imports. `componentFn` is omitted when evaluating
  * module-scope code itself (no component body to see).
  */
-export function createEvalScope(sourceFile: SourceFile, componentFn?: FunctionLike): EvalScope {
+export function createEvalScope(sourceFile: SourceFile, componentFn?: ComponentBody): EvalScope {
   return { sourceFile, locals: buildComponentLocals(componentFn) }
 }
 
-function buildComponentLocals(fn: FunctionLike | undefined): ReadonlyMap<string, LocalBinding> {
+function buildComponentLocals(fn: ComponentBody | undefined): ReadonlyMap<string, LocalBinding> {
   if (!fn) return EMPTY_LOCALS
   const body = fn.getBody()
   if (!body || !Node.isBlock(body)) return EMPTY_LOCALS // concise-body components have no top-level statements
@@ -544,11 +549,18 @@ export function resolveIdentifier(name: string, scope: EvalScope, budget: Budget
     if (!imported.targetFile) {
       // An import that names a FILE rather than a module has no SourceFile —
       // ts-morph only tracks JS/TS — but it still has a static value: a `?raw`
-      // asset's value is its CONTENTS, an image asset's is its PATH.
+      // asset's value is its CONTENTS, an image asset's is its PATH. Both are
+      // a file this value was read out of (WB-2).
       const rawText = resolveRawTextImport(scope.sourceFile, name, budget.workspaceRoot)
-      if (rawText !== undefined) return { kind: 'literal', value: rawText }
+      if (rawText !== undefined) {
+        recordReadFile(budget.readFiles, rawText.file)
+        return { kind: 'literal', value: rawText.text }
+      }
       const asset = resolveImageAssetImport(scope.sourceFile, name, budget.workspaceRoot)
-      if (asset !== undefined) return { kind: 'literal', value: asset.path, origin: asset.origin }
+      if (asset !== undefined) {
+        recordReadFile(budget.readFiles, asset.file)
+        return { kind: 'literal', value: asset.path, origin: asset.origin }
+      }
       const cssModule = resolveCssModuleImport(scope.sourceFile, name, budget.workspaceRoot, budget.cssModuleClassMaps)
       if (cssModule !== undefined) {
         const entries = new Map<string, StaticValue>()
@@ -561,6 +573,10 @@ export function resolveIdentifier(name: string, scope: EvalScope, budget: Budget
       }
       return unresolved(`cannot resolve the import target for "${name}"`)
     }
+    // Recorded HERE, not only in `evaluateModuleConst`: an exported FUNCTION
+    // comes back as `{kind:'fn'}` without its file ever being entered, and
+    // Tier C then evaluates its body — a read of that file all the same.
+    recordReadFile(budget.readFiles, imported.targetFile)
     return evaluateImportedName(imported.targetFile, imported.exportedName, budget, depth)
   }
 
@@ -578,7 +594,7 @@ export function resolveIdentifier(name: string, scope: EvalScope, budget: Budget
  * reset — via `resetParserCaches` — the moment any source file moves,
  * rather than trusting the `SourceFile` key alone.
  */
-let moduleConstCache = new WeakMap<SourceFile, Map<string, StaticValue>>()
+let moduleConstCache = new WeakMap<SourceFile, Map<string, MemoizedValue>>()
 
 /** Drops every memoized module const — see `moduleConstCache` and `./parserCaches`. */
 export function forgetModuleConstCache(): void {
@@ -593,7 +609,10 @@ export function evaluateModuleConst(
   depth: number,
 ): StaticValue {
   const cached = moduleConstCache.get(file)?.get(name)
-  if (cached) return cached
+  if (cached) {
+    recordReadFiles(budget.readFiles, cached.files)
+    return cached.value
+  }
 
   const cycleKey = `${file.getFilePath()}#${name}`
   if (budget.cycle.has(cycleKey)) {
@@ -603,11 +622,17 @@ export function evaluateModuleConst(
   budget.cycle.add(cycleKey)
 
   const init = decl.getInitializer()
-  const { result, truncated } = trackTruncation(budget, () =>
-    init
-      ? evaluateNode(init, { sourceFile: file, locals: EMPTY_LOCALS }, budget, depth + 1)
-      : unresolved(`"${name}" has no initializer`),
-  )
+  const {
+    result: { result, truncated },
+    files,
+  } = collectReads(budget, () => {
+    recordReadFile(budget.readFiles, file)
+    return trackTruncation(budget, () =>
+      init
+        ? evaluateNode(init, { sourceFile: file, locals: EMPTY_LOCALS }, budget, depth + 1)
+        : unresolved(`"${name}" has no initializer`),
+    )
+  })
 
   budget.cycle.delete(cycleKey)
 
@@ -621,7 +646,7 @@ export function evaluateModuleConst(
       byName = new Map()
       moduleConstCache.set(file, byName)
     }
-    byName.set(name, result)
+    byName.set(name, { value: result, files })
   }
   return result
 }

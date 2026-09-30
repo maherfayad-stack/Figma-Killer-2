@@ -2,7 +2,7 @@
  * Unit tests for cssToStyleRules — Phase 1 of the Super Import pipeline.
  *
  * One describe block per row (or group of closely-related rows) of the
- * mapping table in docs/plans/2026-05-29-super-import.md §Phase 1.
+ * mapping table in docs/features/site-import.md → "CSS rule mapping".
  *
  * Environment note:
  * Tests run under happy-dom (see src/__tests__/setup.ts). happy-dom's

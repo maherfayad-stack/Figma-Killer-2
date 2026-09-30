@@ -1,4 +1,5 @@
 # Documentation Conventions
+> **Purpose:** how docs in this repo are written, headed, placed and retired · **Read when:** before adding, moving or rewriting any doc · **Trust:** rule · **Owner:** studio-scribe · **Verified:** 2026-09-23
 
 How we write docs in this repo. The goal is **agent-readable, human-skimmable references** — not marketing, not aspirational text, not a notebook for in-flight work.
 
@@ -19,9 +20,9 @@ If a sentence does not help one of those two readers make a decision or correct 
 
 ---
 
-## Three doc types
+## Doc types
 
-Every file under `docs/` is one of these. The folder it lives in says which type it is.
+Every doc is one of these. The folder it lives in says which type it is.
 
 ### 1. Top-level (`docs/*.md`)
 
@@ -47,14 +48,36 @@ Short, focused, agent-targeted cookbook pages for primitives and patterns that g
 
 A reference doc answers one question: "How do I correctly use / implement X?"
 
+### 4. Agent references (`docs/agent-refs/*.md`)
+
+Compressed, agent-facing summaries of a subsystem: where things live, the gated rules, the pipeline, the store, the handoff protocol. They link to the feature and reference docs for depth instead of restating them.
+
+### 5. Plan (`ROADMAP.md`, repo root)
+
+**There is exactly one living plan: [`ROADMAP.md`](../ROADMAP.md).** It holds intent that is not built yet: work orders grouped into bundles, their owners, their exit gates, and the open owner questions. A plan never describes how a shipped feature works. When a bundle ships, what it built is described in `features/` or `reference/`, and the bundle's row is closed in the ROADMAP.
+
+Settled owner decisions are not plan content. They live in [`docs/decisions.md`](decisions.md), one row each, with date, source and consequence.
+
+### 6. Archive and history (`docs/archive/`, `docs/state-archive/`, `docs/audits/`)
+
+Dated records. They are kept because code and old entries cite them by name, not because they are true now:
+
+- `docs/archive/plans/` — finished root plans, **filenames unchanged**, so a citation such as `STUDIO-FIGMA-PARITY-PLAN.md §D2` in a code comment still resolves by search.
+- `docs/archive/` (other folders) — one-off handoffs and scripts whose work is done.
+- `docs/state-archive/` — `STATE.md` entries moved out verbatim, one file per month (`2026-09.md`), indexed one line per entry in `docs/state-archive/INDEX.md`. `2026-Q3.md` is the older quarterly file and is not split.
+- `docs/audits/` — dated audit reports. Code cites their paths, so they stay in place.
+
+Never act on an archived or historical doc. Read it to learn why something is the way it is; read the current docs and the code to learn what it is.
+
 ---
 
 ## Folder layout
 
 ```
 docs/
-├── README.md                   Index — where to start, what to read
+├── README.md                   The doc map: one row per doc
 ├── CONVENTIONS.md              This file
+├── decisions.md                Settled owner decisions (date · decision · consequence · source)
 ├── architecture.md             System overview
 ├── design.md                   Visual design system
 ├── server.md                   Server deep-dive
@@ -64,7 +87,7 @@ docs/
 │   ├── plugin-system.md
 │   ├── publisher.md
 │   ├── visual-components.md
-│   ├── media.md
+│   ├── trust-tiers.md
 │   └── ...
 │
 ├── reference/                  Short cookbook pages
@@ -76,23 +99,26 @@ docs/
 │   ├── architecture-tests.md
 │   └── ...
 │
+├── agent-refs/                 Compressed agent-facing references
 ├── deployment/                 Operator docs (platform targets + generic hosts)
-├── e2e/                        Agent-run browser test protocols (kept as-is)
+├── e2e/                        Agent-run browser test protocols and the dogfood backlog
+├── archive/                    Historical: finished plans (filenames unchanged), one-off handoffs
 ├── audits/                     Dated read-only audit reports (historical, not maintained)
-├── state-archive/              STATE.md overflow, verbatim, one file per quarter
+├── state-archive/              STATE.md entries, verbatim, one file per month + INDEX.md
 └── assets/                     Images the pages above reference
 ```
 
-**Plans are not docs, and they do not live in `docs/`.** They are `STUDIO-*-PLAN.md` files at the repo root, indexed in [`README.md`](README.md) → "Plans", because they describe work-in-progress decisions rather than the system. When a plan ships, the resulting state goes into `features/` or `reference/`. Never read a plan to learn how the system works.
+The repo root holds exactly six markdown files: `README.md` (humans), `CLAUDE.md` (the rule book), `AGENTS.md` (pointer for non-Claude tools), `PROJECT-BRIEF.md` (orientation), `STATE.md` (live coordination) and `ROADMAP.md` (the one living plan). Do not add a root plan file: new intent goes into `ROADMAP.md`. Never read a plan, live or archived, to learn how the system works.
 
 ---
 
 ## Required shape
 
-Every doc — top-level, feature, or reference — follows this skeleton:
+Every doc — top-level, feature, reference or agent-ref — follows this skeleton:
 
 ```md
 # <Title>
+> **Purpose:** <one line> · **Read when:** <task trigger> · **Trust:** <level> · **Owner:** <agent> · **Verified:** <YYYY-MM-DD>
 
 <One-sentence statement of what this doc covers.>
 
@@ -118,6 +144,48 @@ rest of the doc justifies and extends it.>
 ```
 
 The `Related` section is mandatory. It tells the reader what to read next and where the source of truth lives.
+
+### The header line
+
+Line 1 is the `# Title`. **Line 2 is the header**: one blockquote line with five fields separated by ` · `.
+
+```md
+> **Purpose:** <one line> · **Read when:** <task trigger> · **Trust:** <level> · **Owner:** <agent> · **Verified:** <YYYY-MM-DD>
+```
+
+- **Purpose**: what the doc is for, in one line.
+- **Read when**: the task that should send an agent here.
+- **Trust**: one of the levels below.
+- **Owner**: the specialist in `.claude/agents/` that keeps it current (usually `studio-scribe`).
+- **Verified**: the date someone last checked the doc against the code, or `not yet` when nobody has since the headers were added (2026-09-23). Bump it only when you actually checked; a scribe who checks one section writes the date and names the section.
+
+Trust levels:
+
+| Level | Meaning |
+|---|---|
+| `rule` | Gated constraints (`CLAUDE.md`, `conventions-quickref.md`, this file) |
+| `current` | Describes the tree as it is, and is maintained |
+| `current-cms` | Accurate, but for the dormant CMS half of the fork |
+| `live` | Changes daily (`STATE.md`, `ROADMAP.md`) |
+| `index` | A map of other docs (`docs/README.md`) |
+| `historical` | A dated record; paths may be wrong; never act on it |
+
+A historical doc (everything under `docs/audits/`, `docs/archive/` and `docs/state-archive/`) carries a shorter header on line 2 instead:
+
+```md
+> **Trust:** historical, dated <YYYY-MM-DD>. Paths may be wrong. Never act on it.
+```
+
+A file whose line 1 is not a `# Title` gets the header on line 1.
+
+The header convention does not apply to:
+- `vendor/**`: the vendored design-system docs are **data**, parsed by `src/core/design-system-manifest/vendorDocs.ts`;
+- `.agents/**`: third-party skill packs;
+- `examples/**` and `studio-workspace/**`: templates and user data;
+- `.claude/agents/*.md`: agent definitions, whose frontmatter must stay on line 1;
+- `.github/PULL_REQUEST_TEMPLATE.md`: its text is pasted into every PR body.
+
+The gate is `src/__tests__/architecture/doc-headers.test.ts`.
 
 ### Section choices by doc type
 
@@ -165,7 +233,7 @@ The `Related` section is mandatory. It tells the reader what to read next and wh
 
 7. **No history. No "we used to ..." No comparisons to previous designs.** The repo is pre-release. There is one current design. Document that. Git remembers the rest.
 
-8. **No aspiration. No "we plan to ..."** If it's planned but not built, it goes in the matching `STUDIO-*-PLAN.md` at the repo root, not in a feature or reference doc.
+8. **No aspiration. No "we plan to ..."** If it's planned but not built, it goes in [`ROADMAP.md`](../ROADMAP.md), not in a feature or reference doc.
 
 9. **One topic per doc.** A feature doc covers one feature. A reference doc answers one question. If a doc is sprawling, split it. If two docs heavily overlap, merge them.
 
@@ -190,6 +258,7 @@ The `Related` section is mandatory. It tells the reader what to read next and wh
 | Feature      | `feature-name.md`         | `features/plugin-system.md`      |
 | Reference    | `topic.md`                | `reference/page-tree.md`         |
 | Meta / index | `UPPERCASE.md`            | `CONVENTIONS.md`, `README.md`    |
+| State archive | `YYYY-MM.md`             | `state-archive/2026-09.md`       |
 
 Filenames match the dominant concept. If a doc is about the page tree, it's `page-tree.md`. Not `tree-data-structure.md`, not `node-tree-explained.md`, not `nodes.md`.
 
@@ -214,12 +283,22 @@ Do not add a feature doc for an internal refactor, a one-off utility, or a bug f
 - You changed code that the doc describes — update the doc in the **same change**. A PR that updates code without updating the matching doc is incomplete.
 - You discovered the doc was wrong or stale.
 
-### Delete a doc when
+### Delete or archive a doc when
 
-- The feature it described was removed.
-- The doc was a plan and the plan shipped (move the lasting parts into `features/` or `reference/`, delete the rest).
+- The feature it described was removed: **delete** the doc.
+- A plan shipped: move the lasting parts into `features/` or `reference/`, owner decisions into `docs/decisions.md`, and open rows into `ROADMAP.md`. Then **archive** the plan to `docs/archive/plans/` with its filename unchanged if any code, test or doc still cites it by name. **Delete** it if nothing does.
 
-Pre-release rule applies: **no deprecation notes, no "this is being replaced", no archives of old docs.** Delete is delete.
+Current docs carry **no deprecation notes and no "this is being replaced"**. A doc is either current, or it is archived with a historical header.
+
+### Check for dead paths after any move or delete
+
+A markdown link checker does not see backtick paths, and nearly all of this repo's dead references are backtick paths in code comments. After moving or deleting a doc, grep for its bare path across the whole tree, code included, not only for `](…)` links:
+
+```sh
+git grep -n "docs/features/old-name.md"
+```
+
+`src/__tests__/architecture/doc-headers.test.ts` fails on the known-dead paths it lists. Add a path to that list when you retire one that agents are likely to keep typing.
 
 ---
 
@@ -246,6 +325,7 @@ CLAUDE.md (rule)
 
 ## Quick checklist before committing a doc
 
+- [ ] Line 2 is the header (`Purpose · Read when · Trust · Owner · Verified`).
 - [ ] Has a one-sentence statement of scope under the title.
 - [ ] Has a TL;DR section.
 - [ ] Has a Related section with source-of-truth paths and gate tests.
@@ -263,5 +343,9 @@ CLAUDE.md (rule)
 ## Related
 
 - `CLAUDE.md` — the agent rule book this docs tree supports
-- `docs/README.md` — the docs index
+- `docs/README.md` — the doc map
 - `docs/architecture.md` — start here for system orientation
+- `ROADMAP.md` — the one living plan
+- `docs/decisions.md` — settled owner decisions
+- `docs/agent-refs/handoff-protocol.md` — how `STATE.md` and its archive are written
+- Gate tests: `src/__tests__/architecture/doc-headers.test.ts`

@@ -84,7 +84,6 @@ import {
 } from './codeAssetTools'
 import { runRenderSnapshotAtBreakpoint } from './renderSnapshotAtBreakpoint'
 import { runStudioExportFrames } from './studioExportFrames'
-import { runUploadAsset } from './studioUploadAsset'
 import { runStudioComputedStyles } from './studioComputedStyles'
 import { runStudioPageDiagnostics } from './studioPageDiagnostics'
 import { runStudioLiveReload, StudioLiveReloadInputSchema } from './studioLiveReload'
@@ -466,8 +465,6 @@ export async function executeAgentTool(
         return runStudioComputedStyles(rawInput)
       case 'studio_page_diagnostics':
         return runStudioPageDiagnostics(rawInput)
-      case 'studio_upload_asset':
-        return await runUploadAsset(rawInput)
       case 'studio_live_reload':
         return await runStudioLiveReload(parseValue(StudioLiveReloadInputSchema, rawInput))
       default:

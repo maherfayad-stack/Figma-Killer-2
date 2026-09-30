@@ -50,7 +50,8 @@ const NOOP_ROW_REGISTRY: DomPanelRowRegistry = {
 }
 
 interface PageLayerSubtreeProps {
-  page: Page
+  /** Identity only — the rows resolve their nodes through `DomTreePageContext`. */
+  page: Pick<Page, 'id' | 'title' | 'rootNodeId'>
   editable?: boolean
 }
 

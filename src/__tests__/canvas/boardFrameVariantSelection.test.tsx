@@ -3,7 +3,7 @@
  * coordinator asked for by name: selecting/hovering a node in one
  * "duplicate as variant" frame must NOT also ring it in a sibling frame of
  * the SAME page — the two frames share every node id (trap #2), so without
- * `selectedNodeFrameId`/`hoveredFrameId` scoping (`CanvasFrameContext`,
+ * `selectedNodeFrameId`/`canvasHover` frame scoping (`CanvasFrameContext`,
  * `NodeRenderer.tsx`, `BreakpointSelectionOverlay.tsx`) a click in either
  * frame would ring both.
  *
@@ -15,6 +15,7 @@ import React from 'react'
 import { act, cleanup, render, waitFor } from '@testing-library/react'
 import { DndContext } from '@dnd-kit/core'
 import { createBoard, type BoardsFile } from '@core/studio-board'
+import { getCanvasHover } from '@site/canvas/canvasHover'
 import { useEditorStore } from '@site/store/store'
 import { CanvasRoot } from '@site/canvas/CanvasRoot'
 import { makeNode, makePage, makeSite } from '../fixtures'
@@ -55,9 +56,6 @@ beforeEach(() => {
     selectedNodeId: null,
     selectedNodeIds: [],
     selectedNodeFrameId: null,
-    hoveredNodeId: null,
-    hoveredBreakpointId: null,
-    hoveredFrameId: null,
     _historyPast: [],
     _historyFuture: [],
     canUndo: false,
@@ -164,8 +162,8 @@ describe('selection does not leak between two board frames of the same page', ()
     })
 
     await waitFor(() => {
-      expect(useEditorStore.getState().hoveredNodeId).toBe('headline')
+      expect(getCanvasHover()?.nodeId).toBe('headline')
     })
-    expect(useEditorStore.getState().hoveredFrameId).toBe('frame-source')
+    expect(getCanvasHover()?.frameId).toBe('frame-source')
   })
 })

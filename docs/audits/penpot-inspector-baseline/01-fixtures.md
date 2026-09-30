@@ -1,4 +1,5 @@
 # 01 — Fixtures
+> **Trust:** historical, dated 2026-09-09. Paths may be wrong. Never act on it.
 
 **Provenance note (read first):** the work order (`STATE.md` `panel-20`) said
 the exact fixture definitions and `measurements.json` schema lived in "this

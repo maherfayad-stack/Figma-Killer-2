@@ -20,7 +20,6 @@ function freshSite() {
     canRedo: false,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     hasUnsavedChanges: false,
   })
   const state = useEditorStore.getState()

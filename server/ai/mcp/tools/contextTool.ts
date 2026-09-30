@@ -53,6 +53,7 @@ export const contextMcpTools: AiTool[] = [
       'Orient yourself before editing: reports whether the Site editor is connected (browser tools require it), and which templates wrap pages — an "everywhere" template applies a nav/footer/etc. to every page, so anything you author is in addition to it. Pass entryId to also learn whether a template wraps that specific page. Headless — no editor needed. Call this first if a browser tool returns an "open the workspace" error.',
     scope: 'site',
     execution: 'server',
+    sideEffects: 'none',
     inputSchema: GetContextInput,
     requiredCapabilities: CONTEXT_READ_CAPS,
     handler: async (input, ctx: ToolContext) => {

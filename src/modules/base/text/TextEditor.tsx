@@ -3,8 +3,9 @@
  *
  * Component-only file so React Fast Refresh can hot-patch edits without
  * re-running module registration. Per Constraint #309, this file MUST NOT
- * export non-component values — `normalizeTag` and the tag vocabulary live in
- * the shared `./tags` module that both this file and `index.ts` import.
+ * export non-component values — the tag rule (`resolveTextTag`) lives in
+ * `@modules/base/utils/htmlTag`, which both this file and `index.ts` import,
+ * as does the Studio import pipeline.
  *
  * Text renders through `dangerouslySetInnerHTML` (escaped value with `\n` →
  * `<br>`) so the canvas shows the same hard breaks the published page does.
@@ -18,7 +19,7 @@ import React from 'react'
 import type { ModuleComponentProps } from '@core/module-engine'
 import { htmlAttributesForReact } from '@modules/base/shared/htmlAttributes'
 import { inlineEditableElementProps, rawTextToBreakHtml } from '@modules/base/shared/inlineText'
-import { normalizeTag } from './tags'
+import { resolveTextTag } from '@modules/base/utils/htmlTag'
 import type { TextStoredProps } from './props'
 
 export const TextEditor: React.FC<ModuleComponentProps<TextStoredProps>> = ({
@@ -27,7 +28,7 @@ export const TextEditor: React.FC<ModuleComponentProps<TextStoredProps>> = ({
   nodeWrapperProps,
   inlineEdit,
 }) => {
-  const tag = normalizeTag(props.tag)
+  const tag = resolveTextTag(props.tag, props.customTag)
 
   // Editing: the element becomes the contentEditable surface (content seeded
   // from the frozen initial HTML inside inlineEditableElementProps). `tag: none`

@@ -48,7 +48,7 @@ import { Type } from '@core/utils/typeboxHelpers'
 import { aiToolOk, toolRefusal } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
-import { landAssetBytes } from '../../../../handlers/studio/assetLanding'
+import { isRefusal, landAgentAsset } from './agentWriteSupport'
 import { readDesignReferenceBytes } from '../../../../handlers/studio/designReferenceStore'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { resolvePageByName } from './pageNameMatch'
@@ -86,10 +86,11 @@ export const studioExtractReferenceAssetTool: AiTool = {
   name: 'studio_extract_reference_asset',
   scope: 'shared',
   execution: 'server',
-  mutates: true,
+  sideEffects: 'write',
+  requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
-    'Cut a rectangle out of a registered design reference and write it into the project as a real PNG — the way to get a photo, illustration, logo, badge or mockup that exists ONLY inside the design the user gave you. Give it the screen name, a base filename, and the rectangle in the reference image\'s own pixel coordinates; returns { relPath } ready to import, the same shape studio_upload_asset and studio_fetch_remote_asset return. The bytes are read, cropped and written server-side and never pass through you. PREFER a real source when one exists — an icon from the design system\'s own set, an export from a connected Figma MCP server, a URL through studio_fetch_remote_asset — because those give you the original vector at any size, while this gives you the comp\'s raster at whatever resolution it was exported. Use it when none of those are reachable, which is the ordinary case for a design pasted into chat. It is always better than the two things it replaces: a grey placeholder box, and a photograph impersonated with CSS gradients and border-radius. Requires studio.write.',
+    'Cut a rectangle out of a registered design reference and write it into the project as a PNG: for a photo, illustration, logo or badge that exists ONLY inside the design you were given. Give the screen name, a base filename and the rectangle in the reference image\'s own pixels; returns { relPath } ready to import (the same shape studio_upload_asset and studio_fetch_remote_asset return). The bytes never pass through you. Prefer a real source when one exists — a design-system icon, a Figma connector export, a URL through studio_fetch_remote_asset — because it is the original at any size, while this is the comp\'s raster. Always better than a grey box or a photo faked with CSS gradients. Requires studio.write.',
   inputSchema: InputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, page, referenceId, name, x, y, width, height, targetDir } = input as {
@@ -152,16 +153,22 @@ export const studioExtractReferenceAssetTool: AiTool = {
       return toolRefusal('image-decode-failed', `Could not crop the reference: ${err instanceof Error ? err.message : String(err)}`)
     }
 
-    const landed = landAssetBytes(dir, targetDir, png, name)
-    if (!landed.ok) return toolRefusal('asset-write-failed', landed.error)
+    // Through the agent write gate and the project lock, like every agent
+    // image landing (`landAgentAsset`, P4-E): `assetLanding.ts`' own guard is
+    // built for the user's drops and lets `prototype/` through.
+    const landed = await landAgentAsset(dir, ctx, targetDir, png, name)
+    if (isRefusal(landed)) return landed
 
     return aiToolOk({
       ok: true,
       dir,
       relPath: landed.relPath,
+      src: landed.src,
+      buildSafe: landed.buildSafe,
       width,
       height,
-      bytesWritten: png.byteLength,
+      deduped: landed.deduped,
+      bytesWritten: landed.deduped ? 0 : png.byteLength,
       reference: { id: reference.id, autoSelected: resolved.implicit },
     })
   },

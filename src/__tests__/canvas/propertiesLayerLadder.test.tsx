@@ -51,7 +51,6 @@ function resetStore() {
     selectedSelectorClassId: null,
     selectedSelectorClassIds: [],
     activeClassId: null,
-    hoveredNodeId: null,
     propertiesPanel: { collapsed: false, x: 0, y: 0, width: 360 },
     propertiesPanelMode: 'docked',
     _historyPast: [],

@@ -49,7 +49,8 @@
  * ALSO what the publisher's `generateClassCSS` calls to build the real
  * published stylesheet. All three CSS strings this injector produces (the
  * main registry, the hover-preview overlay, the forced-state overlay) are
- * therefore piped through `rewritePrefersColorScheme` on the way into the
+ * therefore piped through `rewritePrefersColorScheme` (with the rest of
+ * `canvasFrameCss`'s canvas-only transforms) on the way into the
  * `<style>` tag — CANVAS-SIDE ONLY, after generation, never inside
  * `generateClassCSS`/`createStyleRuleCssEmitter` itself. `@core/publisher` is
  * not touched: a real browser DOES support `prefers-color-scheme` correctly
@@ -61,18 +62,19 @@
  * doesn't).
  */
 
-import { useContext, useEffect } from 'react'
-import { useEditorStore } from '@site/store/store'
+import { use, useContext, useEffect } from 'react'
+import { useEditorStore, type EditorStore } from '@site/store/store'
 import { styleRuleSelector, type ConditionDef, type StyleRule } from '@core/page-tree'
 import { collectBackgroundImagePaths } from '@core/publisher'
 import { useResponsiveEditorMediaAssets } from '@admin/shared/media/hooks/useResponsiveBackgroundStyle'
 import { selectorStatePseudo } from '@site/cssStatePseudo'
-import { CanvasFrameAdapterContext } from './CanvasContexts'
+import { CanvasFrameAdapterContext, CanvasFrameContext, CanvasPageContext } from './CanvasContexts'
+import { framePageCanRender } from './useBreakpointOverlaySelectionState'
 import { registryBackgroundImagePaths } from './canvasBackgroundImagePaths'
 import { generateCanvasClassCSS, generateForcedStateCSS, generatePreviewClassCSS } from './canvasClassCss'
-import { resolveViewportUnitsForCanvas, type CanvasViewport } from './resolveViewportUnits'
+import type { CanvasViewport } from './resolveViewportUnits'
 import { CANVAS_CSS_LAYER_ORDER, USER_AUTHORED_LAYER } from './canvasCssLayers'
-import { rewritePrefersColorScheme } from './darkSchemeCssTransform'
+import { canvasFrameCss } from './canvasFrameCss'
 
 interface ClassStyleInjectorProps {
   /**
@@ -123,8 +125,6 @@ export function ClassStyleInjector({ viewport }: ClassStyleInjectorProps = {}) {
   const frameworkPreferences = useEditorStore((s) => s.site?.settings.framework?.preferences ?? null)
   const fonts = useEditorStore((s) => s.site?.settings.fonts ?? null)
   const previewClassStyles = useEditorStore((s) => s.previewClassStyles)
-  const activeClassId = useEditorStore((s) => s.activeClassId)
-  const selectedNodeId = useEditorStore((s) => s.selectedNodeId)
   const backgroundPaths = [
     ...registryBackgroundImagePaths(classes ?? EMPTY_STYLE_RULES),
     ...collectBackgroundImagePaths(previewClassStyles?.styles.backgroundImage),
@@ -136,10 +136,6 @@ export function ClassStyleInjector({ viewport }: ClassStyleInjectorProps = {}) {
 
   useEffect(() => {
     if (!adapter) return
-
-    // Pin viewport units to the frame viewport (canvas-only) so class styles
-    // using `vh`/`vmax`/… don't feed the iframe's grow-to-content height loop.
-    const forCanvas = (css: string) => (viewport ? resolveViewportUnitsForCanvas(css, viewport) : css)
 
     const generated = generateCanvasClassCSS(
       classes ?? EMPTY_STYLE_RULES,
@@ -164,7 +160,9 @@ export function ClassStyleInjector({ viewport }: ClassStyleInjectorProps = {}) {
     // unclassed heading, a table, a link — look BETTER than what a real
     // browser renders, which is exactly the "did I actually style this" case
     // a user is most likely to be checking.
-    const css = rewritePrefersColorScheme(forCanvas(generated))
+    // Canvas-only: project asset URLs, viewport units pinned to the frame (so
+    // `vh` can't feed the grow-to-content height loop), previewed scheme.
+    const css = canvasFrameCss(generated, viewport)
     adapter.applyOverlay(
       STYLE_TAG_ID,
       css
@@ -207,9 +205,7 @@ export function ClassStyleInjector({ viewport }: ClassStyleInjectorProps = {}) {
       breakpointId: previewClassStyles.breakpointId ?? null,
       styles: previewClassStyles.styles,
     }, { mediaAssets: responsiveMediaAssets })
-    const resolvedPreviewCss = rewritePrefersColorScheme(
-      viewport ? resolveViewportUnitsForCanvas(previewCss, viewport) : previewCss,
-    )
+    const resolvedPreviewCss = canvasFrameCss(previewCss, viewport)
     // Keep in the same @layer so the doubled-selector preview rule still wins
     // over the regular class rule within the layer (higher specificity). No
     // need to repeat CANVAS_CSS_LAYER_ORDER here — the main effect above
@@ -220,6 +216,57 @@ export function ClassStyleInjector({ viewport }: ClassStyleInjectorProps = {}) {
       resolvedPreviewCss ? `@layer ${USER_AUTHORED_LAYER} {\n${resolvedPreviewCss}\n}` : '',
     )
   }, [adapter, viewport, classes, previewClassStyles, responsiveMediaAssets])
+
+  // Cleanup: remove the overlays when the component unmounts or the adapter
+  // instance changes (a fresh frame document).
+  useEffect(() => {
+    return () => {
+      adapter?.removeOverlay(STYLE_TAG_ID)
+      adapter?.removeOverlay(PREVIEW_STYLE_TAG_ID)
+    }
+  }, [adapter])
+
+  return <ForcedStatePreviewStyle viewport={viewport} mediaAssets={responsiveMediaAssets} />
+}
+
+/**
+ * The selected node's id when THIS frame renders it, else `null` — the same
+ * scoping the selection rings use (`useBreakpointOverlaySelectionState`): a
+ * board frame answers for the selection it originated, and a frame whose page
+ * does not contain the node answers `null`, so a click elsewhere on the board
+ * changes nothing here.
+ */
+function selectedNodeRenderedHere(s: EditorStore, frameId: string | null, framePageId: string | null): string | null {
+  const id = s.selectedNodeId
+  if (!id) return null
+  if (s.selectedNodeFrameId !== null) return s.selectedNodeFrameId === frameId ? id : null
+  return framePageCanRender(s._nodeIdToPageIds, id, framePageId) ? id : null
+}
+
+/**
+ * The forced-state preview, in its own component so that the class-CSS
+ * generator above does not re-render on every click. It is the only part of
+ * this injector that depends on the selection, and it used to be an effect of
+ * the injector itself — which every mounted frame runs — so each click
+ * re-rendered all of them and re-wrote an empty `<style>` in each (P6-C).
+ */
+function ForcedStatePreviewStyle({
+  viewport,
+  mediaAssets,
+}: {
+  viewport: CanvasViewport | undefined
+  mediaAssets: ReturnType<typeof useResponsiveEditorMediaAssets>['mediaAssets']
+}) {
+  const adapter = useContext(CanvasFrameAdapterContext)
+  const frameId = use(CanvasFrameContext)
+  const framePageId = use(CanvasPageContext)
+  const selectedNodeId = useEditorStore((s) => selectedNodeRenderedHere(s, frameId, framePageId))
+  const activeClassId = useEditorStore((s) => (selectedNodeRenderedHere(s, frameId, framePageId) ? s.activeClassId : null))
+  const classes = useEditorStore((s) => s.site?.styleRules ?? null)
+  const breakpoints = useEditorStore((s) => s.site?.breakpoints ?? EMPTY_BREAKPOINTS)
+  const conditions = useEditorStore((s) => s.site?.conditions ?? EMPTY_CONDITIONS)
+  const previewClassStyles = useEditorStore((s) => s.previewClassStyles)
+  const responsiveMediaAssets = mediaAssets
 
   // Forced state preview — when a state-pseudo selector (`.btn:hover`, …) is the
   // active selector, paint its declarations onto the selected node so the state
@@ -250,9 +297,7 @@ export function ClassStyleInjector({ viewport }: ClassStyleInjectorProps = {}) {
       inflight,
       { mediaAssets: responsiveMediaAssets },
     )
-    const resolved = rewritePrefersColorScheme(
-      viewport ? resolveViewportUnitsForCanvas(forcedCss, viewport) : forcedCss,
-    )
+    const resolved = canvasFrameCss(forcedCss, viewport)
     adapter.applyOverlay(FORCE_STATE_STYLE_TAG_ID, resolved ? `@layer ${USER_AUTHORED_LAYER} {\n${resolved}\n}` : '')
   }, [
     adapter,
@@ -266,12 +311,8 @@ export function ClassStyleInjector({ viewport }: ClassStyleInjectorProps = {}) {
     responsiveMediaAssets,
   ])
 
-  // Cleanup: remove the overlays when the component unmounts or the adapter
-  // instance changes (a fresh frame document).
   useEffect(() => {
     return () => {
-      adapter?.removeOverlay(STYLE_TAG_ID)
-      adapter?.removeOverlay(PREVIEW_STYLE_TAG_ID)
       adapter?.removeOverlay(FORCE_STATE_STYLE_TAG_ID)
     }
   }, [adapter])

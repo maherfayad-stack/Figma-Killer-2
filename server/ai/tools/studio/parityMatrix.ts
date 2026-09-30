@@ -6,15 +6,17 @@
  *
  * Three ways an action can be covered, and the distinction is the point:
  *
- *   - `native` — done with the CLI's own file tools (`Read`/`Write`/`Edit`/
- *     `Glob`/`Grep`), which the driver grants scoped to the project `cwd`
- *     (`claudeCliToolSurface.ts`). Most source editing lives here now. It is
+ *   - `native` — done with the CLI's own tools (`Read`/`Write`/`Edit`/
+ *     `Glob`/`Grep`/`Task`), which the driver grants scoped to the project
+ *     `cwd` (`claudeCliToolSurface.ts`). Most source editing lives here now. It is
  *     a separate status from `tool` rather than folded into it because these
  *     rows carry no Studio-side gate at all — they are bounded by the
  *     subprocess's working directory, not by a capability check — and a
  *     reader of this table must be able to see that difference.
- *   - `tool` — a real Studio MCP tool the agent is offered
- *     (`agentToolNames.ts`).
+ *   - `tool` — a real Studio tool the agent is offered
+ *     (`agentToolNames.ts`). On the HTTP drivers, which have no native tools,
+ *     the `native` rows are done through the file-authoring `tool` row below
+ *     (P4-C): the same edit, landed by Studio instead of by the CLI.
  *   - `withheld` — deliberately not available, with the reason stated.
  *
  * The AST edit tools (`studio_apply_edits`, `studio_codemod`) still exist and
@@ -24,8 +26,9 @@
  *
  * ## The inverse direction, and the one escape from it
  *
- * The gate also runs the table backwards: every registered `mutates: true`
- * tool must be named by some row, because a write tool that maps to no editor
+ * The gate also runs the table backwards: every registered
+ * `sideEffects: 'write'` tool must be named by some row, because a write tool
+ * that maps to no editor
  * action is either undocumented here or should not exist. A tool that
  * genuinely has no canvas counterpart says so on ITSELF —
  * `AiTool.headlessOnly`, a sentence stating why — and the gate reads that
@@ -65,14 +68,35 @@ export const STUDIO_CANVAS_PARITY_MATRIX: readonly ParityRow[] = [
   { action: 'Swap a component instance', status: { kind: 'native', how: 'Edit the element name and its import.' } },
   { action: 'Extract a component', status: { kind: 'native', how: 'Write the new component file, then Edit the call site to import it.' } },
   { action: 'Create a page', status: { kind: 'native', how: 'Write the component file and its stylesheet; studio_screenshot places the board frame on the first capture.' } },
-  { action: 'Read a project file', status: { kind: 'native', how: 'Read, Glob, Grep.' } },
+  { action: 'Read a project file', status: { kind: 'native', how: 'Read, Glob, Grep on the claude CLI path; studio_read_file, studio_list_files, studio_grep and studio_get_node_source on the HTTP drivers.' } },
   { action: 'List projects', status: { kind: 'native', how: 'Exactly one project is open per turn and its path is already in the prompt.' } },
 
+  {
+    // The HTTP drivers' way to do every `native` edit row above: an API key
+    // gives the model no file tools of its own (AI-2).
+    action: 'Write or edit a source file on an HTTP driver (API key, OpenAI, OpenRouter, Ollama, custom)',
+    status: { kind: 'tool', toolNames: ['studio_write_file', 'studio_edit_file', 'studio_edit_files'] },
+  },
+
   // ── Studio tools: what the filesystem cannot do.
-  { action: 'Resize / move a board frame (bulk)', status: { kind: 'tool', toolNames: ['studio_set_frames'] } },
+  { action: 'Resize board frames (bulk)', status: { kind: 'tool', toolNames: ['studio_set_frames'] } },
+  {
+    // AI-17 — the canvas drags frames and the agent could not: `set_frames`
+    // sizes only, so "put the variants side by side" had no tool behind it.
+    action: 'Move board frames — explicit x/y, a row, a column or a grid — with a note on each',
+    status: { kind: 'tool', toolNames: ['studio_arrange_frames'] },
+  },
+  {
+    // AI-15 — the Framework/token panel edits a token's value in place; the
+    // agent's equivalent is one CST edit on the declaration that wins.
+    action: "Change a design token's value (light or dark)",
+    status: { kind: 'tool', toolNames: ['studio_set_tokens'] },
+  },
   { action: 'Install dependencies', status: { kind: 'tool', toolNames: ['studio_install_deps'] } },
   { action: 'Poll an install job', status: { kind: 'tool', toolNames: ['studio_install_status'] } },
   { action: 'Confirm the code just written actually compiles', status: { kind: 'tool', toolNames: ['studio_typecheck'] } },
+  // AI-21 — the Problems view a developer reads next to the canvas.
+  { action: "Check the code just written against the project's own lint rules (Tier 2)", status: { kind: 'tool', toolNames: ['studio_lint'] } },
   { action: 'Read a project profile (framework/styling/deps)', status: { kind: 'tool', toolNames: ['studio_project_profile'] } },
   { action: 'List pages / board frames', status: { kind: 'tool', toolNames: ['studio_list_pages'] } },
   { action: 'See what a screen actually looks like', status: { kind: 'tool', toolNames: ['studio_screenshot'] } },
@@ -167,11 +191,20 @@ export const STUDIO_CANVAS_PARITY_MATRIX: readonly ParityRow[] = [
     status: { kind: 'withheld', reason: 'No Bash, at any trust tier, in any permission mode — the one tool whose blast radius is not bounded by the project cwd. Dependency installs go through studio_install_deps, which IS trust-tier gated.' },
   },
   {
+    // Granted since `claudeCliToolSurface.ts` put `Task` back in
+    // `WORKSPACE_NATIVE_TOOLS`; this row said "withheld" for a wave after
+    // that, and agent.md repeated it (AI-24).
     action: 'Delegate to a subagent',
-    status: { kind: 'withheld', reason: 'Task is not granted. The CLI silently substitutes its own general-purpose agent for an unknown subagent_type and reports success it cannot back up — observed producing a detailed report of ten files written, none of which existed. With native file tools there is nothing a screen-building subagent adds but latency.' },
+    status: { kind: 'native', how: "Task, with subagent_type 'general-purpose' and nothing else — granted on the claude CLI path whenever a project is open (claudeCliToolSurface.ts). One subagent per page, and that page's .tsx and .module.css are the subagent's alone; every shared file stays the orchestrator's. The HTTP drivers do the same through studio_delegate (row below)." },
+  },
+  {
+    // AI-23 — the HTTP drivers' Task: the same one-page-per-agent contract,
+    // enforced on each child's writes (`delegateRunner.ts`), not only asked for.
+    action: 'Delegate pages to subagents on an HTTP driver (API key, OpenAI, OpenRouter, Ollama, custom)',
+    status: { kind: 'tool', toolNames: ['studio_delegate'] },
   },
   {
     action: 'Reach a file outside the open project',
-    status: { kind: 'withheld', reason: "The subprocess cwd is the containment-checked project directory, and the CLI refuses a write outside it plus --add-dir (this turn's attachment staging, nothing else)." },
+    status: { kind: 'withheld', reason: "The subprocess cwd is the containment-checked project directory, and the CLI refuses a write outside it plus --add-dir (this turn's attachment staging, nothing else). On the HTTP drivers every file tool goes through one containment rule (agentFileAccess.ts): inside the project on the real path, never into .studio/.claude/.git/node_modules, never a credential file." },
   },
 ]

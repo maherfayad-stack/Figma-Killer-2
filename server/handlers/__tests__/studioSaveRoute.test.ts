@@ -3,14 +3,14 @@
  * the real route (`tryServeStudio` as the Owner), not through
  * `applyStudioEditBatch` directly.
  *
- * `store-15` shipped a delete whose undo (`reinsert-source`) is built from
- * the `removed`/`prunedImports` the batch computes — and every one of the
- * batch's own tests passed while the route, which lists its response fields
- * by hand, forwarded neither. Every ⌘Z after a delete then resolved to
- * "Studio could not work out how to take this back" with the code that could
- * sitting one layer down. The same class of bug had already happened once to
- * `createdNodeIds`/`relocatedNodeIds` (`store-13`/`store-14`). This file
- * holds the seam: what the batch returns, the route must return.
+ * `store-15` shipped a delete whose undo material the batch computed — and
+ * every one of the batch's own tests passed while the route, which lists its
+ * response fields by hand, never forwarded it. Every ⌘Z after a delete then
+ * resolved to "Studio could not work out how to take this back" with the code
+ * that could sitting one layer down. The same class of bug had already
+ * happened once to `createdNodeIds`/`relocatedNodeIds` (`store-13`/`store-14`).
+ * This file holds the seam: what the batch returns, the route must return —
+ * today, P3-F's `undoToken`, and the route is the one caller that journals.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
@@ -40,9 +40,11 @@ export default function Page() {
 const SaveResponseSchema = Type.Object({
   ok: Type.Boolean(),
   written: Type.Number(),
-  removed: Type.Optional(Type.Array(Type.Object({ nodeId: Type.String(), text: Type.String(), wholeLine: Type.Boolean() }))),
-  prunedImports: Type.Optional(Type.Array(Type.Object({ file: Type.String(), declarations: Type.Array(Type.String()) }))),
+  undoToken: Type.Optional(Type.String()),
+  touchedFiles: Type.Optional(Type.Array(Type.String())),
   refusals: Type.Optional(Type.Array(Type.Object({ nodeId: Type.String(), reason: Type.String(), message: Type.String() }))),
+  fingerprints: Type.Optional(Type.Array(Type.Object({ nodeId: Type.String(), fingerprint: Type.String() }))),
+  detachDetails: Type.Optional(Type.Array(Type.Object({ nodeId: Type.String(), written: Type.Boolean(), lossy: Type.Boolean() }))),
 })
 
 beforeAll(async () => {
@@ -73,12 +75,12 @@ afterEach(() => {
   fs.rmSync(root, { recursive: true, force: true })
 })
 
-async function save(edits: unknown[]) {
+async function save(edits: unknown[], expectations?: Record<string, string>) {
   const url = new URL('http://localhost/admin/api/studio/save')
   const req = new Request(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: 'http://localhost' },
-    body: JSON.stringify({ dir: projectDir, edits }),
+    body: JSON.stringify({ dir: projectDir, edits, ...(expectations ? { expect: expectations } : {}) }),
   })
   const res = await studioRoutes.serve(req, url)
   expect(res).not.toBeNull()
@@ -96,48 +98,82 @@ function nodeIdOf(source: string, name: string, file = 'pages/Home.tsx'): string
   throw new Error(`no <${name} in fixture`)
 }
 
-describe('POST /admin/api/studio/save — the delete material ⌘Z is built from', () => {
-  it('forwards removed (keyed by the edit nodeId) and prunedImports for a delete', async () => {
-    const badgeId = nodeIdOf(PAGE, 'Badge')
-    const body = await save([{ kind: 'delete', nodeId: badgeId }])
+const homeFile = () => path.join(projectDir, 'pages', 'Home.tsx')
+
+describe('POST /admin/api/studio/save — the undo journal crosses the route (P3-F)', () => {
+  it('forwards an undoToken for a delete, and journals it under .studio/undo-journal', async () => {
+    const body = await save([{ kind: 'delete', nodeId: nodeIdOf(PAGE, 'Badge') }])
 
     expect(body.ok).toBe(true)
     expect(body.written).toBe(1)
-    expect(body.removed).toEqual([{ nodeId: badgeId, text: '      <Badge label="new" />\n', wholeLine: true }])
-    expect(body.prunedImports).toEqual([{ file: 'pages/Home.tsx', declarations: ["import { Badge } from './Badge'"] }])
-
-    const after = fs.readFileSync(path.join(projectDir, 'pages', 'Home.tsx'), 'utf8')
-    expect(after).not.toContain('Badge')
+    expect(body.undoToken).toMatch(/^[0-9a-f]{32}$/)
+    expect(fs.existsSync(path.join(projectDir, '.studio', 'undo-journal', `${body.undoToken}.json`))).toBe(true)
+    expect(fs.readFileSync(homeFile(), 'utf8')).not.toContain('Badge')
   })
 
-  it('a reinsert-source built from that response puts the element and its import back byte-for-byte', async () => {
-    const badgeId = nodeIdOf(PAGE, 'Badge')
-    const deleted = await save([{ kind: 'delete', nodeId: badgeId }])
-    const [removed] = deleted.removed ?? []
-    const [pruned] = deleted.prunedImports ?? []
-    if (!removed || !pruned) throw new Error('delete response carried no restore material')
+  it('a restore naming that token puts the element AND its pruned import back byte-for-byte, and consumes the entry', async () => {
+    const deleted = await save([{ kind: 'delete', nodeId: nodeIdOf(PAGE, 'Badge') }])
+    const token = deleted.undoToken
+    if (!token) throw new Error('the delete reported no undo token')
 
-    const afterDelete = fs.readFileSync(path.join(projectDir, 'pages', 'Home.tsx'), 'utf8')
-    const sectionId = nodeIdOf(afterDelete, 'section')
-    const restored = await save([
-      { kind: 'reinsert-source', nodeId: sectionId, index: 1, text: removed.text, imports: pruned.declarations },
-    ])
+    const restored = await save([{ kind: 'restore', nodeId: `undo-journal:${token}`, token }])
+    expect(restored.refusals).toEqual([])
     expect(restored.written).toBe(1)
-    expect(fs.readFileSync(path.join(projectDir, 'pages', 'Home.tsx'), 'utf8')).toBe(PAGE)
+    expect(restored.touchedFiles).toEqual(['pages/Home.tsx'])
+    expect(fs.readFileSync(homeFile(), 'utf8')).toBe(PAGE)
+    expect(fs.existsSync(path.join(projectDir, '.studio', 'undo-journal', `${token}.json`))).toBe(false)
   })
 
-  it('refuses by name, through the route, a reinsert-source whose text is not JSX content (sec-22)', async () => {
-    const sectionId = nodeIdOf(PAGE, 'section')
-    const body = await save([
-      {
-        kind: 'reinsert-source',
-        nodeId: sectionId,
-        index: 1,
-        text: "</section>\n  )\n}\nvoid (function () { /* module load */ })();\nexport function Dummy() {\n  return (\n    <section>\n",
-      },
-    ])
+  it('refuses restore-stale, and writes nothing, when the file changed after the delete', async () => {
+    const deleted = await save([{ kind: 'delete', nodeId: nodeIdOf(PAGE, 'Badge') }])
+    const token = deleted.undoToken!
+    const afterDelete = fs.readFileSync(homeFile(), 'utf8')
+    const edited = await save([{ kind: 'text', nodeId: nodeIdOf(afterDelete, 'p'), text: 'Changed since' }])
+    expect(edited.written).toBe(1)
+    const beforeRestore = fs.readFileSync(homeFile(), 'utf8')
+
+    const body = await save([{ kind: 'restore', nodeId: `undo-journal:${token}`, token }])
     expect(body.written).toBe(0)
-    expect(body.refusals?.map((r) => r.reason)).toEqual(['not-jsx-content'])
+    expect(body.refusals?.map((r) => r.reason)).toEqual(['restore-stale'])
+    expect(body.refusals?.[0]?.message).toContain('pages/Home.tsx has changed since')
+    expect(fs.readFileSync(homeFile(), 'utf8')).toBe(beforeRestore)
+  })
+
+  it('a value edit is not journaled — only the one-shot kinds are', async () => {
+    const body = await save([{ kind: 'text', nodeId: nodeIdOf(PAGE, 'p'), text: 'Typed' }])
+    expect(body.written).toBe(1)
+    expect(body.undoToken).toBeUndefined()
+    expect(fs.existsSync(path.join(projectDir, '.studio', 'undo-journal'))).toBe(false)
+  })
+})
+
+describe('POST /admin/api/studio/save — a detach dry run crosses the route (P5-C)', () => {
+  it('forwards detachDetails for a held detach, and writes nothing', async () => {
+    fs.writeFileSync(
+      path.join(projectDir, 'pages', 'Status.tsx'),
+      ['export function Status({ busy }: { busy?: boolean }) {', '  if (busy) return <p>Busy</p>', '  return <p>Done</p>', '}', ''].join('\n'),
+      'utf8',
+    )
+    const page = PAGE.replace("import { Badge } from './Badge'", "import { Status } from './Status'").replace('<Badge label="new" />', '<Status />')
+    fs.writeFileSync(homeFile(), page, 'utf8')
+    const nodeId = nodeIdOf(page, 'Status')
+    const body = await save([{ kind: 'detach', nodeId, dryRun: 'if-lossy' }])
+    expect(body.written).toBe(0)
+    expect(body.detachDetails).toEqual([expect.objectContaining({ nodeId, written: false, lossy: true })])
+    expect(fs.readFileSync(homeFile(), 'utf8')).toBe(page)
+  })
+})
+
+describe('POST /admin/api/studio/save — the element identity guard (P1-A) crosses the route', () => {
+  it('honours expect, and forwards the new identity of each landed value write', async () => {
+    const pId = nodeIdOf(PAGE, 'p')
+    const wrong = await save([{ kind: 'text', nodeId: pId, text: 'Changed' }], { [pId]: 'p#00000000' })
+    expect(wrong.written).toBe(0)
+    expect(wrong.refusals?.map((r) => r.reason)).toEqual(['element-moved'])
     expect(fs.readFileSync(path.join(projectDir, 'pages', 'Home.tsx'), 'utf8')).toBe(PAGE)
+
+    const written = await save([{ kind: 'text', nodeId: pId, text: 'Changed' }])
+    expect(written.written).toBe(1)
+    expect(written.fingerprints).toEqual([{ nodeId: pId, fingerprint: expect.stringMatching(/^p#[0-9a-f]{8}$/) }])
   })
 })

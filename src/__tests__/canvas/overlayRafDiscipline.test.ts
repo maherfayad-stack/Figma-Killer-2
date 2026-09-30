@@ -41,7 +41,7 @@ describe('BreakpointSelectionOverlay RAF loop', () => {
 
   it('gates its measurement on hasOverlayWork and delegates the schedule to overlayMeasureScheduler', () => {
     const effectMatch = source.match(
-      /useEffect\(\(\) => \{\n\s*if \(!hasOverlayWork\) return[\s\S]*?\}, \[hasOverlayWork, iframeElement, overlayRoot, continuousGesture\]\)/,
+      /useEffect\(\(\) => \{\n\s*if \(!hasOverlayWork\) return[\s\S]*?\}, \[hasOverlayWork, iframeElement, overlayRoot, bridgeChrome, continuousGesture\]\)/,
     )
     expect(effectMatch).not.toBeNull()
     const effectBody = effectMatch![0]

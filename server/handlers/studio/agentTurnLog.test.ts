@@ -32,6 +32,7 @@ function entry(overrides: Partial<AgentTurnLogEntry> = {}): AgentTurnLogEntry {
     ok: true,
     cacheHit: false,
     execution: 'server',
+    sideEffects: 'none',
     ...overrides,
   }
 }

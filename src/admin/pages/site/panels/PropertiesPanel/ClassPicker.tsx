@@ -37,7 +37,7 @@ import { useSelectionModel } from '@site/inspector/selectionModel'
 import { recordClassUsage } from '@site/preferences/classUsage'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import {
-  deriveSelectorPickerModel,
+  ambientRuleMatchesElement,
   type SelectorPillItem,
   type SelectorSuggestionItem,
 } from './selectorPickerModel'
@@ -257,14 +257,9 @@ export function ClassPicker({ nodeId, trailingAction, ref }: ClassPickerProps) {
         recordClassUsage(newClass.id)
       } else {
         const newRule = createAmbientRule({ selector: intent.selector })
-        const createdModel = deriveSelectorPickerModel({
-          rules: { [newRule.id]: newRule },
-          node,
-          selectedElement,
-          activeRuleId: null,
-        })
-        const createdSuggestion = createdModel.suggestions[0]
-        if (createdSuggestion && !createdSuggestion.disabled) {
+        // Asked through a module helper: the React Compiler cannot compile a
+        // logical expression inside `try`, and would skip the whole picker.
+        if (ambientRuleMatchesElement(newRule, node, selectedElement)) {
           setUnmatchedSelectorNotice(null)
           setActiveClass(newRule.id)
         } else {

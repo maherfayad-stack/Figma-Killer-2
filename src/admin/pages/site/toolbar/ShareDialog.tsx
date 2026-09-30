@@ -34,6 +34,8 @@ import styles from './ShareDialog.module.css'
 export function ShareDialog({ onClose }: { onClose: () => void }) {
   const activeBoardId = useEditorStore((s) => s.activeBoardId)
   const [shares, setShares] = useState<ShareSummary[] | null>(null)
+  /** P3-A — the list could not be read: said inside the dialog, where the list would be, not in a toast. */
+  const [loadFailed, setLoadFailed] = useState(false)
   /** The token currently being captured, `'new'` while minting, or null. */
   const [busyToken, setBusyToken] = useState<string | null>(null)
 
@@ -46,11 +48,7 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
         if (isAbortError(err)) return
         console.error('[ShareDialog] could not list shares:', err)
         setShares([])
-        pushToast({
-          kind: 'error',
-          title: 'Could not load shares',
-          body: getErrorMessage(err, 'Unknown error reading this project’s share links'),
-        })
+        setLoadFailed(true)
       }
     })()
     return () => controller.abort()
@@ -146,8 +144,10 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
       {shares === null && <p className={styles.empty}>Loading…</p>}
 
       {shares !== null && live.length === 0 && (
-        <p className={styles.empty}>
-          No live links yet. “Share current board” photographs it and copies the link.
+        <p className={styles.empty} role={loadFailed ? 'status' : undefined}>
+          {loadFailed
+            ? 'Studio could not read this project’s existing links. “Share current board” still makes a new one.'
+            : 'No live links yet. “Share current board” photographs it and copies the link.'}
         </p>
       )}
 

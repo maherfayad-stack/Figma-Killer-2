@@ -68,7 +68,8 @@ export interface StyledEditPayload {
   nodeId: string
   className: string
   selector: string
-  atMedia?: string
+  /** `media (min-width: 700px)` / `container …` / `supports …` — see `@core/css-codemods`' `cssAtRuleScope.ts`. */
+  atRule?: string
   property: string
   value: string
 }

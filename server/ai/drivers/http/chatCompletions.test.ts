@@ -36,12 +36,13 @@ describe('chatCompletions shared adapter', () => {
     expect(turns[1]).toEqual([{ role: 'user', content: 'hi' }])
   })
 
-  it('translator accumulates streamed text and finishes with stop=true when no tool calls', () => {
+  it('translator accumulates streamed text and finishes with no tool calls and no truncation', () => {
     const t = new ChatCompletionsTurnTranslator()
     const events = t.translate(frame({ choices: [{ delta: { content: 'Hello' } }] }))
     expect(events).toEqual([{ type: 'text', text: 'Hello' }])
     const result = t.finish()
-    expect(result.stop).toBe(true)
+    expect(result.toolCalls).toHaveLength(0)
+    expect(result.truncated).toBe(false)
     expect(result.toolCalls).toEqual([])
   })
 
@@ -74,7 +75,8 @@ describe('chatCompletions shared adapter', () => {
     )
     expect(last).toEqual([{ type: 'text', text: 'Hello there!' }])
     const result = t.finish()
-    expect(result.stop).toBe(true)
+    expect(result.toolCalls).toHaveLength(0)
+    expect(result.truncated).toBe(false)
     expect(result.assistantMessage?.[0]).toMatchObject({ role: 'assistant', content: 'Hello there!' })
   })
 
@@ -90,7 +92,7 @@ describe('chatCompletions shared adapter', () => {
     expect(toolEvent).toBeTruthy()
     expect(toolEvent).toMatchObject({ type: 'toolCall', toolName: 'insertHtml', toolCallId: 'c1' })
     const result = t.finish()
-    expect(result.stop).toBe(false)
+    expect(result.toolCalls.length).toBeGreaterThan(0)
     expect(result.toolCalls[0]).toMatchObject({ name: 'insertHtml' })
   })
 })

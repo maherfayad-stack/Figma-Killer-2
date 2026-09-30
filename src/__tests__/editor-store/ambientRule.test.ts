@@ -36,7 +36,6 @@ function freshStore() {
     canRedo: false,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     activeClassId: null,
     isAgentOpen: false,
     isAgentStreaming: false,

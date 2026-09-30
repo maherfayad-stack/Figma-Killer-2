@@ -3,7 +3,7 @@
  * them into custom font families wired to uploaded media assets.
  *
  * Covers the Super Import path that previously dropped every `@font-face`
- * (see docs/plans/2026-05-30-custom-fonts.md).
+ * (see docs/features/site-import.md → "What each category imports").
  */
 import { describe, expect, it } from 'bun:test'
 import { cssToStyleRules } from '@core/siteImport/cssToStyleRules'

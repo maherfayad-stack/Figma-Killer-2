@@ -45,6 +45,7 @@
  * before `setDeclaration` on the same text it is about to write.
  */
 import postcss, { type Container, type Declaration, type Root, type Rule } from 'postcss'
+import { findAtRuleBlocks, parseAtRuleScope } from './cssAtRuleScope'
 
 /** A named, user-readable reason a CSS write refused. `reason` is the machine tag; `message` is shown verbatim in a toast. */
 export interface DeclarationTargetRefusal {
@@ -90,7 +91,7 @@ const SHORTHAND_COVERAGE: ReadonlyArray<readonly [shorthand: string, covers: Reg
 ]
 
 /** True when setting `longhand` would be reset by a declaration of `shorthand`. */
-function shorthandCovers(shorthand: string, longhand: string): boolean {
+export function shorthandCovers(shorthand: string, longhand: string): boolean {
   if (shorthand === longhand) return false
   for (const [name, covers] of SHORTHAND_COVERAGE) {
     if (name === shorthand && covers.test(longhand)) return true
@@ -99,25 +100,23 @@ function shorthandCovers(shorthand: string, longhand: string): boolean {
 }
 
 /**
- * The scopes a write for `atMedia` could land in, in source order.
+ * The scopes a write for `atRule` could land in, in source order.
  *
- * Without `atMedia` that is the file's top level, and only its top level: a
- * rule nested in an `@media` block does not participate in the unconditional
+ * Without `atRule` that is the file's top level, and only its top level: a
+ * rule nested in a conditional block does not participate in the unconditional
  * cascade the caller is asking about.
  *
- * With `atMedia` it is EVERY `@media` block whose params match, not just the
- * first — `setDeclarationAtMedia` writes the first one, so a second block with
- * the same query that also sets this property is exactly the duplicate-selector
- * hazard this analyzer exists to catch, one nesting level down.
+ * With `atRule` (`"media (max-width: 768px)"`, `"container …"`,
+ * `"supports …"` — `cssAtRuleScope.ts`) it is EVERY block of that name whose
+ * params match, not just the first: a second block with the same condition that
+ * also sets this property is exactly the duplicate-selector hazard this
+ * analyzer exists to catch, one nesting level down. A malformed scope matches
+ * nothing.
  */
-function targetScopes(root: Root, atMedia: string | undefined): Container[] {
-  if (!atMedia) return [root]
-  const query = atMedia.trim()
-  const scopes: Container[] = []
-  root.each((node) => {
-    if (node.type === 'atrule' && node.name === 'media' && node.params.trim() === query) scopes.push(node)
-  })
-  return scopes
+function targetScopes(root: Root, atRule: string | undefined): Container[] {
+  if (!atRule) return [root]
+  const scope = parseAtRuleScope(atRule)
+  return scope ? findAtRuleBlocks(root, scope) : []
 }
 
 /** Every direct-child rule of `scopes` whose selector matches `selector` exactly, trimmed — the same match rule `setDeclaration` uses. */
@@ -146,17 +145,21 @@ function ownDeclarations(rule: Rule): Declaration[] {
  * land on exactly one honest target — see this module's doc for what each
  * refusal means and why the non-refusal cases are safe.
  *
- * `atMedia` scopes the whole analysis to rules inside `@media <query>`, which
- * is where `setDeclarationAtMedia` writes. Answering from the file's top level
- * for a breakpoint override would be the wrong question twice over: it would
- * miss a duplicate inside the block, and it would refuse for an unrelated
- * shorthand outside it.
+ * `atRule` scopes the whole analysis to rules inside that conditional block.
+ * Answering from the file's top level for a breakpoint override would be the
+ * wrong question twice over: it would miss a duplicate inside the block, and it
+ * would refuse for an unrelated shorthand outside it.
+ *
+ * P3-C (WB-16): `studioCssWriteback.ts` no longer asks this — `setDeclaration`
+ * now writes the declaration the cascade reads, so the three shapes refused
+ * here are writes there. What still asks is a styled-component template
+ * (`setStyledDeclaration`), whose spans this module cannot re-target.
  */
 export function analyzeDeclarationTarget(
   cssText: string,
   selector: string,
   property: string,
-  options: { atMedia?: string } = {},
+  options: { atRule?: string } = {},
 ): DeclarationTargetAnalysis {
   let root: Root
   try {
@@ -175,8 +178,8 @@ export function analyzeDeclarationTarget(
   }
 
   const prop = property.toLowerCase()
-  const matches = matchingRules(targetScopes(root, options.atMedia), selector)
-  // No existing rule (or, for `atMedia`, no such block yet): the writer
+  const matches = matchingRules(targetScopes(root, options.atRule), selector)
+  // No existing rule (or, for `atRule`, no such block yet): the writer
   // appends a fresh one at the end, which cascades last and is unambiguous.
   // For a REMOVAL there is likewise nothing to be shadowed by.
   if (matches.length === 0) return { ok: true }

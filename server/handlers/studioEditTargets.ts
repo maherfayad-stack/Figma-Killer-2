@@ -18,18 +18,18 @@
  *
  * ## The guard
  *
- * Same posture as `studioAsset.ts`'s read-path guard and
- * `studioCssWriteback.ts`'s write-path resolvers: reject absolute / UNC /
+ * The SAME decoder as `studioAsset.ts`'s read path — `resolveWorkspaceReadPath`
+ * (`@core/page-parser`), not a copy of it: reject absolute / UNC /
  * drive-letter forms, `..`/`.`/empty segments on EITHER separator, and any
- * `EXCLUDED_WORKSPACE_DIR_NAMES` segment; then require CONTAINMENT ON THE REAL
- * PATH after resolving symlinks — a workspace can arrive from GitHub, and git
- * stores symlinks, so a textual check alone is bypassable. `null` on any
+ * `EXCLUDED_WORKSPACE_DIR_NAMES` segment compared case-folded the way the
+ * filesystem resolves it; then require CONTAINMENT ON THE REAL PATH after
+ * resolving symlinks, with no excluded directory there either — a workspace
+ * can arrive from GitHub, and git stores symlinks, so a textual check alone
+ * is bypassable. `null` on any
  * violation, or when the target does not exist: a specifier pointing nowhere
  * is worse than a refused edit.
  */
-import { isAbsolute, join, resolve, sep } from 'node:path'
-import { realpathSync } from 'node:fs'
-import { EXCLUDED_WORKSPACE_DIR_NAMES } from '@core/page-parser'
+import { resolveWorkspaceReadPath } from '@core/page-parser'
 import type { ClassNameToken } from '@core/ast-codemods'
 import type { StudioClassNameToken } from './studioEditSchemas'
 
@@ -39,35 +39,7 @@ import type { StudioClassNameToken } from './studioEditSchemas'
  * for the guard set and why every check is there.
  */
 export function resolveContainedRefPath(dir: string, pathRel: string): string | null {
-  if (pathRel.length === 0) return null
-  if (isAbsolute(pathRel)) return null
-  if (/^[a-zA-Z]:/.test(pathRel)) return null // Windows drive path
-  if (pathRel.startsWith('\\\\') || pathRel.startsWith('//')) return null // UNC path
-
-  const segments = pathRel.split(/[\\/]+/).filter((segment) => segment.length > 0)
-  if (segments.length === 0) return null
-  if (segments.some((segment) => segment === '..' || segment === '.')) return null
-  if (segments.some((segment) => EXCLUDED_WORKSPACE_DIR_NAMES.has(segment))) return null
-
-  const root = resolve(dir)
-  const resolved = resolve(join(dir, ...segments))
-  if (resolved !== root && !resolved.startsWith(root + sep)) return null
-
-  let real: string
-  try {
-    real = realpathSync(resolved)
-  } catch {
-    return null // missing file / broken symlink — nowhere honest to point at
-  }
-  let realRoot: string
-  try {
-    realRoot = realpathSync(root)
-  } catch {
-    return null
-  }
-  if (real !== realRoot && !real.startsWith(realRoot + sep)) return null
-
-  return segments.join('/')
+  return resolveWorkspaceReadPath(dir, pathRel)?.rel ?? null
 }
 
 /**

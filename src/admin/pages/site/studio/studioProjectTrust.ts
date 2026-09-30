@@ -10,7 +10,7 @@
  *
  * Same "tiny external store" pattern the rest of this folder uses for
  * ephemeral, per-load client state (`getStudioComponentSources`,
- * `getStudioVendorCss` in `fsCodemodAdapter.ts`) — not a Zustand slice,
+ * `getStudioVendorCss` in `studioProjectLoad.ts` and `studioRawCssStores.ts`) — not a Zustand slice,
  * because none of this belongs in the persisted `SiteDocument`.
  */
 import { apiRequest } from '@core/http'

@@ -68,7 +68,7 @@ describe('StyleTargetChip', () => {
       <StyleTargetChip
         elementVisible={false}
         classSelector=".card"
-        classCssEditability={{ kind: 'will-create-existing', file: 'src/screens/Home.css' }}
+        classCssEditability={{ kind: 'will-create-existing', file: 'src/screens/Home.css', alternatives: [] }}
       />,
     )
     const classChip = screen.getByTestId('style-target-chip-class')

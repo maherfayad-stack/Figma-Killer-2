@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'bun:test'
 import { buildStudioAgentSystemPrompt, type StudioPromptContext } from './systemPrompt'
-import { studioAgentTools } from './index'
+import { studioAgentTools, studioHttpAgentTools } from './index'
 import type { StudioLiveDigest } from './liveDigest'
 
 /** Every `studio_snake_case` token appearing anywhere in `text`, de-duplicated. */
@@ -62,6 +62,38 @@ describe('Studio system prompt — tool registry parity', () => {
   })
 })
 
+describe('Studio system prompt — each path is told the file tools it actually has (P4-C, AI-2)', () => {
+  const WRITE_TOOLS = new Set(['studio_write_file', 'studio_edit_file', 'studio_edit_files'])
+
+  it('the HTTP path is told about the Studio file tools, not native ones it lacks, and not Task', () => {
+    const [prefix] = buildStudioAgentSystemPrompt(null, studioHttpAgentTools)
+    expect(prefix).toContain('studio_write_file creates a file')
+    expect(prefix).toContain('studio_edit_files applies several such edits')
+    expect(prefix).not.toContain('Read, Write, Edit, Glob and Grep')
+    expect(prefix).not.toContain('you already have it')
+    expect(prefix).not.toContain('Task')
+    expect(prefix).not.toContain('subagent_type')
+    // It reads the project's conventions itself; nothing loads them for it.
+    expect(prefix).toContain("Read the project's CLAUDE.md once, with studio_read_file")
+    // And it knows how the round ceiling ends (AI-10).
+    expect(prefix).toContain('your tools are switched off for one last reply')
+  })
+
+  it('an HTTP caller who may not write is told so, instead of being told to write', () => {
+    const readOnly = studioHttpAgentTools.filter((t) => !WRITE_TOOLS.has(t.name))
+    const [prefix] = buildStudioAgentSystemPrompt(null, readOnly)
+    expect(prefix).toContain('You cannot write files this turn')
+    expect(prefix).not.toContain('studio_write_file')
+  })
+
+  it('the claude CLI path keeps its native-tool guidance and the subagent contract', () => {
+    const [prefix] = buildStudioAgentSystemPrompt(null, studioAgentTools)
+    expect(prefix).toContain('Read, Write, Edit, Glob and Grep')
+    expect(prefix).toContain("subagent_type is ALWAYS 'general-purpose'")
+    expect(prefix).not.toContain('studio_write_file')
+  })
+})
+
 describe('Studio system prompt — capability-aware "Tools available" line (0.11)', () => {
   it('never names a tool that was filtered out of the resolved list handed in', () => {
     // Simulates what `selectStudioTools` does for a caller without
@@ -94,11 +126,14 @@ const FIXTURE_CTX: StudioPromptContext = {
   warningCount: 0,
 }
 
-function baseLiveDigest(capabilities: StudioLiveDigest['capabilities']): StudioLiveDigest {
+function baseLiveDigest(
+  partial: Omit<StudioLiveDigest['capabilities'], 'stockPhotos'> & Partial<Pick<StudioLiveDigest['capabilities'], 'stockPhotos'>>,
+): StudioLiveDigest {
+  const capabilities: StudioLiveDigest['capabilities'] = { stockPhotos: { configured: true }, ...partial }
   return {
     board: { activeBoardId: null, frames: [] },
     activePage: null,
-    selection: null,
+    selection: { nodes: [], omitted: 0 },
     fidelity: null,
     install: { hasPackageJson: true, hasNodeModules: true, dependencyCount: 3 },
     axes: { direction: 'ltr', colorScheme: 'light' },
@@ -146,6 +181,19 @@ describe('Studio system prompt — capability digest (mcp-tooling task)', () => 
     expect(suffix).toContain('Figma MCP connector: configured.')
     expect(suffix).not.toContain('not configured for this project')
     expect(suffix).not.toContain('asset downloads from it are blocked')
+  })
+
+  it('stock search not set up: one line telling the agent not to call studio_find_image; configured says nothing', () => {
+    const off = baseLiveDigest({
+      figma: { status: 'configured', loopbackAssetFetchBlocked: false },
+      typecheck: { available: true },
+      stockPhotos: { configured: false },
+    })
+    const [, , offSuffix] = buildStudioAgentSystemPrompt(FIXTURE_CTX, studioAgentTools, off)
+    expect(offSuffix).toContain('studio_find_image: stock photo search is not set up')
+    const on = baseLiveDigest({ figma: { status: 'configured', loopbackAssetFetchBlocked: false }, typecheck: { available: true } })
+    const [, , onSuffix] = buildStudioAgentSystemPrompt(FIXTURE_CTX, studioAgentTools, on)
+    expect(onSuffix).not.toContain('stock photo search')
   })
 
   it('degraded: figma not configured produces an actionable line naming the fallback tool', () => {

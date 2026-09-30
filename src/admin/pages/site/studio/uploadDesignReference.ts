@@ -33,15 +33,14 @@
  * proposal for the missing HUMAN-driven half; reconcile with whoever wires
  * the route rather than assuming either side is final.
  *
- * Upload uses `XMLHttpRequest` for the same reason `uploadStudioAsset.ts`
- * does: `fetch` exposes no upload progress events, and a lossless reference
+ * Upload goes through `apiUploadRequest` (`@core/http`'s one XHR upload
+ * client) because `fetch` exposes no upload progress events, and a lossless reference
  * (up to `DESIGN_REFERENCE_MAX_BYTES`) is exactly the kind of large binary
  * where progress matters. GET/DELETE have no body to report progress on, so
  * they go through the ordinary `apiRequest` stack.
  */
-import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { compiledCheck } from '@core/utils/typeboxCompiler'
-import { apiRequest } from '@core/http'
+import { Type } from '@core/utils/typeboxHelpers'
+import { apiRequest, apiUploadRequest } from '@core/http'
 import { DesignReferenceMetaSchema, type DesignReferenceMeta } from '@core/ai'
 import { getStudioWorkspaceDir } from './studioWorkspaceDir'
 
@@ -62,61 +61,23 @@ export interface UploadDesignReferenceOptions {
   signal?: AbortSignal
 }
 
-/** Reads the `{ error }` envelope off an XHR JSON response, same shape every studio route returns on failure. */
-function extractXhrErrorMessage(xhr: XMLHttpRequest): string | null {
-  const response = xhr.response as unknown
-  if (response && typeof response === 'object' && 'error' in response) {
-    const errorField = (response as { error?: unknown }).error
-    if (typeof errorField === 'string') return errorField
-  }
-  return null
-}
-
 /** Uploads a design reference's ORIGINAL bytes — never re-encoded, never resized. */
-export function uploadDesignReference(
+export async function uploadDesignReference(
   file: File,
   options: UploadDesignReferenceOptions = {},
 ): Promise<DesignReferenceMeta> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
-    xhr.open('POST', DESIGN_REFERENCE_UPLOAD_PATH, true)
-    xhr.withCredentials = true
-    xhr.responseType = 'json'
-
-    xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable) options.onProgress?.(event.loaded / event.total)
-    }
-
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        const data = xhr.response as unknown
-        if (!compiledCheck(DesignReferenceUploadResponseSchema, data)) {
-          reject(new Error('Server response did not match the expected shape'))
-          return
-        }
-        resolve((data as Static<typeof DesignReferenceUploadResponseSchema>).reference)
-      } else {
-        reject(new Error(extractXhrErrorMessage(xhr) ?? `Upload failed with ${xhr.status}`))
-      }
-    }
-    xhr.onerror = () => reject(new Error('Network error during upload'))
-    xhr.onabort = () => reject(new DOMException('Upload cancelled', 'AbortError'))
-
-    if (options.signal) {
-      if (options.signal.aborted) {
-        xhr.abort()
-        return
-      }
-      options.signal.addEventListener('abort', () => xhr.abort())
-    }
-
-    const body = new FormData()
-    const overrideDir = getStudioWorkspaceDir()
-    if (overrideDir) body.set('dir', overrideDir)
-    if (file.name) body.set('label', file.name)
-    body.set('file', file)
-    xhr.send(body)
+  const body = new FormData()
+  const overrideDir = getStudioWorkspaceDir()
+  if (overrideDir) body.set('dir', overrideDir)
+  if (file.name) body.set('label', file.name)
+  body.set('file', file)
+  const result = await apiUploadRequest(DESIGN_REFERENCE_UPLOAD_PATH, {
+    body,
+    schema: DesignReferenceUploadResponseSchema,
+    ...(options.onProgress ? { onProgress: options.onProgress } : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
   })
+  return result.reference
 }
 
 /** The active project's most recently registered design reference, or `null` if none (including when the endpoint doesn't exist yet). */

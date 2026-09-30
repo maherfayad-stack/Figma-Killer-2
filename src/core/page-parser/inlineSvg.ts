@@ -20,34 +20,44 @@
  * `stroke-*` would be dropped and the graphic would come out blank — the exact
  * symptom this replaces, one layer down.
  *
- * What this deliberately does NOT do: keep the graphic editable. An `<svg>`
- * subtree collapses to one locked `base.svg` node. Its interior is drawing
- * instructions, not page structure, and `base.svg`'s own editor is the place to
- * change markup.
+ * What this deliberately does NOT do: turn the interior into page-tree nodes.
+ * An `<svg>` subtree collapses to one `base.svg` node; its interior is drawing
+ * instructions, not page structure.
+ *
+ * ## Part stamps (P5-D, SVG-3)
+ *
+ * With `stampParts`, every element BELOW the root is serialised with
+ * `data-studio-svg-part="<line>:<col>"` (its own JSX location, the node-id
+ * convention) and, when any, `data-studio-svg-code="<jsx names>"` (its
+ * attributes that came from code, `*` for a spread). That is what lets the
+ * canvas edit a `<path>` — the stamp names the one place its `svg-attr` write
+ * lands, and the code list names what must not be overwritten — without the
+ * path becoming a node. See `@core/vector`'s `svgPartStamps.ts`; every exit
+ * strips them. Stamp bytes do not count against `MAX_MARKUP_LENGTH`: the cap
+ * is about the graphic, and stamps must not tip a graphic that rendered before
+ * into the "SVG built in code" lock.
  */
 import { Node } from 'ts-morph'
+import {
+  SVG_CODE_ATTRIBUTE,
+  SVG_PART_ATTRIBUTE,
+  SVG_SPREAD_CODE,
+  formatSvgPartLocation,
+  isSvgPartStampAttribute,
+  jsxToMarkupAttributeName,
+} from '@core/vector'
 import type { JsxAttribute, JsxSpreadAttribute } from 'ts-morph'
 import type { PageEvalContext } from './nodeResolution'
 import { tryResolveExpression } from './nodeResolution'
+import { isLiteralJsxAttribute } from './jsxLiteralAttribute'
 
-/**
- * SVG attributes that really are camelCase in markup. Everything else that
- * carries a capital is a React-ism for a dashed attribute (`strokeWidth` →
- * `stroke-width`), which is how React itself splits the two cases.
- */
-const CAMEL_CASE_SVG_ATTRIBUTES: ReadonlySet<string> = new Set([
-  'attributeName', 'attributeType', 'baseFrequency', 'baseProfile', 'calcMode',
-  'clipPathUnits', 'diffuseConstant', 'edgeMode', 'filterUnits', 'gradientTransform',
-  'gradientUnits', 'kernelMatrix', 'kernelUnitLength', 'keyPoints', 'keySplines',
-  'keyTimes', 'lengthAdjust', 'limitingConeAngle', 'markerHeight', 'markerUnits',
-  'markerWidth', 'maskContentUnits', 'maskUnits', 'numOctaves', 'pathLength',
-  'patternContentUnits', 'patternTransform', 'patternUnits', 'pointsAtX',
-  'pointsAtY', 'pointsAtZ', 'preserveAlpha', 'preserveAspectRatio', 'primitiveUnits',
-  'refX', 'refY', 'repeatCount', 'repeatDur', 'requiredExtensions', 'specularConstant',
-  'specularExponent', 'spreadMethod', 'startOffset', 'stdDeviation', 'stitchTiles',
-  'surfaceScale', 'systemLanguage', 'tableValues', 'targetX', 'targetY', 'textLength',
-  'viewBox', 'xChannelSelector', 'yChannelSelector', 'zoomAndPan',
-])
+/** One serialisation's settings and running tally. */
+interface SerializeContext {
+  evalCtx: PageEvalContext | undefined
+  stampParts: boolean
+  /** Bytes the stamps added — excluded from the markup cap. */
+  stampBytes: number
+}
 
 /** Attributes that are React plumbing, never markup. */
 const DROPPED_ATTRIBUTES: ReadonlySet<string> = new Set(['key', 'ref', 'dangerouslySetInnerHTML'])
@@ -63,15 +73,6 @@ const VOID_SVG_TAGS: ReadonlySet<string> = new Set([
  * produce invalid markup, so the whole serialisation declines instead.
  */
 const MAX_MARKUP_LENGTH = 64 * 1024
-
-/** React prop name -> markup attribute name. */
-function attributeName(name: string): string {
-  if (name === 'className') return 'class'
-  if (name === 'htmlFor') return 'for'
-  if (name.startsWith('data-') || name.startsWith('aria-') || name.includes(':')) return name
-  if (CAMEL_CASE_SVG_ATTRIBUTES.has(name)) return name
-  return name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase()
-}
 
 /** `strokeWidth` -> `stroke-width` for a `style={{…}}` entry; `--x` passes through. */
 function cssPropertyName(name: string): string {
@@ -140,30 +141,60 @@ function styleAttributeValue(
 
 function serializeAttributes(
   attributes: (JsxAttribute | JsxSpreadAttribute)[],
-  evalCtx: PageEvalContext | undefined,
+  ctx: SerializeContext,
 ): string {
+  const { evalCtx } = ctx
   let out = ''
   for (const attribute of attributes) {
     // A spread carries an unknown set of attributes; there is nothing to write.
     if (!Node.isJsxAttribute(attribute)) continue
     const name = attribute.getNameNode().getText()
     if (DROPPED_ATTRIBUTES.has(name) || name.startsWith('on')) continue
+    // Reserved for Studio's own stamps: an authored copy would collide with them.
+    if (ctx.stampParts && isSvgPartStampAttribute(name)) continue
 
     const value = name === 'style'
       ? styleAttributeValue(attribute, evalCtx)
       : attributeValue(attribute, evalCtx)
     if (value === undefined) continue
-    out += value === '' ? ` ${attributeName(name)}` : ` ${attributeName(name)}="${escapeAttribute(value)}"`
+    // The one JSX ⇄ markup name table (`@core/vector`), shared with the SVG
+    // importer and the canvas renderer so a round trip is an identity.
+    const markupName = jsxToMarkupAttributeName(name)
+    out += value === '' ? ` ${markupName}` : ` ${markupName}="${escapeAttribute(value)}"`
   }
   return out
 }
 
 /**
+ * The stamps for one inner element (see this module's doc): its tag-name
+ * location, and the JSX names of the attributes a literal write would destroy.
+ */
+function partStamps(tagNode: Node, attributes: (JsxAttribute | JsxSpreadAttribute)[], ctx: SerializeContext): string {
+  const { line, column } = tagNode.getSourceFile().getLineAndColumnAtPos(tagNode.getStart())
+  let code: string[] = []
+  for (const attribute of attributes) {
+    if (!Node.isJsxAttribute(attribute)) {
+      code = [SVG_SPREAD_CODE]
+      break
+    }
+    const name = attribute.getNameNode().getText()
+    if (DROPPED_ATTRIBUTES.has(name) || name.startsWith('on') || isSvgPartStampAttribute(name)) continue
+    if (!isLiteralJsxAttribute(attribute)) code.push(name)
+  }
+  const stamps = ` ${SVG_PART_ATTRIBUTE}="${formatSvgPartLocation(line, column)}"` +
+    (code.length > 0 ? ` ${SVG_CODE_ATTRIBUTE}="${escapeAttribute(code.join(','))}"` : '')
+  ctx.stampBytes += stamps.length
+  return stamps
+}
+
+/**
  * One JSX node as markup. Returns `''` for anything that carries nothing
  * renderable (a comment-only expression, an unresolvable interpolation) —
- * omitting a shape rather than guessing at it.
+ * omitting a shape rather than guessing at it. `isRoot` is the `<svg>` itself,
+ * which is never stamped: its location is its node id.
  */
-function serializeNode(node: Node, evalCtx: PageEvalContext | undefined): string {
+function serializeNode(node: Node, ctx: SerializeContext, isRoot = false): string {
+  const { evalCtx } = ctx
   if (Node.isJsxText(node)) {
     // NOT escaped: JSX text and markup text are the same syntax, entities
     // included, so the source text is already what belongs in the output.
@@ -180,20 +211,24 @@ function serializeNode(node: Node, evalCtx: PageEvalContext | undefined): string
   }
 
   if (Node.isJsxFragment(node)) {
-    return node.getJsxChildren().map((child) => serializeNode(child, evalCtx)).join('')
+    return node.getJsxChildren().map((child) => serializeNode(child, ctx)).join('')
   }
 
   if (Node.isJsxSelfClosingElement(node)) {
-    const tag = node.getTagNameNode().getText()
-    const attrs = serializeAttributes(node.getAttributes(), evalCtx)
+    const tagNode = node.getTagNameNode()
+    const tag = tagNode.getText()
+    const stamps = ctx.stampParts && !isRoot ? partStamps(tagNode, node.getAttributes(), ctx) : ''
+    const attrs = stamps + serializeAttributes(node.getAttributes(), ctx)
     return VOID_SVG_TAGS.has(tag) ? `<${tag}${attrs}/>` : `<${tag}${attrs}></${tag}>`
   }
 
   if (Node.isJsxElement(node)) {
     const opening = node.getOpeningElement()
-    const tag = opening.getTagNameNode().getText()
-    const attrs = serializeAttributes(opening.getAttributes(), evalCtx)
-    const children = node.getJsxChildren().map((child) => serializeNode(child, evalCtx)).join('')
+    const tagNode = opening.getTagNameNode()
+    const tag = tagNode.getText()
+    const stamps = ctx.stampParts && !isRoot ? partStamps(tagNode, opening.getAttributes(), ctx) : ''
+    const attrs = stamps + serializeAttributes(opening.getAttributes(), ctx)
+    const children = node.getJsxChildren().map((child) => serializeNode(child, ctx)).join('')
     return `<${tag}${attrs}>${children}</${tag}>`
   }
 
@@ -211,6 +246,7 @@ function serializeNode(node: Node, evalCtx: PageEvalContext | undefined): string
 export function serializeInlineSvg(
   element: Node,
   evalCtx: PageEvalContext | undefined,
+  options: { stampParts?: boolean } = {},
 ): string | undefined {
   const tagNode = Node.isJsxElement(element)
     ? element.getOpeningElement().getTagNameNode()
@@ -219,6 +255,7 @@ export function serializeInlineSvg(
       : undefined
   if (tagNode === undefined || tagNode.getText() !== 'svg') return undefined
 
-  const markup = serializeNode(element, evalCtx)
-  return markup.length > 0 && markup.length <= MAX_MARKUP_LENGTH ? markup : undefined
+  const ctx: SerializeContext = { evalCtx, stampParts: options.stampParts === true, stampBytes: 0 }
+  const markup = serializeNode(element, ctx, true)
+  return markup.length > 0 && markup.length - ctx.stampBytes <= MAX_MARKUP_LENGTH ? markup : undefined
 }

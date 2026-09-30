@@ -90,7 +90,7 @@
     --text-bright: #f4f4f5;
     --text: #ededed;
     --text-muted: #a1a1aa;
-    --text-subtle: #787878;
+    --text-subtle: #888888;
     --text-disabled: #52525b;
 
     /* White overlay scale. Suffix = alpha x 100. */
@@ -174,6 +174,10 @@
     --success-30: rgba(52, 211, 153, 0.3);
     --success-40: rgba(52, 211, 153, 0.4);
     --info-text: #c4b5fd;
+    /* The info tone's one surface tint — a fact card that blocks nothing
+       (`SourceConstraintNotice`'s info variant, `SlotFillNotice`). Literal,
+       like `--warning-10`, so a light-theme region recomputes it. */
+    --info-10: rgba(196, 181, 253, 0.1);
 
     /* Code syntax - GitHub Dark inspired */
     --syntax-keyword: #ff7b72;
@@ -244,43 +248,50 @@
     --inspector-space-l: 10px;
     --inspector-space-xl: 12px;
 
-    /* Panel spacing HIERARCHY (fix/inspector-spacing-audit) — three of the
-       nine steps above, each given one meaning, used consistently across
-       every section so proximity (not colour, not a new divider) is what
-       lets the eye chunk the panel into scannable groups:
+    /* Panel spacing HIERARCHY (fix/inspector-spacing-audit, P2-F) — three
+       steps, each given one meaning, used consistently across every section
+       so proximity (not colour, not a new divider) is what lets the eye
+       chunk the panel into scannable groups:
 
          - `--inspector-space-2xs` (4px) — WITHIN a group: rows/fields that
-           are facets of one concept (a W/H pair, the four padding sides, a
-           prop row's own advanced disclosure).
+           are facets of one concept (a W/H pair, the four padding sides, the
+           Module block's prop rows, Text's four rows, Measures' size /
+           position / rotation rows). Penpot's `gap: var(--sp-xs)` in
+           `menus/text.scss`, `menus/measures.scss` and the variant-property
+           list in `menus/component.scss`.
          - `--inspector-space-m` (8px) — BETWEEN groups inside one section
-           (Layout's mode vs. padding vs. flex settings vs. margin; Measures'
-           size vs. position vs. rotation; one declared prop row vs. the
-           next) AND between sections. Already `Section.module.css`'s
-           `.sectionBody` gap and `PropertyList`'s row height rhythm; since
-           panel-39 it is also `StyleSurface.module.css`'s `.surfaceContent`
-           gap — the single shared ancestor of every section, headered or
-           headerless. That gap lives there and not in `Section.module.css`
-           itself, because `Section` is also used by GitPanel/
-           FrameworkScalePanel, outside the Properties panel's rhythm. A
-           section's own `.sectionContent` has zero top padding, so this one
-           shared gap is ALSO what gives a header more space above it than
-           below — the header belongs to its own content, not to the section
-           before it. 8px is Figma's and Penpot's own measured section gap
-           (`docs/audits/penpot-inspector-baseline/`); the 12px step that
-           used to sit here cost a text node 132px across twelve gaps for no
-           reference behind it.
-         - `--inspector-space-xl` (12px) — block padding for a full-width
-           inset card inside the panel (`MultiSelectorInspector`'s bulk-
-           action surface, the generated-utility notice). NOT a step in the
-           row/section rhythm above.
+           (Layout's mode vs. padding vs. margin). Also `Section.module.css`'s
+           shared `.sectionBody` gap, which GitPanel/FrameworkScalePanel use
+           outside this panel's rhythm, and the Module block's bottom padding.
+         - `--inspector-section-gap` (12px) — BETWEEN sections: the grid gap
+           of `StyleSurface.module.css`'s `.surfaceContent`, the one shared
+           ancestor of every section, headered or headerless. A section's own
+           `.sectionContent` has zero top padding, so this gap is also what
+           gives a header more space above it than below — the header belongs
+           to its own content, not to the section before it.
+
+       The section gap is 12px by owner decision (OD-4). It is NOT "Penpot's
+       gap is 8": Penpot's `.element-options` flex gap is 8px, but every menu
+       also ends in `margin-block-end: var(--sp-s)` (`menus/layer.scss`,
+       `menus/measures.scss`), so its real section boundary is 16px — the Δ16
+       `docs/audits/penpot-inspector-baseline/02-measurements.md` measures
+       between the Layer row and the W/H row. panel-39's 8px conflated the
+       two and left a section boundary exactly as far as a group boundary.
+       Studio takes 12, not 16, because the Design tab is held to the room a
+       900px window leaves; the Shadow + Blur merge into Effects pays for it.
+
+       `--inspector-space-xl` (12px) is a different role that happens to
+       share the value — block padding for a full-width inset card inside the
+       panel (`MultiSelectorInspector`'s bulk-action surface, the generated-
+       utility notice), NOT a step in the rhythm above. Two names for two
+       facts, so the section gap can move without dragging the cards along.
 
        This replaces `--inspector-gap-tight`/`--inspector-gap-group`, the P3
        pair this comment used to describe: `-gap-group` (16px) was defined
-       but never once applied in real CSS (confirmed by grep before this
-       pass), and `-gap-tight` (4px) is the exact value `--inspector-space-
-       2xs` already carries — two names for the same fact is exactly the
-       "parallel scale" the panel's own conventions warn against. Retired
-       rather than left dead. */
+       but never once applied in real CSS, and `-gap-tight` (4px) is the exact
+       value `--inspector-space-2xs` already carries. Retired rather than left
+       dead. */
+    --inspector-section-gap: 12px;
 
     /* `--inspector-pad-x`/`--inspector-row-h`/`--inspector-field-radius`
        corrected to Penpot's measured values (`04-token-gaps.md`) — pure
@@ -294,8 +305,13 @@
     --inspector-group-gap: 8px;
     /* Caption ("Line height") to the field it names. */
     --inspector-caption-gap: 3px;
-    /* The remaining text-label column, for rows with no honest glyph. */
-    --inspector-label-w: 68px;
+    /* The remaining text-label column, for rows with no honest glyph — in
+       practice a module's or a component's own prop names. 96px (P2-G, UX-10):
+       68px fit ~10 characters, so `fetchPriority`, `placeholder`,
+       `ariaLabel` and any `onSomething` ellipsised. Penpot's prop row gives
+       the name 3 of 8 grid columns (104px); 96 leaves the field ~158px at the
+       290px default width. */
+    --inspector-label-w: 96px;
     /* The vertical category rail's column. The content column beside it is
        sized `minmax(0, 1fr)` against this, so the rail is reserved space in
        the grid rather than a strip floating over the sections — the two
@@ -307,24 +323,18 @@
        reads as one quiet block instead of a ladder of outlines. */
     --inspector-field-radius: 8px;
     /* Redefined off `--overlay-5` (`04-token-gaps.md`) — Penpot's field fill
-       is its own literal surface colour, not a translucent overlay wash. */
+       is its own literal surface colour, not a translucent overlay wash.
+
+       The hover fill is a literal too, and for the same reason (P2-H,
+       UX-11). It used to be `--overlay-10`, and a field REPLACES its fill on
+       hover rather than layering over it — so over the docked panel's black
+       `--bg-body` the hovered field painted ~#1a1a1a, DARKER than the
+       #212426 it rests at. Hover must move a field away from the panel
+       behind it, never back toward it: one step lighter here, and in the
+       light theme (whose panel is darker than its fields) one step whiter. */
     --inspector-field-bg: #212426;
-    --inspector-field-bg-hover: var(--overlay-10);
+    --inspector-field-bg-hover: #2a2e31;
     --inspector-divider: var(--overlay-10);
-    /* Penpot's two identity accents (`04-token-gaps.md`'s own proposal, not
-       this app's numbered `--accent-*` scale). Two SEPARATELY NAMED tokens,
-       not a dark/light pair of one token — Penpot itself measures a
-       different hue for the accent it draws on a dark field vs. a light
-       one, not a lightness-only swap of the same colour, so both are always
-       available regardless of the admin's own editor theme. A future
-       section that needs "the accent for a dark-surfaced control" reaches
-       for `-dark`; "for a light-surfaced control" reaches for `-light`. */
-    --inspector-accent-dark: #7efff5;
-    --inspector-accent-light: #6911d4;
-    /* Penpot's muted uppercase section-header label colour — distinct from
-       the admin's own `--text-subtle` (measured separately, `04-token-
-       gaps.md`). */
-    --inspector-section-label-color: #8f9da3;
 
     /* Scrollbars */
     --scrollbar-size: 6px;
@@ -684,7 +694,11 @@
     --text-bright: #111827;
     --text: #1f2937;
     --text-muted: #4b5563;
-    --text-subtle: #6b7280;
+    /* #5b6270, not Tailwind's gray-500 (#6b7280): the docked sidebars sit on
+       `--bg-body`, where gray-500 measured 3.9:1 — below WCAG AA for the
+       captions, units and empty states that read it (P2-H, UX-15). This is
+       4.9:1 there and 6.1:1 on `--bg-surface`. */
+    --text-subtle: #5b6270;
     --text-disabled: #9ca3af;
 
     /* Identity accents tuned as foregrounds for light surfaces. */
@@ -728,6 +742,7 @@
     --success-text: #047857;
     --success-text-muted: #065f46;
     --info-text: #4338ca;
+    --info-10: rgba(67, 56, 202, 0.1);
 
     /* Shadows and focus */
     --shadow-panel-inset-bottom: inset 0 -1px 0 var(--overlay-10);
@@ -761,12 +776,11 @@
     --plugins-hero-tint-a: rgba(142, 230, 200, 0.18);
     --plugins-hero-tint-b: rgba(155, 220, 255, 0.2);
 
-    /* Inspector — Penpot geometry pass (`STATE.md` `panel-25`). The identity
-       accents (`--inspector-accent-dark`/`-light`) are NOT theme-conditional
-       — see their own `:root` comment — so only the two genuinely
-       theme-varying tokens are redefined here. */
+    /* Inspector field fill. The panel behind it (`--bg-body`) is DARKER than
+       the field here, so hover lifts toward white — see the `:root` note on
+       `--inspector-field-bg-hover`. */
     --inspector-field-bg: #f3f4f6;
-    --inspector-section-label-color: #495e74;
+    --inspector-field-bg-hover: var(--bg-surface);
 }
 
 /* Reduced motion support — Constraint from UX Guideline #189 */

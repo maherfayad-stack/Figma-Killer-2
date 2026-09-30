@@ -7,12 +7,17 @@
    `panels/PropertiesPanel/TypographySection.module.css` — the tokens it used
    (`--inspector-group-gap` / `--inspector-field-gap`) were already correct
    after Step 0's global geometry fix, so this is a straight relocation, not
-   a redesign. */
+   a redesign.
+
+   P2-F (UX-3): the four rows are ONE group — the text's typography — so
+   they sit the within-group 4px apart (Penpot `menus/text.scss`
+   `gap: var(--sp-xs)`), here and inside the grid (`rhythm="within-group"`).
+   The 12px between-section gap is what separates Text from its neighbours. */
 
 .section {
     display: flex;
     flex-direction: column;
-    gap: var(--inspector-group-gap);
+    gap: var(--inspector-space-2xs);
 }
 
 .alignRow {

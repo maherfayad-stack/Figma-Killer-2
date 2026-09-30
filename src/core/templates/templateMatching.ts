@@ -89,7 +89,7 @@ export function resolveNotFoundTemplate(site: SiteDocument): Page | null {
  * more stable slice.
  */
 export function resolveTemplateChainFromPages(
-  pages: Page[],
+  pages: readonly Page[],
   ctx: RouteResolutionContext,
 ): Page[] {
   const indexed = pages.map((page, index) => ({ page, index }))

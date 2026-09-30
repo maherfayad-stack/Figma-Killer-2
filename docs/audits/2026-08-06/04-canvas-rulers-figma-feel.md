@@ -1,4 +1,5 @@
 # Audit: Rulers + De-Studio-ify the canvas surface
+> **Trust:** historical, dated 2026-08-06. Paths may be wrong. Never act on it.
 
 Scope read in full: `src/admin/pages/site/canvas/**`, `src/admin/pages/site/toolbar/**`,
 `src/admin/pages/site/sidebars/**`, `src/core/studio-board/**`, plus

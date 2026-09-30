@@ -33,7 +33,19 @@ import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { pushToast } from '@ui/components/Toast'
 import { studioWriteDir } from './studioWorkspaceDir'
+import { captureIdentities, expectationsFor, recordOwnWrites, type IdentityCapture } from './sourceIdentity'
+import { structuralEditNodeIds, type StructuralEditPayload } from './structuralUndoPlan'
+import { elementMovedNodeIds, retryAfterElementMoved } from './elementMovedRecovery'
 import { recordCreatedStylesheet, ruleIdFromCssCreateNodeId } from './styleRuleWriteback'
+import { journaledWriteOutcome } from './journaledUndo'
+
+/**
+ * P3-F — an undo-journal token as the server mints it
+ * (`server/handlers/studio/undoJournalToken.ts`): 32 lowercase hex digits.
+ * Mirrored, not imported — the same browser/server wire-shape split every
+ * schema here follows.
+ */
+const UndoTokenSchema = Type.String({ pattern: '^[0-9a-f]{32}$' })
 
 /**
  * POST /admin/api/studio/save response. `shifted` is true when a write changed
@@ -64,6 +76,8 @@ export const StudioSaveResponseSchema = Type.Object({
   refusals: Type.Optional(Type.Array(Type.Object({
     nodeId: Type.String(),
     kind: Type.String(),
+    /** WB-35 — present for a `prop` edit: which of the element's props this outcome answers (`editOutcomes.ts`). */
+    prop: Type.Optional(Type.String()),
     reason: Type.String(),
     message: Type.String(),
   }))),
@@ -78,17 +92,20 @@ export const StudioSaveResponseSchema = Type.Object({
     unfilledRequiredProps: Type.Array(Type.String()),
   }))),
   /**
-   * `STUDIO-FIGMA-PARITY-PLAN.md` item 0.7 — every edit that skipped with no
-   * matching `refusals` entry (`StudioEditUnexplainedSkip` on the server —
-   * `server/handlers/studioWriteback.ts`), i.e. exactly the set the
-   * `unexplainedSkips` toast in `fsCodemodAdapter.ts` currently reports only
-   * as a bare count. `Type.Optional`, same tolerant-rollout reasoning as
-   * `refusals`/`swapDetails` above — an older server build simply omits it,
-   * and the client falls back to `result.skipped - refusals.length`.
+   * P5-C (DET-5) — every `detach` that did not refuse, written or held back
+   * by its `dryRun`: whether it loses other rendered states (`branchNote`),
+   * writes a context hook into the enclosing component (`movedHooks`), or
+   * changes every `.map` row (`perRow`). `detachInstances` builds its
+   * pre-commit confirm from this. `Type.Optional`, same tolerant-rollout
+   * reasoning as the fields above.
    */
-  unexplainedSkips: Type.Optional(Type.Array(Type.Object({
+  detachDetails: Type.Optional(Type.Array(Type.Object({
     nodeId: Type.String(),
-    kind: Type.String(),
+    written: Type.Boolean(),
+    lossy: Type.Boolean(),
+    branchNote: Type.Optional(Type.String()),
+    movedHooks: Type.Array(Type.String()),
+    perRow: Type.Boolean(),
   }))),
   /**
    * Track B1 — every `css`/`create` edit in the batch that SUCCEEDED, with
@@ -135,25 +152,39 @@ export const StudioSaveResponseSchema = Type.Object({
    */
   relocatedNodeIds: Type.Optional(Type.Array(Type.String())),
   /**
-   * `store-15` — every `delete` edit in the batch that SUCCEEDED, with the
-   * exact bytes it discarded, keyed by the edit's own `nodeId` — `delete`'s
-   * ⌘Z (`reinsert-source`) is built from these once the resync lands.
+   * OD-8 — where each `list-item` edit's array literal is after the batch
+   * (`nodeId` as sent, `to` now): a row delete's import prune can move it,
+   * and the board re-addresses its rows there. `Type.Optional`, same
+   * tolerant-rollout reasoning as the fields above.
+   */
+  listArrays: Type.Optional(Type.Array(Type.Object({ nodeId: Type.String(), to: Type.String() }))),
+  /**
+   * P5-G — every `canvas-layer-delete` in the batch that SUCCEEDED, with the
+   * module bytes it removed, keyed by the edit's own `nodeId` — its ⌘Z
+   * (`canvas-layer-restore`) is built from these once the resync lands.
    * `Type.Optional`, same tolerant-rollout reasoning as the fields above.
    */
   removed: Type.Optional(
     Type.Array(Type.Object({ nodeId: Type.String(), text: Type.String(), wholeLine: Type.Boolean() })),
   ),
   /**
-   * `store-15` — every import binding a `delete`'s own prune pass removed as
-   * a side effect, grouped per workspace-relative file, with a re-insertable
-   * declaration text per binding. `Type.Optional`, same reasoning as above.
+   * P3-F — the undo-journal token for a delete/detach/swap/extract batch: the
+   * one thing its ⌘Z (`restore`) names. Absent when the server recorded none.
    */
-  prunedImports: Type.Optional(
-    Type.Array(Type.Object({ file: Type.String(), declarations: Type.Array(Type.String()) })),
-  ),
+  undoToken: Type.Optional(UndoTokenSchema),
+  /**
+   * P1-A — each landed value write's target identity AFTER the write, keyed by
+   * the edit's own node id. `postEdits` hands it to `sourceIdentity.ts`, so the
+   * next write to the same element expects what is on disk now rather than
+   * what the board read. `Type.Optional`, same tolerant-rollout reasoning.
+   */
+  fingerprints: Type.Optional(Type.Array(Type.Object({ nodeId: Type.String(), fingerprint: Type.String() }))),
 })
 
 export type StudioSaveResponse = Static<typeof StudioSaveResponseSchema>
+
+/** The projects already told, this session, that Studio creates stylesheets — see `notifyCreatedStylesheets`. */
+const projectsToldAboutCreatedStylesheets = new Set<string>()
 
 /**
  * Track B1's create branch, the user-visible half: turns
@@ -168,78 +199,107 @@ export type StudioSaveResponse = Static<typeof StudioSaveResponseSchema>
  * Called once per save response that may carry edits from
  * `collectStyleRuleEdits`: `fsCodemodAdapter.ts`'s `saveSite` invokes it as
  * `notifyCreatedStylesheets(result, site.styleRules)`, right alongside its
- * existing `unexplainedSkips`/`shifted` handling.
+ * refusal and `shifted` handling.
+ *
+ * P3-A — an `info` note, and once per project per session: the first file
+ * Studio invents in a project is worth naming, and every later one is the same
+ * behaviour the person has already been told about. It used to be a success
+ * card on every created file, in the middle of typing a class name.
+ *
+ * Returns how many stylesheets the response created, so the caller can attach
+ * the classes that were waiting on them (ERR-15 — `awaitingCreatedStylesheet`).
  */
 export function notifyCreatedStylesheets(
   result: StudioSaveResponse,
   styleRules: Record<string, StyleRule>,
-): void {
-  for (const created of result.createdStylesheets ?? []) {
+): number {
+  const createdList = result.createdStylesheets ?? []
+  for (const created of createdList) {
     const ruleId = ruleIdFromCssCreateNodeId(created.nodeId)
     if (!ruleId) continue
     const rule = styleRules[ruleId]
     recordCreatedStylesheet(ruleId, created.file, rule?.selector ?? '')
+    const project = studioWriteDir() ?? ''
+    if (projectsToldAboutCreatedStylesheets.has(project)) continue
+    projectsToldAboutCreatedStylesheets.add(project)
     pushToast({
-      kind: 'success',
+      kind: 'info',
       title: 'Stylesheet created',
       body: rule
-        ? `Studio created ${created.file} and wired it into your page for “${rule.name}”.`
-        : `Studio created ${created.file} and wired it into your page.`,
+        ? `Studio created ${created.file} for “${rule.name}” and imported it.`
+        : `Studio created ${created.file} and imported it.`,
     })
   }
-}
-
-/** Post one edit to `/save` and return the parsed response. The shared body of every one-shot commit below. */
-function postOneEdit(edit: Record<string, unknown>): Promise<StudioSaveResponse> {
-  return postEdits([edit])
-}
-
-/** Post a batch of edits to `/save`. The save route orders them bottom-to-top before applying. */
-export function postEdits(edits: readonly Record<string, unknown>[]): Promise<StudioSaveResponse> {
-  return apiRequest('/admin/api/studio/save', {
-    method: 'POST',
-    body: { dir: studioWriteDir(), edits },
-    schema: StudioSaveResponseSchema,
-  })
+  return createdList.length
 }
 
 /**
- * Commits ONE `kind: 'asset'` edit immediately — WS-8.3's "replace this
- * image" action — instead of letting the ordinary optimistic prop-diff loop
- * in `saveSite` pick it up:
+ * Post one edit to `/save` and return the parsed response. The shared body of
+ * every one-shot commit below — each is a single deliberate click, so the
+ * moment it posts IS the moment the user acted, and that is when its
+ * identities are captured.
  *
- *   - An image swap is a discrete, deliberate commit (pick a file, confirm),
- *     not a value the user is continuously typing — nothing to debounce.
- *   - The edit's target is `PageNode.assetOrigin` (the import declaration),
- *     never the node's own `src` prop — writing it as an ordinary prop diff
- *     would need `updateNodeProps`'s codeProps guard to special-case this one
- *     prop, which the store slices do not currently know how to do.
- *   - The save route ALWAYS reports an asset edit as shared
- *     (`isSharedSourceNodeId`'s `kind === 'asset'` branch) because the import
- *     it rewrites can back more than one node — so this always reloads on a
- *     successful write, the same remedy `saveSite` uses for `shifted`/
- *     `sharedComponents`, without waiting for the next autosave tick.
- *
- * `nodeId` is the ORIGIN's own `rel:line:col` (`PageNode.assetOrigin`), not
- * the editing node's id — same convention the `literal` edit kind uses for
- * resolved text. `assetPath` is the new file's workspace-relative POSIX path.
+ * An `element-moved` refusal (P1-A) is re-planned once against the re-read
+ * board (`elementMovedRecovery.ts`) and the retry's answer returned instead;
+ * when there is nothing honest to retry against, the ORIGINAL refusal comes
+ * back, and the caller's own refusal surface is the one message the user sees.
  */
-export async function saveStudioAssetEdit(nodeId: string, assetPath: string): Promise<void> {
-  const result = await postOneEdit({ kind: 'asset', nodeId, assetPath })
-
-  if (result.skipped > 0) {
-    pushToast({
-      kind: 'error',
-      title: 'Image was not saved to source',
-      body: 'The import naming this image could not be rewritten — it may no longer exist at the location the canvas last saw.',
-    })
-    return
-  }
-  if (result.written > 0) requestCmsSiteReload()
+export async function postOneEdit(edit: StructuralEditPayload): Promise<StudioSaveResponse> {
+  const identities = captureIdentities(structuralEditNodeIds(edit))
+  const result = await postEdits([edit], identities)
+  if (elementMovedNodeIds(result.refusals).size === 0) return result
+  return (await retryAfterElementMoved([edit], identities, result.touchedFiles ?? [], postEdits)) ?? result
 }
 
 /**
- * instance-ui-01 — the outcome of a single `detach`/`swap` edit, as reported
+ * How `/save` applies a batch. `sequence` (P3-D): in the order given, each
+ * edit against the files the previous ones left, all or nothing — the server's
+ * `studioEditSequence.ts`. Without it the edits must be independent, and the
+ * route orders them bottom-to-top.
+ */
+export interface PostEditsOptions {
+  sequence?: true
+}
+
+/**
+ * Post a batch of edits to `/save`. The save route orders them bottom-to-top
+ * before applying (unless `options.sequence` asks for them in order).
+ *
+ * `identities` (P1-A) is what the writer captured about each node id its edits
+ * name — sent as `expect`, so an edit whose position now holds a different
+ * element refuses `element-moved` instead of writing to it; and it is where the
+ * response's post-write identities land (`recordOwnWrites`). Every writer that
+ * posts through here — the autosave diff, every structural commit, every
+ * one-shot — rides the same guard.
+ *
+ * `idempotencyKey` is for a caller that retries this one write itself
+ * (`studioStructuralCommits.ts`, ERR-6): every attempt shares it, so a replay of
+ * a write that landed gets the stored answer instead of a second write.
+ */
+export async function postEdits(
+  edits: readonly Record<string, unknown>[],
+  identities?: IdentityCapture,
+  idempotencyKey?: string,
+  options: PostEditsOptions = {},
+): Promise<StudioSaveResponse> {
+  const expect = identities ? expectationsFor(identities) : {}
+  const result = await apiRequest('/admin/api/studio/save', {
+    method: 'POST',
+    body: {
+      dir: studioWriteDir(),
+      edits,
+      ...(Object.keys(expect).length > 0 ? { expect } : {}),
+      ...(options.sequence ? { sequence: true } : {}),
+    },
+    schema: StudioSaveResponseSchema,
+    ...(idempotencyKey ? { idempotencyKey } : {}),
+  })
+  recordOwnWrites(identities, result.fingerprints ?? [])
+  return result
+}
+
+/**
+ * instance-ui-01 — the outcome of a single `swap` edit, as reported
  * to the Properties panel. Mirrors the server's `StudioEditRefusal` /
  * `StudioEditSwapDetail` shapes (`server/handlers/studioWriteback.ts`)
  * one-for-one, without importing them — same "browser/server agree on the
@@ -250,38 +310,24 @@ export type InstanceCodemodResult =
   | { ok: false; reason: string; message: string }
 
 /**
- * WS-4.4 — the Properties panel's Detach action. Detach is a deliberate,
- * one-shot structural rewrite (replace the call site with its own inlined
- * JSX), not a value the diff loop's "what did the user type" model fits.
- *
- * A refusal (`uses-hooks`, `maps-over-props`, …) is a NAMED, expected
- * outcome — returned to the caller rather than just toasted, so the panel
- * can offer the `extractInstanceCopy` escape hatch inline for the specific
- * reasons that warrant it. `detach` always shifts lines and is always
- * reported `sharedComponents` by the server, so a successful write always
- * reloads the board — the detached node's OWN id is about to become stale.
- */
-export async function detachInstance(nodeId: string): Promise<InstanceCodemodResult> {
-  const result = await postOneEdit({ kind: 'detach', nodeId })
-  const refusal = (result.refusals ?? [])[0]
-  if (refusal) return { ok: false, reason: refusal.reason, message: refusal.message }
-  if (result.written > 0) requestCmsSiteReload()
-  return { ok: true }
-}
-
-/**
  * WS-4.5 — the Properties panel's Swap action. On success, `swapDetail` names
  * the props the new component dropped and the required props it still needs —
  * the codemod's own numbers, never re-derived here.
+ *
+ * DET-4 — ⌘Z puts the call site back exactly as it was, dropped props and
+ * all (`journaledUndo.ts`); ⌘⇧Z swaps again.
  */
 export async function swapInstance(
   nodeId: string,
   target: { newComponentName: string; newComponentSource: 'local' | 'package'; newComponentFile: string },
 ): Promise<InstanceCodemodResult> {
-  const result = await postOneEdit({ kind: 'swap', nodeId, ...target })
+  const edit = { kind: 'swap', nodeId, ...target }
+  const result = await postOneEdit(edit)
   const refusal = (result.refusals ?? [])[0]
   if (refusal) return { ok: false, reason: refusal.reason, message: refusal.message }
-  if (result.written > 0) requestCmsSiteReload()
+  if (result.written > 0) {
+    requestCmsSiteReload({ structuralOutcome: journaledWriteOutcome(`Swap to ${target.newComponentName}`, [edit], result.undoToken) })
+  }
   const swapDetail = (result.swapDetails ?? []).find((detail) => detail.nodeId === nodeId)
   return { ok: true, swapDetail }
 }
@@ -303,6 +349,8 @@ export type InsertPropValue =
   | boolean
   | null
   | { __jsx: SlotJsxNode }
+  /** P5-B3 (IMG-10) — an image import by workspace path; the server writes `import x from '…'` and `prop={x}`. */
+  | { __assetImport: string }
   | InsertPropValue[]
   | { [key: string]: InsertPropValue }
 
@@ -363,7 +411,13 @@ export async function commitStudioInsertSlot(fill: {
 
 /** POST /admin/api/studio/extract-component response — see that route's module doc. */
 const ExtractComponentResponseSchema = Type.Union([
-  Type.Object({ ok: Type.Literal(true), newFile: Type.String(), newComponentName: Type.String() }),
+  Type.Object({
+    ok: Type.Literal(true),
+    newFile: Type.String(),
+    newComponentName: Type.String(),
+    /** P3-F — puts the call site back and removes the copy. */
+    undoToken: Type.Optional(UndoTokenSchema),
+  }),
   Type.Object({ ok: Type.Literal(false), reason: Type.String(), message: Type.String() }),
 ])
 
@@ -374,14 +428,24 @@ const ExtractComponentResponseSchema = Type.Union([
  * THIS call site at the copy; always reloads on success (a brand-new file
  * plus a rewritten import is exactly the shape of edit that invalidates
  * in-memory node ids downstream of it).
+ *
+ * DET-4 — pushes its own undo entry (`journaledUndo.ts`): ⌘Z points the call
+ * site back and deletes the copy. `undo: 'caller'` is for the one caller that
+ * records a different entry for the same write (`instanceOnlyGesture.ts`,
+ * whose replayed gesture is linked to it).
  */
-export async function extractInstanceCopy(nodeId: string): Promise<InstanceCodemodResult & { newFile?: string; newComponentName?: string }> {
+export async function extractInstanceCopy(
+  nodeId: string,
+  options: { undo?: 'caller' } = {},
+): Promise<InstanceCodemodResult & { newFile?: string; newComponentName?: string }> {
   const result = await apiRequest('/admin/api/studio/extract-component', {
     method: 'POST',
     body: { dir: studioWriteDir(), nodeId },
     schema: ExtractComponentResponseSchema,
   })
   if (!result.ok) return { ok: false, reason: result.reason, message: result.message }
-  requestCmsSiteReload()
+  requestCmsSiteReload(
+    options.undo === 'caller' ? {} : { structuralOutcome: journaledWriteOutcome(`Duplicate as ${result.newComponentName}`, [], result.undoToken) },
+  )
   return { ok: true, newFile: result.newFile, newComponentName: result.newComponentName }
 }

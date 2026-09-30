@@ -19,7 +19,7 @@
  * a `dir` outside `studio-workspace/` throws there and the router answers 404,
  * so this handler never sees one.
  */
-import { jsonResponse } from '../../http'
+import { jsonResponse, internalServerError } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { loadStudioPageInLocale } from '../studioPageLoad'
 
@@ -46,7 +46,6 @@ export async function tryServeStudioLocalizedPage(req: Request, url: URL, pathna
     return jsonResponse({ page })
   } catch (err) {
     rethrowProjectDirRefusal(err)
-    console.error('[studio:localizedPage]', err)
-    return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    return internalServerError('[studio:localizedPage]', err)
   }
 }

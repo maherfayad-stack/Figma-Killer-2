@@ -14,11 +14,8 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import React, { useEffect } from 'react'
 import { cleanup, render, waitFor } from '@testing-library/react'
-import {
-  SAVE_RETRY_BACKOFF_MS,
-  usePersistence,
-  type PersistenceSaveStatus,
-} from '@site/hooks/usePersistence'
+import { usePersistence } from '@site/hooks/usePersistence'
+import { SAVE_RETRY_BACKOFF_MS, type PersistenceSaveStatus } from '@site/hooks/persistenceStatus'
 import type { IPersistenceAdapter } from '@core/persistence/types'
 import { useEditorStore } from '@site/store/store'
 import { emptyDirtyMarks } from '@site/store/slices/site/dirtyTracking'

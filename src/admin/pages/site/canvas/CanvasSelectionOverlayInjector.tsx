@@ -62,6 +62,7 @@ import {
   buildSelectionChromeStylesheet,
 } from '@core/studio-runtime'
 import { CanvasFrameAdapterContext } from './CanvasContexts'
+import { SPACING_CHROME_RULES } from './canvasSpacingChromeCss'
 import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
 
 interface CanvasSelectionOverlayInjectorProps {
@@ -108,7 +109,11 @@ export function CanvasSelectionOverlayInjector({ onRootReady }: CanvasSelectionO
     // the admin's own global `document` — never an iframe's, regardless of
     // documentMode. See EditorChromeInjector.tsx's buildTokenBlock for the
     // same pattern and why.
-    styleEl.textContent = buildSelectionChromeStylesheet(document)
+    // P5-E — plus the padding / gap handles' look (portal frames only, so it
+    // is not part of the runtime-shared sheet; see `canvasSpacingChromeCss.ts`).
+    styleEl.textContent = `${buildSelectionChromeStylesheet(document)}
+
+${SPACING_CHROME_RULES}`
   }, [adapter])
 
   useEffect(() => {

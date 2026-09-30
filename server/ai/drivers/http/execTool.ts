@@ -37,6 +37,7 @@ import type {
 } from '../../runtime/types'
 import { toolDispatchesInProcess } from '../../runtime/toolExecution'
 import type { ToolContextBase } from '../types'
+import { toolInputRefusal } from './toolInputRefusal'
 
 /**
  * Execute one tool call and return the canonical `AiToolOutput`.
@@ -58,8 +59,9 @@ export async function executeAiTool(
   try {
     validated = parseValue(aiTool.inputSchema, rawInput)
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Invalid tool input.'
-    return { ok: false, error: message }
+    // Where, what was expected, and a call that would have worked — not
+    // TypeBox's bare "Expected union value" (AI-27, `toolInputRefusal.ts`).
+    return toolInputRefusal(aiTool.name, aiTool.inputSchema, rawInput, err)
   }
 
   // Defence in depth: `selectStudioTools` should never have offered a
@@ -115,7 +117,7 @@ export async function executeAiTool(
       return { ok: false, error: `Tool ${aiTool.name} declares execution='${aiTool.execution}' but has no handler.` }
     }
     try {
-      const ctx: ToolContext = { ...toolContextBase, signal }
+      const ctx: ToolContext = { ...toolContextBase, signal, bridge }
       const result = await aiTool.handler(validated, ctx)
       return record(normaliseToolOutput(result))
     } catch (err) {

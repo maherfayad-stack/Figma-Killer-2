@@ -39,6 +39,7 @@
  * no memory of having asked for that. Figma reopens on the Design tab too.
  */
 import type { EditorStoreSliceCreator } from '@site/store/types'
+import { clearCanvasHover } from '@site/canvas/canvasHover'
 import {
   INITIAL_PLAY_STATE,
   applyPlayAction,
@@ -238,11 +239,7 @@ export const createPrototypeSlice: EditorStoreSliceCreator<PrototypeSlice> = (se
       // surface — `useCanvasNodeInteraction` stops WRITING it while armed, so
       // whatever was lit when Play was pressed has to be cleared here or it
       // stays lit for the whole session.
-      if (active) {
-        s.hoveredNodeId = null
-        s.hoveredBreakpointId = null
-        s.hoveredFrameId = null
-      }
+      if (active) clearCanvasHover()
       // Disarming returns the player to its starting screen. Leaving it three
       // screens deep with the arrow cursor back would make the live frame show
       // a page the editor does not think is open.

@@ -59,7 +59,7 @@ export function DeploySection({ dir, branch, dirtyCount, active }: DeploySection
   const { loading, error, status, job, starting, start } = useDeployState(dir, active)
 
   return (
-    <Section title="Deploy" meta={job?.status === 'running' ? 'running' : undefined}>
+    <Section title="Deploy" status={job?.status === 'running' ? 'running' : undefined}>
       {error ? (
         <p className={styles.error} role="alert">
           {error}

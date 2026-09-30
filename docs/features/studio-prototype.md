@@ -1,4 +1,5 @@
 # Studio prototype mode
+> **Purpose:** prototype mode: authored links and the flow map read from the project's own navigation code · **Read when:** touching prototype links, flows or playback · **Trust:** current · **Owner:** canvas-engineer · **Verified:** 2026-09-23
 
 Flows on the Studio board: the ones the user draws, and — the part that matters —
 the ones their code already performs.
@@ -107,6 +108,20 @@ One syntactic ts-morph parse per page file, memoized on the page files' mtimes
 `statSync` per page. The page parser's own cache cannot be shared: it is
 invalidated by things (compiled CSS, preview locale) that cannot change a
 navigation target.
+
+---
+
+## Where an authored link lives, and why
+
+**A prototype link is a design layer, never the user's source** (owner decision PROTO §1, [`docs/decisions.md`](../decisions.md)). Writing real `onClick` handlers into the `.tsx` files would force Studio to decide how the user's project navigates (router, local state, context) and to inject a transition runtime into their repository. "Make a sheet slide up from here" has no single honest target in arbitrary React, so Studio's own write rule refuses it. Annotation on the document is not the document, the same as frame positions in `boards.json` and review threads in `.studio/comments.json`. Two things keep it honest: authored connectors render only in prototype mode (design mode and the publisher never see them), and the flows the code already performs are read and drawn alongside them.
+
+**Authored links live in `.studio/prototype.json`, not in `boards.json`**, for the same three reasons `@core/studio-comments` keeps its own file:
+
+- `boards.json` rides the board's dirty-flag autosave (`useStudioBoardsPersistence`); link authoring has no business on that path.
+- A flow is worth reading as a git diff on its own.
+- **A link outlives the board it was drawn on.** It is about a page and an element, not board furniture: removing a frame from a board must not destroy the flow through that screen.
+
+So `@core/studio-prototype` mirrors `@core/studio-comments`: its own core module, tolerant serializer, server store and file.
 
 ---
 
@@ -563,9 +578,6 @@ flow file is noise on an operation that succeeded.
 
 ---
 
-## Not built yet
+## Limitations
 
-Tracked in [`STUDIO-PROTOTYPE-PLAN.md`](../../STUDIO-PROTOTYPE-PLAN.md).
-
-- **`back`-shaped code flows.** `router.back()` is a real fact with no drawable
-  destination and, today, no consumer.
+- **`back`-shaped navigation is not drawn.** `router.back()`, `navigate(-1)` and `history.goBack()` are real flows with no drawable destination, and `src/core/studio-prototype/codeFlow.ts` does not read them. Surfacing them is an open row in [`ROADMAP.md`](../../ROADMAP.md) §13.

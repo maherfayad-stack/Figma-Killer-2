@@ -69,6 +69,11 @@ function pluginButtonKey(button: RegisteredPluginToolbarButton): string {
   return `${button.pluginId}:${button.id}`
 }
 
+/** The status line after a plugin command finished: its own message, if it sent one. */
+function pluginCommandDoneMessage(result: Awaited<ReturnType<typeof pluginRuntime.runCommand>>, label: string): string {
+  return result && typeof result === 'object' && result.message ? result.message : `${label} complete`
+}
+
 /**
  * Studio-only subordinate label next to the brand, showing the active
  * project's DISPLAY name (from `.studio/meta.json` — never the "Studio"
@@ -205,9 +210,7 @@ export function Toolbar({
       const result = await pluginRuntime.runCommand(button.command)
       setPluginStatus(key, {
         state: 'success',
-        message: result && typeof result === 'object' && result.message
-          ? result.message
-          : `${button.label} complete`,
+        message: pluginCommandDoneMessage(result, button.label),
       })
     } catch (err) {
       console.error('[plugin-runtime] command failed:', err)

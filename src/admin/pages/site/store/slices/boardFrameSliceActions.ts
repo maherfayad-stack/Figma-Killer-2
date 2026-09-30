@@ -93,17 +93,21 @@ export function createFrameMutationActions(
       commitBoardChange(set, get, null, upsertBoard(boards, nextBoard), { explicitRemoval: removedSomething })
     },
 
-    addFrame: (pageId) => {
+    addFrame: (pageId, placement) => {
       const { boards, activeBoardId, frameDefaults } = get()
       const board = getActiveBoard(boards, activeBoardId)
       if (!board) return
       if (board.frames.some((f) => f.pageId === pageId)) return
-      const { x, y } = defaultFramePosition(board.frames.length)
+      // P5-F / IX-13 — a frame drawn with the board tool lands where it was drawn.
+      const { x, y } = placement ?? defaultFramePosition(board.frames.length)
       // WS-7.2 — a page added after "apply to all pages" inherits the
       // project's frame default instead of the hardcoded FRAME_WIDTH/HEIGHT.
+      // A drawn size wins over both.
       const frame: Parameters<typeof upsertFrame>[1] = { id: crypto.randomUUID(), pageId, x, y }
-      if (frameDefaults.width) frame.width = frameDefaults.width
-      if (frameDefaults.height) frame.height = frameDefaults.height
+      const width = placement?.width ?? frameDefaults.width
+      const height = placement?.height ?? frameDefaults.height
+      if (width) frame.width = width
+      if (height) frame.height = height
       commitBoardChange(set, get, null, upsertBoard(boards, upsertFrame(board, frame)))
     },
 

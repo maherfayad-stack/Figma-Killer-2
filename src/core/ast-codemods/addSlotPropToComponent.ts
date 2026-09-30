@@ -65,13 +65,14 @@
  * siblings' trust posture for a bad `(file, line, col)`).
  */
 import * as path from 'node:path'
-import { Node, QuoteKind, type ParameterDeclaration, type Project, type SourceFile } from 'ts-morph'
+import { Node, QuoteKind, type Project } from 'ts-morph'
 // `FunctionLike` is this repo's own union (`@core/page-parser`'s barrel), not a
 // ts-morph export — it is what `getFunctionLikeNode` returns.
-import { createWorkspaceProject, findComponentDeclaration, findNamedComponentDeclaration, getFunctionLikeNode, type FunctionLike } from '@core/page-parser'
+import { createWorkspaceProject, findComponentDeclaration, findNamedComponentDeclaration, getFunctionLikeNode } from '@core/page-parser'
 import { findJsxElementAtLocationOrThrow, loadSourceFile, resolveJsxWholeElement } from './locateJsxElement'
 import { buildParamBindings } from './detachComponent'
 import { findComponentCallSites, type ComponentCallSite } from './componentCallSites'
+import { addOptionalPropToSignature } from './componentPropSignature'
 
 export interface AddSlotPropToComponentParams {
   /** Absolute path to the component's own file. */
@@ -135,111 +136,6 @@ function isWithin(node: Node, ancestor: Node): boolean {
   return node.getStart() >= ancestor.getStart() && node.getEnd() <= ancestor.getEnd()
 }
 
-function ensureReactNodeImport(sourceFile: SourceFile): void {
-  const already = sourceFile
-    .getImportDeclarations()
-    .some((d) => d.getModuleSpecifierValue() === 'react' && d.getNamedImports().some((n) => (n.getAliasNode() ?? n.getNameNode()).getText() === 'ReactNode'))
-  if (already) return
-  sourceFile.addImportDeclaration({ moduleSpecifier: 'react', namedImports: ['ReactNode'], isTypeOnly: true })
-}
-
-function pascalCaseFromFileBase(base: string): string {
-  return base
-    .split(/[^A-Za-z0-9]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join('')
-}
-
-/** `fn`'s own name when it has one (`FunctionDeclaration`), else the file base — an arrow function assigned to a `const` (`getFunctionLikeNode`'s unwrap target) carries no name of its own to recover. */
-function deriveComponentTypeName(sourceFile: SourceFile, fn: FunctionLike): string {
-  const named = Node.hasName(fn) ? fn.getName() : undefined
-  const base = named ?? pascalCaseFromFileBase(sourceFile.getBaseNameWithoutExtension())
-  return `${base}Props`
-}
-
-type TypeEditOutcome = { ok: true } | { ok: false; reason: 'unsupported-props-type'; message: string }
-
-/**
- * `fn` has NO parameters at all — add one, brand new: a destructured
- * `{ slotName }`, typed against a freshly synthesized `<Name>Props` interface
- * in a TypeScript file, or left untyped in a plain JS one (this module's
- * "honest for JS" posture — no type checker, no guessed type, matching
- * `extractSubtreeToComponent.ts`'s own `unknown`-typed free-variable props).
- */
-function addFreshSlotParameter(sourceFile: SourceFile, fn: FunctionLike, slotName: string): TypeEditOutcome {
-  const isTypeScriptFile = /\.tsx?$/.test(sourceFile.getFilePath())
-  if (!isTypeScriptFile) {
-    fn.addParameter({ name: `{ ${slotName} }` })
-    return { ok: true }
-  }
-  const typeName = deriveComponentTypeName(sourceFile, fn)
-  ensureReactNodeImport(sourceFile)
-  sourceFile.addInterface({ isExported: true, name: typeName, properties: [{ name: slotName, type: 'ReactNode', hasQuestionToken: true }] })
-  fn.addParameter({ name: `{ ${slotName} }`, type: typeName })
-  return { ok: true }
-}
-
-/**
- * `fn` already has a destructured first parameter — add `slotName` to it, and
- * add `slotName?: ReactNode` to whichever type surface it uses: a referenced
- * `interface`/`type` alias, an inline type literal, or (an untyped
- * parameter) none at all, in which case only the binding is added and typing
- * is left alone (same "honest for JS" posture as `addFreshSlotParameter`).
- * Caller has already confirmed `first`'s name node is an `ObjectBindingPattern`
- * (`buildParamBindings`'s `hasUndestructuredParam` check, asked before this
- * runs) — see this module's own `addSlotPropToComponent`.
- */
-function addSlotToExistingPattern(sourceFile: SourceFile, first: ParameterDeclaration, slotName: string): TypeEditOutcome {
-  const pattern = first.getNameNode()
-  if (Node.isObjectBindingPattern(pattern)) {
-    // `ObjectBindingPattern` has no structural "add an element" API (unlike
-    // `InterfaceDeclaration`/`TypeLiteralNode`'s `addProperty`) — rebuild the
-    // pattern's own text instead, keeping every existing element's own text
-    // VERBATIM (a rename, a default, a `...rest` — untouched) and appending
-    // the new plain identifier last.
-    const elementTexts = [...pattern.getElements().map((el) => el.getText()), slotName]
-    pattern.replaceWithText(`{ ${elementTexts.join(', ')} }`)
-  }
-
-  const typeNode = first.getTypeNode()
-  if (!typeNode) return { ok: true } // untyped — nothing to annotate
-
-  ensureReactNodeImport(sourceFile)
-
-  if (Node.isTypeLiteral(typeNode)) {
-    typeNode.addProperty({ name: slotName, type: 'ReactNode', hasQuestionToken: true })
-    return { ok: true }
-  }
-  if (Node.isTypeReference(typeNode)) {
-    const typeName = typeNode.getTypeName().getText()
-    const iface = sourceFile.getInterface(typeName)
-    if (iface) {
-      iface.addProperty({ name: slotName, type: 'ReactNode', hasQuestionToken: true })
-      return { ok: true }
-    }
-    const alias = sourceFile.getTypeAlias(typeName)
-    const aliasType = alias?.getTypeNode()
-    if (alias && aliasType && Node.isTypeLiteral(aliasType)) {
-      aliasType.addProperty({ name: slotName, type: 'ReactNode', hasQuestionToken: true })
-      return { ok: true }
-    }
-    return {
-      ok: false,
-      reason: 'unsupported-props-type',
-      message: `Could not find "${typeName}"'s own declaration in this file to add a "${slotName}" property to.`,
-    }
-  }
-  return { ok: false, reason: 'unsupported-props-type', message: "This component's props type is not a plain object shape Studio can add a property to." }
-}
-
-/** Adds `slotName` to `fn`'s own signature — a fresh parameter when it has none, or a new binding/property on its existing destructured one. */
-function addSlotToSignature(sourceFile: SourceFile, fn: FunctionLike, slotName: string): TypeEditOutcome {
-  const first = fn.getParameters()[0]
-  if (!first) return addFreshSlotParameter(sourceFile, fn, slotName)
-  return addSlotToExistingPattern(sourceFile, first, slotName)
-}
-
 export function addSlotPropToComponent(params: AddSlotPropToComponentParams): AddSlotPropToComponentResult {
   const { file, exportName, line, col, workspaceRoot, slotName } = params
   if (!SLOT_NAME_RE.test(slotName)) {
@@ -295,8 +191,13 @@ export function addSlotPropToComponent(params: AddSlotPropToComponentParams): Ad
     return refuse('prop-name-taken', `"${exportName}" already has a "${slotName}" prop.`)
   }
 
-  const typeResult = addSlotToSignature(sourceFile, fn, slotName)
-  if (!typeResult.ok) return refuse(typeResult.reason, typeResult.message)
+  const typeResult = addOptionalPropToSignature(sourceFile, fn, {
+    name: slotName,
+    binding: slotName,
+    type: 'ReactNode',
+    typeImport: { name: 'ReactNode', module: 'react' },
+  })
+  if (!typeResult.ok) return refuse('unsupported-props-type', typeResult.message)
 
   root.replaceWithText(`{${slotName}}`)
   const callSites = findComponentCallSites(project, workspaceRoot, file, exportName)

@@ -42,7 +42,7 @@ import {
 import { resolveInsertLocation, resolveSiblingAfterLocation } from '@site/store/insertLocation'
 import type { EditorStoreSliceCreator } from '@site/store/types'
 import { buildSiteHelpers, resolveActiveTreeTarget } from './site/helpers'
-import { createStudioSourceWrites } from './site/studioSourceWrites'
+import { createStudioPasteWrite } from './site/studioPasteWrites'
 
 /** Where a paste lands relative to its target. See `pasteNode`. */
 export type PastePlacement = 'auto' | 'after'
@@ -156,7 +156,7 @@ export const createClipboardSlice: EditorStoreSliceCreator<ClipboardSlice> = (
   // one structural gesture that never consulted it. A second instance is free:
   // `createStudioSourceWrites` holds no state of its own, it only closes over
   // the helpers and a read-only view of the active tree.
-  const { writePasteToSource } = createStudioSourceWrites(helpers, () => resolveActiveTreeTarget(get())?.tree ?? null)
+  const writePasteToSource = createStudioPasteWrite(helpers, () => resolveActiveTreeTarget(get())?.tree ?? null)
 
   // Hydrate the in-memory entry from localStorage at slice creation. The
   // store is built once per session, so this runs at editor mount only.
@@ -279,7 +279,7 @@ export const createClipboardSlice: EditorStoreSliceCreator<ClipboardSlice> = (
       // selected by the commit's own resync
       // (`pendingCreatedSelection.ts`) rather than at the bottom of this
       // function.
-      if (writePasteToSource(entry.rootNodeIds, location.parentId, location.index)) return null
+      if (writePasteToSource(entry, location.parentId, location.index)) return null
 
       // Commit history once; the entire paste — restored classes + every
       // pasted subtree — is a single undo step. The class plan (scoped clone,

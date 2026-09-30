@@ -75,7 +75,7 @@
  * ------------------------------------------------
  * Nothing set anywhere (base or any breakpoint/condition) renders `Section`'s
  * `empty` state — title + the header's own add buttons, no chevron, no body
- * (`docs/features/inspector-disclosure.md`'s Law 1, matches Penpot's own
+ * (`docs/features/inspector.md`'s Law 1, matches Penpot's own
  * measured "collapsed-empty: Title + trailing +, no chevron"). The moment
  * anything IS set, this section passes `forceOpen` instead — no manual
  * collapse of a populated section (`STATE.md` `panel-25`'s Rule-2 gap, the
@@ -280,7 +280,7 @@ export function FillSection() {
   const colorValue = readString(storedStyles, 'backgroundColor')
   const colorStored = hasStyleValue(storedStyles.backgroundColor)
 
-  // Law 1 (`docs/features/inspector-disclosure.md` §4 G1): whether ANYTHING
+  // Law 1 (`docs/features/inspector.md` §4 G1): whether ANYTHING
   // Fill claims is set, on the active tab OR any other breakpoint/condition
   // — a value set only on an inactive tab is still the user's own work and
   // must not disappear behind the empty header. Mirrors

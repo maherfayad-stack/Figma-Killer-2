@@ -64,7 +64,7 @@ function stubLoad(authoredCss: string): void {
       kind: 'meta',
       dir: '/tmp/studio-test', projectName: 'studio-test', componentSources: {},
       styleRules: {}, styleRuleSources: {}, styledStyleRuleSources: {}, conditions: [], vendorCss: '', authoredCss,
-      trust: 'static', paletteHiddenModuleIds: [], pageCount: 0,
+      trust: 'static', paletteHiddenModuleIds: [], pageList: [],
     })
     return new Response(`${metaLine}\n`, { status: 200, headers: { 'content-type': 'application/x-ndjson' } })
   }) as typeof fetch

@@ -1,4 +1,5 @@
 # Audit 07 — Drag and Drop
+> **Trust:** historical, dated 2026-08-06. Paths may be wrong. Never act on it.
 
 Read-only audit. Repo: `c:\Users\Admin\Documents\GitHub\Figma Killer 2`, branch `feat/alm-figma-killer-studio-shell`.
 Scope: every DnD surface in the tree. No code written, no browser tests run.

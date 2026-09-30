@@ -1,4 +1,5 @@
 # Studio User E2E Protocol
+> **Purpose:** how an agent runs a user-facing browser audit · **Read when:** running a manual browser audit · **Trust:** current · **Owner:** test-engineer · **Verified:** not yet
 
 ## Purpose
 
@@ -56,7 +57,7 @@ Before destructive reset, confirm the target is disposable:
 ## Run Lifecycle
 
 1. **Select scope**
-   Choose rows from `docs/e2e/feature-matrix.md` if one exists in the working tree — it is not currently checked in (see `docs/e2e/README.md`'s note on the missing feature-validation files), so fall back to the scenario IDs documented as comments inside `tests/e2e/*.e2e.ts` and to `docs/e2e/README.md`'s "Automated coverage map" for what already has automated coverage. If unspecified, use the Core Owner Lifecycle: setup, login, edit, save, publish, and public view — noting that `core-owner-lifecycle.e2e.ts` itself no longer exists (removed with the CMS-workspace specs), so this walk is manual until a Studio-era equivalent is written.
+   There is no feature matrix; choose from the scenario IDs documented as comments inside `tests/e2e/*.e2e.ts` and to `docs/e2e/README.md`'s "Automated coverage map" for what already has automated coverage. If unspecified, use the Core Owner Lifecycle: setup, login, edit, save, publish, and public view — noting that `core-owner-lifecycle.e2e.ts` itself no longer exists (removed with the CMS-workspace specs), so this walk is manual until a Studio-era equivalent is written.
 
 2. **Record starting state**
    Capture branch, HEAD SHA, dirty worktree note, app URL, browser, viewport, database URL, and uploads directory.

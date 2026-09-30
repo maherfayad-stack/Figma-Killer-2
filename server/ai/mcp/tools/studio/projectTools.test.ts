@@ -24,9 +24,10 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { projectsRootDir } from '../../../../handlers/studioProjects'
 import { studioProjectMcpTools } from './projectTools'
+import { studioFileReadMcpTools } from './fileReadTools'
 
 function tool(name: string) {
-  const t = studioProjectMcpTools.find((tt) => tt.name === name)
+  const t = [...studioProjectMcpTools, ...studioFileReadMcpTools].find((tt) => tt.name === name)
   if (!t) throw new Error(`tool not found: ${name}`)
   return t
 }

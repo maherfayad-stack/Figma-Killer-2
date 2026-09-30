@@ -29,6 +29,17 @@ import { resolve } from 'node:path'
 /** Vite dev server port — the origin a browser actually talks to. */
 export const E2E_VITE_PORT = process.env.E2E_VITE_PORT ?? '5174'
 
+/**
+ * Which admin bundle the browser runs. `'dev'` (the default, and what CI runs)
+ * is the Vite dev server. `'preview'` builds the admin with `vite build` and
+ * serves it with `vite preview` — the production React bundle, same proxy to
+ * the CMS — for budgets whose target is stated for a production build
+ * (WS-5.6's selection -> ring < 32 ms). Development React renders several
+ * times slower (dev-only element validation and owner stacks), so a dev-build
+ * number is a regression ratchet and a preview number is the product.
+ */
+export const E2E_VITE_MODE: 'dev' | 'preview' = process.env.E2E_VITE_MODE === 'preview' ? 'preview' : 'dev'
+
 /** Bun CMS/API port. Also the public (visitor-facing) origin. */
 export const E2E_CMS_PORT = process.env.E2E_CMS_PORT ?? '3002'
 

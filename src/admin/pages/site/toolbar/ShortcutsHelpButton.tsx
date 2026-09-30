@@ -32,7 +32,8 @@ export function ShortcutsHelpButton() {
       iconOnly
       aria-label="Keyboard shortcuts"
       aria-keyshortcuts={SHORTCUTS_BINDING?.ariaKeyshortcuts}
-      tooltip={keyLabel ? `Keyboard shortcuts (${keyLabel})` : 'Keyboard shortcuts'}
+      tooltip="Keyboard shortcuts"
+      tooltipShortcut={keyLabel ?? undefined}
       onClick={() => openSettings('shortcuts')}
       data-testid="toolbar-shortcuts-btn"
     >

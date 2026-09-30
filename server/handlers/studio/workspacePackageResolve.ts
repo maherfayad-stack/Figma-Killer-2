@@ -18,8 +18,8 @@
  * `studioAsset.ts`'s asset-read guard and `installDeps.ts`'s workspace
  * containment check.
  */
-import { existsSync, readFileSync, realpathSync } from 'node:fs'
-import { dirname, join, sep } from 'node:path'
+import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 
 function safeRealpath(path: string): string | undefined {
   try {
@@ -76,6 +76,57 @@ export function isRealpathContainedAllowingMissing(target: string, dir: string):
     if (parent === current) return false
     current = parent
   }
+}
+
+/**
+ * `path` with symlinks resolved on the part of it that exists, and the
+ * missing tail appended unchanged. For comparing where a directory WILL be
+ * before it is created (a workspace root on first boot).
+ */
+export function realpathAllowingMissing(path: string): string {
+  let existing = resolve(path)
+  const missing: string[] = []
+  for (;;) {
+    const real = safeRealpath(existing)
+    if (real !== undefined) return missing.length === 0 ? real : join(real, ...missing)
+    const parent = dirname(existing)
+    if (parent === existing) return resolve(path)
+    missing.unshift(basename(existing))
+    existing = parent
+  }
+}
+
+/**
+ * The containment rule for a directory Studio is about to CREATE OR REPLACE
+ * under `root` (a clone target, an archive import's target, which is cleared
+ * first). Stricter than {@link isRealpathContainedAllowingMissing} in the two
+ * ways a write target needs:
+ *
+ *   - it must sit strictly INSIDE `root`, never be `root` itself (clearing the
+ *     root would delete every project), whether spelled directly or reached
+ *     through a symlink that resolves to it;
+ *   - a symlink at the target itself must resolve inside `root`, and a
+ *     dangling one is refused outright rather than treated as "missing".
+ *
+ * A missing target is judged by its deepest existing ancestor, exactly as in
+ * {@link isRealpathContainedAllowingMissing}. `root` must exist.
+ */
+export function isRealpathStrictlyInsideAllowingMissing(target: string, root: string): boolean {
+  const realRoot = safeRealpath(root)
+  if (!realRoot) return false
+  if (resolve(target) === resolve(root)) return false
+  let targetEntryExists: boolean
+  try {
+    lstatSync(target)
+    targetEntryExists = true
+  } catch {
+    targetEntryExists = false
+  }
+  if (targetEntryExists) {
+    const realTarget = safeRealpath(target)
+    return realTarget !== undefined && realTarget.startsWith(realRoot + sep)
+  }
+  return isRealpathContainedAllowingMissing(target, root)
 }
 
 /** `<dir>/node_modules/<pkg>`'s real entry file (from its `package.json#main`, default `index.js`), symlink-containment-checked against `dir`, or `undefined` when not installed / not resolvable / escaping `dir`. */

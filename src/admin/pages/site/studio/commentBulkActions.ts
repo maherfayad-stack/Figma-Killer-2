@@ -113,7 +113,10 @@ export async function sendThreadsToAgent(threads: readonly CommentThread[]): Pro
   ].join('\n')
 
   store.openAgent()
-  const { accepted } = await store.sendAgentMessage([{ kind: 'text', text: body }])
+  // `origin: 'studio'`: this text quotes every comment in the threads, the
+  // AI's own replies included, so a URL in it is not one the user supplied
+  // (`remoteFetchPolicy.ts`, review of #248 F2).
+  const { accepted } = await store.sendAgentMessage([{ kind: 'text', text: body, origin: 'studio' }])
   if (!accepted) {
     pushToast({
       kind: 'error',

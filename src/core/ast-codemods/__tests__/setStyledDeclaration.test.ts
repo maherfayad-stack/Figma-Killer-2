@@ -83,7 +83,7 @@ describe('setStyledDeclaration — writes', () => {
 
     const result = setStyledDeclaration({
       file, line, col, className, selector: `.${className}`, property: 'width', value: '33%',
-      atMedia: '(min-width: 700px)',
+      atRule: 'media (min-width: 700px)',
     })
 
     expect(result).toEqual({ ok: true, changed: true })

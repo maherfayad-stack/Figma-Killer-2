@@ -11,7 +11,6 @@ import {
   INLINE_ID_SEPARATOR,
   callSitePosition,
   decodeSourceNodeId,
-  matchesCallSitePosition,
 } from '../sourceNodeId'
 
 describe('callSitePosition', () => {
@@ -32,30 +31,3 @@ describe('callSitePosition', () => {
   })
 })
 
-describe('matchesCallSitePosition', () => {
-  const position = 'pages/Home.jsx:77:19'
-
-  it('matches the position itself (a plain, never-inlined node)', () => {
-    expect(matchesCallSitePosition(position, position)).toBe(true)
-  })
-
-  it('matches a composite id inlined from that call site', () => {
-    const inlined = `${position}${INLINE_ID_SEPARATOR}components/Icon.jsx:3:6`
-    expect(matchesCallSitePosition(inlined, position)).toBe(true)
-  })
-
-  it('does not match a different call site', () => {
-    expect(matchesCallSitePosition('pages/Home.jsx:99:1', position)).toBe(false)
-  })
-
-  it('does not match a different call site even when composite', () => {
-    const other = `pages/Home.jsx:99:1${INLINE_ID_SEPARATOR}components/Icon.jsx:3:6`
-    expect(matchesCallSitePosition(other, position)).toBe(false)
-  })
-
-  it('does not match a position that is only a string prefix, not a real call-site boundary', () => {
-    // Guards the naive `nodeId.startsWith(position)` bug: "…:77:19" must not
-    // match "…:77:190" — the separator check is what prevents that.
-    expect(matchesCallSitePosition('pages/Home.jsx:77:190', position)).toBe(false)
-  })
-})

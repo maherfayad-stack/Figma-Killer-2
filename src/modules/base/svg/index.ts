@@ -57,9 +57,11 @@ export const SvgModule: ModuleDefinition<SvgStoredProps> = {
   htmlTag: (props) => resolveSvgHostTag(props.tag) ?? 'svg',
 
   render: (props) => {
-    // `props.svg` was already sanitised at the escapeProps boundary; this is
-    // the final, safe markup. An a11y label, when present, is added to the
-    // root element so the inline graphic announces itself.
+    // `props.svg` was already sanitised at the escapeProps boundary — which
+    // also removed the parser's part stamps (SVG-3) as attributes — so this is
+    // the final, safe markup. No string surgery on it (review #269 B1). An
+    // a11y label, when present, is added to the root element so the inline
+    // graphic announces itself.
     const markup = String(props.svg ?? '')
     if (!markup.trim()) return { html: '' }
 

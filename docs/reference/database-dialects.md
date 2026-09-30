@@ -1,4 +1,5 @@
 # Database Dialects
+> **Purpose:** running the same repositories on Postgres and SQLite · **Read when:** writing SQL or a migration · **Trust:** current-cms · **Owner:** server-engineer · **Verified:** not yet
 
 How the CMS runs the same repository code against both Postgres and SQLite, what the rules are, and where the boundaries sit.
 

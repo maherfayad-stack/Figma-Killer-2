@@ -29,7 +29,6 @@ function resetStore() {
     activeDocument: null,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     activeClassId: null,
     selectedSelectorClassId: null,
     selectedSelectorClassIds: [],

@@ -11,6 +11,8 @@
  * layer — the server must never import admin/canvas code, and this constant
  * table has nothing UI-specific in it.
  */
+import { Type, type Static } from '@sinclair/typebox'
+
 export const FRAME_WIDTH = 1024
 export const FRAME_HEIGHT = 800
 export const FRAME_GAP = 80
@@ -33,6 +35,22 @@ export const VARIANT_GAP = 48
  * floor is the caller's, passed in per gesture.
  */
 export const MIN_FRAME_SIZE = 200
+
+/**
+ * P5-F / IX-13 — where a NEW frame goes when the user drew it with the board
+ * tool (B): its top-left in board units and, when a size was drawn, that
+ * size. Crosses the wire (`POST /admin/api/studio/page`), so it is a schema;
+ * a size below `MIN_FRAME_SIZE` is refused at the boundary rather than
+ * clamped silently.
+ */
+export const BoardFramePlacementSchema = Type.Object({
+  x: Type.Number(),
+  y: Type.Number(),
+  width: Type.Optional(Type.Number({ minimum: MIN_FRAME_SIZE })),
+  height: Type.Optional(Type.Number({ minimum: MIN_FRAME_SIZE })),
+})
+
+export type BoardFramePlacement = Static<typeof BoardFramePlacementSchema>
 
 /**
  * Header height (board units) added to a frame's own height for on-screen

@@ -8,7 +8,7 @@
  * property LISTS, and the sticky search bar + icon rail chrome around them.
  * All three are gone from this file. What survives, unchanged in shape, is
  * the SECTION CONTENT — `StyleSectionsEditor` and everything under it
- * (`docs/features/inspector-disclosure.md`'s laws, the field model, token
+ * (`docs/features/inspector.md`'s laws, the field model, token
  * autocomplete, provenance) — now called exactly ONCE per selection, over
  * one collapsed style bag (`../../inspector/collapsedStyleBag.ts`) instead
  * of two independent Element/Class renders.
@@ -42,8 +42,15 @@
  *     (`inspector/sections/ExportSection.tsx`), gated by its own `appliesTo`
  *     rather than the bespoke `studioSession`/`activePageId` conditional this
  *     file used to compute for it.
- *   - The one full-column notice for the genuine "nothing here is writable"
- *     case — role permission, or every reachable target locked.
+ *   - The one `StyleWriteLockContext` provider (§9.4a): a multi-selection
+ *     aimed at Element hands every row its own "writes to 3 of 5" count.
+ *   - The one full-column notice for the genuine "no STYLE here is
+ *     writable" case — role permission, or every reachable target locked.
+ *     It stands in for the style sections only: a section that writes a
+ *     call site (`designCallSiteSections` — the Component section) still
+ *     mounts above it, because no style lock says anything about a
+ *     component's props (P2-G; before it, an instance with no writable
+ *     class showed the notice and no props at all).
  *
  * ## Each section is its own failure domain
  *
@@ -54,7 +61,7 @@
  * why the nearest boundary used to be the whole editor body.
  */
 
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { StyleRule } from '@core/page-tree'
 import { isGeneratedClassLocked, styleRuleDisplayName } from '@core/page-tree'
 import { Button } from '@ui/components/Button'
@@ -65,10 +72,12 @@ import { PanelBoundary } from '@site/ui/PanelBoundary'
 import { MultiSelectTargetBar } from '@site/inspector/MultiSelectTargetBar'
 import { useSelectionModel, type SelectionModel } from '@site/inspector/selectionModel'
 import {
+  designCallSiteSections,
   designMoreSections,
   designPrimarySections,
   type InspectorSectionDefinition,
 } from '@site/inspector/sections'
+import { partialStyleWriteLock, StyleWriteLockContext } from './StyleWriteLockContext'
 import styles from './StyleSurface.module.css'
 
 // ---------------------------------------------------------------------------
@@ -99,6 +108,13 @@ export function StyleSurface({ moduleContent, onFocusClassPicker }: StyleSurface
   const permissions = useEditorPermissions()
   const canEditStyleHere = permissions.canEditStyle
 
+  // UX-6 — whether anything has scrolled up under the chrome above this
+  // container. `PropertiesPanel.module.css` draws the ClassPicker's bottom
+  // fade only while this is set: at rest the fade had nothing to fade and
+  // simply dimmed the first header under it. Local to this element, so a
+  // freshly mounted surface (scrollTop 0) can never inherit a stale `true`.
+  const [scrolled, setScrolled] = useState(false)
+
   const reachableClasses = writableClasses.filter((entry) => entry.lockReason === null)
   const nothingWritable = !inlineWritable && reachableClasses.length === 0
 
@@ -119,7 +135,12 @@ export function StyleSurface({ moduleContent, onFocusClassPicker }: StyleSurface
     // (`tests/e2e/inspector-panel-measurement.e2e.ts`) needs a stable real-
     // DOM handle on it since CSS Module class names are hashed in a real
     // build.
-    <div className={styles.surface} data-testid="properties-panel-scroll">
+    <div
+      className={styles.surface}
+      data-testid="properties-panel-scroll"
+      data-scrolled={scrolled ? 'true' : undefined}
+      onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 0)}
+    >
       <div className={styles.surfaceContent}>
         {/* A multi-selection's write target is a CHOICE with a blast radius,
             so it gets its own interactive chip + gate here. A SINGLE
@@ -152,15 +173,21 @@ export function StyleSurface({ moduleContent, onFocusClassPicker }: StyleSurface
         )}
 
         {!canEditStyleHere ? (
-          <div className={styles.lockedContent}>
-            <EmptyState
-              variant="centered"
-              title="Styles are read-only for your role"
-              description="Your role can edit page copy but not classes or style overrides. Ask an editor to make visual changes."
-            />
-          </div>
+          <>
+            <MountedSections sections={designCallSiteSections(model)} />
+            <div className={styles.lockedContent}>
+              <EmptyState
+                variant="centered"
+                title="Styles are read-only for your role"
+                description="Your role can edit page copy but not classes or style overrides. Ask an editor to make visual changes."
+              />
+            </div>
+          </>
         ) : nodeId == null ? null : nothingWritable ? (
-          <NothingWritableNotice reason={inlineLockReason} onFocusClassPicker={onFocusClassPicker} />
+          <>
+            <MountedSections sections={designCallSiteSections(model)} />
+            <NothingWritableNotice reason={inlineLockReason} onFocusClassPicker={onFocusClassPicker} />
+          </>
         ) : (
           <>
             {soleGeneratedUtility && (
@@ -168,8 +195,15 @@ export function StyleSurface({ moduleContent, onFocusClassPicker }: StyleSurface
                 <GeneratedUtilityLockedState cls={soleGeneratedUtility} />
               </div>
             )}
-            <MountedSections sections={designPrimarySections(model)} />
-            <MoreDisclosure model={model} />
+            {/* §9.4a — the ONE provider of the write lock. A multi-selection
+                aimed at Element writes each property to the layers that take
+                it and skips the ones computing it in code; every
+                `ClassPropertyRow` below states its own count ("Writes to 3 of
+                5 selected layers"). `null` everywhere else. */}
+            <StyleWriteLockContext.Provider value={partialStyleWriteLock(model.inlineWriteReach)}>
+              <MountedSections sections={designPrimarySections(model)} />
+              <MoreDisclosure model={model} />
+            </StyleWriteLockContext.Provider>
           </>
         )}
       </div>

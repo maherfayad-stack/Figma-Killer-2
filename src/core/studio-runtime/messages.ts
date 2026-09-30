@@ -68,10 +68,25 @@
  */
 import { Type, type Static } from '@sinclair/typebox'
 import { DropCandidatesMessageSchema, DropCandidatesResultMessageSchema } from './dropCandidateMessages'
-import { NodeRectSchema } from './messageShapes'
+import { FrameBlurMessageSchema, KeyMessageSchema } from './keyMessages'
+import { NodeRectSchema, NodeRefSchema, PointerModifiersSchema } from './messageShapes'
+import { ResizeCommitMessageSchema, ResizeGuidesMessageSchema, SetResizeTargetMessageSchema } from './resizeMessages'
 
 export { DROP_CANDIDATES_MAX, DROP_CANDIDATE_CHILD_RECTS_MAX, DropCandidatesMessageSchema, DropCandidatesResultMessageSchema, type DropCandidateWire } from './dropCandidateMessages'
 export { NodeRectSchema, type NodeRect } from './messageShapes'
+export { FrameBlurMessageSchema, KEY_NAME_MAX, KeyMessageSchema, type KeyMessage } from './keyMessages'
+export {
+  RESIZE_SNAP_SIBLINGS_MAX,
+  ResizeCommitMessageSchema,
+  ResizeCommitPatchSchema,
+  ResizeGuidesMessageSchema,
+  ResizeSizingMarkersSchema,
+  ResizeSnapContextSchema,
+  SetResizeTargetMessageSchema,
+  type ResizeCommitPatch,
+  type ResizeSizingMarkers,
+  type ResizeSnapContext,
+} from './resizeMessages'
 
 /** The `source` every envelope carries, so unrelated `postMessage` traffic is ignored outright. */
 export const RUNTIME_MESSAGE_SOURCE = 'studio-live-runtime'
@@ -87,13 +102,6 @@ const ColorSchemeSchema = Type.Union([Type.Literal('light'), Type.Literal('dark'
 export const RuntimeModeSchema = Type.Union([Type.Literal('design'), Type.Literal('live')])
 export type RuntimeMode = Static<typeof RuntimeModeSchema>
 
-
-const PointerModifiersSchema = Type.Object({
-  shiftKey: Type.Boolean(),
-  altKey: Type.Boolean(),
-  ctrlKey: Type.Boolean(),
-  metaKey: Type.Boolean(),
-})
 
 // ---------------------------------------------------------------------------
 // Inbound — parent -> frame
@@ -116,12 +124,6 @@ export const ApplyOverlayMessageSchema = Type.Object({
 export const RemoveOverlayMessageSchema = Type.Object({
   type: Type.Literal('removeOverlay'),
   id: Type.String({ minLength: 1 }),
-})
-
-/** A stamp id paired with which same-stamp DOM occurrence it addresses — see "occurrenceIndex" in the module doc. */
-const NodeRefSchema = Type.Object({
-  nodeId: Type.String({ minLength: 1 }),
-  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
 })
 
 /** Sets the `data-*` attributes the ring CSS keys on, and shows/positions the selection ring(s). */
@@ -169,19 +171,6 @@ export const SetAxesMessageSchema = Type.Object({
 })
 
 /** See "Two additions" in the module docblock. */
-/**
- * `live-13` — which node, if any, carries resize handles right now, decided
- * by the parent (a single selection whose module can carry an inline style —
- * `resizeOffer.ts`); the runtime draws and drags them (`resizeHandles.ts`)
- * and refuses on its own side when the element's computed display ignores a
- * size. `proportional` is `K4`'s scale tool, re-sent whenever it toggles.
- */
-export const SetResizeTargetMessageSchema = Type.Object({
-  type: Type.Literal('setResizeTarget'),
-  ref: Type.Union([NodeRefSchema, Type.Null()]),
-  proportional: Type.Boolean(),
-})
-
 export const SetModeMessageSchema = Type.Object({
   type: Type.Literal('setMode'),
   mode: RuntimeModeSchema,
@@ -274,14 +263,6 @@ export const OptimisticMoveMessageSchema = Type.Object({
   index: Type.Number({ minimum: 0 }),
 })
 
-/** Sets `textContent`, never `innerHTML` — see the module docblock. */
-export const OptimisticTextMessageSchema = Type.Object({
-  type: Type.Literal('optimistic.text'),
-  nodeId: Type.String({ minLength: 1 }),
-  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
-  text: Type.String(),
-})
-
 /**
  * `speed-01` — a properties-panel style commit or scrub preview, applied
  * in-frame as a stylesheet rule ahead of the file write + HMR round trip
@@ -341,13 +322,29 @@ export const OptimisticStyleClearMessageSchema = Type.Object({
   ref: NodeRefSchema,
 })
 
+/** How many nodes one `optimistic.revert` names — one structural gesture's worth, with room to spare. */
+export const OPTIMISTIC_REVERT_MAX = 512
+
+/**
+ * store-17 — a structural write the server refused (or never answered) is
+ * taken back: the parent's tree already replayed the gesture's inverse
+ * (`structuralCommitRollback.ts`), and this puts back the optimistic hide or
+ * move the gesture made in this frame's DOM for exactly these nodes. No HMR
+ * follows a write that did not land, so without it the frame kept showing a
+ * gesture the file never got.
+ */
+export const OptimisticRevertMessageSchema = Type.Object({
+  type: Type.Literal('optimistic.revert'),
+  refs: Type.Array(NodeRefSchema, { maxItems: OPTIMISTIC_REVERT_MAX }),
+})
+
 export const OptimisticMessageSchema = Type.Union([
   OptimisticInsertMessageSchema,
   OptimisticDeleteMessageSchema,
   OptimisticMoveMessageSchema,
-  OptimisticTextMessageSchema,
   OptimisticStyleMessageSchema,
   OptimisticStyleClearMessageSchema,
+  OptimisticRevertMessageSchema,
 ])
 export type OptimisticMessage = Static<typeof OptimisticMessageSchema>
 
@@ -364,9 +361,9 @@ export const InboundRuntimeMessageSchema = Type.Union([
   OptimisticInsertMessageSchema,
   OptimisticDeleteMessageSchema,
   OptimisticMoveMessageSchema,
-  OptimisticTextMessageSchema,
   OptimisticStyleMessageSchema,
   OptimisticStyleClearMessageSchema,
+  OptimisticRevertMessageSchema,
   DropCandidatesMessageSchema,
 ])
 export type InboundRuntimeMessage = Static<typeof InboundRuntimeMessageSchema>
@@ -465,38 +462,25 @@ export const WheelMessageSchema = Type.Object({
   modifiers: PointerModifiersSchema,
 })
 
-/** A committed size, as the source will spell it: an integer pixel count. Bounded so a forged value can never reach the store as an absurd width. */
-const CssPixelLengthSchema = Type.String({ pattern: '^[0-9]{1,6}px$' })
-
-/**
- * `live-13` — a finished drag on the in-frame resize handles
- * (`resizeHandles.ts`) that changed the element's size. The frame previewed
- * the drag itself; the parent commits `patch` to the node's inline style
- * through the store, exactly the write `useElementResizeDrag` makes for a
- * portal frame. Only the dimensions the drag changed are present, each an
- * integer `px` string — nothing here names a selector or reaches the DOM.
- */
-export const ResizeCommitMessageSchema = Type.Object({
-  type: Type.Literal('resize:commit'),
-  nodeId: Type.String({ minLength: 1 }),
-  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
-  patch: Type.Object({
-    width: Type.Optional(CssPixelLengthSchema),
-    height: Type.Optional(CssPixelLengthSchema),
-  }),
-})
-
 /**
  * `live-18` — a double-click on a stamped element inside a DESIGN-mode
  * frame; the runtime asks, the parent decides (via the inbound
  * {@link TextEditReplyMessageSchema} reply above) whether this node is
  * text-editable at all — the runtime has no page-tree/module knowledge to
  * decide that itself.
+ *
+ * canvas-24 — `ancestors` is the same bounded stamped chain a `pointer`
+ * carries, innermost first. A double-click inside a design-system button
+ * lands on the package's own internal stamp, which the page tree has never
+ * heard of; the parent walks the chain to the nearest node it knows, exactly
+ * as it does for a click, and replies naming THAT node (any ref in the chain
+ * answers this request).
  */
 export const TextEditStartMessageSchema = Type.Object({
   type: Type.Literal('text:editStart'),
   nodeId: Type.String({ minLength: 1 }),
   occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
+  ancestors: Type.Array(NodeRefSchema, { maxItems: 32 }),
 })
 
 /** `live-18` — Enter (no Shift) or blur ended the session with this final text, bounded per {@link TEXT_EDIT_MAX_LENGTH}. */
@@ -652,6 +636,7 @@ export const OutboundRuntimeMessageSchema = Type.Union([
   PointerMessageSchema,
   WheelMessageSchema,
   ResizeCommitMessageSchema,
+  ResizeGuidesMessageSchema,
   TextEditStartMessageSchema,
   TextCommitMessageSchema,
   TextCancelMessageSchema,
@@ -659,6 +644,8 @@ export const OutboundRuntimeMessageSchema = Type.Union([
   FrameResizeMessageSchema,
   ErrorMessageSchema,
   DropCandidatesResultMessageSchema,
+  KeyMessageSchema,
+  FrameBlurMessageSchema,
 ])
 export type OutboundRuntimeMessage = Static<typeof OutboundRuntimeMessageSchema>
 

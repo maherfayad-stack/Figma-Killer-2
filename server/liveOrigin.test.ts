@@ -370,9 +370,15 @@ describe('handleLiveOriginFetch', () => {
   // drop the browser's `Sec-WebSocket-Protocol` on both legs: the upstream
   // never answered, the connect watchdog closed the browser's socket, and
   // Vite's client reloaded every live frame on the board in a loop.
-  it('carries the browser\'s subprotocols to the upstream leg and echoes the first back on the upgrade', async () => {
+  //
+  // The echo itself is Bun's: `upgrade` answers with the first offered
+  // subprotocol on its own, so the relay passes no `headers`. An explicit
+  // `sec-websocket-protocol` on top was sent TWICE by Bun 1.3.6, and a
+  // client that checks the handshake rejects that (the real-socket tests
+  // below prove both the echo and that it appears exactly once).
+  it('carries the browser\'s subprotocols to the upstream leg and leaves the echo to Bun\'s upgrade', async () => {
     registerProject('ws-app', 'ready')
-    let captured: { protocols: string[]; headers?: Record<string, string> } | undefined
+    let captured: { protocols: string[]; optionKeys: string[] } | undefined
     const req = stubRequest('http://live.local/p/ws-app/', {
       upgrade: 'websocket',
       connection: 'Upgrade',
@@ -382,7 +388,7 @@ describe('handleLiveOriginFetch', () => {
       req,
       {
         upgrade: (_req, options) => {
-          captured = { protocols: options.data.protocols, headers: options.headers }
+          captured = { protocols: options.data.protocols, optionKeys: Object.keys(options) }
           return true
         },
       },
@@ -391,18 +397,18 @@ describe('handleLiveOriginFetch', () => {
     )
     expect(res).toBeUndefined()
     expect(captured?.protocols).toEqual(['vite-hmr', 'vite-ping'])
-    expect(captured?.headers).toEqual({ 'sec-websocket-protocol': 'vite-hmr' })
+    expect(captured?.optionKeys).toEqual(['data'])
   })
 
   it('offers no subprotocol upstream, and echoes none, when the browser offered none', async () => {
     registerProject('ws-app', 'ready')
-    let captured: { protocols: string[]; headers?: Record<string, string> } | undefined
+    let captured: { protocols: string[]; optionKeys: string[] } | undefined
     const req = stubRequest('http://live.local/p/ws-app/', { upgrade: 'websocket', connection: 'Upgrade' })
     await handleLiveOriginFetch(
       req,
       {
         upgrade: (_req, options) => {
-          captured = { protocols: options.data.protocols, headers: options.headers }
+          captured = { protocols: options.data.protocols, optionKeys: Object.keys(options) }
           return true
         },
       },
@@ -410,7 +416,7 @@ describe('handleLiveOriginFetch', () => {
       fakeUpstreamFetch([]),
     )
     expect(captured?.protocols).toEqual([])
-    expect(captured?.headers).toBeUndefined()
+    expect(captured?.optionKeys).toEqual(['data'])
   })
 
   it('never derives an attacker-chosen WebSocket host from a network-path reference in the URL', async () => {
@@ -451,7 +457,11 @@ describe('liveOrigin — real WebSocket bridge (genuine socket required)', () =>
           // errors at once rather than after its connect watchdog.
           const offered = req.headers.get('sec-websocket-protocol')
           if (offered !== 'vite-hmr') return new Response('no vite-hmr subprotocol offered', { status: 400 })
-          const ok = server.upgrade(req, { headers: { 'sec-websocket-protocol': 'vite-hmr' } })
+          // Bun echoes the offered `vite-hmr` itself, the way Vite's `ws`
+          // server answers with exactly one. An explicit header here is sent
+          // twice by Bun 1.3.6, and the relay's own outbound client then
+          // refuses the upstream leg (1002 "Mismatch client protocol").
+          const ok = server.upgrade(req)
           return ok ? undefined : new Response('Upgrade failed', { status: 400 })
         }
         return new Response('not a websocket request', { status: 400 })
@@ -483,6 +493,11 @@ describe('liveOrigin — real WebSocket bridge (genuine socket required)', () =>
     await new Promise<void>((resolve, reject) => {
       ws.addEventListener('open', () => resolve())
       ws.addEventListener('error', () => reject(new Error('ws open failed')))
+      // A handshake the client refuses closes without an `error` (Bun: 1002
+      // "Mismatch client protocol" on a duplicated subprotocol header), so
+      // `close` settles this too: the test fails at once, naming the code,
+      // instead of running into the 20 s test timeout.
+      ws.addEventListener('close', (event) => reject(new Error(`ws closed before open: ${event.code} ${event.reason}`)))
     })
     expect(ws.protocol).toBe('vite-hmr')
     const roundTrip = new Promise<string>((resolve, reject) => {
@@ -494,6 +509,48 @@ describe('liveOrigin — real WebSocket bridge (genuine socket required)', () =>
     ws.send('ping')
     expect(await roundTrip).toBe('ping')
     ws.close()
+  })
+
+  it('answers the browser\'s upgrade with exactly one Sec-WebSocket-Protocol header', async () => {
+    registerProject('ws-app', 'ready', `http://127.0.0.1:${fakeUpstream.port}`)
+    const CRLF = String.fromCharCode(13, 10)
+    const handshake = [
+      'GET /p/ws-app/ HTTP/1.1',
+      `Host: 127.0.0.1:${liveServer.port}`,
+      'Upgrade: websocket',
+      'Connection: Upgrade',
+      'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+      'Sec-WebSocket-Version: 13',
+      'Sec-WebSocket-Protocol: vite-hmr',
+      '',
+      '',
+    ].join(CRLF)
+    const response = await new Promise<string>((resolve, reject) => {
+      let received = ''
+      void Bun.connect({
+        hostname: '127.0.0.1',
+        port: liveServer.port,
+        socket: {
+          open(socket) {
+            socket.write(handshake)
+          },
+          data(socket, chunk) {
+            received += new TextDecoder().decode(chunk)
+            const end = received.indexOf(CRLF + CRLF)
+            if (end === -1) return
+            resolve(received.slice(0, end))
+            socket.end()
+          },
+          error(_socket, err) {
+            reject(err)
+          },
+        },
+      })
+    })
+    const lines = response.split(CRLF)
+    expect(lines[0]).toBe('HTTP/1.1 101 Switching Protocols')
+    const protocolLines = lines.filter((line) => line.toLowerCase().startsWith('sec-websocket-protocol:'))
+    expect(protocolLines).toEqual(['Sec-WebSocket-Protocol: vite-hmr'])
   })
 
   it('reports its runtime origin once started', () => {

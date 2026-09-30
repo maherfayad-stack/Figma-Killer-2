@@ -5,10 +5,11 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core'
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import { CanvasRoot } from '@admin/pages/site/canvas'
 import { CodeEditorPanel, CodeEditorSkeleton } from '@admin/pages/site/code-editor'
 import { useActiveLivePath } from '@admin/pages/site/hooks/useActiveLivePath'
+import { installEditorWindowDiagnostics } from '@admin/pages/site/canvas/editorWindowDiagnostics'
 import { useAutoResolveDependencies } from '@admin/pages/site/hooks/useAutoResolveDependencies'
 import { useRegisterProjectModules } from '@admin/pages/site/studio/canvasModuleSet'
 import { useDevServerPrewarm } from '@admin/pages/site/studio/useDevServerPrewarm'
@@ -16,16 +17,19 @@ import { usePreviewAxesHydration } from '@admin/pages/site/studio/usePreviewAxes
 import { useStudioCommentsLoad } from '@admin/pages/site/studio/useStudioCommentsLoad'
 import { useStudioPrototypeLoad } from '@admin/pages/site/studio/useStudioPrototypeLoad'
 import { LayoutNameDialog } from '@admin/pages/site/dialogs/LayoutNameDialog'
+import { DetachConfirmDialog } from '@admin/pages/site/ui/DetachConfirmDialog'
 import { PropertiesPanel } from '@admin/pages/site/panels/PropertiesPanel'
 import { LeftSidebar } from '@admin/pages/site/sidebars/LeftSidebar'
 import { RightSidebar } from '@admin/pages/site/sidebars/RightSidebar'
 import { PanelBoundary } from '@admin/pages/site/ui/PanelBoundary'
+import { ChromeBoundary } from '@admin/pages/site/ui/ChromeBoundary'
 import { selectRightSidebarExpanded, useEditorStore } from '@admin/pages/site/store/store'
 import { useNarrowEditorChrome } from '@site/layout/responsiveChrome'
 import { ConfirmDeleteProvider } from '@admin/shared/dialogs/ConfirmDeleteDialog'
 import { Dialog } from '@ui/components/Dialog'
 import { Button } from '@ui/components/Button'
 import { cn } from '@ui/cn'
+import { ReloadIcon } from 'pixel-art-icons/icons/reload'
 import styles from './AdminCanvasLayout.module.css'
 
 // The canvas runtime graph — base + design-system packs + loop sources —
@@ -42,11 +46,15 @@ const ImportHtmlModal = lazy(() =>
   import('@admin/modals/ImportHtml').then((m) => ({ default: m.ImportHtmlModal })),
 )
 
-interface AdminCanvasEditorBodyProps {
+export interface AdminCanvasEditorBodyProps {
   canEditDraftSite: boolean
   canSaveSite: boolean
   canUseAiChat: boolean
   loadError: string | null
+  /** ERR-18 — the load ladder still has a rung left: say "trying again", not "could not open". */
+  loadRetrying: boolean
+  /** ERR-18 — the Retry button: run the whole project load again. */
+  onRetryLoad: () => void
 }
 
 export function AdminCanvasEditorBody({
@@ -54,6 +62,8 @@ export function AdminCanvasEditorBody({
   canSaveSite,
   canUseAiChat,
   loadError,
+  loadRetrying,
+  onRetryLoad,
 }: AdminCanvasEditorBodyProps) {
   // Keep `siteRuntime.dependencyLock` in lockstep with `packageJson` while
   // the editor body is open.
@@ -82,6 +92,11 @@ export function AdminCanvasEditorBody({
   // their own); lives here, in the lazy body, so the CMS fetch it needs for
   // postTypes templates stays out of the admin-shell bundle.
   useActiveLivePath()
+  // ERR-26 — the editor window's own `error` / `unhandledrejection` sink: logs
+  // and records into the diagnostics buffer the canvas frames already feed,
+  // never a toast. In the lazy body, like every hook above, so the route shell
+  // stays out of the diagnostics code.
+  useEffect(() => installEditorWindowDiagnostics(window), [])
 
   const propertiesPanelMode = useEditorStore((s) => s.propertiesPanelMode)
   const rightSidebarExpanded = useEditorStore(selectRightSidebarExpanded)
@@ -117,11 +132,15 @@ export function AdminCanvasEditorBody({
             and uses its own dedicated `PluginRemoveDialog` instead. */}
         <ConfirmDeleteProvider>
           <div className={styles.editorBody}>
-            <LeftSidebar
-              editable={canEditDraftSite}
-              canUseAiChat={canUseAiChat}
-              railOnly={hasRightSidebar && narrowChrome}
-            />
+            {/* ERR-13 — the rail and the sidebar shells are chrome; every panel
+                inside them has its own `PanelBoundary` already. */}
+            <ChromeBoundary id="left-sidebar">
+              <LeftSidebar
+                editable={canEditDraftSite}
+                canUseAiChat={canUseAiChat}
+                railOnly={hasRightSidebar && narrowChrome}
+              />
+            </ChromeBoundary>
             <div
               className={cn(styles.canvasStage, hasRightSidebar && styles.canvasStageRightSidebarOpen)}
               data-right-sidebar-expanded={hasRightSidebar ? 'true' : 'false'}
@@ -129,7 +148,7 @@ export function AdminCanvasEditorBody({
               <div className={styles.canvasContent} key="site">
                 {/* Canvas — fills the remaining space between sidebars */}
                 {loadError ? (
-                  <SiteEditorLoadError message={loadError} />
+                  <SiteEditorLoadError message={loadError} retrying={loadRetrying} onRetry={onRetryLoad} />
                 ) : (
                   <CanvasRoot editable={canEditDraftSite} />
                 )}
@@ -149,10 +168,12 @@ export function AdminCanvasEditorBody({
                   gated `sitePropertiesExpanded` selector.
                 - `'hidden'`:    Site viewer with no `pages.draft.save`
                   capability. */}
-            <RightSidebar
-              key="site"
-              mode={canSaveSite ? 'site' : 'hidden'}
-            />
+            <ChromeBoundary id="right-sidebar">
+              <RightSidebar
+                key="site"
+                mode={canSaveSite ? 'site' : 'hidden'}
+              />
+            </ChromeBoundary>
           </div>
         </ConfirmDeleteProvider>
       </DndContext>
@@ -161,20 +182,32 @@ export function AdminCanvasEditorBody({
           canvas stage. The panel itself is small chrome; the heavy CodeMirror
           6 bundle (~600 kB) is lazy-loaded inside the panel only when the
           user opens a text file. */}
-      <CodeEditorPanel />
+      <ChromeBoundary id="code-editor">
+        <CodeEditorPanel />
+      </ChromeBoundary>
 
       {/* Naming step for "Save as layout" / saved-layout rename. Renders null
           until a layoutNameDialogRequest is set on the ui slice. */}
-      <LayoutNameDialog />
+      <ChromeBoundary id="layout-name-dialog">
+        <LayoutNameDialog />
+      </ChromeBoundary>
+
+      {/* P5-C — the Detach confirm, asked only when a detach loses something.
+          Renders null until `instanceDetachConfirm` is set. */}
+      <ChromeBoundary id="detach-confirm-dialog">
+        <DetachConfirmDialog />
+      </ChromeBoundary>
 
       {/* Import HTML modal — opens from Spotlight or right-click "Paste HTML here…".
           The modal implementation is rarely used and pulls in the importer,
           tree preview, and HTML editor, so keep it behind this open-state
           lazy boundary. */}
       {importHtmlModalOpen && (
-        <Suspense fallback={<ImportHtmlModalLoading />}>
-          <ImportHtmlModal />
-        </Suspense>
+        <ChromeBoundary id="import-html">
+          <Suspense fallback={<ImportHtmlModalLoading />}>
+            <ImportHtmlModal />
+          </Suspense>
+        </ChromeBoundary>
       )}
     </>
   )
@@ -235,12 +268,38 @@ function ImportHtmlModalLoading() {
  * heading names that, not the CMS document model this fork inherited. The
  * `message` under it is the real reason (a parse failure, a missing
  * directory, a refused read), and it is the only part worth reading.
+ *
+ * ERR-18 — while `usePersistence`'s load ladder is still retrying (the server
+ * gave no answer at all), this says so as a status, not an alert: the project
+ * is not broken, the server is restarting. Once the ladder runs out, or the
+ * answer was a real one, it is the alert — with a Retry button, because the
+ * only other way back was a full page refresh.
  */
-function SiteEditorLoadError({ message }: { message: string }) {
+function SiteEditorLoadError({
+  message,
+  retrying,
+  onRetry,
+}: {
+  message: string
+  retrying: boolean
+  onRetry: () => void
+}) {
+  if (retrying) {
+    return (
+      <section className={styles.canvasBootstrapError} role="status" data-load-state="retrying">
+        <h1>Opening this project…</h1>
+        <p>{message} Trying again.</p>
+      </section>
+    )
+  }
   return (
-    <section className={styles.canvasBootstrapError} role="alert">
+    <section className={styles.canvasBootstrapError} role="alert" data-load-state="failed">
       <h1>Could not open this project</h1>
       <p>{message}</p>
+      <Button variant="secondary" size="sm" className={styles.canvasBootstrapRetry} onClick={onRetry}>
+        <ReloadIcon size={13} aria-hidden="true" />
+        <span>Retry</span>
+      </Button>
     </section>
   )
 }

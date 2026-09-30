@@ -8,7 +8,7 @@
 export const translations = {
   en: {
     sheetHeader: {
-      back: 'Back',
+      back: 'رجوع',
       close: 'Close'
     },
     cssProbe: {
@@ -20,9 +20,9 @@ export const translations = {
       startEditingThisPageIn: 'Start editing this page in Studio.'
     },
     onboardingHero: {
-      almosafer: 'Almosafer',
-      _941Am: '9:41 AM',
-      goodNewsAFewHotels: 'Good news! A few hotels you were interested in just had a 30% price drop'
+      almosafer: 'المسافر',
+      _941Am: '9:41 ص',
+      goodNewsAFewHotels: 'أخبار سارة! انخفضت أسعار بعض الفنادق التي تهتم بها بنسبة 30%'
     },
     onboarding: {
       completeYourSetupDonT: 'Complete your setup. Don’t miss out on:',
@@ -30,37 +30,37 @@ export const translations = {
       priceDropsBeforeTheyAre: 'Price drops before they are gone',
       flashSales: 'Flash sales',
       offersPickedForYou: 'Offers picked for you',
-      agree: 'Agree',
-      maybeLater: 'Maybe later',
-      byClickingAgreeIConsent: 'By clicking Agree, I consent to receiving communications and acknowledge the',
-      privacyPolicy: 'privacy policy',
-      and: ', and',
-      termsAndConditions: 'terms and conditions',
-      youCanOptOutAnytime: 'You can opt-out anytime.'
+      agree: 'موافق',
+      maybeLater: 'ربما لاحقًا',
+      byClickingAgreeIConsent: 'بالنقر على موافق، أوافق على تلقي الاتصالات وأقرّ بـ',
+      privacyPolicy: 'سياسة الخصوصية',
+      and: '، و',
+      termsAndConditions: 'الشروط والأحكام',
+      youCanOptOutAnytime: 'يمكنك إلغاء الاشتراك في أي وقت.'
     },
     signUp: {
-      signInOrCreateAccount: 'Sign in or create account',
-      code: 'Code',
-      mobileNumber: 'Mobile number',
-      continue: 'Continue',
-      registerAsABusiness: 'Register as a Business',
-      continueWithEmail: 'Continue with email',
-      continueWithApple: 'Continue with Apple',
-      continueWithGoogle: 'Continue with Google'
+      signInOrCreateAccount: 'سجّل الدخول أو أنشئ حسابًا',
+      code: 'الرمز',
+      mobileNumber: 'رقم الجوال',
+      continue: 'متابعة',
+      registerAsABusiness: 'التسجيل كشركة',
+      continueWithEmail: 'المتابعة بالبريد الإلكتروني',
+      continueWithApple: 'المتابعة عبر Apple',
+      continueWithGoogle: 'المتابعة عبر Google'
     },
     sMS: {
-      enterVerificationCode: 'Enter Verification Code',
-      enterThe6DigitCode: 'Enter the 6-digit code sent via:',
-      sms: 'SMS',
-      at: 'at',
-      resendIn: 'Resend in',
-      _29Seconds: '29 seconds',
-      digit1: 'Verification code, digit 1',
-      digit2: 'Verification code, digit 2',
-      digit3: 'Verification code, digit 3',
-      digit4: 'Verification code, digit 4',
-      digit5: 'Verification code, digit 5',
-      digit6: 'Verification code, digit 6'
+      enterVerificationCode: 'أدخل رمز التحقق',
+      enterThe6DigitCode: 'أدخل الرمز المكوّن من 6 أرقام المُرسل عبر:',
+      sms: 'رسالة نصية',
+      at: 'على',
+      resendIn: 'إعادة الإرسال خلال',
+      _29Seconds: '29 ثانية',
+      digit1: 'رمز التحقق، الرقم 1',
+      digit2: 'رمز التحقق، الرقم 2',
+      digit3: 'رمز التحقق، الرقم 3',
+      digit4: 'رمز التحقق، الرقم 4',
+      digit5: 'رمز التحقق، الرقم 5',
+      digit6: 'رمز التحقق، الرقم 6'
     }
   },
   ar: {
@@ -75,7 +75,7 @@ export const translations = {
     onboardingHero: {
       almosafer: 'المسافر',
       _941Am: '9:41 ص',
-      goodNewsAFewHotels: 'asdasdasdas'
+      goodNewsAFewHotels: 'أخبار سارة! انخفضت أسعار بعض الفنادق التي تهتم بها بنسبة 30%'
     },
     onboarding: {
       agree: 'موافق',
@@ -108,7 +108,7 @@ export const translations = {
     sMS: {
       _29Seconds: '29 ثانية',
       at: 'على',
-      enterThe6DigitCode: 'asdasdasdasd',
+      enterThe6DigitCode: 'أدخل الرمز المكوّن من 6 أرقام المُرسل عبر:',
       enterVerificationCode: 'أدخل رمز التحقق',
       resendIn: 'إعادة الإرسال خلال',
       sms: 'رسالة نصية',

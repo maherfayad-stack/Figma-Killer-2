@@ -1,4 +1,5 @@
 # Studio preview deploys
+> **Purpose:** preview deploys through the project's own Vercel/Netlify CLI · **Read when:** touching deploys · **Trust:** current · **Owner:** server-engineer · **Verified:** not yet
 
 **Status:** v1 (W5-4). **Needs human dogfooding** against a real project with a
 real Vercel or Netlify account before it is trusted for daily use — a real

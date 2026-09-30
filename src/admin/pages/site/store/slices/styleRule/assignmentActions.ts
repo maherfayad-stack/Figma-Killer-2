@@ -1,6 +1,7 @@
 /**
  * styleRule slice — node ↔ class assignment: addNodeClass, addNodeClasses,
- * removeNodeClass, reorderNodeClasses, reorderNodeClass.
+ * applyNodeStyles (P5-E's paste style), removeNodeClass, reorderNodeClasses,
+ * reorderNodeClass.
  *
  * Invariant: `node.classIds` only ever holds class-kind rule ids. Ambient
  * rules attach by selector matching, not by class-attribute assignment, so
@@ -8,7 +9,9 @@
  * token into the rendered `class=` attribute.
  */
 
+import { isStylePatchWritableToSource } from '@core/page-tree'
 import type { SiteSliceHelpers } from '../site/types'
+import { applyInlineStylePatch } from '../site/inlineStyleActions'
 import type { StyleRuleSlice } from './types'
 import { findNodeWithClassIds, mutateNodeClassIds } from './helpers'
 
@@ -16,12 +19,13 @@ type AssignmentActions = Pick<
   StyleRuleSlice,
   | 'addNodeClass'
   | 'addNodeClasses'
+  | 'applyNodeStyles'
   | 'removeNodeClass'
   | 'reorderNodeClasses'
   | 'reorderNodeClass'
 >
 
-export function createAssignmentActions({ get, mutateSiteState }: SiteSliceHelpers): AssignmentActions {
+export function createAssignmentActions({ get, mutateSiteState, mutateTreesForNodeIds }: SiteSliceHelpers): AssignmentActions {
   return {
     addNodeClass(nodeId, classId) {
       const { site } = get()
@@ -79,6 +83,37 @@ export function createAssignmentActions({ get, mutateSiteState }: SiteSliceHelpe
         })
         return mutated
       })
+    },
+
+    applyNodeStyles(entries) {
+      if (entries.length === 0) return
+      const styleRules = get().site?.styleRules
+      // Same invariant as `addNodeClass`: only class-kind rules are assigned.
+      const isAssignable = (classId: string) => {
+        const rule = styleRules?.[classId]
+        return rule !== undefined && (!rule.kind || rule.kind === 'class')
+      }
+      const byNodeId = new Map(entries.map((entry) => [entry.nodeId, entry]))
+      mutateTreesForNodeIds(
+        entries.map((entry) => entry.nodeId),
+        (tree, idsOnThisTree) => {
+          let changed = false
+          for (const nodeId of idsOnThisTree) {
+            const node = tree.nodes[nodeId]
+            const entry = byNodeId.get(nodeId)
+            if (!node || !entry) continue
+            if (isStylePatchWritableToSource(node, entry.inlinePatch) && applyInlineStylePatch(node, entry.inlinePatch)) {
+              changed = true
+            }
+            for (const classId of entry.addClassIds) {
+              if (!isAssignable(classId) || node.classIds.includes(classId)) continue
+              node.classIds.push(classId)
+              changed = true
+            }
+          }
+          return changed
+        },
+      )
     },
 
     removeNodeClass(nodeId, classId) {

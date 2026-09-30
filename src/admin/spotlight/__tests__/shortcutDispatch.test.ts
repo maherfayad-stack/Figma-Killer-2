@@ -83,58 +83,11 @@ describe('command shortcut dispatch', () => {
     expect(denied).toBeNull()
   })
 
-  it('resolves canvas clipboard shortcuts only from the canvas focus surface', () => {
-    const ctx = context(['site.read'], {
-      selectedNodeIds: ['node-1'],
-      activePageId: 'page-1',
-      activeDocument: { kind: 'page', pageId: 'page-1' },
-      canUndo: false,
-      canRedo: false,
-      activeBreakpointId: 'desktop',
-      activeInlineEdit: false,
-    })
-    const fromCanvas = findMatchingShortcutCommand(
-      eventLike('c', { metaKey: true, target: canvasTarget() as EventTarget }) as KeyboardEvent,
-      ctx,
-    )
-    const outsideCanvas = findMatchingShortcutCommand(
-      eventLike('c', { metaKey: true }) as KeyboardEvent,
-      ctx,
-    )
-
-    expect(fromCanvas?.id).toBe('layers.copy')
-    expect(outsideCanvas).toBeNull()
-  })
-
-  it('resolves layer clipboard shortcuts from the Layers tree focus surface', () => {
-    const ctx = context(['site.read'], {
-      selectedNodeIds: ['node-1'],
-      activePageId: 'page-1',
-      activeDocument: { kind: 'page', pageId: 'page-1' },
-      canUndo: false,
-      canRedo: false,
-      activeBreakpointId: 'desktop',
-      activeInlineEdit: false,
-    })
-
-    const command = findMatchingShortcutCommand(
-      eventLike('c', { metaKey: true, target: layerTreeTarget() as EventTarget }) as KeyboardEvent,
-      ctx,
-    )
-
-    expect(command?.id).toBe('layers.copy')
-  })
-
-  it('registers Cmd/Ctrl+Backspace for deleting the selected layer', () => {
-    const binding = getKeybindingForCommand('layers.delete')
-
-    expect(binding).toBeDefined()
-    expect(binding?.shortcut).toEqual({ mac: '⌘⌫', win: 'Ctrl+Backspace' })
-    expect(binding?.match(eventLike('Backspace', { metaKey: true }))).toBe(true)
-    expect(binding?.match(eventLike('Backspace', { ctrlKey: true }))).toBe(true)
-  })
-
-  it('matches browser-uppercase canvas clipboard shortcut keys', () => {
+  // P5-A — ⌘C / ⌘X / ⌘V are the canvas `node` rung's (`useCanvasNodeShortcuts`),
+  // which must let the keystroke through so the browser raises the `copy` /
+  // `paste` EVENT the clipboard bridge reads. Resolved here, this capture-phase
+  // listener `preventDefault`ed them first and the event never fired.
+  it('leaves ⌘C / ⌘X / ⌘V to the canvas node rung, from the canvas and the Layers tree, in either key case', () => {
     const ctx = context(['site.read', 'site.structure.edit'], {
       selectedNodeIds: ['node-1'],
       activePageId: 'page-1',
@@ -144,25 +97,24 @@ describe('command shortcut dispatch', () => {
       activeBreakpointId: 'desktop',
       activeInlineEdit: false,
     })
+    for (const target of [canvasTarget(), layerTreeTarget()]) {
+      for (const key of ['c', 'x', 'v', 'C', 'X', 'V']) {
+        const command = findMatchingShortcutCommand(
+          eventLike(key, { metaKey: true, target: target as EventTarget }) as KeyboardEvent,
+          ctx,
+        )
+        expect(command?.id).toBeUndefined()
+      }
+    }
+  })
 
-    expect(
-      findMatchingShortcutCommand(
-        eventLike('C', { metaKey: true, target: canvasTarget() as EventTarget }) as KeyboardEvent,
-        ctx,
-      )?.id,
-    ).toBe('layers.copy')
-    expect(
-      findMatchingShortcutCommand(
-        eventLike('X', { metaKey: true, target: canvasTarget() as EventTarget }) as KeyboardEvent,
-        ctx,
-      )?.id,
-    ).toBe('layers.cut')
-    expect(
-      findMatchingShortcutCommand(
-        eventLike('V', { metaKey: true, target: canvasTarget() as EventTarget }) as KeyboardEvent,
-        ctx,
-      )?.id,
-    ).toBe('layers.paste')
+  it('registers Cmd/Ctrl+Backspace for deleting the selected layer', () => {
+    const binding = getKeybindingForCommand('layers.delete')
+
+    expect(binding).toBeDefined()
+    expect(binding?.shortcut).toEqual({ mac: '⌘⌫', win: 'Ctrl+Backspace' })
+    expect(binding?.match(eventLike('Backspace', { metaKey: true }))).toBe(true)
+    expect(binding?.match(eventLike('Backspace', { ctrlKey: true }))).toBe(true)
   })
 
   it('does not run canvas shortcuts during inline text editing', () => {
@@ -176,11 +128,31 @@ describe('command shortcut dispatch', () => {
       activeInlineEdit: true,
     })
 
+    // ⇧K (`insert.image`) is a canvas-scoped shortcut this dispatcher DOES
+    // resolve (see the next test); ⌘C no longer is one (P5-A, above).
     const command = findMatchingShortcutCommand(
-      eventLike('C', { metaKey: true, target: canvasTarget() as EventTarget }) as KeyboardEvent,
+      eventLike('K', { shiftKey: true, target: canvasTarget() as EventTarget }) as KeyboardEvent,
       ctx,
     )
 
     expect(command).toBeNull()
+  })
+
+  it('resolves ⇧K on the canvas to the `insert.image` command from P5-B (the binding names a command that exists)', () => {
+    const editor: CommandContext['editor'] = {
+      selectedNodeIds: ['node-1'],
+      activePageId: 'page-1',
+      activeDocument: { kind: 'page', pageId: 'page-1' },
+      canUndo: false,
+      canRedo: false,
+      activeBreakpointId: 'desktop',
+      activeInlineEdit: false,
+    }
+    const press = eventLike('K', { shiftKey: true, target: canvasTarget() as EventTarget }) as KeyboardEvent
+
+    expect(findMatchingShortcutCommand(press, context(['site.read', 'site.structure.edit'], editor))?.id)
+      .toBe('insert.image')
+    // Inserting is a structural edit: a read-only session gets nothing.
+    expect(findMatchingShortcutCommand(press, context(['site.read'], editor))).toBeNull()
   })
 })

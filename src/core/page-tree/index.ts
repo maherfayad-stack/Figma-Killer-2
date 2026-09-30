@@ -24,14 +24,25 @@ export {
   callSitePosition,
   decodeSourceNodeId,
   hasWritableSourceLocation,
+  inlineDepth,
   isInlinedNodeId,
   isRouteChromeNodeId,
   isSourceDerivedNodeId,
   isStudioPageRootId,
-  matchesCallSitePosition,
+  loopTemplateNodeId,
   toRuntimeStampId,
+  withSourceLocation,
 } from './sourceNodeId'
 export type { SourceNodeLocation } from './sourceNodeId'
+export {
+  ELEMENT_MOVED_REASON,
+  isStaleTargetRefusalReason,
+  SourceFingerprintExpectationsSchema,
+  SourceFingerprintSchema,
+  sourceFingerprintLabel,
+  sourceLocationKey,
+} from './sourceFingerprint'
+export type { SourceFingerprint, SourceFingerprintExpectations } from './sourceFingerprint'
 export { classifyJsxTagKind } from './jsxTagKind'
 export type { JsxTagKind } from './jsxTagKind'
 export {
@@ -47,6 +58,8 @@ export type { SourceWritableNode } from './sourceWritability'
 // The structural counterpart: can this node's PLACE be written back?
 export {
   SourceStructureError,
+  isResolvedByInstanceDetach,
+  markSoleInstanceComponentFile,
   refuseMintedNodeCopy,
   refuseMintedNodeInsert,
   refuseStructuralEdit,
@@ -58,6 +71,26 @@ export type {
   StructuralRefusal,
   StructuralRefusalReason,
 } from './sourceStructure'
+// OD-8 — a `.map` row's reorder / delete / duplicate / paste is written to the
+// array literal it maps over: the parser's stamp, the op vocabulary, the plans.
+export {
+  ListItemOpSchema,
+  ListRowKeySchema,
+  ListRowSourceSchema,
+  invertListItemEdit,
+  isListRowNodeId,
+  listItemLengthAfter,
+  listRowArrayOf,
+} from './listRowSource'
+export type { ListItemEdit, ListItemOp, ListRowArraySource, ListRowKey, ListRowRefusalCode, ListRowSource } from './listRowSource'
+export {
+  planListRowCopy,
+  planListRowCopyTo,
+  planListRowMove,
+  planListRowMoveSequence,
+  planListRowRemove,
+} from './listRowPlans'
+export type { ListRowEditPlan, ListRowPlan } from './listRowPlans'
 // The same rule asked of a live tree: which sibling a move lands beside, which
 // element "inside the page" means, and whether a selection is one run (K3).
 export {
@@ -75,6 +108,7 @@ export type {
 // page it is written in and land in a container on another one?
 export {
   isTransplantDestinationTree,
+  previewStructuralLift,
   previewStructuralTransplant,
 } from './sourceStructureTransplant'
 export type {
@@ -88,12 +122,10 @@ export type {
 // module's own doc for why this stays a read-only translation layer.
 export {
   explainClassNameConstraint,
-  explainCssRuleConstraint,
   explainDetachConstraint,
   explainPropConstraint,
   explainStyleConstraint,
   explainSwapConstraint,
-  explainUnexplainedSkip,
 } from './editConstraint'
 // The structural half of the same translation layer — see
 // `structuralConstraint.ts`'s own doc for why it is a separate module.
@@ -233,6 +265,23 @@ export {
 } from './mutations'
 // Nesting mutations — wrap one, wrap a selection, dissolve a container (K3).
 export { wrapNode, wrapNodes, unwrapNode } from './wrapMutations'
+// P2-C2 — a multi-selection stepping among its siblings, as independent single-element moves.
+export {
+  planSiblingSteps,
+  type SiblingMove,
+  type SiblingStepPlan,
+  type SiblingStepRefusal,
+} from './siblingSteps'
+// P3-D — every multi-element move as single-element moves applied in order.
+export {
+  createScratchTree,
+  invertMoveSequence,
+  moveOnScratch,
+  planMoveSequence,
+  topLevelSelection,
+  type ScratchTree,
+  type SequencedMove,
+} from './moveSequence'
 export { applyTreeOperation } from './treeOperations'
 
 export {

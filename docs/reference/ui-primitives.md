@@ -1,4 +1,5 @@
 # UI Primitives
+> **Purpose:** the shared UI primitives and when to use each · **Read when:** building any admin UI control · **Trust:** current · **Owner:** panel-designer · **Verified:** not yet
 
 Cookbook for `src/ui/components/` — when to use each primitive, what its props mean, and the most common patterns.
 
@@ -48,7 +49,7 @@ Every interactive control in `src/admin/` goes through one of these. Bare `<butt
 | Primitive          | When to use                                                          | Key props                                                  |
 |--------------------|----------------------------------------------------------------------|------------------------------------------------------------|
 | `Stack`            | Small vertical / horizontal flex layouts, especially plugin admin UI  | `direction`, `gap`, `align`, `justify`, `wrap`, `height`   |
-| `Section`          | Collapsible titled section inside a panel (accordion)                | `title`, `children`, `defaultOpen`, `icon`, `meta`, `indicator`, `forceOpen`, `empty`, `flush` |
+| `Section`          | Collapsible titled section inside a panel (accordion)                | `title`, `children`, `defaultOpen`, `icon`, `status`, `indicator`, `forceOpen`, `empty`, `flush`; `SectionStaticHeader` beside it |
 | `ControlRow`       | Label + control row in property panels                               | `label`, `description`, `children`                         |
 | `Separator`        | Visual divider between sections                                      | `orientation: 'horizontal' \| 'vertical'`                  |
 | `Card`             | Token-backed panel surface for plugin/admin grouped content          | `padding`, `bordered`                                      |
@@ -63,7 +64,7 @@ Every interactive control in `src/admin/` goes through one of these. Bare `<butt
 |--------------------|----------------------------------------------------------------------|------------------------------------------------------------|
 | `Alert`            | Inline non-blocking message in host/plugin admin UI                  | `tone: 'info' \| 'success' \| 'warning' \| 'danger'`, `title` |
 | `Dialog`           | Modal dialog with title + content                                    | `open`, `onClose`, `title`, `children`                     |
-| `Tooltip`          | Hover hint — replaces `title=`; `CursorTooltip` anchors to a pointer | `content`, `side: 'top' \| 'bottom' \| 'left' \| 'right' \| 'auto'`, `children`; `CursorTooltip` takes `point` |
+| `Tooltip`          | Hover hint — replaces `title=`; `CursorTooltip` anchors to a pointer | `content`, `shortcut` (formatted label, rendered as keycaps after it), `side: 'top' \| 'bottom' \| 'left' \| 'right' \| 'auto'`, `children`; `CursorTooltip` takes `point` |
 | `Toast`            | Transient confirmation / error notification                          | Used via `pushToast({ kind, title, body, location? })`     |
 | `ContextMenu`      | Right-click and overflow (`…`) menus; searchable and nested menus use companion exports | `ariaLabel`, `onClose`, `children`; `x`/`y` (point) or `anchorRef` (anchor); `ContextMenuItem`, `ContextMenuSubmenu`, `MenuSearchHeader` |
 | `ErrorBoundary`    | Component-level error containment                                    | `location: string`, `resetKeys?`, `children`               |
@@ -199,6 +200,7 @@ import { Button } from '@ui/components/Button'
 | `navItem`     | Style override for top-level nav items                              |
 | `dangerHover` | Ghost buttons only: hover brightens the foreground without adding a background box — use for inline remove/close controls on tinted chips where a colored background would clash with the chip tint |
 | `tooltip`     | Wraps with `Tooltip` — works even when disabled. Auto-suppressed while `aria-expanded={true}` (open dropdown/menu) so the tooltip never overlays the open popup. |
+| `tooltipShortcut` | The action's key, shown as dim keycaps after the tooltip label (Figma's "Text  T"). Pass `shortcutLabelFor(commandId)` from `@admin/spotlight/keybindings` — never a hand-typed `⌘…` (the registry gate fails on those). |
 
 `type="button"` is the default — Button never accidentally submits a form. Pass `type="submit"` explicitly when needed.
 
@@ -418,7 +420,7 @@ const triggerRef = useRef<HTMLButtonElement>(null)
 
 **Width constraints.** `minWidth` sets the lower bound, `width` sets the default rendered width, and `maxWidth` caps the rendered width after `matchAnchorWidth`. Use `matchAnchorWidth` for input-attached dropdowns, and add `maxWidth` when the anchor or row labels can be very long, such as selector pickers. Menu rows should still ellipsize their label text inside the capped width.
 
-**Dismiss handling.** Outside `mousedown` and `contextmenu` events (capture phase) dismiss the menu without cancelling the underlying event — the first outside click both closes the menu and reaches the clicked element. Dismiss listeners attach to the parent document **and every same-origin iframe document** (`collectSameOriginDocuments` in `src/ui/lib/sameOriginDocuments.ts`), so clicking inside the canvas's per-breakpoint iframes correctly dismisses open menus. `anchorRef` gates dismiss handling (clicks inside the anchor element don't close the menu) and provides the rect for auto-flip positioning. `triggerRef` is dismiss-gate only — use it when the trigger is an editable input that must stay focused while the menu is open (e.g. `ClassPicker`). Items use `ContextMenuItem`, separators use `ContextMenuSeparator`, and nested menus use `ContextMenuSubmenu`.
+**Dismiss handling.** Outside `mousedown` and `contextmenu` events (capture phase) dismiss the menu without cancelling the underlying event — the first outside click both closes the menu and reaches the clicked element. Dismiss listeners attach to the parent document **and every same-origin iframe document** (`collectSameOriginDocuments` in `src/ui/lib/sameOriginDocuments.ts`), so clicking inside the canvas's per-breakpoint iframes correctly dismisses open menus. `anchorRef` gates dismiss handling (clicks inside the anchor element don't close the menu) and provides the rect for auto-flip positioning. `triggerRef` is dismiss-gate only — use it when the trigger is an editable input that must stay focused while the menu is open (e.g. `ClassPicker`). Items use `ContextMenuItem`, separators use `ContextMenuSeparator`, and nested menus use `ContextMenuSubmenu`. A `ContextMenuItem` takes `shortcut` — the formatted key, right-aligned as dim keycaps; in admin code always `shortcutLabelFor(commandId)`, so a menu can never teach a key that does something else (P5-E, UX-22).
 
 **Submenus (`ContextMenuSubmenu`).** Opens a positioned flyout to the right of the trigger row (flips left when it doesn't fit). Hover or `ArrowRight` opens; `ArrowLeft` / `Escape` closes the submenu only (not the parent). Clicking a submenu item calls `onClose` to close the parent menu:
 
@@ -443,7 +445,9 @@ For searchable submenus that host a non-menuitem widget (e.g. a search input), p
 
 Layout primitives for property panels.
 
-`Section` is a collapsible accordion block. Each instance manages its own open/closed state via `defaultOpen` (the initial value). `forceOpen` overrides local state and keeps the section always open. `empty` does the opposite and more: it says the section has nothing to disclose, so the header renders alone — no chevron, no toggle, no body, `children` ignored — leaving whatever `actions` supplies (Law 1 of the inspector's disclosure rules; an accordion over an empty body is an affordance that lies). The `flush` prop removes the section's own vertical padding so spacing comes entirely from the parent container's grid gap — used by the Properties panel (1px-gap card pattern). The `indicator` prop renders a small green dot next to the title to signal active state (e.g. properties are set in this section).
+`Section` is a collapsible accordion block. Each instance manages its own open/closed state via `defaultOpen` (the initial value); its toggle draws the inspector's own focus ring (`--overlay-50`, inset 1px) rather than the browser outline. `forceOpen` says the section is open by construction, so it draws the static header (below) over an always-rendered body — no toggle button, no chevron, no `aria-expanded` announcing a disclosure that cannot close (P2-H: it used to keep the button and make its click a no-op). `empty` does the opposite and more: it says the section has nothing to disclose, so the header renders alone — no chevron, no toggle, no body, `children` ignored — leaving whatever `actions` supplies (Law 1 of the inspector's disclosure rules; an accordion over an empty body is an affordance that lies). The `flush` prop removes the section's own vertical padding so spacing comes entirely from the parent container's grid gap — used by the Properties panel (1px-gap card pattern). The `indicator` prop renders a small green dot next to the title to signal active state (e.g. properties are set in this section).
+
+`SectionStaticHeader` (exported beside `Section`) is that `empty` / `forceOpen` header on its own — title, icon, `meta`, `indicator`, `status`, `actions`, 32px, no toggle. It exists for blocks that are always open by construction rather than by state: the Properties panel's Module block (`ModuleBlock.tsx`) and the Component section (`ComponentSection.tsx`, "Button · Local" with Detach and Swap in `actions`) draw their titles with it, so they are the same recipe as every section title around them. `meta` is drawn right after the title, as a qualifier of it ("Button · Local"); `status` — on `Section` too — is a state pushed to the header's far end ("1 ready", "3 set", "Conflict").
 
 `.sectionBody` (exported from the same module's CSS) is the grid wrapper for a section's rows. It clamps itself and its children to `min-width: 0`: a panel that can be dragged to 260px has no room for a control that refuses to shrink, and the properties panel's scroll container clips on x, so an over-wide section draws across the category rail instead of scrolling.
 
@@ -466,7 +470,7 @@ import { ControlRow } from '@ui/components/ControlRow'
   icon={LayoutIcon}
   defaultOpen={sectionsExpanded}
   indicator={hasSetProperties}
-  meta="3 set"
+  status="3 set"
   flush
 >
   {/* content */}

@@ -53,8 +53,8 @@ describe('studio_typecheck', () => {
     fs.rmSync(dir, { recursive: true, force: true })
   })
 
-  it('requires ai.tools.write (mutates) AND studio.write — the same double gate as studio_install_deps', () => {
-    expect(studioTypecheckTool.mutates).toBe(true)
+  it('requires ai.tools.write (requiresWrite) AND studio.write — the same double gate as studio_install_deps', () => {
+    expect(studioTypecheckTool.requiresWrite).toBe(true)
     expect(studioTypecheckTool.requiredCapabilities).toEqual(['studio.write'])
   })
 

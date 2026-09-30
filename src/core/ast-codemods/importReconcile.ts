@@ -15,12 +15,18 @@
  *     component and needs the same "is this name already unused, drop its
  *     import" half of the question.
  *
- * Extracted rather than left triplicated per-codemod — CLAUDE.md forbids
- * old-and-new side by side, and this was heading toward a third copy
- * (`swapComponentInstance.ts` already carried its own near-identical
- * `topLevelBindingNames`/`relativeSpecifier`/`removeImportIfUnused` with a
- * comment admitting the duplication was "kept local"). One implementation,
- * three callers.
+ * One implementation, three callers.
+ *
+ * IDENTITY, NOT SPELLING
+ * ----------------------
+ * Two imports are the same binding when they name the same MODULE and the
+ * same EXPORT — never when they merely share a local name. `styles` from
+ * `./Page.module.css` and `styles` from `../components/Card.module.css` are
+ * two different bindings, and treating the second as "already imported"
+ * silently restyled every detached element with the page's classes (the
+ * audit's DET-1, bug 3). So a name that is taken by a DIFFERENT binding is
+ * ALIASED (`import cardStyles from '…/Card.module.css'`), and the caller gets
+ * the rename to apply to the text it is moving.
  */
 import * as path from 'node:path'
 import { Node, type ImportDeclaration, type SourceFile } from 'ts-morph'
@@ -50,71 +56,237 @@ export function topLevelBindingNames(sourceFile: SourceFile): Set<string> {
   return names
 }
 
-function mirrorImport(destinationFile: SourceFile, originFile: SourceFile, originImport: ImportDeclaration, name: string): void {
-  const specifierText = originImport.getModuleSpecifierValue()
-  const isRelative = specifierText.startsWith('.')
-  const specifier = isRelative
-    ? relativeSpecifier(destinationFile.getFilePath(), path.resolve(path.dirname(originFile.getFilePath()), specifierText))
-    : specifierText
-  const isDefault = originImport.getDefaultImport()?.getText() === name
-  const isNamespace = originImport.getNamespaceImport()?.getText() === name
-  destinationFile.addImportDeclaration({
-    moduleSpecifier: specifier,
-    ...(isDefault ? { defaultImport: name } : {}),
-    ...(isNamespace ? { namespaceImport: name } : {}),
-    ...(!isDefault && !isNamespace ? { namedImports: [name] } : {}),
+// ---------------------------------------------------------------------------
+// Import identity
+// ---------------------------------------------------------------------------
+
+/** Which export an import binding names. `'default'` and `'*'` (a namespace import) are their own kinds; anything else is a named export. */
+export type ImportedName = { kind: 'default' } | { kind: 'namespace' } | { kind: 'named'; name: string }
+
+/**
+ * One binding a destination file needs: which module, which export, and
+ * whether it is type-only. `moduleKey` is the identity (see
+ * {@link importModuleKey}); `target` is how to SPELL the module from any
+ * destination file.
+ */
+export interface ImportRequest {
+  moduleKey: string
+  target: { kind: 'file'; absPath: string } | { kind: 'bare'; specifier: string }
+  imported: ImportedName
+  typeOnly: boolean
+}
+
+const toPosix = (p: string): string => p.split('\\').join('/')
+
+/**
+ * The identity of the module an import declaration names: the absolute path
+ * of the source file it resolves to, or — for a module ts-morph cannot load
+ * (a stylesheet, an image, a `?raw` asset) — the absolute path a relative
+ * specifier points at, or a bare specifier verbatim. Two declarations with the
+ * same key load the same module, however each file spells it.
+ */
+export function importModuleKey(decl: ImportDeclaration): string {
+  const resolved = decl.getModuleSpecifierSourceFile()
+  if (resolved) return toPosix(resolved.getFilePath())
+  const specifier = decl.getModuleSpecifierValue()
+  if (specifier.startsWith('.')) return toPosix(path.resolve(path.dirname(decl.getSourceFile().getFilePath()), specifier))
+  return specifier
+}
+
+/** The request equivalent to one existing import binding of `decl` — the binding a name in `decl`'s file refers to. */
+export function importRequestForBinding(decl: ImportDeclaration, imported: ImportedName, specifierTypeOnly = false): ImportRequest {
+  const specifier = decl.getModuleSpecifierValue()
+  return {
+    moduleKey: importModuleKey(decl),
+    target: specifier.startsWith('.')
+      ? { kind: 'file', absPath: path.resolve(path.dirname(decl.getSourceFile().getFilePath()), specifier) }
+      : { kind: 'bare', specifier },
+    imported,
+    typeOnly: decl.isTypeOnly() || specifierTypeOnly,
+  }
+}
+
+/** The request for an export `exportName` of the source file `file` itself — a helper the origin DECLARES rather than imports. */
+export function importRequestForExport(file: SourceFile, exportName: string): ImportRequest {
+  return {
+    moduleKey: toPosix(file.getFilePath()),
+    target: { kind: 'file', absPath: file.getFilePath() },
+    imported: exportName === 'default' ? { kind: 'default' } : { kind: 'named', name: exportName },
+    typeOnly: false,
+  }
+}
+
+function specifierFor(destination: SourceFile, request: ImportRequest): string {
+  return request.target.kind === 'bare' ? request.target.specifier : relativeSpecifier(destination.getFilePath(), request.target.absPath)
+}
+
+/** The local name `decl` binds for `imported`, if it binds it at all (and not type-only when a value is needed). */
+function localNameIn(decl: ImportDeclaration, request: ImportRequest): string | undefined {
+  if (decl.isTypeOnly() && !request.typeOnly) return undefined
+  const { imported } = request
+  if (imported.kind === 'default') {
+    const direct = decl.getDefaultImport()?.getText()
+    if (direct) return direct
+    const named = decl.getNamedImports().find((n) => n.getName() === 'default' && (request.typeOnly || !n.isTypeOnly()))
+    return named ? (named.getAliasNode()?.getText() ?? named.getName()) : undefined
+  }
+  if (imported.kind === 'namespace') return decl.getNamespaceImport()?.getText()
+  const named = decl.getNamedImports().find((n) => n.getName() === imported.name && (request.typeOnly || !n.isTypeOnly()))
+  return named ? (named.getAliasNode()?.getText() ?? named.getName()) : undefined
+}
+
+// ---------------------------------------------------------------------------
+// Plan, then apply
+// ---------------------------------------------------------------------------
+
+export interface ImportBindingOptions {
+  /** The name the origin uses — the local name to prefer when it is free. */
+  preferred: string
+  /** Whether an EXISTING equivalent binding named `local` may be reused as-is (the caller knows whether something shadows it where the moved text lands). */
+  isReusable(local: string): boolean
+  /** Whether a NEW binding may take `local` without changing what any other reference in the destination means. */
+  isAvailable(local: string): boolean
+  /** A name to alias with when `preferred` is taken, derived from the origin (e.g. the component's name). */
+  aliasPrefix: string
+}
+
+export interface PlannedImportBinding {
+  local: string
+  /** True when an equivalent binding already exists and nothing needs to be written. */
+  existing: boolean
+}
+
+const upperFirst = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)
+const lowerFirst = (s: string): string => s.charAt(0).toLowerCase() + s.slice(1)
+
+/** `styles` + `Card` → `cardStyles`; `Icon` + `Card` → `CardIcon`, then numbered — a component stays capitalized, so it stays a component in JSX. */
+function* aliasCandidates(prefix: string, name: string): Generator<string> {
+  const base = /^[A-Z]/.test(name) ? `${upperFirst(prefix)}${name}` : `${lowerFirst(prefix)}${upperFirst(name)}`
+  yield base
+  for (let n = 2; ; n += 1) yield `${base}${n}`
+}
+
+/**
+ * Decides, WITHOUT writing anything, which local name `destination` should
+ * use for `request`: an equivalent binding it already has (same module, same
+ * export), else `preferred` when it is free, else a fresh alias. Pure, so a
+ * caller can plan every binding it needs and refuse before the first byte
+ * changes.
+ */
+export function planImportBinding(destination: SourceFile, request: ImportRequest, options: ImportBindingOptions): PlannedImportBinding {
+  for (const decl of destination.getImportDeclarations()) {
+    if (importModuleKey(decl) !== request.moduleKey) continue
+    const local = localNameIn(decl, request)
+    if (local && options.isReusable(local)) return { local, existing: true }
+  }
+  if (options.isAvailable(options.preferred)) return { local: options.preferred, existing: false }
+  for (const candidate of aliasCandidates(options.aliasPrefix, options.preferred)) {
+    if (options.isAvailable(candidate)) return { local: candidate, existing: false }
+  }
+  throw new Error('unreachable: aliasCandidates is infinite')
+}
+
+/**
+ * Writes the binding {@link planImportBinding} decided on. A named import is
+ * merged into an existing declaration of the same module when there is one
+ * (`import { Card, CardIcon } from './Card'`, not a second line naming the
+ * same file); every other shape gets its own declaration.
+ */
+export function applyImportBinding(destination: SourceFile, request: ImportRequest, local: string): void {
+  const { imported } = request
+  if (imported.kind === 'named') {
+    const mergeInto = destination
+      .getImportDeclarations()
+      .find((decl) => importModuleKey(decl) === request.moduleKey && !decl.getNamespaceImport() && decl.isTypeOnly() === request.typeOnly)
+    const specifier = local === imported.name ? imported.name : { name: imported.name, alias: local }
+    if (mergeInto) {
+      mergeInto.addNamedImport(specifier)
+      return
+    }
+    destination.addImportDeclaration({ moduleSpecifier: specifierFor(destination, request), isTypeOnly: request.typeOnly, namedImports: [specifier] })
+    return
+  }
+  destination.addImportDeclaration({
+    moduleSpecifier: specifierFor(destination, request),
+    isTypeOnly: request.typeOnly,
+    ...(imported.kind === 'default' ? { defaultImport: local } : { namespaceImport: local }),
   })
 }
 
 /**
- * Adds imports to `destinationFile` so identifiers that `originFile`'s own
- * moved JSX (or expressions) references can still resolve once that content
- * lands in `destinationFile`: for every name in `identifiers` that
- * `originFile` itself imports, mirrors an equivalent import in
- * `destinationFile` — following the import to whatever file/specifier it
- * actually names, resolving a relative specifier fresh against
- * `destinationFile`'s own location; for a name `originFile` declares directly
- * at its own top level (a same-file helper/const), imports it FROM
- * `originFile` itself. A name already bound at `destinationFile`'s own top
- * level is left alone — trusted as-is (a real collision against a DIFFERENT
- * source is rare enough that resolving it precisely would need chasing the
- * existing binding's own declaration file too; left as a documented gap
- * rather than a guess, same posture `detachComponent.ts` stated originally).
+ * Carries every side-effect import of `originFile` (`import './Card.css'`)
+ * into `destinationFile`, re-specified against the destination's own
+ * location, unless the destination already loads that module some other way.
+ * A side-effect import has no binding for a free-variable walk to find, so
+ * without this a detached component's markup kept its class names and lost
+ * the stylesheet that gave them meaning.
+ */
+export function mirrorSideEffectImports(destinationFile: SourceFile, originFile: SourceFile): void {
+  const loaded = new Set(destinationFile.getImportDeclarations().map(importModuleKey))
+  for (const decl of originFile.getImportDeclarations()) {
+    if (decl.getImportClause()) continue
+    const key = importModuleKey(decl)
+    if (loaded.has(key)) continue
+    const request = importRequestForBinding(decl, { kind: 'default' })
+    destinationFile.addImportDeclaration({ moduleSpecifier: specifierFor(destinationFile, request) })
+    loaded.add(key)
+  }
+}
+
+/** How `originFile` itself binds `name`: through one of its imports, or as its own top-level declaration. `undefined` for a global or a name it does not bind at module scope. */
+function describeOriginBinding(originFile: SourceFile, name: string): ImportRequest | undefined {
+  for (const decl of originFile.getImportDeclarations()) {
+    if (decl.getDefaultImport()?.getText() === name) return importRequestForBinding(decl, { kind: 'default' })
+    if (decl.getNamespaceImport()?.getText() === name) return importRequestForBinding(decl, { kind: 'namespace' })
+    const named = decl.getNamedImports().find((n) => (n.getAliasNode()?.getText() ?? n.getName()) === name)
+    if (named) return importRequestForBinding(decl, { kind: 'named', name: named.getName() }, named.isTypeOnly())
+  }
+  const declaredInOrigin =
+    originFile.getFunction(name) !== undefined ||
+    originFile.getVariableDeclaration(name) !== undefined ||
+    originFile.getClass(name) !== undefined
+  return declaredInOrigin ? importRequestForExport(originFile, name) : undefined
+}
+
+/**
+ * Adds imports to `destinationFile` so every name in `identifiers` that
+ * `originFile` binds at module scope resolves to the SAME binding there:
+ * following an import to the module it actually names (a relative specifier
+ * re-resolved against the destination's own location), or importing a
+ * top-level declaration FROM `originFile` itself. A global, or a name the
+ * origin does not bind, is left alone.
+ *
+ * Returns the renames the caller must apply to the text it moves: a name the
+ * destination already binds to something ELSE is aliased, never trusted — see
+ * this module's header. `isNameTaken` lets a caller reserve names this module
+ * cannot see (a local that would shadow the new import where the text lands).
  */
 export function addReconciledImports(
   destinationFile: SourceFile,
   originFile: SourceFile,
   identifiers: ReadonlySet<string>,
-): void {
-  const destinationTopLevelNames = topLevelBindingNames(destinationFile)
+  isNameTaken: (name: string) => boolean = () => false,
+): Map<string, string> {
+  const renames = new Map<string, string>()
+  const taken = topLevelBindingNames(destinationFile)
+  const aliasPrefix = path.basename(originFile.getFilePath()).replace(/\..*$/, '')
 
   for (const name of identifiers) {
-    if (destinationTopLevelNames.has(name)) continue
-
-    const originImport = originFile.getImportDeclarations().find((decl) => {
-      if (decl.getDefaultImport()?.getText() === name) return true
-      if (decl.getNamespaceImport()?.getText() === name) return true
-      return decl.getNamedImports().some((n) => (n.getAliasNode()?.getText() ?? n.getNameNode().getText()) === name)
+    const request = describeOriginBinding(originFile, name)
+    if (!request) continue
+    const planned = planImportBinding(destinationFile, request, {
+      preferred: name,
+      aliasPrefix,
+      isReusable: (local) => !isNameTaken(local),
+      isAvailable: (local) => !taken.has(local) && !isNameTaken(local),
     })
-
-    if (originImport) {
-      mirrorImport(destinationFile, originFile, originImport, name)
-      continue
+    if (!planned.existing) {
+      applyImportBinding(destinationFile, request, planned.local)
+      taken.add(planned.local)
     }
-
-    const declaredInOrigin =
-      originFile.getFunction(name) !== undefined ||
-      originFile.getVariableDeclaration(name) !== undefined ||
-      originFile.getClass(name) !== undefined
-    if (declaredInOrigin) {
-      const specifier = relativeSpecifier(destinationFile.getFilePath(), originFile.getFilePath())
-      destinationFile.addImportDeclaration({ moduleSpecifier: specifier, namedImports: [name] })
-      continue
-    }
-    // Otherwise: a global (`Math`, `String`, …) or something this module
-    // can't trace — left unimported; TypeScript/the bundler will surface it
-    // loudly rather than this codemod guessing.
+    if (planned.local !== name) renames.set(name, planned.local)
   }
+  return renames
 }
 
 /** Removes `localName`'s import from `sourceFile` if no JSX tag or plain identifier reference to it remains anywhere in the file. */
@@ -135,8 +307,11 @@ export function removeImportIfLastUsage(sourceFile: SourceFile, localName: strin
 
   for (const decl of sourceFile.getImportDeclarations()) {
     if (decl.getDefaultImport()?.getText() === localName) {
+      // A mixed `import Card, { CardIcon } from './Card'` keeps its named
+      // half. `removeDefaultImport` rewrites the clause; blanking the
+      // identifier's text left `import , { CardIcon }`, which does not parse.
       if (decl.getNamedImports().length === 0 && !decl.getNamespaceImport()) decl.remove()
-      else decl.getDefaultImport()!.replaceWithText('') // rare mixed-import shape — leave named imports intact
+      else decl.removeDefaultImport()
       return
     }
     if (decl.getNamespaceImport()?.getText() === localName) {

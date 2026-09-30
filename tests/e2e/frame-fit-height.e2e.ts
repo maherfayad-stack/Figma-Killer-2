@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * Real-browser coverage for the "frame fit height" line of work
@@ -78,7 +79,6 @@ test.describe('collectScrollDeficits: the overflow:visible assumption is real in
 })
 
 const MANUAL_ENTRY_PAGE_ID = 'esim-manual-entry-screen'
-const CANVAS_FRAME_IFRAME_SELECTOR = 'iframe[title^="Canvas frame"]'
 
 interface StudioProjectSummary {
   dir: string
@@ -253,20 +253,20 @@ test.describe('canvas-02 regression: esim-manual-entry-screen is not clipped (re
     // otherwise our wheel pan and its retry loop (up to ~3.2s) fight over
     // panX/panY. Any live frame appearing is proof that pass has succeeded
     // at least once, which is all it ever does.
-    await expect(page.locator(CANVAS_FRAME_IFRAME_SELECTOR).first()).toBeVisible({
+    await expect(visibleCanvasIframe(page).first()).toBeVisible({
       timeout: 20_000,
     })
 
     const canvasRoot = page.getByTestId('canvas-root')
     await panIntoView(page, canvasRoot, targetFrame)
 
-    const iframeEl = targetFrame.locator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const iframeEl = visibleCanvasIframe(targetFrame)
     await expect(
       iframeEl,
       'the esim-manual-entry-screen frame never mounted a live iframe after being panned into view',
     ).toBeVisible({ timeout: 15_000 })
 
-    const contentFrame = targetFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame = canvasContentFrame(targetFrame)
     const panel = contentFrame.locator('.manual-entry-sheet__panel')
     await expect(
       panel,

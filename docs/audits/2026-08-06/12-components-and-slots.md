@@ -1,4 +1,5 @@
 # Audit 12 — Components, props, and page-as-component with slots
+> **Trust:** historical, dated 2026-08-06. Paths may be wrong. Never act on it.
 
 Read-only audit. Branch `feat/alm-figma-killer-studio-shell`. No production code written.
 

@@ -67,7 +67,7 @@ export const CORE_CAPABILITIES = [
   'data.export',
   'data.import',
   // AI runtime — `ai.chat` for conversations + read tools; `ai.tools.write`
-  // for canvas write tools. See `docs/plans/2026-05-26-ai-runtime-rewrite.md`.
+  // for canvas write tools. See `docs/reference/capabilities.md` → "AI runtime".
   'ai.chat',
   'ai.tools.write',
   'ai.providers.manage',

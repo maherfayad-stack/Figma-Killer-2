@@ -1,0 +1,6 @@
+/* ExplorerPanel — only the loading state lives here; the explorer body is
+   `StudioExplorer`'s. Inset like `StudioPagesTree`'s `.scroll`, so the
+   skeleton rows sit where the real rows will land. */
+.loading {
+    padding: var(--space-s) var(--space-xs);
+}

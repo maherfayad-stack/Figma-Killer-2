@@ -33,7 +33,7 @@ function toKebab(camel: string): string {
  *
  * `--custom-properties` and vendor-prefixed names (`-webkit-…`) pass too.
  *
- * @see docs/plans/2026-05-30-css-fidelity-and-at-rules.md (Part 1)
+ * @see docs/reference/css-class-registry.md → "Compiling rules to CSS"
  */
 
 /**

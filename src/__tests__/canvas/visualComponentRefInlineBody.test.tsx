@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import React from 'react'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { DndContext } from '@dnd-kit/core'
+import { getCanvasHover } from '@site/canvas/canvasHover'
 import { useEditorStore } from '@site/store/store'
 import { CanvasRoot } from '@site/canvas/CanvasRoot'
 import { queryCanvasElement } from './iframeCanvasQuery'
@@ -25,8 +26,6 @@ beforeEach(() => {
     activeBreakpointId: 'mobile',
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
-    hoveredBreakpointId: null,
     propertiesPanel: { collapsed: true, x: 0, y: 0, width: 360 },
     packageJson: {},
     _historyPast: [],
@@ -102,8 +101,7 @@ describe('base.visual-component-ref inline base.body root', () => {
     fireEvent.mouseEnter(componentRoot)
 
     await waitFor(() => {
-      expect(useEditorStore.getState().hoveredNodeId).toBe('ref-card')
-      expect(componentRoot.getAttribute('data-hovered')).toBe('true')
+      expect(getCanvasHover()?.nodeId).toBe('ref-card')
     })
   })
 })

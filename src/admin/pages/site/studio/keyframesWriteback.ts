@@ -227,10 +227,6 @@ export function collectKeyframesEdits(
         continue
       }
       const destination = resolveCssInsertDestination(rule, pageIndex)
-      if (!destination.ok) {
-        unmapped.push({ label, reason: destination.message })
-        continue
-      }
       if (destination.kind !== 'existing') {
         unmapped.push({ label, reason: NO_STYLESHEET_FOR_KEYFRAMES })
         continue

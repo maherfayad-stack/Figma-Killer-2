@@ -49,10 +49,10 @@
  *      also changes `localizedPages` (same field), and re-seeding on every
  *      edit would erase the very diff this baseline exists to detect.
  *   2. `commitLocalizedTextBaseline()` — called from `saveSite()`
- *      AFTER `collectLocalizedTextEdits()`'s edits (if any) have been sent.
- *      Safe to advance EVERY tracked key in bulk at this point (unlike
- *      seeding, which must be per-key and fetch-triggered): every page's
- *      current text has just been diffed and, if it changed, written.
+ *      AFTER `collectLocalizedTextEdits()`'s edits (if any) have been sent,
+ *      with the same snapshot those edits were collected from (ERR-17 —
+ *      never the store as it stands after the POST). Every page in that
+ *      snapshot has just been diffed and, if it changed, written.
  *
  * The store slice (`localizedPageSlice.ts`) never imports this module —
  * this module WATCHES the store, the store never reaches into the
@@ -159,15 +159,25 @@ export function collectLocalizedTextEdits(localizedPages: Record<string, Page>):
   return edits
 }
 
-/** Advance the baseline to the CURRENT text of every fetched locale-variant page — call strictly AFTER `collectLocalizedTextEdits` has run and its edits (if any) have been sent, so nothing pending is silently accepted as "unchanged." Mirrors `styleRuleWriteback.ts`'s `commitBaseline`. */
-export function commitLocalizedTextBaseline(localizedPages: Record<string, Page>): void {
-  const next = new Map<string, string>()
-  for (const [localizedKey, page] of Object.entries(localizedPages)) {
+/**
+ * Advance the baseline to the text of `sentPages` — the SAME snapshot
+ * `collectLocalizedTextEdits` diffed, handed back after its edits were sent.
+ * Mirrors `styleRuleWriteback.ts`'s `commitBaseline`.
+ *
+ * ERR-17: it used to be handed the store's state as it stood once the POST
+ * returned, so text typed while the save was in flight was adopted as the
+ * baseline without ever being sent — marked saved, never written. And it
+ * UPDATES entries rather than replacing the map: a page whose fetch landed
+ * mid-save was seeded by `watchLocalizedPagesForBaseline` after the snapshot
+ * was taken, and replacing the map would have erased that seed, so none of
+ * that page's edits would ever diff again.
+ */
+export function commitLocalizedTextBaseline(sentPages: Record<string, Page>): void {
+  for (const [localizedKey, page] of Object.entries(sentPages)) {
     for (const [nodeId, value] of textValuesOf(page)) {
-      next.set(nodeBaselineKey(localizedKey, nodeId), value)
+      baseline.set(nodeBaselineKey(localizedKey, nodeId), value)
     }
   }
-  baseline = next
 }
 
 /**
