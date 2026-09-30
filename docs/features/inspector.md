@@ -637,6 +637,34 @@ ships only the values we can honestly write (§7).
 What remained was small enough that `BorderControl` was **deleted**, not left as
 a shell (**G7.6**).
 
+### G7b — Vector: an inline `<svg>`'s own paint
+
+Fill and Stroke above edit CSS — a box's `background` and `border`. On an
+`<svg>` that is the wrong property: its fill is the `fill` ATTRIBUTE, inherited
+down its shapes, and CSS `background` only paints the rectangle behind the
+icon. So one selected `base.svg` also gets a **Vector** section, directly above
+Fill (`sections/VectorSection.tsx`, predicate `showsVectorSection`): fill and
+stroke (Colour / None / Current colour + a colour field), stroke weight, caps
+and joins, opacity, and the `<svg>`'s own W / H / viewBox (proportional while W
+and H already follow the viewBox's ratio).
+
+- **Writes** are P5-D `svg-attr` edits (`studioSvgWriteback.ts`), JSX
+  attributes on the element that carries them (`fill="#ff0000"`,
+  `strokeWidth={3}`). "Applies to" picks the whole graphic or one stamped part;
+  the WHOLE graphic writes the root and removes the same literal attribute from
+  every shape that set its own, so the change is visible (opacity excepted — it
+  composes, it does not inherit). Model: `vectorPaintModel.ts`.
+- **One gesture = one save.** A colour drag or scrub is previewed on the
+  in-frame element and posted once, 400 ms after the last change, with the
+  values from before the burst as its undo (`vectorPaintCommit.ts`). A burst
+  that ends where it began posts nothing.
+- **Refusals are sentences.** An attribute that comes from code (the parser's
+  `data-studio-svg-code` stamp, which the ROOT now carries too) or a spread
+  locks its control with the reason; a `?raw` icon, a `.map` row or a locked
+  node disables the section with why (`vectorPaintRefusal`).
+- A `<svg>` drawn on the free canvas gets the same controls from the
+  loose-layer inspector (`CanvasLayerInspector.tsx`).
+
 ### G8 — Effects (F13/F20–F22)
 
 > **Merged again, P2-F (owner decision OD-4).** P3 items 7-8 had split this

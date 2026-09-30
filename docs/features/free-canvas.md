@@ -182,6 +182,8 @@ the same slot is byte-exact (`transplantJsxElement.canvas.test.ts`,
 | Drag an element out of a frame and release over the empty board | Lifted (`canvas-layer-lift`), keeping the grab offset; ⌥ copies | one ⌘Z: placed back into its old slot, module and placement gone |
 | Delete / Backspace | `canvas-layer-delete` for the selection, one write | one ⌘Z: exact bytes and placements back |
 | Arrow keys | Nudge the selection (board undo, one entry per key-hold) | board undo |
+| ⌘C, then ⌘V with an element in a frame selected | Copies the layer's root; the paste writes it into that page as `canvas-layer-place` with `copy` (the ⌥-drag's write — a module's root has no siblings, so the frame transplant cannot read it) | one ⌘Z per layer: the copy deleted |
+| Select a layer whose root is an `<svg>` | The Properties panel opens on `CanvasLayerInspector` with the Vector controls; each change is one `svg-attr` write into the layer module | one ⌘Z per change |
 
 **Hit-testing from the board.** The surface iframe would swallow every press
 over it, gaps between layers included. Instead of forwarding gap presses back
@@ -222,7 +224,7 @@ back (its rollback).
 | Work order | Missing |
 |---|---|
 | FC-2 | `canvas-layer-duplicate`; `bakeCapturedBindings` (a `captured-scope` lift refuses instead of becoming a copy with values baked) |
-| FC-3/FC-7 | Editing a loose layer's content in the inspector (a loose layer is selected as a whole; its nodes are not selectable); Layers-panel "Canvas" section; Measures X/Y on a placement; context menu |
+| FC-3/FC-7 | Editing a loose layer's content in the inspector beyond a root `<svg>`'s Vector paint (a loose layer is selected as a whole; its nodes are not selectable, and any other root says "edit it inside a frame"); Layers-panel "Canvas" section; Measures X/Y on a placement; context menu; ⌘X and ⌘V ONTO the board |
 | FC-4 | Registering layers as drop targets for an ELEMENT drag (drop into a loose layer's children) |
 | FC-5 | Marquee selection of loose layers; resize handles; z-order keys; lock/hide UI (the placement fields exist and are honoured) |
 | FC-6 | Assets-panel drag, paste and armed-tool drawing onto the empty board (P5-A / P5-D / P5-E call `createCanvasLayer`); a multi-file drop as ONE undo step (today one per layer) |

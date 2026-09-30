@@ -44,7 +44,7 @@
  * category now renders through its own `INSPECTOR_SECTIONS` manifest entry
  * with its own geometry, not a shared registry that budget could describe in
  * one place. What replaces it, below, is a per-SECTION computed rest-height
- * table built the same way, off the current 15-entry manifest.
+ * table built the same way, off the current 16-entry manifest.
  *
  * ── `panel-29` note (direct user feedback while dogfooding) ──────────────
  * `attributes` was REMOVED from the manifest outright (not relocated) —
@@ -81,7 +81,7 @@
  *
  * ── P2-F note (owner decision OD-4 — the design pane's spacing) ──────────
  * `shadow` and `blur` are ONE `effects` entry now (Figma's Effects section),
- * so the manifest is 15 entries. The between-section gap is its own named
+ * so the manifest was 15 entries; the inline-`<svg>` Vector section made it 16. The between-section gap is its own named
  * token, `--inspector-section-gap`, at 12px — read from `globals.css` below,
  * not re-typed — and the rows inside Text, Measures and the Module block sit
  * the within-group 4px apart. This file also pins the Module block's new
@@ -100,7 +100,7 @@ const SRC_ROOT = join(import.meta.dir, '../..')
 const GLOBALS_CSS = readFileSync(join(SRC_ROOT, 'styles/globals.css'), 'utf8')
 
 // ---------------------------------------------------------------------------
-// Manifest shape — the 15-entry `INSPECTOR_SECTIONS` array `sections/
+// Manifest shape — the 16-entry `INSPECTOR_SECTIONS` array `sections/
 // index.ts` itself documents, in the exact order and with contiguous
 // `order` fields. A gap or a dupe here means a section either double-mounts
 // or silently stops rendering.
@@ -112,6 +112,7 @@ const EXPECTED_SECTION_IDS = [
   'measures',
   'component',
   'layout',
+  'vector',
   'fill',
   'selectionColors',
   'stroke',
@@ -136,17 +137,17 @@ const MORE_GROUP_SECTION_IDS = [
 ] as const
 
 describe('INSPECTOR_SECTIONS manifest shape', () => {
-  it('has exactly 15 entries', () => {
-    expect(INSPECTOR_SECTIONS.length).toBe(15)
+  it('has exactly 16 entries', () => {
+    expect(INSPECTOR_SECTIONS.length).toBe(16)
   })
 
   it('lists ids in the exact order sections/index.ts itself documents', () => {
     expect(INSPECTOR_SECTIONS.map((s) => s.id)).toEqual([...EXPECTED_SECTION_IDS])
   })
 
-  it('has order fields 0-14 with no gaps or dupes', () => {
+  it('has order fields 0-15 with no gaps or dupes', () => {
     const orders = INSPECTOR_SECTIONS.map((s) => s.order).sort((a, b) => a - b)
-    expect(orders).toEqual(Array.from({ length: 15 }, (_, i) => i))
+    expect(orders).toEqual(Array.from({ length: 16 }, (_, i) => i))
   })
 
   it('draws shadows and blurs as ONE Effects section (P2-F, OD-4)', () => {
@@ -377,6 +378,10 @@ const SECTION_MINIMAL_STATE: Record<(typeof EXPECTED_SECTION_IDS)[number], { has
   align: { hasHeader: false, rowCount: 0 },
   measures: { hasHeader: false, rowCount: 3 },
   layout: { hasHeader: true, rowCount: 0 },
+  // One inline `<svg>` only — never mounts for the F1-F4 fixtures. Its floor
+  // is a single-shape graphic with no stroke: fill, stroke, opacity, size,
+  // viewBox (the part picker needs 2+ shapes, the stroke details a stroke).
+  vector: { hasHeader: true, rowCount: 5 },
   fill: { hasHeader: true, rowCount: 0 },
   // Multi-select only, so it never mounts for the single-node F1/F2/F3/F4
   // fixtures below. Its floor is `Section`'s `empty` header — a selection
@@ -398,6 +403,7 @@ const EXPECTED_REST_HEIGHT_PX: Record<(typeof EXPECTED_SECTION_IDS)[number], num
   align: 0, // 0 + 0 + 0 — renders null, no flex/grid parent
   measures: 104, // 0 + 3*32 + 2*4
   layout: 32, // 32 + 0 + 0 — collapsed until a layout exists (panel-39)
+  vector: 208, // 32 + 5*32 + 4*4 — inline <svg> only, see SECTION_MINIMAL_STATE
   fill: 32, // 32 + 0 + 0
   selectionColors: 32, // multi-select only — see SECTION_MINIMAL_STATE
   stroke: 32,

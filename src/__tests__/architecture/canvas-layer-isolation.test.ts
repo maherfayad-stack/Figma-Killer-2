@@ -55,6 +55,12 @@ describe('canvas-layer isolation (P5-G)', () => {
       'src/admin/pages/site/store/store.ts',
       'src/admin/pages/site/canvas/BoardCanvasLayer/BoardCanvasLayer.tsx',
       'src/admin/pages/site/canvas/BoardCanvasLayer/useCanvasLayerPointer.ts',
+      // ⌘C on a loose layer copies its root element (editor clipboard only).
+      'src/admin/pages/site/store/slices/clipboardSlice.ts',
+      // ⌘V finds that root again to write it into a page, as the ⌥-drag does.
+      'src/admin/pages/site/store/slices/site/studioPasteWrites.ts',
+      // The Properties body for a selected loose layer (its Vector controls).
+      'src/admin/pages/site/panels/PropertiesPanel/CanvasLayerInspector.tsx',
     ])
     const readers = sourceFiles()
       .filter((file) => withoutComments(readSource(file)).includes('canvasLayerPages'))

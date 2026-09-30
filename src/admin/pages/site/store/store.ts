@@ -282,7 +282,9 @@ export const selectRightSidebarExpanded = (s: EditorStore) =>
     s.selectedNodeId ||
       s.selectedSelectorClassId ||
       s.selectedSelectorClassIds.length > 0 ||
-      s.selectedFrameIds.length > 0,
+      s.selectedFrameIds.length > 0 ||
+      // P5-G — a loose layer on the free canvas has its own inspector body.
+      s.selectedCanvasLayerIds.length > 0,
   )
 
 // ---------------------------------------------------------------------------

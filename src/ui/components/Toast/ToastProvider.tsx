@@ -169,6 +169,50 @@ async function runToastAction(
   }
 }
 
+/**
+ * The body, clamped to three lines (a stack trace must not fill the viewport)
+ * with a "Show more" that lifts the clamp when the text really is cut. A
+ * refusal's sentence is the whole point of its toast, and the clamp used to
+ * end it mid-word ("… Copy it…") with no way to read the rest.
+ *
+ * Whether the text overflows is measured, not guessed from its length: a
+ * `ResizeObserver` (attached by the ref callback, so no effect sets state)
+ * re-checks whenever the clamped box changes size.
+ */
+function ToastBody({ body }: { body: string }) {
+  const [expanded, setExpanded] = useState(false)
+  const [clipped, setClipped] = useState(false)
+
+  const measure = (element: HTMLParagraphElement | null) => {
+    if (!element || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => {
+      setClipped(element.scrollHeight > element.clientHeight + 1)
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }
+
+  return (
+    <>
+      <p ref={measure} className={cn(styles.body, expanded && styles.bodyExpanded)} data-toast-body="">
+        {body}
+      </p>
+      {(clipped || expanded) && (
+        <Button
+          variant="ghost"
+          size="micro"
+          className={styles.bodyToggle}
+          aria-expanded={expanded}
+          onClick={() => setExpanded((open) => !open)}
+          data-toast-body-toggle=""
+        >
+          {expanded ? 'Show less' : 'Show more'}
+        </Button>
+      )}
+    </>
+  )
+}
+
 function ToastItem({ toast }: { toast: Toast }) {
   const [actionPending, setActionPending] = useState(false)
 
@@ -200,7 +244,7 @@ function ToastItem({ toast }: { toast: Toast }) {
             </span>
           )}
         </p>
-        {toast.body && <p className={styles.body}>{toast.body}</p>}
+        {toast.body && <ToastBody body={toast.body} />}
         {toast.location && (
           <p className={styles.location}>{toast.location}</p>
         )}

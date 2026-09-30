@@ -30,13 +30,17 @@ export function usePropertiesPanelAutoOpen() {
   const selectedSelectorClassId = useEditorStore((s) => s.selectedSelectorClassId)
   const hasSelectorMultiSelect = useEditorStore((s) => s.selectedSelectorClassIds.length > 0)
   const hasFrameSelection = useEditorStore((s) => s.selectedFrameIds.length > 0)
+  // P5-G — selecting a loose layer clears the node selection, which used to
+  // read as "nothing selected" and close the panel: a vector drawn on the
+  // free canvas could never reach its fill and stroke.
+  const hasCanvasLayerSelection = useEditorStore((s) => s.selectedCanvasLayerIds.length > 0)
   const setPropertiesPanel = useEditorStore((s) => s.setPropertiesPanel)
   const consumePropertiesPanelAutoOpenSuppression = useEditorStore(
     (s) => s.consumePropertiesPanelAutoOpenSuppression,
   )
   useEffect(() => {
     const shouldCollapse =
-      !selectedNodeId && !selectedSelectorClassId && !hasSelectorMultiSelect && !hasFrameSelection
+      !selectedNodeId && !selectedSelectorClassId && !hasSelectorMultiSelect && !hasFrameSelection && !hasCanvasLayerSelection
     const suppressed = consumePropertiesPanelAutoOpenSuppression()
     if (suppressed && !shouldCollapse) return
     setPropertiesPanel({ collapsed: shouldCollapse })
@@ -45,6 +49,7 @@ export function usePropertiesPanelAutoOpen() {
     selectedSelectorClassId,
     hasSelectorMultiSelect,
     hasFrameSelection,
+    hasCanvasLayerSelection,
     consumePropertiesPanelAutoOpenSuppression,
     setPropertiesPanel,
   ])

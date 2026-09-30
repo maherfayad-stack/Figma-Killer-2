@@ -1,0 +1,54 @@
+/*
+ * VectorSection — an inline <svg>'s own paint and size, written as JSX
+ * attributes (`VectorPaintControls.tsx`). Rows follow the inspector's row
+ * geometry: a fixed label column, then fields that share the rest.
+ */
+
+.root {
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-field-gap);
+    width: 100%;
+}
+
+.row {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-field-gap);
+    min-height: var(--inspector-row-h);
+}
+
+.rowLabel {
+    flex: 0 0 56px;
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+}
+
+.mode {
+    flex: 0 0 112px;
+    min-width: 0;
+}
+
+.colour {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.weight {
+    flex: 0 0 64px;
+    min-width: 0;
+}
+
+.grow {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+/* Why a control is read-only — the sentence stays next to the controls it
+   explains instead of hiding in a disabled field's tooltip. */
+.note {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    line-height: 1.45;
+}

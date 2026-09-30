@@ -137,6 +137,17 @@
     overflow: hidden;
 }
 
+/* "Show more" lifted the clamp: the whole sentence, still wrapping. */
+.bodyExpanded {
+    display: block;
+    -webkit-line-clamp: unset;
+    overflow: visible;
+}
+
+.bodyToggle {
+    align-self: flex-start;
+}
+
 .location {
     margin: var(--space-4xs) 0 0;
     color: var(--text-subtle);

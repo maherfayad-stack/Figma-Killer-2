@@ -923,6 +923,13 @@ events. Six cases are bridged explicitly:
    (`canvasClipboardData.ts`'s `decideCanvasPaste`): matching marker → layers
    (P3-D's source paste), SVG → sanitised subtree insert (or an `<img>` when
    too large), image → the file drop's own insert, nothing readable → layers.
+   A copied LOOSE LAYER (⌘C on the annotation rung, `copyCanvasLayers`) is its
+   root element; the layers paste finds it in `canvasLayerPages` and writes
+   `canvas-layer-place` with `copy`, never a transplant (a module's root has
+   no JSX parent to read it from). A layers paste whose source cannot be
+   found refuses with one of two sentences (`missingPasteSourceMessage`):
+   never written in the code, or moved since the copy — ⌘C that copies
+   nothing leaves the OLD entry, which is how a stale paste happens.
    **When no event comes** (Safari outside an editable target; a Tier 2
    bridge frame, whose events are cross-origin) a timer armed at keydown —
    which a real event, raised in the same task, always beats — reads
@@ -1400,6 +1407,16 @@ away.
   would delete the svg), double-click a point toggles corner ⇄ smooth. Each is
   one `svg-attr`. The svg's resize handles stand down while its points are
   edited (`CanvasResizeHandles`).
+
+**Paint, not points: the inspector's Vector section.** The same literal
+`<svg>` (and a loose layer whose root is one) gets fill / stroke / weight /
+caps / joins / opacity / W / H / viewBox in the Properties panel, each an
+`svg-attr` write. It previews on the in-frame element and posts ONE write per
+burst, 400 ms after the last change (`inspector/sections/vectorPaintCommit.ts`);
+a write that does not land restores the previewed attributes by hand, because
+React only re-applies them when the resync brings new markup. The root `<svg>`
+carries the `data-studio-svg-code` stamp too (never `-part`), so a code-bound
+`fill={color}` on the root is read-only. See `docs/features/inspector.md` G7b.
 
 ## Inline text editing
 

@@ -28,8 +28,10 @@
  * them. There is deliberately no string strip — a regex over serialized
  * markup deleted across a tag boundary and made sanitized markup live
  * (review #269 B1). Gated by `svg-part-stamps-stripped.test.ts`. The root
- * `<svg>` is never stamped: its location is its node id, and a part of `''`
- * names it.
+ * `<svg>` never carries a location stamp — its location is its node id, and a
+ * part of `''` names it — but it does carry `data-studio-svg-code` when any of
+ * its own attributes came from code, which the inspector's Vector section
+ * reads to leave those alone.
  */
 
 export const SVG_PART_ATTRIBUTE = 'data-studio-svg-part'

@@ -51,6 +51,7 @@ import { usePropertiesPanelData } from './usePropertiesPanelData'
 import { renderModuleTabContent } from './renderModuleTabContent'
 import { PropertiesPanelBody } from './PropertiesPanelBody'
 import { FrameBulkInspector } from './FrameBulkInspector'
+import { CanvasLayerInspector } from './CanvasLayerInspector'
 import { InspectorShell } from '@site/inspector/InspectorShell'
 import { NodeHeader } from './NodeHeader'
 import { SelectorHeader } from './SelectorHeader'
@@ -124,6 +125,10 @@ export function PropertiesPanel({ variant = 'floating' }: PropertiesPanelProps) 
   // also keeps the panel open and swaps its body for `FrameBulkInspector`.
   const selectedFrameIds = useEditorStore((s) => s.selectedFrameIds)
   const isFrameMultiSelect = selectedFrameIds.length > 0
+  // P5-G — loose layers on the free canvas are a selection list of their own
+  // (mutually exclusive with nodes and frames); they get their own body.
+  const canvasLayerCount = useEditorStore((s) => s.selectedCanvasLayerIds.length)
+  const isCanvasLayerSelection = canvasLayerCount > 0
 
   // ── ClassPicker ref — for the locked-state 'Add class' CTA ────────────────
   const classPickerRef = useRef<ClassPickerHandle>(null)
@@ -160,7 +165,8 @@ export function PropertiesPanel({ variant = 'floating' }: PropertiesPanelProps) 
       !data.selectedSelectorClass &&
       !data.isSelectorMultiSelect &&
       !isActiveBoardFrame &&
-      !isFrameMultiSelect)
+      !isFrameMultiSelect &&
+      !isCanvasLayerSelection)
   ) {
     return null
   }
@@ -228,7 +234,9 @@ export function PropertiesPanel({ variant = 'floating' }: PropertiesPanelProps) 
         panelId="properties"
         title="Properties"
         titleContent={
-          isFrameMultiSelect ? (
+          isCanvasLayerSelection ? (
+            <span>{canvasLayerCount === 1 ? 'Loose layer' : `${canvasLayerCount} loose layers`}</span>
+          ) : isFrameMultiSelect ? (
             <span>{selectedFrameIds.length} frames selected</span>
           ) : (
             <HeaderTitleContent
@@ -261,7 +269,9 @@ export function PropertiesPanel({ variant = 'floating' }: PropertiesPanelProps) 
         aria-label="Properties editor"
         className={styles.propertiesPanel}
       >
-        {isFrameMultiSelect ? (
+        {isCanvasLayerSelection ? (
+          <CanvasLayerInspector />
+        ) : isFrameMultiSelect ? (
           <FrameBulkInspector />
         ) : (
           <InspectorShell

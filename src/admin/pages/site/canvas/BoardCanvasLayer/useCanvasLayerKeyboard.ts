@@ -1,6 +1,6 @@
 /**
- * useCanvasLayerKeyboard — Delete and arrow-nudge for the selected loose layers
- * on the free canvas (P5-G, FC-5 G6/G15).
+ * useCanvasLayerKeyboard — Delete, ⌘C and arrow-nudge for the selected loose
+ * layers on the free canvas (P5-G, FC-5 G6/G15).
  *
  * Registered on the SAME `annotation` rung as the sticky notes' keyboard
  * (`useBoardAnnotationKeyboard`): a loose layer is board furniture, selected in
@@ -33,6 +33,17 @@ export function useCanvasLayerKeyboard(editable: boolean): void {
       if (event.key === 'Delete' || event.key === 'Backspace') {
         event.preventDefault()
         state.removeCanvasLayers(selected)
+        return true
+      }
+
+      // ⌘C copies the layers' root elements, so a ⌘V in a frame writes them
+      // into that page. Claimed but NOT `preventDefault`ed — the same P5-A rule
+      // as the node rung: the `copy` event this keystroke raises is what puts
+      // the Studio marker on the OS clipboard. Before this the chord fell
+      // through with nothing copied, and the next ⌘V pasted whatever an
+      // EARLIER copy had left in the clipboard.
+      if (getKeybindingForCommand('layers.copy')?.match(event)) {
+        state.copyCanvasLayers(selected)
         return true
       }
 

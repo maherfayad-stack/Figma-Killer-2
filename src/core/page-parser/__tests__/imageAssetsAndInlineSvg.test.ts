@@ -422,6 +422,26 @@ describe('SVG-3: an inline <svg> stamps each inner element with where it is writ
     expect(markup).toContain('<rect data-studio-svg-part="6:8" data-studio-svg-code="*" width="4"/>')
   })
 
+  it('lists the ROOT <svg>’s own code attributes too, without a location stamp (its location is the node id)', () => {
+    write(
+      'pages/CodedRoot.jsx',
+      [
+        'export default function CodedRoot({ tone }) {',
+        '  return (',
+        '    <svg viewBox="0 0 8 8" fill={tone} strokeWidth={2}>',
+        '      <path d="M0 0h8" />',
+        '    </svg>',
+        '  )',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const markup = markupOf(parse('pages/CodedRoot.jsx'))
+    expect(markup.startsWith('<svg data-studio-svg-code="fill" viewBox="0 0 8 8"')).toBe(true)
+    expect(markup).not.toMatch(/^<svg[^>]*data-studio-svg-part/)
+  })
+
   it('keeps a stamp on the element it names when the sanitiser drops a sibling (no index to drift)', () => {
     write(
       'pages/Dropped.jsx',

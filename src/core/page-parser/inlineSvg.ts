@@ -29,7 +29,8 @@
  * With `stampParts`, every element BELOW the root is serialised with
  * `data-studio-svg-part="<line>:<col>"` (its own JSX location, the node-id
  * convention) and, when any, `data-studio-svg-code="<jsx names>"` (its
- * attributes that came from code, `*` for a spread). That is what lets the
+ * attributes that came from code, `*` for a spread). The root `<svg>` gets
+ * only the code list. That is what lets the
  * canvas edit a `<path>` — the stamp names the one place its `svg-attr` write
  * lands, and the code list names what must not be overwritten — without the
  * path becoming a node. See `@core/vector`'s `svgPartStamps.ts`; every exit
@@ -166,10 +167,11 @@ function serializeAttributes(
 }
 
 /**
- * The stamps for one inner element (see this module's doc): its tag-name
- * location, and the JSX names of the attributes a literal write would destroy.
+ * The stamps for one element (see this module's doc): an inner element's
+ * tag-name location, and — for it and for the root — the JSX names of the
+ * attributes a literal write would destroy.
  */
-function partStamps(tagNode: Node, attributes: (JsxAttribute | JsxSpreadAttribute)[], ctx: SerializeContext): string {
+function partStamps(tagNode: Node, attributes: (JsxAttribute | JsxSpreadAttribute)[], ctx: SerializeContext, isRoot: boolean): string {
   const { line, column } = tagNode.getSourceFile().getLineAndColumnAtPos(tagNode.getStart())
   let code: string[] = []
   for (const attribute of attributes) {
@@ -181,7 +183,10 @@ function partStamps(tagNode: Node, attributes: (JsxAttribute | JsxSpreadAttribut
     if (DROPPED_ATTRIBUTES.has(name) || name.startsWith('on') || isSvgPartStampAttribute(name)) continue
     if (!isLiteralJsxAttribute(attribute)) code.push(name)
   }
-  const stamps = ` ${SVG_PART_ATTRIBUTE}="${formatSvgPartLocation(line, column)}"` +
+  // The root carries no location stamp — its location IS its node id — but it
+  // does carry its code list, so the inspector's Vector section can tell a
+  // literal `fill="none"` from a `fill={color}` on the `<svg>` itself.
+  const stamps = (isRoot ? '' : ` ${SVG_PART_ATTRIBUTE}="${formatSvgPartLocation(line, column)}"`) +
     (code.length > 0 ? ` ${SVG_CODE_ATTRIBUTE}="${escapeAttribute(code.join(','))}"` : '')
   ctx.stampBytes += stamps.length
   return stamps
@@ -191,7 +196,8 @@ function partStamps(tagNode: Node, attributes: (JsxAttribute | JsxSpreadAttribut
  * One JSX node as markup. Returns `''` for anything that carries nothing
  * renderable (a comment-only expression, an unresolvable interpolation) —
  * omitting a shape rather than guessing at it. `isRoot` is the `<svg>` itself,
- * which is never stamped: its location is its node id.
+ * which never carries a location stamp (its location is its node id), only
+ * its code list.
  */
 function serializeNode(node: Node, ctx: SerializeContext, isRoot = false): string {
   const { evalCtx } = ctx
@@ -217,7 +223,7 @@ function serializeNode(node: Node, ctx: SerializeContext, isRoot = false): strin
   if (Node.isJsxSelfClosingElement(node)) {
     const tagNode = node.getTagNameNode()
     const tag = tagNode.getText()
-    const stamps = ctx.stampParts && !isRoot ? partStamps(tagNode, node.getAttributes(), ctx) : ''
+    const stamps = ctx.stampParts ? partStamps(tagNode, node.getAttributes(), ctx, isRoot) : ''
     const attrs = stamps + serializeAttributes(node.getAttributes(), ctx)
     return VOID_SVG_TAGS.has(tag) ? `<${tag}${attrs}/>` : `<${tag}${attrs}></${tag}>`
   }
@@ -226,7 +232,7 @@ function serializeNode(node: Node, ctx: SerializeContext, isRoot = false): strin
     const opening = node.getOpeningElement()
     const tagNode = opening.getTagNameNode()
     const tag = tagNode.getText()
-    const stamps = ctx.stampParts && !isRoot ? partStamps(tagNode, opening.getAttributes(), ctx) : ''
+    const stamps = ctx.stampParts ? partStamps(tagNode, opening.getAttributes(), ctx, isRoot) : ''
     const attrs = stamps + serializeAttributes(opening.getAttributes(), ctx)
     const children = node.getJsxChildren().map((child) => serializeNode(child, ctx)).join('')
     return `<${tag}${attrs}>${children}</${tag}>`

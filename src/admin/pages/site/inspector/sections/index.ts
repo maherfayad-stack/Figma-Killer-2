@@ -72,8 +72,9 @@
  * still mounts beside that notice; before P2-G the notice swallowed it, so an
  * instance with no writable class showed no props at all.
  *
- * 15 entries: 11 mount in the Design tab's continuous scroll (one of them,
- * `selectionColors`, only for a multi-selection), 4 in Design's More
+ * 16 entries: 12 mount in the Design tab's continuous scroll (one of them,
+ * `selectionColors`, only for a multi-selection, and one, `vector`, only for
+ * an inline `<svg>`), 4 in Design's More
  * disclosure (3 of which also mount, expanded, in Prototype). P2-F merged
  * Shadow and Blur into one Effects entry, which is why there are no longer
  * sixteen.
@@ -97,6 +98,8 @@ import { TransformSection } from './TransformSection'
 import { AnimationsSection } from './AnimationsSection'
 import { InteractionSection } from './InteractionSection'
 import { CustomPropertiesSection } from './CustomPropertiesSection'
+import { VectorSection } from './VectorSection'
+import { showsVectorSection } from './vectorPaintModel'
 
 export type InspectorSectionTab = 'design' | 'prototype'
 
@@ -162,11 +165,17 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   // LayoutSection.tsx's own doc for why this section never fully hides its
   // body once mounted, unlike Penpot's literal empty convention.
   { id: 'layout', label: 'Layout', order: 4, appliesTo: (m) => m.selectedNode != null, Component: LayoutSection },
+  // Vector — an inline `<svg>`'s own paint (fill / stroke / weight / caps /
+  // joins / opacity) and its width / height / viewBox, written as JSX
+  // attributes through the `svg-attr` edit. Directly above Fill, which is the
+  // CSS box's fill: for a vector the attribute is what a designer means by
+  // "fill", and it is the first thing looked for. One `base.svg` only.
+  { id: 'vector', label: 'Vector', order: 5, appliesTo: showsVectorSection, Component: VectorSection },
   // Fill (P3 item 5) — text colour / solid fill / background-image layers /
   // content fit, in CSS paint order. Any selected node can carry a fill
   // (matches the old `FillSection`'s own unconditional mount inside
   // `StyleSectionsEditor` — no node kind ever excluded it).
-  { id: 'fill', label: 'Fill', order: 5, appliesTo: (m) => m.selectedNode != null, Component: FillSection },
+  { id: 'fill', label: 'Fill', order: 6, appliesTo: (m) => m.selectedNode != null, Component: FillSection },
   // Selection colours (WS-14.4 / G6.4) — the colours a MULTI-selection is
   // made of, across properties, each recolourable everywhere it appears.
   // Directly under Fill, which is the per-property answer to the same
@@ -175,7 +184,7 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   {
     id: 'selectionColors',
     label: 'Selection colours',
-    order: 6,
+    order: 7,
     appliesTo: (m) => m.isMultiSelect && m.selectedNodes.length > 1,
     Component: SelectionColorsSection,
   },
@@ -185,32 +194,32 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   // the old `StrokeSection`'s own unconditional mount inside
   // `StyleSectionsEditor` via the `border` entry — no node kind ever
   // excluded it).
-  { id: 'stroke', label: 'Stroke', order: 7, appliesTo: (m) => m.selectedNode != null, Component: StrokeSection },
+  { id: 'stroke', label: 'Stroke', order: 8, appliesTo: (m) => m.selectedNode != null, Component: StrokeSection },
   // Effects (P2-F, owner decision OD-4) — `box-shadow` / `text-shadow`
   // layers and `filter: blur()` ("Layer blur") / `backdrop-filter: blur()`
   // ("Background blur"), in one section with one `+` menu, as Figma draws
   // them. P3 items 7-8 had split them into Shadow and Blur after Penpot; the
   // merge is one fewer header and gap on every selection, which is what pays
   // for the 12px section gap. Any selected node can carry an effect.
-  { id: 'effects', label: 'Effects', order: 8, appliesTo: (m) => m.selectedNode != null, Component: EffectsSection },
+  { id: 'effects', label: 'Effects', order: 9, appliesTo: (m) => m.selectedNode != null, Component: EffectsSection },
   // Text (P3 item 9) — family/weight/size/line-height/letter-spacing/align/
   // vertical-align, split out of the old `typography` entry. The first
   // section in this series gated on more than "a node is selected" —
   // `isTextNode` (`styleSectionOrder.ts`, reused not duplicated) — since
   // Text only means something on a text-capable node.
-  { id: 'text', label: 'Text', order: 9, appliesTo: (m) => m.selectedNode != null && isTextNode(m.selectedNode), Component: TextSection },
+  { id: 'text', label: 'Text', order: 10, appliesTo: (m) => m.selectedNode != null && isTextNode(m.selectedNode), Component: TextSection },
   // Export (P3 item 10) — PNG/SVG of a node, Copy CSS, Copy JSX. Node-level,
   // not a set of CSS properties, so unlike every other entry here it never
   // wrote to `classStyleSections.ts` in the first place (see
   // `ExportSection.tsx`'s own doc for why).
-  { id: 'export', label: 'Export', order: 10, appliesTo: (m) => m.selectedNode != null, Component: ExportSection },
+  { id: 'export', label: 'Export', order: 11, appliesTo: (m) => m.selectedNode != null, Component: ExportSection },
   // Transform (P3 item 11) — `transform`/`transformOrigin`. Expanded in
   // Prototype, behind Design's More disclosure. See the `tabs`/`designGroup`
   // docs above.
   {
     id: 'transform',
     label: 'Transform',
-    order: 11,
+    order: 12,
     tabs: ['design', 'prototype'],
     designGroup: 'more',
     appliesTo: (m) => m.selectedNode != null,
@@ -220,7 +229,7 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   {
     id: 'animations',
     label: 'Animations',
-    order: 12,
+    order: 13,
     tabs: ['design', 'prototype'],
     designGroup: 'more',
     appliesTo: (m) => m.selectedNode != null,
@@ -231,7 +240,7 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   {
     id: 'interaction',
     label: 'Interaction',
-    order: 13,
+    order: 14,
     tabs: ['design', 'prototype'],
     designGroup: 'more',
     appliesTo: (m) => m.selectedNode != null,
@@ -246,7 +255,7 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   {
     id: 'customProperties',
     label: 'Custom properties',
-    order: 14,
+    order: 15,
     designGroup: 'more',
     appliesTo: (m) => m.selectedNode != null,
     Component: CustomPropertiesSection,
