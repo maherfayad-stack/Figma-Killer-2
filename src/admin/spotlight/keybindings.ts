@@ -486,9 +486,10 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
   // per kind of selection, and the editor key ladder decides between them:
   //   - `useBoardAnnotationKeyboard` (annotation rung): selected notes / docs;
   //   - `useCanvasNodeArrowKeys` (node rung): the selected layers (all of
-  //     them since P2-C2, OD-16) — an
-  //     absolute one nudges its offsets, a layout child reorders ±1 along its
-  //     parent's axis (`canvasNodeArrowMove.ts`). Canvas-scoped like Tab: in
+  //     them since P2-C2, OD-16) — an absolute one nudges its offsets, a
+  //     flex / grid child reorders ±1 along its parent's axis, and any other
+  //     flow layer nudges through `position: relative` (canvas-48,
+  //     `canvasNodeArrowMove.ts`). Canvas-scoped like Tab: in
   //     a panel the arrows stay the panel's;
   //   - `useBoardFrameNudge` (board rung): selected board frames.
   // With nothing selected nobody claims them. `ignoreInEditableField` plus
@@ -501,7 +502,7 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
   // Backspace. Alt is excluded so `layers.moveUp/moveDown` keep ⌥↑/⌥↓.
   {
     commandId: 'canvas.moveSelection',
-    displayName: 'Move the selection: nudge, or reorder a layout child (Shift for 10)',
+    displayName: 'Move the selection: nudge 1 px (Shift for 10), or reorder a flex / grid child',
     shortcut: { mac: '← ↑ → ↓', win: '← ↑ → ↓' },
     match: (e) =>
       !e.metaKey && !e.ctrlKey && !e.altKey &&
@@ -546,7 +547,7 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
 
 /**
  * Units one arrow press moves the selection, and the Shift step: board units
- * for a frame or a note, CSS px for an absolute layer.
+ * for a frame or a note, CSS px for a layer.
  */
 export const NUDGE_STEP = 1
 export const NUDGE_STEP_LARGE = 10

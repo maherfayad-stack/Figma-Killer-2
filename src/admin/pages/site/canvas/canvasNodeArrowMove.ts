@@ -1,18 +1,48 @@
 /**
  * canvasNodeArrowMove — what an arrow key does to the selected layer (P2-C,
- * IX-1). Penpot's `move-selected` rule, in CSS terms:
+ * IX-1; the flow nudge since canvas-48). Figma's rule, in CSS terms:
  *
  *   - a layer that is `position: absolute | fixed` NUDGES: its offsets move by
  *     1 px, or 10 with ⇧. The write is one inline style — the element's own
  *     `style={{…}}`, one honest target — so it is a VALUE edit;
- *   - any other layer is laid out by its parent, so moving it by a pixel would
- *     be a lie (K6, the feel plan's decision 6). An arrow ALONG the parent's
- *     axis REORDERS it one place (`moveNode`, a STRUCTURAL edit). An arrow
- *     across the axis does nothing.
+ *   - a flow child of an AUTO-LAYOUT parent (`flex` / `grid`, inline or not)
+ *     is placed by that parent, so moving it by a pixel would be a lie (K6).
+ *     An arrow ALONG the parent's axis REORDERS it one place (`stepSiblings`
+ *     → the Layers panel's `moveNodes`, a STRUCTURAL edit). An arrow across
+ *     the axis does nothing;
+ *   - any OTHER flow layer (its parent is `block`, `inline`, `flow-root`, a
+ *     table …) NUDGES too, through `position: relative` (canvas-48, the
+ *     owner's ask: "if it's not flex, move it 1px"). See "The flow nudge".
  *
  * A multi-selection (P2-C2, OD-16) follows the same rule per layer —
  * `resolveArrowSelectionMove` below says what a MIXED selection does — and a
  * grid child steps a whole row on ↑ / ↓ (`reorderStep`).
+ *
+ * ## The flow nudge (canvas-48) — why `position: relative`
+ *
+ * A layer in block flow has no offset that places it. Of the properties that
+ * could move it by one pixel, only a RELATIVE offset moves THAT element and
+ * nothing else: `margin` shifts every following sibling (and collapses with a
+ * neighbour's, so a 1 px step can render as 0), `transform` makes the element
+ * the containing block of its `fixed` descendants and fights any authored
+ * transform, and `position: absolute` (the ⌘-drag's promotion) pulls it out of
+ * flow so its siblings close the gap. `position: relative` + `top` / `left`
+ * keeps the element's slot in the flow and paints it offset from it — exactly
+ * what a 1 px nudge means.
+ *
+ *   - already `relative`: its authored offsets move, as for an absolute layer;
+ *   - `static`: the write adds `position: relative`, and its offsets start from
+ *     ZERO (a static element's computed `top` is whatever was authored, which
+ *     `static` ignores). An offset the source authored but `static` ignored
+ *     would wake up with the promotion, so the patch pins that axis's default
+ *     property to `0px` (`NudgePlan.fixed`) — the element moves by exactly the
+ *     step, on the axis the arrow points;
+ *   - `sticky`: refused — its offsets are stick thresholds, not a position;
+ *   - no box of its own (`display: contents`, a component call site rendered
+ *     as a Fragment): refused — an offset there does nothing at all;
+ *   - promoting it would re-anchor an absolutely positioned descendant (one
+ *     whose containing block is currently ABOVE this layer): refused, because
+ *     that descendant would jump (`reanchorsAbsoluteDescendant`).
  *
  * This module holds the rules (pure) and the one layout read they need
  * (`measureArrowTargets`, through the frame adapters, so a live bridge frame
@@ -71,6 +101,12 @@ export interface NudgeTerm {
 export interface NudgePlan {
   horizontal: NudgeTerm[]
   vertical: NudgeTerm[]
+  /**
+   * Declarations every non-empty patch carries, under the moving terms: a flow
+   * nudge's `position: relative`, and the `0px` pins that keep an offset the
+   * source authored under `static` from waking up with it (canvas-48).
+   */
+  fixed?: Readonly<Record<string, string>>
 }
 
 /** The computed-style facts the rules read — plain strings, so the rules are testable without a DOM. */
@@ -98,6 +134,8 @@ export interface ArrowTargetMeasurement {
   own: ArrowTargetStyle
   /** `null` when no boxed ancestor could be read. */
   layout: ArrowParentLayout | null
+  /** The layer renders a box of its own — an offset on it can move something (canvas-48). */
+  boxed: boolean
 }
 
 const HORIZONTAL_OFFSETS = ['left', 'right', 'insetInlineStart', 'insetInlineEnd'] as const
@@ -215,7 +253,7 @@ export function planNudge(style: ArrowTargetStyle, authored: ReadonlySet<NudgeOf
  * the axes that moved are written.
  */
 export function nudgeStylePatch(plan: NudgePlan, dx: number, dy: number): Record<string, string> {
-  const patch: Record<string, string> = {}
+  const patch: Record<string, string> = dx !== 0 || dy !== 0 ? { ...plan.fixed } : {}
   const write = (terms: readonly NudgeTerm[], delta: number) => {
     for (const term of terms) patch[term.property] = `${Math.round(term.base + term.sign * delta)}px`
   }
@@ -226,19 +264,57 @@ export function nudgeStylePatch(plan: NudgePlan, dx: number, dy: number): Record
 
 
 /**
- * What an arrow does to the whole selection (P2-C2, OD-16):
+ * The plan of a FLOW layer's nudge (canvas-48) — see "The flow nudge" in the
+ * module doc. Already `relative`: its authored offsets, from their used
+ * values, exactly as for an absolute layer. `static`: promoted to `relative`,
+ * its default offsets from zero, and every axis the source authored an offset
+ * on (ignored until now) pinned to `0px`, so only the arrow's axis moves.
+ */
+export function planFlowNudge(style: ArrowTargetStyle, authored: ReadonlySet<NudgeOffsetProperty>): NudgePlan {
+  if (style.position === 'relative') return planNudge(style, authored)
+  const horizontalProperty = inlineOffsetProperty(style.direction)
+  const fixed: Record<string, string> = { position: 'relative' }
+  // `left` beats `right`, and under RTL the inline start (`right`) beats
+  // `left`; `top` beats `bottom`. So one pin per axis silences every offset
+  // the source authored there.
+  if (HORIZONTAL_OFFSETS.some((property) => authored.has(property))) fixed[horizontalProperty] = '0px'
+  if (VERTICAL_OFFSETS.some((property) => authored.has(property))) fixed.top = '0px'
+  return {
+    // `insetInlineStart` is the RIGHT edge under RTL: visual right shrinks it.
+    horizontal: [{ property: horizontalProperty, sign: horizontalProperty === 'left' ? 1 : -1, base: 0 }],
+    vertical: [{ property: 'top', sign: 1, base: 0 }],
+    fixed,
+  }
+}
+
+/** A parent that PLACES its flow children (`flex` / `grid`, inline or not) — the arrows reorder there. */
+export function isAutoLayout(layout: ArrowParentLayout | null): layout is ArrowParentLayout {
+  return layout !== null && (layout.display.includes('flex') || layout.display.includes('grid'))
+}
+
+/** Why a flow layer has no pixel an arrow could move (canvas-48). */
+export type FlowNudgeRefusal = 'sticky' | 'unboxed' | 'reanchors'
+
+/**
+ * What an arrow does to the whole selection (P2-C2, OD-16; canvas-48):
  *
- *   - any member is `absolute | fixed` → `nudge`: EVERY positioned member
- *     moves by the same delta, each through its own authored offsets. A flow
- *     member of a MIXED selection stays where its parent lays it out — it has
- *     no pixel position to move (Penpot's `move-selected` rule);
- *   - every member is a layout child → `reorder`: each moves along ITS
+ *   - a member that is `absolute | fixed`, or a flow member whose parent is
+ *     NOT auto-layout, NUDGES. If any member nudges, every nudging member
+ *     moves by the same delta, each through its own offsets, and an
+ *     auto-layout child of a MIXED selection stays where its parent places
+ *     it — it has no pixel position to move (Penpot's `move-selected` rule);
+ *   - every member is an auto-layout child → `reorder`: each moves along ITS
  *     parent's axis (`reorderStep`), so a selection spanning a row and a
- *     column moves only the members the arrow points along.
+ *     column moves only the members the arrow points along;
+ *   - a member the flow nudge must refuse (`FlowNudgeRefusal`) refuses the
+ *     whole press — a selection moves together or not at all.
+ *
+ * The page's root has no parent to move within and is left out.
  */
 export type ArrowSelectionMove =
   | { kind: 'nudge'; plans: ReadonlyMap<string, NudgePlan> }
   | { kind: 'reorder'; layouts: ReadonlyMap<string, ArrowParentLayout> }
+  | { kind: 'refuse'; nodeId: string; reason: FlowNudgeRefusal }
 
 /** `null` when nothing was measured. `measured` is keyed by node id; `layouts` by TREE parent id. */
 export function resolveArrowSelectionMove(
@@ -248,18 +324,87 @@ export function resolveArrowSelectionMove(
 ): ArrowSelectionMove | null {
   if (measured.size === 0) return null
   const plans = new Map<string, NudgePlan>()
-  for (const [nodeId, measurement] of measured) {
-    const node = tree.nodes[nodeId]
-    if (!node || !isPositionedFreely(measurement.own.position)) continue
-    plans.set(nodeId, planNudge(measurement.own, authoredOffsets(node, styleRules)))
-  }
-  if (plans.size > 0) return { kind: 'nudge', plans }
   const layouts = new Map<string, ArrowParentLayout>()
   for (const [nodeId, measurement] of measured) {
-    const parentId = tree.nodes[nodeId]?.parentId
-    if (parentId && measurement.layout) layouts.set(parentId, measurement.layout)
+    const node = tree.nodes[nodeId]
+    if (!node) continue
+    const { own, layout } = measurement
+    if (isPositionedFreely(own.position)) {
+      plans.set(nodeId, planNudge(own, authoredOffsets(node, styleRules)))
+      continue
+    }
+    if (!node.parentId) continue
+    if (isAutoLayout(layout)) {
+      layouts.set(node.parentId, layout)
+      continue
+    }
+    if (own.position === 'sticky') return { kind: 'refuse', nodeId, reason: 'sticky' }
+    if (!measurement.boxed) return { kind: 'refuse', nodeId, reason: 'unboxed' }
+    plans.set(nodeId, planFlowNudge(own, authoredOffsets(node, styleRules)))
   }
+  if (plans.size > 0) return { kind: 'nudge', plans }
   return { kind: 'reorder', layouts }
+}
+
+/** The plans that promote a `static` layer to `relative` — the ones `findReanchoringPromotion` checks. */
+export function promotedNodeIds(plans: ReadonlyMap<string, NudgePlan>): string[] {
+  return [...plans].filter(([, plan]) => plan.fixed?.position === 'relative').map(([nodeId]) => nodeId)
+}
+
+/**
+ * Would promoting `nodeId` to `position: relative` re-anchor an absolutely
+ * positioned descendant? Such a descendant's containing block is ABOVE this
+ * layer today exactly when no layer between them is positioned, so the walk
+ * descends only through `static` layers (a layer with no element of its own
+ * is walked through, as the browser does). `positionOf` answers a node's
+ * computed `position`; an unmeasured one counts as `static`.
+ */
+export function reanchorsAbsoluteDescendant(
+  tree: NodeTree<PageNode>,
+  nodeId: string,
+  positionOf: (id: string) => string | undefined,
+): boolean {
+  const pending = [...(tree.nodes[nodeId]?.children ?? [])]
+  while (pending.length > 0) {
+    const id = pending.pop()!
+    const position = positionOf(id) ?? 'static'
+    if (position === 'absolute') return true
+    if (position === 'static') pending.push(...(tree.nodes[id]?.children ?? []))
+  }
+  return false
+}
+
+function descendantIds(tree: NodeTree<PageNode>, nodeId: string): string[] {
+  const ids: string[] = []
+  const pending = [...(tree.nodes[nodeId]?.children ?? [])]
+  while (pending.length > 0) {
+    const id = pending.pop()!
+    ids.push(id)
+    pending.push(...(tree.nodes[id]?.children ?? []))
+  }
+  return ids
+}
+
+/**
+ * The layer among `promotedIds` whose promotion to `relative` would move an
+ * absolutely positioned descendant, or `null` when none would. ONE `measure`
+ * of every descendant's `position`, in the frame rendering the layers — paid
+ * only by a press that promotes a `static` layer with children.
+ */
+export async function findReanchoringPromotion(
+  tree: NodeTree<PageNode>,
+  promotedIds: readonly string[],
+  preferredBreakpointId: string,
+): Promise<string | null> {
+  const descendants = promotedIds.flatMap((id) => descendantIds(tree, id))
+  if (descendants.length === 0) return null
+  const byId = await measureInRenderingFrame([...promotedIds, ...descendants], ['position'], preferredBreakpointId, promotedIds)
+  if (!byId) return null
+  const positionOf = (id: string) => {
+    const measurement = byId.get(id)
+    return measurement?.rect ? measurement.computedStyle.position : undefined
+  }
+  return promotedIds.find((id) => reanchorsAbsoluteDescendant(tree, id, positionOf)) ?? null
 }
 
 /** How many tracks a resolved `grid-template-*` names — `none` (an implicit grid) is one. */
@@ -395,7 +540,12 @@ export async function measureArrowTargets(
   const measured = new Map<string, ArrowTargetMeasurement>()
   for (const nodeId of nodeIds) {
     const chain = (chains.get(nodeId) ?? []).map((id) => byId.get(id))
-    measured.set(nodeId, { own: readOwn(byId.get(nodeId)), layout: readLayout(chain) })
+    const own = byId.get(nodeId)
+    measured.set(nodeId, {
+      own: readOwn(own),
+      layout: readLayout(chain),
+      boxed: own?.rect != null && own.computedStyle.display !== 'contents',
+    })
   }
   return measured
 }

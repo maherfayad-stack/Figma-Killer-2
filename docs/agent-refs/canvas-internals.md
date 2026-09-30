@@ -1009,20 +1009,37 @@ The rules the ladder replaced prose with:
   (notes AND frames) nudges the notes, because `annotation` outranks `board`.
   Sibling selection went to Tab / ⇧Tab, not the arrows.
 - **Arrows on a layer (IX-1).** An `absolute | fixed` layer nudges its
-  offsets 1 px / ⇧ 10 px; any other layer reorders along its parent's axis
+  offsets 1 px / ⇧ 10 px; a flow child of a `flex` / `grid` parent (inline
+  or not — `isAutoLayout`) reorders along its parent's axis
   (`reorderStep`: reversed for `*-reverse` and an RTL row; a cross-axis arrow
   does nothing; in a GRID ↑ / ↓ move a whole row — the resolved
-  `grid-template-columns` count — and ← / → one cell, P2-C2). The decision
+  `grid-template-columns` count — and ← / → one cell, P2-C2). **Any other
+  flow layer (block / inline / flow-root parent) nudges too (canvas-48)**,
+  through `position: relative` (`planFlowNudge`): already `relative` → its
+  authored offsets move; `static` → the write adds `position: relative`,
+  offsets start at 0, and an axis whose offsets `static` was ignoring is
+  pinned to `0px` (`NudgePlan.fixed`) so the promotion cannot wake them.
+  `relative` was chosen over `margin` (shifts every following sibling,
+  collapses), `transform` (containing block for `fixed` descendants, fights
+  an authored transform) and `absolute` (the ⌘-drag's promotion; siblings
+  close the gap). Refused, with a toast: `sticky` (offsets are thresholds),
+  a box-less layer (`display: contents` / Fragment call site), and a
+  promotion that would re-anchor an absolute descendant whose containing
+  block is above the layer (`findReanchoringPromotion` — one extra
+  `measure` of the descendants' `position`, only when a `static` layer with
+  children is promoted). The page root does not move. The decision
   needs ONE layout read — `measureArrowTargets` asks the frame adapters for
   every selected layer and its ancestor chain in one `measure`, so a live
   frame answers it too. Rules in `canvas/canvasNodeArrowMove.ts`, the gesture
   in `useCanvasNodeArrowKeys.ts`. Canvas-scoped like Tab
   (`isCanvasKeyboardSurface`): in a panel the arrows stay the panel's.
-- **A multi-selection moves as one gesture (P2-C2, OD-16).** Any positioned
-  member → every positioned member nudges by the same delta (one preview bag
+- **A multi-selection moves as one gesture (P2-C2, OD-16).** Any nudging
+  member (absolute, or flow outside flex / grid) → every nudging member
+  nudges by the same delta (one preview bag
   per layer, `NodeStylesPreview.stylesByNode`; one
-  `setNodesInlineStylesPerNode` on release); the flow members of a MIXED
-  selection stay put. All flow → `stepSiblings`: `@core/page-tree`'s
+  `setNodesInlineStylesPerNode` on release); the flex / grid children of a
+  MIXED selection stay put, and one refused member refuses the press. All
+  flex / grid children → `stepSiblings`: `@core/page-tree`'s
   `planSiblingSteps` turns the step into INDEPENDENT single-element moves (a
   run of 2+ is its one neighbour jumping over it; a single layer moves
   itself), written as ONE `/save` sequence (`moveNodesInSequence` →

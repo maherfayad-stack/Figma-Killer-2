@@ -23,9 +23,13 @@ import { useCanvasNodeArrowKeys } from '@site/canvas/useCanvasNodeArrowKeys'
 import { dispatchEditorKeyUp } from '@site/canvas/editorKeyDispatcher'
 import {
   authoredOffsets,
+  isAutoLayout,
   nudgeStylePatch,
+  planFlowNudge,
   planNudge,
+  reanchorsAbsoluteDescendant,
   reorderStep,
+  resolveArrowSelectionMove,
   type ArrowParentLayout,
   type ArrowTargetStyle,
 } from '@site/canvas/canvasNodeArrowMove'
@@ -100,6 +104,110 @@ describe('which offsets a nudge writes', () => {
   })
 })
 
+describe('a flow layer nudges through `position: relative` (canvas-48)', () => {
+  const flow = (overrides: Partial<ArrowTargetStyle> = {}) =>
+    ownStyle({ position: 'static', left: 'auto', right: 'auto', top: 'auto', bottom: 'auto', ...overrides })
+
+  it('a static layer is promoted, and moves from zero on the arrow axis only', () => {
+    const plan = planFlowNudge(flow(), new Set())
+    expect(nudgeStylePatch(plan, 0, -1)).toEqual({ position: 'relative', top: '-1px' })
+    expect(nudgeStylePatch(plan, 10, 0)).toEqual({ position: 'relative', left: '10px' })
+    // No move, no write — not even the promotion.
+    expect(nudgeStylePatch(plan, 0, 0)).toEqual({})
+  })
+
+  it('an offset `static` ignored is pinned to 0 so the promotion cannot wake it', () => {
+    // `left: 40px` on a static element does nothing today; `relative` would apply it.
+    const authored = authoredOffsets({ classIds: [], inlineStyles: { left: '40px', bottom: '8px' } }, {})
+    const plan = planFlowNudge(flow({ left: '40px', bottom: '8px' }), authored)
+    expect(nudgeStylePatch(plan, 0, 1)).toEqual({ position: 'relative', left: '0px', top: '1px' })
+    expect(nudgeStylePatch(plan, 1, 0)).toEqual({ position: 'relative', left: '1px', top: '0px' })
+  })
+
+  it('RTL: the inline start, which visual right shrinks', () => {
+    expect(nudgeStylePatch(planFlowNudge(flow({ direction: 'rtl' }), new Set()), 1, 0)).toEqual({
+      position: 'relative',
+      insetInlineStart: '-1px',
+    })
+  })
+
+  it('an already relative layer moves its authored offsets from their used values, and is not re-promoted', () => {
+    const authored = authoredOffsets({ classIds: [], inlineStyles: { position: 'relative', top: '5px' } }, {})
+    const plan = planFlowNudge(flow({ position: 'relative', top: '5px', left: '0px' }), authored)
+    expect(nudgeStylePatch(plan, 0, 1)).toEqual({ top: '6px' })
+    expect(nudgeStylePatch(plan, -1, 0)).toEqual({ left: '-1px' })
+  })
+})
+
+describe('which parent reorders instead of nudging', () => {
+  it('flex and grid, inline or not, are auto-layout; block, inline and flow-root are not', () => {
+    for (const display of ['flex', 'inline-flex', 'grid', 'inline-grid']) expect(isAutoLayout(layout({ display }))).toBe(true)
+    for (const display of ['block', 'inline', 'flow-root', 'table-cell', 'list-item']) expect(isAutoLayout(layout({ display }))).toBe(false)
+    expect(isAutoLayout(null)).toBe(false)
+  })
+
+  it('classifies a selection: auto-layout children reorder, other flow layers nudge, sticky / box-less refuse', () => {
+    const tree = makePage({
+      id: 'p',
+      rootNodeId: 'root',
+      nodes: {
+        root: makeNode({ id: 'root', moduleId: 'base.body', children: ['row', 'para', 'stuck'] }),
+        row: makeNode({ id: 'row', moduleId: 'base.container', children: ['cell'] }),
+        cell: makeNode({ id: 'cell', moduleId: 'base.container' }),
+        para: makeNode({ id: 'para', moduleId: 'base.container' }),
+        stuck: makeNode({ id: 'stuck', moduleId: 'base.container' }),
+      },
+    })
+    const staticOwn = ownStyle({ position: 'static' })
+    const measured = (entries: [string, Partial<{ own: ArrowTargetStyle; layout: ArrowParentLayout | null; boxed: boolean }>][]) =>
+      new Map(entries.map(([id, m]) => [id, { own: staticOwn, layout: layout(), boxed: true, ...m }] as const))
+
+    const reorder = resolveArrowSelectionMove(tree, measured([['cell', { layout: layout({ display: 'flex' }) }]]), undefined)
+    expect(reorder?.kind).toBe('reorder')
+
+    const nudge = resolveArrowSelectionMove(tree, measured([['para', {}]]), undefined)
+    expect(nudge?.kind).toBe('nudge')
+    if (nudge?.kind === 'nudge') expect(nudgeStylePatch(nudge.plans.get('para')!, 0, 1)).toEqual({ position: 'relative', top: '1px' })
+
+    // Mixed: the flow nudge wins, the flex child stays put.
+    const mixed = resolveArrowSelectionMove(tree, measured([['cell', { layout: layout({ display: 'grid' }) }], ['para', {}]]), undefined)
+    expect(mixed?.kind === 'nudge' && [...mixed.plans.keys()]).toEqual(['para'])
+
+    expect(resolveArrowSelectionMove(tree, measured([['stuck', { own: ownStyle({ position: 'sticky' }) }]]), undefined)).toEqual({
+      kind: 'refuse',
+      nodeId: 'stuck',
+      reason: 'sticky',
+    })
+    expect(resolveArrowSelectionMove(tree, measured([['para', { boxed: false }]]), undefined)).toEqual({
+      kind: 'refuse',
+      nodeId: 'para',
+      reason: 'unboxed',
+    })
+    // The page root has nowhere to move.
+    const root = resolveArrowSelectionMove(tree, measured([['root', {}]]), undefined)
+    expect(root?.kind === 'reorder' && root.layouts.size).toBe(0)
+  })
+
+  it('promotion re-anchors an absolute descendant only through static layers', () => {
+    const tree = makePage({
+      id: 'p',
+      rootNodeId: 'wrap',
+      nodes: {
+        wrap: makeNode({ id: 'wrap', moduleId: 'base.container', children: ['mid'] }),
+        mid: makeNode({ id: 'mid', moduleId: 'base.container', children: ['pin'] }),
+        pin: makeNode({ id: 'pin', moduleId: 'base.container' }),
+      },
+    })
+    const positions = (table: Record<string, string>) => (id: string) => table[id]
+    expect(reanchorsAbsoluteDescendant(tree, 'wrap', positions({ mid: 'static', pin: 'absolute' }))).toBe(true)
+    // A positioned layer in between is already the pin's containing block.
+    expect(reanchorsAbsoluteDescendant(tree, 'wrap', positions({ mid: 'relative', pin: 'absolute' }))).toBe(false)
+    // An unmeasured (box-less) layer is walked through.
+    expect(reanchorsAbsoluteDescendant(tree, 'wrap', positions({ pin: 'absolute' }))).toBe(true)
+    expect(reanchorsAbsoluteDescendant(tree, 'wrap', positions({ pin: 'fixed' }))).toBe(false)
+  })
+})
+
 function layout(overrides: Partial<ArrowParentLayout> = {}): ArrowParentLayout {
   return { display: 'block', flexDirection: 'row', gridAutoFlow: 'row', direction: 'ltr', gridColumns: 1, gridRows: 1, ...overrides }
 }
@@ -111,6 +219,23 @@ describe('which way a reorder goes', () => {
     expect(reorderStep(layout(), { dx: 1, dy: 0 })).toBeNull()
     expect(reorderStep(layout({ display: 'flex' }), { dx: 1, dy: 0 })).toBe(1)
     expect(reorderStep(layout({ display: 'flex', flexDirection: 'row-reverse' }), { dx: 1, dy: 0 })).toBe(-1)
+  })
+
+  it('a flex column: ↓ is later, ↑ earlier, reversed for column-reverse; ← / → do nothing', () => {
+    const column = layout({ display: 'flex', flexDirection: 'column' })
+    expect(reorderStep(column, { dx: 0, dy: 1 })).toBe(1)
+    expect(reorderStep(column, { dx: 0, dy: -10 })).toBe(-1)
+    expect(reorderStep(column, { dx: 1, dy: 0 })).toBeNull()
+    expect(reorderStep(layout({ display: 'flex', flexDirection: 'column-reverse' }), { dx: 0, dy: 1 })).toBe(-1)
+    // RTL mirrors the inline axis only: a column is unaffected.
+    expect(reorderStep({ ...column, direction: 'rtl' }, { dx: 0, dy: 1 })).toBe(1)
+  })
+
+  it('an RTL row: → is visually later, which is one place EARLIER; row-reverse under RTL flips back', () => {
+    expect(reorderStep(layout({ display: 'flex', direction: 'rtl' }), { dx: 1, dy: 0 })).toBe(-1)
+    expect(reorderStep(layout({ display: 'inline-flex', direction: 'rtl' }), { dx: -1, dy: 0 })).toBe(1)
+    expect(reorderStep(layout({ display: 'flex', flexDirection: 'row-reverse', direction: 'rtl' }), { dx: 1, dy: 0 })).toBe(1)
+    expect(reorderStep(layout({ display: 'flex', direction: 'rtl' }), { dx: 0, dy: 1 })).toBeNull()
   })
 
   it('a grid: ←/→ step one cell, ↑/↓ a whole row of the resolved column count (P2-C2)', () => {
@@ -158,7 +283,10 @@ function seed(overrides: { abs?: Partial<PageNode>; right?: Partial<PageNode> } 
     id: 'page-1',
     rootNodeId: 'root',
     nodes: {
-      root: makeNode({ id: 'root', moduleId: 'base.body', children: ['row', 'stage', 'grid'] }),
+      root: makeNode({ id: 'root', moduleId: 'base.body', children: ['row', 'stage', 'grid', 'wrap', 'stuck'] }),
+      wrap: makeNode({ id: 'wrap', moduleId: 'base.container', children: ['pin'] }),
+      pin: makeNode({ id: 'pin', moduleId: 'base.container' }),
+      stuck: makeNode({ id: 'stuck', moduleId: 'base.container' }),
       grid: makeNode({ id: 'grid', moduleId: 'base.container', children: GRID_CELLS }),
       ...Object.fromEntries(GRID_CELLS.map((id) => [id, makeNode({ id, moduleId: 'base.container' })])),
       row: makeNode({ id: 'row', moduleId: 'base.container', children: ['a', 'b', 'c'] }),
@@ -241,6 +369,7 @@ beforeEach(() => {
     tableAdapter({
       root: COLUMN, row: ROW, a: STATIC, b: STATIC, c: STATIC, stage: { ...COLUMN, position: 'relative' }, abs: ABSOLUTE, right: ABSOLUTE,
       grid: GRID, ...Object.fromEntries(GRID_CELLS.map((id) => [id, STATIC])),
+      wrap: { ...COLUMN, ...STATIC }, pin: ABSOLUTE, stuck: { ...STATIC, position: 'sticky' },
     }),
     'desktop',
   )
@@ -361,13 +490,69 @@ describe('a layout child reorders (IX-1)', () => {
     expect(childOrder('row')).toEqual(['b', 'a', 'c'])
   })
 
-  it('↓ in a block column moves it one place later', async () => {
+})
+
+const ROOT_ORDER = ['row', 'stage', 'grid', 'wrap', 'stuck']
+
+describe('a flow layer outside flex / grid nudges by a pixel (canvas-48)', () => {
+  it('↑ in a block parent: previewed, then ONE write of `position: relative` + `top`, one entry, one save; the order stays', async () => {
     mount()
     select('row')
+    press(document, { key: 'ArrowUp' })
+    await settle()
+    press(document, { key: 'ArrowUp', repeat: true })
+    expect(useEditorStore.getState().previewNodeStyles?.stylesByNode).toEqual({ row: { position: 'relative', top: '-2px' } })
+    expect(historyLength()).toBe(0)
+    release(document, 'ArrowUp')
+    expect(node('row').inlineStyles).toMatchObject({ position: 'relative', top: '-2px' })
+    expect(childOrder('root')).toEqual(ROOT_ORDER)
+    expect(historyLength()).toBe(1)
+    expect(saveRequests).toBe(1)
+    useEditorStore.getState().undo()
+    expect(node('row').inlineStyles?.position).toBeUndefined()
+    expect(node('row').inlineStyles?.top).toBeUndefined()
+  })
+
+  it('⇧→ steps 10 on the inline axis', async () => {
+    mount()
+    select('row')
+    press(document, { key: 'ArrowRight', shiftKey: true })
+    await settle()
+    release(document, 'ArrowRight')
+    expect(node('row').inlineStyles).toMatchObject({ position: 'relative', left: '10px' })
+  })
+
+  it('an already relative layer moves its own offsets and is not re-promoted', async () => {
+    mount()
+    select('stage')
     press(document, { key: 'ArrowDown' })
     await settle()
     release(document, 'ArrowDown')
-    expect(childOrder('root')).toEqual(['stage', 'row', 'grid'])
+    // The table's `stage` resolves no `top`, so it moves from 0.
+    expect(node('stage').inlineStyles).toEqual({ top: '1px' })
+  })
+
+  it('refuses when the promotion would shift an absolute descendant anchored above it', async () => {
+    mount()
+    select('wrap')
+    press(document, { key: 'ArrowDown' })
+    await settle()
+    release(document, 'ArrowDown')
+    await settle()
+    expect(node('wrap').inlineStyles).toBeUndefined()
+    expect(useEditorStore.getState().previewNodeStyles).toBeNull()
+    expect(historyLength()).toBe(0)
+  })
+
+  it('refuses a sticky layer — its offsets are thresholds, not a position', async () => {
+    mount()
+    select('stuck')
+    expect(press(document, { key: 'ArrowDown' })).toBe(true)
+    await settle()
+    release(document, 'ArrowDown')
+    expect(node('stuck').inlineStyles).toBeUndefined()
+    expect(childOrder('root')).toEqual(ROOT_ORDER)
+    expect(historyLength()).toBe(0)
   })
 })
 
@@ -424,7 +609,8 @@ describe('a multi-selection moves as one gesture (P2-C2, OD-16)', () => {
     press(document, { key: 'ArrowDown' })
     await settle()
     release(document, 'ArrowDown')
-    expect(childOrder('root')).toEqual(['stage', 'row', 'grid'])
+    expect(node('row').inlineStyles).toMatchObject({ position: 'relative', top: '1px' })
+    expect(node('b').inlineStyles).toBeUndefined()
     expect(childOrder('row')).toEqual(['a', 'b', 'c'])
   })
 

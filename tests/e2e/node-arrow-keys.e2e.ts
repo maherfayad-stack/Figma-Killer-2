@@ -53,6 +53,13 @@ const FIXTURE_PAGE = `export default function Home() {
         <div className="g4" style={{ height: "30px", background: "#ddd" }}>G4</div>
         <div className="g5" style={{ height: "30px", background: "#ddd" }}>G5</div>
       </div>
+      <div className="col" style={{ display: "flex", flexDirection: "column", gap: "4px", marginTop: "40px", width: "120px" }}>
+        <div className="c0" style={{ height: "24px", background: "#fcc" }}>C0</div>
+        <div className="c1" style={{ height: "24px", background: "#cfc" }}>C1</div>
+        <div className="c2" style={{ height: "24px", background: "#ccf" }}>C2</div>
+      </div>
+      <div className="note" style={{ margin: "20px 0", width: "200px", background: "#ffd" }}>Note</div>
+      <div className="after" style={{ width: "200px", background: "#dff" }}>After</div>
     </main>
   )
 }
@@ -60,7 +67,7 @@ const FIXTURE_PAGE = `export default function Home() {
 
 const REL = 'pages/Home.tsx'
 /** `<div>` occurrences in FIXTURE_PAGE, in source order. */
-const DIV = { row: 1, a: 2, b: 3, c: 4, d: 5, stage: 6, abs: 7, anchored: 8, grid: 9, g0: 10, g1: 11 } as const
+const DIV = { row: 1, a: 2, b: 3, c: 4, d: 5, stage: 6, abs: 7, anchored: 8, grid: 9, g0: 10, g1: 11, col: 16, c0: 17, note: 20 } as const
 
 let fixture: FixtureProject
 const readPage = () => fs.readFileSync(path.join(fixture.dir, 'pages', 'Home.tsx'), 'utf8')
@@ -280,5 +287,71 @@ test.describe('P2-C2 (OD-16) — arrows move a whole multi-selection as one gest
 
     await page.keyboard.press('ArrowRight')
     await expect.poll(() => sourceOrder(names), { timeout: 30_000 }).toEqual(['g0', 'g2', 'g3', 'g4', 'g5', 'g1'])
+  })
+})
+
+/** The source line of the element whose `className` is `name`. */
+function sourceLine(name: string): string {
+  return readPage().split('\n').find((text) => text.includes(`className="${name}"`)) ?? ''
+}
+
+test.describe('canvas-48 — auto-layout children reorder, every other flow layer nudges', () => {
+  test.setTimeout(180_000)
+
+  test('a flex COLUMN child: ↓ swaps it with the one below in ONE write; ↑ at the top is a no-op', async ({ page }) => {
+    const { content } = await openAndSelect(page, DIV.c0)
+    const saves = recordSaves(page)
+    const beforeC1 = await content.getByText('C1', { exact: true }).boundingBox()
+
+    await page.keyboard.press('ArrowDown')
+    await expect.poll(() => sourceOrder(['c0', 'c1', 'c2']), { timeout: 30_000 }).toEqual(['c1', 'c0', 'c2'])
+    await page.waitForTimeout(QUIET_MS)
+    expect(saves, 'one arrow press, one source write').toHaveLength(1)
+    // C0 now renders where C1 was — computed layout, not just the file.
+    await expect
+      .poll(async () => Math.abs((await content.getByText('C0', { exact: true }).boundingBox())!.y - beforeC1!.y))
+      .toBeLessThanOrEqual(2)
+    // The swap is a reorder, not a nudge: nothing positional was written.
+    expect(sourceLine('c0')).not.toContain('position')
+
+    // Back up, then ↑ again at the first place: claimed, and nothing is written.
+    await page.keyboard.press('ArrowUp')
+    await expect.poll(() => sourceOrder(['c0', 'c1', 'c2']), { timeout: 30_000 }).toEqual(['c0', 'c1', 'c2'])
+    await page.waitForTimeout(QUIET_MS)
+    const written = readPage()
+    const savesBefore = saves.length
+    await page.keyboard.press('ArrowUp')
+    await page.waitForTimeout(QUIET_MS)
+    expect(readPage()).toBe(written)
+    expect(saves).toHaveLength(savesBefore)
+  })
+
+  test('a block-flow layer: ↑ moves it 1 px through `position: relative`, its sibling stays, ONE write, ONE ⌘Z', async ({ page }) => {
+    const { content, element: note } = await openAndSelect(page, DIV.note)
+    const after = content.getByText('After', { exact: true })
+    const saves = recordSaves(page)
+    const before = await position(note)
+    const afterBefore = (await after.boundingBox())!
+
+    await page.keyboard.press('ArrowUp')
+    await expect.poll(() => sourceLine('note'), { timeout: 30_000 }).toMatch(/position: "relative"[\s\S]*top: "-1px"/)
+    await page.waitForTimeout(QUIET_MS)
+    expect(saves, 'one arrow press, one source write').toHaveLength(1)
+    const moved = await position(note)
+    expect(moved.cssTop).toBe('-1px')
+    near(moved.top, before.top - 1)
+    near(moved.left, before.left)
+    // A relative offset keeps its slot in the flow: the next sibling does not move.
+    expect(Math.abs((await after.boundingBox())!.y - afterBefore.y)).toBeLessThanOrEqual(0.5)
+
+    // A second press builds on the first (no stale read of the promoted element).
+    await page.keyboard.press('Shift+ArrowUp')
+    await expect.poll(() => sourceLine('note'), { timeout: 30_000 }).toContain('top: "-11px"')
+    near((await position(note)).top, before.top - 11)
+
+    await page.keyboard.press('Control+z')
+    await page.keyboard.press('Control+z')
+    await expect.poll(readPage, { timeout: 30_000 }).toBe(FIXTURE_PAGE)
+    await expect.poll(async () => Math.abs((await position(note)).top - before.top)).toBeLessThanOrEqual(1)
   })
 })

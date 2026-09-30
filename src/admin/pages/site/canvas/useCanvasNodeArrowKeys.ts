@@ -1,7 +1,8 @@
 /**
  * useCanvasNodeArrowKeys — the `node` rung's arrow keys (P2-C, IX-1; the
  * whole selection since P2-C2, OD-16): absolutely positioned layers NUDGE,
- * layers laid out by their parent REORDER. The rules are
+ * children of a flex / grid parent REORDER, and any other flow layer NUDGES
+ * through `position: relative` (canvas-48). The rules are
  * `canvasNodeArrowMove.ts`; this file is the gesture around them.
  *
  * ## A held key is one undo entry and one source write
@@ -24,9 +25,12 @@
  *
  * ## A mixed selection
  *
- * Positioned members nudge and flow members stay put — a flow child has no
+ * Nudging members (absolute ones, and flow children of a non-auto-layout
+ * parent) nudge, and flex / grid children stay put — a layout child has no
  * pixel position to move (Penpot's `move-selected` rule). A selection that is
- * all flow children reorders, each along its own parent's axis.
+ * all flex / grid children reorders, each along its own parent's axis. A
+ * member the flow nudge refuses (sticky, box-less, or one whose promotion to
+ * `relative` would shift an absolute descendant) refuses the whole press.
  *
  * The release is the dispatcher's keyup BROADCAST (`dispatchEditorKeyUp`):
  * a keyup on the editor document, a keyup inside a portal or bridge frame
@@ -59,10 +63,13 @@ import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 import { flushAutosave } from '@site/hooks/autosaveSchedule'
 import { pushToast } from '@ui/components/Toast'
 import {
+  findReanchoringPromotion,
   measureArrowTargets,
   nudgeStylePatch,
+  promotedNodeIds,
   reorderSteps,
   resolveArrowSelectionMove,
+  type FlowNudgeRefusal,
   type NudgePlan,
 } from './canvasNodeArrowMove'
 import { isCanvasKeyboardSurface, isInsideKeyOwningOverlay, isTextInputTarget } from './editorKeyGuards'
@@ -90,6 +97,14 @@ interface ArrowSession {
 
 const REFUSAL_TITLE = "This layer can't be nudged"
 const LOCKED_TITLE = 'Locked layers do not move'
+
+/** What the flow nudge says when a layer has no pixel to move (canvas-48) — the reason, and the way out. */
+const FLOW_NUDGE_REFUSAL: Record<FlowNudgeRefusal, string> = {
+  sticky: "It is position: sticky, so its offsets say where it sticks, not where it sits. Change its position in the inspector to move it.",
+  unboxed: 'It renders no box of its own (a component call site or display: contents), so an offset would move nothing. Select the element inside it.',
+  reanchors:
+    'Moving it makes it position: relative, which would shift the absolutely positioned layers inside it. Nudge those, or set its position in the inspector.',
+}
 
 /** Each nudged layer's patch for the hold so far. */
 function nudgePatches(session: ArrowSession): { nodeId: string; patch: Record<string, string> }[] {
@@ -147,7 +162,7 @@ function nudgeRefusal(nodeId: string, plan: NudgePlan): string | null {
   if (!canWriteInlineStyleForModule(node.moduleId)) {
     return "Its position is decided inside the component it renders, so it can't be written at this call site."
   }
-  const keys = [...plan.horizontal, ...plan.vertical].map((term) => term.property)
+  const keys = [...plan.horizontal, ...plan.vertical].map((term) => term.property as string).concat(Object.keys(plan.fixed ?? {}))
   const probe = Object.fromEntries(keys.map((key) => [key, '0px']))
   if (!isStylePatchWritableToSource(node, probe)) {
     return 'Its position is computed in code. Edit the expression in the source instead.'
@@ -170,9 +185,18 @@ async function resolveSession(session: ArrowSession, current: () => ArrowSession
     session.state = 'spent'
     const steps = reorderSteps(move.layouts, session)
     if (Object.keys(steps).length > 0) useEditorStore.getState().stepSiblings(session.nodeIds, steps)
+  } else if (move?.kind === 'refuse') {
+    session.state = 'spent'
+    pushToast({ kind: 'info', title: REFUSAL_TITLE, body: FLOW_NUDGE_REFUSAL[move.reason] })
   } else if (move?.kind === 'nudge') {
     // All or nothing: a selection moves together, or not at all.
-    const refusal = [...move.plans].map(([nodeId, plan]) => nudgeRefusal(nodeId, plan)).find((reason) => reason !== null)
+    const promoted = promotedNodeIds(move.plans)
+    const reanchoring = page && promoted.length > 0
+      ? await findReanchoringPromotion(page, promoted, store.activeBreakpointId)
+      : null
+    const refusal = reanchoring
+      ? FLOW_NUDGE_REFUSAL.reanchors
+      : [...move.plans].map(([nodeId, plan]) => nudgeRefusal(nodeId, plan)).find((reason) => reason !== null)
     if (refusal) {
       session.state = 'spent'
       pushToast({ kind: 'info', title: REFUSAL_TITLE, body: refusal })
