@@ -282,7 +282,7 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
       return { applied: true }
     }
     case 'literal':
-      setStringLiteral({ ...loc, value: edit.text, project })
+      setStringLiteral({ ...loc, value: edit.text, expected: edit.expected, project })
       return { applied: true }
     case 'asset': {
       // `target` here is the IMPORT's own location (assetOrigin), decoded by

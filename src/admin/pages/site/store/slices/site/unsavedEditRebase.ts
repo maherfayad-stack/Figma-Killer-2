@@ -34,10 +34,11 @@
  *     is NOT carried when the element is gone, when a value it touches is now
  *     set in code (`isPropWritableToSource` on the FRESH node — writing a
  *     literal there would bake over a binding), or when a value the parser
- *     traced to a literal elsewhere now comes from a different file, or was
- *     changed there too: a local-wins write to a literal is a write into
- *     someone else's copy (a locale switch re-reads every text from another
- *     dictionary).
+ *     traced to a literal elsewhere now comes from a different literal
+ *     (another file, or another place in the same file — a locale switch
+ *     re-reads every text from another dictionary branch, usually in the same
+ *     module), or was changed there too: a local-wins write to a literal is a
+ *     write into someone else's copy.
  *
  * The rebased page keeps its save marks, so autosave writes exactly the
  * carried edits against the fresh baseline. Nothing is said when every edit
@@ -167,11 +168,15 @@ function pendingEditOf(node: PageNode, baseline: BaselineBeforeRead): PendingNod
 }
 
 /** Where a value the parser traced to a literal is written — `null` for a value that is this element's own. */
-function originOf(node: PageNode, key: string): { rel: string } | null {
+function originOf(node: PageNode, key: string): { rel: string; line: number; col: number } | null {
   const traced = node.resolvedProps?.[key]?.origin
   if (traced) return traced
   const textProp = registry.get(node.moduleId)?.inlineTextEdit?.prop
   return key === textProp && node.textOrigin ? node.textOrigin : null
+}
+
+function sameLiteral(a: { rel: string; line: number; col: number }, b: { rel: string; line: number; col: number }): boolean {
+  return a.rel === b.rel && a.line === b.line && a.col === b.col
 }
 
 /** The page as it read before the user's edits: each edited value put back to its baseline. */
@@ -210,8 +215,14 @@ function carryEdit(edit: PendingNodeEdit, target: PageNode): PageNode | LostEdit
     if (!isPropWritableToSource(target, key)) return 'now-code'
     const was = originOf(edit.node, key)
     if (was) {
+      // The SAME literal, not just the same file: one dictionary module holds
+      // every locale (`translations.ts`'s `en` and `ar` branches), so a
+      // locale switch re-reads each text from a different literal in the
+      // same file. Carrying the `ar` value onto the fresh node would aim the
+      // next save at the `en` literal — the 2026-09-30 bug that wrote Arabic
+      // into the source locale.
       const now = originOf(target, key)
-      if (!now || now.rel !== was.rel || !Object.is(fresh, base)) return 'source-changed'
+      if (!now || !sameLiteral(now, was) || !Object.is(fresh, base)) return 'source-changed'
     }
     next = writeValue(next, key, local)
   }

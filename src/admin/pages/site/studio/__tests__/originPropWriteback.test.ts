@@ -83,20 +83,29 @@ describe('WB-8 — an origin-backed prop writes at its origin', () => {
 
   it('a .map row’s prop writes its own array element', () => {
     const { edits } = collectNodeDiffEdits([menu({ row: { title: 'Warm bowl' } })], undefined)
-    expect(edits).toEqual([{ kind: 'literal', nodeId: at(ROW_ORIGIN), text: 'Warm bowl' }])
+    expect(edits).toEqual([{ kind: 'literal', nodeId: at(ROW_ORIGIN), text: 'Warm bowl', expected: 'Hot bowl' }])
   })
 
   it('an instance’s call-site prop writes the literal it resolved through, never a prop over the binding', () => {
     const { edits } = collectNodeDiffEdits([menu({ instance: { title: 'Stews' } })], undefined)
-    expect(edits).toEqual([{ kind: 'literal', nodeId: at(INSTANCE_ORIGIN), text: 'Stews' }])
+    expect(edits).toEqual([{ kind: 'literal', nodeId: at(INSTANCE_ORIGIN), text: 'Stews', expected: 'Soups' }])
   })
 
   it('a plain node’s dictionary prop still writes the dictionary, and its text is sent once', () => {
     const { edits } = collectNodeDiffEdits([menu({ plain: { title: 'Later', text: 'Cook later' } })], undefined)
     expect(edits).toEqual([
-      { kind: 'literal', nodeId: at(TEXT_ORIGIN), text: 'Cook later' },
-      { kind: 'literal', nodeId: at(DICTIONARY_ORIGIN), text: 'Later' },
+      { kind: 'literal', nodeId: at(TEXT_ORIGIN), text: 'Cook later', expected: 'Cook tonight' },
+      { kind: 'literal', nodeId: at(DICTIONARY_ORIGIN), text: 'Later', expected: 'Tonight' },
     ])
+  })
+
+  it('a literal this board never read (no baseline) is never written — no blind write into a dictionary', () => {
+    // The 2026-09-30 report: a tree holding values the baseline never saw
+    // (another locale's text, a stale read) must not reach a literal without
+    // saying what it replaces. No baseline, no `expected`, no write.
+    resetLoadedValues([])
+    const { edits } = collectNodeDiffEdits([menu({ plain: { title: 'التسمية', text: 'التسمية' } })], undefined)
+    expect(edits.filter((edit) => edit.kind === 'literal')).toEqual([])
   })
 
   it('a row’s prop with NO origin is still not written', () => {

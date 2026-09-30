@@ -33,6 +33,11 @@ a text edit can re-flow children and a style edit can rewrite a multi-line
 - **prop** replaces only a LITERAL attribute value, or adds a missing
   attribute. An attribute holding code (\`title={c.heading}\`, \`onClick={fn}\`)
   refuses with \`binding-overwrite\` rather than baking a literal over it.
+- **literal** (\`{ kind: "literal", nodeId: "<file>:<line>:<col>", text, expected }\`)
+  rewrites the string literal a resolved value came from (a dictionary entry,
+  a call-site attribute). \`expected\` is the text you read there; when the file
+  no longer holds it the edit refuses \`literal-changed\` and writes nothing —
+  re-read the file and decide again.
 - **class** (\`{ kind: "class", nodeId, add: string[], remove: string[] }\`)
   adds or removes whole class TOKENS (class names such as \`bg-blue-600\`, never
   Studio's \`sc-<hash>\` rule ids). Swapping \`bg-red-500\` for \`bg-blue-600\` is a

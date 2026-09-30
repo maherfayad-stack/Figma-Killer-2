@@ -53,10 +53,18 @@ export function loadSourceFile(project: Project, file: string): SourceFile {
  * for the same reason: ts-morph's own structure printer must agree with the
  * hand-built text, and the file system is the single place the ending is
  * decided. See `@core/page-parser`'s `eolFileSystem.ts`.
+ *
+ * `allowJs` (with `maxNodeModuleJsDepth: 0`, exactly `createWorkspaceProject`'s
+ * pair): without it TypeScript neither binds a `.js`/`.jsx` file nor resolves
+ * an import to one, so every checker question a codemod asks about a JS
+ * project — which declaration `useLanguage` is, whether it reads a context —
+ * came back empty, and a hook the same codemod carries in a `.tsx` repo was
+ * refused in a `.jsx` one.
  */
 export function createProject(): Project {
   return new Project({
     useInMemoryFileSystem: false,
+    compilerOptions: { allowJs: true, maxNodeModuleJsDepth: 0 },
     fileSystem: new EolPreservingFileSystem(),
     manipulationSettings: { newLineKind: NewLineKind.LineFeed },
   })

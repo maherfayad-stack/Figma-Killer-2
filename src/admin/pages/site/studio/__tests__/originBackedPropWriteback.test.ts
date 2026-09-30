@@ -13,6 +13,7 @@
  */
 import { afterEach, describe, expect, it } from 'bun:test'
 import { fsCodemodAdapter } from '../fsCodemodAdapter'
+import { resetLoadedValues } from '../loadedValuesBaseline'
 import { makeNode, makePage, makeSite } from '../../../../../__tests__/fixtures'
 
 const originalFetch = globalThis.fetch
@@ -83,6 +84,10 @@ describe('editing a prop that resolved through a dictionary lookup', () => {
     const saveCalls: Array<{ body: unknown }> = []
     stubFetch(saveCalls)
     await fsCodemodAdapter.loadSite()
+    // What the board read at the literal — the `expected` the write is sent against.
+    const loaded = marketingCard('Skip the taxi queue')
+    const loadedRoot = makeNode({ id: 'page-root', moduleId: 'base.body', children: [loaded.id] })
+    resetLoadedValues([makePage({ id: 'home', rootNodeId: loadedRoot.id, nodes: { [loadedRoot.id]: loadedRoot, [loaded.id]: loaded } })])
 
     const node = marketingCard('Skip the queue entirely')
     const root = makeNode({ id: 'page-root', moduleId: 'base.body', children: [node.id] })
@@ -91,12 +96,14 @@ describe('editing a prop that resolved through a dictionary lookup', () => {
     )
 
     expect(saveCalls).toHaveLength(1)
-    const edits = (saveCalls[0]!.body as { edits: Array<{ kind: string; nodeId: string; text?: string; prop?: string }> }).edits
+    const edits = (saveCalls[0]!.body as { edits: Array<{ kind: string; nodeId: string; text?: string; expected?: string; prop?: string }> })
+      .edits
 
     const literal = edits.find((edit) => edit.kind === 'literal')
     expect(literal).toBeDefined()
     expect(literal!.nodeId).toBe(`${ORIGIN.rel}:${ORIGIN.line}:${ORIGIN.col}`)
     expect(literal!.text).toBe('Skip the queue entirely')
+    expect(literal!.expected).toBe('Skip the taxi queue')
 
     // The invariant. A `prop` edit here would bake a string over the binding.
     expect(edits.some((edit) => edit.kind === 'prop' && edit.prop === 'title')).toBe(false)

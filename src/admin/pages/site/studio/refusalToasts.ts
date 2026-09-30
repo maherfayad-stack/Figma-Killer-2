@@ -91,6 +91,8 @@ const REASON_TITLES: Record<string, string> = {
   // WB-24 — any kind refuses this way, and the file, not the edit, is the story.
   'syntax-error': 'Not saved: the file has a syntax error',
   'write-failed': 'Not saved to source',
+  // A dictionary entry changed in the code since the board read it; the code wins.
+  'literal-changed': 'Not saved: the text changed in the code',
 }
 
 /**

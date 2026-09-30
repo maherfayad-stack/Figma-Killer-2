@@ -44,6 +44,8 @@ export interface MaterializedHookGroup {
   /** Free-variable name -> the text it now reads instead of its own bare name. */
   reads: Map<string, string>
   edits: TextEdit[]
+  /** The new `const … = hook(…)` statement `edits` writes; absent when an existing call was reused. */
+  statement?: string
 }
 
 /** How an already-written top-level `const` reads, when it calls the same hook this group needs. */
@@ -165,7 +167,7 @@ export function materializeHookGroup(
     : `${lineIndentAt(fullText, destinationBody.getStart())}  `
   const statement = `const ${pattern} = ${calleeLocal}(${argsText})`
   const text = first ? `${statement}\n${indent}` : `${indent}${statement}\n`
-  return { reads, edits: [{ start: insertAt, end: insertAt, text }] }
+  return { reads, edits: [{ start: insertAt, end: insertAt, text }], statement }
 }
 
 /**

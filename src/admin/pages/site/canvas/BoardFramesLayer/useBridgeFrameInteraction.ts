@@ -224,7 +224,8 @@ export function useBridgeFrameInteraction(adapter: FrameDocumentAdapter | null, 
     // The layer a press means — the SAME resolution a portal frame's click,
     // hover and body drag use (`canvasPressTarget.ts`): Figma's selection
     // depth, a closed instance as one layer, ⌘/Ctrl for the innermost.
-    const selectionTarget = (nodeId: string, modifiers: { metaKey: boolean; ctrlKey: boolean }): string => {
+    // `null` is the frame's own empty background (`canvasPressTarget.ts`).
+    const selectionTarget = (nodeId: string, modifiers: { metaKey: boolean; ctrlKey: boolean }): string | null => {
       const page = framePage()
       if (!page) return nodeId
       const state = useEditorStore.getState()
@@ -310,7 +311,7 @@ export function useBridgeFrameInteraction(adapter: FrameDocumentAdapter | null, 
             }
             if (event.nodeId) handlers.onNodePointerUp(event.nodeId)
             return
-          case 'click':
+          case 'click': {
             if (dropNextClick) {
               dropNextClick = false
               return
@@ -319,8 +320,14 @@ export function useBridgeFrameInteraction(adapter: FrameDocumentAdapter | null, 
             // already selected what it moved (`useBridgeBodyDragTrigger`).
             if (takeCanvasPressDrag()) return
             activateIfNeeded()
-            if (event.nodeId) handlers.onFrameNodeClick(selectionTarget(event.nodeId, event.modifiers), event.modifiers, current.breakpointId, current.frameId)
+            // No stamped element under the click (the app's own `<html>` /
+            // `<body>` below its content), or the page root itself: the
+            // frame's empty background, which lets go of everything.
+            const target = event.nodeId ? selectionTarget(event.nodeId, event.modifiers) : null
+            if (target === null) handlers.onFrameBackgroundClick(current.breakpointId, current.frameId)
+            else handlers.onFrameNodeClick(target, event.modifiers, current.breakpointId, current.frameId)
             return
+          }
         }
       }),
       adapter.on('wheel', (event) => {

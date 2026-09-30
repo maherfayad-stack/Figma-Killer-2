@@ -195,6 +195,35 @@ describe('saveSite → narrow board resync', () => {
       expect(order).toEqual(['save', 'reload-scope', 'load'])
     })
 
+    it('a literal refused `literal-changed` re-reads its dictionary file, so the board shows what the file holds now', async () => {
+      stubFetch({
+        saveBody: {
+          ok: true,
+          written: 0,
+          skipped: 0,
+          shifted: false,
+          sharedComponents: false,
+          refusals: [
+            {
+              nodeId: 'i18n/translations.ts:24:15',
+              kind: 'literal',
+              reason: 'literal-changed',
+              message: 'This text was changed in the code since the board read it.',
+            },
+          ],
+        },
+        reloadScopeBody: { ok: true, narrow: true, pageIds: ['home'] },
+        reloadedPages: [makePage({ id: 'home', rootNodeId: 'root', nodes: { root: makeNode({ id: 'root', moduleId: 'base.body' }) } })],
+      })
+
+      const { reloads, patches } = await record(() => fsCodemodAdapter.saveSite(siteWithEditedClass()))
+
+      expect(reloads).toBe(0)
+      expect(patches).toHaveLength(1)
+      const scope = calls.find((call) => call.url.includes('/reload-scope'))!
+      expect((scope.body as { files: string[] }).files).toEqual(['i18n/translations.ts'])
+    })
+
     it('a shifted save takes the same narrow path', async () => {
       stubFetch({
         saveBody: { ok: true, written: 1, skipped: 0, shifted: true, sharedComponents: false, touchedFiles: ['pages/Home.tsx'] },

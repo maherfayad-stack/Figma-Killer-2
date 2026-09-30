@@ -167,7 +167,7 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
     const preview = s.previewClassAssignment?.nodeId === nodeId ? s.previewClassAssignment : null
     return getCanvasNodeClassName(canvasNode?.classIds, preview, nodeId, s.site?.styleRules)
   })
-  const { onNodeClick, onNodeHover, onNodeContextMenu, onNodeDoubleClick, onNodePointerDown, onNodePointerUp } =
+  const { onNodeClick, onFrameBackgroundClick, onNodeHover, onNodeContextMenu, onNodeDoubleClick, onNodePointerDown, onNodePointerUp } =
     use(CanvasSelectionContext)
 
   /**
@@ -175,9 +175,10 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
    * selection depth, a closed instance or an inlined VC body as one layer, and
    * ⌘/Ctrl (`deep`) for the innermost. Depth is an EDITING rule: a live frame
    * is the page as a visitor gets it, and its clicks (and the prototype
-   * player's links) land on the element actually pressed.
+   * player's links) land on the element actually pressed. `null` is the
+   * frame's own empty background.
    */
-  const resolvePressTarget = (hitId: string, deep: boolean): string => {
+  const resolvePressTarget = (hitId: string, deep: boolean): string | null => {
     const state = useEditorStore.getState()
     const page = selectCanvasPageFor(state, contextPageId, frameId)
     const context = canvasPressContext(state, frameId)
@@ -187,10 +188,18 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
   /**
    * A click: deep (the innermost layer) when ⌘/Ctrl is held. The keyboard's
    * Enter/Space passes `focusedNode` — it activates the node that HAS focus,
-   * which is exactly the one it names.
+   * which is exactly the one it names. A click on the frame's own empty
+   * background selects nothing and lets go of everything.
    */
   const handleNodeClick = (clickedNodeId: string, e: React.MouseEvent, focusedNode?: boolean) => {
-    onNodeClick(resolvePressTarget(clickedNodeId, focusedNode === true || e.metaKey || e.ctrlKey), e, breakpointId, frameId)
+    const target = resolvePressTarget(clickedNodeId, focusedNode === true || e.metaKey || e.ctrlKey)
+    if (target !== null) {
+      onNodeClick(target, e, breakpointId, frameId)
+      return
+    }
+    // The design canvas owns its clicks outright, as `onNodeClick` does.
+    e.stopPropagation()
+    onFrameBackgroundClick(breakpointId, frameId)
   }
 
   // A right-click is ABOUT the same layer a click would be: a right-click that
@@ -198,8 +207,10 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
   // instance the user had selected — so the menu never offered "Detach
   // instance", and the right-click itself replaced the selection with that
   // inner element. Only ⌘ is deep here: ⌃-click IS the right-click on macOS.
+  // On the frame's own background the menu is the page root's — the one
+  // layer that is there.
   const handleNodeContextMenu = (clickedNodeId: string, e: React.MouseEvent) => {
-    onNodeContextMenu(resolvePressTarget(clickedNodeId, e.metaKey), e, breakpointId, frameId)
+    onNodeContextMenu(resolvePressTarget(clickedNodeId, e.metaKey) ?? clickedNodeId, e, breakpointId, frameId)
   }
 
   // A double-click steps ONE container level down from what its clicks
@@ -228,7 +239,8 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
   }
 
   // The hover ring shows what a click WOULD select, so it follows the same
-  // resolution (⌘/Ctrl held shows the innermost layer).
+  // resolution (⌘/Ctrl held shows the innermost layer) — and nothing over the
+  // frame's own empty background.
   const handleNodeHover = (hoveredNodeId: string | null, deep: boolean) => {
     onNodeHover(hoveredNodeId === null ? null : resolvePressTarget(hoveredNodeId, deep), breakpointId, frameId)
   }

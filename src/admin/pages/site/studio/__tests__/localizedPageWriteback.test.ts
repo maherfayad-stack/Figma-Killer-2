@@ -16,6 +16,7 @@ import {
   resetLocalizedTextBaseline,
   watchLocalizedPagesForBaseline,
 } from '../localizedPageWriteback'
+import { resetLoadedValues } from '../loadedValuesBaseline'
 import { makeNode, makePage, makeSite } from '../../../../../__tests__/fixtures'
 // Side-effect import: registers `base.text`'s `inlineTextEdit.prop` ('text')
 // into the global registry — both the default-tree AND locale-variant
@@ -80,6 +81,13 @@ describe('a same-node-id edit in the en (default) frame and the ar (variant) fra
 
     // --- default (en) tree, loaded the normal way ---
     await fsCodemodAdapter.loadSite()
+    // What that load read at the `en` literal — the baseline its edit is sent
+    // against (`expected`). A literal with no baseline is never written.
+    const enLoadedNode = makeNode({ id: 'headline', moduleId: 'base.text', props: { text: 'Hi' }, textOrigin: EN_ORIGIN })
+    const enLoadedRoot = makeNode({ id: 'page-root', moduleId: 'base.body', children: [enLoadedNode.id] })
+    resetLoadedValues([
+      makePage({ id: 'home', rootNodeId: enLoadedRoot.id, nodes: { [enLoadedRoot.id]: enLoadedRoot, [enLoadedNode.id]: enLoadedNode } }),
+    ])
 
     // --- locale-variant (ar) tree: simulates `loadStudioPageInLocale`'s
     // output landing in the store via `ensureLocalizedPage` — the fetch
@@ -227,6 +235,8 @@ describe('ERR-17 — the baseline advances to what was SENT, never to what the s
     await fsCodemodAdapter.saveSite(makeSite())
 
     const second = (saveCalls[1]?.body as { edits: Array<{ nodeId: string; text?: string }> } | undefined)?.edits ?? []
-    expect(second).toEqual([{ kind: 'literal', nodeId: `${AR_ORIGIN.rel}:${AR_ORIGIN.line}:${AR_ORIGIN.col}`, text: 'Ahlan' }])
+    expect(second).toEqual([
+      { kind: 'literal', nodeId: `${AR_ORIGIN.rel}:${AR_ORIGIN.line}:${AR_ORIGIN.col}`, text: 'Ahlan', expected: 'Marhaba' },
+    ])
   })
 })

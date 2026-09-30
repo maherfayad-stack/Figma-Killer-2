@@ -138,7 +138,7 @@ describe('WB-1 — an edit whose file changed under the board refuses instead of
     write('i18n/copy.ts', ["export const copy = {", "  intro: 'Hi there',", "  title: 'Welcome',", '}', ''].join('\n'))
     const before = read('i18n/copy.ts')
 
-    const result = applyStudioEditBatch(tmpDir, [{ kind: 'literal', nodeId: originId, text: 'Hello' }], {
+    const result = applyStudioEditBatch(tmpDir, [{ kind: 'literal', nodeId: originId, text: 'Hello', expected: 'Welcome' }], {
       [originId]: origin.fingerprint!,
     })
 

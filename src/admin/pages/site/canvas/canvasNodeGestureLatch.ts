@@ -65,9 +65,11 @@ export function claimSuppressedPointerActivation(target: EventTarget | null): bo
  * press started and where it ended. Left alone, that click re-selected
  * whatever it landed on and replaced the layer the user had just moved (a
  * bridge frame's runtime forwards the same click). Set when the drag session
- * ACTIVATES (`useCanvasReorderDrag`), cleared by the next press in any frame
- * (`beginCanvasPress`), and read by every click and release path: a press that
- * became a drag selects nothing on release.
+ * ACTIVATES (`useCanvasReorderDrag`) — and on a press that starts a PAN of the
+ * canvas (`useCanvasBodyDragTrigger`), which drags the board rather than an
+ * element — cleared by the next press in any frame (`beginCanvasPress`), and
+ * read by every click and release path: a press that became a drag selects
+ * (and deselects) nothing on release.
  */
 let pressBecameDrag = false
 

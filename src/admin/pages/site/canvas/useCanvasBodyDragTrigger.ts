@@ -42,7 +42,7 @@ import {
 } from './canvasEventTargets'
 import { iframeLocalPointToParentClientPoint } from './iframeEventCoordinates'
 import { isCanvasSpacePanActive, shouldStartCanvasPointerPan } from './canvasPanInput'
-import { beginCanvasPress } from './canvasNodeGestureLatch'
+import { beginCanvasPress, markCanvasPressDragged } from './canvasNodeGestureLatch'
 import { canvasPressContext, planCanvasPressDrag } from './canvasPressTarget'
 import type { CanvasDragOrigin } from './canvasDragSession'
 
@@ -105,7 +105,13 @@ export function useCanvasBodyDragTrigger({
       // Space + left-drag and middle-drag are the canvas's PAN gesture on the
       // same button. `IframeFrameSurface`'s relay claims those; starting a
       // reorder here would make one gesture mean two things.
-      if (shouldStartCanvasPointerPan(event, { spaceHeld: isCanvasSpacePanActive(document) })) return
+      // Its release is not a click either: the frame moved under the pointer,
+      // and the click lands on whatever common ancestor is left — often the
+      // page root, whose click now lets go of everything.
+      if (shouldStartCanvasPointerPan(event, { spaceHeld: isCanvasSpacePanActive(document) })) {
+        markCanvasPressDragged()
+        return
+      }
 
       const state = useEditorStore.getState()
       // An inline text edit owns the pointer inside its contentEditable: a
@@ -139,6 +145,8 @@ export function useCanvasBodyDragTrigger({
       const plan = planCanvasPressDrag(page, nodeId, canvasPressContext(state, frameId), {
         deep: event.metaKey || event.ctrlKey,
       })
+      // The frame's own background: nothing to move — the press is the in-frame marquee's.
+      if (!plan) return
 
       const rect = iframe.getBoundingClientRect()
       const point = iframeLocalPointToParentClientPoint(

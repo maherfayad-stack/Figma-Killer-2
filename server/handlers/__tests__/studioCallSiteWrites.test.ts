@@ -102,9 +102,13 @@ function nodesWith(page: Page, key: string, value: string): PageNode[] {
 }
 
 /** The `literal` edit the client emits for a value with an origin, guarded by the origin's fingerprint. */
-function writeAtOrigin(origin: NonNullable<PageNode['textOrigin']>, text: string) {
+function writeAtOrigin(origin: NonNullable<PageNode['textOrigin']>, text: string, expected: string) {
   const nodeId = `${origin.rel}:${origin.line}:${origin.col}`
-  return applyStudioEditBatch(wsDir, [{ kind: 'literal', nodeId, text }], origin.fingerprint ? { [nodeId]: origin.fingerprint } : {})
+  return applyStudioEditBatch(
+    wsDir,
+    [{ kind: 'literal', nodeId, text, expected }],
+    origin.fingerprint ? { [nodeId]: origin.fingerprint } : {},
+  )
 }
 
 beforeEach(() => {
@@ -130,7 +134,7 @@ describe('WB-6 — forwarded text is written at the call site', () => {
     expect(heading?.codeProps ?? []).not.toContain('text')
     expect(heading?.textOrigin?.rel).toBe('pages/Recipes.tsx')
 
-    const result = writeAtOrigin(heading!.textOrigin!, 'Quick dinners')
+    const result = writeAtOrigin(heading!.textOrigin!, 'Quick dinners', 'Weeknight dinners')
     expect(result.refusals).toEqual([])
     expect(result.written).toBe(1)
     expect(read('pages/Recipes.tsx')).toBe(PAGE.replace('title="Weeknight dinners"', 'title="Quick dinners"'))
@@ -144,7 +148,7 @@ describe('WB-6 — forwarded text is written at the call site', () => {
 
   it('two inlining hops still write the page’s literal, not the middle component', async () => {
     const [heading] = nodesWith(await recipes(), 'text', 'Soups')
-    const result = writeAtOrigin(heading!.textOrigin!, 'Stews')
+    const result = writeAtOrigin(heading!.textOrigin!, 'Stews', 'Soups')
     expect(result.refusals).toEqual([])
     expect(read('pages/Recipes.tsx')).toBe(PAGE.replace('heading="Soups"', 'heading="Stews"'))
     expect(read('components/RecipeCard.tsx')).toBe(COMPONENTS['components/RecipeCard.tsx']!)
@@ -152,7 +156,7 @@ describe('WB-6 — forwarded text is written at the call site', () => {
 
   it('a value with a quote in it keeps the attribute valid', async () => {
     const [heading] = nodesWith(await recipes(), 'text', 'Weeknight dinners')
-    writeAtOrigin(heading!.textOrigin!, 'Mum’s "best" dinners')
+    writeAtOrigin(heading!.textOrigin!, 'Mum’s "best" dinners', 'Weeknight dinners')
     expect(read('pages/Recipes.tsx')).toBe(PAGE.replace('title="Weeknight dinners"', 'title=\'Mum’s "best" dinners\''))
     clearStudioLoadMemo()
     expect(nodesWith(await recipes(), 'text', 'Mum’s "best" dinners')).toHaveLength(1)
@@ -166,7 +170,7 @@ describe('WB-8 — a forwarded PROP with an origin is writable there', () => {
     const origin = button?.resolvedProps?.['aria-label']?.origin
     expect(origin?.rel).toBe('pages/Recipes.tsx')
 
-    const result = writeAtOrigin(origin!, 'Keep this recipe')
+    const result = writeAtOrigin(origin!, 'Keep this recipe', 'Save this recipe')
     expect(result.refusals).toEqual([])
     expect(read('pages/Recipes.tsx')).toBe(PAGE.replace('hint="Save this recipe"', 'hint="Keep this recipe"'))
     expect(read('components/SaveButton.tsx')).toBe(COMPONENTS['components/SaveButton.tsx']!)

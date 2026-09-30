@@ -114,7 +114,8 @@ describe('ContentPanel', () => {
     await user.tab()
 
     await waitFor(() => expect(writes.length).toBeGreaterThan(0))
-    expect(writes[0]).toMatchObject({ locale: 'ar', key: 'nav.home', value: 'الرئيسية' })
+    // `expected: null` — the cell was a gap; the server refuses if it no longer is.
+    expect(writes[0]).toEqual(expect.objectContaining({ locale: 'ar', key: 'nav.home', value: 'الرئيسية', expected: null }))
   })
 
   it('does not write when the value was not edited', async () => {

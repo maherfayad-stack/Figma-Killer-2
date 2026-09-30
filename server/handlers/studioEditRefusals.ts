@@ -32,6 +32,8 @@
  *     that is not an HTML tag.
  *   - `not-a-literal` — a `literal`/`asset` edit whose position holds
  *     something other than the string it expects.
+ *   - `literal-changed` — a `literal` edit whose string no longer holds the text
+ *     the board read (`expected`): someone changed it since, and theirs wins.
  *   - `spread-attribute` — a prop that only exists inside `{...spread}`.
  *   - `no-source-location` / `stylesheet-unavailable` / `asset-unavailable` —
  *     an `applied: false` outcome: nowhere honest to write.
@@ -75,6 +77,12 @@ export const WRITE_FAILED_REASON = 'write-failed'
 
 const ELEMENT_MOVED_SENTENCE =
   'The file changed since the board read it, and this element is no longer where it was, so nothing was written.'
+
+/** A `literal` edit whose literal no longer holds the text the board read (`setStringLiteral`'s compare-and-swap). */
+const LITERAL_CHANGED_REASON = 'literal-changed'
+
+const LITERAL_CHANGED_SENTENCE =
+  'This text was changed in the code since the board read it, so Studio did not write over it. The board now shows the file as it is.'
 
 const UNWRITABLE_SENTENCE: Record<StudioEditUnwritableReason, string> = {
   'no-source-location': 'This element has no single place in your code to write to, so the change stays on the canvas only.',
@@ -126,6 +134,9 @@ export function refusalFromCodemodError(edit: StudioEdit, err: unknown): StudioE
         ? 'This element is a component, not an HTML element, so its tag cannot be renamed — that would need a different import. Swap the component instead.'
         : `"${edit.kind === 'tag' ? edit.tag : ''}" is not an HTML tag name Studio can write.`,
     )
+  }
+  if (err instanceof StringLiteralTargetError && err.reason === LITERAL_CHANGED_REASON) {
+    return new StudioEditRefusalError(LITERAL_CHANGED_REASON, LITERAL_CHANGED_SENTENCE)
   }
   if (err instanceof StringLiteralTargetError || err instanceof ImportSpecifierTargetError) {
     if (err.reason === ELEMENT_MOVED_REASON) return new StudioEditRefusalError(ELEMENT_MOVED_REASON, ELEMENT_MOVED_SENTENCE)

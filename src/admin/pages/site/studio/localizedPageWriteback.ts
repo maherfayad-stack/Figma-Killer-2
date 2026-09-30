@@ -81,6 +81,8 @@ export interface LocalizedLiteralEditPayload {
   kind: 'literal'
   nodeId: string
   text: string
+  /** The text this locale's frame read at the literal — the server writes only while the file still holds it. */
+  expected: string
 }
 
 /** `${pageId}::${locale}::${nodeId}` -> the text value as last synced (seed OR commit, whichever most recently observed it). */
@@ -153,7 +155,7 @@ export function collectLocalizedTextEdits(localizedPages: Record<string, Page>):
       if (before === undefined || Object.is(before, value)) continue
       const node = page.nodes[nodeId]!
       const { rel, line, col } = node.textOrigin!
-      edits.push({ kind: 'literal', nodeId: `${rel}:${line}:${col}`, text: value })
+      edits.push({ kind: 'literal', nodeId: `${rel}:${line}:${col}`, text: value, expected: before })
     }
   }
   return edits

@@ -199,11 +199,20 @@ export function collectNodeDiffEdits(
       // location — which is what lets a `.map` row be edited individually. Each
       // iteration resolved a DIFFERENT array element, so each carries its own
       // origin and writes only its own string.
+      //
+      // A literal is written ONLY against a baseline: `expected` is what the
+      // board read there, and the server refuses when the file holds anything
+      // else. A node with no baseline for the value was never read from disk
+      // by this board (or its read was replaced), so there is nothing honest
+      // to compare against — writing it anyway is how a stale tree, or a value
+      // resolved from ANOTHER locale's branch, was put back over the
+      // dictionary (2026-09-30: `ar` text written into `en`).
       if (textProp !== undefined && node.textOrigin) {
         const value = node.props?.[textProp]
-        if (typeof value === 'string' && !(baseline && Object.is(baseline[textProp], value))) {
+        const expected = baseline?.[textProp]
+        if (typeof value === 'string' && typeof expected === 'string' && value !== expected) {
           const { rel, line, col } = node.textOrigin
-          const editKey = emit({ kind: 'literal', nodeId: `${rel}:${line}:${col}`, text: value })
+          const editKey = emit({ kind: 'literal', nodeId: `${rel}:${line}:${col}`, text: value, expected })
           bumps.push({ nodeId: node.id, key: textProp, value, editKey })
         }
       }
@@ -223,8 +232,15 @@ export function collectNodeDiffEdits(
       const writtenAtOrigin = new Set<string>()
       for (const { key, value, origin } of originBackedValues(node, textProp)) {
         writtenAtOrigin.add(key)
-        if (baseline && Object.is(baseline[key], value)) continue
-        const editKey = emit({ kind: 'literal', nodeId: `${origin.rel}:${origin.line}:${origin.col}`, text: String(value) })
+        const expected = baseline?.[key]
+        // No baseline: never read at this literal, never written — see the text branch above.
+        if (expected === undefined || typeof expected === 'boolean' || Object.is(expected, value)) continue
+        const editKey = emit({
+          kind: 'literal',
+          nodeId: `${origin.rel}:${origin.line}:${origin.col}`,
+          text: String(value),
+          expected: String(expected),
+        })
         bumps.push({ nodeId: node.id, key, value, editKey })
       }
 

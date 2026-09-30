@@ -81,7 +81,7 @@ describe('translation catalog', () => {
   it('creates a missing Arabic entry, including its intermediate objects', () => {
     seedDictionaryProject()
     // `nav.home` has no Arabic at all — the normal state the panel exists for.
-    expect(writeTranslationEntry(dir, { locale: 'ar', key: 'nav.home', value: 'الرئيسية' })).toEqual({ ok: true })
+    expect(writeTranslationEntry(dir, { locale: 'ar', key: 'nav.home', value: 'الرئيسية', expected: null })).toEqual({ ok: true })
 
     const byKey = new Map(readTranslationCatalog(dir)!.entries.map((e) => [e.key, e.values]))
     expect(byKey.get('nav.home')).toEqual({ en: 'Home', ar: 'الرئيسية' })
@@ -91,7 +91,7 @@ describe('translation catalog', () => {
 
   it('overwrites an existing value in place', () => {
     seedDictionaryProject()
-    expect(writeTranslationEntry(dir, { locale: 'ar', key: 'greeting', value: 'أهلاً' })).toEqual({ ok: true })
+    expect(writeTranslationEntry(dir, { locale: 'ar', key: 'greeting', value: 'أهلاً', expected: 'مرحبا' })).toEqual({ ok: true })
     expect(readFileSync(join(dir, 'src/i18n/translations.js'), 'utf8')).toContain("greeting: 'أهلاً'")
   })
 
@@ -103,7 +103,7 @@ describe('translation catalog', () => {
     )
     write('src/App.jsx', "const t = translations[lang]\nexport default function App() { return <p>{t.greeting}</p> }")
 
-    const result = writeTranslationEntry(dir, { locale: 'en', key: 'greeting', value: 'Hi' })
+    const result = writeTranslationEntry(dir, { locale: 'en', key: 'greeting', value: 'Hi', expected: null })
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.message).toContain('expression')
     // Refused BEFORE writing — the call is still there.
@@ -112,8 +112,61 @@ describe('translation catalog', () => {
 
   it('refuses a locale the project does not declare', () => {
     seedDictionaryProject()
-    const result = writeTranslationEntry(dir, { locale: 'fr', key: 'greeting', value: 'Salut' })
+    const result = writeTranslationEntry(dir, { locale: 'fr', key: 'greeting', value: 'Salut', expected: null })
     expect(result.ok).toBe(false)
+  })
+})
+
+/**
+ * Compare-and-swap, one entry at a time — the 2026-09-30 owner report: a hand
+ * fix to `en` was reverted by a write carrying an OLD read of the dictionary.
+ * Every write says what it believes the entry holds; a file that moved on wins.
+ */
+describe('a dictionary write never clobbers a newer file', () => {
+  const FILE = 'src/i18n/translations.js'
+
+  it('refuses when the entry changed on disk between the read and the write, and leaves every byte alone', () => {
+    seedDictionaryProject()
+    // The caller read `greeting` as 'Hello'; someone fixed it since.
+    const fixed = readFileSync(join(dir, FILE), 'utf8').replace("greeting: 'Hello'", "greeting: 'Hello there'")
+    write(FILE, fixed)
+
+    const result = writeTranslationEntry(dir, { locale: 'en', key: 'greeting', value: 'مرحبا', expected: 'Hello' })
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.message).toContain('changed in the dictionary')
+    expect(readFileSync(join(dir, FILE), 'utf8')).toBe(fixed)
+  })
+
+  it('refuses to CREATE over an entry that appeared since the caller read it as absent', () => {
+    seedDictionaryProject()
+    const filled = readFileSync(join(dir, FILE), 'utf8').replace(
+      "    greeting: 'مرحبا',",
+      "    greeting: 'مرحبا',\n    nav: { home: 'البيت' },",
+    )
+    write(FILE, filled)
+
+    const result = writeTranslationEntry(dir, { locale: 'ar', key: 'nav.home', value: 'الرئيسية', expected: null })
+
+    expect(result.ok).toBe(false)
+    expect(readFileSync(join(dir, FILE), 'utf8')).toBe(filled)
+  })
+
+  it('patches only its own (locale, key): every other line of the file is byte-identical', () => {
+    seedDictionaryProject()
+    const before = readFileSync(join(dir, FILE), 'utf8')
+
+    expect(writeTranslationEntry(dir, { locale: 'ar', key: 'greeting', value: 'أهلاً', expected: 'مرحبا' })).toEqual({ ok: true })
+
+    const after = readFileSync(join(dir, FILE), 'utf8')
+    expect(after).toBe(before.replace("greeting: 'مرحبا'", "greeting: 'أهلاً'"))
+  })
+
+  it('a value already on disk is a no-op, whatever the caller expected', () => {
+    seedDictionaryProject()
+    const before = readFileSync(join(dir, FILE), 'utf8')
+    expect(writeTranslationEntry(dir, { locale: 'en', key: 'greeting', value: 'Hello', expected: 'stale' })).toEqual({ ok: true })
+    expect(readFileSync(join(dir, FILE), 'utf8')).toBe(before)
   })
 })
 
@@ -128,14 +181,14 @@ describe('WB-32 — a locale JSON keeps its own formatting', () => {
 
   it('changes only the value bytes of an existing key — tabs, CRLF and the missing final newline all stay', () => {
     seedJsonProject(TAB_CRLF)
-    expect(writeTranslationEntry(dir, { locale: 'en', key: 'nav.home', value: 'Start' })).toEqual({ ok: true })
+    expect(writeTranslationEntry(dir, { locale: 'en', key: 'nav.home', value: 'Start', expected: 'Home' })).toEqual({ ok: true })
     expect(readFileSync(join(dir, 'locales/en.json'), 'utf8')).toBe(TAB_CRLF.replace('"Home"', '"Start"'))
   })
 
   it("creates a missing key in the file's own indentation, line ending and final newline", () => {
     const fourSpacesCrlf = ['{', '    "greeting": "Hello"', '}', ''].join('\r\n')
     seedJsonProject(fourSpacesCrlf)
-    expect(writeTranslationEntry(dir, { locale: 'en', key: 'nav.home', value: 'Home' })).toEqual({ ok: true })
+    expect(writeTranslationEntry(dir, { locale: 'en', key: 'nav.home', value: 'Home', expected: null })).toEqual({ ok: true })
     expect(readFileSync(join(dir, 'locales/en.json'), 'utf8')).toBe(
       ['{', '    "greeting": "Hello",', '    "nav": {', '        "home": "Home"', '    }', '}', ''].join('\r\n'),
     )

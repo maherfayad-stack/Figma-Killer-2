@@ -185,6 +185,17 @@ drag cannot disagree:
   (`base.body`) and, when it has exactly one child, that child (the page
   component's own root, i.e. the screen) are the frame and transparent to
   presses, the way a Figma top-level frame is.
+  The screen's own background (padding, gaps) still selects the screen.
+- A press on the frame's EMPTY AREA — the element under the pointer IS the
+  page root, the frame document's synthetic `<body>` (`base.body`, no element
+  of the user's source): typically the height below the page's content →
+  `null`: no layer. A click there deselects everything
+  (`onFrameBackgroundClick` → `deselectEverything`, the same function the
+  empty board uses), hover shows nothing, no body drag starts (the in-frame
+  marquee owns that press), and right-click opens the page root's menu. A
+  selected body keeps meaning itself; ⌘/Ctrl reaches it. An authored root (a
+  Visual Component's own root) is never background. Bridge frames: a click
+  with no stamped element under it is background too.
 - A press inside a selected layer → that layer (drag moves it; click keeps it).
 - Otherwise → the child of the deepest node the selection and the pressed
   element share: the sibling of the selection, at its level.
@@ -1039,8 +1050,11 @@ The rules the ladder replaced prose with:
   (`isEmptyBoardTarget`, the one test the drop paths use too), its press must
   not have been a pan (Space, the hand tool, the middle button), and the
   pointer must have stayed within 3 screen px — a Space-pan or a marquee
-  across the board keeps the selection. A click on a frame's own page
-  background is not this: it selects the page root, the frame's own model.
+  across the board keeps the selection. A click on a frame's own empty
+  background deselects too, through the press resolution (see "A press means
+  a LAYER" above); a Space-pan that STARTS in a portal frame marks its press as
+  a drag (`useCanvasBodyDragTrigger` → `markCanvasPressDragged`), so its
+  release click deselects nothing.
 - **Enter (P5-E, IX-7):** on ONE text layer it opens the inline edit, the
   double-click path (`canvasTextEditStart.ts` — portal frames only, because a
   live frame's text edit is started by its runtime and a session opened from

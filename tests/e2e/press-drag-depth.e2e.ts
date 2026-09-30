@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { expect, test, type Frame, type Locator, type Page } from '@playwright/test'
-import { canvasContentFrame, liveBridgeIframe, settleCanvasFrameMode } from './helpers/canvasIframe'
+import { canvasContentFrame, liveBridgeIframe, settleCanvasFrameMode, visibleCanvasIframe } from './helpers/canvasIframe'
 import { giveFixtureARealVite } from './helpers/liveAnimatedFixture'
 import {
   createAuthoredFixtureProject,
@@ -341,6 +341,167 @@ test.describe('press-and-drag moves the layer the press means', () => {
       const far = await emptyBoardPoint(page, canvasRoot)
       await page.mouse.click(far.x, far.y)
       await expect.poll(() => selectedNodeId(page), { timeout: 15_000 }).toBeNull()
+    })
+  })
+
+  /**
+   * The owner's board, shaped like `test4`: several right-to-left phone
+   * screens side by side, each SHORTER than its frame, so the frame's lower
+   * part is the frame document's own `<body>` — no element of the user's
+   * source. Measured on a copy of `test4` (Shift+1, 3 frames): every grey
+   * point between and around the frames already deselected; what did not was
+   * that lower area, which selected the page's Body instead (16 % of the SMS
+   * frame). "Clicking an empty place deselects everything" means both.
+   */
+  test.describe('a multi-frame board', () => {
+    const SCREENS = ['one', 'two', 'three'] as const
+    const screenSource = (title: string) => `export default function Screen() {
+  return (
+    <main className="screen" dir="rtl">
+      <h1 className="heading">${title}</h1>
+      <p className="copy">نص قصير</p>
+    </main>
+  )
+}
+`
+    let fixture: FixtureProject
+
+    test.beforeEach(() => {
+      const files: Record<string, string> = {
+        '.studio/meta.json': JSON.stringify(
+          { displayName: 'Zz multi-frame', pagesDir: 'pages', trust: 'static', frameDefaults: { width: 393, height: 852 } },
+          null,
+          2,
+        ),
+        '.studio/boards.json': JSON.stringify(
+          {
+            version: 1,
+            boards: [
+              {
+                id: 'multi-board',
+                name: 'Multi',
+                frames: SCREENS.map((id, index) => ({ id: `multi-${id}`, pageId: id, x: index * 420, y: 0, width: 393, height: 852 })),
+                notes: [],
+                docs: [],
+                guides: [],
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+      }
+      for (const id of SCREENS) files[`pages/${id}.jsx`] = screenSource(`Screen ${id}`)
+      fixture = createAuthoredFixtureProject('__e2e-press-drag-multi', files)
+    })
+
+    test.afterEach(() => removeFixtureProject(fixture))
+
+    test('a click between frames and a click in a frame’s empty lower area both deselect everything', async ({ page }) => {
+      // Room for three phone frames beside the Properties panel a selection opens.
+      await page.setViewportSize({ width: 1600, height: 1000 })
+      const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
+      // Every frame on screen, the way the owner looks at the board.
+      await canvasRoot.focus()
+      await page.keyboard.press('Shift+1')
+      await page.waitForTimeout(800)
+      for (const id of SCREENS) await expect(visibleCanvasIframe(page.locator(`[data-page-id="${id}"]`).first())).toBeVisible({ timeout: 60_000 })
+
+      const middle = page.locator('[data-page-id="two"]').first()
+      const middleContent = canvasContentFrame(middle)
+      const heading = middleContent.getByText('Screen two')
+      await expect(heading).toBeVisible({ timeout: 30_000 })
+      const ring = middleContent.locator('[data-canvas-selection-ring="true"]')
+
+      const select = async () => {
+        // Near the heading's left end: the Properties panel may cover the frame's right half.
+        const at = await heading.boundingBox()
+        if (!at) throw new Error('the heading has no box')
+        await page.mouse.click(at.x + 20, at.y + at.height / 2)
+        await expect.poll(() => selectedNodeId(page), { timeout: 15_000 }).not.toBeNull()
+        await expect(ring.first()).toBeVisible({ timeout: 15_000 })
+        // The Properties panel a selection opens narrows the canvas: measure
+        // the board only once the middle frame has stopped moving.
+        let last = ''
+        await expect
+          .poll(async () => {
+            const b = await middle.boundingBox()
+            const key = b ? `${Math.round(b.x)},${Math.round(b.y)},${Math.round(b.width)}` : ''
+            const settled = key !== '' && key === last
+            last = key
+            return settled
+          }, { timeout: 10_000, intervals: [250] })
+          .toBe(true)
+      }
+
+      // 1. Between two frames: the empty board itself.
+      await select()
+      const [left, right] = await Promise.all([
+        page.locator('[data-page-id="one"]').first().boundingBox(),
+        middle.boundingBox(),
+      ])
+      if (!left || !right) throw new Error('a frame has no box')
+      const gap = { x: (left.x + left.width + right.x) / 2, y: right.y + right.height / 2 }
+      expect(
+        await page.evaluate(({ x, y }) => (document.elementFromPoint(x, y) as HTMLElement | null)?.dataset.studioCanvasRoot ?? null, gap),
+        'the gap between two frames is not the empty board',
+      ).toBe('true')
+      await page.mouse.click(gap.x, gap.y)
+      await expect.poll(() => selectedNodeId(page), { timeout: 15_000 }).toBeNull()
+      await expect(ring).toHaveCount(0, { timeout: 15_000 })
+
+      // 2. Inside the frame, below the page's content: the frame's own body.
+      await select()
+      const box = await middle.boundingBox()
+      if (!box) throw new Error('the middle frame has no box')
+      // The lowest point where the frame's page is what is under the pointer
+      // (the frame's own chrome may sit below it), then 12 px up into it.
+      const lower = await page.evaluate((b) => {
+        // Near its left edge: the Properties panel a selection opens can cover its right half.
+        const x = b.x + 30
+        for (let y = b.y + b.height - 1; y > b.y; y -= 2) {
+          if (document.elementFromPoint(x, y)?.tagName === 'IFRAME') return { x, y: y - 12 }
+        }
+        throw new Error('no point of the middle frame shows its page')
+      }, box)
+      const hitInFrame = await visibleCanvasIframe(middle).evaluate(
+        (iframe, point) => {
+          const frame = iframe as HTMLIFrameElement
+          const rect = frame.getBoundingClientRect()
+          const scale = rect.width / frame.clientWidth
+          const el = frame.contentDocument?.elementFromPoint((point.x - rect.left) / scale, (point.y - rect.top) / scale)
+          return el?.tagName.toLowerCase() ?? null
+        },
+        lower,
+      )
+      // The frame document's own `<body>` or, past its margin, its `<html>`: either way no element of the source.
+      expect(['body', 'html'], 'the frame’s lower area is not empty — the fixture no longer measures the owner’s case').toContain(hitInFrame)
+      await page.mouse.click(lower.x, lower.y)
+      await expect.poll(() => selectedNodeId(page), { timeout: 15_000 }).toBeNull()
+      await expect(ring).toHaveCount(0, { timeout: 15_000 })
+
+      // 3. Mid-frame, below the two lines of copy: the frame's `<body>` itself
+      // (test4's SMS case — the page root, which used to get SELECTED).
+      await select()
+      const midBox = await middle.boundingBox()
+      if (!midBox) throw new Error('the middle frame has no box')
+      const mid = { x: midBox.x + 30, y: midBox.y + midBox.height * 0.6 }
+      const midHit = await visibleCanvasIframe(middle).evaluate(
+        (iframe, point) => {
+          const frame = iframe as HTMLIFrameElement
+          const rect = frame.getBoundingClientRect()
+          const scale = rect.width / frame.clientWidth
+          return frame.contentDocument?.elementFromPoint((point.x - rect.left) / scale, (point.y - rect.top) / scale)?.tagName.toLowerCase() ?? null
+        },
+        mid,
+      )
+      expect(midHit, 'mid-frame below the copy is not the frame’s body').toBe('body')
+      await page.mouse.click(mid.x, mid.y)
+      await expect.poll(() => selectedNodeId(page), { timeout: 15_000 }).toBeNull()
+      await expect(ring).toHaveCount(0, { timeout: 15_000 })
+
+      // 4. Content still selects.
+      await select()
     })
   })
 

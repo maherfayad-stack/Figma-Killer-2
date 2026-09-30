@@ -13,9 +13,12 @@
  *        Both are returned every time — a project WITH a dictionary can still
  *        have strings that never made it in.
  *
- *   POST { dir?, locale, key, value }
+ *   POST { dir?, locale, key, value, expected }
  *     -> `{ ok: true }` | `{ ok: false, message }`
- *        Writes ONE entry into the project's own dictionary. A structured
+ *        Writes ONE entry into the project's own dictionary. `expected` is the
+ *        value the panel showed for that entry (`null` for a gap): when the
+ *        file no longer holds it, the write is refused rather than put over a
+ *        newer value (`translationWrite.ts`'s compare-and-swap). A structured
  *        refusal (`ok: false`) is a 200, not a 4xx: "this key holds a
  *        function call, so Studio won't overwrite it" is an answer about the
  *        user's source, not a failed request — the same posture the studio
@@ -39,6 +42,8 @@ const WriteBodySchema = Type.Object({
   locale: Type.String({ minLength: 1 }),
   key: Type.String({ minLength: 1 }),
   value: Type.String(),
+  /** The value the caller read for this entry, `null` when it was absent. Required: a write that cannot say what it replaces is a blind write. */
+  expected: Type.Union([Type.String(), Type.Null()]),
 })
 
 export async function tryServeStudioTranslations(req: Request, url: URL, pathname: string): Promise<Response | null> {
@@ -64,9 +69,9 @@ export async function tryServeStudioTranslations(req: Request, url: URL, pathnam
       const body = await readValidatedBody(req, WriteBodySchema)
       // `readValidatedBody` returns null for an unparsable/invalid body — a
       // malformed request, distinct from the structured refusal below.
-      if (!body) return badRequest('Expected { locale, key, value }.')
+      if (!body) return badRequest('Expected { locale, key, value, expected }.')
       const dir = resolveProjectDir(body.dir ?? null)
-      return jsonResponse(writeTranslationEntry(dir, { locale: body.locale, key: body.key, value: body.value }))
+      return jsonResponse(writeTranslationEntry(dir, { locale: body.locale, key: body.key, value: body.value, expected: body.expected }))
     }
 
     return null
