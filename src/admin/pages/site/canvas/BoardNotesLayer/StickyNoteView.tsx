@@ -46,6 +46,7 @@ import { CopyPlusSolidIcon } from 'pixel-art-icons/icons/copy-plus-solid'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
 import { cn } from '@ui/cn'
 import { useAnnotationInteraction } from '../useAnnotationInteraction'
+import { clearAnnotationEditRequest, hasAnnotationEditRequest } from '../annotationPlacement'
 import { RESIZE_HANDLES } from '@core/studio-runtime'
 import { useAutoFitText } from './useAutoFitText'
 import styles from './StickyNoteView.module.css'
@@ -78,7 +79,11 @@ function StickyNoteViewImpl({ note }: StickyNoteViewProps) {
 
   const textRef = useRef<HTMLDivElement>(null)
   const textBoxRef = useRef<HTMLDivElement>(null)
-  const [isEditing, setIsEditing] = useState(false)
+  // A note just added from the toolbar mounts already editing (annotationPlacement.ts).
+  const [isEditing, setIsEditing] = useState(() => hasAnnotationEditRequest(note.id))
+  useEffect(() => {
+    clearAnnotationEditRequest(note.id)
+  }, [note.id])
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   // The text as it was when editing began — Escape restores it.
   const preEditTextRef = useRef(note.text)
