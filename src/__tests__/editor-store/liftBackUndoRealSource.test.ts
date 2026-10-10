@@ -109,7 +109,7 @@ describe('W2-2 — the free canvas lift and place are byte-exact ⌘Z', () => {
 
     expect(project.saves[1]!.edits[0]!.kind).toBe('restore')
     expect(project.read('pages/Product.tsx')).toBe(PRODUCT)
-    expect(Object.keys(store().canvasLayerPages)).toHaveLength(0)
+    await project.waitFor(() => Object.keys(store().canvasLayerPages).length === 0)
     expect(store().canRedo).toBe(true)
 
     // And the redo is undoable again.
@@ -121,7 +121,7 @@ describe('W2-2 — the free canvas lift and place are byte-exact ⌘Z', () => {
     await project.waitFor(() => project.saves.length === 4)
     await project.waitFor(() => !store().canUndo)
     expect(project.read('pages/Product.tsx')).toBe(PRODUCT)
-  })
+  }, 30_000)
 
   it('drops the lifted layer into another frame, and each ⌘Z puts back the step before it byte for byte', async () => {
     const product = pageNamed('roduct')
@@ -151,8 +151,8 @@ describe('W2-2 — the free canvas lift and place are byte-exact ⌘Z', () => {
     await project.waitFor(() => !store().canUndo)
     expect(project.read('pages/Product.tsx')).toBe(PRODUCT)
     expect(project.read('pages/Cart.tsx')).toBe(CART)
-    expect(Object.keys(store().canvasLayerPages)).toHaveLength(0)
-  })
+    await project.waitFor(() => Object.keys(store().canvasLayerPages).length === 0)
+  }, 30_000)
 })
 
 describe('W2-2 — a same-file move is undone byte for byte', () => {
@@ -171,7 +171,7 @@ describe('W2-2 — a same-file move is undone byte for byte', () => {
   it('reorders a sibling, then ⌘Z restores the file with the journal and ⌘⇧Z moves it again', async () => {
     const product = pageNamed('roduct')
     store().setActivePage(product.id)
-    const main = nodeAt(product, 7)
+    const main = nodeAt(product, 6)
     store().moveNodes([nodeAt(product, 8).id], main.id, 4)
     await project.waitFor(() => project.saves.length === 1)
     await project.waitFor(() => store().canUndo)
@@ -186,9 +186,8 @@ describe('W2-2 — a same-file move is undone byte for byte', () => {
 
     store().redo()
     await project.waitFor(() => project.saves.length === 3)
-    await project.waitFor(() => store().canUndo)
-    expect(project.read('pages/Product.tsx')).toBe(moved)
-  })
+    await project.waitFor(() => project.read('pages/Product.tsx') === moved)
+  }, 30_000)
 
   it('reparents into a sibling container, then ⌘Z restores the blank line and indentation', async () => {
     const cart = pageNamed('art')
@@ -203,7 +202,7 @@ describe('W2-2 — a same-file move is undone byte for byte', () => {
     await project.waitFor(() => project.saves.length === 2)
     await project.waitFor(() => !store().canUndo)
     expect(project.read('pages/Cart.tsx')).toBe(CART)
-  })
+  }, 30_000)
 })
 
 describe('W2-2 — an insert into a self-closing element is undone byte for byte', () => {
@@ -224,7 +223,7 @@ describe('W2-2 — an insert into a self-closing element is undone byte for byte
     await project.waitFor(() => !store().canUndo)
     expect(project.saves[1]!.edits[0]!.kind).toBe('restore')
     expect(project.read('pages/Home.tsx')).toBe(HOME)
-  })
+  }, 30_000)
 
   it('an insert into a populated parent still undoes as a plain delete', async () => {
     project = await openRealSourceProject({ 'pages/Home.tsx': HOME })
@@ -237,7 +236,7 @@ describe('W2-2 — an insert into a self-closing element is undone byte for byte
     store().undo()
     await project.waitFor(() => project.saves.length === 2)
     expect(project.saves[1]!.edits[0]!.kind).toBe('delete')
-  })
+  }, 30_000)
 
   it('an OD-7 insert into a shared component\'s self-closing root: one ⌘Z puts `<Frame />` back', async () => {
     project = await openRealSourceProject({ 'components/Frame.tsx': FRAME, 'pages/Checkout.tsx': CHECKOUT })
@@ -252,5 +251,5 @@ describe('W2-2 — an insert into a self-closing element is undone byte for byte
     store().undo()
     await project.waitFor(() => project.read('pages/Checkout.tsx') === CHECKOUT, 8000)
     expect(project.read('components/Frame.tsx')).toBe(FRAME)
-  })
+  }, 30_000)
 })

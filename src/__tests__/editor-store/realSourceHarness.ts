@@ -20,6 +20,7 @@ import { applySitePagesPatch } from '@site/hooks/siteReloadApply'
 import { CMS_SITE_PAGES_PATCH_EVENT, type CmsSitePagesPatchDetail } from '@admin/state/adminEvents'
 import { __resetToastBusForTests } from '@ui/components/Toast/toastBus'
 import { resetStructuralCommitQueue } from '@site/studio/structuralCommitQueue'
+import { noteBoardRead, resetSourceIdentities } from '@site/studio/sourceIdentity'
 import { setStudioLoadedDir } from '@site/studio/studioWorkspaceDir'
 import { makeSite } from '../fixtures'
 import { applyStudioEditBatchLocked } from '../../../server/handlers/studioWriteback'
@@ -57,6 +58,7 @@ export async function openRealSourceProject(files: Record<string, string>): Prom
 
   __resetToastBusForTests()
   resetStructuralCommitQueue()
+  resetSourceIdentities()
   const originalFetch = globalThis.fetch
   const saves: RealSourceProject['saves'] = []
   const unregisterSave = registerEditorSave(async () => {})
@@ -121,6 +123,7 @@ export async function openRealSourceProject(files: Record<string, string>): Prom
   store.loadSite(makeSite({ pages: loaded.pages, styleRules: loaded.styleRules }))
   store.loadBoards({ version: 1, boards: [{ id: 'b1', name: 'Board 1', frames: [], notes: [], docs: [] }] })
   store.setCanvasLayers(loaded.canvasLayers)
+  noteBoardRead(loaded.pages, 'reset')
 
   return {
     dir,
