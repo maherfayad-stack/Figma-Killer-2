@@ -114,7 +114,7 @@ describe('a same-node-id edit in the en (default) frame and the ar (variant) fra
     })
 
     // ar: through the REAL store mutation a locale-variant inline-edit
-    // session uses (`inlineEditSlice.ts`'s `applyInlineEditValue` calls
+    // session uses (`inlineEditSlice.ts`'s `endInlineEdit` calls
     // exactly this action for a `localeOverride` session).
     useEditorStore.getState().updateLocalizedNodeText('home', 'ar', 'headline', 'text', 'مرحبا جدًا')
 

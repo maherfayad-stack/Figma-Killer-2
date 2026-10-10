@@ -1482,6 +1482,11 @@ Module contract: `ModuleDefinition.inlineTextEdit?: { prop, multiline? }`.
 Declared by `base.text`, `base.button`, `base.link`. Values store `\n`, render
 `<br>` on both the canvas and publish paths.
 
+**One session = one write.** `applyInlineEditValue` only updates the session
+`draft`; `endInlineEdit` writes it once (one undo entry, one source write — a
+translation-dictionary literal included); `cancelInlineEdit` (Escape) drops the
+draft, writing nothing. The bridge-frame editor already worked this way.
+
 ---
 
 ## Selection and geometry
