@@ -81,6 +81,9 @@ import { mergePreviewedInlineStyles } from './canvasNodeInlineStyle'
 import { resolveInstanceEntry } from './canvasSelectionUtils'
 import { canvasPressContext, resolveCanvasDrillTarget, resolveCanvasPressTarget } from './canvasPressTarget'
 import { canvasNodeIdEnteredOnLeave } from './canvasHoverHandoff'
+import { useCanvasNodeData } from './canvasNodeData'
+import { resolvePressSelection } from './canvasPressSelect'
+import { NO_MODIFIERS, selectOnPress } from './pressRing'
 import { useLoopPreviewItems } from './useLoopPreviewItems'
 import styles from './NodeRenderer.module.css'
 
@@ -93,10 +96,10 @@ interface NodeRendererProps {
 }
 
 function NodeRenderer({ nodeId }: NodeRendererProps) {
-  // The page this frame renders. `null` (no CanvasPageContext provider) means
-  // "the active canvas document" — every CMS/VC frame. Board frames provide a
-  // page id so this NodeRenderer resolves against that frame's own page.
+  // The page this frame renders. `null` (no provider) means "the active canvas
+  // document" — every CMS/VC frame; board frames provide their own page id.
   const contextPageId = use(CanvasPageContext)
+  const pageScoped = contextPageId !== null
   const breakpointId = use(CanvasBreakpointContext)
   // WS-10 Phase 2 — owning BoardFrame id (`null` outside board context). NOT
   // `breakpointId` — see `CanvasFrameContext`'s doc. Declared before `node`
@@ -128,7 +131,7 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
   // component. `frameId` (§4.4/Phase 4) lets a locale-variant frame read
   // `localizedPageSlice.ts`'s tree instead of `site.pages` — see
   // `selectCanvasPageFor`'s own doc.
-  const node = useEditorStore((s) => selectCanvasPageFor(s, contextPageId, frameId)?.nodes[nodeId] ?? null)
+  const node = useCanvasNodeData((s) => selectCanvasPageFor(s, contextPageId, frameId)?.nodes[nodeId] ?? null, pageScoped)
   const templateContext = use(CanvasTemplateContext)
 
   // Keyed selection read (P2-I) — see the module doc. Multi-select: every node
@@ -148,7 +151,7 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
   // canvas sweep. The session's `initialValue` and `multiline` are constant for
   // its whole life, so they are read through `getState()` exactly where they
   // are used (the seeding effect, the Enter handler).
-  const isInlineEditing = useEditorStore((s) => isInlineEditSessionFor(s.activeInlineEdit, nodeId, breakpointId, frameId))
+  const isInlineEditing = useCanvasNodeData((s) => isInlineEditSessionFor(s.activeInlineEdit, nodeId, breakpointId, frameId), pageScoped)
   const editableRef = useRef<HTMLElement | null>(null)
   // Canvas preview state for THIS node — the class-target hover preview
   // (`previewClassAssignment`) and its Rule 7 (panel-22) Element-target
@@ -156,18 +159,16 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
   // store's own object or `null`, so neither allocates (P2-I). Both are
   // filtered to this node's id so unrelated nodes never re-render while a
   // preview is live elsewhere.
-  const previewClassAssignment = useEditorStore((s) =>
-    s.previewClassAssignment?.nodeId === nodeId ? s.previewClassAssignment : null,
-  )
-  const previewNodeStyles = useEditorStore((s) => (s.previewNodeStyles?.nodeIds.includes(nodeId) ? s.previewNodeStyles : null))
-  const editorFormPreviewState = useEditorStore((s) => resolveEditorFormPreviewState(s, nodeId))
-  const editorFormPreviewSuccessMessage = useEditorStore((s) => resolveEditorFormPreviewSuccessMessage(s, nodeId))
-  const mcClassName = useEditorStore((s) => {
+  const previewClassAssignment = useCanvasNodeData((s) => (s.previewClassAssignment?.nodeId === nodeId ? s.previewClassAssignment : null), pageScoped)
+  const previewNodeStyles = useCanvasNodeData((s) => (s.previewNodeStyles?.nodeIds.includes(nodeId) ? s.previewNodeStyles : null), pageScoped)
+  const editorFormPreviewState = useCanvasNodeData((s) => resolveEditorFormPreviewState(s, nodeId), pageScoped)
+  const editorFormPreviewSuccessMessage = useCanvasNodeData((s) => resolveEditorFormPreviewSuccessMessage(s, nodeId), pageScoped)
+  const mcClassName = useCanvasNodeData((s) => {
     const canvasNode = selectCanvasPageFor(s, contextPageId, frameId)?.nodes[nodeId]
     const preview = s.previewClassAssignment?.nodeId === nodeId ? s.previewClassAssignment : null
     return getCanvasNodeClassName(canvasNode?.classIds, preview, nodeId, s.site?.styleRules)
-  })
-  const { onNodeClick, onFrameBackgroundClick, onNodeHover, onNodeContextMenu, onNodeDoubleClick, onNodePointerDown, onNodePointerUp } =
+  }, pageScoped)
+  const { onNodeClick, onFrameNodeClick, onFrameBackgroundClick, onNodeHover, onNodeContextMenu, onNodeDoubleClick, onNodePointerDown, onNodePointerUp } =
     use(CanvasSelectionContext)
 
   /**
@@ -362,12 +363,9 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
   // Build className from classIds using the user-facing class names.
   const effectiveClassIds = getCanvasNodeClassIds(node.classIds, previewClassAssignment, nodeId)
 
-  // Editor attributes + event handlers the module spreads onto its root
-  // element. Previously this was a wrapping `<div class="nodeWrapper">`
-  // around every node — that wrapper broke CSS combinators (`body > nav`,
-  // `:nth-child()`, etc.) because it sat between every authored element.
-  // Moving the bag onto the module's own root removes the wrapper entirely
-  // and the canvas DOM matches the published DOM exactly.
+  // Editor attributes + handlers the module spreads onto its own root element
+  // — never a wrapper `<div>`, which would break CSS combinators (`body > nav`,
+  // `:nth-child()`) and make the canvas DOM differ from the published DOM.
   const nodeWrapperProps: NodeWrapperPropsType = {
     'data-node-id': nodeId,
     'data-module-id': node.moduleId,
@@ -376,9 +374,7 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
     ...(inlineStyle ? { style: inlineStyle } : {}),
     onPointerDownCapture: (e) => {
       focusNodeWithoutScrolling(e.currentTarget, e.target, isInlineEditing)
-      // The press half of the player's gesture. Guarded by the same
-      // "innermost node wins" predicate the click handlers use, so exactly one
-      // node in the path latches it — the one the pointer is actually on.
+      // The press half of the player's gesture; the innermost node wins.
       if (isClosestCanvasNodeTarget(e.target, e.currentTarget) && !isCanvasEditorControlTarget(e.target, e.currentTarget)) {
         onNodePointerDown(nodeId)
       }
@@ -386,6 +382,8 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
         // A press this node does not suppress still STARTS a new gesture, so
         // whatever the last one latched is over.
         setSuppressedPointerTarget(null)
+        const pressed = ownsAuthoredEvents && !isInlineEditing ? resolvePressSelection(useEditorStore.getState(), contextPageId, frameId, nodeId, e) : null
+        if (pressed !== null) selectOnPress(e.currentTarget as Element, pressed, () => onFrameNodeClick(pressed, NO_MODIFIERS, breakpointId, frameId))
         return
       }
       // Cancel the control's own activation (focus, a picker) now; SELECT on
