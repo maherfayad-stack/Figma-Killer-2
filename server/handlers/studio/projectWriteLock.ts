@@ -132,7 +132,7 @@ function openWriteSession(key: string): WriteSession {
 const heldKeys = new AsyncLocalStorage<ReadonlySet<string>>()
 
 /** The real path, so a symlinked project cannot acquire a second lock on the same directory. */
-function lockKey(dirInput: string): string {
+export function lockKey(dirInput: string): string {
   const resolved = resolve(dirInput)
   try {
     return existsSync(resolved) ? realpathSync(resolved) : resolved
@@ -215,6 +215,32 @@ export async function withProjectWriteLock<T>(
   } finally {
     session.end = Date.now()
     release(key)
+    notifyWriteSessionEnd(key)
+  }
+}
+
+const writeSessionEndListeners = new Set<(realRoot: string) => void>()
+
+/**
+ * Calls `listener` with the project's real path each time an outermost write
+ * session ends (after the lock is handed on), so the live room's `rev` counter
+ * advances in exactly lock order. A listener that throws is logged and does not
+ * disturb the write that just finished. Returns the unsubscribe.
+ */
+export function onProjectWriteSessionEnd(listener: (realRoot: string) => void): () => void {
+  writeSessionEndListeners.add(listener)
+  return () => {
+    writeSessionEndListeners.delete(listener)
+  }
+}
+
+function notifyWriteSessionEnd(key: string): void {
+  for (const listener of writeSessionEndListeners) {
+    try {
+      listener(key)
+    } catch (err) {
+      console.error('[projectWriteLock] write-session listener failed:', err)
+    }
   }
 }
 

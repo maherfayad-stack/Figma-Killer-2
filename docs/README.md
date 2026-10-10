@@ -65,6 +65,7 @@ Compressed, agent-facing summaries. Start here for any task; follow their links 
 | [`features/modules.md`](features/modules.md) | the module engine, the base and alm.* packs, and the built-in design system manifest | adding or changing a module | current |
 | [`features/prototype-export.md`](features/prototype-export.md) | the runnable preview shell Studio scaffolds into a project, and "Download the code" | touching the generated prototype shell or the download | current |
 | [`features/spotlight.md`](features/spotlight.md) | the ⌘K command palette | adding a command or a palette provider | current |
+| [`features/multiplayer.md`](features/multiplayer.md) | live presence: the WebSocket channel, roster, cursors, selections, follow | touching `/admin/api/studio/live`, `@core/studio-live` or the peer overlay | current |
 | [`features/studio-comments.md`](features/studio-comments.md) | review threads pinned to the board and the agent loop over them | touching comments or the anchor model | current |
 | [`features/studio-deploy.md`](features/studio-deploy.md) | preview deploys through the project's own Vercel/Netlify CLI | touching deploys | current |
 | [`features/studio-git.md`](features/studio-git.md) | version control against the project's own repository, GitHub sign-in, the agent commit tool | touching the Git panel or git routes | current |

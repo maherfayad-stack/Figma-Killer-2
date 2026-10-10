@@ -190,6 +190,10 @@ export const STUDIO_ROUTE_CAPABILITIES: readonly StudioRouteDeclaration[] = [
   { path: '/admin/api/studio/project-assets', read: 'site.read', mutate: null },
   { path: '/admin/api/studio/localized-page', read: 'site.read', mutate: null },
   { path: '/admin/api/studio/live-origin', read: 'site.read', mutate: null },
+  // The presence WebSocket (`studio/live/upgrade.ts`). A GET handshake, so the
+  // gate's CSRF rule does not cover it - the upgrade checks `Origin` itself.
+  // Viewers hold `site.read` and get presence (provisional, owner to confirm).
+  { path: '/admin/api/studio/live', read: 'site.read', mutate: null },
   // The GET serves an already-built `.studio/cache/bundle-<hash>.js`; the
   // POST is the half that spawns `Bun.build` in a subprocess, and it is a
   // `studio.write` — `sec-16`'s note that this route spawns at `site.read`

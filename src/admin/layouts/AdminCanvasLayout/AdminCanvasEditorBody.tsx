@@ -15,6 +15,7 @@ import { useDevServerPrewarm } from '@admin/pages/site/studio/useDevServerPrewar
 import { usePreviewAxesHydration } from '@admin/pages/site/studio/usePreviewAxesHydration'
 import { useStudioCommentsLoad } from '@admin/pages/site/studio/useStudioCommentsLoad'
 import { useStudioPrototypeLoad } from '@admin/pages/site/studio/useStudioPrototypeLoad'
+import { useStudioLive } from '@admin/pages/site/studio/live/useStudioLive'
 import { LayoutNameDialog } from '@admin/pages/site/dialogs/LayoutNameDialog'
 import { DetachConfirmDialog } from '@admin/pages/site/ui/DetachConfirmDialog'
 import { PropertiesPanel } from '@admin/pages/site/panels/PropertiesPanel'
@@ -86,6 +87,9 @@ export function AdminCanvasEditorBody({
   // from the project's own navigation code. Same editor-only reasoning as the
   // comments loader above; see the hook's own doc.
   useStudioPrototypeLoad()
+  // Live presence: joins this project's room for as long as the board is open.
+  // The socket carries cursors and rosters only - edits stay on HTTP.
+  useStudioLive()
   // ERR-26 — the editor window's own `error` / `unhandledrejection` sink: logs
   // and records into the diagnostics buffer the canvas frames already feed,
   // never a toast. In the lazy body, like every hook above, so the route shell

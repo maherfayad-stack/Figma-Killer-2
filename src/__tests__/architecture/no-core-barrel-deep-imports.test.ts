@@ -16,6 +16,7 @@
  *   - `@core/studio-prototype`
  *   - `@core/studio-runtime`
  *   - `@core/vector`
+ *   - `@core/studio-live`
  *
  * Per the barrel convention (CLAUDE.md → "Barrel imports"): everything OUTSIDE
  * a module imports through its barrel; files INSIDE the module import each
@@ -70,6 +71,10 @@ const BARRELLED_MODULES = [
   // the sanitizer and the canvas renderer share. A deep import is how a
   // second, drifted name table or a looser fragment check would get made.
   'vector',
+  // The live presence protocol (TypeBox schemas, limits, follow maths) shared by
+  // the server room and the client store. One schema set: a deep import is how
+  // a second, drifted frame shape would get made.
+  'studio-live',
 ]
 
 // Scan production + test sources in both the app and the server.
