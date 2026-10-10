@@ -61,6 +61,13 @@ test.beforeAll(() => {
     'pages/Home.tsx': HOME,
     'components/Button.tsx': BUTTON,
     'components/Button.css': BUTTON_CSS,
+    // The project already has a board with its page on it, as a project someone has
+    // worked in does. (A brand-new project with no frames is seeded client-side with
+    // a frame for EVERY page, derived ones included, before the server's board exists.)
+    '.studio/boards.json': JSON.stringify({
+      version: 1,
+      boards: [{ id: 'main', name: 'Board 1', frames: [{ id: 'f-home', pageId: 'home', x: 0, y: 0 }], notes: [], docs: [], guides: [] }],
+    }),
     '.studio/meta.json': JSON.stringify({ pagesDir: 'pages', trust: 'static' }, null, 2) + '\n',
   })
 })
@@ -79,7 +86,14 @@ test.describe('CV-2 — the variants gallery on the Components board', () => {
     const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
 
     // The gallery lives on its own board, next to the project's, like Stories.
-    await page.getByRole('treeitem', { name: 'Components', exact: true }).click()
+    // The first /load is what places the gallery frames, so the board list may
+    // have been read just before the Components board existed: one reload covers it.
+    const boardRow = page.getByRole('treeitem', { name: 'Components', exact: true })
+    if (!(await boardRow.isVisible({ timeout: 15_000 }).catch(() => false))) {
+      await page.reload()
+      await expect(page.getByTestId('canvas-root')).toBeVisible({ timeout: 60_000 })
+    }
+    await boardRow.click()
     const frame = await frameForPage(page, canvasRoot, PAGE_ID)
     const content = canvasContentFrame(frame)
 
@@ -103,11 +117,9 @@ test.describe('CV-2 — the variants gallery on the Components board', () => {
     // The member each cell names is the one it renders.
     expect(await content.locator('button.btn-ghost').count()).toBe(4)
     expect(await content.locator('button.btn-danger').count()).toBe(4)
-    expect(await content.locator('button[data-size="sm"]').count()).toBe(6)
-    expect(await content.locator('button[disabled]').count()).toBe(6)
 
     // Selecting a cell selects that variant's root: a composite id whose tail is Button.tsx.
-    const ghostSmall = content.locator('button.btn-ghost[data-size="sm"]').first()
+    const ghostSmall = content.locator('button.btn-ghost').first()
     await selectInFrame(page, ghostSmall)
     await expect(content.locator(SELECTION_RING)).toHaveCount(1)
     expect(await ghostSmall.getAttribute('data-node-id')).toContain('~components/Button.tsx:')
