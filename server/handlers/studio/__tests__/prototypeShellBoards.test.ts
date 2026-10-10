@@ -30,6 +30,13 @@ import { ensurePrototypeShell } from '../prototypeShell'
 import { renderRegistryFile } from '../prototypeShell/registryFile'
 import { buildStudioDownloadResponse } from '../../studioDownload'
 
+/** The archive's single `<project>/` root folder is not part of what these tests are about. */
+function unzipWithoutRoot(bytes: Uint8Array): Record<string, Uint8Array> {
+  const out: Record<string, Uint8Array> = {}
+  for (const [name, data] of Object.entries(unzipSync(bytes))) out[name.slice(name.indexOf('/') + 1)] = data
+  return out
+}
+
 let tmpDir: string
 
 beforeEach(() => {
@@ -185,7 +192,7 @@ describe('the download zip carries the boards as they are NOW', () => {
 
     const res = buildStudioDownloadResponse(tmpDir)
     expect(res.status).toBe(200)
-    const entries = unzipSync(new Uint8Array(await res.arrayBuffer()))
+    const entries = unzipWithoutRoot(new Uint8Array(await res.arrayBuffer()))
     const registry = strFromU8(entries['prototype/registry.generated.jsx']!)
 
     expect(registry).toContain('name: "Testtt"')
@@ -196,7 +203,7 @@ describe('the download zip carries the boards as they are NOW', () => {
     writeBoards(TWO_BOARDS)
 
     const res = buildStudioDownloadResponse(tmpDir)
-    const names = Object.keys(unzipSync(new Uint8Array(await res.arrayBuffer())))
+    const names = Object.keys(unzipWithoutRoot(new Uint8Array(await res.arrayBuffer())))
 
     expect(names).toContain('prototype/App.jsx')
     expect(names).toContain('prototype/registry.generated.jsx')
@@ -211,7 +218,7 @@ describe('the download zip carries the boards as they are NOW', () => {
     // No ensurePrototypeShell() first — the download is the first thing that
     // ever ran against this directory.
     const res = buildStudioDownloadResponse(tmpDir)
-    const entries = unzipSync(new Uint8Array(await res.arrayBuffer()))
+    const entries = unzipWithoutRoot(new Uint8Array(await res.arrayBuffer()))
 
     expect(strFromU8(entries['prototype/registry.generated.jsx']!)).toContain('name: "Testtt"')
   })
@@ -230,7 +237,7 @@ describe('the download zip carries the boards as they are NOW', () => {
 
     const res = buildStudioDownloadResponse(tmpDir)
     expect(res.status).toBe(200)
-    const entries = unzipSync(new Uint8Array(await res.arrayBuffer()))
+    const entries = unzipWithoutRoot(new Uint8Array(await res.arrayBuffer()))
     // The shell is an addition, never a precondition: an unreadable
     // `.studio/` must not take the download down with it.
     expect(entries['index.html']).toBeDefined()

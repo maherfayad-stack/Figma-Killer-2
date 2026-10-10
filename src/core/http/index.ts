@@ -6,6 +6,8 @@
 export {
   apiRequest,
   apiBlobRequest,
+  apiFileRequest,
+  fileNameFromContentDisposition,
   ndjsonRequest,
   readEnvelope,
   assertOk,

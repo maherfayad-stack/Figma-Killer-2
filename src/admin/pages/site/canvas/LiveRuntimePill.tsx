@@ -50,7 +50,7 @@
  * every frame is its own answer to this question and there is no single
  * project-level runtime to label.
  */
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useState, useSyncExternalStore } from 'react'
 import { useAdminUi } from '@admin/state/adminUi'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { Button } from '@ui/components/Button'
@@ -60,8 +60,8 @@ import { getErrorMessage } from '@core/utils/errorMessage'
 import { retryWhileUnreachable } from '@core/http'
 import { useEditorStore } from '@site/store/store'
 import { useDevServerReadiness } from '@site/studio/useDevServerReadiness'
+import { useLiveCapability } from '@site/studio/liveCapabilityStore'
 import {
-  fetchStudioTrustStatus,
   getStudioTrustTier,
   setStudioProjectTrust,
   subscribeStudioTrustTier,
@@ -90,28 +90,10 @@ function needsInstall(reason: NonNullable<LiveCapability['reason']>): boolean {
 export function LiveRuntimePill() {
   const projectDir = useAdminUi((s) => s.studioProject?.dir ?? null)
   const trust = useSyncExternalStore(subscribeStudioTrustTier, getStudioTrustTier, getStudioTrustTier)
-  const [live, setLive] = useState<LiveCapability | null>(null)
+  const live = useLiveCapability(projectDir)
   const [busy, setBusy] = useState(false)
   const readiness = useDevServerReadiness(projectDir)
   const setDependenciesPanelOpen = useEditorStore((s) => s.setDependenciesPanelOpen)
-
-  // Re-ask whenever the active project changes. Same posture as
-  // `StyleCompileConsentBanner`'s probe effect: no synchronous clear first
-  // (that trips the "setState in effect body" rule), one request of staleness.
-  useEffect(() => {
-    if (!projectDir) return
-    let cancelled = false
-    fetchStudioTrustStatus(projectDir)
-      .then((status) => {
-        if (!cancelled) setLive(status.live)
-      })
-      .catch((err) => {
-        console.error('[LiveRuntimePill] trust status fetch failed:', err)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [projectDir])
 
   if (!projectDir || !live) return null
 
