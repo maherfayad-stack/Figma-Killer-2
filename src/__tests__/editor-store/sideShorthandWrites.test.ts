@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { coalesceCssSideChanges, coalesceInlineSideWrites } from '../sideShorthandWrites'
+import { coalesceCssSideChanges, coalesceInlineSideWrites } from '@site/studio/sideShorthandWrites'
 
 describe('coalesceInlineSideWrites', () => {
   it('turns four equal padding sides into one shorthand and removes the longhands', () => {
