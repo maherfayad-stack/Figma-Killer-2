@@ -116,5 +116,5 @@ export function describeLiveRefusal(dir: string, reason: LiveBlockedReason): str
   if (!resolveDevScript(resolveAppRoot(dir))) {
     return 'Live needs a dev script: package.json has no "dev" or "start" script, so there is nothing for Studio to run.'
   }
-  return 'Live needs Vite: this project's dev/start script is not a vite invocation, so Studio does not run it.'
+  return "Live needs Vite: this project's dev/start script is not a vite invocation, so Studio does not run it."
 }
