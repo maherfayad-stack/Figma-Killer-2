@@ -103,6 +103,7 @@ export {
   DropCandidatesMessageSchema,
   DropCandidatesResultMessageSchema,
   DROP_CANDIDATES_MAX,
+  OPTIMISTIC_STYLE_CLEARED,
   DROP_CANDIDATE_CHILD_RECTS_MAX,
   toInboundEnvelope,
   toOutboundEnvelope,
