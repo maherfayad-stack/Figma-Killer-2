@@ -168,6 +168,33 @@ export function resolveCanvasPressTarget(
   return contextIndex >= path.length - 1 ? leaf : path[contextIndex + 1]!
 }
 
+/**
+ * The node whose children are the frame's top-level layers: the page
+ * component's own root element when it is the root's only child (it IS the
+ * screen), else the root itself. The in-frame marquee sweeps below it.
+ */
+export function frameContentRootId(tree: NodeTree<PageNode>): string {
+  const root = tree.nodes[tree.rootNodeId]
+  return root?.moduleId === 'base.body' && root.children.length === 1 ? root.children[0]! : tree.rootNodeId
+}
+
+/**
+ * Whether a press on `hitId` landed on the frame's own background — the
+ * synthetic `<body>` or the screen element — rather than on a layer inside it.
+ * Neither moves, so such a press is the in-frame marquee's (`useInFrameMarquee`);
+ * ⌘/Ctrl (`deep`) still reaches the innermost layer and is never background.
+ */
+export function isFrameBackgroundHit(
+  tree: NodeTree<PageNode>,
+  hitId: string,
+  context: Pick<CanvasPressContext, 'enteredInstanceIds' | 'vcLockdown'>,
+): boolean {
+  // An authored page root (a Visual Component's own root element) is a layer.
+  if (tree.nodes[tree.rootNodeId]?.moduleId !== 'base.body') return false
+  const leaf = clampToComponentBoundary(tree, hitId, context)
+  return leaf === tree.rootNodeId || leaf === frameContentRootId(tree)
+}
+
 /** What a double-click selects before it does anything else — see {@link resolveCanvasDrillTarget}. */
 export interface CanvasDrill {
   /** The layer the double-click selects. */
@@ -225,8 +252,8 @@ export interface CanvasPressDragPlan {
  * moment you move it); pressing anywhere else drags the layer the press means,
  * and selects it only once the gesture stops being a click — a press that
  * stays a click is decided on release, by the click path, never here. `null`
- * on the frame's own background: there is nothing to drag, and the press is
- * the in-frame marquee's (`useInFrameMarquee`).
+ * on the frame's own background (the page body or the screen element): there is
+ * nothing to drag, and the press is the in-frame marquee's (`useInFrameMarquee`).
  */
 export function planCanvasPressDrag(
   tree: NodeTree<PageNode>,
@@ -234,6 +261,7 @@ export function planCanvasPressDrag(
   context: CanvasPressContext,
   { deep }: { deep: boolean },
 ): CanvasPressDragPlan | null {
+  if (!deep && isFrameBackgroundHit(tree, hitId, context)) return null
   const target = resolveCanvasPressTarget(tree, hitId, context, { deep })
   if (target === null) return null
   const inSelection = context.selectedIds.includes(target)

@@ -16,6 +16,7 @@
 import { describe, it, expect } from 'bun:test'
 import { createRef } from 'react'
 import {
+  enterCommitsInlineEdit,
   inlineEditableElementProps,
   seedInlineEditableContent,
 } from '@modules/base/shared/inlineText'
@@ -69,5 +70,23 @@ describe('seedInlineEditableContent', () => {
     seedInlineEditableContent(el, '<b>x</b>\n&y')
     expect(el.innerHTML).toBe('&lt;b&gt;x&lt;/b&gt;<br>&amp;y')
     expect(el.querySelector('b')).toBeNull()
+  })
+})
+
+describe('enterCommitsInlineEdit', () => {
+  const key = (init: { shiftKey?: boolean; metaKey?: boolean; ctrlKey?: boolean }) => ({ shiftKey: false, metaKey: false, ctrlKey: false, ...init })
+
+  it('plain Enter commits a multiline edit instead of writing a second newline', () => {
+    expect(enterCommitsInlineEdit(key({}), true)).toBe(true)
+  })
+
+  it('Shift+Enter is the hard break of a multiline edit', () => {
+    expect(enterCommitsInlineEdit(key({ shiftKey: true }), true)).toBe(false)
+  })
+
+  it('Cmd/Ctrl+Enter always commits; a single-line edit has no break to insert', () => {
+    expect(enterCommitsInlineEdit(key({ shiftKey: true, metaKey: true }), true)).toBe(true)
+    expect(enterCommitsInlineEdit(key({ shiftKey: true, ctrlKey: true }), true)).toBe(true)
+    expect(enterCommitsInlineEdit(key({ shiftKey: true }), false)).toBe(true)
   })
 })

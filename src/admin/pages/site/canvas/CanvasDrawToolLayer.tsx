@@ -40,18 +40,18 @@ import {
 import { getViewportZoom } from './canvasDomGeometry'
 import { canvasZoomOf } from './canvasZoom'
 import {
-  acceptsBoardDraws,
   DRAW_TOOL_SPECS,
   drawInsertStyles,
   drawnRect,
   isDrawDrag,
-  offerBoardDraw,
   setDrawGestureActive,
   type DrawPoint,
   type DrawRect,
 } from './canvasDrawTool'
 import { armCreatedNodeFollowUp } from './createdNodeFollowUp'
 import { boardDrawPlacement } from './boardDrawTool'
+import { placeDrawOnBoard } from './placeDrawOnBoard'
+import { pushToast } from '@ui/components/Toast'
 import { startCanvasTextEdit } from './canvasTextEditStart'
 import styles from './CanvasDrawToolLayer.module.css'
 
@@ -191,7 +191,7 @@ export function CanvasDrawToolLayer({ tool, transformLayerRef }: CanvasDrawToolL
     // Every insert writes through the ACTIVE tree, so the frame's page must be
     // active before it runs (`useCanvasInsertionDrag` does the same).
     if (drop.pageId !== selectActiveCanvasPage(store)?.id) store.openPageInCanvas(drop.pageId)
-    if (tool === 'text') armCreatedNodeFollowUp((nodeId) => { startCanvasTextEdit(nodeId, frameId) })
+    if (tool === 'text') armCreatedNodeFollowUp((nodeId) => { startCanvasTextEdit(nodeId, frameId, { selectAll: true }) })
     const nodeId = insertModule(definition, drop.location, { inlineStyles: drawInsertStyles(spec, rect, scale) })
     if (nodeId !== null) useEditorStore.getState().setActiveBreakpoint(drop.breakpointId)
     useEditorStore.getState().setCanvasTool('move')
@@ -222,15 +222,14 @@ export function CanvasDrawToolLayer({ tool, transformLayerRef }: CanvasDrawToolL
       store.setCanvasTool('move')
       return
     }
-    const created = offerBoardDraw({ tool, spec, dragged: rect !== null, boardRect })
-    if (created) useEditorStore.getState().setCanvasTool('move')
+    if (placeDrawOnBoard(tool, boardRect, rect !== null)) {
+      useEditorStore.getState().setCanvasTool('move')
+      return
+    }
+    pushToast({ kind: 'warning', title: `${spec.label} not added`, body: 'Draw inside a frame, or open a board to draw on the free canvas.', location: 'site-editor' })
   }
 
-  const ghostLabel = hover && !hover.preview
-    ? tool === 'board'
-      ? 'Board — draw a new page here'
-      : acceptsBoardDraws() ? spec.label : `${spec.label} — draw inside a frame`
-    : spec.label
+  const ghostLabel = hover && !hover.preview && tool === 'board' ? 'Board — draw a new page here' : spec.label
 
   return (
     <>

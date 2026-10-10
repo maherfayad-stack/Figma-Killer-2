@@ -53,6 +53,8 @@ interface ActiveInlineEdit {
   initialValue: string
   /** True once a keystroke produced a REAL history entry (a burst exists). Only meaningful for the default-tree (undo-tracked) path. */
   committed: boolean
+  /** Open with the whole text selected (a freshly drawn text's placeholder) instead of the caret at the end. */
+  selectAll?: true
 }
 
 /**
@@ -87,7 +89,7 @@ interface InlineEditSlice {
    * frame caller needs the return value to answer the frame's
    * `text:editStart` request; the portal double-click handler ignores it.
    */
-  startInlineEdit: (nodeId: string, breakpointId: string, frameId?: string | null) => boolean
+  startInlineEdit: (nodeId: string, breakpointId: string, frameId?: string | null, options?: { selectAll?: boolean }) => boolean
   /** Live per-keystroke commit — one coalesced undo entry per session (default tree), or a direct mutation (locale-variant tree). */
   applyInlineEditValue: (value: string) => void
   /** Commit + close. Keystrokes already landed live; this ends session + burst. */
@@ -137,7 +139,7 @@ function resolveSessionNode(
 export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (set, get) => ({
   activeInlineEdit: null,
 
-  startInlineEdit: (nodeId, breakpointId, frameId = null) => {
+  startInlineEdit: (nodeId, breakpointId, frameId = null, options) => {
     const state = get()
     const localeOverride = resolveLocaleOverride(state, frameId)
     const node = resolveSessionNode(state, nodeId, localeOverride)
@@ -201,6 +203,7 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
         multiline: spec.multiline ?? false,
         initialValue: value,
         committed: false,
+        ...(options?.selectAll ? { selectAll: true as const } : {}),
       }
       // Isolate the session's burst from any in-flight coalescing burst for
       // the same key (e.g. Properties-panel typing on the same prop).

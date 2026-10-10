@@ -23,14 +23,11 @@
  * so the element and its size are ONE write and ONE undo entry. The tool puts
  * itself away after a draw (Figma's default).
  *
- * ## For P5-G (the free canvas)
+ * ## The empty board
  *
- * A press on the EMPTY board is not a frame draw. Instead of dropping it, the
- * gesture offers it to `registerBoardDrawHandler`'s handler — P5-G's free
- * canvas registers one to create a loose layer there. With no handler the
- * board press is ignored and the tool stays armed. The handler receives the
- * tool, what it inserts, and the drawn rectangle in BOARD units; it returns
- * whether it created something (which disarms the tool, as a frame draw does).
+ * A press on the EMPTY board is not a frame draw: it creates a loose layer on
+ * the free canvas at the drawn rect, in board units (`placeDrawOnBoard.ts`).
+ * With no active board nothing is created and the tool stays armed.
  */
 import type { DrawTool, VectorTool } from '@site/store/slices/canvasSlice'
 
@@ -203,42 +200,4 @@ export function setDrawGestureActive(active: boolean): void {
 
 export function isDrawGestureActive(): boolean {
   return drawGestureActive
-}
-
-// ── The empty-board seam (P5-G) ─────────────────────────────────────────────
-
-export interface CanvasBoardDraw {
-  tool: DrawTool
-  spec: DrawToolSpec
-  /** The drawn rectangle in BOARD units; a click is a zero-size rect at the press point. */
-  boardRect: DrawRect
-  /** True when the pointer was dragged (the rect carries a size). */
-  dragged: boolean
-}
-
-/** Returns true when it created something for the draw. */
-export type BoardDrawHandler = (draw: CanvasBoardDraw) => boolean
-
-let boardDrawHandler: BoardDrawHandler | null = null
-
-/**
- * Let the empty board take draws (P5-G). One handler at a time — the free
- * canvas is the only thing that owns the board's empty space. Returns the
- * unregister function.
- */
-export function registerBoardDrawHandler(handler: BoardDrawHandler): () => void {
-  boardDrawHandler = handler
-  return () => {
-    if (boardDrawHandler === handler) boardDrawHandler = null
-  }
-}
-
-/** Offer a board draw to the registered handler; `false` when none took it. */
-export function offerBoardDraw(draw: CanvasBoardDraw): boolean {
-  return boardDrawHandler?.(draw) ?? false
-}
-
-/** Whether anything accepts draws on the empty board — the ghost says so when nothing does. */
-export function acceptsBoardDraws(): boolean {
-  return boardDrawHandler !== null
 }

@@ -97,6 +97,9 @@ interface ArrowSession {
 
 const REFUSAL_TITLE = "This layer can't be nudged"
 const LOCKED_TITLE = 'Locked layers do not move'
+const ACROSS_AXIS_BODY =
+  'Its parent lays its children out (flex or grid), so an arrow along that layout reorders it and an arrow across it has nothing to move. Use the arrow along the layout, or set the layer to position: absolute to place it freely.'
+const UNMEASURED_BODY = 'It is not rendered in a frame that can report where it sits. Open its screen and select it there.'
 
 /** What the flow nudge says when a layer has no pixel to move (canvas-48) — the reason, and the way out. */
 const FLOW_NUDGE_REFUSAL: Record<FlowNudgeRefusal, string> = {
@@ -185,6 +188,7 @@ async function resolveSession(session: ArrowSession, current: () => ArrowSession
     session.state = 'spent'
     const steps = reorderSteps(move.layouts, session)
     if (Object.keys(steps).length > 0) useEditorStore.getState().stepSiblings(session.nodeIds, steps)
+    else pushToast({ kind: 'info', title: REFUSAL_TITLE, body: ACROSS_AXIS_BODY })
   } else if (move?.kind === 'refuse') {
     session.state = 'spent'
     pushToast({ kind: 'info', title: REFUSAL_TITLE, body: FLOW_NUDGE_REFUSAL[move.reason] })
@@ -207,7 +211,10 @@ async function resolveSession(session: ArrowSession, current: () => ArrowSession
       if (session.released || current() !== session) commitNudge(session)
     }
   } else {
+    // Nothing was measured: the layer is not rendered in a frame that can say
+    // where it sits, so there is nothing to move it from. Say so.
     session.state = 'spent'
+    pushToast({ kind: 'info', title: REFUSAL_TITLE, body: UNMEASURED_BODY })
   }
   if (session.released && current() === session) end()
 }

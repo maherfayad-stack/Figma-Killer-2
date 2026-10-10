@@ -49,6 +49,18 @@ export function isEditableTextTarget(target: EventTarget | null): boolean {
 }
 
 /**
+ * Whether a press on `target` belongs to the inline text edit in progress
+ * (selecting text inside the editable element). A press anywhere else is the
+ * END of the edit, and the caller must end it NOW (`endInlineEdit`) and carry
+ * on with the press: the blur that also ends the edit arrives after the press
+ * has already been judged, so a gesture that stood down for "an edit is active"
+ * silently dropped the first drag after a double-click edit.
+ */
+export function isPressInsideInlineEditor(target: EventTarget | null): boolean {
+  return !isElementLike(target) || target.closest('[contenteditable]') !== null
+}
+
+/**
  * Focus the node the browser is about to focus anyway, but with
  * `preventScroll` — the one thing the native focus step will not do.
  *
