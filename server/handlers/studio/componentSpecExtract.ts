@@ -487,6 +487,15 @@ function variantFieldsFor(
   return fields
 }
 
+/**
+ * `analyzeBindings: false` skips reading each component's stylesheets — the
+ * variants gallery only needs the axes and their members, and runs on every
+ * full load, where the catalog route runs on demand.
+ */
+export interface LocalCatalogOptions {
+  analyzeBindings: boolean
+}
+
 /** `buildComponentSpec`, plus the variant read model for every enum/boolean prop. */
 function buildLocalComponentSpec(
   project: Project,
@@ -495,13 +504,14 @@ function buildLocalComponentSpec(
   declaration: Node,
   relFile: string,
   isDefaultExport: boolean,
+  analyzeBindings: boolean,
 ): LocalComponentSpec | undefined {
   const spec = buildComponentSpec(project, exportName, declaration, relFile, isDefaultExport)
   if (!spec) return undefined
   const signatures = new Map(
     (resolveTypeNodeToMembers(project, resolvePropsTypeNode(declaration))?.getProperties() ?? []).map((p) => [p.getName(), p] as const),
   )
-  const context = createComponentAnalysisContext(declaration, workspaceRoot)
+  const context = analyzeBindings ? createComponentAnalysisContext(declaration, workspaceRoot) : undefined
   return {
     ...spec,
     props: spec.props.map((prop) => ({
@@ -550,7 +560,9 @@ function identifierDefaultExportName(sourceFile: SourceFile): string | undefined
  * source-fallback tier already gives; this module never fabricates a prop
  * kind it can't read from a type annotation.
  */
-export function extractLocalComponentCatalog(project: Project, workspaceRoot: string): LocalComponentSpec[] {
+export function extractLocalComponentCatalog(project: Project, workspaceRoot: string, options: LocalCatalogOptions = { analyzeBindings: true }): LocalComponentSpec[] {
+  const build = (exportName: string, declaration: Node, relFile: string, isDefaultExport: boolean) =>
+    buildLocalComponentSpec(project, workspaceRoot, exportName, declaration, relFile, isDefaultExport, options.analyzeBindings)
   const specs: LocalComponentSpec[] = []
 
   for (const sourceFile of project.getSourceFiles()) {
@@ -569,20 +581,20 @@ export function extractLocalComponentCatalog(project: Project, workspaceRoot: st
 
     for (const fn of sourceFile.getFunctions()) {
       if (fn.isDefaultExport()) {
-        const spec = buildLocalComponentSpec(project, workspaceRoot, 'default', fn, relFile, true)
+        const spec = build('default', fn, relFile, true)
         if (spec) specs.push(spec)
       } else if (fn.isExported() && fn.getName()) {
-        const spec = buildLocalComponentSpec(project, workspaceRoot, fn.getName()!, fn, relFile, false)
+        const spec = build(fn.getName()!, fn, relFile, false)
         if (spec) specs.push(spec)
       }
     }
 
     for (const cls of sourceFile.getClasses()) {
       if (cls.isDefaultExport()) {
-        const spec = buildLocalComponentSpec(project, workspaceRoot, 'default', cls, relFile, true)
+        const spec = build('default', cls, relFile, true)
         if (spec) specs.push(spec)
       } else if (cls.isExported() && cls.getName()) {
-        const spec = buildLocalComponentSpec(project, workspaceRoot, cls.getName()!, cls, relFile, false)
+        const spec = build(cls.getName()!, cls, relFile, false)
         if (spec) specs.push(spec)
       }
     }
@@ -590,7 +602,7 @@ export function extractLocalComponentCatalog(project: Project, workspaceRoot: st
     for (const stmt of sourceFile.getVariableStatements()) {
       if (!stmt.isExported()) continue
       for (const decl of stmt.getDeclarations()) {
-        const spec = buildLocalComponentSpec(project, workspaceRoot, decl.getName(), decl, relFile, false)
+        const spec = build(decl.getName(), decl, relFile, false)
         if (spec) specs.push(spec)
       }
     }
@@ -607,7 +619,7 @@ export function extractLocalComponentCatalog(project: Project, workspaceRoot: st
         sourceFile.getClass(defaultIdentifierName) ??
         sourceFile.getVariableDeclaration(defaultIdentifierName)
       if (declaration) {
-        const spec = buildLocalComponentSpec(project, workspaceRoot, 'default', declaration, relFile, true)
+        const spec = build('default', declaration, relFile, true)
         if (spec) specs.push(spec)
       }
     }

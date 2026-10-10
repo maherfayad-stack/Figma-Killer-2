@@ -9,3 +9,5 @@ export type {
   VariantMember,
   VariantRule,
 } from './variantSchema'
+export { MAX_GALLERY_CELLS, planVariantGrid } from './variantGrid'
+export type { GalleryAxis, GalleryAxisInput, GalleryCell, GalleryPlan, GalleryValue } from './variantGrid'
