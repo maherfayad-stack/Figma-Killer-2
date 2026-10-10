@@ -285,7 +285,8 @@ export function useSelectionModel(): SelectionModel {
     const conditions = s.site?.conditions
     return conditions && conditions.some((c) => c.id === id) ? id : null
   })
-  const activeTab = getActiveStyleTab(activeBreakpointId)
+  const siteBreakpoints = useEditorStore((s) => s.site?.breakpoints)
+  const activeTab = getActiveStyleTab(activeBreakpointId, siteBreakpoints)
   const activeContextId = activeConditionId ?? (activeTab !== 'base' ? activeTab : null)
 
   // The load-bearing change: `s.site?.styleRules` as its OWN selector, never
