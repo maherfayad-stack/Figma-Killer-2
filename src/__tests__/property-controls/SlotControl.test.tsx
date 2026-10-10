@@ -129,7 +129,7 @@ describe('SlotControl', () => {
         return new Response(
           JSON.stringify({
             components: [
-              { name: 'Icon', file: 'src/components/Icon.tsx', exportName: 'default', isDefaultExport: true, props: [] },
+              { name: 'Icon', file: 'src/components/Icon.tsx', exportName: 'default', isDefaultExport: true, role: 'component', props: [] },
             ],
           }),
           { status: 200 },

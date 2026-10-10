@@ -18,6 +18,7 @@ const cardSpec: LocalComponentSpec = {
   file: 'src/components/Card.tsx',
   exportName: 'default',
   isDefaultExport: true,
+  role: 'component',
   props: [
     { name: 'title', kind: { kind: 'string' }, required: true },
     { name: 'variant', kind: { kind: 'enum', values: ['primary', 'ghost'] }, required: false },
@@ -78,6 +79,7 @@ describe('buildComponentCallSiteRows', () => {
       file: 'src/components/Button.tsx',
       exportName: 'default',
       isDefaultExport: true,
+      role: 'component',
       props: [
         { name: 'variant', kind: { kind: 'enum', values: ['primary', 'gpay-personalized'] }, required: false },
         {

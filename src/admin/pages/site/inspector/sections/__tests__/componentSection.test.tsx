@@ -115,6 +115,7 @@ beforeEach(() => {
               file: 'src/components/Card.tsx',
               exportName: 'default',
               isDefaultExport: true,
+              role: 'component',
               props: [
                 { name: 'title', kind: { kind: 'string' }, required: true },
                 { name: 'variant', kind: { kind: 'enum', values: ['primary', 'ghost'] }, required: false },

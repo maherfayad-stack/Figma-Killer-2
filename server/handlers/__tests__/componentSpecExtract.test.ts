@@ -170,3 +170,37 @@ describe('extractLocalComponentCatalog', () => {
     expect(button!.props.some((p) => p.name === 'label')).toBe(true)
   })
 })
+
+describe('extractLocalComponentCatalog roles', () => {
+  it('marks a flat pages/ screen as a page via the detected pagesDir, not only Next route files', () => {
+    write('pages/Home.tsx', 'export default function Home() {\n  return <main />\n}')
+    write('components/Hero.tsx', 'export default function Hero() {\n  return <section />\n}')
+    const project = createWorkspaceProject(tmpDir)
+    const roles = Object.fromEntries(extractLocalComponentCatalog(project, tmpDir, 'pages').map((c) => [c.name, c.role]))
+    expect(roles).toEqual({ Home: 'page', Hero: 'component' })
+  })
+
+  it('marks a children-only context wrapper as a provider, never a component with real markup', () => {
+    write(
+      'components/LanguageProvider.tsx',
+      [
+        "import { createContext } from 'react'",
+        'const Ctx = createContext<string>("en")',
+        'export function LanguageProvider({ children }: { children: React.ReactNode }) {',
+        '  const lang = "en"',
+        '  return <Ctx.Provider value={lang}>{children}</Ctx.Provider>',
+        '}',
+      ].join('\n'),
+    )
+    write(
+      'components/Shell.tsx',
+      'export const Shell = ({ children }: { children: React.ReactNode }) => (\n  <div className="shell">{children}</div>\n)',
+    )
+    write(
+      'components/Providers.tsx',
+      'export const Providers = ({ children }) => <A.Provider value={1}><BProvider>{children}</BProvider></A.Provider>',
+    )
+    const roles = Object.fromEntries(catalog().map((c) => [c.name, c.role]))
+    expect(roles).toEqual({ LanguageProvider: 'provider', Shell: 'component', Providers: 'provider' })
+  })
+})

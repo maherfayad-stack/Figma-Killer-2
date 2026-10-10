@@ -458,6 +458,12 @@ function BoardFrameViewImpl({
             <span aria-hidden="true"><PenSquareSolidIcon size={13} /></span>
             Rename
           </ContextMenuItem>
+          <ContextMenuItem
+            onClick={() => { setContextMenu(null); handleDuplicateAsVariant({ ...frame.axes }) }}
+          >
+            <span aria-hidden="true"><CopyPlusSolidIcon size={13} /></span>
+            Duplicate frame
+          </ContextMenuItem>
           {/* WS-10 Phase 2 (§4.3-§4.4) — "duplicate as variant": a second
               frame of the SAME page, beside this one, with one preview axis
               flipped. Direction always applies (no probe gate — `dir`
