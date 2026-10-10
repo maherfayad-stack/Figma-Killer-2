@@ -146,7 +146,7 @@ describe('liveSocketUrl', () => {
     )
   })
 
-  it('goes straight to the backend port in development, on the page's own hostname', () => {
+  it('goes straight to the backend port in development, on the page own hostname', () => {
     expect(liveSocketUrl(null, { protocol: 'http:', host: '127.0.0.1:5174', hostname: '127.0.0.1' }, '3002')).toBe(
       'ws://127.0.0.1:3002/admin/api/studio/live',
     )
