@@ -161,6 +161,19 @@ export function inlineTailKey(nodeId: string): string | undefined {
   return nodeId.split(INLINE_ID_SEPARATOR).pop()
 }
 
+/**
+ * How many board nodes resolve to the same source element as `nodeId` — 1 for
+ * an element that is its own call site, N for one inlined out of a component
+ * used in N places (an edit to it is written once and lands on all N).
+ */
+export function inlinedSourceInstanceCount(
+  index: Pick<NodeIndexHost, '_inlineTailToCount'>,
+  nodeId: string,
+): number {
+  const tail = inlineTailKey(nodeId)
+  return tail ? (index._inlineTailToCount.get(tail) ?? 1) : 1
+}
+
 function addPageIdForNode(index: Map<string, string[]>, nodeId: string, pageId: string): void {
   const existing = index.get(nodeId)
   if (!existing) {

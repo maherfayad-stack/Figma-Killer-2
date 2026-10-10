@@ -1,0 +1,24 @@
+.row {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-space-m);
+    min-height: var(--inspector-row-h);
+    color: var(--text);
+    font-size: var(--text-s);
+}
+
+.label {
+    min-width: 0;
+}
+
+/* The chip that names a parent which places its children by position (PA-4):
+ * state, not decoration — achromatic like every default surface. */
+.freeFrameChip {
+    align-self: flex-start;
+    padding-inline: var(--inspector-space-m);
+    padding-block: var(--inspector-space-4xs);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface-3);
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+}

@@ -373,6 +373,14 @@ classifies each axis against the parent's *computed* `display`/`flex-direction`
 | flex, **cross** axis | `align-self: stretch` (clears the axis length) | `width\|height: fit-content` |
 | grid | `justify-self` (inline) / `align-self` (block) `: stretch`, clears the axis length | `width\|height: fit-content` |
 | block | `width\|height: 100%` | `width\|height: fit-content` |
+| **absolute / fixed** (PA-5), whatever the parent | both insets, axis length cleared: the Left-and-right / Top-and-bottom constraint, planned by `constraintMapping`'s `planConstraintChange(axis, 'stretch')` so the size field and the crosshair share one write | `width\|height: fit-content`; a stretch's end inset is released |
+
+An element that is `absolute`/`fixed` has left the parent's layout, so its role
+is `absolute` regardless of the parent (`SizingParentLayout.childPosition`,
+read from the element's own `position`). Fixed there freezes the measured
+length and drops a stretch's end inset. Fill is disabled with the constraints
+gate's reason (e.g. an unpositioned parent) when the stretch has no honest
+patch.
 
 The earlier model wrote `fit-content`/`100%` unconditionally. `100%` on a flex
 child resolves against the container's content box and ignores `gap`, so a
@@ -393,6 +401,25 @@ layout comes from `useSizingParentLayout` — a live `getComputedStyle` read of
 the parent's rendered element, the same source `SingleNodeAlignRow` uses for
 G10; a stored declaration cannot tell you what the cascade resolved `display`
 to.
+
+#### Ignore auto layout (PA-4)
+
+A child of a flex/grid container shows an **Ignore auto layout** switch in the
+"Flex element" section. On: `setIgnoreAutoLayout` writes `position: absolute`
+and the `left`/`top` the layer already occupies (measured against the container
+by `containingBlockOffsets`, margin taken off) on the child and, when the
+container does not yet contain absolute children, `position: relative` on the
+container, **in one undo step**. The container write happens only when that one
+declaration stays on one element: a container inlined from a component used in
+N places, or repeated per `.map` row, refuses with a dialog naming N and
+offering the same write as an explicit remedy (OD-P2). Off: position and every
+inset are cleared (the layer's source index never changed) and a container
+`relative` that nothing else needs is released, so on-then-off restores the
+file. A position that comes from a class is refused with that reason. A
+container whose children are all absolute shows a derived **Free frame** chip
+(`useParentPlacementKind`); the menu items read "Add auto layout" / "Add /
+remove auto layout" to match shift-A. Live (Tier 2) frames cannot be measured
+and say so.
 
 ### G3 — Layout: the settings popover (F3–F8)
 
