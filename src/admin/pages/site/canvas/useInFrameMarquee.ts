@@ -33,7 +33,8 @@ import { isCanvasSpacePanActive, shouldStartCanvasPointerPan } from './canvasPan
 import { CANVAS_NODE_SELECTOR, isElementLike, isPressInsideInlineEditor } from './canvasEventTargets'
 import { presentedElementForNode } from './canvasNodeLookup'
 import { nodeVisualRect } from './canvasDomGeometry'
-import { canvasPressContext, frameContentRootId, isFrameBackgroundHit } from './canvasPressTarget'
+import { createBareWrapperProbe } from './canvasBareWrapperProbe'
+import { canvasPressContext, isFrameBackgroundHit, marqueeRootId } from './canvasPressTarget'
 import { marqueeBetween, marqueeHits, type MarqueeCandidate, type MarqueeRect } from './inFrameMarquee'
 
 /** Frame px the pointer travels before a root press becomes a marquee rather than a click. */
@@ -46,7 +47,7 @@ interface InFrameMarqueeOptions {
   frameId: string | null
 }
 
-function collectCandidates(doc: Document, tree: NodeTree<PageNode>): MarqueeCandidate[] {
+function collectCandidates(doc: Document, tree: NodeTree<PageNode>, rootId: string): MarqueeCandidate[] {
   const candidates: MarqueeCandidate[] = []
   const walk = (nodeId: string, depth: number) => {
     const node = tree.nodes[nodeId]
@@ -62,8 +63,8 @@ function collectCandidates(doc: Document, tree: NodeTree<PageNode>): MarqueeCand
       walk(childId, depth + 1)
     }
   }
-  // Below the screen element: the layers a sweep means are its children.
-  walk(frameContentRootId(tree), 1)
+  // Below the background the press landed on: the layers a sweep means are its children.
+  walk(rootId, 1)
   return candidates
 }
 
@@ -111,8 +112,11 @@ export function useInFrameMarquee({ enabled, overlayRoot, frameId }: InFrameMarq
       const nodeId = target.closest(CANVAS_NODE_SELECTOR)?.getAttribute('data-node-id')
       if (!nodeId) return
       const resolved = resolveSelectableNode(state, nodeId)
-      if (!resolved || !isFrameBackgroundHit(resolved.tree, nodeId, canvasPressContext(state, frameId))) return
-      const tree = resolved.tree
+      const tree = resolved?.tree
+      if (!tree) return
+      const isBareWrapper = createBareWrapperProbe(doc, tree)
+      if (!isFrameBackgroundHit(tree, nodeId, canvasPressContext(state, frameId), isBareWrapper)) return
+      const sweepRootId = marqueeRootId(tree, nodeId, isBareWrapper)
 
       const start = { x: event.clientX, y: event.clientY }
       const additive = event.shiftKey
@@ -146,7 +150,7 @@ export function useInFrameMarquee({ enabled, overlayRoot, frameId }: InFrameMarq
         if (!candidates) {
           if (Math.hypot(moveEvent.clientX - start.x, moveEvent.clientY - start.y) < MARQUEE_THRESHOLD_PX) return
           // The marquee starts: one read of every layer's box, then chrome.
-          candidates = collectCandidates(doc, tree)
+          candidates = collectCandidates(doc, tree, sweepRootId)
           box = doc.createElement('div')
           box.setAttribute('data-canvas-in-frame-marquee', 'true')
           Object.assign(box.style, {

@@ -256,6 +256,16 @@ export interface SiteSlice {
    */
   setNodeInlineStyles: (nodeId: string, patch: Record<string, string | number | null | undefined>) => void
   /**
+   * `setNodeInlineStyles` for a canvas GESTURE (a resize, a Hug double-click)
+   * on the element the user pointed at. On markup that lives in a shared
+   * component's own file the plain write would silently restyle every
+   * instance, so it takes the same road a structural gesture does: this
+   * instance is detached, the write replayed on it, one undo
+   * (`instanceOnlyGesture.ts`), with the refusal dialog only when that cannot
+   * happen. Anywhere else it is exactly `setNodeInlineStyles`.
+   */
+  setNodeInlineStylesFromGesture: (nodeId: string, patch: Record<string, string | number | null | undefined>, gesture: string) => void
+  /**
    * Bulk sibling of `setNodeInlineStyles` — applies ONE patch to every id in
    * `nodeIds` within a single history transaction, so an inspector edit made
    * against an N-node multi-selection is ONE undo step (W8-3 phase 1). A

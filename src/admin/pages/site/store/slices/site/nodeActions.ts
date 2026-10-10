@@ -79,6 +79,7 @@ type NodeActions = Pick<
   | 'updateNodeProps'
   | 'updateInstanceCallSiteProp'
   | 'setNodeInlineStyles'
+  | 'setNodeInlineStylesFromGesture'
   | 'setNodesInlineStyles'
   | 'setNodesInlineStylesPerNode'
   | 'removeNodeInlineStyleProperty'

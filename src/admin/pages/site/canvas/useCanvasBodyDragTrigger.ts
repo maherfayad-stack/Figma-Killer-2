@@ -44,6 +44,7 @@ import {
 import { iframeLocalPointToParentClientPoint } from './iframeEventCoordinates'
 import { isCanvasSpacePanActive, shouldStartCanvasPointerPan } from './canvasPanInput'
 import { beginCanvasPress, markCanvasPressDragged } from './canvasNodeGestureLatch'
+import { createBareWrapperProbe } from './canvasBareWrapperProbe'
 import { canvasPressContext, planCanvasPressDrag } from './canvasPressTarget'
 import type { CanvasDragOrigin } from './canvasDragSession'
 
@@ -151,6 +152,7 @@ export function useCanvasBodyDragTrigger({
       if (!page) return
       const plan = planCanvasPressDrag(page, nodeId, canvasPressContext(state, frameId), {
         deep: event.metaKey || event.ctrlKey,
+        isBareWrapper: createBareWrapperProbe(doc, page),
       })
       // The frame's own background: nothing to move — the press is the in-frame marquee's.
       if (!plan) return

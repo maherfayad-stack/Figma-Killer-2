@@ -545,6 +545,8 @@ export const STRUCTURAL_REFUSAL_TITLE = {
   ignoreAutoLayout: 'Cannot ignore auto layout here',
   /** P5-C — the Detach verb (`instanceActions.ts`): a refusal names why this instance's markup can't be written in place. */
   detach: 'Detach refused',
+  /** A canvas resize / Hug on markup that lives in a shared component (`inlineStyleActions.ts`). */
+  resize: 'Resize refused',
 } as const
 
 /**
