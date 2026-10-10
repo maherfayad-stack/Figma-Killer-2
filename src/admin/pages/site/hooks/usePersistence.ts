@@ -307,6 +307,14 @@ export function usePersistence(
     const controller = new AbortController()
 
     async function load() {
+      // React's dev double-mount runs this effect, cleans it up, and runs it
+      // again inside ONE synchronous commit. Starting the request below at once
+      // would send the first run's `/load` (a full project parse on the
+      // server) only to abort it; yielding one microtask lets the cleanup
+      // cancel the superseded run before it touches the network. In
+      // production there is no double-mount and the yield costs nothing.
+      await Promise.resolve()
+      if (cancelled) return
       // Read actions point-in-time — no React subscription needed
       const {
         site: existingSite,
