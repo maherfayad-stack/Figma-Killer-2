@@ -23,6 +23,7 @@ import { pruneCanvasSelectionDraft } from '../selectionSlice'
 import { collectDirtyFromSitePatches, mergeDirtyMarks } from './dirtyTracking'
 import { applyNodeIndexPatch, nodeIndexesOf } from './nodeIndex'
 import { isBoardOnlyEntry, restoreBoardSnapshot } from '../boardHistory'
+import { flushPendingGestures } from '../../pendingGestures'
 import { pushToast } from '@ui/components/Toast'
 import { reissueStructuralMove, reissueStructuralMoves, type StructuralStepOutcome } from './structuralHistory'
 import { reissueStructuralSourceEdits } from './structuralSourceHistory'
@@ -176,6 +177,7 @@ function runBoardStep(
 export function createUndoRedoActions({ get, set }: SiteSliceHelpers): UndoRedoActions {
   return {
     undo: () => {
+      flushPendingGestures() // a nudge burst still settling is the step ⌘Z undoes
       // P3-D — a structural write still on the wire may not have pushed its
       // entry yet (a source gesture's entry lands with its re-read), so the
       // stack is read only once the write has settled: a ⌘Z pressed right
@@ -227,6 +229,7 @@ export function createUndoRedoActions({ get, set }: SiteSliceHelpers): UndoRedoA
     },
 
     redo: () => {
+      flushPendingGestures()
       if (deferWhileStructuralCommitInFlight(() => get().redo())) return // see `undo`
       const { _historyFuture, site } = get()
       if (_historyFuture.length === 0) return

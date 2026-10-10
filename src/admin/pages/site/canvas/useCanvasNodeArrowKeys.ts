@@ -5,18 +5,25 @@
  * through `position: relative` (canvas-48). The rules are
  * `canvasNodeArrowMove.ts`; this file is the gesture around them.
  *
- * ## A held key is one undo entry and one source write
+ * ## A held key — or a burst of taps — is one undo entry and one source write
  *
- * Auto-repeat fires ~30 keydowns a second. A store write per repeat is thirty
- * undo entries and — past the autosave's deferral cap — several source writes
- * for one gesture (parity 0.3, "undo flooding"). So a hold is a SESSION:
+ * Auto-repeat fires ~30 keydowns a second, and a person tapping an arrow
+ * manages ~25. A store write per keystroke is that many undo entries, commits
+ * and `/save` round trips for one gesture (parity 0.3, "undo flooding"; the
+ * 2026-10-10 audit measured 15 saves and 7 long tasks for 15 taps). So the
+ * unit is a SESSION that outlives a single press:
  *
  *   - nudge: every keydown moves a PREVIEW (the same transient channel an
  *     inspector scrub uses — `setPreviewNodeStyles`, one bag per layer, for a
- *     portal frame; the optimistic style broadcast for a live one), and the
- *     release writes ONE `setNodesInlineStylesPerNode` — one history entry
- *     for the whole selection — and flushes the autosave straight away, so
- *     the source is written once, at the end;
+ *     portal frame; the optimistic style broadcast for a live one). Releasing
+ *     the key does NOT write: it arms a {@link NUDGE_SETTLE_MS} settle timer
+ *     (the Vector section's burst figure), and the next tap inside the window
+ *     RESUMES the same session — no new layout read, no store write. When the
+ *     burst settles the session writes ONE `setNodesInlineStylesPerNode` — one
+ *     history entry for the whole selection — and flushes the autosave, so the
+ *     source is written once, at the end. Anything else that records history
+ *     (an inspector edit, ⌘Z, a board change) commits the session FIRST
+ *     (`store/pendingGestures.ts`), so the nudge is never overtaken;
  *   - reorder: the first keydown moves the selection one step
  *     (`stepSiblings`: one save batch, one entry — see `@core/page-tree`'s
  *     `planSiblingSteps` for which selections that covers); the repeats of
@@ -61,6 +68,7 @@ import { canWriteInlineStyleForModule, isStylePatchWritableToSource, topLevelSel
 import { getKeybindingForCommand, nudgeDelta } from '@admin/spotlight/keybindings'
 import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 import { flushAutosave } from '@site/hooks/autosaveSchedule'
+import { registerPendingGesture } from '@site/store/pendingGestures'
 import { pushToast } from '@ui/components/Toast'
 import {
   findReanchoringPromotion,
@@ -91,9 +99,16 @@ interface ArrowSession {
   state: 'measuring' | 'nudging' | 'spent'
   /** The positioned layers a nudge moves, each with its own offsets. */
   plans: ReadonlyMap<string, NudgePlan> | null
-  /** The key was released while the layout read was still in flight. */
+  /** The key is up: the session is waiting out the settle window (or the layout read) for a next tap. */
   released: boolean
+  /** The settle timer that commits a released session. */
+  settleTimer: ReturnType<typeof setTimeout> | null
+  /** Unregisters the session from `flushPendingGestures`; set while the session has an uncommitted preview. */
+  unregisterPending: (() => void) | null
 }
+
+/** How long after the last arrow tap a nudge burst is committed — `vectorPaintCommit`'s `BURST_SETTLE_MS`. */
+export const NUDGE_SETTLE_MS = 400
 
 const REFUSAL_TITLE = "This layer can't be nudged"
 const LOCKED_TITLE = 'Locked layers do not move'
@@ -139,6 +154,10 @@ function dropNudgePreview(session: ArrowSession): void {
  * sends, until Vite's update carries them for real.
  */
 function commitNudge(session: ArrowSession): void {
+  if (session.settleTimer !== null) clearTimeout(session.settleTimer)
+  session.settleTimer = null
+  session.unregisterPending?.()
+  session.unregisterPending = null
   session.state = 'spent'
   const store = useEditorStore.getState()
   const page = selectActiveCanvasPage(store)
@@ -175,7 +194,12 @@ function nudgeRefusal(nodeId: string, plan: NudgePlan): string | null {
  * finish. `current` answers "is this still the live session?", because a new
  * selection may have replaced it while the read was in flight.
  */
-async function resolveSession(session: ArrowSession, current: () => ArrowSession | null, end: () => void): Promise<void> {
+async function resolveSession(
+  session: ArrowSession,
+  current: () => ArrowSession | null,
+  end: () => void,
+  settle: (session: ArrowSession) => void,
+): Promise<void> {
   const store = useEditorStore.getState()
   const page = selectActiveCanvasPage(store)
   const measured = page ? await measureArrowTargets(page, session.nodeIds, store.activeBreakpointId) : null
@@ -204,12 +228,14 @@ async function resolveSession(session: ArrowSession, current: () => ArrowSession
       session.plans = move.plans
       session.state = 'nudging'
       previewNudge(session)
-      if (session.released || current() !== session) commitNudge(session)
+      if (current() !== session) commitNudge(session)
+      else if (session.released) settle(session)
     }
   } else {
     session.state = 'spent'
   }
-  if (session.released && current() === session) end()
+  // A nudging session released during the read is `settle`'s now.
+  if (session.released && session.state !== 'nudging' && current() === session) end()
 }
 
 /** Registers the scope. Inert while live or read-only. */
@@ -222,13 +248,29 @@ export function useCanvasNodeArrowKeys(editable: boolean, isLive: boolean): void
     sessionRef.current = null
   }
 
+  /** Commit a nudging session and, if it is still the live one, retire it. */
+  const commitSession = (session: ArrowSession) => {
+    if (session.state === 'nudging') commitNudge(session)
+    if (sessionRef.current === session) end()
+  }
+
+  /**
+   * Wait out the burst: the session stays live and painted, and registered with
+   * the store so any other history write (or ⌘Z) commits it first.
+   */
+  const settle = (session: ArrowSession) => {
+    session.unregisterPending ??= registerPendingGesture(() => commitSession(session))
+    if (session.settleTimer !== null) clearTimeout(session.settleTimer)
+    session.settleTimer = setTimeout(() => commitSession(session), NUDGE_SETTLE_MS)
+  }
+
   const release = () => {
     const session = sessionRef.current
     if (!session) return
     session.released = true
-    if (session.state === 'nudging') commitNudge(session)
+    if (session.state === 'nudging') settle(session)
     // A read still in flight finishes the session itself (`resolveSession`).
-    if (session.state !== 'measuring') end()
+    else if (session.state !== 'measuring') end()
   }
 
   useEditorKeyScope(
@@ -254,18 +296,23 @@ export function useCanvasNodeArrowKeys(editable: boolean, isLive: boolean): void
       if (nodeIds.length === 0) return true
       const key = nodeIds.join('\n')
 
-      // The selection moved on mid-hold, or this is a NEW press whose
-      // predecessor is still waiting for its layout read: the old hold is
-      // over, and it finishes on its own once the read lands.
+      // The selection moved on: the old burst is over. A nudge commits now; a
+      // layout read still in flight finishes on its own once it lands
+      // (`resolveSession` sees it is no longer the live session).
       const previous = sessionRef.current
-      if (previous && (previous.key !== key || previous.released)) {
-        release()
+      if (previous && previous.key !== key) {
+        previous.released = true
+        commitSession(previous)
         sessionRef.current = null
       }
 
       const session = sessionRef.current
       if (session) {
         if (session.state === 'spent') return true
+        // A tap inside the settle window resumes the burst.
+        if (session.settleTimer !== null) clearTimeout(session.settleTimer)
+        session.settleTimer = null
+        session.released = false
         session.dx += delta.dx
         session.dy += delta.dy
         if (session.state === 'nudging') previewNudge(session)
@@ -275,14 +322,34 @@ export function useCanvasNodeArrowKeys(editable: boolean, isLive: boolean): void
       // A locked layer does not move, and neither does a selection holding
       // one — said once per press, never per auto-repeat.
       if (nodeIds.some((id) => page.nodes[id]?.locked === true)) {
-        sessionRef.current = { nodeIds, key, dx: 0, dy: 0, state: 'spent', plans: null, released: false }
+        sessionRef.current = {
+          nodeIds,
+          key,
+          dx: 0,
+          dy: 0,
+          state: 'spent',
+          plans: null,
+          released: false,
+          settleTimer: null,
+          unregisterPending: null,
+        }
         pushToast({ kind: 'info', title: LOCKED_TITLE, body: 'Unlock it (⌘⇧L) to move the selection.' })
         return true
       }
 
-      const next: ArrowSession = { nodeIds, key, dx: delta.dx, dy: delta.dy, state: 'measuring', plans: null, released: false }
+      const next: ArrowSession = {
+        nodeIds,
+        key,
+        dx: delta.dx,
+        dy: delta.dy,
+        state: 'measuring',
+        plans: null,
+        released: false,
+        settleTimer: null,
+        unregisterPending: null,
+      }
       sessionRef.current = next
-      void resolveSession(next, () => sessionRef.current, end)
+      void resolveSession(next, () => sessionRef.current, end, settle)
       return true
     },
     // Only an arrow's release ends the hold — letting go of ⇧ mid-hold must
