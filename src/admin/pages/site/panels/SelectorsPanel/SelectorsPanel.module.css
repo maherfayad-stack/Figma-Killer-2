@@ -119,6 +119,13 @@
     white-space: nowrap;
 }
 
+/* A file name can be long (`OnboardingHero.module.css`) - clip, never wrap. */
+.rowMeta {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .rowUsage {
     justify-self: end;
 }

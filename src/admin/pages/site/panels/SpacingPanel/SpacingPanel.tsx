@@ -114,9 +114,17 @@ function PillBarRow({
   )
 }
 
-export function SpacingBarChart({ points }: { points: ChartPoint[] }) {
-  const desktopHeights = points.map((p) => Math.max(0, p.maxPx))
-  const mobileHeights = points.map((p) => Math.max(0, p.minPx))
+/**
+ * `maxBarPx` caps the tallest bar by scaling EVERY bar by one factor (the
+ * Space tab draws 1px = 1px; a card in the Framework overview has no room for
+ * a 700px bar and used to run off the bottom of the panel). Value labels keep
+ * the true numbers.
+ */
+export function SpacingBarChart({ points, maxBarPx }: { points: ChartPoint[]; maxBarPx?: number }) {
+  const peakPx = points.reduce((acc, p) => Math.max(acc, p.maxPx, p.minPx), 0)
+  const scale = maxBarPx !== undefined && peakPx > maxBarPx ? maxBarPx / peakPx : 1
+  const desktopHeights = points.map((p) => Math.max(0, p.maxPx) * scale)
+  const mobileHeights = points.map((p) => Math.max(0, p.minPx) * scale)
 
   // Per-side max bar height. Plus the reserve gives the wrapping row height,
   // leaving room for the floating value labels.
@@ -181,7 +189,7 @@ export function SpacingBarChart({ points }: { points: ChartPoint[] }) {
                     // Desktop label cell uses flex-start (label at row top).
                     // Push it down by (maxBar − thisBar) so it sits right
                     // above this bar's tip.
-                    transform: `translateY(${desktopBarHeight - Math.max(0, p.maxPx)}px)`,
+                    transform: `translateY(${desktopBarHeight - Math.max(0, p.maxPx) * scale}px)`,
                   } as CSSProperties
                 }
                 title={`${p.variableName}: desktop ${p.maxPx}px${p.isBase ? ' (base step)' : ''}`}
@@ -242,7 +250,7 @@ export function SpacingBarChart({ points }: { points: ChartPoint[] }) {
                     // Mobile cells use flex-end (label parked at row bottom).
                     // Pull it up by (maxBar − thisBar) so it rides this bar's
                     // tip — negative translateY moves it up.
-                    transform: `translateY(${Math.max(0, p.minPx) - mobileBarHeight}px)`,
+                    transform: `translateY(${Math.max(0, p.minPx) * scale - mobileBarHeight}px)`,
                   } as CSSProperties
                 }
                 title={`${p.variableName}: mobile ${p.minPx}px${p.isBase ? ' (base step)' : ''}`}
