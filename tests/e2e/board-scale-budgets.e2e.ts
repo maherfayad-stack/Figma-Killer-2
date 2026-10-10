@@ -355,7 +355,29 @@ test.describe('board-scale budgets on the 100 x 140 corpus', () => {
     await page.waitForTimeout(3000)
     const posterLocator = page.locator(`[data-page-id="${firstId}"] [data-testid="board-frame-poster"]`)
     await expect(posterLocator, 'frame 0 left the screen and showed no picture').toBeAttached()
-    await posterLocator.screenshot({ path: '.tmp/board-speed/poster-sample-poster.png' }).catch(() => undefined)
+    // Read the picture back (an element screenshot of an off-screen, transformed <img> comes out black): it must hold
+    // real content, not a transparent or blank bitmap.
+    const picture = await posterLocator.evaluate(async (img) => {
+      const el = img as HTMLImageElement
+      await el.decode()
+      const canvas = document.createElement('canvas')
+      canvas.width = el.naturalWidth
+      canvas.height = el.naturalHeight
+      const ctx = canvas.getContext('2d')!
+      ctx.drawImage(el, 0, 0)
+      const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data
+      let opaque = 0
+      let inked = 0
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i + 3] > 0) opaque += 1
+        if (data[i + 3] > 0 && (data[i]! < 235 || data[i + 1]! < 235 || data[i + 2]! < 235)) inked += 1
+      }
+      return { width: canvas.width, height: canvas.height, opaque, inked, png: canvas.toDataURL('image/png') }
+    })
+    writeFileSync('.tmp/board-speed/poster-sample-poster.png', Buffer.from(picture.png.split(',')[1]!, 'base64'))
+    annotate('poster bitmap', `${picture.width}x${picture.height}, opaque ${picture.opaque}, inked ${picture.inked}`)
+    expect(picture.opaque, 'the poster is fully transparent').toBeGreaterThan(picture.width * picture.height * 0.9)
+    expect(picture.inked, 'the poster is blank').toBeGreaterThan(picture.width * picture.height * 0.02)
     type Probe = { iframeAt: number; contentAt: number }
     await page.evaluate((id) => {
       const state: Probe = { iframeAt: 0, contentAt: 0 }

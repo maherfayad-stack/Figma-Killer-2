@@ -113,6 +113,16 @@ function collectStyleText(doc: Document): string {
   return parts.join('\n')
 }
 
+/** The first background `<body>` then `<html>` declares, as a CSS color (possibly transparent: filling with it is then a no-op). */
+function documentBackground(doc: Document): string {
+  const view = doc.defaultView
+  for (const element of [doc.body, doc.documentElement]) {
+    const color = view?.getComputedStyle(element).backgroundColor
+    if (color && color !== 'transparent') return color
+  }
+  return '#fff'
+}
+
 /** Style text sits in an XML document, so `&` (CSS nesting, URLs) and `<` (inline SVG data URIs) must be escaped. */
 function escapeXmlText(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -164,10 +174,18 @@ async function inlineAll(styleText: string, bodyMarkup: string, base: string): P
  * `blob:` URL (it cannot export it); the same markup as a `data:` URL draws
  * clean, so the markup travels as a data URL even though it costs one encode.
  */
-function loadSvgImage(svg: string): Promise<HTMLImageElement> {
+async function loadSvgImage(svg: string): Promise<HTMLImageElement> {
   const image = new Image()
-  image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
-  return image.decode().then(() => image)
+  const source = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+  await yieldToMain()
+  image.src = source
+  await image.decode()
+  return image
+}
+
+/** End the current task so the phases of one capture are separate tasks, each short enough to sit between two frames. A timeout, never an rAF: a hidden tab must still finish. */
+function yieldToMain(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0))
 }
 
 /**
@@ -184,6 +202,7 @@ export async function rasterizeFrameDocument(doc: Document, { width, height, max
 
   // `<html>` and `<body>` selectors, `:root` variables and `dir`/`lang` all survive because the
   // real element chain is rebuilt, not flattened into a div.
+  await yieldToMain()
   const markup = `${htmlOpenTag(root)}<head><style>${escapeXmlText(style)}</style></head>${inlinedBody}</html>`
   const svg = `<svg xmlns="${SVG_NS}" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><foreignObject x="0" y="0" width="${width}" height="${height}">${markup}</foreignObject></svg>`
 
@@ -194,6 +213,12 @@ export async function rasterizeFrameDocument(doc: Document, { width, height, max
   canvas.height = Math.max(1, Math.round(height * scale))
   const context = canvas.getContext('2d')
   if (!context) return null
+  await yieldToMain()
+  // The document's own background is what the frame shows; the canvas starts transparent, which a poster must not be.
+  context.fillStyle = '#fff'
+  context.fillRect(0, 0, canvas.width, canvas.height)
+  context.fillStyle = documentBackground(doc)
+  context.fillRect(0, 0, canvas.width, canvas.height)
   context.drawImage(image, 0, 0, canvas.width, canvas.height)
   return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/webp', 0.8))
 }
