@@ -152,6 +152,15 @@ export const PropertyControlSchema = Type.Recursive((Self) => Type.Union([
       ...PropertyControlBaseSchema,
       type: Type.Literal('select'),
       options: Type.Array(PropertyControlOptionSchema),
+      /**
+       * How the choice is drawn. Absent is the dropdown; `segmented` lays a
+       * handful of options out as a connected button group (a component's
+       * variant axis of 2..4 members). The VALUE contract is identical — only
+       * the affordance differs — which is why this is a display hint on
+       * `select` and not a second control type every consumer would have to
+       * learn.
+       */
+      display: Type.Optional(Type.Literal('segmented')),
     },
     { additionalProperties: false },
   ),

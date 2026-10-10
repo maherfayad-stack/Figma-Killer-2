@@ -16,6 +16,7 @@
  *   - `@core/studio-prototype`
  *   - `@core/studio-runtime`
  *   - `@core/vector`
+ *   - `@core/component-variants`
  *
  * Per the barrel convention (CLAUDE.md → "Barrel imports"): everything OUTSIDE
  * a module imports through its barrel; files INSIDE the module import each
@@ -70,6 +71,10 @@ const BARRELLED_MODULES = [
   // the sanitizer and the canvas renderer share. A deep import is how a
   // second, drifted name table or a looser fragment check would get made.
   'vector',
+  // The variant read model's wire schema: ONE definition shared by the server
+  // analyzer and the browser catalog client. A deep import is how a second,
+  // drifted mirror of the binding union would get made.
+  'component-variants',
 ]
 
 // Scan production + test sources in both the app and the server.
