@@ -99,6 +99,11 @@ export function TokenizedColorField({
   const colorSettings = useEditorStore((state) => state.site?.settings.framework?.colors)
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
+  // True once the user has moved the highlight onto a suggestion (arrow keys
+  // or hover). Until then Enter commits the TYPED text — the auto-highlighted
+  // first row is a default, not a choice (typing `#ff0000` + Enter used to
+  // apply the first token, `var(--color-metal)`).
+  const [highlightMoved, setHighlightMoved] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
   const swatchButtonRef = useRef<HTMLButtonElement>(null)
   const variables = generateFrameworkColorVariableSets(colorSettings).light
@@ -146,6 +151,7 @@ export function TokenizedColorField({
   if (lastValue !== value) {
     setLastValue(value)
     setActiveIndex(0)
+    setHighlightMoved(false)
   }
 
   function handleTextFocus() {
@@ -205,6 +211,21 @@ export function TokenizedColorField({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      if (showMenu && highlightMoved) {
+        commitToken(filteredVariables[activeIndex])
+        return
+      }
+      // Figma: Enter commits the typed text and leaves the field, so the next
+      // Ctrl+Z reaches the editor's undo instead of the input's own text undo.
+      // Blurring runs `onTextBlur`, the one commit path for typed text.
+      onTokenPreviewClear?.()
+      setOpen(false)
+      event.currentTarget.blur()
+      return
+    }
+
     if (!showMenu) {
       if (event.key === 'ArrowDown' && filteredVariables.length > 0) {
         event.preventDefault()
@@ -219,13 +240,12 @@ export function TokenizedColorField({
       setOpen(false)
     } else if (event.key === 'ArrowDown') {
       event.preventDefault()
+      setHighlightMoved(true)
       setActiveIndex((index) => Math.min(index + 1, filteredVariables.length - 1))
     } else if (event.key === 'ArrowUp') {
       event.preventDefault()
+      setHighlightMoved(true)
       setActiveIndex((index) => Math.max(index - 1, 0))
-    } else if (event.key === 'Enter') {
-      event.preventDefault()
-      commitToken(filteredVariables[activeIndex])
     }
   }
 
@@ -349,6 +369,7 @@ export function TokenizedColorField({
                     className={styles.colorTokenOption}
                     onMouseEnter={() => {
                       setActiveIndex(index)
+                      setHighlightMoved(true)
                       onTokenPreview?.(`var(${variable.name})`)
                     }}
                     onMouseDown={(event) => event.preventDefault()}

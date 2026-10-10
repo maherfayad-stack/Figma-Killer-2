@@ -58,6 +58,7 @@ import {
   cssPropertyLabel,
   isNudgeableProp,
   isUnitlessNumberProp,
+  normalizeBareLength,
   NUMBER_TYPED_PROPS,
 } from './cssControlTypes'
 import {
@@ -314,7 +315,7 @@ export function ClassPropertyRow({
       onChange(property, Number.isFinite(parsed) && nextValue.trim() !== '' ? parsed : undefined)
       return
     }
-    onChange(property, nextValue)
+    onChange(property, normalizeBareLength(property, nextValue))
   }
 
   // Token-aware properties commit on blur via TokenAwareInput's `onCommit`.
@@ -331,7 +332,7 @@ export function ClassPropertyRow({
       onChange(property, Number.isFinite(parsed) ? parsed : resolved)
       return
     }
-    onChange(property, resolved)
+    onChange(property, resolved === undefined ? resolved : normalizeBareLength(property, resolved))
   }
 
   // Preview counterparts — same value coercion as the commit handlers, but
@@ -345,7 +346,7 @@ export function ClassPropertyRow({
       onPreview(property, Number.isFinite(parsed) && nextValue.trim() !== '' ? parsed : undefined)
       return
     }
-    onPreview(property, nextValue)
+    onPreview(property, normalizeBareLength(property, nextValue))
   }
 
   const handleTokenPreview = (resolved: string | undefined) => {

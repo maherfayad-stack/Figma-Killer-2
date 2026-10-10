@@ -255,6 +255,29 @@ const UNITLESS_NUMBER_PROPS = new Set<keyof CSSPropertyBag>([
   'lineHeight',
 ])
 
+/**
+ * A bare line-height at or above this is a pixel length, not a ratio. The
+ * unitless form is a multiple of `font-size`, so `24` would paint 24 line
+ * boxes per line (`288px` at a 12px font) - never what someone typing `24`
+ * into a Figma-style line-height field means. Ratios in real stylesheets are
+ * 1-3; nothing sane is >= 10.
+ */
+const LINE_HEIGHT_MIN_BARE_PIXELS = 10
+
+/**
+ * Figma semantics for a typed bare number in a length field: it is pixels.
+ * Every length property already gets that from the field's unit; `lineHeight`
+ * is the one field that legitimately also accepts a bare ratio (`1.5`), so it
+ * keeps ratios and treats a bare number past `LINE_HEIGHT_MIN_BARE_PIXELS` as
+ * px. Explicit units, percentages and keywords pass through untouched.
+ */
+export function normalizeBareLength(prop: keyof CSSPropertyBag, value: string): string {
+  if (prop !== 'lineHeight') return value
+  const trimmed = value.trim()
+  if (!/^[+-]?(\d+\.?\d*|\.\d+)$/.test(trimmed)) return value
+  return Math.abs(Number(trimmed)) >= LINE_HEIGHT_MIN_BARE_PIXELS ? `${trimmed}px` : value
+}
+
 /** True when a bare number is already a valid value for `prop` — see above. */
 export function isUnitlessNumberProp(prop: keyof CSSPropertyBag): boolean {
   return UNITLESS_NUMBER_PROPS.has(prop)

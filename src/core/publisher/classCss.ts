@@ -97,7 +97,7 @@ const SIDE_PROP_TO_PREFIX = new Map<string, SideShorthandPrefix>(
  *   - left == right                → "T L B"       (e.g. `20px 8px 12px`)
  *   - otherwise                    → "T R B L"     (e.g. `20px 8px 12px 4px`)
  */
-function buildSidesShorthand(top: string, right: string, bottom: string, left: string): string {
+export function buildSidesShorthand(top: string, right: string, bottom: string, left: string): string {
   if (top === right && right === bottom && bottom === left) return top
   if (top === bottom && left === right) return `${top} ${right}`
   if (left === right) return `${top} ${left} ${bottom}`

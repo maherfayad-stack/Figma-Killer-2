@@ -6,8 +6,18 @@
     flex-shrink: 0;
 }
 
+/* The layer's NAME is the row's content and the class chip is a hint, so when
+   the row is too narrow for both the chip gives way first. The name sizes to
+   its text (not to 0 like the shared `.label`'s `flex: 1`) and still takes any
+   spare width; the chip's shrink factor is far higher, so the overflow lands on
+   it and it ellipsizes. The name only truncates once the chip is gone.
+   `.layerLabelGroup .layerName` out-specifies the shared label rule. */
+.layerLabelGroup .layerName {
+    flex: 1 1 auto;
+}
+
 .classChip {
-    flex: 0 1 auto;
+    flex: 0 100 auto;
     min-width: 0;
 }
 

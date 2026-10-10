@@ -140,6 +140,7 @@ import {
   type StyledEditPayload,
   type StyledRuleSource,
 } from './styledRuleSources'
+import { coalesceCssSideChanges } from './sideShorthandWrites'
 import { baselineFor, contextBaselineFor, effectiveStudioStyles, realContextIds } from './styleRuleBaseline'
 
 /**
@@ -378,7 +379,9 @@ function diffDeclarations(before: Record<string, unknown>, after: Record<string,
     if (property in after) continue
     changes.push({ property: camelToKebabCssProperty(property), value: null })
   }
-  return changes
+  // The bag is per-side; four sides moving together is ONE `padding`/`margin`
+  // declaration in the user's stylesheet (see `sideShorthandWrites.ts`).
+  return coalesceCssSideChanges(changes)
 }
 
 /** Only the changes that SET a value — what an `insert`/`create` edit's full declaration bag is built from. */
