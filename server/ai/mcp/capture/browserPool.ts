@@ -28,6 +28,8 @@
  * modules now need it and a second copy would drift.
  */
 
+import { withDeadline } from './withDeadline'
+
 /** The navigation + rasterisation surface both capture paths need. Real `chromium.launch()` output satisfies it. */
 export interface PlaywrightLikePage {
   goto(url: string, options: { waitUntil: 'load'; timeout: number }): Promise<unknown>
@@ -82,6 +84,9 @@ let warm: WarmBrowser | null = null
 /** Serialises captures — see module doc. */
 let captureTail: Promise<unknown> = Promise.resolve()
 
+/** A Chromium launch that has not produced a browser by now is stuck, not slow. */
+const LAUNCH_TIMEOUT_MS = 30_000
+
 /**
  * When a launch last failed, and why.
  *
@@ -130,7 +135,7 @@ async function getWarmBrowser(launch: LaunchBrowser<CapturePage>): Promise<Playw
   if (warm?.idleTimer) clearTimeout(warm.idleTimer)
   warm = null
   try {
-    const browser = await launch()
+    const browser = await withDeadline(launch(), LAUNCH_TIMEOUT_MS, 'Launching the capture browser')
     launchFailure = null
     warm = { browser, idleTimer: null }
     return browser

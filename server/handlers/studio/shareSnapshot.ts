@@ -39,6 +39,7 @@ import { FRAME_HEIGHT, FRAME_WIDTH, type Board } from '@core/studio-board'
 import { Type, safeParseValue } from '@core/utils/typeboxHelpers'
 import { isShareTokenShape, type SharedBoard, type SharedFrame } from '@core/studio-share'
 import { captureFrames } from '../../ai/mcp/capture/captureFrames'
+import { DeadlineExceededError, withDeadline } from '../../ai/mcp/capture/withDeadline'
 import { readBoardsFile } from './boardGeometry'
 import { loadStudioPages } from '../studioPageLoad'
 import { projectDisplayName } from '../studioProjects'
@@ -72,6 +73,15 @@ export interface ShareSnapshotInput {
 }
 
 /**
+ * The most a share will wait for its photograph. The capture queues behind the
+ * single warm Chromium (thumbnail captures included), launches it, loads the
+ * capture page and may fall back to the open tab; each step has its own bound
+ * and this is the ceiling over all of them. A share the user is watching must
+ * end in a link or a reason, never in an endless "Photographing the board...".
+ */
+export const SHARE_CAPTURE_DEADLINE_MS = 120_000
+
+/**
  * Injectable seams for tests — never passed by the route. Mirrors
  * `HeadlessCaptureOverrides`: a share test must be able to assert what is
  * WRITTEN without launching Chromium, and the thing worth asserting (that the
@@ -80,6 +90,8 @@ export interface ShareSnapshotInput {
  */
 export interface ShareSnapshotOverrides {
   captureFrames?: typeof captureFrames
+  /** Overrides {@link SHARE_CAPTURE_DEADLINE_MS}. Tests only. */
+  captureDeadlineMs?: number
   /** Page id → display title. Stands in for the parse when a fixture has no real pages. */
   titles?: Map<string, string>
 }
@@ -119,7 +131,21 @@ export async function writeShareSnapshot(
   // render for identical bytes. Both frames reference the one image.
   const pageIds = [...new Set(frames.map((frame) => frame.pageId))]
   const capture = overrides.captureFrames ?? captureFrames
-  const outcome = await capture({ userId: input.userId, dir: input.dir, pageIds })
+  let outcome: Awaited<ReturnType<typeof captureFrames>>
+  try {
+    outcome = await withDeadline(
+      capture({ userId: input.userId, dir: input.dir, pageIds }),
+      overrides.captureDeadlineMs ?? SHARE_CAPTURE_DEADLINE_MS,
+      'Photographing the board',
+    )
+  } catch (err) {
+    if (!(err instanceof DeadlineExceededError)) throw err
+    console.error('[studio-share]', err.message)
+    return {
+      ok: false,
+      error: `${err.message} The capture browser is not responding. Try again in a moment; if it keeps happening, check that Chromium is installed for playwright-core.`,
+    }
+  }
   if (!outcome.output.ok) {
     return { ok: false, error: outcome.output.error ?? 'The board could not be photographed.' }
   }

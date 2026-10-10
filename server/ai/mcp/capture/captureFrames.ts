@@ -51,6 +51,7 @@ import type { AiBrowserBridge } from '../../runtime/types'
 import { awaitEditorBridgeForUser, editorBridgeScope } from '../editorBridge'
 import { awaitStudioLiveReload } from '../tools/studio/liveReloadPush'
 import { rememberedLaunchFailure } from './browserPool'
+import { DeadlineExceededError, withDeadline } from './withDeadline'
 import { captureFramesHeadless, type HeadlessCaptureFailure, type HeadlessCaptureOverrides } from './headlessCapture'
 
 /** Which path a caller wants. `auto` is headless-first with the bridge as fallback. */
@@ -103,11 +104,23 @@ export interface CaptureFramesOverrides extends HeadlessCaptureOverrides {
   awaitBridge?: (userId: string, signal?: AbortSignal) => Promise<AiBrowserBridge | null>
 }
 
-/** Relay to the open editor tab — the original capture path, unchanged. */
+/** How long the open editor tab gets to answer a relayed capture before the caller is told it stalled. */
+const BRIDGE_CAPTURE_TIMEOUT_MS = 60_000
+
+/** Relay to the open editor tab — the original capture path, bounded so a tab that never answers cannot hang the caller. */
 async function captureViaBridge(
   bridge: AiBrowserBridge,
   request: CaptureFramesRequest,
 ): Promise<AiToolOutput> {
+  try {
+    return await withDeadline(relayToBridge(bridge, request), BRIDGE_CAPTURE_TIMEOUT_MS, 'The open Studio tab')
+  } catch (err) {
+    if (err instanceof DeadlineExceededError) return aiToolError(err.message)
+    throw err
+  }
+}
+
+function relayToBridge(bridge: AiBrowserBridge, request: CaptureFramesRequest): Promise<AiToolOutput> {
   return bridge.callBrowser('studio_export_frames', {
     pageIds: [...request.pageIds],
     ...(request.dpr === undefined ? {} : { dpr: request.dpr }),
