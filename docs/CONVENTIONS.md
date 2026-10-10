@@ -56,6 +56,8 @@ Compressed, agent-facing summaries of a subsystem: where things live, the gated 
 
 **There is exactly one living plan: [`ROADMAP.md`](../ROADMAP.md).** It holds intent that is not built yet: work orders grouped into bundles, their owners, their exit gates, and the open owner questions. A plan never describes how a shipped feature works. When a bundle ships, what it built is described in `features/` or `reference/`, and the bundle's row is closed in the ROADMAP.
 
+A bundle program too long to inline keeps its design in [`docs/programs/`](programs/refusals.md), one file per plan, each with the standard header; `ROADMAP.md` keeps the bundle rows and links the file. When the program ships, the plan is archived to `docs/archive/plans/` (filename unchanged) or deleted, by the "Delete or archive a doc when" rule below.
+
 Settled owner decisions are not plan content. They live in [`docs/decisions.md`](decisions.md), one row each, with date, source and consequence.
 
 ### 6. Archive and history (`docs/archive/`, `docs/state-archive/`, `docs/audits/`)
@@ -100,6 +102,7 @@ docs/
 │   └── ...
 │
 ├── agent-refs/                 Compressed agent-facing references
+├── programs/                   Live design plans for a ROADMAP bundle program (not built yet)
 ├── deployment/                 Operator docs (platform targets + generic hosts)
 ├── e2e/                        Agent-run browser test protocols and the dogfood backlog
 ├── archive/                    Historical: finished plans (filenames unchanged), one-off handoffs
