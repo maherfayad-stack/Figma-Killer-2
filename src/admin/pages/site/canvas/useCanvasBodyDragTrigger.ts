@@ -39,6 +39,7 @@ import {
   CANVAS_EDITOR_CONTROL_SELECTOR,
   CANVAS_NODE_SELECTOR,
   isElementLike,
+  isPressInsideInlineEditor,
 } from './canvasEventTargets'
 import { iframeLocalPointToParentClientPoint } from './iframeEventCoordinates'
 import { isCanvasSpacePanActive, shouldStartCanvasPointerPan } from './canvasPanInput'
@@ -113,11 +114,17 @@ export function useCanvasBodyDragTrigger({
         return
       }
 
-      const state = useEditorStore.getState()
+      let state = useEditorStore.getState()
       // An inline text edit owns the pointer inside its contentEditable: a
       // press-and-drag there is selecting text, not moving the element. Same
-      // stand-down the keyboard bridge makes for the same reason.
-      if (state.activeInlineEdit) return
+      // stand-down the keyboard bridge makes for the same reason. A press
+      // OUTSIDE it ends the edit first and is then an ordinary press — the
+      // drag right after a double-click edit must not be eaten.
+      if (state.activeInlineEdit) {
+        if (isPressInsideInlineEditor(event.target)) return
+        state.endInlineEdit()
+        state = useEditorStore.getState()
+      }
 
       const target = event.target
       if (!isElementLike(target)) return

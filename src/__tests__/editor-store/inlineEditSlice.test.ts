@@ -76,6 +76,12 @@ describe('startInlineEdit', () => {
     })
   })
 
+  it('a text tool session can open with its placeholder selected', () => {
+    const { nodeId } = setupSiteWithTextNode()
+    useEditorStore.getState().startInlineEdit(nodeId, 'bp-desktop', null, { selectAll: true })
+    expect(useEditorStore.getState().activeInlineEdit?.selectAll).toBe(true)
+  })
+
   it('opens a single-line session for base.button on the label prop', () => {
     const store = useEditorStore.getState()
     const site = store.createSite('Inline Edit Test Site')

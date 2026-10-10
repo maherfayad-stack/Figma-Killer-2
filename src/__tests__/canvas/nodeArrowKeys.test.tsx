@@ -39,6 +39,7 @@ import {
 } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
 import type { FrameDocumentAdapter, NodeMeasurement } from '@site/canvas/frameAdapter/FrameDocumentAdapter'
 import { EDITOR_SAVE_REQUEST_EVENT } from '@admin/state/adminEvents'
+import { subscribeToasts } from '@ui/components/Toast/toastBus'
 import { makeNode, makePage, makeSite } from '../fixtures'
 
 // ---------------------------------------------------------------------------
@@ -488,6 +489,21 @@ describe('a layout child reorders (IX-1)', () => {
     await settle()
     release(document, 'ArrowDown')
     expect(childOrder('row')).toEqual(['b', 'a', 'c'])
+  })
+
+  it('a cross-axis arrow is never silent: it says the parent places the layer and how to move it', async () => {
+    const seen: { title: string; body?: string }[] = []
+    const unsubscribe = subscribeToasts((list) => {
+      seen.splice(0, seen.length, ...list)
+    })
+    mount()
+    select('b')
+    press(document, { key: 'ArrowDown' })
+    await settle()
+    release(document, 'ArrowDown')
+    unsubscribe()
+    expect(seen.map((toast) => toast.title)).toContain("This layer can't be nudged")
+    expect(seen.map((toast) => toast.body).join(' ')).toContain('position: absolute')
   })
 
 })

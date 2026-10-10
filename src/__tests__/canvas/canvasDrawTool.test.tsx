@@ -7,28 +7,26 @@
  *     selection (a keyboard-only user is never stranded);
  *   - the drawn rectangle (⇧ square, ⌥ from the centre) and the styles one
  *     draw inserts with;
- *   - the empty-board seam P5-G registers on.
+ *   - a draw on the empty board becoming a loose layer.
  *
  * The pointer gesture over a real frame is the e2e's
  * (`tests/e2e/canvas-tools-and-handles.e2e.ts`): it needs layout.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { cleanup, renderHook } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
+import { act, cleanup, fireEvent, render, renderHook } from '@testing-library/react'
+import { createRef } from 'react'
+import { CanvasDrawToolLayer } from '@site/canvas/CanvasDrawToolLayer'
 import { useEditorStore } from '@site/store/store'
 import { useEditorKeyDispatcher } from '@site/canvas/useEditorKeyDispatcher'
 import { useCanvasToolShortcuts } from '@site/canvas/useCanvasToolShortcuts'
 import { useCanvasSelectionKeyboard } from '@site/canvas/useCanvasSelectionKeyboard'
 import {
   DRAW_TOOL_SPECS,
-  acceptsBoardDraws,
   drawInsertStyles,
   drawnRect,
   isDrawDrag,
   isDrawTool,
-  offerBoardDraw,
-  registerBoardDrawHandler,
   setDrawGestureActive,
-  type CanvasBoardDraw,
 } from '@site/canvas/canvasDrawTool'
 import { makeNode, makePage, makeSite } from '../fixtures'
 import '@modules/base'
@@ -176,20 +174,57 @@ describe('what one draw inserts with', () => {
   })
 })
 
-describe('the empty-board seam (for P5-G)', () => {
-  it('offers a board draw to the one registered handler, and nothing without one', () => {
-    const draw: CanvasBoardDraw = { tool: 'rectangle', spec: DRAW_TOOL_SPECS.rectangle, boardRect: { x: 5, y: 6, width: 7, height: 8 }, dragged: true }
-    expect(acceptsBoardDraws()).toBe(false)
-    expect(offerBoardDraw(draw)).toBe(false)
-    const seen: CanvasBoardDraw[] = []
-    const unregister = registerBoardDrawHandler((received) => {
-      seen.push(received)
-      return true
+describe('a draw on the empty board becomes a loose layer at the drawn rect', () => {
+  const realCreate = useEditorStore.getState().createCanvasLayer
+  const createCanvasLayer = mock((_element: unknown, _at: unknown): string | null => 'layer-1')
+  beforeEach(() => {
+    createCanvasLayer.mockClear()
+    useEditorStore.setState({ createCanvasLayer } as unknown as Parameters<typeof useEditorStore.setState>[0])
+  })
+  afterEach(() => {
+    useEditorStore.setState({ createCanvasLayer: realCreate } as unknown as Parameters<typeof useEditorStore.setState>[0])
+  })
+
+  function drawOnBoard(tool: 'rectangle' | 'ellipse' | 'text', down: { x: number; y: number }, up: { x: number; y: number }) {
+    useEditorStore.setState({ canvasTool: tool } as Parameters<typeof useEditorStore.setState>[0])
+    const transformLayerRef = createRef<HTMLDivElement>()
+    const layer = document.createElement('div')
+    layer.getBoundingClientRect = () => ({ left: 100, top: 50, width: 0, height: 0, right: 100, bottom: 50, x: 100, y: 50 }) as DOMRect
+    ;(transformLayerRef as { current: HTMLDivElement | null }).current = layer
+    const { container } = render(<CanvasDrawToolLayer tool={tool} transformLayerRef={transformLayerRef} />)
+    const surface = container.querySelector<HTMLElement>(`[data-canvas-draw-layer="${tool}"]`)!
+    act(() => {
+      fireEvent.pointerDown(surface, { button: 0, pointerId: 1, clientX: down.x, clientY: down.y })
+      fireEvent.pointerUp(surface, { button: 0, pointerId: 1, clientX: up.x, clientY: up.y })
     })
-    expect(acceptsBoardDraws()).toBe(true)
-    expect(offerBoardDraw(draw)).toBe(true)
-    expect(seen).toEqual([draw])
-    unregister()
-    expect(acceptsBoardDraws()).toBe(false)
+  }
+
+  it('a dragged rectangle is a <div> of the drawn size at the drawn board position, and disarms the tool', () => {
+    drawOnBoard('rectangle', { x: 300, y: 150 }, { x: 500, y: 250 })
+    expect(createCanvasLayer).toHaveBeenCalledTimes(1)
+    const [element, at] = createCanvasLayer.mock.calls[0] as [{ name: string; props: { style: Record<string, string> } }, { x: number; y: number }]
+    expect(element.name).toBe('div')
+    expect(element.props.style).toMatchObject({ width: '200px', height: '100px', background: '#d9d9d9' })
+    expect(at).toEqual({ x: 200, y: 100 })
+    expect(useEditorStore.getState().canvasTool).toBe('move')
+  })
+
+  it('a click with the ellipse tool is 100 x 100 and round', () => {
+    drawOnBoard('ellipse', { x: 300, y: 150 }, { x: 300, y: 150 })
+    const [element] = createCanvasLayer.mock.calls[0] as [{ props: { style: Record<string, string> } }]
+    expect(element.props.style).toMatchObject({ width: '100px', height: '100px', borderRadius: '50%' })
+  })
+
+  it('text is a <p> at the press point', () => {
+    drawOnBoard('text', { x: 300, y: 150 }, { x: 300, y: 150 })
+    const [element, at] = createCanvasLayer.mock.calls[0] as [{ name: string }, { x: number; y: number }]
+    expect(element.name).toBe('p')
+    expect(at).toEqual({ x: 200, y: 100 })
+  })
+
+  it('with no board to hold it the tool stays armed', () => {
+    createCanvasLayer.mockImplementationOnce(() => null)
+    drawOnBoard('rectangle', { x: 300, y: 150 }, { x: 500, y: 250 })
+    expect(useEditorStore.getState().canvasTool).toBe('rectangle')
   })
 })

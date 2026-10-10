@@ -1055,6 +1055,13 @@ The rules the ladder replaced prose with:
   a LAYER" above); a Space-pan that STARTS in a portal frame marks its press as
   a drag (`useCanvasBodyDragTrigger` → `markCanvasPressDragged`), so its
   release click deselects nothing.
+- **Inline text edit keys:** Enter commits the edit, ⇧Enter is the hard line
+  break of a multiline module (`enterCommitsInlineEdit`, matching the live
+  frame's `inlineTextEdit.ts`); a plain Enter that fell through to the browser
+  stored `\n\n`. The text tool's new text opens with its placeholder selected
+  (`startInlineEdit(…, { selectAll: true })`). The placeholder is the module's
+  literal default; moving a literal into the project's `t()` dictionary is
+  `POST /i18n-setup`'s job (re-runnable), not the draw gesture's.
 - **Enter (P5-E, IX-7):** on ONE text layer it opens the inline edit, the
   double-click path (`canvasTextEditStart.ts` — portal frames only, because a
   live frame's text edit is started by its runtime and a session opened from
@@ -1084,7 +1091,8 @@ The rules the ladder replaced prose with:
   offsets 1 px / ⇧ 10 px; a flow child of a `flex` / `grid` parent (inline
   or not — `isAutoLayout`) reorders along its parent's axis
   (`reorderStep`: reversed for `*-reverse` and an RTL row; a cross-axis arrow
-  does nothing; in a GRID ↑ / ↓ move a whole row — the resolved
+  moves nothing and SAYS so with an info toast — a press is never silent, nor
+  is one whose layer could not be measured; in a GRID ↑ / ↓ move a whole row — the resolved
   `grid-template-columns` count — and ← / → one cell, P2-C2). **Any other
   flow layer (block / inline / flow-root parent) nudges too (canvas-48)**,
   through `position: relative` (`planFlowNudge`): already `relative` → its
@@ -1265,12 +1273,18 @@ has points). The whole session is ONE write: an `insert` of
 (`planSourceInsert` + `commitStudioInsert` with element children), or a loose
 free-canvas layer (`createCanvasLayer`) when it started on the empty board.
 
-**The empty board is P5-G's.** A press outside every frame is offered to
-`registerBoardDrawHandler`'s handler (`canvasDrawTool.ts`) with the drawn
-rectangle in BOARD units; with none registered it is ignored and the ghost
-says "draw inside a frame". The one exception is **B, the board tool** (P5-F,
+**A press in a container's own empty space lands where the pointer is.**
+`resolveCanvasInsertionTarget` (draw tools, pen, Assets drag) inserts BEFORE
+the first child that follows the point in reading order (`nearestFlowIndex`:
+y for a vertical flow, row then x for a horizontal one, flipped for reversed),
+and only appends past the last; the transplant/move resolvers are unchanged.
+
+**The empty board is the free canvas's.** A press outside every frame creates a
+loose layer at the drawn rectangle (BOARD units; `placeDrawOnBoard.ts` →
+`createCanvasLayer`, spelled by `moduleSourceElement` + `drawInsertStyles` so it
+is the same JSX a frame draw writes). The one exception is **B, the board tool** (P5-F,
 IX-13): inside a frame it is the F tool, and on the empty board it never
-reaches that handler — it opens the add-page picker at the release point
+makes a loose layer — it opens the add-page picker at the release point
 (`BoardDrawPagePicker`, through the store's `boardDrawRequest`), and the pick
 lands at the drawn rect (`boardDrawTool.ts`: a click is a point at the default
 size, a drag its size floored at `MIN_FRAME_SIZE`, a width within 8 units of
@@ -1570,8 +1584,12 @@ a component in a live frame selected the element inside it.
 - **Padding and gap handles (P5-E, IX-17).** `CanvasSpacingHandles` renders
   INSIDE the resize-handle frame (before the handles, so an edge strip wins
   at the edge), so the bands ride the ring's one measurement. Shown for a
-  single flex / grid container; gap bands between consecutive children
-  (`columnGap` side by side, `rowGap` stacked). The one layout read
+  single flex / grid container; gap handles between consecutive children
+  (`columnGap` side by side, `rowGap` stacked). A handle is a SHORT PILL
+  (`HANDLE_LENGTH` 32 x `MIN_BAND_THICKNESS` 6 frame px) centred in its padding
+  side / gap, never the whole region: the region is where a press means "move
+  this container", and a handle that filled it wrote `row-gap: 31px` when a
+  stack was dragged by its middle. The one layout read
   (`spacingHandleMeasure.ts`) runs in a rAF on mount, on a store change to
   the node and on a `ResizeObserver` tick; during a drag the bands follow the
   preview arithmetically. Positions are `--band-*` custom properties read by
@@ -1588,10 +1606,17 @@ a component in a live frame selected the element inside it.
   `useSelectionModel` + `useInspectorCommit` only while one waits, runs it in
   a layout effect (so a canvas preview cleared inside it and the committed
   value paint together), then unmounts. One write-target rule, zero idle cost.
-- **In-frame marquee (P5-E, IX-16, OD-6).** A press on the page ROOT itself
-  (no child under the pointer) that travels 4 px sweeps a rectangle painted
-  in the overlay root; it selects the touched layers at the shallowest hit
+- **In-frame marquee (P5-E, IX-16, OD-6).** A press on the frame's
+  BACKGROUND (`isFrameBackgroundHit`: the synthetic `<body>` OR the screen
+  element — the root's only child, which in a real project is nearly every
+  empty pixel) that travels 4 px sweeps a rectangle painted
+  in the overlay root; it selects the touched layers BELOW the screen element
+  (`frameContentRootId`) at the shallowest hit
   depth (⌥ the deepest, ⇧ adds), live, and swallows the release's click.
+  `planCanvasPressDrag` is null for the same hits, so the body drag and the
+  marquee never both claim the press. A press outside an open inline text edit
+  ends that edit first (`isPressInsideInlineEditor`), in the drag trigger and
+  the marquee alike.
   `useInFrameMarquee` (a capture listener on the frame document beside the
   body drag trigger), rules in `inFrameMarquee.ts`. ⌘-drag stays free move.
 - **Alt-hover measurement (K5).** `MeasureLayer.tsx` + `canvasMeasureGeometry.ts`.

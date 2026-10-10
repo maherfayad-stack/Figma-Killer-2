@@ -38,6 +38,16 @@ export function readInlineEditableText(el: HTMLElement): string {
 }
 
 /**
+ * Whether an Enter keystroke in an inline text edit commits the edit. Enter
+ * commits; Shift+Enter is the hard line break of a multiline module (a single-
+ * line module has none, so there Shift+Enter commits too). Letting a plain
+ * Enter fall through to the browser wrote a doubled newline into the stored text.
+ */
+export function enterCommitsInlineEdit(event: Pick<KeyboardEvent, 'shiftKey' | 'metaKey' | 'ctrlKey'>, multiline: boolean): boolean {
+  return event.metaKey || event.ctrlKey || !event.shiftKey || !multiline
+}
+
+/**
  * Props a text module spreads onto its element to BECOME the inline editor.
  * The element is `contentEditable` (plaintext-only — no rich formatting or
  * pasted markup) and carries the live-edit handlers + ref.

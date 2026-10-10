@@ -11,14 +11,13 @@
  * The server half (the frame lands at the placement) is
  * `server/handlers/studio/__tests__/pageScaffold.test.ts`.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
 import { act, cleanup, fireEvent, render, renderHook } from '@testing-library/react'
 import { createRef } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { useEditorKeyDispatcher } from '@site/canvas/useEditorKeyDispatcher'
 import { useCanvasToolShortcuts } from '@site/canvas/useCanvasToolShortcuts'
 import { boardDrawPlacement, snapFrameWidthToPreset } from '@site/canvas/boardDrawTool'
-import { registerBoardDrawHandler } from '@site/canvas/canvasDrawTool'
 import { CanvasDrawToolLayer } from '@site/canvas/CanvasDrawToolLayer'
 import { makeNode, makePage, makeSite } from '../fixtures'
 import '@modules/base'
@@ -71,12 +70,9 @@ describe('the placement', () => {
 })
 
 describe('a draw on the empty board', () => {
-  it('opens the page picker with the drawn placement, and never reaches the loose-layer handler', () => {
-    const offered: unknown[] = []
-    const unregister = registerBoardDrawHandler((draw) => {
-      offered.push(draw)
-      return true
-    })
+  it('opens the page picker with the drawn placement, and never makes a loose layer', () => {
+    const createCanvasLayer = mock((_element: unknown, _at: unknown): string | null => 'layer-1')
+    useEditorStore.setState({ createCanvasLayer } as unknown as Parameters<typeof useEditorStore.setState>[0])
     useEditorStore.setState({ canvasTool: 'board' } as Parameters<typeof useEditorStore.setState>[0])
     const transformLayerRef = createRef<HTMLDivElement>()
     const layer = document.createElement('div')
@@ -89,8 +85,7 @@ describe('a draw on the empty board', () => {
       fireEvent.pointerDown(surface, { button: 0, pointerId: 1, clientX: 300, clientY: 150 })
       fireEvent.pointerUp(surface, { button: 0, pointerId: 1, clientX: 900, clientY: 1050 })
     })
-    unregister()
-    expect(offered).toEqual([])
+    expect(createCanvasLayer).not.toHaveBeenCalled()
     expect(useEditorStore.getState().boardDrawRequest).toEqual({
       placement: { x: 200, y: 100, width: 600, height: 900 },
       clientX: 900,
