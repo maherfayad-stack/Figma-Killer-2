@@ -72,7 +72,8 @@ test('a cursor moved in one tab appears in the other at the same board point, an
     await page.mouse.move(target.x, target.y, { steps: 6 })
 
     const cursor = other.getByTestId('peer-cursor')
-    await expect(cursor).toBeVisible({ timeout: 5_000 })
+    // The cursor element is a zero-size anchor; its name label is the visible part.
+    await expect(cursor.getByTestId('peer-cursor-label')).toBeVisible({ timeout: 5_000 })
     const latencyMs = Date.now() - startedAt
     test.info().annotations.push({ type: 'cursor-latency-ms', description: String(latencyMs) })
 
@@ -91,7 +92,7 @@ test('a cursor moved in one tab appears in the other at the same board point, an
 
     // Closing the tab removes its cursor from the other (member-left).
     await page.close()
-    await expect(cursor).toBeHidden({ timeout: 10_000 })
+    await expect(cursor).toHaveCount(0, { timeout: 10_000 })
   } finally {
     await second.close()
   }

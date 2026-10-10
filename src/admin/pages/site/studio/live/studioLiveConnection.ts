@@ -16,17 +16,35 @@ export function getLiveClient(): LiveClient | null {
   return client
 }
 
-export function liveSocketUrl(dir: string | null, location: Pick<Location, 'protocol' | 'host'>): string {
+/**
+ * The socket URL. Same-origin by default (production: the admin app and the API
+ * share one origin). In development the admin app is served by Vite, whose
+ * `/admin/api` proxy cannot carry a WebSocket under Bun (it hangs a good
+ * upgrade and can crash on a refused one), so the dev scripts publish the
+ * backend's port as `VITE_STUDIO_LIVE_BACKEND_PORT` and the socket connects to
+ * it directly, on the page's own hostname so the session cookie goes along.
+ */
+export function liveSocketUrl(
+  dir: string | null,
+  location: Pick<Location, 'protocol' | 'host' | 'hostname'>,
+  backendPort?: string,
+): string {
   const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const host = backendPort ? `${location.hostname}:${backendPort}` : location.host
   const query = dir ? `?dir=${encodeURIComponent(dir)}` : ''
-  return `${scheme}//${location.host}${LIVE_ROUTE_PATH}${query}`
+  return `${scheme}//${host}${LIVE_ROUTE_PATH}${query}`
+}
+
+function devBackendPort(): string | undefined {
+  const port: unknown = import.meta.env.VITE_STUDIO_LIVE_BACKEND_PORT
+  return typeof port === 'string' && /^\d+$/.test(port) ? port : undefined
 }
 
 /** Connects this tab to `dir`'s room. Returns the disconnect. */
 export function startStudioLive(dir: string | null): () => void {
   const store = useLivePresence.getState()
   const next = new LiveClient({
-    url: liveSocketUrl(dir, window.location),
+    url: liveSocketUrl(dir, window.location, devBackendPort()),
     createSocket: (url) => new WebSocket(url) as unknown as LiveSocketLike,
     onMessage: (message) => useLivePresence.getState().apply(message),
     onStatus: (status) => {

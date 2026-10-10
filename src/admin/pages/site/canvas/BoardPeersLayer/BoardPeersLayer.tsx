@@ -65,7 +65,7 @@ export function BoardPeersLayer() {
             } as CSSProperties}
           >
             <span className={styles.pointer} aria-hidden="true" />
-            <span className={styles.label}>{member.name}</span>
+            <span className={styles.label} data-testid="peer-cursor-label">{member.name}</span>
           </div>
         )
       })}

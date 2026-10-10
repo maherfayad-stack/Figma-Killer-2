@@ -138,11 +138,17 @@ describe('LiveClient', () => {
 
 describe('liveSocketUrl', () => {
   it('uses wss on https, encodes the project dir, and omits it when unknown', () => {
-    expect(liveSocketUrl('my proj', { protocol: 'https:', host: 'studio.example' })).toBe(
+    expect(liveSocketUrl('my proj', { protocol: 'https:', host: 'studio.example', hostname: 'studio.example' })).toBe(
       'wss://studio.example/admin/api/studio/live?dir=my%20proj',
     )
-    expect(liveSocketUrl(null, { protocol: 'http:', host: 'localhost:5173' })).toBe(
+    expect(liveSocketUrl(null, { protocol: 'http:', host: 'localhost:5173', hostname: 'localhost' })).toBe(
       'ws://localhost:5173/admin/api/studio/live',
+    )
+  })
+
+  it('goes straight to the backend port in development, on the page's own hostname', () => {
+    expect(liveSocketUrl(null, { protocol: 'http:', host: '127.0.0.1:5174', hostname: '127.0.0.1' }, '3002')).toBe(
+      'ws://127.0.0.1:3002/admin/api/studio/live',
     )
   })
 })

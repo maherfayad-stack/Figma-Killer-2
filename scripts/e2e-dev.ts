@@ -157,6 +157,9 @@ const sharedEnv = {
   DATABASE_URL: `sqlite:${DATABASE_PATH}`,
   UPLOADS_DIR,
   STUDIO_WORKSPACE_DIR: E2E_WORKSPACE_DIR,
+  // Vite's proxy cannot carry the presence WebSocket under Bun; the editor
+  // connects to the backend directly (studioLiveConnection.ts).
+  VITE_STUDIO_LIVE_BACKEND_PORT: E2E_CMS_PORT,
 }
 
 const children: StackChild[] = []

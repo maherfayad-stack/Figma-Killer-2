@@ -260,13 +260,12 @@ export default defineConfig({
       // Bun backend. Agent endpoints live under `/admin/api/agent` (and
       // `/admin/api/agent/tool-result`) so the admin session cookie —
       // scoped to `Path=/admin` to keep it off the public site — actually
-      // accompanies the request. The agent needs no WebSocket (NDJSON
-      // streams over a standard HTTP response); `ws: true` is for the Studio
-      // presence channel (`/admin/api/studio/live`), the one upgrade here.
+      // accompanies the request. The `ws: false` default suffices; we do
+      // not need WebSocket upgrades for the agent (NDJSON streams over a
+      // standard HTTP response).
       '/admin/api': {
         target: CMS_DEV_SERVER_ORIGIN,
         changeOrigin: true,
-        ws: true,
       },
       '/uploads': {
         target: CMS_DEV_SERVER_ORIGIN,
