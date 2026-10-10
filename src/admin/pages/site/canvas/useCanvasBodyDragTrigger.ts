@@ -123,6 +123,10 @@ export function useCanvasBodyDragTrigger({
       // drag right after a double-click edit must not be eaten.
       if (state.activeInlineEdit) {
         if (isPressInsideInlineEditor(event.target)) return
+        // The edited element itself, even where the caret host is not the
+        // pressed descendant (a padded text box, a child span).
+        const editedId = state.activeInlineEdit.nodeId
+        if (isElementLike(event.target) && event.target.closest(CANVAS_NODE_SELECTOR)?.getAttribute('data-node-id') === editedId) return
         state.endInlineEdit()
         state = useEditorStore.getState()
       }

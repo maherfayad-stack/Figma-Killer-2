@@ -26,6 +26,7 @@ import {
 } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
 import type { FrameDocumentAdapter, NodeMeasurement } from '@site/canvas/frameAdapter/FrameDocumentAdapter'
 import { EDITOR_SAVE_REQUEST_EVENT } from '@admin/state/adminEvents'
+import { flushPendingGestures } from '@site/store/pendingGestures'
 import { makeNode, makePage, makeSite } from '../fixtures'
 
 const COLUMN = { display: 'block', 'flex-direction': 'row', 'grid-auto-flow': 'row', direction: 'ltr', position: 'relative' }
@@ -145,6 +146,8 @@ describe('OD-15 — a pointer pick in Layers hands the arrows to the canvas', ()
     key('keydown', { key: 'ArrowRight' })
     await settle()
     key('keyup', { key: 'ArrowRight' })
+    // A released burst commits when it settles (NUDGE_SETTLE_MS); end it now.
+    act(() => flushPendingGestures())
     expect(node('abs').inlineStyles?.left).toBe('101px')
     expect(historyLength()).toBe(1)
     expect(saveRequests).toBe(1)
@@ -186,6 +189,8 @@ describe('OD-15 — keyboard entry keeps the tree its own arrows', () => {
     key('keydown', { key: 'ArrowRight' })
     await settle()
     key('keyup', { key: 'ArrowRight' })
+    // A released burst commits when it settles (NUDGE_SETTLE_MS); end it now.
+    act(() => flushPendingGestures())
     expect(node('abs').inlineStyles?.left).toBe('100px')
     expect(historyLength()).toBe(0)
   })
