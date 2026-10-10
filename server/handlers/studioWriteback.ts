@@ -56,6 +56,7 @@ import {
   createProject,
   detachComponentInstance,
   exposeLiteralAsProp,
+  promoteOverrideToDefault,
   setImportSpecifier,
   setJsxClassName,
   setJsxProp,
@@ -347,9 +348,28 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
         line: loc.line,
         col: loc.col,
         workspaceRoot: dir,
-        target: edit.target,
-        propName: edit.propName,
-        ...(edit.value !== undefined ? { value: edit.value } : {}),
+        overrides: edit.overrides.map(({ target, propName, value }) => ({ target, propName, ...(value !== undefined ? { value } : {}) })),
+      })
+      if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
+      return { applied: true }
+    }
+    case 'promote-override': {
+      // OD-19 — "Apply to all": the same two files as `expose-prop`, addressed
+      // the same way (call site = the id's head, component file = its tail,
+      // both through `studioEditLocation`); the codemod checks the file the
+      // call site's import resolves to is the tail's.
+      if (inlineDepth(edit.nodeId) !== 1) {
+        throw new StudioEditRefusalError('not-in-component', 'Only an instance placed directly on this page can have a value applied to every place its component is used.')
+      }
+      const callSite = studioEditLocation(dir, callSitePosition(edit.nodeId), scope)
+      if (!callSite) return { applied: false, unwritable: 'no-source-location' }
+      const result = promoteOverrideToDefault({
+        callSiteFile: join(dir, callSite.rel),
+        callSiteLine: callSite.line,
+        callSiteCol: callSite.col,
+        componentFile: loc.file,
+        workspaceRoot: dir,
+        propNames: edit.propNames,
       })
       if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
       return { applied: true }

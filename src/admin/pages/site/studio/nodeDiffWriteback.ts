@@ -33,6 +33,7 @@ import {
 } from './loadedValuesBaseline'
 import type { StudioEditPayload } from './studioEditPayload'
 import { editOutcomeKey } from './editOutcomes'
+import { isInstanceOverrideHeld } from './instanceOverrideHold'
 import { coalesceInlineSideWrites } from './sideShorthandWrites'
 import { rowsOfTemplate, type RowTemplateWrite } from './rowTemplateWrites'
 
@@ -143,7 +144,10 @@ export function collectNodeDiffEdits(
     // the rule: it is the one predicate every OFFER has to agree with
     // (`StyleSurface`'s composer, `CanvasResizeHandles`'s handles), and S4
     // is what happens when a copy drifts. See it for which modules qualify.
-    const { changed, removed } = diffInlineStyles(node, baseline)
+    const diff = diffInlineStyles(node, baseline)
+    // OD-19 — a property an instance override is still writing is not this diff's to write.
+    const changed = Object.fromEntries(Object.entries(diff.changed).filter(([k]) => !isInstanceOverrideHeld(node.id, styleValueKey(k))))
+    const removed = diff.removed.filter((property) => !isInstanceOverrideHeld(node.id, styleValueKey(property)))
     if (Object.keys(changed).length === 0 && removed.length === 0) return undefined
     if (!canWriteInlineStyleForModule(node.moduleId)) {
       // `font-revert` — this used to be an `if` around the write, so a
@@ -300,6 +304,8 @@ export function collectNodeDiffEdits(
         // — silently destroying the binding. `setJsxText` refuses that on
         // the text path, but `setJsxProp` will happily do it.
         if (baseline && Object.is(baseline[prop], value)) continue
+        // OD-19 — an instance override is writing this value through `expose-prop`.
+        if (isInstanceOverrideHeld(node.id, prop)) continue
         // Already emitted as a `literal` edit aimed at its origin, above.
         if (writtenAtOrigin.has(prop)) continue
         // Second gate on the same rule the store applies, here because THIS is

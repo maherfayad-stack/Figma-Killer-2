@@ -544,6 +544,22 @@ the detached markup by child-index path, replays it (`retry(mapId)` — every
 `linkedToNext`, so one ⌘Z undoes both (`undoRedoActions.ts` cascades). A
 detach that refuses shows the refusal dialog, as before.
 
+**OD-19 — a VALUE edit inside an instance is an override of that instance**
+(`instanceOverrideActions.ts`, `instanceOverridePlan.ts`). `updateNodeProps` and
+`setNodeInlineStyles` call `overrides.route(...)` BEFORE they mutate (the router
+is built in `siteSlice.ts` and handed to `createNodeActions`). It is a router
+and not a second action: `plain` is the ordinary write, passed in, so a plan of
+`direct` / `whole-component` or a server refusal falls back to it with no
+duplicated logic. The override path is the one structural family that previews
+OUTSIDE history: `previewActiveTreeMutation` shows the value, the hold
+(`studio/instanceOverrideHold.ts`, read by `collectNodeDiffEdits`) keeps the
+autosave diff from writing it to the component, and the write landing pushes the
+one `restore-journal` entry (`undo` option, `kind: 'push'`) — the preview is
+never a second undo step. `mainEditComponent` (+ `setMainEditComponent`) is the
+explicit all-instances mode; the router steps aside while it names the node's
+`fromComponent`. A gesture parked behind another structural write is re-aimed
+with `again(relocate(id))`, like every other.
+
 **Undo never jams, and never lies (P1-F).** A structural step that can never
 happen as recorded (an `unsupported` inverse, an element gone from the board, a
 file changed under the entry by an agent or an editor) is SKIPPED: undo drops

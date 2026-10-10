@@ -11,7 +11,7 @@
  *
  * {@link isJournaled}: the one-shot rewrites whose undo no other edit kind
  * can express — `delete`, `detach`, `expose-prop` (P5-C: a component AND its
- * call site), `swap`, `promote-component` (extract a subtree into a new
+ * call site) and `promote-override` (OD-19: the same two files), `swap`, `promote-component` (extract a subtree into a new
  * component), a `list-item` remove (OD-8: a `.map`
  * row's delete cuts array elements whose bytes no op carries back), and a
  * `transplant` that MOVES (a cross-frame drag: two files, one pruned import). A batch holding any of them records ONE
@@ -36,7 +36,7 @@ import type { StudioEdit, StudioEditApplyOutcome, StudioEditBatchOptions, Studio
 import { captureUndoPreImage, recordUndoJournal, restoreUndoJournal, undoJournalFiles } from './studio/undoJournal'
 
 /** The kinds a journaled batch records a pre-image for. */
-const JOURNALED_KINDS = new Set<StudioEdit['kind']>(['delete', 'detach', 'expose-prop', 'swap', 'promote-component'])
+const JOURNALED_KINDS = new Set<StudioEdit['kind']>(['delete', 'detach', 'expose-prop', 'promote-override', 'swap', 'promote-component'])
 
 function isJournaled(edit: StudioEdit): boolean {
   return (

@@ -424,6 +424,10 @@ export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(
       edit.kind === 'group' ||
       edit.kind === 'transplant' ||
       edit.kind === 'styled' ||
+      // OD-19 — two instances of one component share the element's tail (the
+      // dedupe key) but are two call sites, two writes.
+      edit.kind === 'expose-prop' ||
+      edit.kind === 'promote-override' ||
       // P5-D — every part of one `<svg>` shares its host's location; two
       // edits on different parts are two writes, and two on one part apply
       // in order (each only sets what it names).
@@ -492,7 +496,8 @@ export function studioEditsTouchedFiles(
     }
     // P5-C (DET-7) — "Expose as prop" writes the component (`edit.nodeId`'s
     // tail) AND the one call site (its head).
-    if (edit.kind === 'expose-prop') {
+    // OD-19 — "Apply to all" writes the same two files, addressed the same way.
+    if (edit.kind === 'expose-prop' || edit.kind === 'promote-override') {
       const callSite = studioEditFile(dir, callSitePosition(edit.nodeId), scope)
       if (callSite) touchedFiles.add(callSite)
     }

@@ -16,6 +16,11 @@
  * call site passes the new one (`<Card heading="New text" />`). Two files,
  * one gesture, zero blast radius; ⌘Z is the undo journal's `restore`.
  *
+ * One call may expose SEVERAL literals of the one element (a gesture that sets
+ * `width` and `height` together): they are located against the original text,
+ * written in one splice per file, and given their signatures in order, so the
+ * whole gesture is one write and one undo-journal entry.
+ *
  * What can be exposed (`ExposeTarget`), each only when it is a LITERAL in the
  * component's own source — a binding is never baked:
  *   - `text`: an element whose whole content is one run of text (or one
@@ -67,6 +72,15 @@ export type ExposeLiteralRefusalReason =
   | 'maps-over-props'
   | 'call-site-spread'
 
+/** One literal of the element, the prop it becomes, and (optionally) this call site's own value for it. */
+export interface ExposeOverride {
+  target: ExposeTarget
+  /** The preferred prop name — a free variant is chosen when it is taken. */
+  propName: string
+  /** Written at THIS call site when given; otherwise every call site, this one included, renders the default. */
+  value?: string | number | boolean
+}
+
 export interface ExposeLiteralAsPropParams {
   /** The call site: absolute file and its tag-name `line:col`. */
   callSiteFile: string
@@ -77,16 +91,14 @@ export interface ExposeLiteralAsPropParams {
   line: number
   col: number
   workspaceRoot: string
-  target: ExposeTarget
-  /** The preferred prop name — a free variant is chosen when it is taken. */
-  propName: string
-  /** Written at THIS call site when given; otherwise every call site, this one included, renders the default. */
-  value?: string | number | boolean
+  /** The literals of that one element to expose — each target at most once. */
+  overrides: readonly ExposeOverride[]
   project?: Project
 }
 
 export type ExposeLiteralAsPropResult =
-  | { ok: true; propName: string; callSites: number }
+  /** `propNames` — the name each override was given, in `overrides` order. */
+  | { ok: true; propNames: string[]; callSites: number }
   | { ok: false; refusal: { reason: ExposeLiteralRefusalReason; message: string } }
 
 const IDENTIFIER_RE = /^[A-Za-z_$][\w$]*$/
@@ -237,16 +249,16 @@ function allCallSites(project: Project, workspaceRoot: string, componentFile: So
   return openings
 }
 
-/** The function whose own text starts at `start` — the component, found again after a splice forgot every node. */
-function functionStartingAt(file: SourceFile, start: number): FunctionLike {
-  let node: Node | undefined = file.getDescendantAtPos(start)
-  while (node && !((Node.isFunctionDeclaration(node) || Node.isArrowFunction(node) || Node.isFunctionExpression(node)) && node.getStart() === start)) {
-    node = node.getParent()
-  }
-  if (!node || !(Node.isFunctionDeclaration(node) || Node.isArrowFunction(node) || Node.isFunctionExpression(node))) {
-    throw new Error('[exposeLiteralAsProp] the component could not be found again after its literal was replaced.')
-  }
-  return node
+/** Every function-like of `file`, in document order — what a component is found among again after a splice forgot every node. */
+function functionLikesOf(file: SourceFile): FunctionLike[] {
+  return file.getDescendants().filter((node): node is FunctionLike => Node.isFunctionDeclaration(node) || Node.isArrowFunction(node) || Node.isFunctionExpression(node))
+}
+
+/** The component, found again by its place among the file's functions: neither a splice nor a signature edit above it adds or removes one. */
+function functionAtIndex(file: SourceFile, index: number): FunctionLike {
+  const found = functionLikesOf(file)[index]
+  if (!found) throw new Error('[exposeLiteralAsProp] the component could not be found again after its literal was replaced.')
+  return found
 }
 
 function attributeText(name: string, value: string | number | boolean): string {
@@ -255,8 +267,24 @@ function attributeText(name: string, value: string | number | boolean): string {
   return `${name}={${String(value)}}`
 }
 
+/** The type a prop is declared with: the literal's own, widened when this call site hands a value of another type (`padding: 8` overridden with `'12px'`). */
+function propType(literal: LiteralSite, value: ExposeOverride['value']): string {
+  return value === undefined || typeof value === literal.type ? literal.type : `${literal.type} | ${typeof value}`
+}
+
+function targetKey(target: ExposeTarget): string {
+  return target.kind === 'text' ? 'text' : target.kind === 'attribute' ? `attribute:${target.name}` : `style:${target.property}`
+}
+
+function literalFor(element: JsxOpeningLikeElement, componentFile: SourceFile, target: ExposeTarget): LiteralSite {
+  return target.kind === 'text' ? textLiteral(element, componentFile) : target.kind === 'attribute' ? attributeLiteral(element, target.name) : styleLiteral(element, target.property)
+}
+
 export function exposeLiteralAsProp(params: ExposeLiteralAsPropParams): ExposeLiteralAsPropResult {
-  if (!IDENTIFIER_RE.test(params.propName)) throw new Error(`[exposeLiteralAsProp] "${params.propName}" is not a valid prop name.`)
+  if (params.overrides.length === 0) throw new Error('[exposeLiteralAsProp] nothing to expose.')
+  for (const override of params.overrides) {
+    if (!IDENTIFIER_RE.test(override.propName)) throw new Error(`[exposeLiteralAsProp] "${override.propName}" is not a valid prop name.`)
+  }
   const project = params.project ?? createWorkspaceProject(params.workspaceRoot)
   project.manipulationSettings.set({ quoteKind: QuoteKind.Single })
   const callFile = loadSourceFile(project, params.callSiteFile)
@@ -286,12 +314,16 @@ export function exposeLiteralAsProp(params: ExposeLiteralAsPropParams): ExposeLi
       refuse('unsupported-props-type', `${identifier}'s props are typed through its variable (like FC<Props>), which Studio can't add a property to safely.`)
     }
 
-    const literal =
-      params.target.kind === 'text' ? textLiteral(element, componentFile)
-        : params.target.kind === 'attribute' ? attributeLiteral(element, params.target.name)
-          : styleLiteral(element, params.target.property)
+    const seenTargets = new Set<string>()
     const propNames = new Set([...bindings.keys(), ...(childrenParam ? [childrenParam] : [])])
-    assertNotMappedOverProps(literal.anchor, fn, propNames)
+    const literals = params.overrides.map((override) => {
+      const key = targetKey(override.target)
+      if (seenTargets.has(key)) refuse('not-a-literal', 'The same value was listed twice.')
+      seenTargets.add(key)
+      const literal = literalFor(element, componentFile, override.target)
+      assertNotMappedOverProps(literal.anchor, fn, propNames)
+      return literal
+    })
 
     const sites = allCallSites(project, params.workspaceRoot, componentFile, target.exportedName ?? identifier, exportNameOf(componentFile, target.declaration))
     if (!sites.some((site) => site === callSite || (site.getSourceFile() === callFile && site.getStart() === callSite.getStart()))) sites.push(callSite)
@@ -307,38 +339,43 @@ export function exposeLiteralAsProp(params: ExposeLiteralAsPropParams): ExposeLi
       ...sites.flatMap((site) => site.getAttributes().flatMap((attr) => (Node.isJsxAttribute(attr) ? [attr.getNameNode().getText()] : []))),
       ...RESERVED_PROPS,
     ])
-    let name = params.propName
-    for (let n = 2; taken.has(name); n += 1) name = `${params.propName}${n}`
+    const names = params.overrides.map((override) => {
+      let name = override.propName
+      for (let n = 2; taken.has(name); n += 1) name = `${override.propName}${n}`
+      taken.add(name)
+      return name
+    })
 
-    // Both text edits are one splice of the ORIGINAL texts (the call site and
+    // Every text edit is one splice of the ORIGINAL texts (the call site and
     // the component may be one file, in either order), then the signature,
     // on the function found again by where the splice moved it.
-    const reference = literal.asJsx ? `{${name}}` : name
-    const fnStartBefore = fn.getStart()
+    const fnIndex = functionLikesOf(componentFile).indexOf(fn)
     const attrs = callSite.getAttributes()
     const attrAt = attrs.length > 0 ? attrs[attrs.length - 1]!.getEnd() : callSite.getTagNameNode().getEnd()
-    const attrText = params.value === undefined ? '' : ` ${attributeText(name, params.value)}`
+    const attrText = params.overrides.map((override, i) => (override.value === undefined ? '' : ` ${attributeText(names[i]!, override.value)}`)).join('')
     const edits = new Map<SourceFile, { pos: number; remove: number; text: string }[]>()
     const push = (file: SourceFile, edit: { pos: number; remove: number; text: string }) => edits.set(file, [...(edits.get(file) ?? []), edit])
-    push(componentFile, { pos: literal.start, remove: literal.end - literal.start, text: reference })
+    literals.forEach((literal, i) => push(componentFile, { pos: literal.start, remove: literal.end - literal.start, text: literal.asJsx ? `{${names[i]}}` : names[i]! }))
     if (attrText) push(callFile, { pos: attrAt, remove: 0, text: attrText })
     for (const [file, fileEdits] of edits) {
       let out = file.getFullText()
       for (const edit of [...fileEdits].sort((x, y) => y.pos - x.pos)) out = out.slice(0, edit.pos) + edit.text + out.slice(edit.pos + edit.remove)
       file.replaceWithText(out)
     }
-    const fnStart = fnStartBefore + (callFile === componentFile && attrText && attrAt < fnStartBefore ? attrText.length : 0)
-    const component = functionStartingAt(componentFile, fnStart)
-    const signature = addOptionalPropToSignature(componentFile, component, { name, binding: `${name} = ${literal.defaultText}`, type: literal.type })
-    if (!signature.ok) refuse('unsupported-props-type', signature.message)
+    for (const [i, literal] of literals.entries()) {
+      const component = functionAtIndex(componentFile, fnIndex)
+      const name = names[i]!
+      const signature = addOptionalPropToSignature(componentFile, component, { name, binding: `${name} = ${literal.defaultText}`, type: propType(literal, params.overrides[i]!.value) })
+      if (!signature.ok) refuse('unsupported-props-type', signature.message)
+    }
 
     for (const [file, original] of originals) {
       if (introducesSyntaxErrors(file.getFilePath(), original, file.getFullText())) {
-        throw new Error(`[exposeLiteralAsProp] ${path.basename(file.getFilePath())} would not parse after exposing \`${name}\` — nothing was written.`)
+        throw new Error(`[exposeLiteralAsProp] ${path.basename(file.getFilePath())} would not parse after exposing \`${names.join('`, `')}\` — nothing was written.`)
       }
     }
     for (const file of originals.keys()) if (file.getFullText() !== originals.get(file)) file.saveSync()
-    return { ok: true, propName: name, callSites: sites.length }
+    return { ok: true, propNames: names, callSites: sites.length }
   } catch (err) {
     for (const [file, original] of originals) if (file.getFullText() !== original) file.replaceWithText(original)
     if (err instanceof ExposeRefusal) return { ok: false, refusal: { reason: err.reason, message: err.message } }
