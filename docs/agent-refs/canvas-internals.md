@@ -1016,7 +1016,9 @@ by **mount order**. There is now exactly one:
   four files under two names.
 - `useCanvas` registers the `global`-rung viewport scope
   (`hooks/useCanvasViewportKeys.ts`, P2-B / IX-15): + / = / − / _ zoom, ⌘0 and
-  ⇧0 zoom to 100%, ⇧1 fit, ⇧2 fit the selection, Space held to pan. They were a
+  ⇧0 zoom to 100%, ⇧1 fit (W3-d: measures the whole frame CARD, title bar
+  included, plus sticky notes and docs, and keeps `measureCanvasFitInsets`
+  clear of the notch at the top), ⇧2 fit the selection, Space held to pan. They were a
   React `onKeyDown` on the canvas div (dead after one click into a panel) and
   two raw `document` listeners. The canvas div binds no key handler at all now,
   and `@use-gesture`'s own arrow-key drag is off (`drag.keys: false`).
@@ -1254,7 +1256,13 @@ press. Hover shows the insertion drag's own drop line
 (`resolveCanvasPointerInsertionDrop` + a per-arming candidate snapshot); a
 click inserts there (a box gets Figma's 100 × 100, text its natural size), a
 drag also writes the drawn `width` / `height` (screen px ÷ the frame's zoom;
-⇧ square, ⌥ from the centre), and the tool puts itself away. Space / the hand
+⇧ square, ⌥ from the centre), and the tool puts itself away. W3-d: when the
+destination container already positions a child `position: absolute` (an
+exported mobile layout), the draw also writes `position: absolute` + `left` /
+`top` relative to that child's containing block (`canvasDrawAbsolutePlacement.ts`),
+so it lands where it was drawn instead of at the container's origin; a flow
+container still gets a flow insert, and a live (cross-origin) frame cannot be
+inspected so it stays a flow insert. Space / the hand
 tool make the layer click-through (the pan owns the pointer). T opens the new
 text for typing through `createdNodeFollowUp.ts` → `canvasTextEditStart.ts`.
 ⏎ with a tool armed is the old immediate insert (`T` / `F` inside the
@@ -1560,8 +1568,13 @@ a component in a live frame selected the element inside it.
     apply — portal frames only: `ResizeSnapContext` carries neither guides
     nor toggles to a live frame yet, so it snaps to peers with both on.
   - **Double-click a handle: Hug** (P5-F, IX-6f). `hugPatchForHandle` is the
-    inspector's own `sizingPatch('hug', …)` on the axes the handle owns (an
-    edge one, a corner both), in one `setNodeInlineStyles`. Detected as a
+    inspector's own `sizingPatch('hug', …)` on the axes the handle owns, in one
+    `setNodeInlineStylesFromGesture` (W3-d: CORNER handles only — the edge
+    handles are invisible strips along the whole side, so a double-click on the
+    selection ring's edge is not a double-click on a handle; and on markup in a
+    shared component that action detaches this instance and replays the write,
+    `instanceOnlyGesture.ts`, exactly as a structural gesture does, instead of
+    silently restyling every instance — a resize drag takes the same road). Detected as a
     SECOND PRESS on the same handle within 400 ms of a press that moved
     nothing — never from the native `dblclick`, which a real browser did not
     deliver after the handle's cancelled `pointerdown` (measured by the e2e).
@@ -1640,6 +1653,16 @@ a component in a live frame selected the element inside it.
   the marquee alike.
   `useInFrameMarquee` (a capture listener on the frame document beside the
   body drag trigger), rules in `inFrameMarquee.ts`. ⌘-drag stays free move.
+  W3-d: "background" is wider than body + screen element, because real pages
+  wrap the whole screen in full-bleed layout `<div>`s and every blank point hit
+  one. `isFrameBackgroundHit` also counts (a) an unselected ANCESTOR of the
+  selection and (b) a container the caller's `isBareWrapper` probe
+  (`canvasBareWrapperProbe.ts`: covers >= 90% of the screen element and has no
+  fill, image, shadow or border in COMPUTED style, read once per pointerdown)
+  calls a bare wrapper. A press inside a SELECTED layer is never background — it
+  moves that layer — and a click that does not travel still selects as before.
+  The sweep starts below the wrapper chain (`marqueeRootId`). Bridge frames pass
+  no probe, so only the selection-ancestor rule applies there.
 - **Alt-hover measurement (K5).** `MeasureLayer.tsx` + `canvasMeasureGeometry.ts`.
   With a selection and Alt held, hovering another node paints the distances
   between the two boxes and the hovered node's padding bands/content box — and

@@ -13,6 +13,7 @@ import {
   clampToComponentBoundary,
   frameContentRootId,
   isFrameBackgroundHit,
+  marqueeRootId,
   planCanvasPressDrag,
   resolveCanvasDrillTarget,
   resolveCanvasPressTarget,
@@ -202,5 +203,59 @@ describe('planCanvasPressDrag — what a body drag carries', () => {
 describe('resolveCanvasDrillTarget — the frame background', () => {
   it('has no level to step into', () => {
     expect(resolveCanvasDrillTarget(page, 'body', context())).toBeNull()
+  })
+})
+
+/**
+ * body -> screen -> wrap (a full-bleed, unpainted layout div, as on every real
+ * imported page) -> [hero, form -> [field]]
+ */
+function wrappedPage() {
+  return makePage({
+    id: 'w',
+    rootNodeId: 'body',
+    nodes: {
+      body: makeNode({ id: 'body', moduleId: 'base.body', children: ['screen'] }),
+      screen: makeNode({ id: 'screen', moduleId: 'base.div', children: ['wrap'] }),
+      wrap: makeNode({ id: 'wrap', moduleId: 'base.div', children: ['hero', 'form'] }),
+      hero: makeNode({ id: 'hero', moduleId: 'base.text' }),
+      form: makeNode({ id: 'form', moduleId: 'base.div', children: ['field'] }),
+      field: makeNode({ id: 'field', moduleId: 'base.text' }),
+    },
+  })
+}
+
+describe('isFrameBackgroundHit — full-bleed wrappers and the selection', () => {
+  const wrapped = wrappedPage()
+  const bare = (id: string) => id === 'wrap'
+
+  it('a press on an unpainted full-frame wrapper is background: it sweeps instead of moving the wrapper', () => {
+    expect(isFrameBackgroundHit(wrapped, 'wrap', context(), bare)).toBe(true)
+    expect(planCanvasPressDrag(wrapped, 'wrap', context(), { deep: false, isBareWrapper: bare })).toBeNull()
+  })
+
+  it('without the probe a wrapper is an ordinary layer, and a painted one never is background', () => {
+    expect(isFrameBackgroundHit(wrapped, 'wrap', context())).toBe(false)
+    expect(isFrameBackgroundHit(wrapped, 'wrap', context(), () => false)).toBe(false)
+    expect(isFrameBackgroundHit(wrapped, 'form', context(), bare)).toBe(false)
+  })
+
+  it('a leaf is never a bare wrapper, and cmd still reaches the wrapper', () => {
+    expect(isFrameBackgroundHit(wrapped, 'hero', context(), () => true)).toBe(false)
+    expect(planCanvasPressDrag(wrapped, 'wrap', context(), { deep: true, isBareWrapper: bare })?.preferredDraggedId).toBe('wrap')
+  })
+
+  it('an unselected ancestor of the selection is background; a press inside a selected layer moves it', () => {
+    expect(isFrameBackgroundHit(wrapped, 'form', context(['field']))).toBe(true)
+    expect(planCanvasPressDrag(wrapped, 'form', context(['field']), shallow)).toBeNull()
+    expect(isFrameBackgroundHit(wrapped, 'field', context(['field']))).toBe(false)
+    expect(isFrameBackgroundHit(wrapped, 'field', context(['form']))).toBe(false)
+    expect(planCanvasPressDrag(wrapped, 'field', context(['form']), shallow)?.candidateIds).toEqual(['form'])
+  })
+
+  it('the sweep starts below the wrapper chain', () => {
+    expect(marqueeRootId(wrapped, 'wrap', bare)).toBe('wrap')
+    expect(marqueeRootId(wrapped, 'body', bare)).toBe('wrap')
+    expect(marqueeRootId(wrapped, 'body', () => false)).toBe('screen')
   })
 })

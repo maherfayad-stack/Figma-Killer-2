@@ -452,12 +452,12 @@ function doubleClick(handle: string) {
 }
 
 describe('IX-6f — double-clicking a handle sets Hug', () => {
-  it('an edge handle hugs its one axis, through the inspector resolver', () => {
+  it('an edge handle (an invisible strip along the whole side) never hugs', () => {
     seed()
     harness = mount('width: 200px; height: 100px')
     render()
     doubleClick('e')
-    expect(commits).toEqual([{ width: 'fit-content' }])
+    expect(commits).toEqual([])
   })
 
   it('a corner hugs both axes; a flex main axis also stops growing and shrinking', () => {
@@ -498,7 +498,7 @@ describe('IX-6f — double-clicking a handle sets Hug', () => {
     seed({ alignSelf: 'stretch' })
     harness = mount('width: 200px; height: 100px', 'display: flex')
     render()
-    doubleClick('s')
-    expect(commits).toEqual([{ height: 'fit-content', alignSelf: null }])
+    doubleClick('se')
+    expect(commits).toEqual([expect.objectContaining({ height: 'fit-content', alignSelf: null })])
   })
 })
