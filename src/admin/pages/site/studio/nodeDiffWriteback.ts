@@ -33,6 +33,7 @@ import {
 } from './loadedValuesBaseline'
 import type { StudioEditPayload } from './studioEditPayload'
 import { editOutcomeKey } from './editOutcomes'
+import { coalesceInlineSideWrites } from './sideShorthandWrites'
 import { rowsOfTemplate, type RowTemplateWrite } from './rowTemplateWrites'
 
 export interface NodeDiffResult {
@@ -158,11 +159,14 @@ export function collectNodeDiffEdits(
       })
       return undefined
     }
+    // The wire form collapses four sides moving together into one
+    // `padding`/`margin`; the baseline bumps/drops below stay per-side.
+    const wire = coalesceInlineSideWrites(changed, removed)
     const editKey = emit({
       kind: 'style',
       nodeId: targetId,
-      style: changed,
-      ...(removed.length > 0 ? { remove: removed } : {}),
+      style: wire.style,
+      ...(wire.remove.length > 0 ? { remove: wire.remove } : {}),
     })
     for (const [k, v] of Object.entries(changed)) {
       bumps.push({ nodeId: node.id, key: styleValueKey(k), value: v, editKey })

@@ -194,6 +194,42 @@ describe('TextSection — code-locked properties', () => {
     expect(currentNode()?.inlineStyles?.fontSize).toBe('16px')
   })
 
+  it('a typed bare line-height of 24 is written in pixels (it was written unitless, 24 line boxes tall)', () => {
+    selectNode({ inlineStyles: { fontSize: '12px' } })
+    render(<TextSection />)
+
+    const field = screen.getByTestId('css-property-row-lineHeight').querySelector('input')!
+    fireEvent.change(field, { target: { value: '24' } })
+    fireEvent.blur(field)
+
+    expect(currentNode()?.inlineStyles?.lineHeight).toBe('24px')
+  })
+
+  it('a typed line-height ratio and explicit units survive untouched', () => {
+    selectNode({ inlineStyles: { fontSize: '12px' } })
+    render(<TextSection />)
+
+    const field = screen.getByTestId('css-property-row-lineHeight').querySelector('input')!
+    fireEvent.change(field, { target: { value: '1.25' } })
+    fireEvent.blur(field)
+    expect(currentNode()?.inlineStyles?.lineHeight).toBe('1.25')
+
+    fireEvent.change(field, { target: { value: '150%' } })
+    fireEvent.blur(field)
+    expect(currentNode()?.inlineStyles?.lineHeight).toBe('150%')
+  })
+
+  it('a typed bare letter-spacing is written in pixels', () => {
+    selectNode({ inlineStyles: { fontSize: '12px' } })
+    render(<TextSection />)
+
+    const field = screen.getByTestId('css-property-row-letterSpacing').querySelector('input')!
+    fireEvent.change(field, { target: { value: '2' } })
+    fireEvent.blur(field)
+
+    expect(currentNode()?.inlineStyles?.letterSpacing).toBe('2px')
+  })
+
   it('disables the vertical-align group with a reason when alignItems is code-valued', () => {
     selectNode({
       inlineStyles: { display: 'flex', flexDirection: 'row' },

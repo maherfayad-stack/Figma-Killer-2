@@ -57,7 +57,7 @@ export function LayerTreeNodeContent({
       )}
 
       {labelSlot ?? (
-        <TreeLabelGroup>
+        <TreeLabelGroup className={styles.layerLabelGroup}>
           {showTag && htmlTag && (
             <TagPill
               label={htmlTag}
@@ -67,7 +67,7 @@ export function LayerTreeNodeContent({
               className={styles.tagPill}
             />
           )}
-          <TreeLabel>
+          <TreeLabel className={styles.layerName}>
             {displayName}
           </TreeLabel>
           {showClasses && classSelectorChip && (

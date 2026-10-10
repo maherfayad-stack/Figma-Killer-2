@@ -166,6 +166,8 @@ function PageRow({ page, isActive, expanded, editable, onToggleExpand, onActivat
           rename.start(page.title)
         }}
         onKeyDown={(e) => {
+          // Only the row's own keys: a key bubbling from the rename input is the input's.
+          if (e.target !== e.currentTarget) return
           if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggleExpand() }
         }}
       >

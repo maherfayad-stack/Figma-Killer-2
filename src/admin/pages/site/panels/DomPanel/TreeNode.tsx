@@ -278,10 +278,12 @@ export const TreeNode = memo(function TreeNode({
   }
 
   const handleRenameKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    // stopPropagation prevents bubbling to the parent row's handleKeyDown,
-    // which would otherwise intercept Enter/Space and call selectNode().
-    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); commitRename() }
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setIsRenaming(false) }
+    // The open field owns the keyboard: every key stops here. The row's own
+    // handler would take Enter/Space as select/toggle, and the editor's
+    // document-level dispatcher would take a typed letter as a tool shortcut.
+    e.stopPropagation()
+    if (e.key === 'Enter') { e.preventDefault(); commitRename() }
+    if (e.key === 'Escape') { e.preventDefault(); setIsRenaming(false) }
   }
 
   return (
@@ -360,10 +362,25 @@ export const TreeNode = memo(function TreeNode({
         tabIndex={0}
         onClick={(e) => {
           e.stopPropagation()
+          // A click inside the open rename field bubbles here; it is the
+          // field's, not a selection or a toggle.
+          if (isRenaming) return
+          // The second click of a double-click IS the rename gesture, read from
+          // the click itself (`detail` is the browser's click count) - the same
+          // `openRename` the context menu runs, without depending on a separate
+          // `dblclick` event surviving the re-render the first click causes
+          // (selection, expansion). It also keeps the pair from toggling the
+          // row open and shut again.
+          if (e.detail >= 2 && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+            openRename()
+            return
+          }
           // OD-15 — a POINTER pick hands the keyboard back to the canvas, as a
           // canvas click would, so the arrows move the layer just picked.
           // `detail` is 0 for a click synthesised from the keyboard, which
-          // keeps the tree's own keys (the a11y path).
+          // keeps the tree's own keys (the a11y path). After the rename
+          // branches above: handing focus to the canvas is exactly what would
+          // pull it out from under a rename field.
           if (e.detail > 0) returnKeyboardToCanvas()
           // Modifier-aware selection (multi-select): Cmd/Ctrl-click toggles,
           // Shift-click extends a range from the anchor. Modifier-clicks do

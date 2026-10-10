@@ -139,6 +139,7 @@
 /* Figma's section title: small, bold, full-contrast — the only strong text
    in the section, which is what lets everything under it be quiet. */
 .sectionTitle {
+    flex: 0 1 auto;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -149,9 +150,14 @@
 }
 
 /* `.sectionMeta` qualifies the title ("Button · Local"); `.sectionStatus`
-   is a state pushed to the header's far end ("1 ready"). Same type. */
+   is a state pushed to the header's far end ("1 ready"). Same type.
+   The title is the label, the meta a hint: when the header is tight (a Fill
+   with a long value, three action buttons) the meta ellipsizes first. With
+   equal shrink factors the title lost the argument and read "Fil". */
 .sectionMeta,
 .sectionStatus {
+    flex: 0 100 auto;
+    min-width: 0;
     max-width: 118px;
     overflow: hidden;
     text-overflow: ellipsis;
