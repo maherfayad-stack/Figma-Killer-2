@@ -28,6 +28,7 @@ import { bindingKindAt, freeReferenceNames, isReferenceIdentifier, tagReferenceR
 import { DetachNameResolver, type Expectation, type PendingImport } from './detachNames'
 import { DetachHookPlan, type ComponentHook, type PageTextEdit } from './detachHooks'
 import { foldClassName, readFoldPart } from './detachClassNameFold'
+import { foldConditional, literalOfNode, type FoldedBranch, type Literal } from './detachConstantFold'
 import {
   INTRINSIC_TAG_RE,
   NO_NAMES,
@@ -78,6 +79,12 @@ export interface DetachPlan {
   pageEdits: PageTextEdit[]
   /** DET-3 — hooks a NEW call was written for; what a pre-commit confirm names. */
   movedHooks: string[]
+}
+
+/** `{ literal }` for a node that IS a primitive, nothing otherwise — spread into a `Value`. */
+function literalField(node: Node): { literal?: Literal } {
+  const literal = literalOfNode(node)
+  return literal ? { literal } : {}
 }
 
 // ---------------------------------------------------------------------------
@@ -170,6 +177,7 @@ export class DetachPlanner {
       free,
       numeric: Node.isNumericLiteral(node),
       jsString: literal,
+      ...literalField(node),
       jsx: isJsxNode(node),
       tagChain: isChain ? text : undefined,
       intrinsicTag: literal !== undefined && INTRINSIC_TAG_RE.test(literal) ? literal : undefined,
@@ -375,6 +383,8 @@ export class DetachPlanner {
         return this.callSite.children.rawText
       }
     }
+    const folded = this.foldedChild(expr, unit)
+    if (folded !== undefined) return folded
     const value = this.siteValue(expr, unit)
     if (!value) return undefined
     this.admit(expr, value.free, unit)
@@ -386,6 +396,76 @@ export class DetachPlanner {
     }
     if (value.jsx) return value.expr()
     return `{${value.expr()}}`
+  }
+
+  // --- constant conditionals (detachConstantFold.ts) -------------------------
+
+  /**
+   * Which branch a conditional takes, when its test is made of props the call
+   * site gave literals — and at least one prop takes part, so an author's own
+   * `true ? a : b` is left alone. `undefined` is "not decidable".
+   */
+  private decideConditional(expression: Node, unit: Unit, inChild: boolean): FoldedBranch | undefined {
+    let readAProp = false
+    const read = (reference: Node): Literal | undefined => {
+      if (Node.isIdentifier(reference)) {
+        if (!isReferenceIdentifier(reference)) return undefined
+        const ref = this.classify(reference, unit)
+        if (ref.kind !== 'param') return undefined
+        readAProp = true
+        return this.paramValue(ref.entry).literal
+      }
+      if (!Node.isPropertyAccessExpression(reference)) return undefined
+      const value = this.restMemberValue(reference, unit)
+      if (!value) return undefined
+      readAProp = true
+      return value.literal
+    }
+    const decided = foldConditional(expression, read, inChild)
+    return decided && readAProp ? decided : undefined
+  }
+
+  /** A JSX child `{test ? a : b}` / `{test && a}` written as the branch that renders; `undefined` when it cannot be decided. */
+  private foldedChild(expression: Node, unit: Unit): string | undefined {
+    const decided = this.decideConditional(expression, unit, true)
+    if (!decided) return undefined
+    let branch = decided.branch
+    while (branch && Node.isParenthesizedExpression(branch)) branch = branch.getExpression()
+    if (!branch) return ''
+    const nested = this.foldedChild(branch, unit)
+    if (nested !== undefined) return nested
+    if (isJsxNode(branch)) return this.renderNode(branch, unit)
+    const literal = literalOfNode(branch)
+    if (literal && (literal.v === null || literal.v === undefined || typeof literal.v === 'boolean')) return ''
+    return `{${this.renderNode(branch, unit)}}`
+  }
+
+  /**
+   * An attribute's `{test ? a : b}` reduced to the expression that renders:
+   * the chosen node, or `null` for a value React drops (`undefined`). Follows
+   * nested decidable conditionals. `undefined` when the value is not a
+   * decidable conditional at all.
+   */
+  private foldedAttributeValue(expression: Node, unit: Unit): Node | null | undefined {
+    const decided = this.decideConditional(expression, unit, false)
+    if (!decided || decided.branch === null) return undefined
+    let branch: Node = decided.branch
+    while (Node.isParenthesizedExpression(branch)) branch = branch.getExpression()
+    const nested = this.foldedAttributeValue(branch, unit)
+    if (nested !== undefined) return nested
+    const literal = literalOfNode(branch)
+    return literal !== undefined && literal.v === undefined ? null : branch
+  }
+
+  private foldedAttributeText(name: string, chosen: Node, unit: Unit): string | undefined {
+    const value = this.siteValue(chosen, unit)
+    if (value) {
+      this.admit(chosen, value.free, unit)
+      return this.attributeText(name, value)
+    }
+    const literal = literalOfNode(chosen)
+    if (typeof literal?.v === 'string' && isJsxAttributeSafe(literal.v)) return `${name}="${literal.v}"`
+    return `${name}={${this.renderNode(chosen, unit)}}`
   }
 
   /** An opening, self-closing or closing tag: its name and its attributes rewritten. */
@@ -433,6 +513,12 @@ export class DetachPlanner {
       const folded = inner && (name === 'className' || name === 'class') ? foldClassName(inner, (part) => readFoldPart(part, () => this.siteValue(part, unit))) : undefined
       if (folded !== undefined && isJsxAttributeSafe(folded)) {
         items.push({ name, text: `${name}="${folded}"`, separator })
+        return
+      }
+      const chosen = inner ? this.foldedAttributeValue(inner, unit) : undefined
+      if (chosen !== undefined) {
+        const text = chosen === null ? undefined : this.foldedAttributeText(name, chosen, unit)
+        if (text !== undefined) items.push({ name, text, separator })
         return
       }
       const value = inner ? this.siteValue(inner, unit) : undefined
@@ -616,6 +702,7 @@ export class DetachPlanner {
       free: unit.free,
       numeric: Node.isNumericLiteral(node),
       jsString: literal,
+      ...literalField(node),
       jsx: isJsxNode(node),
       tagChain: (Node.isIdentifier(node) || Node.isPropertyAccessExpression(node)) && TAG_CHAIN_RE.test(text) ? text : undefined,
       intrinsicTag: literal !== undefined && INTRINSIC_TAG_RE.test(literal) ? literal : undefined,

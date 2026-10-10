@@ -10,6 +10,7 @@
 import { Node, SyntaxKind, type BindingElement, type JsxAttribute } from 'ts-morph'
 import type { FunctionLike } from '@core/page-parser'
 import type { JsxOpeningLikeElement } from './locateJsxElement'
+import type { Literal } from './detachConstantFold'
 
 export type DetachRefusalReason =
   | 'not-a-component'
@@ -165,6 +166,8 @@ export interface Value {
   free: ReadonlySet<string>
   isUndefined?: boolean
   isTrue?: boolean
+  /** The primitive this value IS, when it is one — what lets a conditional on it be decided (`detachConstantFold.ts`). */
+  literal?: Literal
   numeric?: boolean
   /** A call-site `attr="…"` string, verbatim: raw text (entities and all) plus a JSX attribute spelling when one is safe. */
   jsxString?: { raw: string; attrText?: string }
@@ -177,8 +180,8 @@ export interface Value {
 }
 
 export const NO_NAMES: ReadonlySet<string> = new Set()
-export const UNDEFINED_VALUE: Value = { expr: () => 'undefined', primary: true, free: NO_NAMES, isUndefined: true }
-export const TRUE_VALUE: Value = { expr: () => 'true', primary: true, free: NO_NAMES, isTrue: true }
+export const UNDEFINED_VALUE: Value = { expr: () => 'undefined', primary: true, free: NO_NAMES, isUndefined: true, literal: { v: undefined } }
+export const TRUE_VALUE: Value = { expr: () => 'true', primary: true, free: NO_NAMES, isTrue: true, literal: { v: true } }
 
 export const INTRINSIC_TAG_RE = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/
 export const TAG_CHAIN_RE = /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/
@@ -282,6 +285,9 @@ export function jsxStringValue(raw: string, attrText: string | undefined, free: 
     primary: true,
     free,
     jsxString: { raw, attrText },
+    // An entity decodes to something other than its text, so such a string is
+    // not a literal this can reason about.
+    ...(HTML_ENTITY_RE.test(raw) ? {} : { literal: { v: raw } }),
     intrinsicTag: INTRINSIC_TAG_RE.test(raw) ? raw : undefined,
   }
 }
