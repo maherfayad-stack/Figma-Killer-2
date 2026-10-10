@@ -147,6 +147,32 @@ export async function traceGesture(page: Page, gesture: () => Promise<void>, win
   }
 }
 
+export interface MainThreadTasks {
+  /** Every main-thread RunTask that started during the action, longest first, ms. */
+  tasksMs: number[]
+  longestMs: number
+  totalMs: number
+}
+
+/** Run `action` under a DevTools trace and report every main-thread task it produced (no input event needed). */
+export async function traceMainThreadTasks(page: Page, action: () => Promise<void>): Promise<MainThreadTasks> {
+  const client = await page.context().newCDPSession(page)
+  try {
+    const events = await collect(client, action)
+    const mainTids = new Set<string>()
+    for (const e of events) {
+      if (e.ph === 'M' && e.name === 'thread_name' && e.args?.name === 'CrRendererMain') mainTids.add(`${e.pid}:${e.tid}`)
+    }
+    const tasksMs = events
+      .filter((e) => mainTids.has(`${e.pid}:${e.tid}`) && e.ph === 'X' && e.name === 'RunTask' && typeof e.dur === 'number')
+      .map((e) => (e.dur ?? 0) / 1000)
+      .sort((a, b) => b - a)
+    return { tasksMs, longestMs: tasksMs[0] ?? 0, totalMs: tasksMs.reduce((sum, ms) => sum + ms, 0) }
+  } finally {
+    await client.detach()
+  }
+}
+
 export interface DomCounters {
   documents: number
   nodes: number

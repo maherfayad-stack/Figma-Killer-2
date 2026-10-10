@@ -1986,17 +1986,29 @@ must stay that way: a caller outside `BoardFramesLayer` means "mounted exactly
 while visible", and making it required silently renders nothing at all for
 every such caller with no `tsc` error (`meta-14` landmine 1;
 `boardFrameViewTierFork.test.tsx` is the gate). `isOnScreen` stays a separate
-prop because it drives poster CAPTURE — since P2-I (PERF-5) the picture is
-taken only while the frame is OFF screen and still pooled (`framePosterNeeded`
-in `useFramePosterCapture.ts`), never while the user is looking at it. A capture
-was measured at 880–1,160 ms of main thread per 310-element frame; the old rule
-("on screen, no poster for this `Page` object") rasterized every visible frame
-the first time the board went quiet and the edited frame after every edit. A
-frame evicted before the board went quiet shows the plain title placeholder.
-`framePosterQueue`'s busy listeners run in every mounted frame document too
-(portal: DOM listeners; bridge: the adapter's `pointer`/`wheel`/`key` events),
-so a press inside a frame holds the queue. Each capture records a
-`studio:poster-capture` User Timing measure.
+prop for the pool's own reasons.
+
+**Posters (SB-2).** A frame's picture is `framePosters` (`posterStore.ts`: in-memory
+LRU by bytes + IndexedDB, one picture per frame), keyed by `posterKey.ts` — frame
+id + a hash of the page tree and the site style inputs + the frame's effective
+preview axes + width — so an edit makes a new key and a stale picture is
+unreachable; `framePosters.invalidate()` is the explicit hammer (the file-watcher
+`diskChanged` path calls it). `useFramePosterCapture` takes the picture while the
+frame is LIVE and its content has committed (`framePosterNeeded`), not as it
+leaves the screen: the rasterizer (`posterRasterizer.ts`) serializes the frame's
+real document (style sheets as text + `XMLSerializer` of the body, resources
+inlined once per URL) into an SVG `<foreignObject>` and draws it once at poster
+size, which replaced `html-to-image` (85–1,160 ms of main thread) on the board
+path. `html-to-image` remains only in `agent/renderEvidence.ts` (agent exports).
+What the rasterizer cannot draw by name: `<video>`/`<canvas>` pixels, iframe
+children, `@import`ed and cross-origin `<link>` sheets. `framePosterQueue`'s busy
+listeners run in every mounted frame document too (portal: DOM listeners; bridge:
+the adapter's `pointer`/`wheel`/`key` events), so a press inside a frame holds the
+queue. Each capture records a `studio:poster-capture` User Timing measure.
+`liveFrameCap.ts` is the pure, adaptive live-frame cap policy (default 20, scaled
+by `navigator.deviceMemory` and the measured cost of a live frame, floor 12;
+posters below zoom 0.35; selected/editing/play frames always live) — SB-5's
+poster-first mounting will replace `framePool.ts` with it.
 
 Measured, 18-frame stand-in board, dev build, same Playwright runner
 `tests/e2e/studio-board-perf.e2e.ts` uses:

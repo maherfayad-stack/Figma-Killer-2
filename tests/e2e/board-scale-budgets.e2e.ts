@@ -1,10 +1,10 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { expect, test, type Frame, type Locator, type Page } from '@playwright/test'
 import { profileGesture, readBoardCounts } from './helpers/canvasPerf'
-import { profileCpu, readDomCounters, traceGesture } from './helpers/cdpTrace'
+import { profileCpu, readDomCounters, traceGesture, traceMainThreadTasks } from './helpers/cdpTrace'
 import { visibleCanvasIframe } from './helpers/canvasIframe'
 import { LARGE_BOARD_SHAPE, largeBoardPageId, openLargeBoardAtWorkingZoom, SCALE_BOARD_SHAPE, writeLargeBoardCorpus } from './helpers/largeBoardCorpus'
-import { removeFixtureProject, type FixtureProject } from './helpers/studioFixtureProject'
+import { frameForPage, removeFixtureProject, selectInFrame, type FixtureProject } from './helpers/studioFixtureProject'
 
 /**
  * Board-scale budgets — SB-0 of the board-speed plan
@@ -43,6 +43,11 @@ const ZOOM_CYCLES = 20
 /** Documents may wobble by a frame or two while a mount is in flight; a leak is a slope. */
 const LEAK_DOC_TOLERANCE = 2
 const CLICK_SAMPLES = 8
+/** SB-2: the longest main-thread task a poster refresh may cause. */
+const TARGET_POSTER_REFRESH_MAIN_MS = 15
+/** SB-2: a poster frame becoming a live, readable document. */
+const TARGET_POSTER_TO_LIVE_MS = 250
+const POSTER_CAPTURE_MEASURE = 'studio:poster-capture'
 
 test.use({ viewport: { width: 1920, height: 1080 } })
 test.describe.configure({ timeout: 300_000 })
@@ -295,5 +300,81 @@ test.describe('board-scale budgets on the 100 x 140 corpus', () => {
     expect(last.jsEventListeners - baseline.jsEventListeners, 'JS listeners grew across zoom cycles').toBeLessThanOrEqual(
       Math.max(50, baseline.jsEventListeners * 0.05),
     )
+  })
+
+  test('poster refresh: one edited frame is re-photographed with a main-thread task <= 15 ms', { tag: '@production-bundle' }, async ({ page }) => {
+    const { content } = await open(page)
+    const heading = content.locator('.block__heading').nth(1)
+    await selectInFrame(page, heading)
+    const original = (await heading.textContent())?.trim() ?? ''
+    const fields = page.locator('input:visible, textarea:visible')
+    let textField: Locator | null = null
+    for (let i = 0; i < (await fields.count()); i += 1) {
+      if ((await fields.nth(i).inputValue().catch(() => '')) === original) {
+        textField = fields.nth(i)
+        break
+      }
+    }
+    if (!textField) throw new Error(`no inspector field holds the heading's text ("${original}")`)
+    await textField.click()
+    await page.keyboard.press('End')
+    await page.keyboard.type(' edited')
+    await page.keyboard.press('Tab')
+    await expect(heading).toContainText('edited', { timeout: 10_000 })
+    // Let the edit's own render, autosave and settle passes finish: what is left under the trace is the poster queue.
+    await page.waitForTimeout(250)
+    const startedAt = await page.evaluate(() => performance.now())
+    const tasks = await traceMainThreadTasks(page, () => page.waitForTimeout(2500))
+    const captures = await page.evaluate(
+      ({ since, name }) =>
+        performance
+          .getEntriesByName(name)
+          .filter((entry) => entry.startTime >= since)
+          .map((entry) => ({ pageId: (entry as PerformanceMeasure).detail?.pageId as string, ms: entry.duration })),
+      { since: startedAt, name: POSTER_CAPTURE_MEASURE },
+    )
+    dump('poster-refresh', { tasks: tasks.tasksMs.slice(0, 10), captures })
+    annotate('poster refresh: captures in window', captures.map((c) => `${c.pageId} ${c.ms.toFixed(0)}ms wall`).join(', ') || '(none)')
+    annotate('poster refresh: longest main-thread tasks (ms)', tasks.tasksMs.slice(0, 6).map((n) => n.toFixed(1)).join(', '))
+    expect(captures.length, 'the edited frame was never re-photographed').toBeGreaterThan(0)
+    expect(tasks.longestMs).toBeLessThanOrEqual(TARGET_POSTER_REFRESH_MAIN_MS)
+  })
+
+  test('poster -> live: a frame that was a picture becomes a readable document in <= 250 ms', { tag: '@production-bundle' }, async ({ page }) => {
+    const { canvasRoot, frameEl } = await open(page)
+    const firstId = largeBoardPageId(0)
+    mkdirSync('.tmp/board-speed', { recursive: true })
+    await frameEl.screenshot({ path: '.tmp/board-speed/poster-sample-live.png' })
+    // Frame 0 has been live: wait for its picture, then send the viewport far away so the pool lets it go.
+    await expect
+      .poll(() => page.evaluate(({ name, id }) => performance.getEntriesByName(name).some((e) => (e as PerformanceMeasure).detail?.pageId === id), { name: POSTER_CAPTURE_MEASURE, id: firstId }), {
+        timeout: 20_000,
+      })
+      .toBe(true)
+    await frameForPage(page, canvasRoot, largeBoardPageId(80))
+    await page.waitForTimeout(3000)
+    const posterLocator = page.locator(`[data-page-id="${firstId}"] [data-testid="board-frame-poster"]`)
+    await expect(posterLocator, 'frame 0 left the screen and showed no picture').toBeAttached()
+    await posterLocator.screenshot({ path: '.tmp/board-speed/poster-sample-poster.png' }).catch(() => undefined)
+    type Probe = { iframeAt: number; contentAt: number }
+    await page.evaluate((id) => {
+      const state: Probe = { iframeAt: 0, contentAt: 0 }
+      ;(window as unknown as { __sb2: Probe }).__sb2 = state
+      const tick = () => {
+        const body = document.querySelector(`[data-page-id="${id}"] [data-testid="board-frame-body"]`)
+        const iframe = body?.querySelector('iframe[title^="Canvas frame"]') as HTMLIFrameElement | null | undefined
+        if (iframe && state.iframeAt === 0) state.iframeAt = performance.now()
+        if (iframe && state.contentAt === 0 && iframe.contentDocument?.querySelector('.row__label')) state.contentAt = performance.now()
+        if (state.contentAt === 0) requestAnimationFrame(tick)
+      }
+      requestAnimationFrame(tick)
+    }, firstId)
+    await frameForPage(page, canvasRoot, firstId)
+    await page.waitForTimeout(500)
+    const probe = await page.evaluate(() => (window as unknown as { __sb2: Probe }).__sb2)
+    const ms = probe.contentAt - probe.iframeAt
+    annotate('poster -> live (iframe attached -> first node present)', `${ms.toFixed(0)}ms`)
+    expect(probe.contentAt, 'the frame never reached a live document').toBeGreaterThan(0)
+    expect(ms).toBeLessThanOrEqual(TARGET_POSTER_TO_LIVE_MS)
   })
 })
