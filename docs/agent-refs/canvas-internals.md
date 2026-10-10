@@ -1878,6 +1878,48 @@ click → ring 253 → 216 ms / 109 → 69 ms. WS-5.6's 32 ms click target is **
 met** in production; `canvas-feel-budgets.e2e.ts`'s warm-click docblock lists
 what is left in a click.
 
+### A press selects, and its ring does not wait for the flush (`canvasPressSelect.ts`, `pressRing.ts`)
+
+Selection is **on the press**, not on the click. It used to wait for the
+`click`: `pointerdown` activated the pressed frame's page (which clears the
+selection when the page changed) and the real layer arrived a press-and-release
+later, behind one long task that began at release — "two-phase selection".
+
+- `NodeRenderer`'s `onPointerDownCapture` asks `resolvePressSelection` which
+  layer the press means — `resolveCanvasPressTarget`, the SAME depth rule the
+  click, the hover ring and the body drag use, so the click that follows
+  re-selects the same layer (a no-op). It stands down for ⇧ (a toggle is the
+  click's), a non-primary button, a press that became a pan/drag, a press
+  inside the current selection (a multi-selection survives being grabbed) and
+  the frame's empty background (the in-frame marquee's).
+- `selectOnPress` (`pressRing.ts`) paints first and commits second. The hover
+  ring is already on the layer a press means (same rule), so a press restyles it
+  as a selection ring with ONE attribute (`data-canvas-press-ring`, rule in
+  `selectionChromeCss.ts`) — no DOM added, so no childList mutation for the
+  frame's layout observers. The page activation (`BoardFrameView`) and the
+  selection are queued with `afterPressPaint`: they run after a frame has been
+  presented, in order, in ONE task and one React flush (before: two flushes
+  inside the pointerdown task, the ring behind both). Run as two tasks they
+  measured 60% slower end to end — the activation clears the selection and
+  unmounts the inspector, the selection then mounts it again — so they are not
+  split. `flushPressQueue()` runs the
+  queue at once on release / context menu / key / dblclick and when a press
+  becomes a drag (`useCanvasReorderDrag`), so nothing reads a selection or an
+  active page the press has not made yet; a 64 ms timer covers a backgrounded
+  tab, where `requestAnimationFrame` never fires.
+- **A board is never framed by selection** (`canvasFocusTarget.ts`). `CanvasRoot`
+  frames a document on open by looking its frame up under the store's
+  `activeBreakpointId`; a board's frames all carry the synthetic `'studio'`
+  breakpoint id instead, so the lookup found nothing until the user's first press
+  on a frame set `activeBreakpointId = 'studio'` — and then framed the board
+  right there, under that selection: every frame jumped (measured ~340 px right,
+  ~500 px up on test4 under a throttled open; reproduced and gone). A board is
+  not framed from there at all now; its view is the user's, or Shift+1's. For
+  every other document `startCanvasFraming` settles the key however framing
+  ends (success, the retry cap, the user moving the view first) — giving up used
+  to leave it unrecorded, so the next effect run framed the page under whatever
+  the user was doing.
+
 ### Mounting a frame (S1) — what a mount actually costs, measured
 
 `perf-01` recorded "a zoom that mounts frames costs 290–337 ms in one frame"
