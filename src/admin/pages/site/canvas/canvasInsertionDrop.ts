@@ -9,6 +9,7 @@ import {
 } from './canvasDomGeometry'
 import {
   resolveCanvasInsertionTarget,
+  type CanvasDropAxis,
   type CanvasDropCandidate,
   type CanvasInsertionTarget,
 } from './canvasDnd'
@@ -22,7 +23,9 @@ export interface CanvasDropPreview {
   width: number
   height: number
   /** `canvas` — the empty board: the element becomes a loose layer at the pointer (P5-G). */
-  position: CanvasInsertionTarget['position'] | 'inside' | 'canvas'
+  position: CanvasInsertionTarget['position'] | 'inside' | 'canvas' | 'gap'
+  /** `gap` only: the siblings' layout axis — `vertical` (stacked) draws a horizontal line, `horizontal` a vertical one. */
+  axis?: CanvasDropAxis
   label: string
 }
 
@@ -221,6 +224,20 @@ export function fixedPreviewForTarget(
 ): CanvasDropPreview {
   const viewportRect = viewport.getBoundingClientRect()
   const scale = viewport.offsetWidth > 0 ? viewportRect.width / viewport.offsetWidth : 1
+  // A drop among a flow container's children is a LINE at the exact index —
+  // outlining the whole container says "into this box", not "here".
+  if (target.gap) {
+    const { rect, axis } = target.gap
+    return {
+      left: viewportRect.left + rect.left * scale,
+      top: viewportRect.top + rect.top * scale,
+      width: rect.width * scale,
+      height: rect.height * scale,
+      position: 'gap',
+      axis,
+      label,
+    }
+  }
   return {
     left: viewportRect.left + target.rect.left * scale,
     top: viewportRect.top + target.rect.top * scale,

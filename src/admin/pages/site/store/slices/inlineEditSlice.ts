@@ -32,11 +32,14 @@
  */
 import { registry } from '@core/module-engine'
 import { isPropWritableToSource } from '@core/page-tree'
+import { isCanvasLayerPageId } from '@core/studio-board'
 import { pushToast } from '@ui/components/Toast'
 import type { EditorStore, EditorStoreSliceCreator } from '@site/store/types'
 import { getActiveTree } from './selectionResolve'
 import { selectActiveBoard } from './boardSelectors'
 import { localizedPageKey } from './localizedPageSlice'
+import { mintPendingCommitId } from './site/structuralCommitRollback'
+import { commitCanvasLayerText } from '@site/studio/canvasLayerTextCommit'
 
 interface ActiveInlineEdit {
   nodeId: string
@@ -53,6 +56,13 @@ interface ActiveInlineEdit {
   initialValue: string
   /** True once a keystroke produced a REAL history entry (a burst exists). Only meaningful for the default-tree (undo-tracked) path. */
   committed: boolean
+  /**
+   * A loose layer's session (`frameId` is its `canvas:<id>` page): the text as typed so far. The
+   * layer's module is not in the page tree, so nothing is written per keystroke — the element
+   * holds the text and `endInlineEdit` posts it once, as one undo entry. `undefined` until the
+   * first keystroke.
+   */
+  layerValue?: string
   /** Open with the whole text selected (a freshly drawn text's placeholder) instead of the caret at the end. */
   selectAll?: true
 }
@@ -129,7 +139,10 @@ function resolveSessionNode(
   state: EditorStore,
   nodeId: string,
   localeOverride: { pageId: string; locale: string } | null,
+  frameId: string | null | undefined,
 ) {
+  // A loose layer's node lives in its own module's tree, not the active page's.
+  if (frameId && isCanvasLayerPageId(frameId)) return state.canvasLayerPages[frameId]?.nodes[nodeId]
   if (localeOverride) {
     return state.localizedPages[localizedPageKey(localeOverride.pageId, localeOverride.locale)]?.nodes[nodeId]
   }
@@ -142,7 +155,7 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
   startInlineEdit: (nodeId, breakpointId, frameId = null, options) => {
     const state = get()
     const localeOverride = resolveLocaleOverride(state, frameId)
-    const node = resolveSessionNode(state, nodeId, localeOverride)
+    const node = resolveSessionNode(state, nodeId, localeOverride, frameId)
     if (!node) return false
     const def = registry.get(node.moduleId)
     const spec = def?.inlineTextEdit
@@ -216,9 +229,15 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
     const state = get()
     const session = state.activeInlineEdit
     if (!session) return
-    const node = resolveSessionNode(state, session.nodeId, session.localeOverride)
+    const node = resolveSessionNode(state, session.nodeId, session.localeOverride, session.frameId)
     if (!node) return
     const changed = !Object.is(node.props[session.prop], value)
+    if (session.frameId && isCanvasLayerPageId(session.frameId)) {
+      set((s) => {
+        if (s.activeInlineEdit) s.activeInlineEdit.layerValue = value
+      })
+      return
+    }
     if (session.localeOverride) {
       // WS-10 §4.4 — a genuinely separate, undo-EXEMPT mutation on
       // `localizedPageSlice.ts`'s tree, not `site.pages`. See this file's
@@ -238,7 +257,9 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
   },
 
   endInlineEdit: () => {
-    if (!get().activeInlineEdit) return
+    const session = get().activeInlineEdit
+    if (!session) return
+    if (session.frameId && isCanvasLayerPageId(session.frameId)) commitLayerSession(set, get, session)
     set((s) => {
       s.activeInlineEdit = null
       // End the burst: later edits of the same prop get a fresh undo entry.
@@ -249,7 +270,10 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
   cancelInlineEdit: () => {
     const session = get().activeInlineEdit
     if (!session) return
-    if (session.localeOverride) {
+    if (session.frameId && isCanvasLayerPageId(session.frameId)) {
+      // Nothing was written to the layer, so nothing to take back: the node's
+      // prop still holds `initialValue` and the element re-renders from it.
+    } else if (session.localeOverride) {
       // No undo() entry exists for this path (see module doc) — revert by
       // re-setting the frozen initial value directly, iff it actually
       // changed (mirrors `committed`'s purpose for the default-tree path).
@@ -273,6 +297,45 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
     })
   },
 })
+
+type Set = Parameters<EditorStoreSliceCreator<EditorStore>>[0]
+type Get = Parameters<EditorStoreSliceCreator<EditorStore>>[1]
+
+/**
+ * Post a loose layer's finished text session as one write. The layer's tree is
+ * updated first so the text does not flash back to the old value until the
+ * resync; a write that does not land puts the old text back.
+ */
+function commitLayerSession(set: Set, get: Get, session: NonNullable<EditorStore['activeInlineEdit']>): void {
+  const after = session.layerValue
+  const pageId = session.frameId
+  if (after === undefined || after === session.initialValue || !pageId) return
+  const node = get().canvasLayerPages[pageId]?.nodes[session.nodeId]
+  if (!node) return
+  const writeProp = (value: string) =>
+    set((s) => {
+      const target = s.canvasLayerPages[pageId]?.nodes[session.nodeId]
+      if (target) target.props[session.prop] = value
+    })
+  writeProp(after)
+  let done = false
+  void commitCanvasLayerText({
+    node,
+    before: session.initialValue,
+    after,
+    rollback: {
+      id: mintPendingCommitId(),
+      settle: () => {
+        done = true
+      },
+      rollback: () => {
+        if (done) return
+        done = true
+        writeProp(session.initialValue)
+      },
+    },
+  })
+}
 
 /** `value from c.hotelsTitle` -> `Value from c.hotelsTitle`, for use mid-sentence. */
 function capitalise(text: string): string {

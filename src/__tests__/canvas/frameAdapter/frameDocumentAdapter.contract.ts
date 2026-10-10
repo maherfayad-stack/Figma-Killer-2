@@ -112,6 +112,15 @@ export function runFrameDocumentAdapterContract(name: string, makeHarness: () =>
       }
     })
 
+    it('beginTextEdit does not throw', () => {
+      const { adapter, existingRef, cleanup } = makeHarness()
+      try {
+        expect(() => adapter.beginTextEdit(existingRef.nodeId, 'seed text')).not.toThrow()
+      } finally {
+        cleanup()
+      }
+    })
+
     // `live-18`
     it('startTextEdit does not throw for an allowed or a refused reply', () => {
       const { adapter, existingRef, cleanup } = makeHarness()

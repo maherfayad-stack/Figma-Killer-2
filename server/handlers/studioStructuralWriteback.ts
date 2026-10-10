@@ -329,6 +329,7 @@ function resolveNodeImport(
 export interface ImportableJsxNode<TProps> {
   name: string
   importSpecifier?: string
+  importStyle?: 'default'
   designSystemImport?: true
   props?: TProps
   children?: string | ImportableJsxNode<TProps>[]
@@ -355,6 +356,7 @@ export function resolveDesignSystemImports<TProps>(
     return {
       name: node.name,
       ...(specifier === undefined ? {} : { importSpecifier: specifier }),
+      ...(node.importStyle === undefined ? {} : { importStyle: node.importStyle }),
       ...(node.props === undefined ? {} : { props: node.props }),
       ...(children === undefined
         ? {}

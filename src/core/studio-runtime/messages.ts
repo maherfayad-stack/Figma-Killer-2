@@ -180,7 +180,8 @@ export const SetModeMessageSchema = Type.Object({
 export const TEXT_EDIT_MAX_LENGTH = 20_000
 
 /**
- * `live-18` — the parent's reply to a frame's `text:editStart` request: it
+ * `live-18` — the parent's reply to a frame's `text:editStart` request (or, with
+ * `begin`, its own start of an edit): it
  * already ran the same predicate `startInlineEdit` applies (module declares
  * `inlineTextEdit`, no children, source-writable, not dynamically bound) and
  * decides here whether `nodeId`/`occurrenceIndex` may be edited inline.
@@ -194,6 +195,13 @@ export const TextEditReplyMessageSchema = Type.Object({
   occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
   allowed: Type.Boolean(),
   text: Type.Optional(Type.String({ maxLength: TEXT_EDIT_MAX_LENGTH })),
+  /**
+   * The parent starts the edit itself — a text just drawn with the text tool,
+   * Enter on a selected text — with no `text:editStart` outstanding. The element
+   * may not be in the frame's DOM yet (the write is still reaching Vite), so
+   * the runtime waits for it to appear.
+   */
+  begin: Type.Optional(Type.Boolean()),
 })
 export type TextEditReplyMessage = Static<typeof TextEditReplyMessageSchema>
 

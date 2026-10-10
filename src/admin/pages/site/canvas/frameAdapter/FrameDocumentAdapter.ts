@@ -269,6 +269,13 @@ export interface FrameDocumentAdapter {
    * round trip — a documented no-op there.
    */
   startTextEdit(nodeId: string, allowed: boolean, text?: string): void
+  /**
+   * Open `nodeId` for inline editing on the PARENT's initiative — a text just
+   * drawn, Enter on a selected text — with no `text:editStart` to answer. The
+   * frame waits for the element to reach its DOM. A portal frame's own
+   * `NodeRenderer` opens its session from the store, so this is a no-op there.
+   */
+  beginTextEdit(nodeId: string, text: string): void
   optimistic: OptimisticDomOps
   /** Subscribes to a runtime event. Portal mode: real DOM/synthetic events (`ready` fires once, synchronously — a portal frame has no real "boot" moment). Bridge mode: the matching inbound `postMessage` from `runtime.ts`. */
   on<E extends FrameRuntimeEvent['type']>(event: E, handler: (msg: Extract<FrameRuntimeEvent, { type: E }>) => void): Unsubscribe

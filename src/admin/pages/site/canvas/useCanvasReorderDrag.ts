@@ -73,6 +73,7 @@ import { useCanvasBodyDragTrigger } from './useCanvasBodyDragTrigger'
 import { useBridgeBodyDragTrigger } from './useBridgeBodyDragTrigger'
 import { markCanvasPressDragged } from './canvasNodeGestureLatch'
 import { useInFrameMarquee } from './useInFrameMarquee'
+import { useBridgeFrameMarquee } from './useBridgeFrameMarquee'
 import { subscribeReparseFollow, type NodeIdFollower } from '@site/store/slices/site/reparseNodeFollow'
 import { clearCanvasPointerRelay, markCanvasPointerRelay } from './canvasPointerRelay'
 import { guardDragSession } from '@core/studio-runtime'
@@ -586,6 +587,8 @@ export function useCanvasReorderDrag({
   // P5-E (IX-16, OD-6) — a press on the page ROOT that travels is a marquee,
   // not a drag (the root never moves). Same document, same gate.
   useInFrameMarquee({ enabled: bodyDragEnabled, overlayRoot, frameId })
+  // The same sweep in a Tier 2 BRIDGE frame, drawn in the parent over the iframe.
+  useBridgeFrameMarquee({ enabled: bodyDragEnabled, iframeElement, pageId, frameId })
 
   useEffect(() => resetDrag, [resetDrag])
 
