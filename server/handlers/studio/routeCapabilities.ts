@@ -198,6 +198,9 @@ export const STUDIO_ROUTE_CAPABILITIES: readonly StudioRouteDeclaration[] = [
   { path: '/admin/api/studio/component-bundle', read: 'site.read', mutate: 'studio.write' },
   { path: '/admin/api/studio/preview-axes', read: 'site.read', mutate: 'studio.write' },
   { path: '/admin/api/studio/tokens', read: 'site.read', mutate: 'studio.write' },
+  // The token catalog (modes + usage) and the editor's write path for it. The GET
+  // reads the stylesheets the canvas loads; the POST edits a project stylesheet.
+  { path: '/admin/api/studio/token-catalog', read: 'site.read', mutate: 'studio.write' },
   { path: '/admin/api/studio/translations', read: 'site.read', mutate: 'studio.write' },
   { path: '/admin/api/studio/stories', read: 'site.read', mutate: 'studio.write' },
   { path: '/admin/api/studio/design-system/migrate', read: 'site.read', mutate: 'studio.write' },

@@ -43,6 +43,7 @@ import { useEditorStore } from '@site/store/store'
 import { ControlRow, type ControlRowLayout } from '@ui/components/ControlRow'
 import { ScrubInput } from '@ui/components/ScrubInput'
 import { TokenAwareInput } from '@site/property-controls/TokenAwareInput'
+import { variableKindsForProperty } from '@site/property-controls/variableKindsForProperty'
 import { ScrubTokenField } from '../../inspector/sections/LayoutSection/ScrubTokenField'
 import { useTokenCatalog } from '@site/property-controls/TokenCatalogContext'
 import type { Token } from '@site/property-controls/tokenUtils'
@@ -564,6 +565,7 @@ export function ClassPropertyRow({
           disabled={writeLocked}
           prefix={glyphPrefix}
           numericUnit={fieldUnit}
+          variableKinds={variableKindsForProperty(String(property))}
         />
       )
       break

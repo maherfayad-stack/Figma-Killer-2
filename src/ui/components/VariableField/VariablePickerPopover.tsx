@@ -18,6 +18,7 @@
 import { useState } from 'react'
 import type { CSSProperties, RefObject } from 'react'
 import { Button } from '@ui/components/Button'
+import { Input } from '@ui/components/Input'
 import { SearchBar } from '@ui/components/SearchBar'
 import { InspectorPopover } from '@ui/components/InspectorPopover'
 import { cn } from '@ui/cn'
@@ -31,6 +32,19 @@ import styles from './VariableField.module.css'
 
 const SOURCE_ORDER: readonly VariableSource[] = ['project', 'vendor', 'framework']
 
+/** "Create variable from this value" - present only when the field holds a literal it can turn into one. */
+export interface VariableCreateOffer {
+  /** The literal the new variable will hold. */
+  value: string
+  suggestedName: string
+  /** Existing variables that already hold exactly this value - offered first, so no duplicate is made. */
+  sameValue: readonly VariableOption[]
+  pending: boolean
+  /** A refusal from the server, shown next to the control. */
+  error: string | null
+  onCreate: (name: string) => void
+}
+
 interface VariablePickerPopoverProps {
   anchorRef: RefObject<HTMLElement | null>
   /** Stable identity for sticky popover view state — the field's accessible name. */
@@ -40,6 +54,9 @@ interface VariablePickerPopoverProps {
   boundName: string | undefined
   onPick: (option: VariableOption) => void
   onClose: () => void
+  /** Present when the field is bound: replaces the binding with the variable's current value. */
+  onDetach?: () => void
+  create?: VariableCreateOffer
 }
 
 function matches(option: VariableOption, query: string): boolean {
@@ -51,6 +68,16 @@ function matches(option: VariableOption, query: string): boolean {
   )
 }
 
+const TOOLTIP_LINE_BREAK = String.fromCharCode(10)
+
+/** The row tooltip: where the variable is declared and its value in each other mode. */
+function optionTitle(option: VariableOption): string | undefined {
+  const parts = [option.file, ...(option.modes ?? []).map((mode) => `${mode.label}: ${mode.value}`)].filter(
+    (part): part is string => part !== undefined,
+  )
+  return parts.length > 0 ? parts.join(TOOLTIP_LINE_BREAK) : undefined
+}
+
 export function VariablePickerPopover({
   anchorRef,
   id,
@@ -58,8 +85,12 @@ export function VariablePickerPopover({
   boundName,
   onPick,
   onClose,
+  onDetach,
+  create,
 }: VariablePickerPopoverProps) {
   const [query, setQuery] = useState('')
+  const [naming, setNaming] = useState(false)
+  const [draftName, setDraftName] = useState('')
 
   const visible = options.filter((option) => matches(option, query))
   const groups = SOURCE_ORDER.map((source) => ({
@@ -100,6 +131,7 @@ export function VariablePickerPopover({
                         styles.pickerRow,
                         option.name === boundName && styles.pickerRowActive,
                       )}
+                      title={optionTitle(option)}
                       onClick={() => onPick(option)}
                     >
                       {option.kind === 'color' ? (
@@ -119,6 +151,75 @@ export function VariablePickerPopover({
           ))}
         </ul>
       )}
+      {onDetach || create ? (
+        <div className={styles.pickerFooter}>
+          {onDetach ? (
+            <Button variant="ghost" size="sm" className={styles.pickerAction} onClick={onDetach}>
+              Detach variable
+            </Button>
+          ) : null}
+          {create ? (
+            <>
+              {create.sameValue.map((option) => (
+                <Button
+                  key={option.name}
+                  variant="ghost"
+                  size="sm"
+                  className={styles.pickerAction}
+                  onClick={() => onPick(option)}
+                >
+                  Use {variableChipLabel(option.name)} - same value
+                </Button>
+              ))}
+              {naming ? (
+                <div className={styles.pickerCreateRow}>
+                  <Input
+                    fieldSize="sm"
+                    monospace
+                    value={draftName}
+                    aria-label="New variable name"
+                    spellCheck={false}
+                    autoFocus
+                    disabled={create.pending}
+                    onChange={(event) => setDraftName(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault()
+                        create.onCreate(draftName)
+                      }
+                    }}
+                  />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={create.pending || draftName.trim() === ''}
+                    onClick={() => create.onCreate(draftName)}
+                  >
+                    {create.pending ? 'Creating' : 'Create'}
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={styles.pickerAction}
+                  onClick={() => {
+                    setDraftName(create.suggestedName)
+                    setNaming(true)
+                  }}
+                >
+                  Create variable from {create.value}
+                </Button>
+              )}
+              {create.error ? (
+                <p className={styles.pickerError} role="alert">
+                  {create.error}
+                </p>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+      ) : null}
     </InspectorPopover>
   )
 }
