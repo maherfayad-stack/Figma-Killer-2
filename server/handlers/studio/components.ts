@@ -10,7 +10,9 @@
  *   GET /admin/api/studio/components?dir=<abs>
  *     -> `{ components: LocalComponentSpec[] }` — every exported,
  *        PascalCase-named component declared anywhere in the workspace
- *        (`extractLocalComponentCatalog`, `componentSpecExtract.ts`), sorted
+ *        (`extractLocalComponentCatalog`, `componentSpecExtract.ts`), each with a
+ *        `role` (`component` | `page` | `provider`) read from the project's own
+ *        detected pages directory and the parsed render, sorted
  *        by file then name. A project with no matching files (or no pages
  *        directory at all) yields `{ components: [] }`, never an error.
  *
@@ -45,7 +47,8 @@
  */
 import { createWorkspaceProject } from '@core/page-parser'
 import { jsonResponse, internalServerError } from '../../http'
-import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
+import { relative, sep } from 'node:path'
+import { projectPagesDir, resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { extractLocalComponentCatalog, type LocalComponentSpec } from './componentSpecExtract'
 
 const ROUTE_PATH = '/admin/api/studio/components'
@@ -58,7 +61,11 @@ export async function tryServeStudioComponents(req: Request, url: URL, pathname:
     const dir = resolveProjectDir(url.searchParams.get('dir'))
 
     const project = createWorkspaceProject(dir)
-    const components: LocalComponentSpec[] = extractLocalComponentCatalog(project, dir)
+    const components: LocalComponentSpec[] = extractLocalComponentCatalog(
+      project,
+      dir,
+      relative(dir, projectPagesDir(dir)).split(sep).join('/'),
+    )
     return jsonResponse({ components })
   } catch (err) {
     rethrowProjectDirRefusal(err)

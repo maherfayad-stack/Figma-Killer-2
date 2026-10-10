@@ -97,6 +97,7 @@ export const LocalComponentSpecSchema = Type.Object({
   file: Type.String(),
   exportName: Type.String(),
   isDefaultExport: Type.Boolean(),
+  role: Type.Union([Type.Literal('component'), Type.Literal('page'), Type.Literal('provider')]),
   props: Type.Array(LocalPropSpecSchema),
 })
 export type LocalComponentSpec = Static<typeof LocalComponentSpecSchema>

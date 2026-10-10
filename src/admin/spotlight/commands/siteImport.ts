@@ -18,8 +18,8 @@ export function getSiteImportCommands(): Command[] {
   return [
     {
       id: 'editor.importSite',
-      title: 'Import Site',
-      subtitle: 'Import a site from files, folders, or .zip archives',
+      title: 'Import project…',
+      subtitle: 'Bring in a React project from files, a folder or a .zip archive',
       group: 'editor',
       iconName: 'files-stack-2-solid',
       keywords: ['import', 'site', 'zip', 'folder', 'html', 'css'],

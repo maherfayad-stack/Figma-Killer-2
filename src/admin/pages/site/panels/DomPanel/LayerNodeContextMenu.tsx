@@ -479,12 +479,17 @@ export function LayerNodeContextMenu({
             Cut
           </ContextMenuItem>
 
-          {canPaste && (
-            <ContextMenuItem onClick={onPaste} shortcut={shortcutLabelFor('layers.paste')}>
-              <span aria-hidden="true"><FilesStack2SolidIcon size={13} /></span>
-              Paste
-            </ContextMenuItem>
-          )}
+          {/* Always offered, greyed out while the clipboard is empty - a menu
+              with no Paste reads as "paste is not a thing here". */}
+          <ContextMenuItem
+            onClick={onPaste}
+            shortcut={shortcutLabelFor('layers.paste')}
+            disabled={!canPaste}
+            tooltip={canPaste ? undefined : 'Copy or cut a layer first.'}
+          >
+            <span aria-hidden="true"><FilesStack2SolidIcon size={13} /></span>
+            Paste
+          </ContextMenuItem>
 
           {!isMulti && isContainer && onPasteHtml && nodeId && (
             <ContextMenuItem onClick={() => { onPasteHtml(nodeId); onClose() }}>

@@ -426,6 +426,14 @@ export const LocalComponentSpecSchema = Type.Object({
   /** The literal export name at `file` — `'default'` for a default export, otherwise identical to `name`. */
   exportName: Type.String(),
   isDefaultExport: Type.Boolean(),
+  /**
+   * What the declaration IS in the project: a reusable `component`, a route
+   * `page` (under the project's detected pages directory, or a framework route
+   * file such as `app/page.tsx`), or a `provider` (a context wrapper whose
+   * render is only `{children}` inside `<X.Provider>`). Pages and providers are
+   * declared components too, but they are not parts a designer places.
+   */
+  role: Type.Union([Type.Literal('component'), Type.Literal('page'), Type.Literal('provider')]),
   props: Type.Array(LocalPropSpecSchema),
 })
 export type LocalComponentSpec = Static<typeof LocalComponentSpecSchema>
@@ -521,6 +529,96 @@ function identifierDefaultExportName(sourceFile: SourceFile): string | undefined
   return undefined
 }
 
+/** Route and framework entry files declare components too, but they are pages, not parts. */
+const ROUTE_FILE_RE = /(^|\/)(page|layout|loading|error|not-found|template|route|_app|_document)\.[jt]sx?$/
+
+function isPageFile(relFile: string, pagesPrefix: string | null): boolean {
+  return ROUTE_FILE_RE.test(relFile) || (pagesPrefix !== null && relFile.startsWith(pagesPrefix))
+}
+
+function meaningfulChildren(node: Node): Node[] {
+  if (!Node.isJsxElement(node) && !Node.isJsxFragment(node)) return []
+  return node.getJsxChildren().filter((child) => !(Node.isJsxText(child) && child.containsOnlyTriviaWhiteSpaces()))
+}
+
+/** `{children}` or `{props.children}` — the pass-through a context wrapper renders. */
+function isChildrenExpression(node: Node): boolean {
+  if (!Node.isJsxExpression(node)) return false
+  const expr = node.getExpression()
+  if (!expr) return false
+  if (Node.isIdentifier(expr)) return expr.getText() === 'children'
+  return Node.isPropertyAccessExpression(expr) && expr.getName() === 'children'
+}
+
+/**
+ * Does this JSX render nothing but `{children}` inside one or more
+ * `<Something.Provider>` / `<SomethingProvider>` wrappers? Parse-only: the
+ * chain is walked on the written AST, never evaluated.
+ */
+function isProviderJsx(node: Node | undefined): boolean {
+  let sawProvider = false
+  let current: Node | undefined = node
+  while (current) {
+    if (Node.isParenthesizedExpression(current)) {
+      current = current.getExpression()
+      continue
+    }
+    if (Node.isJsxFragment(current)) {
+      const kids = meaningfulChildren(current)
+      if (kids.length !== 1) return false
+      current = kids[0]
+      continue
+    }
+    if (Node.isJsxExpression(current)) return sawProvider && isChildrenExpression(current)
+    if (!Node.isJsxElement(current)) return false
+    if (!/Provider$/.test(current.getOpeningElement().getTagNameNode().getText())) return false
+    sawProvider = true
+    const kids = meaningfulChildren(current)
+    if (kids.length !== 1) return false
+    current = kids[0]
+  }
+  return false
+}
+
+/** The expression a component declaration returns when it is a single `return <jsx/>` / `=> <jsx/>`. */
+function singleReturnedJsx(declaration: Node): Node | undefined {
+  let fn: Node | undefined = declaration
+  if (Node.isVariableDeclaration(declaration)) {
+    let init = declaration.getInitializer()
+    // `memo(function …)` / `forwardRef((…) => …)` — look through one call.
+    if (init && Node.isCallExpression(init)) init = init.getArguments()[0]
+    fn = init
+  }
+  if (!fn) return undefined
+  let body: Node | undefined
+  if (Node.isArrowFunction(fn)) body = fn.getBody()
+  else if (Node.isFunctionDeclaration(fn) || Node.isFunctionExpression(fn)) body = fn.getBody()
+  if (!body) return undefined
+  if (!Node.isBlock(body)) return body
+  const returns = body.getDescendantsOfKind(SyntaxKind.ReturnStatement)
+  return returns.length === 1 ? returns[0].getExpression() : undefined
+}
+
+/** A declaration in the workspace -> its catalog entry, with the role the project's own layout gives it. */
+function localSpec(
+  project: Project,
+  workspaceRoot: string,
+  pagesPrefix: string | null,
+  exportName: string,
+  declaration: Node,
+  relFile: string,
+  isDefaultExport: boolean,
+): LocalComponentSpec | undefined {
+  const spec = buildLocalComponentSpec(project, workspaceRoot, exportName, declaration, relFile, isDefaultExport)
+  if (!spec) return undefined
+  const role = isPageFile(relFile, pagesPrefix)
+    ? 'page'
+    : isProviderJsx(singleReturnedJsx(declaration))
+      ? 'provider'
+      : 'component'
+  return { ...spec, role }
+}
+
 /**
  * Every exported, PascalCase-named component declared ANYWHERE in `project`
  * — the whole-workspace counterpart to `packageManifest.ts`'s single-package
@@ -550,8 +648,14 @@ function identifierDefaultExportName(sourceFile: SourceFile): string | undefined
  * source-fallback tier already gives; this module never fabricates a prop
  * kind it can't read from a type annotation.
  */
-export function extractLocalComponentCatalog(project: Project, workspaceRoot: string): LocalComponentSpec[] {
+export function extractLocalComponentCatalog(
+  project: Project,
+  workspaceRoot: string,
+  /** The project's detected pages directory, POSIX, relative to `workspaceRoot` (`.studio/meta.json` `profile.pagesDir`). */
+  pagesDir?: string,
+): LocalComponentSpec[] {
   const specs: LocalComponentSpec[] = []
+  const pagesPrefix = pagesDir ? `${toPosix(pagesDir).replace(/^\.?\/+|\/+$/g, '')}/` : null
 
   for (const sourceFile of project.getSourceFiles()) {
     const relFile = toPosix(sourceFile.getFilePath()).replace(toPosix(workspaceRoot), '').replace(/^\/+/, '')
@@ -569,20 +673,20 @@ export function extractLocalComponentCatalog(project: Project, workspaceRoot: st
 
     for (const fn of sourceFile.getFunctions()) {
       if (fn.isDefaultExport()) {
-        const spec = buildLocalComponentSpec(project, workspaceRoot, 'default', fn, relFile, true)
+        const spec = localSpec(project, workspaceRoot, pagesPrefix, 'default', fn, relFile, true)
         if (spec) specs.push(spec)
       } else if (fn.isExported() && fn.getName()) {
-        const spec = buildLocalComponentSpec(project, workspaceRoot, fn.getName()!, fn, relFile, false)
+        const spec = localSpec(project, workspaceRoot, pagesPrefix, fn.getName()!, fn, relFile, false)
         if (spec) specs.push(spec)
       }
     }
 
     for (const cls of sourceFile.getClasses()) {
       if (cls.isDefaultExport()) {
-        const spec = buildLocalComponentSpec(project, workspaceRoot, 'default', cls, relFile, true)
+        const spec = localSpec(project, workspaceRoot, pagesPrefix, 'default', cls, relFile, true)
         if (spec) specs.push(spec)
       } else if (cls.isExported() && cls.getName()) {
-        const spec = buildLocalComponentSpec(project, workspaceRoot, cls.getName()!, cls, relFile, false)
+        const spec = localSpec(project, workspaceRoot, pagesPrefix, cls.getName()!, cls, relFile, false)
         if (spec) specs.push(spec)
       }
     }
@@ -590,7 +694,7 @@ export function extractLocalComponentCatalog(project: Project, workspaceRoot: st
     for (const stmt of sourceFile.getVariableStatements()) {
       if (!stmt.isExported()) continue
       for (const decl of stmt.getDeclarations()) {
-        const spec = buildLocalComponentSpec(project, workspaceRoot, decl.getName(), decl, relFile, false)
+        const spec = localSpec(project, workspaceRoot, pagesPrefix, decl.getName(), decl, relFile, false)
         if (spec) specs.push(spec)
       }
     }
@@ -607,7 +711,7 @@ export function extractLocalComponentCatalog(project: Project, workspaceRoot: st
         sourceFile.getClass(defaultIdentifierName) ??
         sourceFile.getVariableDeclaration(defaultIdentifierName)
       if (declaration) {
-        const spec = buildLocalComponentSpec(project, workspaceRoot, 'default', declaration, relFile, true)
+        const spec = localSpec(project, workspaceRoot, pagesPrefix, 'default', declaration, relFile, true)
         if (spec) specs.push(spec)
       }
     }
