@@ -19,8 +19,8 @@
  *
  * ## Nothing is written to the store until commit
  *
- * Unlike the portal editor (which live-commits every keystroke through
- * `applyInlineEditValue`, coalesced into one undo entry), this module keeps
+ * Like the portal editor (whose `applyInlineEditValue` only records a session
+ * draft until `endInlineEdit` writes it once), this module keeps
  * the typed text ENTIRELY inside the frame's own DOM — the user is typing
  * directly into the real `contentEditable` element, which already is the
  * final text. Only the FINAL value crosses the wire, once, on commit. That

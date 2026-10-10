@@ -245,9 +245,17 @@ describe('resolveCanvasFileDropIntent — cmd places absolutely, the K6 rule (IM
   ]
   const box = (position: string): DropContainerBox => ({
     contentWidth: 460,
-    paddingOrigin: { x: 0, y: 0 },
-    paddingWidth: 500,
-    position,
+    block: {
+      rect: { left: 0, top: 0, width: 500, height: 800 },
+      borderLeft: 0,
+      borderTop: 0,
+      borderRight: 0,
+      borderBottom: 0,
+      scale: 1,
+      scrollLeft: 0,
+      scrollTop: 0,
+    },
+    containsAbsolute: position !== 'static',
     direction: 'ltr',
   })
 
