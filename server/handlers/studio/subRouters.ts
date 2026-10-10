@@ -27,6 +27,7 @@ import { tryServeStudioAssetLedger } from './assetPrune'
 import { tryServeStudioReferenceUpload } from './referenceUpload'
 import { tryServeStudioComponentBundle } from './componentBundle'
 import { tryServeStudioTokens } from './tokenExtract'
+import { tryServeStudioTokenCatalog } from './tokenCatalogRoutes'
 import { tryServeStudioTrustTier } from './trustTier'
 import { tryServeStudioLiveOriginInfo } from './liveOriginInfo'
 import { tryServeStudioStyleCompileConsent } from './styleCompileConsent'
@@ -74,6 +75,7 @@ export const STUDIO_SUB_ROUTERS = [
   tryServeStudioStyleCompileConsent,
   tryServeStudioDesignSystemMigrate,
   tryServeStudioTokens,
+  tryServeStudioTokenCatalog,
   tryServeStudioExtractComponent,
   tryServeStudioPreviewAxes,
   tryServeStudioLocalizedPage,

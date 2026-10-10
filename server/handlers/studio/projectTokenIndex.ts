@@ -69,10 +69,10 @@ import {
   collectRootScopeDeclarations,
   collectRootScopeMaps,
   detectRootFontSizePx,
-  resolveVarValue,
   toPx,
   type ScopedDeclaration,
 } from './tokenExtractCssScan'
+import { resolveVarValue } from '@core/studio-tokens'
 
 export { rgbToHex }
 
@@ -230,7 +230,7 @@ export interface ListedToken {
 
 const VAR_ALIAS_RE = /^var\(\s*(--[a-zA-Z0-9_-]+)\s*\)$/
 
-function familyOf(designFamily: DesignTokenFamily | 'unclassified'): { family: TokenFamily; role?: TypeRole } {
+export function familyOf(designFamily: DesignTokenFamily | 'unclassified'): { family: TokenFamily; role?: TypeRole } {
   switch (designFamily) {
     case 'color':
     case 'space':

@@ -17,6 +17,7 @@
  *   - `@core/studio-runtime`
  *   - `@core/vector`
  *   - `@core/component-variants`
+ *   - `@core/studio-tokens`
  *
  * Per the barrel convention (CLAUDE.md → "Barrel imports"): everything OUTSIDE
  * a module imports through its barrel; files INSIDE the module import each
@@ -75,6 +76,10 @@ const BARRELLED_MODULES = [
   // analyzer and the browser catalog client. A deep import is how a second,
   // drifted mirror of the binding union would get made.
   'component-variants',
+  // The project's design tokens as a catalog with modes. `gates.ts` is the ONE
+  // place that decides what a declaration's selector means as a mode; the
+  // editor, the Variables route and `studio_set_tokens` all read that answer.
+  'studio-tokens',
 ]
 
 // Scan production + test sources in both the app and the server.

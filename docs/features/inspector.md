@@ -2061,20 +2061,34 @@ written into the source as `var(--name)`.
 
 ### §10.1 Where the variables come from
 
-`projectVariables.ts` (`src/admin/pages/site/property-controls/`) scans the
-raw CSS the client **already has** for the canvas — `studioRawCssStores.ts`'s
-`authoredCss` (the project's own `.css`, concatenated in cascade order) and
-`vendorCss` (a design system's package stylesheets) — plus a third string it
-generates locally with `generateFrameworkRootCss`, the same generator
-`canvasClassCss.ts` feeds the canvas. No server change, no second wire
-format, and the catalog can never disagree with what the canvas is rendering,
-because it *is* what the canvas is rendering.
+The server's **token catalog** (CT-1): `GET /admin/api/studio/token-catalog`
+(`server/handlers/studio/tokenCatalog.ts`) reads the exact stylesheet stack the
+canvas loads (`projectTokenSources.ts` — Studio's design-system sheet, package
+CSS, compiled Sass/PostCSS/Tailwind output, the entry module's global
+stylesheets, in cascade order, each with the file it came from) and returns
+every custom property with **every declaration of it, gated by the mode it is
+written under** (`:root`, `[data-theme="dark"]`, `.dark`, `@media …`, Tailwind
+v4 `@theme`, a component's own `.btn { --btn-pad }`). `@core/studio-tokens`
+holds the pure half — the gate classifier (`gates.ts`), the gated declaration
+scan (`scan.ts`), the wire schema — and the same module backs `studio_set_tokens`
+through the shared write planner (§10.7). The catalog is cheap to refetch and
+is re-read whenever the load's raw CSS changes (`projectVariables.ts` →
+`studioTokenCatalog.ts`'s external store), so it can still never disagree with
+the canvas. **There is no CSS scan in the client any more.**
 
-Each entry carries a name, a **resolved** value (chains of `var(--a)` →
-`var(--b)` → `4px` are followed, bounded and cycle-safe), a kind, and the
-bundle it came from. Groups in the picker read Project / Package / Framework.
-A package re-declaring a name the user's own stylesheet already declares does
-**not** relabel it — the user's own value and label win.
+Provisional model decisions (CT-OD-1…5, owner to confirm): tokens are the
+project's own CSS custom properties plus Tailwind v4 `@theme`; **modes are
+inferred** from the gates found (nothing is stored beside the CSS); Studio's
+**Framework scales stay a generator** — `@core/framework` still generates them
+and the picker lists them as a separate, read-only "Framework" group, never
+shadowing a project variable of the same name.
+
+Each picker row carries a name, a **resolved** value (`var(--a)` → `var(--b)`
+→ `4px` chains followed per mode, bounded and cycle-safe), a kind, the bundle
+that owns the declaration (Project / Package / Framework), its **file**, its
+collection, and its value in every other mode (the row's tooltip). A package
+re-declaring a name the user's own stylesheet already declares does **not**
+relabel it — the user's own value and label win.
 
 `ProjectVariablesProvider` publishes the catalog on the panel's root
 `<aside>`, the same altitude as `data-field-skin="inspector"` and for the
@@ -2086,9 +2100,11 @@ threaded through all of them.
 A field only offers variables **compatible with its property**, and the kind
 is inferred from the *resolved value*, never from the name (`--brand-4` is a
 colour in one project and a spacing step in another). `classifyVariableValue`
-buckets into `color` / `length` / `number` / `other`. A width field that
-offered `--color-primary` would let one click write a declaration the browser
-drops, leaving a field that reads as bound while rendering nothing.
+buckets into `color` / `length` / `number` / `duration` / `font-family` /
+`shadow` / `other`. A width field that offered `--color-primary` — or a
+`box-shadow` field that offered a length — would let one click write a
+declaration the browser drops, leaving a field that reads as bound while
+rendering nothing.
 
 Corollary: **when nothing compatible exists, no icon is rendered at all.** An
 icon that opens an empty list is the same defect in a different costume.
@@ -2167,7 +2183,43 @@ inherits from them — `ScrubTokenField`, `AddablePropertyField`,
 `SpacingBoxControl`, `ClassPropertyRow`'s generic rows, and the bespoke
 Size / Spacing / Position / Typography / Stroke / Appearance fields.
 `TokenizedColorField` (and therefore `ColorValueInput`) carries the trigger
-for colour variables.
+for colour variables. The plain text style fields opt in with
+`TextControl`'s `variableKinds` (`variableKindsForProperty.ts` is the explicit
+map: `letterSpacing`, `lineHeight`, `boxShadow`, `transitionDuration`, …) and
+`FontFamilyControl` takes `font-family` variables; a property not in the map
+gets no affordance rather than a guess.
+
+### §10.7 Create from a value, detach, and the one write path (CT-2)
+
+The picker's footer (the hook feeds it, `VariablePickerPopover` draws it):
+
+- **Detach variable** — bound fields only; writes the resolved literal, the
+  same write as the chip's ×.
+- **Use `--x` — same value** — when a variable of an accepted kind already
+  holds exactly this literal, it is offered first so no duplicate is made.
+- **Create variable from `<value>`** — only for a literal the field's own kinds
+  can take (a `width: auto` field has nothing to turn into a variable), and
+  only inside the site editor (`VariableActionsContext`). It asks for a name
+  (`suggestVariableName`: from what the value is, in the prefix the project
+  already uses, unique against the catalog), POSTs `{ op: 'insert' }` to
+  `/admin/api/studio/token-catalog`, re-syncs the board
+  (`resyncBoardAfterWrite`) and binds the field to `var(--name)`. A refusal
+  (no project stylesheet, name already declared, stale file) shows inline next
+  to the control with its remedy; the field stays unbound. Undoing the field
+  edit un-binds the field but leaves the declared token — it is a real project
+  token now.
+
+`server/handlers/studio/tokenWrite.ts`'s `planTokenEdits` is the single planner
+behind both `studio_set_tokens` and this route: `set` edits the ONE declaration
+that is a token for a mode (`light` / `dark` / an explicit gate), `insert`
+declares a new token or a new mode of one (or the project's override of a
+package token) in a hand-written global `.css` file — beside its siblings in the
+same rule, inside `@theme` for a Tailwind namespace when the file already has
+one, in a new gate block otherwise. `insertCustomProperty`
+(`@core/css-codemods`) is the CST codemod; line endings and every other byte
+are kept. Refusals are the same from both writers: `no-such-token`,
+`read-only-source`, `ambiguous-declaration`, `already-declared`,
+`no-project-stylesheet`, `invalid-input`, `stale-source`.
 ## §11. What an inspector gesture costs the undo stack
 
 Two defects made Ctrl+Z read as broken from the Properties panel. Both were

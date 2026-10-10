@@ -186,3 +186,33 @@
     color: var(--text-subtle);
     font-size: var(--text-2xs);
 }
+
+/* ── Picker footer: detach / use existing / create ─────────────────────── */
+.pickerFooter {
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-space-3xs);
+    margin-top: var(--inspector-space-s);
+    padding-top: var(--inspector-space-s);
+    border-top: 1px solid var(--border);
+}
+
+.pickerAction {
+    justify-content: flex-start;
+    width: 100%;
+    min-height: var(--inspector-row-h);
+    padding-inline: var(--inspector-space-s);
+}
+
+.pickerCreateRow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--inspector-space-s);
+    align-items: center;
+}
+
+.pickerError {
+    margin: 0;
+    color: var(--danger-text);
+    font-size: var(--text-2xs);
+}

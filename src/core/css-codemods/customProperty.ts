@@ -25,12 +25,18 @@
  * survive the LF normalisation unchanged — CRLF → LF removes a character per
  * line, never a line.
  *
+ * A third, {@link insertCustomProperty}, declares a token that does not exist
+ * yet — in the rule that already holds its gate (`:root`, `[data-theme="dark"]`,
+ * the `@media` block), or in a new one it creates — which is what "create
+ * variable from this value" and "+ Mode" write.
+ *
  * Pure text-in/text-out, no filesystem, like every codemod here. The value is
  * validated by parsing it back as a declaration: a value carrying `;`, `{` or
  * `}` would otherwise land as a second declaration or a broken block, which is
  * a change nobody asked for.
  */
-import postcss, { type Declaration, type Node, type Root } from 'postcss'
+import postcss, { type Declaration, type Node, type Root, type Rule } from 'postcss'
+import { classifyGates, gateKey, gateSelector, type ModeGate } from '@core/studio-tokens'
 import { toLf } from '@core/utils/lineEndings'
 import { preservingLineEndings } from './preserveLineEndings'
 
@@ -49,6 +55,11 @@ export interface CustomPropertyDeclaration {
 export type CustomPropertyEditResult =
   | { readonly ok: true; readonly css: string; readonly changed: boolean; readonly previous: string }
   | { readonly ok: false; readonly reason: 'not-a-custom-property' | 'invalid-value' | 'no-declaration-at-line' | 'unparseable-stylesheet'; readonly message: string }
+
+/** One empty line between the file's last block and an appended one. */
+const BLANK_LINE = `
+
+`
 
 const CUSTOM_PROPERTY_NAME_RE = /^--[A-Za-z0-9_-]+$/
 
@@ -154,4 +165,129 @@ function declarationsAtLine(root: Root, name: string, line: number): Declaration
     if (decl.source?.start?.line === line) atLine.push(decl)
   })
   return atLine
+}
+
+// ---------------------------------------------------------------------------
+// Insert — declare a token that does not exist yet
+// ---------------------------------------------------------------------------
+
+export interface InsertCustomPropertyOptions {
+  readonly name: string
+  readonly value: string
+  /** Which mode the value is for; the declaration goes into the rule that already holds that gate, else a new one. */
+  readonly gate: ModeGate
+  /**
+   * `theme` puts a base-gate token inside Tailwind v4's `@theme` block (so it
+   * also generates utilities) when the file has one; `root` (default) uses
+   * `:root`.
+   */
+  readonly host?: 'root' | 'theme'
+  /** Place the new declaration right after this sibling token when it sits in the same rule. */
+  readonly after?: string
+}
+
+export type CustomPropertyInsertResult =
+  | { readonly ok: true; readonly css: string; readonly changed: true; readonly created: 'declaration' | 'rule' }
+  | {
+      readonly ok: false
+      readonly reason: 'not-a-custom-property' | 'invalid-value' | 'unparseable-stylesheet' | 'already-declared'
+      readonly message: string
+    }
+
+function atRuleChain(node: Node): string[] {
+  const chain: string[] = []
+  let parent = node.parent as Node | undefined
+  while (parent && parent.type !== 'root') {
+    if (parent.type === 'atrule') {
+      const at = parent as postcss.AtRule
+      chain.unshift(`@${at.name}${at.params ? ` ${at.params.trim()}` : ''}`)
+    }
+    parent = parent.parent as Node | undefined
+  }
+  return chain
+}
+
+/** The rule that exclusively holds `gate` (a comma group would also set the other segments, so it does not qualify). */
+function findGateRule(root: Root, gate: ModeGate): Rule | null {
+  const wanted = gateKey(gate)
+  let found: Rule | null = null
+  root.walkRules((rule) => {
+    if (found || rule.parent?.type === 'rule') return
+    const gates = classifyGates(rule.selector.replace(/\s+/g, ' ').trim(), atRuleChain(rule))
+    if (gates.length === 1 && gateKey(gates[0]!) === wanted) found = rule
+  })
+  return found
+}
+
+function findThemeBlock(root: Root): postcss.AtRule | null {
+  let found: postcss.AtRule | null = null
+  root.walkAtRules('theme', (atRule) => {
+    if (!found && atRule.parent?.type === 'root') found = atRule
+  })
+  return found
+}
+
+function buildGateBlock(gate: ModeGate, name: string, value: string): postcss.ChildNode {
+  const fragment = gate.kind === 'media'
+    ? `@media ${gate.query} {
+  :root {
+    ${name}: ${value};
+  }
+}`
+    : `${gateSelector(gate)} {
+  ${name}: ${value};
+}`
+  const node = postcss.parse(fragment).first
+  if (!node) throw new Error('[css-codemods] unreachable: parsed fragment did not yield a node')
+  return node
+}
+
+/**
+ * Declare `name: value` for `gate`. Refuses (never overwrites) when the rule
+ * that holds the gate already declares the name — `setCustomPropertyValueAtLine`
+ * is the edit. Every byte outside the inserted declaration (or the appended
+ * block) is the caller's own.
+ */
+export function insertCustomProperty(cssText: string, options: InsertCustomPropertyOptions): CustomPropertyInsertResult {
+  const { name, value, gate } = options
+  if (!CUSTOM_PROPERTY_NAME_RE.test(name)) {
+    return { ok: false, reason: 'not-a-custom-property', message: `"${name}" is not a CSS custom property name (it must start with "--").` }
+  }
+  const invalid = invalidValueReason(name, value)
+  if (invalid) return { ok: false, reason: 'invalid-value', message: `The value for ${name} was not written: ${invalid}.` }
+  const next = value.trim()
+  if (!parse(toLf(cssText))) {
+    return { ok: false, reason: 'unparseable-stylesheet', message: `The stylesheet does not parse as CSS, so ${name} cannot be added to it safely.` }
+  }
+
+  let refusal: CustomPropertyInsertResult | null = null
+  let createdKind: 'declaration' | 'rule' = 'declaration'
+  const rewrite = preservingLineEndings(cssText, (source) => {
+    const root = postcss.parse(source)
+    const theme = gate.kind === 'base' && options.host === 'theme' ? findThemeBlock(root) : null
+    const container: postcss.Container | null = theme ?? findGateRule(root, gate)
+    let created: 'declaration' | 'rule'
+    if (container) {
+      if (container.some((child) => child.type === 'decl' && child.prop === name)) {
+        refusal = { ok: false, reason: 'already-declared', message: `${name} is already declared for this mode in that block.` }
+        return { css: source, changed: false }
+      }
+      const declaration = postcss.decl({ prop: name, value: next })
+      const sibling = options.after
+        ? container.nodes?.find((child): child is Declaration => child.type === 'decl' && child.prop === options.after)
+        : undefined
+      if (sibling) container.insertAfter(sibling, declaration)
+      else container.append(declaration)
+      created = 'declaration'
+    } else {
+      const block = buildGateBlock(gate, name, next)
+      block.raws.before = root.nodes.length > 0 ? BLANK_LINE : ''
+      root.append(block)
+      created = 'rule'
+    }
+    createdKind = created
+    return { css: root.toString(), changed: true }
+  })
+  if (refusal) return refusal
+  return { ok: true, css: rewrite.css, changed: true, created: createdKind }
 }

@@ -1,0 +1,7 @@
+/* The positioned host the trailing "Apply variable" button overlays. See
+ * VariableField.module.css's `[data-variable-host]` reveal rule. */
+.variableHost {
+    position: relative;
+    width: 100%;
+    min-width: 0;
+}
