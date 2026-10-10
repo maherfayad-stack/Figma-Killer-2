@@ -444,9 +444,17 @@ specifier to the file it actually names and re-resolving it against the
 destination's own location, and keeping the style the user wrote it in (a
 default import is not re-spelled as a named one). A name bound by a movable
 context-reader hook (`const { t } = useLanguage()`) re-establishes the call at
-the destination — a page component, or a lift's new layer component. Anything
-else body-local to the origin's component refuses as **`captured-scope`**, by
-name. Both files' next
+the destination — a page component, or a lift's new layer component. A plain
+declaration the element reads (G-1a: a body `const` or `function` handler whose
+own reads are all imports, globals, context hooks or other such declarations,
+found by the same scope walk, transitively) is COPIED into the destination
+component's body, a private module-level constant or function into its module
+scope — deduped when the destination already declares the identical thing,
+renamed on a clash (`transplantBindings.ts` decides, `transplantScopeCarry.ts`
+renders; `carriedDeclarations` reports what was written). Nothing is exported
+from the origin. Anything the component OWNS - a prop, state/ref/custom-hook
+result, a `.map` row, a `let` - refuses as **`captured-scope`**, by name (moving
+state and baking props are separate decisions: G-1b/G-1c). Both files' next
 contents are computed in full before either is written, so a refusal leaves two
 untouched files and a success writes two complete ones.
 
@@ -512,12 +520,12 @@ CROSS-FILE move can answer that a same-file one cannot: **`captured-scope`**
 (the markup reads a binding local to the component it is leaving, so there is no
 module the other file could import it from) and **`binding-conflict`** (the
 destination already means something else by a name the move would carry).
-`sec-17` adds a third: **`unexported-binding`** — the markup reads a helper or
-a local component the origin file DECLARES but does not export, so the mirrored
-import the destination would receive resolves to nothing. Writing it anyway
-(the earlier behaviour, on the reasoning that the compiler would say so) leaves
-the markup gone from one file and a broken import in the other, with no undo
-entry for either — so it refuses and names the export to add.
+`sec-17` adds a third: **`unexported-binding`** — the markup reads a local
+*component* the origin file DECLARES but does not export, so the mirrored
+import the destination would receive resolves to nothing (a private constant or
+function is copied instead, G-1a; a component is never copied - two copies are
+two components). Writing it anyway leaves the markup gone from one file and a
+broken import in the other — so it refuses and names the export to add.
 
 **A refusal reaches the user as an `EditConstraint`, never a bare string.**
 `describeStructuralRefusal` (`src/core/page-tree/editConstraint.ts`) dresses

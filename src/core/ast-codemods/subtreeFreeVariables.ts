@@ -74,7 +74,7 @@ const GLOBAL_WHITELIST = new Set([
 ])
 
 /** Every leaf identifier NAME a binding pattern introduces — `{ a, b: c, ...d }` -> `{a, c, d}`. */
-function bindingNames(node: Node): Set<string> {
+export function bindingNames(node: Node): Set<string> {
   const names = new Set<string>()
   if (Node.isIdentifier(node)) {
     names.add(node.getText())
