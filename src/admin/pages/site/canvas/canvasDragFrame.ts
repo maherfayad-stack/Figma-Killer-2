@@ -46,7 +46,7 @@ import { selectActiveBoardGuides } from '@site/store/slices/boardSelectors'
 import { guideLinesInSpace, type SnapLine } from '@core/studio-runtime'
 import { readBoardScreenOrigin, rulerGuideLines } from './boardSnapping'
 import { getNodeDisplayName } from '@core/page-tree'
-import type { NodeTree, PageNode } from '@core/page-tree'
+import type { EditConstraint, NodeTree, PageNode } from '@core/page-tree'
 import type { CanvasDropCandidate, CanvasDropResolution, CanvasTransplantResolution } from './canvasDnd'
 import { resolveCanvasDropTarget, resolveCanvasTransplantTarget } from './canvasDnd'
 import { autoPanDelta } from './canvasDragAutoPan'
@@ -66,6 +66,7 @@ import {
   type FrameCandidateIndex,
 } from './canvasDragSession'
 import {
+  clearFreeMovePreview,
   paintFreeMoveFrame,
   resolveFreeMove,
   type FreeMoveResolution,
@@ -233,12 +234,32 @@ export function runCanvasDragFrame(session: DragSession, env: CanvasDragFrameEnv
     ? constrainToDragAxis(session.origin, session.point)
     : session.point
 
+  session.board = refreshBoardDropSurfaces(session.board, env.transform)
+  const foreign = session.originPageId
+    ? resolveForeignFrameDrop(
+        session.board,
+        screenPoint,
+        session.originPageId,
+        session.foreign,
+        env.transform,
+        env.readPage,
+      )
+    : null
+
   // K6 — a FREE move (an already-positioned element, or ⌘ held inside a
   // positioned parent) does not resolve a drop target at all: it writes a
   // position. Nothing below this branch runs for one, including the board scan
   // and the auto-pan — a coordinate drag stays inside the container it is
   // positioned in.
-  const free = readSessionFreeMove(session, env)
+  //
+  // Asked AFTER the cross-frame question, never before: an absolutely
+  // positioned element dragged over a DIFFERENT screen is a transplant, and its
+  // pointer travel is not an offset inside the screen it is leaving (the free
+  // move used to win and wrote `left: -421px; bottom: 341px` into the source).
+  // The element keeps its own offsets when it lands - they are relative to its
+  // new containing block, which is how a constraint behaves in Figma too.
+  if (foreign && session.free?.ok) clearFreeMovePreview(session.free.plan)
+  const free = foreign ? null : readSessionFreeMove(session, env)
   if (free) {
     const point = indexLocalPoint(session.index, screenPoint)
     const origin = indexLocalPoint(session.index, session.origin)
@@ -264,18 +285,6 @@ export function runCanvasDragFrame(session: DragSession, env: CanvasDragFrameEnv
     session.paintedLayer = env.dropLayer
     return
   }
-
-  session.board = refreshBoardDropSurfaces(session.board, env.transform)
-  const foreign = session.originPageId
-    ? resolveForeignFrameDrop(
-        session.board,
-        screenPoint,
-        session.originPageId,
-        session.foreign,
-        env.transform,
-        env.readPage,
-      )
-    : null
 
   const index = foreign ? foreign.index : session.index
   const point = indexLocalPoint(index, screenPoint)
@@ -538,4 +547,22 @@ export function followDragSessionThroughReparse(
   session.freeWanted = undefined
   session.freeStep = null
   return true
+}
+
+/**
+ * The explained refusal for the position the pointer is on, or `null`.
+ *
+ * Read at release (`commitCanvasDrag`) so a drop on a position the store
+ * would refuse ends with the same sentence the drag painted beside the cursor
+ * - plus its remedy - rather than with nothing at all.
+ */
+export function dropRefusal(
+  session: DragSession,
+): { constraint: EditConstraint; crossFrame: boolean } | null {
+  if (session.foreign) {
+    const constraint = session.foreignResolution.invalid?.constraint
+    return constraint ? { constraint, crossFrame: true } : null
+  }
+  const constraint = session.resolution.invalid?.constraint
+  return constraint ? { constraint, crossFrame: false } : null
 }

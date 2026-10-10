@@ -693,6 +693,18 @@ can render the same page (a "duplicate as variant" sibling, WS-10 Phase 2), and
 a drop between those two is an ordinary same-file reparent that must keep going
 through `moveNodes`.
 
+**The cross-frame question is asked BEFORE the free-move one** (`runCanvasDragFrame`,
+`commitCanvasDrag`). An absolutely positioned element released over another
+screen is a transplant (it keeps its own offsets, relative to its new containing
+block); K6's free move only applies while the pointer is in the origin frame.
+Releasing on a position the store would refuse presents the same refusal the drag
+painted (`dropRefusal`), never silence.
+
+**The Layers panel shares the resolver.** A drop on a row of another page's tree
+(`PageLayerSubtree`, wired by `LayerDragBridge`) resolves through
+`resolveTransplantDropOver` (`canvasDnd.ts`) and commits `transplantNodes`, the
+same action the canvas drag commits.
+
 **Released over no frame at all** (the empty board of a Studio board), the drag
 is a LIFT (P5-G): the element leaves its page and becomes a loose layer on the
 free canvas, keeping the grab offset (`BoardCanvasLayer/canvasLayerLift.ts`,

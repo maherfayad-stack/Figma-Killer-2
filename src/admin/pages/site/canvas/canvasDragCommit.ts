@@ -32,7 +32,9 @@
  * verdicts the drag painted while the pointer was down were previews of those
  * same rules and are deliberately not re-read here.
  */
+import type { EditConstraint } from '@core/page-tree'
 import { useEditorStore } from '@site/store/store'
+import { STRUCTURAL_REFUSAL_TITLE, presentStructuralRefusal } from '@site/store/slices/site/structuralSourceEdits'
 import type { CanvasLiftDrop } from './BoardCanvasLayer/canvasLayerLift'
 import type { CanvasDropResolution, CanvasTransplantTarget } from './canvasDnd'
 import {
@@ -69,6 +71,13 @@ export interface CanvasDragCommitInput {
   foreign: CanvasDragForeignDrop | null
   /** P5-G — set when the release was over the empty board of a Studio board. */
   lift: CanvasLiftDrop | null
+  /**
+   * The explained refusal for the position the pointer was released on, when
+   * that position exists but the store would refuse the write (an instance's
+   * own markup, a shared layout, a list row). The drag already painted this
+   * sentence beside the cursor; releasing on it must not end in silence.
+   */
+  refusal: { constraint: EditConstraint; crossFrame: boolean } | null
 }
 
 /**
@@ -83,18 +92,6 @@ export interface CanvasDragCommitInput {
  */
 export function commitCanvasDrag(input: CanvasDragCommitInput): void {
   const store = useEditorStore.getState()
-
-  if (input.free) {
-    if (!input.free.ok) presentFreeMoveRefusal(input.free.refusal)
-    else if (input.freeStep) {
-      // IX-22 — every moved layer's own patch, in ONE transaction: one undo
-      // entry however many layers moved together.
-      const patches = freeMoveStylePatches(input.free.plan, input.freeStep)
-      if (patches.length === 1) store.setNodeInlineStyles(patches[0]!.nodeId, patches[0]!.patch)
-      else if (patches.length > 1) store.setNodesInlineStylesPerNode(patches)
-    }
-    return
-  }
 
   const foreign = input.foreign
   if (foreign) {
@@ -111,13 +108,34 @@ export function commitCanvasDrag(input: CanvasDragCommitInput): void {
     return
   }
 
+  if (input.free) {
+    if (!input.free.ok) presentFreeMoveRefusal(input.free.refusal)
+    else if (input.freeStep) {
+      // IX-22 — every moved layer's own patch, in ONE transaction: one undo
+      // entry however many layers moved together.
+      const patches = freeMoveStylePatches(input.free.plan, input.freeStep)
+      if (patches.length === 1) store.setNodeInlineStyles(patches[0]!.nodeId, patches[0]!.patch)
+      else if (patches.length > 1) store.setNodesInlineStylesPerNode(patches)
+    }
+    return
+  }
+
   if (input.lift) {
     store.liftNodeToCanvas(input.draggedId, input.lift.originPageId, input.lift.at, input.duplicating)
     return
   }
 
   const target = input.resolution.target
-  if (!target) return
+  if (!target) {
+    if (input.refusal) {
+      presentStructuralRefusal(
+        input.refusal.crossFrame ? STRUCTURAL_REFUSAL_TITLE.transplant : STRUCTURAL_REFUSAL_TITLE.move,
+        input.refusal.constraint,
+        { nodeId: input.draggedId, getState: useEditorStore.getState, set: useEditorStore.setState },
+      )
+    }
+    return
+  }
   if (input.duplicating) store.duplicateNodesTo(target.draggedIds, target.parentId, target.index)
   else store.moveNodes(target.draggedIds, target.parentId, target.index)
 }

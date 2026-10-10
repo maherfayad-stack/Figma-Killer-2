@@ -40,6 +40,7 @@ import type { NodeTree, PageNode } from '@core/page-tree'
 import { subtreeHasOutlet, treeHasOutlet } from '@core/templates'
 import { wouldCreateCycle, syncSlotInstances, applySlotSyncResult } from '@core/visualComponents'
 import { pushToast } from '@ui/components/Toast'
+import { openSourceFile } from '../../openSourceFile'
 import { commitStudioDelete, commitStudioMove, commitStudioReparent, commitStudioTransplant } from '@site/studio/studioStructuralCommits'
 import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
 import { broadcastOptimisticDelete, broadcastOptimisticMove } from '@site/canvas/frameAdapter/optimisticStructuralBroadcast'
@@ -159,6 +160,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       position,
       copy: false,
       origin: { parentNodeId: originParentId, index: index < 0 ? Number.MAX_SAFE_INTEGER : index },
+      openSource: (origin) => openSourceFile(get(), origin),
     })
   }
   const {
