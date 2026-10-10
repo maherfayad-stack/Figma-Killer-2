@@ -166,7 +166,7 @@ describe('ClassPicker — rendering', () => {
   it('renders the search input with the expected placeholder', () => {
     const { nodeId } = loadSiteWithNode()
     render(<ClassPicker nodeId={nodeId} />)
-    expect(screen.getByPlaceholderText('Add or create selector…')).toBeTruthy()
+    expect(screen.getByPlaceholderText('Add class…')).toBeTruthy()
   })
 
   it('renders an assigned class as a selector pill with a dotted class label', () => {
@@ -228,7 +228,7 @@ describe('ClassPicker — search + create', () => {
     const { nodeId } = loadSiteWithNode()
     render(<ClassPicker nodeId={nodeId} />)
 
-    const input = screen.getByPlaceholderText('Add or create selector…')
+    const input = screen.getByPlaceholderText('Add class…')
     await user.click(input)
     await user.type(input, 'brand-new')
     expect(screen.getByText('+ Create class “.brand-new”')).toBeTruthy()
@@ -258,7 +258,7 @@ describe('ClassPicker — search + create', () => {
     const { nodeId } = loadSiteWithStudioNode()
     render(<ClassPicker nodeId={nodeId} />)
 
-    const input = screen.getByPlaceholderText('Add or create selector…')
+    const input = screen.getByPlaceholderText('Add class…')
     await user.click(input)
     await user.type(input, 'hero-card')
     await user.keyboard('{Enter}')
@@ -278,7 +278,7 @@ describe('ClassPicker — search + create', () => {
     const { nodeId } = loadSiteWithNode()
     render(<ClassPicker nodeId={nodeId} />)
 
-    const input = screen.getByPlaceholderText('Add or create selector…')
+    const input = screen.getByPlaceholderText('Add class…')
     await user.click(input)
     await user.type(input, 'plain-card')
     await user.keyboard('{Enter}')
@@ -305,7 +305,7 @@ describe('ClassPicker — search + create', () => {
     const cls = useEditorStore.getState().createClass('header')
     render(<ClassPicker nodeId={nodeId} />)
 
-    const input = screen.getByPlaceholderText('Add or create selector…')
+    const input = screen.getByPlaceholderText('Add class…')
     await user.click(input)
     await user.type(input, 'header')
     await user.keyboard('{Enter}')
@@ -320,7 +320,7 @@ describe('ClassPicker — search + create', () => {
     useEditorStore.getState().createClass('alpha')
     render(<ClassPicker nodeId={nodeId} />)
 
-    const input = screen.getByPlaceholderText('Add or create selector…')
+    const input = screen.getByPlaceholderText('Add class…')
     await user.click(input)
     await user.type(input, 'a')
 
@@ -340,7 +340,7 @@ describe('ClassPicker — search + create', () => {
       if (conditionText === 'selector(*)') return true
       return conditionText !== 'selector(input:placeholder)'
     }, async () => {
-      const input = screen.getByPlaceholderText('Add or create selector…')
+      const input = screen.getByPlaceholderText('Add class…')
       await user.click(input)
       await user.type(input, 'input:placeholder')
 
@@ -458,7 +458,7 @@ describe('ClassPicker — ambient selectors', () => {
 
     render(<ClassPicker nodeId={nodeId} />)
 
-    const input = screen.getByPlaceholderText('Add or create selector…')
+    const input = screen.getByPlaceholderText('Add class…')
     await user.click(input)
 
     expect(screen.getByText('Ambient selectors')).toBeTruthy()
@@ -503,7 +503,7 @@ describe('ClassPicker — ambient selectors', () => {
     addRenderedCanvasFrame(`<h1 data-node-id="${nodeId}" class="title"></h1>`)
     render(<ClassPicker nodeId={nodeId} />)
 
-    const input = screen.getByPlaceholderText('Add or create selector…')
+    const input = screen.getByPlaceholderText('Add class…')
     await user.click(input)
     await user.type(input, '.hero .missing')
     await user.keyboard('{Enter}')
@@ -534,7 +534,7 @@ describe('ClassPicker — empty-query suggestions', () => {
     useEditorStore.getState().createClass('beta')
     render(<ClassPicker nodeId={nodeId} />)
 
-    const input = screen.getByPlaceholderText('Add or create selector…')
+    const input = screen.getByPlaceholderText('Add class…')
     act(() => input.focus())
 
     // Both class-kind rules should appear with their CSS class selector prefix.
@@ -548,7 +548,7 @@ describe('ClassPicker — empty-query suggestions', () => {
     const cls = useEditorStore.getState().createClass('alpha')
     render(<ClassPicker nodeId={nodeId} />)
 
-    const input = screen.getByPlaceholderText('Add or create selector…')
+    const input = screen.getByPlaceholderText('Add class…')
     await user.click(input)
 
     const item = await screen.findByRole('menuitem', { name: '.alpha' })
