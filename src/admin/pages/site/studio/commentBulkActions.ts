@@ -37,24 +37,24 @@ import { useEditorStore } from '@site/store/store'
 import { pushToast } from '@ui/components/Toast'
 import { buildCommentLocation, describeCommentLocation, type CommentThread } from '@core/studio-comments'
 import type { EditorStore } from '@site/store/types'
-import { deleteThreadById } from './commentActions'
+import { announceDeletedThreads, deleteThreadById } from './commentActions'
 
 /**
  * Delete every thread in `threadIds`. Returns the number actually deleted;
  * callers use it only to decide whether to clear the selection.
  */
 export async function deleteThreadsById(threadIds: readonly string[]): Promise<number> {
-  let deleted = 0
+  const deletedIds: string[] = []
   for (const threadId of threadIds) {
     // `deleteThreadById` toasts its own failure, so a run of failures produces
     // a run of toasts — which is right: each one names a thread the user asked
-    // to delete and did not get.
-    const before = useEditorStore.getState().comments.threads.length
-    await deleteThreadById(threadId)
-    if (useEditorStore.getState().comments.threads.length < before) deleted += 1
+    // to delete and did not get. Its success toast is held back so the whole
+    // run gets ONE, whose Undo restores all of it.
+    if (await deleteThreadById(threadId, { announce: false })) deletedIds.push(threadId)
   }
+  announceDeletedThreads(deletedIds)
   useEditorStore.getState().clearSelectedThreads()
-  return deleted
+  return deletedIds.length
 }
 
 /**

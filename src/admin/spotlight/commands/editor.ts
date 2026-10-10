@@ -84,7 +84,6 @@ export function getEditorCommands(): Command[] {
       workspaces: ['site'],
       capability: SITE_WRITE_CAPABILITIES,
       when: (ctx) => ctx.editor?.canRedo === true,
-      priorityBoost: 1.2,
       keepOpenAfterRun: false,
       run: async (ctx) => {
         ctx.closeSpotlight()

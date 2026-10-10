@@ -1008,3 +1008,44 @@ describe('insertJsxElement — a React element inside a prop', () => {
     expect(written).not.toContain('svg }')
   })
 })
+
+describe('insertJsxElement — a project component exported as default', () => {
+  it('writes a default import (`import Card from …`), not a named one', () => {
+    const source = `export default function Page() {
+  return (
+    <section>
+      <p>hi</p>
+    </section>
+  )
+}
+`
+    const file = writeFixture(source)
+    const at = locateTag(source, 'section')
+
+    const result = insertJsxElement({ file, ...at, name: 'Card', importSpecifier: '../components/Card', importStyle: 'default' })
+
+    expect(result).toMatchObject({ ok: true })
+    const written = fs.readFileSync(file, 'utf8')
+    expect(written).toContain("import Card from '../components/Card'")
+    expect(written).not.toContain('{ Card }')
+    expect(written).toContain('<Card />')
+  })
+
+  it('reuses the default import the file already has instead of adding a second', () => {
+    const source = `import Card from '../components/Card'
+
+export default function Page() {
+  return (
+    <section>
+      <Card />
+    </section>
+  )
+}
+`
+    const file = writeFixture(source)
+    const at = locateTag(source, 'section')
+
+    expect(insertJsxElement({ file, ...at, name: 'Card', importSpecifier: '../components/Card', importStyle: 'default' })).toMatchObject({ ok: true })
+    expect(fs.readFileSync(file, 'utf8').match(/import Card from/g)).toHaveLength(1)
+  })
+})

@@ -465,6 +465,8 @@ export async function commitStudioInsert(insert: {
    * package component, which is imported from this specifier.
    */
   importSpecifier?: string
+  /** `'default'` when `name` is the default export of `importSpecifier`; omitted for a named export. */
+  importStyle?: 'default'
   /**
    * DS-3 — the component comes from Studio's built-in design system, which a
    * project reaches through its own `design-system/` folder. There is no
@@ -502,6 +504,7 @@ export async function commitStudioInsert(insert: {
         // branches on `importSpecifier === undefined` to choose intrinsic vs
         // component, and the wire schema has it optional for the same reason.
         ...(insert.importSpecifier === undefined ? {} : { importSpecifier: insert.importSpecifier }),
+        ...(insert.importStyle === undefined ? {} : { importStyle: insert.importStyle }),
         ...(insert.designSystemImport === undefined ? {} : { designSystemImport: insert.designSystemImport }),
         ...(insert.children === undefined ? {} : { children: insert.children }),
         props: insert.props,

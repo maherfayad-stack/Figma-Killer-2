@@ -31,6 +31,7 @@ import type { ImportFragment } from '@core/htmlImport'
 import type { NewStyleRule, SiteImportTransaction } from '@core/siteImport'
 import type { FrameworkChangeImpact, FrameworkPreset } from '@core/framework'
 import type { EditorStore } from '@site/store/types'
+import type { LocalComponentSpec } from '@site/property-controls/componentPropKind'
 import type { PendingStructuralHistory } from '@site/studio/pendingStructuralOutcome'
 import type { SlotOwnerEntry } from './nodeIndex'
 import type { ImportedNodesResult } from './importedNodesResult'
@@ -196,6 +197,14 @@ export interface SiteSlice {
    * a studio tree: the insert is an async source write, this returns `''`, and
    * no id exists to style until the resync lands.
    */
+  /**
+   * Insert a component declared in the user's own project (`components/Card.tsx`)
+   * under `parentId` by writing `<Card />` and its `import` into the source file.
+   * `false` on an ordinary CMS tree, which has no source to write to; `true` when
+   * the write was started or refused out loud (a toast says why).
+   */
+  insertProjectComponent: (component: LocalComponentSpec, parentId: string, index?: number) => boolean
+
   insertNode: (
     moduleId: string,
     defaults: Record<string, unknown>,

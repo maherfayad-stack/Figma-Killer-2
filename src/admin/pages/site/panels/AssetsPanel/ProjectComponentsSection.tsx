@@ -1,0 +1,117 @@
+/**
+ * ProjectComponentsSection — the components the open project declares itself
+ * (`components/Card.tsx`), as insertable Assets cards.
+ *
+ * They were missing: the Assets panel listed registry modules (the design
+ * system and packages) and saved Visual Components, so a project's OWN
+ * components could not be dragged into a frame or placed from the panel at all.
+ * The list is the same parsed-never-executed catalog the Component inspector
+ * reads (`componentCatalog.ts`, `GET /admin/api/studio/components`).
+ *
+ * Insertion is a source write — `<Card />` plus its `import` into the file the
+ * target frame element lives in (`insertProjectComponent`) — through the same
+ * target resolution every other Assets insert uses (`resolveInsertLocation`:
+ * the selected container, else the frame root), and the same drag session
+ * (`useCanvasInsertionDrag`) onto a frame. Not onto the empty board: a loose
+ * board layer is a registry module, and a project component has none.
+ *
+ * Cards are deliberately plain (name + file): rendering a project component
+ * needs its real runtime, which Studio does not start for a thumbnail.
+ */
+import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
+import { resolveInsertLocation, type InsertLocation } from '@site/store/insertLocation'
+import { useLocalComponentCatalog } from '@site/studio/componentCatalog'
+import type { LocalComponentSpec } from '@site/property-controls/componentPropKind'
+import { useCanvasInsertionDrag } from '@site/canvas/useCanvasInsertionDrag'
+import { CanvasInsertionDragOverlay } from '@site/canvas/CanvasInsertionDragOverlay'
+import { Button } from '@ui/components/Button'
+import { AssetGrid, AssetSection } from './AssetSection'
+import cardStyles from './AssetCard.module.css'
+
+/** Route and framework entry files declare components too, but they are pages, not parts. */
+const ROUTE_FILE_RE = /(^|\/)(page|layout|loading|error|not-found|template|route|_app|_document)\.[jt]sx?$/
+
+/** Studio's built-in design system is offered under "Design system", not here. */
+const DESIGN_SYSTEM_PREFIX = 'design-system/'
+
+/** The catalog entries worth offering as parts: not a route file, not the built-in design system. */
+export function insertableProjectComponents(catalog: readonly LocalComponentSpec[]): LocalComponentSpec[] {
+  return catalog.filter(
+    (component) => !component.file.startsWith(DESIGN_SYSTEM_PREFIX) && !ROUTE_FILE_RE.test(component.file),
+  )
+}
+
+/** Case-insensitive match on the component's name or its file path. */
+export function matchProjectComponents(
+  components: readonly LocalComponentSpec[],
+  query: string,
+): LocalComponentSpec[] {
+  const needle = query.trim().toLowerCase()
+  if (!needle) return [...components]
+  return components.filter(
+    (component) => component.name.toLowerCase().includes(needle) || component.file.toLowerCase().includes(needle),
+  )
+}
+
+interface ProjectComponentsSectionProps {
+  query: string
+  collapsed: boolean
+  onToggle: () => void
+}
+
+export function ProjectComponentsSection({ query, collapsed, onToggle }: ProjectComponentsSectionProps) {
+  const catalog = useLocalComponentCatalog()
+  const insertProjectComponent = useEditorStore((s) => s.insertProjectComponent)
+
+  const drag = useCanvasInsertionDrag<LocalComponentSpec>({
+    onDrop: (component, location) => insertProjectComponent(component, location.parentId, location.index),
+  })
+
+  if (!catalog) return null
+  const all = insertableProjectComponents(catalog)
+  if (all.length === 0) return null
+  const matches = matchProjectComponents(all, query)
+  if (matches.length === 0) return null
+
+  // The page and the selection are read when a card is clicked, not
+  // subscribed — see `useInsertModule` for why.
+  const insertAtSelection = (component: LocalComponentSpec) => {
+    const state = useEditorStore.getState()
+    const page = selectActiveCanvasPage(state)
+    if (!page) return
+    const location: InsertLocation | null = resolveInsertLocation(page, state.selectedNodeId ?? page.rootNodeId)
+    if (!location) return
+    insertProjectComponent(component, location.parentId, location.index)
+  }
+
+  return (
+    <AssetSection title="Project components" count={matches.length} collapsed={collapsed} onToggle={onToggle}>
+      <AssetGrid>
+        {matches.map((component) => (
+          <div key={`${component.file}#${component.exportName}`} className={cardStyles.cell}>
+            <Button
+              variant="ghost"
+              className={cardStyles.card}
+              tooltip={`${component.name} — ${component.file}`}
+              data-asset-kind="projectComponent"
+              data-asset-id={component.name}
+              onClick={() => {
+                // The pointerup that ends a drag also fires a click on the
+                // card it started from — which would insert a SECOND copy.
+                if (drag.shouldSuppressClick()) return
+                insertAtSelection(component)
+              }}
+              onPointerDown={(event) => drag.startDrag(event, component, `Drop ${component.name}`)}
+            >
+              <span className={cardStyles.name}>{component.name}</span>
+              <span className={cardStyles.description}>{component.file}</span>
+            </Button>
+          </div>
+        ))}
+      </AssetGrid>
+      <CanvasInsertionDragOverlay drag={drag.drag}>
+        {drag.drag?.ghost.name}
+      </CanvasInsertionDragOverlay>
+    </AssetSection>
+  )
+}
