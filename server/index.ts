@@ -7,6 +7,8 @@ import { DEV_ORIGIN_ALLOWLIST } from './config'
 import { applySecurityHeaders } from './securityHeaders'
 import { startConversationPurgeTick } from './ai/boot'
 import { provideGithubCredentialDb } from './handlers/studio/githubToken'
+import { handleLiveUpgrade, isLiveUpgradePath } from './handlers/studio/live/upgrade'
+import { liveWebsocketHandler, type LiveSocketData } from './handlers/studio/live/socketHandler'
 
 await import('./richtextSanitizer')
 const { handleServerRequest } = await import('./router')
@@ -81,8 +83,12 @@ function corsHeaders(origin: string | null): Record<string, string> {
   }
 }
 
-Bun.serve({
+Bun.serve<LiveSocketData>({
   port: config.port,
+
+  // The live presence channel (`/admin/api/studio/live`) is the only WebSocket
+  // on this listener; edits never travel over it. See `studio/live/upgrade.ts`.
+  websocket: liveWebsocketHandler,
 
   // Disable Bun's default 10-second idle timeout. The agent endpoint streams
   // NDJSON for as long as Claude's loop is running — Claude's "thinking"
@@ -93,7 +99,7 @@ Bun.serve({
   // idle timeout has no downside for them.
   idleTimeout: 0,
 
-  async fetch(req: Request, server: Bun.Server<unknown>) {
+  async fetch(req: Request, server: Bun.Server<LiveSocketData>) {
     const origin = req.headers.get('origin')
     const cors = corsHeaders(origin)
     const pathname = new URL(req.url).pathname
@@ -109,6 +115,24 @@ Bun.serve({
         new Response(null, { status: 204, headers: cors }),
         pathname,
       )
+    }
+
+    if (isLiveUpgradePath(pathname)) {
+      try {
+        const refusal = await handleLiveUpgrade(req, server, db)
+        // `undefined` is Bun's "upgraded" answer: the runtime owns the response.
+        if (!refusal) return undefined
+        return applySecurityHeaders(refusal, pathname)
+      } catch (err) {
+        console.error('[server] Live upgrade failed:', err)
+        return applySecurityHeaders(
+          new Response(JSON.stringify({ error: 'Internal server error' }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+          pathname,
+        )
+      }
     }
 
     try {
