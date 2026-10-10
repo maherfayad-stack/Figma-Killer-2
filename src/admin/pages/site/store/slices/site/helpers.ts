@@ -25,6 +25,7 @@ import { pruneCanvasSelectionDraft } from '../selectionSlice'
 import { applyNodeIndexPatch, nodeIndexesOf } from './nodeIndex'
 import type { EditorStore } from '@site/store/types'
 import { commitHistoryEntry } from './historyStack'
+import { flushPendingGestures } from '../../pendingGestures'
 import { reconcileFrameworkClasses } from './framework/reconcile'
 import { indexStyleRulesByName, linkImportedClassNames } from './importLinking'
 import { addImportedColorTokens, overwriteImportedColorTokens } from './importedColorTokens'
@@ -172,6 +173,7 @@ export function buildSiteHelpers(
     recipe: (draft: Draft<EditorStore>) => SiteMutationResult,
     coalesceKey: string | null,
   ): boolean {
+    flushPendingGestures() // a painted-but-uncommitted gesture (arrow-nudge burst) lands BEFORE this edit
     const cur = get()
     if (!cur.site) return false
 
@@ -655,6 +657,7 @@ export function buildSiteHelpers(
     fn: (tree: NodeTree<PageNode>, idsOnThisTree: string[]) => SiteMutationResult,
     opts?: { coalesceKey?: string },
   ): boolean {
+    flushPendingGestures() // a painted-but-uncommitted gesture (arrow-nudge burst) lands BEFORE this edit
     const cur = get()
     const target = resolveActiveTreeTarget(cur)
     if (!target || target.vc) {

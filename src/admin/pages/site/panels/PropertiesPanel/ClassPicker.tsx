@@ -130,7 +130,11 @@ interface ClassPickerProps {
 }
 
 export function ClassPicker({ nodeId, trailingAction, ref }: ClassPickerProps) {
-  const site = useEditorStore((s) => s.site)
+  // The rules only - NOT the whole document. `s.site` is a new object on every
+  // edit, so subscribing to it re-rendered the picker (and re-ran its selector
+  // model: an `Element.matches()` per ambient rule) on every nudge and every
+  // keystroke anywhere in the site. `styleRules` keeps its identity until a rule changes.
+  const styleRules = useEditorStore((s) => s.site?.styleRules ?? null)
   const node = useEditorStore((s) => selectActiveCanvasPage(s)?.nodes[nodeId] ?? null)
   const activeClassId = useEditorStore((s) => s.activeClassId)
   const setActiveClass = useEditorStore((s) => s.setActiveClass)
@@ -186,7 +190,7 @@ export function ClassPicker({ nodeId, trailingAction, ref }: ClassPickerProps) {
     selectorSuggestions,
     hasSuggestionRows,
   } = useClassPickerDerivedState({
-    site,
+    styleRules,
     node,
     nodeId,
     activeClassId,
@@ -195,7 +199,7 @@ export function ClassPicker({ nodeId, trailingAction, ref }: ClassPickerProps) {
     highlightedIndex,
   })
 
-  const contextClass = contextMenu ? site?.styleRules[contextMenu.classId] ?? null : null
+  const contextClass = contextMenu ? styleRules?.[contextMenu.classId] ?? null : null
   const contextClassIndex = contextMenu ? visibleAssignedIds.indexOf(contextMenu.classId) : -1
 
   // ── Write-target facts, per pill (panel-41) ────────────────────────────────
@@ -493,7 +497,7 @@ export function ClassPicker({ nodeId, trailingAction, ref }: ClassPickerProps) {
         />
       </SelectorInputArea>
       {createError && <p role="alert" className={styles.errorText}>{createError}</p>}
-      {unmatchedSelectorNotice && site?.styleRules[unmatchedSelectorNotice.ruleId] && (
+      {unmatchedSelectorNotice && styleRules?.[unmatchedSelectorNotice.ruleId] && (
         <UnmatchedSelectorNotice
           selector={unmatchedSelectorNotice.selector}
           onUndo={handleUndoUnmatchedSelector}

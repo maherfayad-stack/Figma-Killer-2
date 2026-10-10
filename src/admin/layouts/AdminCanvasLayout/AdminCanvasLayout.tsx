@@ -371,11 +371,14 @@ function useStudioBoardsPersistence(): void {
       // got no answer is tried again quietly before anything is said.
       import('@site/studio/boardsApi')
         .then(({ fetchBoards }) => {
+          // A run React's dev double-mount already cleaned up never reaches the
+          // network: the second run asks for the same file.
+          if (isStale()) return null
           const dir = getStudioWorkspaceDir()
           return retryWhileUnreachable(() => fetchBoards(dir))
         })
         .then((file) => {
-          if (isStale()) return
+          if (file === null || isStale()) return
           useEditorStore.getState().loadBoards(file)
           // A real load — reflects the on-disk file at this instant. New
           // baseline for the save guard; a fresh episode may warn again.
@@ -421,9 +424,9 @@ function useStudioBoardsPersistence(): void {
       // (which waits on `frameDefaultsSettled`) must not run on them.
       useEditorStore.getState().clearFrameDefaults()
       import('@site/studio/frameDefaultsApi')
-        .then(({ fetchFrameDefaults }) => fetchFrameDefaults(getStudioWorkspaceDir()))
+        .then(({ fetchFrameDefaults }) => (isStale() ? null : fetchFrameDefaults(getStudioWorkspaceDir())))
         .then((defaults) => {
-          if (!isStale()) useEditorStore.getState().setFrameDefaults(defaults)
+          if (defaults !== null && !isStale()) useEditorStore.getState().setFrameDefaults(defaults)
         })
         .catch((err) => {
           console.error('[AdminCanvasLayout] frame-defaults load failed:', err)
