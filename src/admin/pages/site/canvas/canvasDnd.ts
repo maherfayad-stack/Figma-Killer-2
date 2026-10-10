@@ -10,6 +10,7 @@ import {
   type EditConstraint,
   type PageTreeDropPosition,
   type PageTreeDropTarget,
+  type StructuralTransplantPreview,
 } from '@core/page-tree'
 
 interface CanvasPoint {
@@ -326,25 +327,20 @@ export function resolveCanvasTransplantTarget({
   if (!candidate) return { target: null, invalid: null }
 
   const zone = getCanvasDropZone(candidate, point, zoom)
-  const target = resolvePageTreeInsertionTarget({
-    tree: destinationTree,
+  const verdict = resolveTransplantDropOver({
+    originTree,
+    destinationTree,
+    draggedIds,
     overId: candidate.nodeId,
     zone,
     canHaveChildren,
-  })
-  if (!target) {
-    return { target: null, invalid: { overId: candidate.nodeId, rect: candidate.rect, axis: candidate.axis } }
-  }
-
-  const preview = previewStructuralTransplant({
-    originTree,
-    nodeIds: draggedIds,
-    destinationTree,
-    newParentId: target.parentId,
-    newIndex: target.index,
     copy,
   })
-  if (!preview.ok) {
+  if (!verdict.target) {
+    return { target: null, invalid: { overId: candidate.nodeId, rect: candidate.rect, axis: candidate.axis } }
+  }
+  if (verdict.preview && !verdict.preview.ok) {
+    const preview = verdict.preview
     // The refusal names one end of the gesture; the chip is rendered beside
     // the pointer either way, so the node it is dressed against is whichever
     // `previewStructuralTransplant` says it is about.
@@ -365,7 +361,60 @@ export function resolveCanvasTransplantTarget({
     }
   }
 
-  return { target: { ...target, rect: candidate.rect, axis: candidate.axis }, invalid: null }
+  return { target: { ...verdict.target, rect: candidate.rect, axis: candidate.axis }, invalid: null }
+}
+
+interface ResolveTransplantDropOverInput {
+  originTree: NodeTree<PageNode>
+  destinationTree: NodeTree<PageNode>
+  draggedIds: readonly string[]
+  /** The destination node the pointer is over. */
+  overId: string
+  zone: PageTreeDropPosition
+  canHaveChildren: (moduleId: string) => boolean
+  copy: boolean
+}
+
+/**
+ * The ONE cross-page drop question, asked by the canvas (pointer over a frame)
+ * and by the Layers panel (pointer over another page's row): given the node
+ * under the pointer and the zone of it, which container and index in the
+ * DESTINATION tree, and would `transplantNodes` accept it?
+ *
+ * `target` is `null` when the destination has no valid position there at all;
+ * `preview` is the store gate's own verdict for a position that exists, and a
+ * refusal in it carries the sentence both surfaces show while the pointer is
+ * down. Geometry (rects, axis) is deliberately not part of this: it is the
+ * canvas's.
+ */
+export function resolveTransplantDropOver({
+  originTree,
+  destinationTree,
+  draggedIds,
+  overId,
+  zone,
+  canHaveChildren,
+  copy,
+}: ResolveTransplantDropOverInput): {
+  target: Omit<CanvasInsertionTarget, 'rect' | 'axis'> | null
+  preview: StructuralTransplantPreview | null
+} {
+  const target = resolvePageTreeInsertionTarget({
+    tree: destinationTree,
+    overId,
+    zone,
+    canHaveChildren,
+  })
+  if (!target) return { target: null, preview: null }
+  const preview = previewStructuralTransplant({
+    originTree,
+    nodeIds: draggedIds,
+    destinationTree,
+    newParentId: target.parentId,
+    newIndex: target.index,
+    copy,
+  })
+  return { target, preview }
 }
 
 export function resolveCanvasInsertionTarget({

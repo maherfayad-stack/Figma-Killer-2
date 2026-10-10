@@ -9,10 +9,12 @@ import {
   getDomDropZone,
   previewDomDropRefusal,
   resolveDomDropTarget,
+  resolveDomTransplantDrop,
   type DomDropRowMeta,
   type DomDropTarget,
 } from './domPanelDnd'
 import type { DomPanelDropState, DomPanelRowRegistry } from './DomPanelDndContext'
+import { useLayerDragBridge } from './LayerDragBridge'
 import { findScrollContainer } from './rowWindow'
 import { getDragPoint, getEventPoint } from '@admin/lib/dndPointer'
 
@@ -47,10 +49,17 @@ export function useDomPanelDnd({
   expandNode,
 }: UseDomPanelDndOptions) {
   const rowsRef = useRef<Map<string, HTMLElement>>(new Map())
+  // Rows of the OTHER pages' trees beside this one, when a pages list provides them.
+  const bridge = useLayerDragBridge()
   const measuredRowsRef = useRef<DomDropRowMeta[]>([])
   const startPointRef = useRef<Point | null>(null)
   const latestPointerRef = useRef<Point | null>(null)
   const latestTargetRef = useRef<DomDropTarget | null>(null)
+  // A cross-page position that exists but that `transplantNodes` would refuse.
+  // The row paints the reason while the pointer is down; a release on it hands
+  // the drop to the store anyway, which presents the refusal with its remedy
+  // instead of letting the drag end in silence.
+  const latestRefusedTransplantRef = useRef<DomDropTarget | null>(null)
   const activeIdRef = useRef<string | null>(null)
   // Full multi-drag set (frozen at drag start). Defaults to `[activeId]` for
   // single-drag — when the user grabs a row that's part of an existing
@@ -96,11 +105,17 @@ export function useDomPanelDnd({
 
   // exception #1: feeds runAutoScroll's effect-bound closure (exhaustive-deps)
   const measureRows = useCallback(() => {
-    measuredRowsRef.current = Array.from(rowsRef.current.entries())
-      .map(([nodeId, element]) => {
+    const entries: Array<{ nodeId: string; pageId?: string; element: HTMLElement }> = []
+    for (const [nodeId, element] of rowsRef.current) entries.push({ nodeId, element })
+    for (const [pageId, pageRows] of bridge?.foreignRows ?? []) {
+      for (const [nodeId, element] of pageRows) entries.push({ nodeId, pageId, element })
+    }
+    measuredRowsRef.current = entries
+      .map(({ nodeId, pageId, element }): DomDropRowMeta => {
         const rect = element.getBoundingClientRect()
         return {
           nodeId,
+          ...(pageId ? { pageId } : {}),
           rect: {
             top: rect.top,
             bottom: rect.bottom,
@@ -109,7 +124,7 @@ export function useDomPanelDnd({
         }
       })
       .sort((a, b) => a.rect.top - b.rect.top)
-  }, [])
+  }, [bridge])
 
   // exception #1: feeds runAutoScroll/resetDragState effect-bound closures (exhaustive-deps)
   const clearAutoExpand = useCallback(() => {
@@ -176,6 +191,32 @@ export function useDomPanelDnd({
     const draggedIds = activeIdsRef.current.length > 0
       ? activeIdsRef.current
       : [draggedId]
+    latestRefusedTransplantRef.current = null
+
+    // A row of ANOTHER page's tree: the same cross-page question the canvas asks
+    // when the pointer crosses into another frame, answered by the same function.
+    if (row.pageId) {
+      const destinationPage = useEditorStore.getState().site?.pages.find((p) => p.id === row.pageId)
+      const verdict = destinationPage
+        ? resolveDomTransplantDrop({
+            originPage: page,
+            destinationPage,
+            draggedId,
+            draggedIds,
+            overId: row.nodeId,
+            zone,
+            canHaveChildren,
+          })
+        : null
+      const foreignTarget = verdict?.refusal ? null : (verdict?.target ?? null)
+      latestRefusedTransplantRef.current = verdict?.refusal ? verdict.target : null
+      setResolvedTarget(foreignTarget)
+      setInvalidOverId(foreignTarget ? null : row.nodeId)
+      setInvalidReason(verdict?.refusal?.message ?? null)
+      scheduleAutoExpand(null, point)
+      return
+    }
+
     const resolved = resolveDomDropTarget({
       page,
       draggedId,
@@ -264,6 +305,7 @@ export function useDomPanelDnd({
     startPointRef.current = null
     latestPointerRef.current = null
     latestTargetRef.current = null
+    latestRefusedTransplantRef.current = null
     setActiveId(null)
     setDragPreview(null)
     setResolvedTarget(null)
@@ -316,7 +358,7 @@ export function useDomPanelDnd({
   }
 
   const handleDragEnd = (_event: DragEndEvent): DomDropTarget | null => {
-    const finalTarget = latestTargetRef.current
+    const finalTarget = latestTargetRef.current ?? latestRefusedTransplantRef.current
     resetDragState()
     return finalTarget
   }
@@ -333,6 +375,12 @@ export function useDomPanelDnd({
     invalidOverId,
     invalidReason,
   }
+
+  // Mirror the live drop state to the other pages' rows so a cross-page drop
+  // paints its insertion line / refusal where the pointer actually is.
+  useEffect(() => {
+    bridge?.publishDropState(dropState)
+  }, [bridge, dropState])
 
   return {
     /** Re-published on every drag move — consumed ONLY by the windowed list. */
@@ -373,7 +421,8 @@ function areTargetsEqual(a: DomDropTarget | null, b: DomDropTarget | null): bool
     a.index === b.index &&
     a.position === b.position &&
     a.overId === b.overId &&
-    a.slot === b.slot
+    a.slot === b.slot &&
+    a.foreignPageId === b.foreignPageId
   )
 }
 

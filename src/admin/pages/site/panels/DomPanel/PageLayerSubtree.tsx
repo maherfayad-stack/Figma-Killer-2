@@ -34,6 +34,7 @@
  * CAPTURE handler, same pattern as `BoardFramesLayer`'s frame activation —
  * so those actions land on the right page's tree.
  */
+import { useState, useSyncExternalStore } from 'react'
 import type { Page } from '@core/page-tree'
 import { LayerRowList } from './LayerRowList'
 import { DomTreeProvider } from './DomTreeProvider'
@@ -44,9 +45,14 @@ import {
   IDLE_DROP_STATE,
   type DomPanelRowRegistry,
 } from './DomPanelDndContext'
+import { useLayerDragBridge } from './LayerDragBridge'
 
 const NOOP_ROW_REGISTRY: DomPanelRowRegistry = {
   registerRow: () => {},
+}
+
+function noopSubscribe(): () => void {
+  return () => {}
 }
 
 interface PageLayerSubtreeProps {
@@ -56,10 +62,25 @@ interface PageLayerSubtreeProps {
 }
 
 export function PageLayerSubtree({ page, editable = true }: PageLayerSubtreeProps) {
+  const bridge = useLayerDragBridge()
+  const pageId = page.id
+  // Rows still cannot START a drag here (no `DndContext`), but a drag started in
+  // the active page's tree can END on them: they hand their elements to the
+  // bridge and paint the active panel's drop state.
+  const [rowRegistry] = useState<DomPanelRowRegistry>(() =>
+    bridge
+      ? { registerRow: (nodeId, element) => bridge.registerForeignRow(pageId, nodeId, element) }
+      : NOOP_ROW_REGISTRY,
+  )
+  const dropState = useSyncExternalStore(
+    bridge ? bridge.subscribe : noopSubscribe,
+    bridge ? bridge.getDropState : getIdleDropState,
+    getIdleDropState,
+  )
   return (
     <DomTreeProvider>
-      <DomPanelRowRegistryContext.Provider value={NOOP_ROW_REGISTRY}>
-        <DomPanelDropStateContext.Provider value={IDLE_DROP_STATE}>
+      <DomPanelRowRegistryContext.Provider value={rowRegistry}>
+        <DomPanelDropStateContext.Provider value={dropState}>
           <DomTreePageContext.Provider value={page.id}>
             <LayerRowList
               ariaLabel={`${page.title} element tree`}
@@ -73,4 +94,8 @@ export function PageLayerSubtree({ page, editable = true }: PageLayerSubtreeProp
       </DomPanelRowRegistryContext.Provider>
     </DomTreeProvider>
   )
+}
+
+function getIdleDropState() {
+  return IDLE_DROP_STATE
 }

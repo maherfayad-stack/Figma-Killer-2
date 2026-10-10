@@ -155,6 +155,19 @@ function DomPanelInner({ editable = true }: { editable?: boolean }) {
     if (!target) return
 
     try {
+      // A row of another page's tree: a cross-page transplant, committed by the
+      // SAME store action the canvas cross-frame drag uses (one gate, one
+      // refusal dialog with its remedy, one undo step).
+      if (target.foreignPageId) {
+        if (!page) return
+        useEditorStore.getState().transplantNodes(target.draggedIds, {
+          originPageId: page.id,
+          pageId: target.foreignPageId,
+          parentId: target.parentId,
+          index: target.index,
+        })
+        return
+      }
       // Multi-drag: route to `moveNodes` so every dragged id is moved in a
       // single undo step. For single-drag, `target.draggedIds` is `[draggedId]`
       // and `moveNodes` collapses to `moveNode` internally.
