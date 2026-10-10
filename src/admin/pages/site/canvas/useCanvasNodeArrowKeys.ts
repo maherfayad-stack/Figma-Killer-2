@@ -259,7 +259,9 @@ export function useCanvasNodeArrowKeys(editable: boolean, isLive: boolean): void
    * the store so any other history write (or ⌘Z) commits it first.
    */
   const settle = (session: ArrowSession) => {
-    session.unregisterPending ??= registerPendingGesture(() => commitSession(session))
+    if (session.unregisterPending === null) {
+      session.unregisterPending = registerPendingGesture(() => commitSession(session))
+    }
     if (session.settleTimer !== null) clearTimeout(session.settleTimer)
     session.settleTimer = setTimeout(() => commitSession(session), NUDGE_SETTLE_MS)
   }
