@@ -123,7 +123,7 @@
  * `classNameWriteback.ts`'s `resolveClassToken`.
  */
 import { isGeneratedClass, type Breakpoint, type ConditionDef, type Page, type StyleRule } from '@core/page-tree'
-import { camelToKebabCssProperty } from '@core/css-codemods'
+import { camelToKebabCssProperty } from '@core/css-codemods/browser'
 import {
   buildClassPageIndex,
   getStudioStyleRuleSources,

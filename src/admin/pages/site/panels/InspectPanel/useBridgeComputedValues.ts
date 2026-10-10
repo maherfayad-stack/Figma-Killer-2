@@ -62,7 +62,7 @@
  * only ever sees the camelCase vocabulary it already indexes by.
  */
 import { useEffect, useEffectEvent, useRef, useState } from 'react'
-import { camelToKebabCssProperty } from '@core/css-codemods'
+import { camelToKebabCssProperty } from '@core/css-codemods/browser'
 import { isBridgeFrameAdapter } from '@site/canvas/frameAdapter/BridgeFrameAdapter'
 import { listFrameAdapters } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
 import { preferredRenderedCanvasNode } from '@site/canvas/canvasNodeLookup'

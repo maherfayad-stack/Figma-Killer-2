@@ -57,7 +57,7 @@
  */
 import type { StyleRule } from '@core/page-tree'
 import { isImportedStyleRuleId } from '@core/page-tree'
-import { classifyStylesheetEditability } from '@core/css-codemods'
+import { classifyStylesheetEditability } from '@core/css-codemods/browser'
 import { getStudioStyleRuleSources, resolveCssInsertDestination } from '@site/studio/styleRuleWriteback'
 import { getStudioStyledRuleSources } from '@site/studio/styledRuleSources'
 import type { ClassCssEditability } from './StyleTargetChip'

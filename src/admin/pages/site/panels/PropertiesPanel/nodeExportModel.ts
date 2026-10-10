@@ -40,7 +40,7 @@
  * user verbatim, and every one of them names the remedy (export PNG).
  */
 import type { CSSPropertyBag, PageNode } from '@core/page-tree'
-import { camelToKebabCssProperty } from '@core/css-codemods'
+import { camelToKebabCssProperty } from '@core/css-codemods/browser'
 import { sanitizeSvg } from '@core/sanitize'
 import type { PropertyProvenance } from './stylePropertyProvenance'
 

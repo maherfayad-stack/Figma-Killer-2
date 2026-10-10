@@ -31,7 +31,7 @@
  * declaration. Not because a typed control per property would be worse, but
  * because a keyframe body can hold ANY property, including ones this panel has
  * no control for, and a typed grid would have to either hide them or invent
- * controls for them. Every edit goes through `applyKeyframeStepEdit`, i.e.
+ * controls for them. Every edit goes through `applyKeyframeStepEdit` (`keyframesStepEdit.ts`), i.e.
  * through the same codemod the server runs on the real file.
  *
  * When the `@keyframes` block cannot be written — it came from compiled output,
@@ -47,6 +47,8 @@ import { Input } from '@ui/components/Input'
 import { InspectorPopover } from '@ui/components/InspectorPopover'
 import { ScrubInput } from '@ui/components/ScrubInput'
 import { Select } from '@ui/components/Select'
+import { pushToast } from '@ui/components/Toast'
+import { getErrorMessage } from '@core/utils/errorMessage'
 import { ClassPropertyRow } from './ClassPropertyRow'
 import { ClassCssLockedNotice } from './ClassCssLockedNotice'
 import {
@@ -54,7 +56,7 @@ import {
   type AnimationField,
   type ResolvedAnimation,
 } from './animationValue'
-import { applyKeyframeStepEdit, type ResolvedKeyframes } from './keyframesModel'
+import type { ResolvedKeyframes } from './keyframesModel'
 import type { ResolvedTransition, TransitionField } from './transitionValue'
 import styles from './AnimationsSection.module.css'
 
@@ -330,9 +332,17 @@ function KeyframesTab({ target }: { target: Extract<AnimationEditorTarget, { kin
   const locked = keyframes.lockReason !== null
   const rawCss = typeof keyframes.rule.rawCss === 'string' ? keyframes.rule.rawCss : ''
 
-  function editStep(keyText: string, property: string, value: string | undefined) {
-    const next = applyKeyframeStepEdit(rawCss, animation.name, keyText, property, value)
-    if (next !== null) onKeyframesChange(keyframes!.rule.id, next)
+  // The postcss-backed codemod is loaded on the first edit, not with the editor
+  // (see keyframesStepEdit.ts), so the edit itself is asynchronous.
+  async function editStep(keyText: string, property: string, value: string | undefined) {
+    try {
+      const { applyKeyframeStepEdit } = await import('./keyframesStepEdit')
+      const next = applyKeyframeStepEdit(rawCss, animation.name, keyText, property, value)
+      if (next !== null) onKeyframesChange(keyframes!.rule.id, next)
+    } catch (err) {
+      console.error('[AnimationEditorPopover] could not apply the keyframe edit:', err)
+      pushToast({ kind: 'warning', title: 'Keyframe edit not applied', body: getErrorMessage(err, 'Try the edit again.') })
+    }
   }
 
   return (
@@ -354,7 +364,7 @@ function KeyframesTab({ target }: { target: Extract<AnimationEditorTarget, { kin
                   disabled={locked}
                   onBlur={(event) => {
                     const next = event.target.value.trim()
-                    if (next && next !== value) editStep(step.keyText, property, next)
+                    if (next && next !== value) void editStep(step.keyText, property, next)
                   }}
                 />
                 <Button
@@ -364,7 +374,7 @@ function KeyframesTab({ target }: { target: Extract<AnimationEditorTarget, { kin
                   disabled={locked}
                   aria-label={`Remove ${property} from ${step.keyText}`}
                   tooltip="Remove declaration"
-                  onClick={() => editStep(step.keyText, property, undefined)}
+                  onClick={() => void editStep(step.keyText, property, undefined)}
                 >
                   ×
                 </Button>
