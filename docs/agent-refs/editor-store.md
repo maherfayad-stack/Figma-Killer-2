@@ -91,6 +91,7 @@ subscribes to the whole array or to bare `s.site`.
 | `clipboardSlice.ts` | Copy/paste of subtrees. Its `copiedAt` is also the Studio marker ⌘C writes onto the OS clipboard (P5-A, `canvas/canvasClipboardBridge.ts`), which is how ⌘V tells the copied layers from a newer image there |
 | `filesSlice.ts` | Site files / code assets |
 | `saveTrackingSlice.ts` | Dirty tracking, autosave cadence |
+| (editing context) | `activeBreakpointId` may hold a board frame's synthetic `'studio'` id after a canvas click. Never use it as a write key: resolve the editing context with `getActiveStyleTab(activeBreakpointId, site.breakpoints)` (unregistered → `'base'`); `setClassContextStyles` refuses unregistered contexts |
 | `commentsSlice.ts` (+ `commentSelectors.ts`) | The editor's view of `<workspace>/.studio/comments.json` and the transient UI state around it (armed tool, open thread, uncommitted pin) — no HTTP here, the round trip lives in `@site/studio/commentActions.ts` |
 | `localizedPageSlice.ts` | WS-10 §4.4 (Phase 4): the `(pageId, locale)` parallel map a board frame reads from when its own `axes.locale` differs from the board default — see `canvas-internals.md`'s Locale section |
 | `visualComponentsSlice.ts`, `vcTreeOps.ts`, `vcSlotReconcile.ts` | Visual Components |
