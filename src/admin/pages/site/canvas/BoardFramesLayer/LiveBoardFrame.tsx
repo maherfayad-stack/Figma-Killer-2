@@ -3,11 +3,13 @@
  * `BoardFrameView`'s render fork (the other half stays today's unmodified
  * portal `BreakpointFrame`, for Tier 0/1).
  *
- * Mounts BOTH subtrees at once — a Tier-0 fallback (a plain portal
- * `BreakpointFrame` over the SAME page tree the store already holds — the
- * static parse is trust-tier-independent) and the real bridge iframe — so the
- * bridge's cold boot runs CONCURRENTLY with showing the fallback instead of
- * paying that cost serially after the fallback is already on screen.
+ * Mounts a Tier-0 fallback (a plain portal `BreakpointFrame` over the SAME
+ * page tree the store already holds — the static parse is trust-tier-independent)
+ * and, from the moment the dev server is READY, the real bridge iframe next to
+ * it — so the bridge's cold boot runs CONCURRENTLY with showing the fallback
+ * instead of paying that cost serially after the fallback is already on screen.
+ * Until the server is ready the bridge has no document to load, so it is not
+ * mounted at all (an `src`-less iframe per frame doubled the board's documents).
  *
  * The fallback is always the real, clickable frame. A cached poster is only
  * painted OVER it until its node tree has committed — the same overlay a
@@ -156,26 +158,32 @@ export function LiveBoardFrame({
       {!ready && !fallbackContentReady && (
         <FramePosterPlaceholder title={page.title} posterUrl={posterUrl} overlay />
       )}
-      <div hidden={!ready} data-testid="live-board-frame-bridge">
-        <BreakpointFrame
-          page={page}
-          breakpoint={breakpoint}
-          isActive={isActive}
-          onActivate={onActivate}
-          frameId={frameId}
-          axesOverride={axesOverride}
-          showBreakpointChrome={false}
-          documentMode="bridge"
-          liveFrame={liveFrame}
-          onAdapterChange={setAdapter}
-          // `speed-04` (STATE.md) — the bridge overlay has nothing to do
-          // until this frame is ready (see `overlayEnabled`'s own doc on
-          // `BreakpointFrame`): the Tier-0 fallback above is the ONLY active
-          // selection chrome for this board frame while `!ready`, and it
-          // unmounts the instant this flips, so the two are never both live.
-          overlayEnabled={ready}
-        />
-      </div>
+      {/* Mounted only once there is a document to load (`attemptLive`). Before that it was an
+          `<iframe>` with no `src` per frame - an empty document, its adapter and its listeners,
+          doubling what a board with a dev server that is booting, failed or absent holds
+          mounted (measured: 20 iframes for 4 visible frames). */}
+      {attemptLive && (
+        <div hidden={!ready} data-testid="live-board-frame-bridge">
+          <BreakpointFrame
+            page={page}
+            breakpoint={breakpoint}
+            isActive={isActive}
+            onActivate={onActivate}
+            frameId={frameId}
+            axesOverride={axesOverride}
+            showBreakpointChrome={false}
+            documentMode="bridge"
+            liveFrame={liveFrame}
+            onAdapterChange={setAdapter}
+            // `speed-04` (STATE.md) — the bridge overlay has nothing to do
+            // until this frame is ready (see `overlayEnabled`'s own doc on
+            // `BreakpointFrame`): the Tier-0 fallback above is the ONLY active
+            // selection chrome for this board frame while `!ready`, and it
+            // unmounts the instant this flips, so the two are never both live.
+            overlayEnabled={ready}
+          />
+        </div>
+      )}
     </>
   )
 }

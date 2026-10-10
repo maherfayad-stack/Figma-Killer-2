@@ -1131,14 +1131,23 @@ The rules the ladder replaced prose with:
   row, ⇧ extends the range, nothing is written) and →/← expand and collapse.
   A rename field keeps its caret (P2-B's input guard, and its target is not a
   row).
-- **A held arrow is one undo entry and one source write.** A nudge previews
-  every repeat through the inspector's scrub channel (`setPreviewNodeStyles`
-  + the optimistic style broadcast for live frames), then writes ONE
-  inline-style transaction on the arrow's keyup (the dispatcher's release
-  broadcast — P2-B routes frame keyups there) and flushes the autosave. A
-  focus loss (`handleKeyUp(null)`) commits where the preview was. A reorder is
-  one step per PRESS: the repeats are claimed and dropped, because a
-  structural write per repeat would queue thirty a second.
+- **A held arrow - or a burst of taps - is one undo entry and one source write.**
+  A nudge previews every keydown through the inspector's scrub channel
+  (`setPreviewNodeStyles` + the optimistic style broadcast for live frames).
+  Releasing the key does NOT write: it arms a `NUDGE_SETTLE_MS` (400 ms, the
+  Vector section's `BURST_SETTLE_MS`) timer, and the next tap inside the window
+  resumes the same session (no new layout read, no store write). When the burst
+  settles the session writes ONE inline-style transaction and flushes the
+  autosave. Measured by the 2026-10-10 audit before this: 15 Shift+Arrow taps =
+  15 `/studio/save` POSTs, 7 long tasks (379 ms). Because the document is
+  behind the canvas for up to 400 ms, **anything else that records history
+  commits the pending burst first**: `store/pendingGestures.ts`
+  (`registerPendingGesture` / `flushPendingGestures`) is called by
+  `runHistoricMutation`, `mutateTreesForNodeIds`, `commitBoardChange`, `undo`
+  and `redo`. A new painted-but-uncommitted gesture registers there; it must
+  not invent a second flush path. A focus loss (`handleKeyUp(null)`) releases
+  the same way. A reorder is one step per PRESS: the repeats are claimed and
+  dropped, because a structural write per repeat would queue thirty a second.
 - **A nudge writes the offsets the source authored**, not always `left`/`top`
   (`authoredOffsets`: inline over class base styles, `inset` read side by side, so `inset: 124px 0 auto 0` never gains a `bottom`). A
   computed inset on a positioned element is its used px value, so the DOM
@@ -1681,6 +1690,10 @@ a component in a live frame selected the element inside it.
 | O(pages × nodes) scan in a store selector, runs on **every** store change | `PropertiesPanelBody.tsx` (`sharedTextOriginCount`), `InPlaceInspector.tsx` (`findNodeById`) | precomputed indexes in the site slice |
 | Overlay coordinate conversion across zoom | `canvasSelectionOverlayPositioning.ts` | render rings inside the iframe |
 | A permanent rAF loop per mounted frame while anything is selected | `BreakpointSelectionOverlay.tsx` | **fixed (S4)** — `overlayMeasureScheduler.ts`, below |
+| The right sidebar opened on selection with a 180 ms `width` transition: the canvas root resized every frame, re-rendering `BoardFramesLayer` and repainting both rulers each time | `RightSidebar.module.css` | **fixed (edit-speed)** - no transition; the panel just is there |
+| `ClassPicker` subscribed to the whole `s.site`, so every nudge/keystroke re-ran its selector model (`Element.matches()` per ambient rule) | `ClassPicker.tsx`, `useClassPickerDerivedState.ts` | **fixed (edit-speed)** - subscribes to `site.styleRules` only |
+| `LiveBoardFrame` mounted its bridge `<iframe>` (no `src`) beside the fallback for every frame of a Tier-2 board whose dev server was not ready: 2 documents per frame | `LiveBoardFrame.tsx` | **fixed (edit-speed)** - the bridge mounts once the dev server is ready |
+| React's dev double-mount sent `/load`, `boards` and `frame-defaults` twice (the first aborted, but the server still parsed) | `usePersistence.ts`, `AdminCanvasLayout.tsx` | **fixed (edit-speed)** - a superseded run never reaches the network |
 | Frames mount all iframes once the doc is in the store | `CanvasTransformLayer.tsx` | virtualize iframe mounting; frozen poster for offscreen frames |
 | Every on-screen frame's node-tree mount was its own `startTransition`, but React groups all pending transition lanes into ONE commit — ten frames committed together, 1.3–1.9 s after their shells | `IframeFrameSurface.tsx` | **fixed (perf-17)** — `frameTreeMountQueue.ts`, below |
 | React re-render per pointermove during pan | `useCanvas.ts` | write `transform` to a ref, commit on pointerup |

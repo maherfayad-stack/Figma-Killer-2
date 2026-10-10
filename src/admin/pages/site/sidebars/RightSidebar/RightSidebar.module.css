@@ -26,7 +26,7 @@
  * panel.
  *
  * The absolute positioning is what keeps the PANEL at its full layout width
- * while the sidebar's own width animates open and closed — it used to live on
+ * while the sidebar's own width changes as a selection opens and closes it — it used to live on
  * `.panelSlot` itself, which is why a tab strip added as a flex sibling simply
  * drew on top of the panel. One positioned container, its children in normal
  * flow, and the two stack.

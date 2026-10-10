@@ -13,7 +13,7 @@ function isClassRule(rule: StyleRule): boolean {
 }
 
 export function useClassPickerDerivedState({
-  site,
+  styleRules,
   node,
   nodeId,
   activeClassId,
@@ -21,7 +21,7 @@ export function useClassPickerDerivedState({
   query,
   highlightedIndex,
 }: {
-  site: { styleRules: Record<string, StyleRule> } | null
+  styleRules: Record<string, StyleRule> | null
   node: PageNode | null
   nodeId: string
   activeClassId: string | null
@@ -30,9 +30,9 @@ export function useClassPickerDerivedState({
   highlightedIndex: number
 }) {
   const assignedIds = node?.classIds ?? []
-  const visibleAssignedIds = assignedIds.filter((id) => isUserVisibleClass(site?.styleRules[id]))
+  const visibleAssignedIds = assignedIds.filter((id) => isUserVisibleClass(styleRules?.[id]))
   const nodeHasInlineStyles = !!node?.inlineStyles && Object.keys(node.inlineStyles).length > 0
-  const allRules = Object.values(site?.styleRules ?? {}).filter(isUserVisibleClass)
+  const allRules = Object.values(styleRules ?? {}).filter(isUserVisibleClass)
   const allClasses = allRules.filter(isClassRule)
   const visibleRuleRegistry = Object.fromEntries(allRules.map((rule) => [rule.id, rule]))
   const selectedElement = findRenderedCanvasNodeElement(nodeId)
