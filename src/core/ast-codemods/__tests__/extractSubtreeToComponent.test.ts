@@ -347,7 +347,7 @@ describe('extractSubtreeToComponent — refusals', () => {
     expect(exists('pages/Spready.tsx')).toBe(false)
   })
 
-  it('refuses when the target file already exists', () => {
+  it('takes the next free name when the target file already exists', () => {
     write('pages/Existing.tsx', 'export function Existing() {\n  return <div />\n}\n')
     const pageFile = write('pages/Home.tsx', [
       'export default function Home() {',
@@ -362,12 +362,17 @@ describe('extractSubtreeToComponent — refusals', () => {
     const loc = locateTag(read('pages/Home.tsx'), 'p')
 
     const result = extractAt(pageFile, loc.line, loc.col, 'Existing')
-    expect(result.ok).toBe(false)
-    if (result.ok) return
-    expect(result.refusal.reason).toBe('name-taken')
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.componentName).toBe('Existing2')
+    expect(result.newFile).toBe('pages/Existing2.tsx')
+    // The user's own file is untouched; the new component sits beside it.
+    expect(read('pages/Existing.tsx')).toBe('export function Existing() {\n  return <div />\n}\n')
+    expect(read('pages/Existing2.tsx')).toContain('export function Existing2')
+    expect(read('pages/Home.tsx')).toContain('<Existing2 />')
   })
 
-  it('refuses when the name collides with a binding already in scope in the page file', () => {
+  it('takes the next free name when the name collides with a binding already in scope in the page file', () => {
     const pageFile = write('pages/Home.tsx', [
       "import { Card } from '../components/Card'",
       'export default function Home() {',
@@ -383,19 +388,24 @@ describe('extractSubtreeToComponent — refusals', () => {
     const loc = locateTag(read('pages/Home.tsx'), 'p')
 
     const result = extractAt(pageFile, loc.line, loc.col, 'Card')
-    expect(result.ok).toBe(false)
-    if (result.ok) return
-    expect(result.refusal.reason).toBe('name-taken')
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.componentName).toBe('Card2')
+    const page = read('pages/Home.tsx')
+    // The imported `Card` keeps meaning the imported component.
+    expect(page).toContain("import { Card } from '../components/Card'")
+    expect(page).toContain('<Card />')
+    expect(page).toContain('<Card2 />')
   })
 
-  it('refuses via a caller-supplied `existingComponentNames` catalog', () => {
+  it('takes the next free name from a caller-supplied `existingComponentNames` catalog', () => {
     const pageFile = write('pages/Home.tsx', 'export default function Home() {\n  return (\n    <div><p>Hi</p></div>\n  )\n}\n')
     const loc = locateTag(read('pages/Home.tsx'), 'p')
 
-    const result = extractAt(pageFile, loc.line, loc.col, 'Button', { existingComponentNames: new Set(['Button']) })
-    expect(result.ok).toBe(false)
-    if (result.ok) return
-    expect(result.refusal.reason).toBe('name-taken')
+    const result = extractAt(pageFile, loc.line, loc.col, 'Button', { existingComponentNames: new Set(['Button', 'Button2']) })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.componentName).toBe('Button3')
   })
 
   it('refuses a subtree that is itself a .map row (AST-derived, no nodeId needed)', () => {

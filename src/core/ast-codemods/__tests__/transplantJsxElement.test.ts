@@ -510,7 +510,7 @@ describe('transplantJsxElement — refusals leave BOTH files untouched', () => {
    * write that cannot land honestly in BOTH files refuses, and names the
    * one-line remedy.
    */
-  it('refuses a helper the origin declares but does not export, touching neither file', () => {
+  it('copies a constant the origin declares but does not export, rather than importing a name that is not there', () => {
     const homeText = `const label = 'Hi'
 
 export default function Home() {
@@ -535,11 +535,13 @@ export default function Home() {
       destinationCol: container.col,
     })
 
-    expect(result.ok).toBe(false)
-    if (result.ok) throw new Error('unreachable')
-    expect(result.refusal.reason).toBe('unexported-binding')
-    expect(result.refusal.message).toContain('label')
-    expectUntouched(home, homeText, about, ABOUT)
+    // G-1a: a private constant is COPIED to the destination (the old answer was
+    // to refuse and ask for an export). The destination never imports `label`
+    // from a file that does not export it, so the repo still builds.
+    expect(result.ok).toBe(true)
+    expect(fs.readFileSync(about, 'utf8')).toContain("const label = 'Hi'")
+    expect(fs.readFileSync(about, 'utf8')).not.toContain('import')
+    expect(fs.readFileSync(home, 'utf8')).toBe(homeText.replace('      <p title={label}>x</p>\n', ''))
   })
 
   it('refuses an unexported local COMPONENT the destination could never import', () => {

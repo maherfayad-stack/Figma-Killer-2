@@ -9,11 +9,13 @@
  * cross-file move would MEAN, not of the splice": the markup would land in a
  * different module, where the bindings it reads do not exist. That sentence is
  * still exactly right — and it is also the specification of this codemod. A
- * cross-file move is honest precisely when every name the subtree reads is
- * either resolvable at the ORIGIN file's module scope (so it can be CARRIED as
- * an import) or already bound at the DESTINATION's. Anything else — a prop, a
- * hook result, a `.map` row's parameter — is body-local to the origin's
- * component and cannot travel, so the gesture refuses and names it.
+ * cross-file move is honest precisely when every name the subtree reads
+ * either travels with it or is already bound at the DESTINATION's. What
+ * travels (`transplantBindings.ts` decides, name by name): an import, a
+ * context-hook read, and the plain constants and handlers the element reads
+ * (G-1a - COPIED into the destination, transitively). What the component OWNS
+ * - a prop, state, a ref, a `.map` row's parameter, a `let` - cannot travel, so
+ * the gesture refuses and names it.
  *
  * So the difference from a reparent is not the splice; it is one extra
  * question (which bindings travel) and one extra write (the destination's
@@ -62,7 +64,7 @@
  */
 import { realpathSync } from 'node:fs'
 import * as path from 'node:path'
-import { Node, Project, SyntaxKind, type Block, type CallExpression, type SourceFile } from 'ts-morph'
+import { Node, Project, SyntaxKind, type SourceFile } from 'ts-morph'
 import { createProject, findJsxElementAtLocation, loadSourceFile } from './locateJsxElement'
 import {
   applyTextEdits,
@@ -72,14 +74,13 @@ import {
   type TextEdit,
 } from './jsxChildRange'
 import { lineIndentAt, reindentBlock, resolveChildPlacement } from './jsxChildPlacement'
-import { planImportBindings, resolveImportEdits, type ImportRequirement } from './jsxImportEdits'
+import { resolveImportEdits } from './jsxImportEdits'
 import { createdJsxLocation, offsetAfterEdits, type CreatedJsxLocation } from './createdJsxLocation'
 import type { InsertJsxRefusalReason } from './jsxSubtree'
-import { relativeSpecifier } from './importReconcile'
-import { analyzeFreeVariables } from './subtreeFreeVariables'
 import { buildCanvasLayerModule } from './canvasLayerModule'
-import { enclosingFunctionComponent, findHookBindingForName } from './detachHooks'
-import { applySubtreeRenames, materializeHookGroup, moduleDerivedAlias, type HookCarryGroup } from './transplantCarry'
+import { enclosingFunctionComponent } from './detachHooks'
+import { applySubtreeRenames } from './transplantCarry'
+import { resolveCarriedBindings, type CarriedDeclaration } from './transplantBindings'
 
 export interface TransplantJsxElementParams {
   /** Absolute path to the file the element is written in today. */
@@ -134,7 +135,7 @@ export interface TransplantJsxRefusal {
  * does not confirm an element there; never a guess.
  */
 export type TransplantJsxElementResult =
-  | { ok: true; carriedImports: string[]; created: CreatedJsxLocation | null }
+  | { ok: true; carriedImports: string[]; carriedDeclarations: CarriedDeclaration[]; created: CreatedJsxLocation | null }
   | { ok: false; refusal: TransplantJsxRefusal }
 
 function refuseTransplant(
@@ -215,7 +216,7 @@ export function transplantJsxElement(params: TransplantJsxElementParams): Transp
   const created = landed.write()
   if (nextOrigin !== null) writeVerbatimSource(originSource, file, nextOrigin)
 
-  return { ok: true, carriedImports: landed.carriedImports, created }
+  return { ok: true, carriedImports: landed.carriedImports, carriedDeclarations: landed.carriedDeclarations, created }
 }
 
 /** The element being carried, and the file it is written in. */
@@ -248,7 +249,7 @@ function landInDestination(
   origin: TransplantOrigin,
   destination: TransplantDestination,
 ):
-  | { ok: true; carriedImports: string[]; write: () => CreatedJsxLocation | null }
+  | { ok: true; carriedImports: string[]; carriedDeclarations: CarriedDeclaration[]; write: () => CreatedJsxLocation | null }
   | { ok: false; refusal: TransplantJsxRefusal } {
   const container = findJsxElementAtLocation(destination.source, destination.destinationLine, destination.destinationCol)
   if (!container) {
@@ -260,13 +261,21 @@ function landInDestination(
 
   // ── The scope question, and the only one that makes a cross-file move
   //    different from a same-file one ────────────────────────────────────
-  const destinationBody = enclosingFunctionComponent(container)?.getBody()
-  const carried = resolveCarriedBindings(origin.element, origin.source, {
+  const componentBody = enclosingFunctionComponent(container)?.getBody()
+  const destinationBody = componentBody && Node.isBlock(componentBody) ? componentBody : undefined
+  // Where copied declarations are written: a component-body one goes right
+  // before the statement of the body that holds the container, a module-level
+  // one right before the top-level statement that holds it.
+  const bodyAnchor = destinationBody ? container.getAncestors().find((ancestor) => ancestor.getParent() === destinationBody) : undefined
+  const moduleAnchor = container.getAncestors().find((ancestor) => Node.isSourceFile(ancestor.getParent()))
+  const bodyIndent = bodyAnchor ? lineIndentAt(destination.text, bodyAnchor.getStart()) : '  '
+  const carried = resolveCarriedBindings(origin.element, origin.source, origin.text, {
     source: destination.source,
     file: destination.destinationFile,
-    ...(destinationBody && Node.isBlock(destinationBody) ? { body: destinationBody } : {}),
+    bodyIndent,
+    ...(destinationBody && bodyAnchor ? { body: destinationBody } : {}),
   })
-  if (!carried.ok) return carried
+  if (!carried.ok) return refuseTransplant(carried.refusal.reason, carried.refusal.message)
 
   const rawSubtree = origin.text.slice(origin.element.getStart(), origin.element.getEnd())
   const subtree = applySubtreeRenames(rawSubtree, origin.element.getStart(), origin.element, carried.renames)
@@ -290,12 +299,24 @@ function landInDestination(
   }
 
   const importEdits = resolveImportEdits(destination.source, destination.text, carried.requirements)
-  const priorEdits = [...importEdits, ...carried.hookEdits]
+  // Order matters at an equal offset (`applyTextEdits` lands a LATER entry first):
+  // an import above a copied module declaration, a hook above a copied body one.
+  const carryEdits: TextEdit[] = []
+  if (carried.moduleStatements.length > 0 && moduleAnchor) {
+    const at = moduleAnchor.getStart(true)
+    carryEdits.push({ start: at, end: at, text: carried.moduleStatements.map((statement) => `${statement}\n\n`).join('') })
+  }
+  if (carried.bodyStatements.length > 0 && bodyAnchor) {
+    const at = bodyAnchor.getStart()
+    carryEdits.push({ start: at, end: at, text: carried.bodyStatements.map((statement) => `${statement}\n${bodyIndent}`).join('') })
+  }
+  const priorEdits = [...carryEdits, ...importEdits, ...carried.hookEdits]
   const nextDestination = applyTextEdits(destination.text, [placement.edit, ...priorEdits])
 
   return {
     ok: true,
     carriedImports: [...carried.requirements.keys()],
+    carriedDeclarations: carried.carried,
     write: () => {
       writeVerbatimSource(destination.source, destination.destinationFile, nextDestination)
       // Measured against the DESTINATION, which `writeVerbatimSource` has just
@@ -385,7 +406,7 @@ export function placeCanvasLayerRoot(params: PlaceCanvasLayerRootParams): Transp
   )
   if (!landed.ok) return landed
   const created = landed.write()
-  return { ok: true, carriedImports: landed.carriedImports, created }
+  return { ok: true, carriedImports: landed.carriedImports, carriedDeclarations: landed.carriedDeclarations, created }
 }
 
 export interface LiftJsxElementParams {
@@ -459,12 +480,13 @@ export function liftJsxElementToCanvasModule(params: LiftJsxElementParams): Lift
     '/layer.tsx',
     'export default function CanvasLayer() {}\n',
   )
-  const carried = resolveCarriedBindings(element, originSource, {
+  const carried = resolveCarriedBindings(element, originSource, originText, {
     source: emptyLayer,
     file: params.moduleFile,
+    bodyIndent: '  ',
     body: emptyLayer.getFunctionOrThrow('CanvasLayer').getBodyOrThrow().asKindOrThrow(SyntaxKind.Block),
   })
-  if (!carried.ok) return carried
+  if (!carried.ok) return refuseTransplant(carried.refusal.reason, carried.refusal.message)
 
   const subtree = applySubtreeRenames(
     originText.slice(element.getStart(), element.getEnd()),
@@ -475,222 +497,12 @@ export function liftJsxElementToCanvasModule(params: LiftJsxElementParams): Lift
   const built = buildCanvasLayerModule(
     reindentBlock(subtree, lineIndentAt(originText, element.getStart()), ''),
     carried.requirements,
-    carried.hookStatements,
+    [...carried.hookStatements, ...carried.bodyStatements],
+    carried.moduleStatements,
   )
 
   params.writeModule(built.text)
   if (removal) writeVerbatimSource(originSource, params.file, applyTextEdits(originText, [removal]))
 
   return { ok: true, carriedImports: [...carried.requirements.keys()], root: built.root }
-}
-
-/**
- * Which of the subtree's free names travel with it, and whether any of them
- * cannot.
- *
- * Four buckets, and the partition is `analyzeFreeVariables`'s plus one this
- * codemod draws inside its own `'prop'` bucket:
- *
- *  - **`kind: 'prop'`, bound by a movable context-hook read** (`const { t } =
- *    useLanguage()`, DET-3's shape) — not body-local in the way that matters:
- *    under one provider every component reads the same value, so the CALL
- *    re-establishes at the destination (reusing one it already makes, else
- *    written as its first statement) and the name resolves to whatever local
- *    that call gives it. `destination.body` is the component the call lands
- *    in — the enclosing component of a page container, or a lift's new
- *    layer component; with none (a container outside any component) this
- *    bucket refuses like the next one.
- *  - **`kind: 'prop'`, anything else** — a destructured prop, a `.map` row's
- *    parameter, a plain body `const`, or a hook binding that is not a
- *    context read. Genuinely body-local: no module the other file could
- *    import it from. Refused, by name — "some binding" is not something a
- *    person can act on.
- *  - **`kind: 'import'`, already bound at the destination's top level** —
- *    nothing to write; reused as-is (`planImportBindings`).
- *  - **`kind: 'import'`, not bound at the destination, and the plain name is
- *    free** — carried under its own name, either by mirroring the origin's
- *    own import declaration or, for a helper the origin file declares
- *    itself, by importing it FROM the origin file.
- *  - **`kind: 'import'`, the plain name is already something else at the
- *    destination** — carried under a fresh alias instead of refusing
- *    (`planImportBindings`, `moduleDerivedAlias`), and every reference to it
- *    inside the moved subtree renamed to match.
- */
-function resolveCarriedBindings(
-  subtree: Node,
-  originSource: SourceFile,
-  destination: { source: SourceFile; file: string; body?: Block },
-):
-  | {
-      ok: true
-      requirements: Map<string, ImportRequirement>
-      renames: Map<string, string>
-      hookEdits: TextEdit[]
-      /** Each NEW hook statement `hookEdits` writes, as text — what a lift's module body is built from. */
-      hookStatements: string[]
-    }
-  | { ok: false; refusal: TransplantJsxRefusal } {
-  const { source: destinationSource, file: destinationFile, body: destinationBody } = destination
-  const free = analyzeFreeVariables(subtree, originSource)
-  const originComponent = enclosingFunctionComponent(subtree)
-  const canCarryHooks = destinationBody !== undefined
-
-  const requirements = new Map<string, ImportRequirement>()
-  const renames = new Map<string, string>()
-  const captured: string[] = []
-  const hookGroups = new Map<CallExpression, HookCarryGroup>()
-
-  for (const variable of free) {
-    if (variable.kind !== 'prop') continue
-    const hook = originComponent && canCarryHooks ? findHookBindingForName(originComponent, variable.name) : undefined
-    if (!hook || hook === 'unmovable') {
-      captured.push(variable.name)
-      continue
-    }
-    const calleeRequirement = resolveCarriedBinding(hook.label, originSource, destinationFile)
-    if (calleeRequirement === UNEXPORTED) {
-      captured.push(variable.name)
-      continue
-    }
-    let group = hookGroups.get(hook.call)
-    if (!group) {
-      group = { hook, names: new Map() }
-      hookGroups.set(hook.call, group)
-    }
-    const key = hook.binding.kind === 'keys' ? hook.binding.keys.find((k) => k.local === variable.name)?.key : undefined
-    group.names.set(variable.name, key)
-    if (calleeRequirement) requirements.set(hook.label, calleeRequirement)
-  }
-
-  if (captured.length > 0) {
-    const names = captured.map((name) => `"${name}"`).join(', ')
-    const isOne = captured.length === 1
-    return {
-      ok: false,
-      refusal: {
-        reason: 'captured-scope',
-        message:
-          `It uses ${names}, which only ${isOne ? 'exists' : 'exist'} inside the component it is written in — a prop, a list item or a value that component works out — so it cannot work anywhere else. ` +
-          `Keep it inside its own frame, or move ${isOne ? 'that value' : 'those values'} into a shared file first.`,
-      },
-    }
-  }
-
-  for (const variable of free) {
-    if (variable.kind !== 'import') continue
-    const requirement = resolveCarriedBinding(variable.name, originSource, destinationFile)
-    if (requirement === UNEXPORTED) {
-      return {
-        ok: false,
-        refusal: {
-          reason: 'unexported-binding',
-          message:
-            `This element reads "${variable.name}", which the file it is leaving declares but does not export — so the other file has no way to import it, and writing the move anyway would leave that file with an import of a name that is not there. ` +
-            `Export "${variable.name}" from its own file first, then drag again.`,
-        },
-      }
-    }
-    if (!requirement) continue // a global, or a name nothing here can trace — left to the compiler to report
-    requirements.set(variable.name, requirement)
-  }
-
-  // Every requirement — the free names AND each hook's own callee — planned
-  // together, so a callee that happens to collide gets exactly the same
-  // aliasing treatment as anything else (`planImportBindings`).
-  const bindings = planImportBindings(destinationSource, requirements, { preferredAlias: moduleDerivedAlias })
-  for (const name of requirements.keys()) {
-    const local = bindings.localName(name)
-    if (local !== name) renames.set(name, local)
-  }
-
-  const hookEdits: TextEdit[] = []
-  const hookStatements: string[] = []
-  if (destinationBody) {
-    for (const group of hookGroups.values()) {
-      const calleeLocal = bindings.localName(group.hook.label)
-      const materialized = materializeHookGroup(destinationSource, destinationBody, calleeLocal, group)
-      for (const [name, text] of materialized.reads) renames.set(name, text)
-      hookEdits.push(...materialized.edits)
-      if (materialized.statement) hookStatements.push(materialized.statement)
-    }
-  }
-
-  // A hook's own binding shape (whole vs. destructured) can disagree with an
-  // EXISTING call the destination already makes to the same hook — reading a
-  // whole value against a call the destination only ever destructures has no
-  // field to reuse, and `materializeHookGroup` leaves that one name
-  // unresolved rather than guess. Caught here, once, for every group: a
-  // partial rename is worse than a refusal, because it would write the
-  // moved subtree referencing a name nothing in the destination binds.
-  for (const group of hookGroups.values()) {
-    for (const name of group.names.keys()) {
-      if (renames.has(name)) continue
-      return {
-        ok: false,
-        refusal: {
-          reason: 'captured-scope',
-          message: `This element reads \`${name}\` from ${group.hook.label}(), and the destination component already calls ${group.hook.label}() in a shape that has no "${name}" to reuse. Give it a matching binding first, then drag again.`,
-        },
-      }
-    }
-  }
-
-  return { ok: true, requirements: bindings.required, renames, hookEdits, hookStatements }
-}
-
-/**
- * The origin declares this name but keeps it to itself — see
- * {@link resolveCarriedBinding}.
- */
-const UNEXPORTED = Symbol('unexported')
-
-/**
- * Where `name` comes from, expressed as an import the DESTINATION file can
- * carry — or `undefined` when the origin file neither imports nor declares it
- * (a global, or a name this walk cannot trace, which `analyzeFreeVariables`
- * has already narrowed to almost nothing), or {@link UNEXPORTED} when the
- * origin declares it but does not export it.
- *
- * The same resolution `addReconciledImports` performs, expressed as a
- * REQUIREMENT rather than applied as a ts-morph mutation: this codemod writes
- * byte splices, and a ts-morph `addImportDeclaration` would reprint offsets the
- * splices were measured against.
- */
-function resolveCarriedBinding(
-  name: string,
-  originSource: SourceFile,
-  destinationFile: string,
-): ImportRequirement | typeof UNEXPORTED | undefined {
-  for (const declaration of originSource.getImportDeclarations()) {
-    const specifierText = declaration.getModuleSpecifierValue()
-    const specifier = specifierText.startsWith('.')
-      ? relativeSpecifier(destinationFile, path.resolve(path.dirname(originSource.getFilePath()), specifierText))
-      : specifierText
-
-    if (declaration.getDefaultImport()?.getText() === name) return { specifier, style: 'default' }
-    if (declaration.getNamespaceImport()?.getText() === name) return { specifier, style: 'namespace' }
-    const named = declaration
-      .getNamedImports()
-      .some((entry) => (entry.getAliasNode() ?? entry.getNameNode()).getText() === name)
-    if (named) return { specifier, style: 'named' }
-  }
-
-  // A helper the origin file declares itself: the destination imports it FROM
-  // the origin. That only works when the origin EXPORTS it, and `sec-17` is
-  // where this stopped being "the compiler will say so loudly". By the time
-  // the compiler says anything the gesture has already written both files:
-  // the markup is gone from the origin, the destination has an import of a
-  // name that is not there, neither is undoable with ⌘Z (this whole edit
-  // family mints no history entry), and the user's repo does not build. A
-  // write that cannot land honestly in both files refuses — which is the
-  // invariant, and the refusal names the one-line remedy.
-  const declaration =
-    originSource.getFunction(name) ?? originSource.getVariableDeclaration(name) ?? originSource.getClass(name)
-  if (declaration) {
-    return declaration.isExported()
-      ? { specifier: relativeSpecifier(destinationFile, originSource.getFilePath()), style: 'named' }
-      : UNEXPORTED
-  }
-
-  return undefined
 }
