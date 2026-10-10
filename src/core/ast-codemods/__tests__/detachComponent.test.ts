@@ -273,7 +273,10 @@ describe('detachComponentInstance — a param used anywhere, by symbol (bug 1)',
     ].join('\n')
     const { result, text } = detachTag('pages/Home.tsx', source, 'Card')
     expect(result.ok).toBe(true)
-    expect(text).toContain('<article>{undefined && <strong>New</strong>}<h3>A</h3></article>')
+    // P0-6 — an omitted prop IS `undefined`, so the `&&` has a known answer:
+    // nothing renders, and nothing is written in its place.
+    expect(text).toContain('<article><h3>A</h3></article>')
+    expect(text).not.toContain('undefined')
     expect(text).not.toContain('{featured &&')
   })
 
@@ -293,7 +296,8 @@ describe('detachComponentInstance — a param used anywhere, by symbol (bug 1)',
     ].join('\n')
     const { result, text } = detachTag('pages/Home.tsx', source, 'Card')
     expect(result.ok).toBe(true)
-    expect(text).toContain('<article>{true && <strong>New</strong>}</article>')
+    expect(text).toContain('<article><strong>New</strong></article>')
+    expect(text).not.toContain('true &&')
   })
 
   it('substitutes a param inside a template literal', () => {

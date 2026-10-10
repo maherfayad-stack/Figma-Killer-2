@@ -10,6 +10,7 @@
 import { Node, SyntaxKind, type BindingElement, type JsxAttribute } from 'ts-morph'
 import type { FunctionLike } from '@core/page-parser'
 import type { JsxOpeningLikeElement } from './locateJsxElement'
+import { literalField, type Literal } from './detachConstantFold'
 
 export type DetachRefusalReason =
   | 'not-a-component'
@@ -165,6 +166,8 @@ export interface Value {
   free: ReadonlySet<string>
   isUndefined?: boolean
   isTrue?: boolean
+  /** The primitive this value IS, when it is one — what lets a conditional on it be decided (`detachConstantFold.ts`). */
+  literal?: Literal
   numeric?: boolean
   /** A call-site `attr="…"` string, verbatim: raw text (entities and all) plus a JSX attribute spelling when one is safe. */
   jsxString?: { raw: string; attrText?: string }
@@ -177,8 +180,8 @@ export interface Value {
 }
 
 export const NO_NAMES: ReadonlySet<string> = new Set()
-export const UNDEFINED_VALUE: Value = { expr: () => 'undefined', primary: true, free: NO_NAMES, isUndefined: true }
-export const TRUE_VALUE: Value = { expr: () => 'true', primary: true, free: NO_NAMES, isTrue: true }
+export const UNDEFINED_VALUE: Value = { expr: () => 'undefined', primary: true, free: NO_NAMES, isUndefined: true, literal: { v: undefined } }
+export const TRUE_VALUE: Value = { expr: () => 'true', primary: true, free: NO_NAMES, isTrue: true, literal: { v: true } }
 
 export const INTRINSIC_TAG_RE = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/
 export const TAG_CHAIN_RE = /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/
@@ -282,8 +285,36 @@ export function jsxStringValue(raw: string, attrText: string | undefined, free: 
     primary: true,
     free,
     jsxString: { raw, attrText },
+    // An entity decodes to something other than its text, so such a string is
+    // not a literal this can reason about.
+    ...(HTML_ENTITY_RE.test(raw) ? {} : { literal: { v: raw } }),
     intrinsicTag: INTRINSIC_TAG_RE.test(raw) ? raw : undefined,
   }
+}
+
+/** The `Value` a source expression is, spelled as `text` once rewritten, reading `free` from its surroundings. */
+export function nodeValue(node: Node, text: string, free: ReadonlySet<string>): Value {
+  const literal = Node.isStringLiteral(node) || Node.isNoSubstitutionTemplateLiteral(node) ? node.getLiteralValue() : undefined
+  return {
+    expr: () => text,
+    primary: isPrimary(node),
+    free,
+    numeric: Node.isNumericLiteral(node),
+    jsString: literal,
+    ...literalField(node),
+    jsx: isJsxNode(node),
+    tagChain: (Node.isIdentifier(node) || Node.isPropertyAccessExpression(node)) && TAG_CHAIN_RE.test(text) ? text : undefined,
+    intrinsicTag: literal !== undefined && INTRINSIC_TAG_RE.test(literal) ? literal : undefined,
+  }
+}
+
+/** How attribute `name` is written with `value`, or `undefined` to drop it (an absent prop renders no attribute). */
+export function attributeText(name: string, value: Value): string | undefined {
+  if (value.isUndefined) return undefined
+  if (value.isTrue) return name
+  if (value.jsxString?.attrText) return `${name}=${value.jsxString.attrText}`
+  if (value.jsString !== undefined && isJsxAttributeSafe(value.jsString)) return `${name}="${value.jsString}"`
+  return `${name}={${value.expr()}}`
 }
 
 /** Whether `site` needs parentheses around a non-primary value — only where the grammar would otherwise re-associate it. */

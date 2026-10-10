@@ -50,7 +50,7 @@ import { commitStudioStructuralReissue } from '@site/studio/studioStructuralComm
 import {
   addressesJournalEntry,
   addressesSourceLiteral,
-  anchorTransplantBack,
+  anchorLiftBack,
   fileOfNodeId,
   structuralEditNodeIds,
   type StructuralEditPayload,
@@ -171,7 +171,7 @@ export function reissueStructuralSourceEdits(
 
   const edits =
     direction === 'undo'
-      ? anchorTransplantBack(planned, inverseTemplate, parentChildIds(state, inverseTemplate))
+      ? anchorLiftBack(planned, inverseTemplate, parentChildIds(state, inverseTemplate))
       : [...planned]
 
   const missing = unresolvedNodeIds(edits, state)
@@ -194,16 +194,16 @@ export function reissueStructuralSourceEdits(
 }
 
 /**
- * The destination parent's current child list, for a `transplant-back` whose
+ * The destination parent's current child list, for a `canvas-layer-lift-back` whose
  * anchor has to be resolved against the tree as it is now — read off the page
  * that owns the parent, which need not be the active one (ERR-3). Empty for
- * every other template, which `anchorTransplantBack` ignores.
+ * every other template, which `anchorLiftBack` ignores.
  */
 function parentChildIds(
   state: Pick<EditorStore, 'site' | '_nodeIdToPageIds'>,
   template: StructuralSourceHistory['source']['inverseTemplate'],
 ): readonly string[] {
-  if (template.kind !== 'transplant-back' && template.kind !== 'canvas-layer-lift-back') return []
+  if (template.kind !== 'canvas-layer-lift-back') return []
   const pageId = state._nodeIdToPageIds.get(template.parentNodeId)?.[0]
   const page: NodeTree<PageNode> | undefined = state.site?.pages.find((candidate) => candidate.id === pageId)
   return page?.nodes[template.parentNodeId]?.children ?? []

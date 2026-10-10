@@ -58,21 +58,6 @@ function findPage(site: SiteDocument, pageId: string): Page | null {
   return site.pages.find((page) => page.id === pageId) ?? null
 }
 
-/**
- * The slot `nodeId` occupies in `page` right now — its parent and its index in
- * that parent's child list.
- *
- * The parent falls back to the page's root and the index to the end when the
- * node is not addressable, which is a position an append already means; a
- * transplant whose origin cannot be named simply has an undo that puts the
- * element back last rather than one that puts it somewhere wrong.
- */
-function originSlot(page: Page, nodeId: string): { parentNodeId: string; index: number } {
-  const parentNodeId = page.nodes[nodeId]?.parentId ?? page.rootNodeId
-  const index = page.nodes[parentNodeId]?.children.indexOf(nodeId) ?? -1
-  return { parentNodeId, index: index < 0 ? Number.MAX_SAFE_INTEGER : index }
-}
-
 export function createTransplantActions(helpers: SiteSliceHelpers): TransplantActions {
   const { get, set } = helpers
 
@@ -141,13 +126,6 @@ export function createTransplantActions(helpers: SiteSliceHelpers): TransplantAc
         anchorNodeId: commit.anchorNodeId,
         position: commit.position,
         copy: commit.copy,
-        // `store-14` — where it came from, which is the whole of a MOVE's undo.
-        // The slot is recorded as parent + index rather than as a sibling id:
-        // every sibling below the element shifts up the moment it leaves, so a
-        // sibling id captured here would name a line that has moved by the time
-        // ⌘Z is pressed. `anchorTransplantBack` re-reads the slot from the live
-        // tree instead.
-        origin: originSlot(originPage, commit.nodeId),
         openSource: (origin) => openSourceFile(get(), origin),
       })
     },

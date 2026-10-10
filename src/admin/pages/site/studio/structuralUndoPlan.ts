@@ -32,7 +32,7 @@
  * | insert / duplicate / paste / image drop | `delete` what it created |
  * | wrap / group | `ungroup` the container it created |
  * | ungroup | `group` the children it released, back into the same container |
- * | transplant (move) | `transplant` back to the parent it left |
+ * | transplant (move) | the undo journal's `restore` — both files, byte for byte |
  * | transplant (copy) | `delete` the copy it created |
  * | a `.map` row's reorder / copy (OD-8) | the inverse `list-item` edit, known at gesture time |
  * | delete / detach / swap / extract, a `.map` row's delete | `restore` the undo-journal entry the write recorded |
@@ -101,13 +101,6 @@ export type StructuralInverseTemplate =
   | { kind: 'delete-created' }
   | { kind: 'ungroup-created' }
   | { kind: 'group-relocated'; container: StructuralContainerSpelling }
-  | {
-      kind: 'transplant-back'
-      /** The container it left. An ancestor's own tag sits ABOVE its children, so removing one does not move it. */
-      parentNodeId: string
-      /** Which child it was. The SIBLING to anchor against is resolved from the live tree at undo time — see {@link anchorTransplantBack}. */
-      index: number
-    }
   /**
    * P3-F — the inverse of a one-shot write (delete, detach, swap, extract):
    * `restore` the undo-journal entry its batch recorded. Nothing to capture at
@@ -136,8 +129,8 @@ export type StructuralInverseTemplate =
   | { kind: 'canvas-layer-unplace'; layerId: string }
   /**
    * An element lifted out of a frame (a move): place the new layer's root back
-   * into the container it left — `transplant-back`'s shape, with the same
-   * live-tree anchor resolution ({@link anchorTransplantBack}).
+   * into the container it left, anchored against the live tree
+   * at undo time ({@link anchorLiftBack}).
    */
   | { kind: 'canvas-layer-lift-back'; layerId: string; parentNodeId: string; index: number }
 
@@ -208,16 +201,6 @@ export function resolveStructuralInverse(
           ? { kind: 'wrap', nodeId: first, ...template.container }
           : { kind: 'group', nodeId: first, siblingNodeIds: rest, ...template.container },
       ]
-    }
-    case 'transplant-back': {
-      const [moved] = outcome.relocatedNodeIds
-      if (moved === undefined) return null
-      // No anchor yet: every sibling BELOW the element the transplant removed
-      // shifted up when it left, so an anchor recorded at gesture time would
-      // name a line that has moved. `anchorTransplantBack` fills it in from the
-      // tree as it is when ⌘Z is pressed. Appending is the honest fallback the
-      // wire already gives a missing anchor.
-      return [{ kind: 'transplant', nodeId: moved, parentNodeId: template.parentNodeId }]
     }
     case 'restore-journal':
       return outcome.undoToken === null ? null : [restoreEdit(outcome.undoToken)]
@@ -348,14 +331,14 @@ export function remapInverseTemplate(
   template: StructuralInverseTemplate,
   remap: ReadonlyMap<string, string>,
 ): StructuralInverseTemplate {
-  if (template.kind === 'transplant-back' || template.kind === 'canvas-layer-lift-back') {
+  if (template.kind === 'canvas-layer-lift-back') {
     return { ...template, parentNodeId: remap.get(template.parentNodeId) ?? template.parentNodeId }
   }
   return template
 }
 
 /**
- * Point a resolved `transplant-back` at the sibling it should land before,
+ * Point a resolved `canvas-layer-lift-back` at the sibling it should land before,
  * using the destination parent's CURRENT child list.
  *
  * Called at re-issue time, where the tree is the one the last resync left
@@ -367,16 +350,16 @@ export function remapInverseTemplate(
  * A no-op for every other template, so the caller can pipe every inverse
  * through it.
  */
-export function anchorTransplantBack(
+export function anchorLiftBack(
   edits: readonly StructuralEditPayload[],
   template: StructuralInverseTemplate,
   parentChildIds: readonly string[],
 ): StructuralEditPayload[] {
-  if (template.kind !== 'transplant-back' && template.kind !== 'canvas-layer-lift-back') return [...edits]
+  if (template.kind !== 'canvas-layer-lift-back') return [...edits]
   const anchorNodeId = parentChildIds[template.index]
   if (anchorNodeId === undefined) return [...edits]
   return edits.map((edit) =>
-    edit.kind === 'transplant' || edit.kind === 'canvas-layer-place' ? { ...edit, anchorNodeId, position: 'before' } : edit,
+    edit.kind === 'canvas-layer-place' ? { ...edit, anchorNodeId, position: 'before' } : edit,
   )
 }
 

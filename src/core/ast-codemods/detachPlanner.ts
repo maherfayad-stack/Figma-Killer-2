@@ -28,18 +28,18 @@ import { bindingKindAt, freeReferenceNames, isReferenceIdentifier, tagReferenceR
 import { DetachNameResolver, type Expectation, type PendingImport } from './detachNames'
 import { DetachHookPlan, type ComponentHook, type PageTextEdit } from './detachHooks'
 import { foldClassName, readFoldPart } from './detachClassNameFold'
+import { DetachConditionals, type Unit } from './detachConditionals'
 import {
-  INTRINSIC_TAG_RE,
   NO_NAMES,
-  TAG_CHAIN_RE,
   TRUE_VALUE,
   UNDEFINED_VALUE,
   fail,
+  attributeText,
   isJsxAttributeSafe,
+  nodeValue,
   isJsxNode,
   isJsxTextSafe,
   isNeverUndefined,
-  isPrimary,
   isWithin,
   jsStringLiteral,
   jsxStringValue,
@@ -61,13 +61,6 @@ type Ref =
   | { kind: 'local'; decl: VariableDeclaration }
   | { kind: 'hook'; decl: Node }
   | { kind: 'outer'; symbol: MorphSymbol | undefined; decl: Node | undefined }
-
-/** One piece of the component's source being rewritten: the chosen JSX root, or a default/initializer inlined into it. */
-interface Unit {
-  node: Node
-  /** Names the rendered text reads from outside itself. */
-  free: Set<string>
-}
 
 export interface DetachPlan {
   siteText: string
@@ -97,6 +90,7 @@ export class DetachPlanner {
   private readonly inProgress = new Set<Node>()
   private readonly scopeCache = new Map<Node, Map<string, MorphSymbol>>()
   private fragmentLocal: string | undefined
+  private readonly conditionals: DetachConditionals
   private readonly page: SourceFile
   private readonly componentFile: SourceFile
   private readonly fn: FunctionLike
@@ -125,6 +119,22 @@ export class DetachPlanner {
     this.fnIdentifierNames = new Set(fn.getDescendantsOfKind(SyntaxKind.Identifier).map((id) => id.getText()))
     this.names = new DetachNameResolver(this.checker, page, componentFile, componentName, opening, this.fnIdentifierNames)
     this.hooks = new DetachHookPlan(hooks, page, opening, this.names, componentName)
+    this.conditionals = new DetachConditionals({
+      readProp: (reference, unit) => {
+        if (Node.isIdentifier(reference)) {
+          if (!isReferenceIdentifier(reference)) return undefined
+          const ref = this.classify(reference, unit)
+          return ref.kind === 'param' ? { literal: this.paramValue(ref.entry).literal } : undefined
+        }
+        if (!Node.isPropertyAccessExpression(reference)) return undefined
+        const value = this.restMemberValue(reference, unit)
+        return value ? { literal: value.literal } : undefined
+      },
+      renderNode: (node, unit) => this.renderNode(node, unit),
+      siteValue: (node, unit) => this.siteValue(node, unit),
+      admit: (site, names, unit) => this.admit(site, names, unit),
+      attributeText,
+    })
   }
 
   plan(): DetachPlan {
@@ -160,20 +170,7 @@ export class DetachPlanner {
   private callSiteValue(node: Node): Value {
     const free = new Set(freeReferenceNames(node))
     this.names.expectCallSiteNames(free)
-    const isString = Node.isStringLiteral(node) || Node.isNoSubstitutionTemplateLiteral(node)
-    const literal = isString ? node.getLiteralValue() : undefined
-    const text = node.getText()
-    const isChain = (Node.isIdentifier(node) || Node.isPropertyAccessExpression(node)) && TAG_CHAIN_RE.test(text)
-    return {
-      expr: () => text,
-      primary: isPrimary(node),
-      free,
-      numeric: Node.isNumericLiteral(node),
-      jsString: literal,
-      jsx: isJsxNode(node),
-      tagChain: isChain ? text : undefined,
-      intrinsicTag: literal !== undefined && INTRINSIC_TAG_RE.test(literal) ? literal : undefined,
-    }
+    return nodeValue(node, node.getText(), free)
   }
 
   // --- classification ------------------------------------------------------
@@ -375,6 +372,8 @@ export class DetachPlanner {
         return this.callSite.children.rawText
       }
     }
+    const folded = this.conditionals.child(expr, unit)
+    if (folded !== undefined) return folded
     const value = this.siteValue(expr, unit)
     if (!value) return undefined
     this.admit(expr, value.free, unit)
@@ -435,13 +434,18 @@ export class DetachPlanner {
         items.push({ name, text: `${name}="${folded}"`, separator })
         return
       }
+      const decided = inner ? this.conditionals.attribute(name, inner, unit) : undefined
+      if (decided) {
+        if (decided.text !== undefined) items.push({ name, text: decided.text, separator })
+        return
+      }
       const value = inner ? this.siteValue(inner, unit) : undefined
       if (!value || !inner) {
         items.push({ name, text: this.renderNode(property, unit), separator })
         return
       }
       this.admit(inner, value.free, unit)
-      const text = this.attributeText(name, value)
+      const text = attributeText(name, value)
       if (text !== undefined) items.push({ name, text, separator })
     })
 
@@ -460,15 +464,6 @@ export class DetachPlanner {
       })
       .reverse()
     return kept.map((item, i) => (i === 0 ? '' : (item.separator ?? ' ')) + item.text).join('')
-  }
-
-  /** How `name` is written with `value`, or `undefined` to drop it (an absent prop renders no attribute). */
-  private attributeText(name: string, value: Value): string | undefined {
-    if (value.isUndefined) return undefined
-    if (value.isTrue) return name
-    if (value.jsxString?.attrText) return `${name}=${value.jsxString.attrText}`
-    if (value.jsString !== undefined && isJsxAttributeSafe(value.jsString)) return `${name}="${value.jsString}"`
-    return `${name}={${value.expr()}}`
   }
 
   private renderTagName(tag: Node, unit: Unit): string {
@@ -609,17 +604,7 @@ export class DetachPlanner {
     const unit: Unit = { node, free: new Set() }
     const text = this.renderNode(node, unit)
     this.inProgress.delete(node)
-    const literal = Node.isStringLiteral(node) || Node.isNoSubstitutionTemplateLiteral(node) ? node.getLiteralValue() : undefined
-    return {
-      expr: () => text,
-      primary: isPrimary(node),
-      free: unit.free,
-      numeric: Node.isNumericLiteral(node),
-      jsString: literal,
-      jsx: isJsxNode(node),
-      tagChain: (Node.isIdentifier(node) || Node.isPropertyAccessExpression(node)) && TAG_CHAIN_RE.test(text) ? text : undefined,
-      intrinsicTag: literal !== undefined && INTRINSIC_TAG_RE.test(literal) ? literal : undefined,
-    }
+    return nodeValue(node, text, unit.free)
   }
 
   /** A body `const` the JSX reads: inlined as its initializer when that is a faithful rewrite, refused otherwise. */
