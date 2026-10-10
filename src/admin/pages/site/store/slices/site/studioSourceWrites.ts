@@ -41,7 +41,7 @@ import {
   type NodeTree,
   type PageNode,
 } from '@core/page-tree'
-import type { LocalComponentSpec } from '@site/property-controls/componentPropKind'
+import { localComponentJsxName, type LocalComponentSpec } from '@site/property-controls/componentPropKind'
 import { relativeImportSpecifier } from '@site/property-controls/relativeImportSpecifier'
 import { broadcastOptimisticInsert } from '@site/canvas/frameAdapter/optimisticStructuralBroadcast'
 import {
@@ -218,7 +218,7 @@ export function createStudioSourceWrites(
     )
     void commitStudioInsert({
       ...commit,
-      name: component.exportName,
+      name: localComponentJsxName(component),
       importSpecifier: relativeImportSpecifier(targetFile, component.file),
       ...(component.isDefaultExport ? { importStyle: 'default' as const } : {}),
       props: {},

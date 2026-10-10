@@ -88,6 +88,15 @@ export const LocalComponentSpecSchema = Type.Object({
 export type LocalComponentSpec = Static<typeof LocalComponentSpecSchema>
 
 /**
+ * The identifier a call site writes for `component`: its declared name for a
+ * default export (the catalog's `exportName` is the literal `'default'` there,
+ * which is not a valid JSX tag or import binding), its export name otherwise.
+ */
+export function localComponentJsxName(component: LocalComponentSpec): string {
+  return component.isDefaultExport ? component.name : component.exportName
+}
+
+/**
  * Props the CANVAS owns on a design-system component — never the panel, and
  * never a per-node value.
  *
