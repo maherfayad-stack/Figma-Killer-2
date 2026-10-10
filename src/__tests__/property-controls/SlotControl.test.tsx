@@ -216,8 +216,8 @@ describe('SlotControl', () => {
           return new Response(
             JSON.stringify({
               components: [
-                { name: 'Heart', file: 'src/components/Heart.tsx', exportName: 'default', isDefaultExport: true, props: [] },
-                { name: 'Star', file: 'src/components/Star.tsx', exportName: 'default', isDefaultExport: true, props: [] },
+                { name: 'Heart', file: 'src/components/Heart.tsx', exportName: 'default', isDefaultExport: true, role: 'component', props: [] },
+                { name: 'Star', file: 'src/components/Star.tsx', exportName: 'default', isDefaultExport: true, role: 'component', props: [] },
               ],
             }),
             { status: 200 },
