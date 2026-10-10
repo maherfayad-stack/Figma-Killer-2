@@ -4,31 +4,28 @@
  * Contract: docs/agent-refs/canvas-internals.md → "Inline text editing"
  *
  * The session is UI-only state (never persisted, never itself part of undo
- * history). Live commits route through `updateNodeProps`, whose single-field
- * patches coalesce under `props:<nodeId>:<prop>` (see `coalesceKeyForPatch`
- * in slices/site/nodeActions.ts) — the whole typing burst is ONE undo entry,
- * which is what lets `cancelInlineEdit` revert with a single `undo()`.
+ * history). **One session is one write.** Keystrokes only update the
+ * session's `draft` (the contentEditable element already shows the text);
+ * nothing reaches the page tree, the undo stack or the autosave until the
+ * session COMMITS (`endInlineEdit` — Enter, blur, or another gesture taking
+ * over), which writes the draft through `updateNodeProps` exactly once: one
+ * history entry, one source write. `cancelInlineEdit` (Escape) simply drops
+ * the draft — there is nothing to undo, so no partial write can survive it
+ * and no timing window (a save landing between the last keystroke and
+ * Escape) can leave "all but the last character" on disk.
  *
  * Burst isolation: `startInlineEdit` and `endInlineEdit` both reset
- * `_historyCoalesceKey`, so the inline burst can never fold into a
- * Properties-panel typing burst for the same prop (or vice versa) — Escape
- * must revert exactly the inline session, nothing more.
+ * `_historyCoalesceKey`, so the commit can never fold into a
+ * Properties-panel typing burst for the same prop.
  *
- * **WS-10 §4.4 (Phase 4) — locale-variant frame sessions branch to a SECOND
- * mutation path, `updateLocalizedNodeText`.** A session started in a board
- * frame whose OWN `axes.locale` differs from the board default is editing a
- * node that lives in `localizedPageSlice.ts`'s `localizedPages` map, NOT
- * `site.pages` — writing it through `updateNodeProps`/`mutateActiveTree`
- * would silently edit the WRONG tree (the default-locale one, sharing this
- * node's id per trap #2) while displaying the edit in the locale-variant
- * frame, which would both corrupt the default tree and lose the actual
- * locale edit. `session.frameId`/`localeOverride` (resolved once, at
- * `startInlineEdit` time) is what tells `applyInlineEditValue`/
- * `cancelInlineEdit` which path to take. This is a genuinely SEPARATE,
- * undo-EXEMPT mutation (see `localizedPageSlice.ts`'s own doc for why that
- * scope boundary is deliberate) — `session.committed`/`undo()` stay
- * meaningful ONLY for the default-tree path; the locale-variant path
- * reverts by re-setting `initialValue` directly on cancel.
+ * **WS-10 §4.4 (Phase 4) — locale-variant frame sessions commit through a
+ * SECOND mutation path, `updateLocalizedNodeText`.** A session started in a
+ * board frame whose OWN `axes.locale` differs from the board default is
+ * editing a node that lives in `localizedPageSlice.ts`'s `localizedPages`
+ * map, NOT `site.pages` — writing it through `updateNodeProps` would
+ * silently edit the WRONG tree. `session.localeOverride` (resolved once, at
+ * `startInlineEdit` time) tells `endInlineEdit` which path to take. That
+ * path is undo-EXEMPT (see `localizedPageSlice.ts`).
  */
 import { registry } from '@core/module-engine'
 import { isPropWritableToSource } from '@core/page-tree'
@@ -49,10 +46,10 @@ interface ActiveInlineEdit {
   /** WS-10 §4.4 (Phase 4) — set when `frameId`'s frame has its own locale override that differs from the board default; names WHICH `(pageId, locale)` tree in `localizedPageSlice.ts` this session mutates instead of `site.pages`. `null` for every other session (the overwhelmingly common case, including all of Phase 1-3). */
   localeOverride: { pageId: string; locale: string } | null
   multiline: boolean
-  /** Prop value when the session started; cancel restores it via one undo() (default tree) or a direct re-set (locale-variant tree). */
+  /** Prop value when the session started. */
   initialValue: string
-  /** True once a keystroke produced a REAL history entry (a burst exists). Only meaningful for the default-tree (undo-tracked) path. */
-  committed: boolean
+  /** The text as typed so far; written to the tree once, on commit. Starts equal to `initialValue`. */
+  draft: string
   /** Open with the whole text selected (a freshly drawn text's placeholder) instead of the caret at the end. */
   selectAll?: true
 }
@@ -90,11 +87,11 @@ interface InlineEditSlice {
    * `text:editStart` request; the portal double-click handler ignores it.
    */
   startInlineEdit: (nodeId: string, breakpointId: string, frameId?: string | null, options?: { selectAll?: boolean }) => boolean
-  /** Live per-keystroke commit — one coalesced undo entry per session (default tree), or a direct mutation (locale-variant tree). */
+  /** Record the text typed so far. Touches only the session draft — no tree write, no history, no save. */
   applyInlineEditValue: (value: string) => void
-  /** Commit + close. Keystrokes already landed live; this ends session + burst. */
+  /** Commit + close: writes the draft once (one undo entry) iff it differs from the initial value. */
   endInlineEdit: () => void
-  /** Revert + close: one undo() (default tree) or a direct re-set of `initialValue` (locale-variant tree), iff the session actually changed something. */
+  /** Discard the draft + close. Nothing was written, so nothing is reverted. */
   cancelInlineEdit: () => void
 }
 
@@ -202,7 +199,7 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
         localeOverride,
         multiline: spec.multiline ?? false,
         initialValue: value,
-        committed: false,
+        draft: value,
         ...(options?.selectAll ? { selectAll: true as const } : {}),
       }
       // Isolate the session's burst from any in-flight coalescing burst for
@@ -213,60 +210,35 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
   },
 
   applyInlineEditValue: (value) => {
-    const state = get()
-    const session = state.activeInlineEdit
-    if (!session) return
-    const node = resolveSessionNode(state, session.nodeId, session.localeOverride)
-    if (!node) return
-    const changed = !Object.is(node.props[session.prop], value)
-    if (session.localeOverride) {
-      // WS-10 §4.4 — a genuinely separate, undo-EXEMPT mutation on
-      // `localizedPageSlice.ts`'s tree, not `site.pages`. See this file's
-      // module doc and `localizedPageSlice.ts`'s own for why.
-      state.updateLocalizedNodeText(session.localeOverride.pageId, session.localeOverride.locale, session.nodeId, session.prop, value)
-    } else {
-      // `committed` flips only on a REAL change — updateNodeProps no-ops equal
-      // values (recordPatchChanges), and cancel must not undo() unless this
-      // session actually pushed a history entry.
-      state.updateNodeProps(session.nodeId, { [session.prop]: value })
-    }
-    if (changed && !session.committed) {
-      set((s) => {
-        if (s.activeInlineEdit) s.activeInlineEdit.committed = true
-      })
-    }
+    if (!get().activeInlineEdit) return
+    set((s) => {
+      if (s.activeInlineEdit) s.activeInlineEdit.draft = value
+    })
   },
 
   endInlineEdit: () => {
-    if (!get().activeInlineEdit) return
+    const state = get()
+    const session = state.activeInlineEdit
+    if (!session) return
+    // Close first, so the write below renders the node as plain (not editing).
     set((s) => {
       s.activeInlineEdit = null
-      // End the burst: later edits of the same prop get a fresh undo entry.
+      s._historyCoalesceKey = null
+    })
+    if (session.draft === session.initialValue) return
+    if (session.localeOverride) {
+      // WS-10 §4.4 — a separate, undo-EXEMPT mutation on the localized tree.
+      state.updateLocalizedNodeText(session.localeOverride.pageId, session.localeOverride.locale, session.nodeId, session.prop, session.draft)
+    } else {
+      get().updateNodeProps(session.nodeId, { [session.prop]: session.draft })
+    }
+    set((s) => {
       s._historyCoalesceKey = null
     })
   },
 
   cancelInlineEdit: () => {
-    const session = get().activeInlineEdit
-    if (!session) return
-    if (session.localeOverride) {
-      // No undo() entry exists for this path (see module doc) — revert by
-      // re-setting the frozen initial value directly, iff it actually
-      // changed (mirrors `committed`'s purpose for the default-tree path).
-      if (session.committed) {
-        get().updateLocalizedNodeText(
-          session.localeOverride.pageId,
-          session.localeOverride.locale,
-          session.nodeId,
-          session.prop,
-          session.initialValue,
-        )
-      }
-    } else if (session.committed) {
-      // The whole session is one coalesced entry — a single undo() restores
-      // the pre-session value. undo() also resets _historyCoalesceKey.
-      get().undo()
-    }
+    if (!get().activeInlineEdit) return
     set((s) => {
       s.activeInlineEdit = null
       s._historyCoalesceKey = null
