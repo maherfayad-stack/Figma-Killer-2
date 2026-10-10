@@ -525,7 +525,6 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
             also hosts inline breakpoint switcher buttons, and the toggle owns
             the "Run scripts" switch + its build status / Refresh. */}
           <CanvasModeToggle
-            peek={isLive}
             scriptStatus={scriptBuild.status}
             onRefreshScripts={scriptBuild.refresh}
           />

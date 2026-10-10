@@ -148,9 +148,6 @@ export function AdminCanvasLayout() {
     if (siteName === null) return
     publishSiteSummary({ name: siteName, faviconUrl })
   }, [siteName, faviconUrl, publishSiteSummary])
-  // The toolbar's "Open live page" target (adminUi.activeLivePath) is owned by
-  // `useActiveLivePath` in the lazy editor body — it resolves templates to the
-  // page / post they're previewed against instead of their non-routable slug.
   // Three-way edit permissions — see `src/admin/access.ts`. A user with all
   // three holds full editor rights; a user with only `canEditContent` is the
   // "Client / copy editor" persona: read everything, change copy on existing

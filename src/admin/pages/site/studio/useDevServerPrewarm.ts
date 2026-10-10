@@ -30,8 +30,18 @@ export function useDevServerPrewarm(): void {
 
   useEffect(() => {
     if (!projectDir || trust !== 'run-project') return
-    startDevServer(projectDir).catch((err: unknown) => {
-      console.error('[useDevServerPrewarm] could not prewarm the dev server', err)
-    })
+    startDevServer(projectDir)
+      .then((status) => {
+        // A refused boot RESOLVES (`phase: 'failed'` + the reason in `log`), it
+        // does not reject — dropping it here is what let the Live pill claim
+        // a running app. `useDevServerReadiness` carries the same status to
+        // the pill; this keeps the reason in the console too.
+        if (status.phase === 'failed') {
+          console.error('[useDevServerPrewarm] the dev server did not start:', status.log)
+        }
+      })
+      .catch((err: unknown) => {
+        console.error('[useDevServerPrewarm] could not prewarm the dev server', err)
+      })
   }, [projectDir, trust])
 }

@@ -483,6 +483,16 @@ describe('tryServeStudioIngest (POST /admin/api/studio/import-upload)', () => {
     expect(fs.existsSync(path.join(dir, 'pages', 'Home.tsx'))).toBe(true)
   })
 
+  it('answers 400 (not 500) for a file that is not a zip at all, and writes nothing', async () => {
+    const rootName = `not-a-zip-${Date.now()}`
+    const garbage = new TextEncoder().encode('this is definitely not a zip archive '.repeat(20))
+    const res = await serve(zipUploadRequest(rootName, garbage))
+    expect(res!.status).toBe(400)
+    const body = (await res!.json()) as { error: string }
+    expect(body.error).toMatch(/could not be read as a zip/i)
+    expect(fs.existsSync(targetDirFor(rootName))).toBe(false)
+  })
+
   it('rejects a zip whose every entry lands in node_modules — no importable files', async () => {
     const rootName = `all-node-modules-${Date.now()}`
     const zip = zipSync({

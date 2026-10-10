@@ -25,8 +25,17 @@ import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { AGENT_CAPTURE_ROUTE } from '@core/studio-capture'
 
-/** Where Vite serves the admin app in `bun run dev` — mirrors `router.ts`'s own `VITE_DEV_URL`. */
-const VITE_DEV_URL = 'http://localhost:5173'
+/**
+ * Where Vite serves the admin app in `bun run dev`. The port is the one the
+ * dev supervisor started Vite on (`VITE_PORT`, passed to this process by
+ * `scripts/dev.ts` and the e2e stack) — it was hard-coded to 5173, so a stack
+ * on any other port photographed a page nothing served: every share and every
+ * project thumbnail failed. Loopback literal for the same IPv6 reason as
+ * {@link captureBaseUrl}.
+ */
+export function viteDevOrigin(env: Record<string, string | undefined> = process.env): string {
+  return `http://127.0.0.1:${env.VITE_PORT?.trim() || 5173}`
+}
 
 /** Vite's second HTML entry (`agent-capture.html` at the repo root). Only used in dev — see module doc. */
 const VITE_CAPTURE_ENTRY = '/agent-capture.html'
@@ -44,7 +53,7 @@ function adminAppIsBuilt(env: Record<string, string | undefined>): boolean {
 export function captureBaseUrl(env: Record<string, string | undefined> = process.env): string {
   const override = env.STUDIO_CAPTURE_ORIGIN?.trim()
   if (override) return override.replace(/\/$/, '')
-  return adminAppIsBuilt(env) ? `http://127.0.0.1:${env.PORT ?? 3001}` : VITE_DEV_URL
+  return adminAppIsBuilt(env) ? `http://127.0.0.1:${env.PORT ?? 3001}` : viteDevOrigin(env)
 }
 
 /** The full URL the driver navigates to, token included. */

@@ -116,7 +116,14 @@ function deriveUploadTargetDir(rootName: string | undefined, projectsRoot: strin
 
 async function ingestZipUpload(file: File, targetDir: string, projectsRoot: string) {
   const zipBytes = new Uint8Array(await file.arrayBuffer())
-  const sharedRoot = detectSharedZipRoot(listZipEntryNames(zipBytes))
+  let entryNames: string[]
+  try {
+    entryNames = listZipEntryNames(zipBytes)
+  } catch (err) {
+    console.error('[studio-import-upload] header scan failed:', err)
+    throw new ArchiveIngestError('The uploaded file could not be read as a zip archive.', 400)
+  }
+  const sharedRoot = detectSharedZipRoot(entryNames)
   const decider = createArchiveEntryDecider({ stripRootFolder: sharedRoot !== null })
 
   let zip: Unzipped
