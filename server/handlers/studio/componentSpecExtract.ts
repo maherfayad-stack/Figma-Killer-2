@@ -503,7 +503,7 @@ function buildLocalComponentSpec(
   declaration: Node,
   relFile: string,
   isDefaultExport: boolean,
-): LocalComponentSpec | undefined {
+): Omit<LocalComponentSpec, 'role'> | undefined {
   const spec = buildComponentSpec(project, exportName, declaration, relFile, isDefaultExport)
   if (!spec) return undefined
   const signatures = new Map(
@@ -584,7 +584,7 @@ function isProviderJsx(node: Node | undefined): boolean {
 function singleReturnedJsx(declaration: Node): Node | undefined {
   let fn: Node | undefined = declaration
   if (Node.isVariableDeclaration(declaration)) {
-    let init = declaration.getInitializer()
+    let init: Node | undefined = declaration.getInitializer()
     // `memo(function …)` / `forwardRef((…) => …)` — look through one call.
     if (init && Node.isCallExpression(init)) init = init.getArguments()[0]
     fn = init
