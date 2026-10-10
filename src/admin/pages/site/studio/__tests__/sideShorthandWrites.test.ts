@@ -75,3 +75,43 @@ describe('coalesceCssSideChanges', () => {
     expect(out).toContainEqual({ property: 'margin', value: null })
   })
 })
+
+describe('border stroke coalescing', () => {
+  const sides = ['Top', 'Right', 'Bottom', 'Left']
+  const inlineStroke = Object.fromEntries(
+    sides.flatMap((side) => [
+      [`border${side}Width`, '1px'],
+      [`border${side}Style`, 'solid'],
+      [`border${side}Color`, '#808080'],
+    ]),
+  )
+
+  it('writes twelve equal border longhands as ONE `border` shorthand', () => {
+    const wire = coalesceInlineSideWrites(inlineStroke, [])
+    expect(wire.style).toEqual({ border: '1px solid #808080' })
+    expect(wire.remove).toHaveLength(12)
+  })
+
+  it('keeps longhands when the sides disagree on a field', () => {
+    const wire = coalesceInlineSideWrites({ ...inlineStroke, borderTopWidth: '2px' }, [])
+    expect(wire.style.border).toBeUndefined()
+    expect(wire.style.borderTopWidth).toBe('2px')
+  })
+
+  it('removing all twelve longhands also removes the `border` shorthand', () => {
+    const wire = coalesceInlineSideWrites({}, Object.keys(inlineStroke))
+    expect(wire.remove).toContain('border')
+  })
+
+  it('does the same for stylesheet declarations', () => {
+    const changes = sides.flatMap((side) =>
+      ['width', 'style', 'color'].map((field) => ({
+        property: `border-${side.toLowerCase()}-${field}`,
+        value: field === 'width' ? '1px' : field === 'style' ? 'solid' : '#808080',
+      })),
+    )
+    const out = coalesceCssSideChanges(changes)
+    expect(out.at(-1)).toEqual({ property: 'border', value: '1px solid #808080' })
+    expect(out.filter((change) => change.value === null)).toHaveLength(12)
+  })
+})

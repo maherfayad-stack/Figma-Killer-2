@@ -441,7 +441,9 @@ state is Figma's link: one field, writing the four longhands in a single
 history entry (`LinkedSidesField.tsx`). It is not the `padding` shorthand —
 here the link is about how many fields are drawn, unlike corner radius (G5.5),
 where the shorthand is what a human writes and the link picks the declaration.
-Before P9 the H/V pair was the whole collapsed state, so the most common
+The all-sides field shows **Mixed** unless all four sides render equal
+(`padding-inline: 16px` alone leaves top/bottom at 0), and an H or V edit is one
+`onChangeMany` patch, so its two sides undo together. Before P9 the H/V pair was the whole collapsed state, so the most common
 padding gesture of all — one number on every side — took two edits. The `SpacingBoxControl`
 diagram — the tallest single block in the panel — survives as an opt-in behind
 the Spacing `⚙` (*Box model*), because it is the best control for "which side is
@@ -636,6 +638,14 @@ ships only the values we can honestly write (§7).
 
 What remained was small enough that `BorderControl` was **deleted**, not left as
 a shell (**G7.6**).
+
+Adding a stroke writes ONE `border: 1px solid #808080` (mid grey, visible on a
+light and a dark canvas), not twelve longhands: `studio/sideShorthandWrites.ts`
+collapses the twelve side/width/style/color writes into the shorthand when every
+side agrees, exactly as it does for `padding`/`margin`, and removes the shorthand
+when all twelve are cleared. The section reads it back through
+`borderShorthand.ts` (`withBorderShorthandExpanded`): a side's own longhand wins
+over `border`.
 
 ### G7b — Vector: an inline `<svg>`'s own paint
 
