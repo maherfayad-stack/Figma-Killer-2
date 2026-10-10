@@ -426,7 +426,7 @@ describe('LayoutSection — padding cluster', () => {
     expect(useEditorStore.getState()._historyPast.length).toBe(1)
   })
 
-  it('the all-sides field reads Mixed when only two sides are padded, never one side's value', () => {
+  it("the all-sides field reads Mixed when only two sides are padded, never one side's value", () => {
     selectNode({ inlineStyles: { paddingLeft: '16px', paddingRight: '16px' } })
     renderLayout()
     setPaddingState('all')
