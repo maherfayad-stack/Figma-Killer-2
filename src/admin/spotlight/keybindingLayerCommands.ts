@@ -112,7 +112,7 @@ export const LAYER_COMMAND_KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
   // block. Two or more siblings are grouped first, then the group is laid out.
   {
     commandId: 'layers.toggleFlexLayout',
-    displayName: 'Add flex layout (again removes it; several layers are grouped first)',
+    displayName: 'Add auto layout (again removes it; several layers are grouped first)',
     shortcut: { mac: '⇧A', win: 'Shift+A' },
     ariaKeyshortcuts: 'Shift+A',
     match: (e) => e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && isLetter(e, 'a'),

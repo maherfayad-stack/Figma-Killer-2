@@ -255,3 +255,77 @@ describe('sizingPatch(fixed) with the element cascade (the canvas resize)', () =
     expect(sizingPatch('fixed', 'width', BLOCK, {}, 90, { flexGrow: '1', flexBasis: '0%' })).toEqual({ width: '90px' })
   })
 })
+
+// ---------------------------------------------------------------------------
+// PA-5 — an absolute element has its own role; the parent's layout is moot
+// ---------------------------------------------------------------------------
+
+describe('the absolute sizing role (PA-5)', () => {
+  const ABSOLUTE_IN_FLEX: SizingParentLayout = { ...FLEX_ROW, childPosition: 'absolute' }
+
+  it('classifies absolute and fixed children as absolute whatever the parent is', () => {
+    for (const parent of [FLEX_ROW, FLEX_COLUMN, GRID, BLOCK]) {
+      expect(sizingAxisRole('width', { ...parent, childPosition: 'absolute' })).toBe('absolute')
+      expect(sizingAxisRole('height', { ...parent, childPosition: 'fixed' })).toBe('absolute')
+    }
+    expect(sizingAxisRole('width', { ...FLEX_ROW, childPosition: 'relative' })).toBe('flex-main')
+    expect(sizingAxisRole('width', { ...FLEX_ROW, childPosition: 'static' })).toBe('flex-main')
+  })
+
+  it('reads both insets with no size as Fill, and the size alone as Fixed', () => {
+    expect(currentSizingMode('width', ABSOLUTE_IN_FLEX, { left: '8px', right: '8px' })).toBe('fill')
+    expect(currentSizingMode('height', ABSOLUTE_IN_FLEX, { top: '0px', bottom: '0px' })).toBe('fill')
+    expect(currentSizingMode('width', ABSOLUTE_IN_FLEX, { left: '8px', right: '8px', width: '100px' })).toBe('fixed')
+    expect(currentSizingMode('width', ABSOLUTE_IN_FLEX, { left: '8px', width: '100px' })).toBe('fixed')
+    expect(currentSizingMode('width', ABSOLUTE_IN_FLEX, { left: '8px', width: 'fit-content' })).toBe('hug')
+  })
+
+  it('does not read the in-flow answer for an absolute axis', () => {
+    // `flex: 1` and `align-self: stretch` mean nothing to an absolute box.
+    expect(currentSizingMode('width', ABSOLUTE_IN_FLEX, { flex: '1 1 0' })).toBe('fixed')
+    expect(currentSizingMode('width', { ...FLEX_COLUMN, childPosition: 'absolute' }, { alignSelf: 'stretch' })).toBe('fixed')
+    expect(currentSizingMode('width', { ...BLOCK, childPosition: 'absolute' }, { width: '100%' })).toBe('fixed')
+  })
+
+  it('Hug writes fit-content and, from a stretch, releases the end inset', () => {
+    expect(sizingPatch('hug', 'width', ABSOLUTE_IN_FLEX, { left: '8px' }, 120)).toEqual({ width: 'fit-content' })
+    expect(sizingPatch('hug', 'width', ABSOLUTE_IN_FLEX, { left: '8px', right: '8px' }, 120)).toEqual({
+      width: 'fit-content',
+      right: undefined,
+    })
+    expect(sizingPatch('hug', 'height', ABSOLUTE_IN_FLEX, { top: '1px', bottom: '2px' }, 50)).toEqual({
+      height: 'fit-content',
+      bottom: undefined,
+    })
+  })
+
+  it('Fixed freezes the measured size and releases the end inset of a stretch', () => {
+    expect(sizingPatch('fixed', 'width', ABSOLUTE_IN_FLEX, { left: '8px', right: '8px' }, 144)).toEqual({
+      width: '144px',
+      right: undefined,
+    })
+    expect(sizingPatch('fixed', 'width', ABSOLUTE_IN_FLEX, { left: '8px', width: 'fit-content' }, 90)).toEqual({ width: '90px' })
+  })
+
+  it('writes nothing for Fill: the stretch plan needs measured insets and belongs to the constraint planner', () => {
+    expect(sizingPatch('fill', 'width', ABSOLUTE_IN_FLEX, { left: '8px', width: '40px' }, 40)).toEqual({})
+  })
+
+  it('round-trips Hug and Fixed through read-back', () => {
+    for (const mode of ['fixed', 'hug'] as const) {
+      const stored = { left: '8px', right: '8px' }
+      const patch = sizingPatch(mode, 'width', ABSOLUTE_IN_FLEX, stored, 100)
+      const next: Record<string, unknown> = { ...stored }
+      for (const [key, value] of Object.entries(patch)) {
+        if (value === undefined) delete next[key]
+        else next[key] = value
+      }
+      expect(currentSizingMode('width', ABSOLUTE_IN_FLEX, next)).toBe(mode)
+    }
+  })
+
+  it('leaves in-flow behaviour untouched when no child position is given', () => {
+    expect(sizingAxisRole('width', FLEX_ROW)).toBe('flex-main')
+    expect(sizingPatch('fill', 'width', FLEX_ROW, {}, 10)).toEqual({ flex: '1 1 0' })
+  })
+})

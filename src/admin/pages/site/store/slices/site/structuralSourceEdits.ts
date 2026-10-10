@@ -541,6 +541,8 @@ export const STRUCTURAL_REFUSAL_TITLE = {
    * regardless, so one refusal vocabulary reaches the user.
    */
   freeMove: 'Cannot place this by hand',
+  /** PA-4 — "Ignore auto layout" whose container cannot take the `position: relative` it needs, or whose own position cannot be written. */
+  ignoreAutoLayout: 'Cannot ignore auto layout here',
   /** P5-C — the Detach verb (`instanceActions.ts`): a refusal names why this instance's markup can't be written in place. */
   detach: 'Detach refused',
 } as const

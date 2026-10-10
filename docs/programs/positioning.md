@@ -8,7 +8,7 @@ ROADMAP: not a bundle. Extends P2-C (arrow keys), P5-E (IX-21 authored offsets),
 
 | Figma concept | Already in the tree |
 |---|---|
-| Hug / Fill / Fixed | `core/studio-runtime/elementSizingRules.ts` (`sizingAxisRole`: flex-main / flex-cross / grid / block; `sizingPatch`, `currentSizingMode`), `SizeSection.tsx`, `useSizingParentLayout.ts` |
+| Hug / Fill / Fixed | `core/studio-runtime/elementSizingRules.ts` (`sizingAxisRole`: flex-main / flex-cross / grid / block / absolute; `sizingPatch`, `currentSizingMode`), `SizeSection.tsx`, `useSizingParentLayout.ts` |
 | Layout mode row (none / V / H / grid), padding, gap, wrap, clip | `inspector/sections/LayoutSection*`, `layoutMode.ts` |
 | Constraints (5 modes, crosshair, refusals) | `panels/PropertiesPanel/constraintMapping.ts`, `useConstraintAxes.ts`, `PositionConstraints.tsx`, `ConstraintsDiagram.tsx` |
 | Absolute move, authored-offset aware, snap, RTL, multi-select | `canvas/canvasFreeMove.ts` (only with the cmd modifier, or if already absolute) |

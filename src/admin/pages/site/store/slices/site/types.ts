@@ -288,6 +288,22 @@ export interface SiteSlice {
   removeNodeInlineStyleProperty: (nodeId: string, propKey: string) => void
   /** Remove ALL inline styles from a node (clears the `inlineStyles` field). */
   clearNodeInlineStyles: (nodeId: string) => void
+  /**
+   * PA-4 — Figma's "Ignore auto layout". `ignore: true` takes an in-flow child
+   * of a flex / grid container out of the flow (`position: absolute` at the
+   * place it already is, plus `position: relative` on the container when it
+   * does not yet contain it); `ignore: false` returns it to flow. The writes
+   * to the child and the container are ONE undo step. `refused` means a
+   * dialog explained why (a shared container, a position set in code); the
+   * tree is untouched. `offsets` are measured by the caller against the box
+   * that will contain the child (`containingBlockOffsets`).
+   */
+  setIgnoreAutoLayout: (
+    nodeId: string,
+    request:
+      | { ignore: true; parentContains: boolean; offsets: { left: number; top: number } }
+      | { ignore: false; releaseParent: boolean },
+  ) => 'applied' | 'refused' | 'noop'
   setBreakpointOverride: (nodeId: string, breakpointId: string, patch: Record<string, unknown>) => void
   clearBreakpointOverride: (nodeId: string, breakpointId: string) => void
   renameNode: (nodeId: string, label: string) => void
