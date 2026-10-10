@@ -71,11 +71,6 @@ const PADDING_PROPERTY: Record<PaddingSide, 'paddingTop' | 'paddingRight' | 'pad
   left: 'paddingLeft',
 }
 
-/** Is the display one whose children a gap spaces (and whose padding the handles offer)? */
-export function isSpacingLayout(display: string): boolean {
-  return display.includes('flex') || display.includes('grid')
-}
-
 /**
  * The bands, RELATIVE to the container's border box (so they ride the handle
  * frame the overlay already positions on the selection ring). A band is a

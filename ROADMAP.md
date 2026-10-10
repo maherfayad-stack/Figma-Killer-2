@@ -400,3 +400,93 @@ Each row names its source (plan section or STATE id) and the bundle above that a
 - **GitHub device-flow sign-in needs `GITHUB_OAUTH_CLIENT_ID`**, which only the owner can create (a GitHub OAuth App with Device Flow enabled). Until then G8 runs through the paste-a-token path. (`git-23`)
 - **How far to take Tailwind** beyond class edits (utility autocomplete, arbitrary values, variant prefixes)? (PARITY §15.5)
 - **Compact spacing and border rows** by default, with the diagram behind a toggle? Track P's Penpot rebuild may have settled this; confirm. (PARITY §15.4)
+
+---
+
+## 14. Figma parity program (2026-10-10)
+
+Five design plans, written after the 2026-10-10 real-mouse audit, close the remaining gaps to Figma. Each plan lives in [`docs/programs/`](docs/programs/) with its risks, gates and owner decisions; the rows below are the work orders. Sizes: S under 1 day, M 1 to 3, L 3 to 5. Decided questions (OD-17, OD-19, OD-21, OD-22, SB-D1 to SB-D3) are in [`docs/decisions.md`](docs/decisions.md) under "Figma parity: decided"; the rest are under "Proposed — owner to confirm (2026-10-10)". "In flight" means a worktree agent has the bundle now; the owning `STATE.md` entry is the truth.
+
+Recommended order across the program: the in-flight set first (G-4 + G-1a, SB-0 + SB-1, PA-1 + PA-2, CT-1 + CT-2, CV-1, MP-1 + MP-2; each needs no new owner decision, or runs on a provisionally adopted one). Then the presence release (MP-2 ships alone). Then the serial `StudioEdit` chain (G-1b/c, G-2a, CT-3, CV-3, MP-3b), one at a time per the serial-files rule in §11. Then SB-2 to SB-6, which are strictly sequential, and the long tail.
+
+### Refusals into working gestures: [`docs/programs/refusals.md`](docs/programs/refusals.md)
+
+| Bundle | Change | Size | Depends on | Status |
+|---|---|---|---|---|
+| G-4 | Names resolve themselves: one shared `freshName` helper, no "name taken" refusal | S | none | in flight |
+| G-1a | A move carries plain scope (consts, functions, handlers) across files and components | M | none | in flight |
+| G-1b | A move carries `useState`/`useReducer`/`useRef` as an independent copy | M | G-1a, OD-17 (decided) | not started |
+| G-1c | A move carries props and `.map` row values, baked as literals | M | G-1a, OD-18 | not started |
+| G-2a | Editing inside a shared component edits the instance (auto `expose-prop`, "Apply to all") | L | OD-19 (decided), P3-F journal | not started |
+| G-2b | Overrides beyond literals: nested instances, class-bound style, spread-forwarding | L | G-2a, G-9 | not started |
+| G-3 | Detach and instance-edge gestures never refuse (hoist state, `alm.*` is local) | L | OD-21 (decided), OD-23 | not started |
+| G-5 | Style always lands (declaration-target ladder, "Saved in ..." chip) | M/L | none | not started |
+| G-6 | Typing into a code-bound field unbinds, with Undo | S | OD-20 | not started |
+| G-7 | Single-file structure tidy (resolve instead of warn) | M | none | not started |
+| G-8 | "Edit layout" mode for route-chrome structure | S | G-2a | not started |
+| G-9 | "Unroll list" menu action | M | OD-24 | not started |
+| G-10 | Paste HTML as JSX | L | none | not started |
+| G-11 | Refusal copy and before/after counts | S | the other G bundles | not started |
+
+### Board speed: [`docs/programs/board-speed.md`](docs/programs/board-speed.md)
+
+Closes the open row speed-09 (§13). SB-0 to SB-6 are strictly sequential; SB-7 may run beside SB-5; SB-8 follows SB-5.
+
+| Bundle | Change | Size | Depends on | Status |
+|---|---|---|---|---|
+| SB-0 | Attribute and baseline: CDP trace harness, zoom-cycle DOM-counter leak gate, 100-frame fixture | S | none | in flight |
+| SB-1 | Containment quick wins (`content-visibility`, `contain`, Layers selection carries `frameId`) | S | none | in flight |
+| SB-2 | Poster store v2 and capture (content-hash keys, persisted WebP, Studio-owned serializer) | L | SB-1, D4, D6 | not started |
+| SB-3 | Rect index (`FrameGeometryIndex`, `measureAll`, tree-based hit test) | L | SB-2 | not started |
+| SB-4 | Parent-side chrome: one board-space overlay replaces in-frame overlays | L | SB-3 | not started |
+| SB-5 | Poster-first mounting: live set capped by a zoom rule | M-L | SB-4, D1 and D3 (decided) | not started |
+| SB-6 | Poster compositor: one 2D canvas for all posters | M | SB-5, D7 | not started |
+| SB-7 | Incremental style: rule-level CSSOM diff | M | none (runs beside SB-5) | not started |
+| SB-8 | Tier 2: cap live bridge frames, runtime-side poster and index | M | SB-5, D5 | not started |
+| SB-9 | Delete dead poster and pool code; docs | S | SB-6, SB-8 | not started |
+
+### Positioning, auto layout and constraints: [`docs/programs/positioning.md`](docs/programs/positioning.md)
+
+| Bundle | Change | Size | Depends on | Status |
+|---|---|---|---|---|
+| PA-1 | `containingBlockOffsets`; repro and fix of the negative-inset write | M | none | in flight |
+| PA-2 | `parentPlacementKind` and `resolvePlacement`; free-move without cmd inside a free frame | M | PA-1 | in flight |
+| PA-3 | Draw, drop and insert into a free frame land absolute | M | PA-2, OD-P4 | not started |
+| PA-4 | Ignore auto layout / Reinstate | M | PA-2, OD-P2 | not started |
+| PA-5 | Absolute sizing role so Fill/Hug and constraints agree | S/M | PA-2 | not started |
+| PA-6 | Frame selection (opt cmd G) | L | PA-3, OD-P3 | not started |
+| PA-7 | Add auto layout with inference and `convertToFlow` | L | PA-2, OD-P5 | not started |
+| PA-8 | Remove auto layout keeping positions; live-frame anchored resize | M | PA-7 | not started |
+
+### Components and tokens: [`docs/programs/components-tokens.md`](docs/programs/components-tokens.md)
+
+Order: CT-1, CT-2, CV-1 (CV-1 in parallel), CT-3, CT-4, CV-2, CV-3, CT-5, CT-6, CV-4. CT-4 and CV-4 touch serial files that P3-D and P5-D own: schedule them after those.
+
+| Bundle | Change | Size | Depends on | Status |
+|---|---|---|---|---|
+| CT-1 | Token catalog with gates, collections and usage (read only); `projectVariables.ts` collapses into it | M | CT-OD-1 | in flight |
+| CT-2 | Apply, detach and create a variable from every control | M | CT-1 | in flight |
+| CT-3 | Variables panel: edit with live preview, usage, rename, remove | L | CT-2, CT-OD-4, CT-OD-5 | not started |
+| CT-4 | Modes on the board: per-frame mode chip, "+ Mode" | M | CT-3, CT-OD-2, P3-D | not started |
+| CT-5 | Text and effect styles | M | CT-3, CT-OD-3 | not started |
+| CT-6 | Tailwind v4 `@theme` write; v3 and JS theme read-only | S | CT-3 | not started |
+| CV-1 | Variant model (read): binding analyzer, component-properties controls | M | none | in flight |
+| CV-2 | Variants gallery: synthesized call-site frames | M | CV-1, CV-OD-2 | not started |
+| CV-3 | Add variant / add property / remove as `StudioEdit` kinds | L | CV-2, CV-OD-1, CV-OD-3, CV-OD-4 | not started |
+| CV-4 | Edit styles per variant (variant edit context) | L | CV-3, CT-4, P5-D | not started |
+
+### Multiplayer: [`docs/programs/multiplayer.md`](docs/programs/multiplayer.md)
+
+MP-1 and MP-2 are presence only and ship alone. MP-5 and MP-6 each delete the old path in the same PR.
+
+| Bundle | Change | Size | Depends on | Status |
+|---|---|---|---|---|
+| MP-1 | Live channel and roster (WebSocket, per-project room) | M | OD-MP-2, OD-MP-3, OD-MP-9, OD-MP-10 | in flight |
+| MP-2 | Cursors, selections, viewport, follow | M | MP-1 | in flight |
+| MP-3a | Split identity from content fingerprints | M-L | none | not started |
+| MP-3b | Edit fan-out and client reconcile | L | MP-3a, MP-2 | not started |
+| MP-4 | Conflict UX (advisory rings, info chips) | S-M | MP-3b, OD-MP-4, OD-MP-6 | not started |
+| MP-5 | Hunk-level, actor-tagged undo journal | M-L | MP-3b, OD-MP-5 | not started |
+| MP-6 | Boards/notes ops endpoint, comments and sidecar broadcast | M | MP-3b | not started |
+| MP-7 | Agent as a room participant | S-M | MP-3b, OD-MP-7 | not started |
+| MP-8 | Hardening, soak test, `docs/features/multiplayer.md` | S-M | MP-4 to MP-7 | not started |
