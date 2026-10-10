@@ -224,7 +224,9 @@ not pressable (the frame is on top) — reach them by moving the frame.
 structural source gesture (`canvasLayerCommits.ts` → `commitStructural`) whose
 entry also carries the placement change (`StructuralSourceGesture.placements`).
 Undo and redo re-issue the write AND put the placement on the matching side
-(`structuralSourceHistory.ts`); a write that does not land takes the placement
+(`structuralSourceHistory.ts`). A lift or a place that MOVES is undone by the
+undo journal's `restore` (every file the write touched, byte for byte — no id
+recorded at drag time survives a pruned import); a write that does not land takes the placement
 back (its rollback).
 
 ---

@@ -78,7 +78,6 @@ export type {
   HistoryEntry,
   BoardHistorySnapshot,
   BoardHistory,
-  StructuralHistoryMove,
   StructuralHistory,
   StructuralSourceHistory,
   PendingStructuralCommit,

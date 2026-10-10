@@ -162,6 +162,12 @@ export interface SourceInsertCommit {
   /** The existing child the new element is written next to, or `null` to append as the last child. */
   anchorNodeId: string | null
   position: 'before' | 'after'
+  /**
+   * The container has no children yet. The write may then turn a self-closing
+   * `<X />` into `<X>…</X>`, which deleting the new element does not undo — so
+   * the insert's ⌘Z is the undo journal's `restore` (`commitStudioInsert`).
+   */
+  parentIsEmpty: boolean
 }
 
 /**
@@ -192,7 +198,10 @@ export function planSourceInsert(
     return { ok: false, constraint: describeStructuralRefusal({ refusal, node }), nodeId: node.id }
   }
 
-  return { ok: true, commit: { parentNodeId: node.id, ...resolveContainerAnchor(tree, node, index) } }
+  return {
+    ok: true,
+    commit: { parentNodeId: node.id, ...resolveContainerAnchor(tree, node, index), parentIsEmpty: node.children.length === 0 },
+  }
 }
 
 /**

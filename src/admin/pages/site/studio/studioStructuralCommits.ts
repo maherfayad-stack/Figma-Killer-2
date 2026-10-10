@@ -51,15 +51,17 @@ import type { InsertPropValue, SlotJsxNode, StudioSaveResponse } from './studioS
 export async function commitStudioSequence(
   edits: readonly StructuralEditPayload[],
   refusalTitle: string,
-  options: Pick<StructuralCommitOptions, 'undo' | 'rollback' | 'optimistic' | 'select'> = {},
+  options: Pick<StructuralCommitOptions, 'undo' | 'fill' | 'rollback' | 'optimistic' | 'select'> = {},
 ): Promise<void> {
   if (edits.length === 0) return
   await commitStructural(edits, refusalTitle, { ...options, sequence: true })
 }
 
 /**
- * `struct-01` — a sibling reorder, committed to the user's `.tsx` the moment
- * the drag ends.
+ * `struct-01` / W4-1 — a reorder (`kind: 'move'`: put this element next to that
+ * sibling) or a reparent within the same file (`kind: 'reparent'`: into that
+ * container, optionally beside a child), committed to the user's `.tsx` the
+ * moment the drag ends. `moveEditOf` builds the edit from the planner's commit.
  *
  * A one-shot commit rather than a `saveSite` diff, for the reason every other
  * one-shot commit in this module is one and then a sharper one: `saveSite`
@@ -69,7 +71,8 @@ export async function commitStudioSequence(
  *
  * `anchorNodeId` is the sibling the moved element is written against, not an
  * index: see `MoveEditSchema` in `server/handlers/studioWriteback.ts` for why
- * an index computed on the canvas does not name a position in the source.
+ * an index computed on the canvas does not name a position in the source. A
+ * reparent's anchor is optional: appending as the last child is a position.
  *
  * The store has already refused everything it can decide from the node ids
  * (`refuseStructuralEdit`); what can still come back is the residue only the
@@ -80,53 +83,16 @@ export async function commitStudioSequence(
  * which is why a successful write resyncs and a refused one is taken back
  * through `rollback` (ERR-6).
  *
- * No `undo` template: a move mutates the tree, so it already has a history
- * entry that `structuralHistory.ts` re-issues in either direction.
+ * `fill: true`, like `commitStudioDelete`: the move's tree mutation already
+ * pushed an entry and `nodeActions.ts` tagged it with `restore-journal`; this
+ * commit reports the undo-journal token that completes it, so ⌘Z restores the
+ * file byte for byte (a blank line or an indentation a move changed included).
  *
  * ONE element. Several are a {@link commitStudioSequence} (P3-D): each move is
  * written against the file the previous one left.
  */
-export async function commitStudioMove(
-  move: { nodeId: string; anchorNodeId: string; position: 'before' | 'after' },
-  rollback?: StructuralCommitRollback,
-): Promise<void> {
-  await commitStructural([{ kind: 'move', ...move }], 'Move refused', rollback ? { rollback } : {})
-}
-
-/**
- * W4-1 — a move into a DIFFERENT parent, in the same file.
- *
- * A separate kind from `move` rather than an optional field on it, because the
- * two are different writes: a reorder is a pure byte splice between siblings,
- * while a reparent re-hangs the subtree at the destination's indentation and
- * has to answer a question a reorder never asks — whether the values the markup
- * reads are in scope where it lands (`moveJsxElement`'s `out-of-scope`
- * refusal). The wire shape says which one is meant instead of leaving the
- * server to infer it from a missing field.
- *
- * `anchorNodeId` is optional here, unlike `move`: with no addressable child in
- * the destination, appending as its last child is still an honest position —
- * the same reading `insert` gives a missing anchor.
- */
-export async function commitStudioReparent(reparent: {
-  nodeId: string
-  parentNodeId: string
-  anchorNodeId: string | null
-  position: 'before' | 'after'
-  rollback?: StructuralCommitRollback
-}): Promise<void> {
-  await commitStructural(
-    [
-      {
-        kind: 'reparent',
-        nodeId: reparent.nodeId,
-        parentNodeId: reparent.parentNodeId,
-        ...(reparent.anchorNodeId ? { anchorNodeId: reparent.anchorNodeId, position: reparent.position } : {}),
-      },
-    ],
-    'Move refused',
-    reparent.rollback ? { rollback: reparent.rollback } : {},
-  )
+export async function commitStudioMove(edit: StructuralEditPayload, rollback?: StructuralCommitRollback): Promise<void> {
+  await commitStructural([edit], 'Move refused', { fill: true, ...(rollback ? { rollback } : {}) })
 }
 
 /**
@@ -468,6 +434,12 @@ export async function commitStudioInsert(insert: {
   parentNodeId: string
   anchorNodeId: string | null
   position: 'before' | 'after'
+  /**
+   * The container had no children (`SourceInsertCommit.parentIsEmpty`): the
+   * write may expand a self-closing `<X />`, so its ⌘Z is the undo journal's
+   * `restore` — the file as it was, byte for byte — instead of a `delete`.
+   */
+  parentIsEmpty?: boolean
   name: string
   /**
    * Omit for an INTRINSIC element (`<div>`, `<p>`) — those need no import, and
@@ -510,6 +482,7 @@ export async function commitStudioInsert(insert: {
         nodeId: insert.parentNodeId,
         ...(insert.anchorNodeId ? { anchorNodeId: insert.anchorNodeId, position: insert.position } : {}),
         name: insert.name,
+        ...(insert.parentIsEmpty ? { exactUndo: true } : {}),
         // Spread conditionally, never passed as `undefined`: the codemod
         // branches on `importSpecifier === undefined` to choose intrinsic vs
         // component, and the wire schema has it optional for the same reason.
@@ -523,7 +496,7 @@ export async function commitStudioInsert(insert: {
     ],
     'Add refused',
     {
-      undo: { label: insert.undoLabel ?? `Add ${insert.name}`, template: { kind: 'delete-created' } },
+      undo: { label: insert.undoLabel ?? `Add ${insert.name}`, template: insert.parentIsEmpty ? { kind: 'restore-journal' } : { kind: 'delete-created' } },
       ...(insert.optimistic ? { optimistic: insert.optimistic } : {}),
     },
   )

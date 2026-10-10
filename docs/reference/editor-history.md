@@ -363,11 +363,12 @@ Where the protocol can say it, the inverse is an ordinary edit:
 
 | gesture | inverse |
 |---|---|
-| insert / duplicate / paste / image drop | `delete` what it created |
+| insert / duplicate / paste / image drop | `delete` what it created. An insert into a parent with NO children is the exception: it writes `exactUndo`, and its ⌘Z is the undo-journal `restore` — the write may have expanded a self-closing `<X />` to `<X>…</X>`, which a `delete` leaves as `<X>\n</X>` (and which then makes a linked OD-7 detach restore refuse `restore-stale`) |
 | wrap / group | `ungroup` the container it created |
 | ungroup | `group` the children it released, into the same container |
 | transplant (move) | `restore` the undo-journal entry the write recorded. A cross-frame move cuts markup from one file, prunes the import only that markup used, and carries imports into the other, so every `line:col` below the cut moves in BOTH files — including the container the element left, which an inverse `transplant` would have had to name from an id recorded at drag time. That id was stale the moment the import line went (the undo then refused as a changed file). The pre-image has no ids, and puts both files back byte for byte |
 | transplant (copy) | `delete` the copy it created |
+| free-canvas lift / place (move) | `restore` the undo-journal entry — the page and the layer module, byte for byte. A lift prunes the import only the element used, so a parent id recorded at drag time (the old `canvas-layer-lift-back`) was a line off by ⌘Z; a place removes the module, which the pre-image recreates. A COPY is taken back by deleting the layer or element it made |
 | delete / detach / expose-prop / swap / extract, a `.map` row's delete (OD-8) | `restore` the undo-journal entry the write recorded (P3-F) |
 | vector drag / nudge (P5-D) | `svg-attr` on the same part carrying the previous literals, `remove` for the attributes that were absent — a `known` template, fixed at gesture time (`svgPartCommits.ts`) |
 | pen path (P5-D) | `delete` the `<svg>` it created (an `insert`); on the empty board, the free canvas's own layer delete |
@@ -494,8 +495,7 @@ the file. Now:
   `openPageInCanvas` — the way Figma takes you to the page an undo changes —
   before calling `moveNodes`, which routes through `mutateActiveTree`.
 - `reissueStructuralSourceEdits` checks every id against `_nodeIdToPageIds`,
-  i.e. the whole board, and reads a `canvas-layer-lift-back` parent's children
-  off the page that owns it. Nothing is activated: the write does not need a tree.
+  i.e. the whole board. Nothing is activated: the write does not need a tree.
 
 ### A step that can never happen is skipped (ERR-2 stop-gap, ERR-28)
 

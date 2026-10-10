@@ -63,6 +63,7 @@ interface SaveAnswer {
   refusals?: { nodeId: string; kind: string; reason: string; message: string }[]
   createdNodeIds?: string[]
   removed?: { nodeId: string; text: string; wholeLine: boolean }[]
+  undoToken?: string
   /** What the re-read after this write reports. */
   layers?: { layerId: string; pageId: string; page: Page }[]
   pages?: Page[]
@@ -122,6 +123,7 @@ describe('free-canvas gestures', () => {
             createdNodeIds: lastAnswer.createdNodeIds ?? [],
             relocatedNodeIds: [],
             removed: lastAnswer.removed ?? [],
+            ...(lastAnswer.undoToken ? { undoToken: lastAnswer.undoToken } : {}),
           }),
           { status: 200 },
         )
@@ -255,6 +257,7 @@ describe('free-canvas gestures', () => {
       {
         createdNodeIds: [placed],
         removed: [{ nodeId: '.studio/canvas/cl0123456789.tsx:6:6', text: 'MODULE BYTES', wholeLine: false }],
+        undoToken: '0123456789abcdef0123456789abcdef',
         layers: [],
         pages: [pageAfter],
       },
@@ -275,9 +278,10 @@ describe('free-canvas gestures', () => {
 
     useEditorStore.getState().undo()
     await waitFor(() => saveCalls.length === 2)
+    // A MOVE into a frame is the undo journal's restore: the page and the
+    // module back byte for byte, with no id recorded at drag time.
     expect(lastEdits()).toEqual([
-      { kind: 'delete', nodeId: placed },
-      { kind: 'canvas-layer-restore', nodeId: 'canvas-layer:cl0123456789', layerId: 'cl0123456789', text: 'MODULE BYTES' },
+      { kind: 'restore', nodeId: 'undo-journal:0123456789abcdef0123456789abcdef', token: '0123456789abcdef0123456789abcdef' },
     ])
     expect(findLayerPlacement(useEditorStore.getState().boards, 'cl0123456789')?.placement).toEqual({ id: 'cl0123456789', x: 10, y: 20 })
   })

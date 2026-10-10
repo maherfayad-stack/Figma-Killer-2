@@ -13,21 +13,14 @@
  * element moved, and the next reparse snaps the canvas back to it. The undo
  * has to be the INVERSE WRITE.
  *
- * `tagStructuralGesture` records what that inverse write is at gesture time
- * (the only moment the pre-move position is still known), and
- * `reissueStructuralMove` performs it through the same `moveNodes` action a
- * drag uses — so an undo rides every refusal gate, resolves its own anchor
- * against the tree as it is NOW, and writes to source exactly once.
- *
- * A DELETE is tagged here too, but its undo does not re-issue through a
- * store action: it is folded into the `source` gesture family
- * (`tagStructuralGesture(set, {gesture:'source', …})`, in
- * `deleteNodesAction.ts`/`nodeActions.ts`), and its ⌘Z is the undo journal's
- * `restore` (P3-F) once the delete's own commit reports the token.
+ * `tagStructuralGesture` tags the entry the eager tree mutation already pushed
+ * as a `source` gesture (the optimistic preview stays; its patches are never
+ * replayed). A DELETE and a MOVE (single or sequence) are tagged this way, and
+ * their ⌘Z is the undo journal's `restore` (P3-F) once the commit reports the
+ * token: every file back byte for byte, including the blank line and the
+ * indentation a move changes. Re-issuing `moveNodes` by position could not.
  */
-import type { NodeTree, PageNode, SequencedMove } from '@core/page-tree'
-import { resolveActiveTreeTarget } from './helpers'
-import type { SiteSliceHelpers, StructuralHistory, StructuralHistoryMove } from './types'
+import type { SiteSliceHelpers, StructuralHistory } from './types'
 
 /**
  * Mark the transaction just committed by `mutateActiveTree` as structural.
@@ -70,25 +63,6 @@ export function tagStructuralGesture(
 }
 
 /**
- * Where `nodeId` sits right now, in the terms `moveNodes` takes.
- *
- * The index is read off the parent's own child list rather than a stored
- * counter, and `moveNode` detaches before it splices — so feeding this pair
- * straight back in restores the exact slot, same-parent reorder or reparent
- * alike.
- */
-export function captureMoveOrigin(
-  tree: NodeTree<PageNode>,
-  nodeId: string,
-): StructuralHistoryMove | null {
-  const parentId = tree.nodes[nodeId]?.parentId
-  if (parentId === undefined || parentId === null) return null
-  const index = tree.nodes[parentId]?.children.indexOf(nodeId) ?? -1
-  if (index < 0) return null
-  return { nodeId, parentId, index }
-}
-
-/**
  * What one structural undo/redo step came to (`undoRedoActions.ts`'s
  * `runStructuralStep` reads it):
  *  - `posted` — a write is on its way; `pendingCommitId` is the id its
@@ -101,77 +75,3 @@ export function captureMoveOrigin(
 export type StructuralStepOutcome =
   | { kind: 'posted'; pendingCommitId: number | null }
   | { kind: 'skipped'; notice: string | null }
-
-/**
- * Re-issue one direction of a structural move, through the same `moveNodes`
- * a drag uses — so it rides every refusal gate, resolves its anchor against the
- * tree as it is NOW, and writes to source exactly once.
- *
- * ERR-3 — the move is re-issued on the page that OWNS the element, not the
- * active one. Pressing on a frame activates its page, so "drag in frame A,
- * click frame B, ⌘Z" is the normal flow, and it used to answer "Nothing to
- * undo here" while leaving the entry on top of the stack. The owner is found
- * through `_nodeIdToPageIds` (O(1) per id; many-valued for shared layout
- * chrome, so the first page that also holds the destination parent wins) and
- * activated silently, the way Figma takes you to the page an undo changes —
- * `moveNodes` routes through `mutateActiveTree`, which is the one place that
- * decides which tree is active.
- */
-export function reissueStructuralMove(
-  get: SiteSliceHelpers['get'],
-  step: StructuralHistoryMove,
-): StructuralStepOutcome {
-  const state = get()
-  const owner = owningPageOfMove(state, step)
-  if (owner === null) {
-    return { kind: 'skipped', notice: 'The element it moved is no longer on the board.' }
-  }
-  if (owner !== ACTIVE_TREE) state.openPageInCanvas(owner)
-  const before = get()._historyPast.at(-1)
-  get().moveNodes([step.nodeId], step.parentId, step.index)
-  const top = get()._historyPast.at(-1)
-  // A performed move always commits one transaction; a refused one commits
-  // none — and has already said why, in its own toast or dialog.
-  if (!top || top === before) return { kind: 'skipped', notice: null }
-  return { kind: 'posted', pendingCommitId: top.pendingCommit?.id ?? null }
-}
-
-/**
- * P2-C2 / P3-D — re-issue one direction of a move sequence through
- * `moveNodesInSequence`, the action that made it: one write, one entry, every
- * refusal gate. Same owning-page rule as {@link reissueStructuralMove}; every
- * move of a sequence is on one page (a gesture acts within the active tree),
- * so the first move decides it.
- */
-export function reissueStructuralMoves(
-  get: SiteSliceHelpers['get'],
-  moves: readonly SequencedMove[],
-): StructuralStepOutcome {
-  const [first] = moves
-  const owner = first ? owningPageOfMove(get(), first) : null
-  if (owner === null || !first) {
-    return { kind: 'skipped', notice: 'The elements it moved are no longer on the board.' }
-  }
-  if (owner !== ACTIVE_TREE) get().openPageInCanvas(owner)
-  const before = get()._historyPast.at(-1)
-  get().moveNodesInSequence([...moves])
-  const top = get()._historyPast.at(-1)
-  if (!top || top === before) return { kind: 'skipped', notice: null }
-  return { kind: 'posted', pendingCommitId: top.pendingCommit?.id ?? null }
-}
-
-const ACTIVE_TREE = Symbol('active-tree')
-
-/** The page `step` can be re-issued on: the active tree when it holds both ends, else the first owning page that does. */
-function owningPageOfMove(
-  state: ReturnType<SiteSliceHelpers['get']>,
-  step: StructuralHistoryMove,
-): string | typeof ACTIVE_TREE | null {
-  const active = resolveActiveTreeTarget(state)
-  if (active?.tree.nodes[step.nodeId] && active.tree.nodes[step.parentId]) return ACTIVE_TREE
-  for (const pageId of state._nodeIdToPageIds.get(step.nodeId) ?? []) {
-    const page = state.site?.pages.find((candidate) => candidate.id === pageId)
-    if (page?.nodes[step.parentId]) return pageId
-  }
-  return null
-}

@@ -7,8 +7,7 @@
  * `moveNodes` mutates the ACTIVE tree and then writes the file that tree came
  * from. A cross-frame drop has two trees and two files, and none of
  * `moveNodes`'s machinery survives that: `mutateActiveTree` can only reach one
- * of them, the undo/redo origin it captures (`captureMoveOrigin`) describes a
- * position in the tree the node is leaving, and the id the element gets in its
+ * of them, and the id the element gets in its
  * new file does not exist until the codemod has written it. A flag on
  * `moveNodes` would be a second function wearing the first one's name.
  *

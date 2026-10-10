@@ -107,20 +107,3 @@ export function planMoveSequence(
   })
   return moves
 }
-
-/**
- * The moves that take `moves` back: each element returned to where it was
- * just before its own step, in REVERSE order — so each inverse step runs
- * against exactly the tree its forward step started from.
- */
-export function invertMoveSequence(tree: NodeTree<PageNode>, moves: readonly SequencedMove[]): SequencedMove[] {
-  const scratch = createScratchTree(tree)
-  const origins: SequencedMove[] = []
-  for (const move of moves) {
-    const parentId = scratch.nodes[move.nodeId]?.parentId
-    const index = parentId ? (scratch.nodes[parentId]?.children.indexOf(move.nodeId) ?? -1) : -1
-    if (parentId && index >= 0) origins.push({ nodeId: move.nodeId, parentId, index })
-    moveOnScratch(scratch, move)
-  }
-  return origins.reverse()
-}

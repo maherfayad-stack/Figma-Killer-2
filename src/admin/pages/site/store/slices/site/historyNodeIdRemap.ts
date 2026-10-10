@@ -42,7 +42,7 @@
  */
 import type { Patches } from 'mutative'
 import type { NodeTree, PageNode, SiteDocument } from '@core/page-tree'
-import { remapInverseTemplate, remapStructuralEditIds } from '@site/studio/structuralUndoPlan'
+import { remapStructuralEditIds } from '@site/studio/structuralUndoPlan'
 import type { HistoryEntry, StructuralHistory } from './types'
 
 /**
@@ -130,33 +130,16 @@ function remapStructural(
   structural: StructuralHistory,
   remap: ReadonlyMap<string, string>,
 ): StructuralHistory {
-  // `store-14` — a SOURCE gesture's entry holds no patches at all; what it
+  // `store-14` — a structural entry holds no patches that matter; what it
   // names are the edits it would post on ⌘Z / ⌘⇧Z. Those address exactly the
   // `rel:line:col` ids a later write in the same file renumbers, so they need
-  // the same re-addressing the move steps get. Without it, undoing a duplicate
-  // after some other structural write landed above it would delete whichever
-  // element inherited that line.
-  if (structural.gesture === 'source') {
-    const { source } = structural
-    const forward = remapStructuralEditIds(source.forward, remap)
-    const inverse = source.inverse === null ? null : remapStructuralEditIds(source.inverse, remap)
-    const inverseTemplate = remapInverseTemplate(source.inverseTemplate, remap)
-    if (forward === source.forward && inverse === source.inverse && inverseTemplate === source.inverseTemplate) {
-      return structural
-    }
-    return { gesture: 'source', source: { ...source, forward, inverse, inverseTemplate } }
-  }
-  const step = <T extends { nodeId: string; parentId: string }>(s: T): T => ({
-    ...s,
-    nodeId: remap.get(s.nodeId) ?? s.nodeId,
-    parentId: remap.get(s.parentId) ?? s.parentId,
-  })
-  // P2-C2 / P3-D — a move sequence names one element and one parent per
-  // step, the same two ids a single move does.
-  if (structural.gesture === 'moves') {
-    return { ...structural, undo: structural.undo.map(step), redo: structural.redo.map(step) }
-  }
-  return { ...structural, undo: step(structural.undo), redo: step(structural.redo) }
+  // re-addressing. Without it, undoing a duplicate after some other structural
+  // write landed above it would delete whichever element inherited that line.
+  const { source } = structural
+  const forward = remapStructuralEditIds(source.forward, remap)
+  const inverse = source.inverse === null ? null : remapStructuralEditIds(source.inverse, remap)
+  if (forward === source.forward && inverse === source.inverse) return structural
+  return { gesture: 'source', source: { ...source, forward, inverse } }
 }
 
 /**

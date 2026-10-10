@@ -29,10 +29,10 @@
  *
  * | gesture | inverse |
  * |---|---|
- * | insert / duplicate / paste / image drop | `delete` what it created |
+ * | insert / duplicate / paste / image drop | `delete` what it created (an insert into a childless parent: the journal's `restore`, so a self-closing `<X />` comes back byte for byte) |
  * | wrap / group | `ungroup` the container it created |
  * | ungroup | `group` the children it released, back into the same container |
- * | transplant (move) | the undo journal's `restore` — both files, byte for byte |
+ * | transplant (move), a free-canvas lift or place (move) | the undo journal's `restore` — every file the write touched, byte for byte |
  * | transplant (copy) | `delete` the copy it created |
  * | a `.map` row's reorder / copy (OD-8) | the inverse `list-item` edit, known at gesture time |
  * | delete / detach / swap / extract, a `.map` row's delete | `restore` the undo-journal entry the write recorded |
@@ -125,14 +125,6 @@ export type StructuralInverseTemplate =
   | { kind: 'canvas-layer-delete'; layerId: string }
   /** A layer delete: write each module back, byte for byte, from the `removed` bytes the delete reported. */
   | { kind: 'canvas-layer-restore-removed'; layerIds: string[] }
-  /** A layer placed into a frame (a move): delete what it wrote into the page and write the module back. */
-  | { kind: 'canvas-layer-unplace'; layerId: string }
-  /**
-   * An element lifted out of a frame (a move): place the new layer's root back
-   * into the container it left, anchored against the live tree
-   * at undo time ({@link anchorLiftBack}).
-   */
-  | { kind: 'canvas-layer-lift-back'; layerId: string; parentNodeId: string; index: number }
 
 /** One `canvas-layer-delete`'s module bytes — `StructuralWriteOutcome.removed`'s own shape, keyed by the edit's `nodeId`. */
 export interface StructuralRemovedText {
@@ -217,20 +209,6 @@ export function resolveStructuralInverse(
         layerId,
         text: texts[i]!,
       }))
-    }
-    case 'canvas-layer-unplace': {
-      const [created] = outcome.createdNodeIds
-      const [removed] = outcome.removed
-      if (created === undefined || removed === undefined) return null
-      return [
-        { kind: 'delete', nodeId: created },
-        { kind: 'canvas-layer-restore', nodeId: canvasLayerEditNodeId(template.layerId), layerId: template.layerId, text: removed.text },
-      ]
-    }
-    case 'canvas-layer-lift-back': {
-      const [root] = outcome.createdNodeIds
-      if (root === undefined) return null
-      return [{ kind: 'canvas-layer-place', nodeId: root, layerId: template.layerId, parentNodeId: template.parentNodeId }]
     }
   }
 }
@@ -324,43 +302,6 @@ export function remapStructuralEditIds(
     }
     return next
   })
-}
-
-/** The same, for the templates that name node ids of their own. */
-export function remapInverseTemplate(
-  template: StructuralInverseTemplate,
-  remap: ReadonlyMap<string, string>,
-): StructuralInverseTemplate {
-  if (template.kind === 'canvas-layer-lift-back') {
-    return { ...template, parentNodeId: remap.get(template.parentNodeId) ?? template.parentNodeId }
-  }
-  return template
-}
-
-/**
- * Point a resolved `canvas-layer-lift-back` at the sibling it should land before,
- * using the destination parent's CURRENT child list.
- *
- * Called at re-issue time, where the tree is the one the last resync left
- * behind: `children[index]` is whatever now occupies the slot the element was
- * taken out of, so writing before it restores the original order. An index
- * past the end means it was the last child, and appending — the edit as
- * `resolveStructuralInverse` left it — is exactly right.
- *
- * A no-op for every other template, so the caller can pipe every inverse
- * through it.
- */
-export function anchorLiftBack(
-  edits: readonly StructuralEditPayload[],
-  template: StructuralInverseTemplate,
-  parentChildIds: readonly string[],
-): StructuralEditPayload[] {
-  if (template.kind !== 'canvas-layer-lift-back') return [...edits]
-  const anchorNodeId = parentChildIds[template.index]
-  if (anchorNodeId === undefined) return [...edits]
-  return edits.map((edit) =>
-    edit.kind === 'canvas-layer-place' ? { ...edit, anchorNodeId, position: 'before' } : edit,
-  )
 }
 
 /** The sentence an `unsupported` inverse carries, or `null` for every template that has a real inverse. */

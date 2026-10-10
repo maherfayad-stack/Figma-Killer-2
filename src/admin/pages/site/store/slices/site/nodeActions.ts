@@ -41,7 +41,7 @@ import { subtreeHasOutlet, treeHasOutlet } from '@core/templates'
 import { wouldCreateCycle, syncSlotInstances, applySlotSyncResult } from '@core/visualComponents'
 import { pushToast } from '@ui/components/Toast'
 import { openSourceFile } from '../../openSourceFile'
-import { commitStudioDelete, commitStudioMove, commitStudioReparent, commitStudioTransplant } from '@site/studio/studioStructuralCommits'
+import { commitStudioDelete, commitStudioMove, commitStudioTransplant } from '@site/studio/studioStructuralCommits'
 import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
 import { broadcastOptimisticDelete, broadcastOptimisticMove } from '@site/canvas/frameAdapter/optimisticStructuralBroadcast'
 import { resolveActiveTreeTarget } from './helpers'
@@ -52,12 +52,12 @@ import { createImageDropActions } from './imageDropActions'
 import { createSubtreeInsertActions } from './subtreeInsertActions'
 import { createInlineStyleActions } from './inlineStyleActions'
 import { createVisibilityActions } from './visibilityActions'
-import { createMoveSequenceActions } from './moveSequenceActions'
+import { createMoveSequenceActions, moveEditOf } from './moveSequenceActions'
 import { duplicateNodeWithScopedClasses } from './duplicateWithScopedClasses'
 import { resolvePreviewTargets } from './structuralOptimism'
 import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, planSourceMove, presentStructuralRefusal } from './structuralSourceEdits'
 import { writeListRowPlan } from './listRowSourceWrites'
-import { captureMoveOrigin, tagStructuralGesture } from './structuralHistory'
+import { tagStructuralGesture } from './structuralHistory'
 import { trackStructuralTreeCommit } from './structuralCommitRollback'
 import { createStudioSourceWrites } from './studioSourceWrites'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
@@ -487,13 +487,9 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
         writeCrossFileMove(plan.commit.nodeId, plan.commit.destinationParentNodeId, plan.commit.anchorNodeId, plan.commit.position)
         return
       }
-      // `store-08` — where the node is NOW, captured before the mutation, is
-      // the only description of the inverse move that exists. `moveNodes`
-      // (core) writes exactly one element to source (`previewStructuralMove`
-      // resolves the commit off `nodeIds[0]`), so that is the one whose origin
-      // undo has to be able to re-issue.
+      // `moveNodes` (core) writes exactly one element to source
+      // (`previewStructuralMove` resolves the commit off `nodeIds[0]`).
       const primaryId = nodeIds[0]!
-      const origin = tree ? captureMoveOrigin(tree, primaryId) : null
       const topBefore = get()._historyPast.at(-1)
       const moved = mutateActiveTree((draft) => {
         moveNodes(draft, nodeIds, newParentId, newIndex)
@@ -513,26 +509,16 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
           : undefined
       // Tagged only when a SOURCE write is actually issued: a CMS or Visual
       // Component tree has no file to disagree with, so patch-replay undo
-      // stays correct there and must not be routed through a re-issue.
-      if (commit && origin) {
+      // stays correct there. The undo is the journal's `restore` (like a
+      // delete): byte-exact, where moving the element back by position left
+      // a blank line shifted and a block re-indented.
+      const edit = commit ? moveEditOf(commit) : null
+      if (edit) {
         tagStructuralGesture(set, {
-          gesture: 'move',
-          undo: origin,
-          redo: { nodeId: primaryId, parentId: newParentId, index: newIndex },
+          gesture: 'source',
+          source: { label: 'Move', forward: [edit], inverseTemplate: { kind: 'restore-journal' }, inverse: null },
         })
-      }
-      if (commit?.destinationParentNodeId) {
-        // W4-1 — the move crossed parents, so the write names the container as
-        // well as the neighbour (which may be absent: appending is a position).
-        void commitStudioReparent({
-          nodeId: commit.nodeId,
-          parentNodeId: commit.destinationParentNodeId,
-          anchorNodeId: commit.anchorNodeId,
-          position: commit.position,
-          rollback,
-        })
-      } else if (commit?.anchorNodeId) {
-        void commitStudioMove({ nodeId: commit.nodeId, anchorNodeId: commit.anchorNodeId, position: commit.position }, rollback)
+        void commitStudioMove(edit, rollback)
       }
     },
 

@@ -275,7 +275,6 @@ export {
 // P3-D — every multi-element move as single-element moves applied in order.
 export {
   createScratchTree,
-  invertMoveSequence,
   moveOnScratch,
   planMoveSequence,
   topLevelSelection,

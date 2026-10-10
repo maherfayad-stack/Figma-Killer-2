@@ -138,6 +138,13 @@ const InsertEditSchema = Type.Object({
    * every one of them, in order.
    */
   siblings: Type.Optional(Type.Array(InsertNodeSchema, { minItems: 1 })),
+  /**
+   * The editor's ⌘Z for this insert is the undo journal's `restore`, not a
+   * `delete` of what it made: the parent had no children, so the write may have
+   * expanded a self-closing `<X />`, and only the pre-image puts that back byte
+   * for byte. Honoured on the editor's journaled `/save` only (`studioBatchUndoJournal.ts`).
+   */
+  exactUndo: Type.Optional(Type.Literal(true)),
 })
 
 /**
