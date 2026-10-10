@@ -252,6 +252,15 @@
     z-index: 51;
 }
 
+/* Out of the way for the length of any element drag: the popover sits below the
+   selection, exactly over the neighbours the drag is heading for, and a stale
+   one left standing over them hid the drop line and intercepted the release.
+   `useCanvasReorderDrag` tags `<html>` for the whole gesture. */
+:global(html[data-studio-canvas-dragging]) .inspectorAnchor {
+    visibility: hidden;
+    pointer-events: none;
+}
+
 .inspectorAnchor[data-canvas-inspector-mode="scoped"] {
     position: absolute;
 }

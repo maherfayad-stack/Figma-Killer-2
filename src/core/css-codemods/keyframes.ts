@@ -61,14 +61,7 @@ import postcss, { type AtRule, type Root, type Rule } from 'postcss'
 import { applyDeclaration } from './setDeclaration'
 import { preservingLineEndings, type CssRewrite } from './preserveLineEndings'
 import type { InsertRuleResult } from './insertRule'
-
-/** One step of an `@keyframes` block, as authored. */
-export interface KeyframeStep {
-  /** The offset exactly as written — `from`, `to`, `0%`, or a list like `0%, 100%`. */
-  keyText: string
-  /** kebab-cased property → value, in source order. */
-  declarations: Record<string, string>
-}
+import { KEYFRAMES_AT_RULE_RE, keyframesBlockText, type KeyframeStep } from './keyframesText'
 
 /** A named, user-readable reason a keyframes write refused — same shape as `DeclarationTargetRefusal`. */
 export interface KeyframesTargetRefusal {
@@ -77,29 +70,6 @@ export interface KeyframesTargetRefusal {
 }
 
 export type KeyframesTargetAnalysis = { ok: true } | { ok: false; refusal: KeyframesTargetRefusal }
-
-/** `@keyframes`, `@-webkit-keyframes`, `@-moz-keyframes`, … — see this module's "Matching". */
-const KEYFRAMES_AT_RULE_RE = /^(?:-[a-z]+-)?keyframes$/i
-
-/** The same at-rule name family, written as a whole prelude: `@keyframes fade-in`. */
-const KEYFRAMES_PRELUDE_RE = /^@(?:-[a-z]+-)?keyframes\s+(.+)$/i
-
-/**
- * The animation name in a `@keyframes fade-in` prelude, or `null` when the
- * text is not one.
- *
- * Studio stores a keyframes block as a `StyleRule` whose `selector` IS that
- * prelude (`siteImport/keyframesToStyleRule.ts`), so this is how both the
- * inspector and the save path get from a rule to the `name` every function
- * above matches on. It lives here, with the matcher it has to agree with,
- * rather than beside either caller — the two would otherwise each own a copy
- * of the vendor-prefix spelling, and a copy that drifts is a copy that writes
- * to the wrong block.
- */
-export function keyframesNameFromSelector(selector: string): string | null {
-  const match = KEYFRAMES_PRELUDE_RE.exec(selector.trim())
-  return match ? match[1]!.trim() : null
-}
 
 function isKeyframesAtRule(node: Root['nodes'][number], name: string): node is AtRule {
   return (
@@ -168,46 +138,6 @@ export function analyzeKeyframesTarget(cssText: string, name: string): Keyframes
   }
 }
 
-/**
- * The steps of `@keyframes <name>` in `cssText`, in source order, or `null`
- * when the file declares no such block.
- *
- * The read side of this module, and the reason it exists at all: a
- * `@keyframes` block reaches the editor as one opaque `StyleRule.rawCss`
- * string (`siteImport/keyframesToStyleRule.ts`), so the inspector has no way
- * to show a step, let alone edit one, without parsing it back. Declarations
- * keep their authored kebab-case names — this is a view of CSS text, not of a
- * `CSSPropertyBag`, and the caller converts if it needs the editor's camelCase
- * convention.
- *
- * A step whose block holds only comments contributes an empty `declarations`
- * rather than being dropped: it is a step the user wrote, and the editor must
- * be able to see it to add the first declaration to it.
- */
-export function readKeyframeSteps(cssText: string, name: string): KeyframeStep[] | null {
-  let root: Root
-  try {
-    root = postcss.parse(cssText)
-  } catch (_err) {
-    // Unparseable text is "no block here", not a crash — the caller is often
-    // rendering a panel for CSS that arrived from an arbitrary repository.
-    return null
-  }
-  const atRule = findKeyframesAtRules(root, name)[0]
-  if (!atRule) return null
-
-  const steps: KeyframeStep[] = []
-  atRule.each((node) => {
-    if (node.type !== 'rule') return
-    const declarations: Record<string, string> = {}
-    node.each((child) => {
-      if (child.type === 'decl') declarations[child.prop.trim()] = child.value.trim()
-    })
-    steps.push({ keyText: node.selector.trim(), declarations })
-  })
-  return steps
-}
-
 /** Build a fresh step node via a literal-fragment parse — `setDeclaration`'s `buildRule` technique, indented one level inside the at-rule. */
 function buildStep(keyText: string, declarations: Readonly<Record<string, string>>): Rule {
   const body = Object.entries(declarations)
@@ -221,22 +151,9 @@ function buildStep(keyText: string, declarations: Readonly<Record<string, string
   return rule
 }
 
-/** The literal CSS text of a whole `@keyframes` block — the one reliable way to get correct nested indentation (see `appendRule`'s note in `setDeclaration.ts`). */
-function keyframesFragment(name: string, steps: readonly KeyframeStep[]): string {
-  const body = steps
-    .map((step) => {
-      const decls = Object.entries(step.declarations)
-        .map(([property, value]) => `    ${property}: ${value};`)
-        .join('\n')
-      return `  ${step.keyText} {\n${decls}\n  }`
-    })
-    .join('\n')
-  return `@keyframes ${name} {\n${body}\n}`
-}
-
 /** Append a parsed `@keyframes` fragment to `root`, separated from whatever precedes it. */
 function appendKeyframes(root: Root, name: string, steps: readonly KeyframeStep[]): void {
-  const fragment = postcss.parse(keyframesFragment(name, steps))
+  const fragment = postcss.parse(keyframesBlockText(name, steps))
   const atRule = fragment.first
   if (!atRule || atRule.type !== 'atrule') {
     throw new Error('[css-codemods] unreachable: parsed fragment did not yield an at-rule node')

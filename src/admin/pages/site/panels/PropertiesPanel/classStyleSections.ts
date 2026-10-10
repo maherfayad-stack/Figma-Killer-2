@@ -304,7 +304,18 @@ export function getClassStyleSectionSetCounts(
 /**
  * Returns the active breakpoint tab id for class style reads/writes.
  * 'base' when desktop (or no breakpoint); otherwise the breakpoint id.
+ *
+ * Only a breakpoint that is in the site's registry is an editing context. A
+ * canvas click on a board frame activates that frame's SYNTHETIC `'studio'`
+ * breakpoint (see `BoardFramesLayer`), which is a viewport, not a registered
+ * context: the CSS emitter drops any `contextStyles` key that is neither a
+ * registry breakpoint nor a condition, so an edit filed under it would be
+ * written to disk and never painted. Such an id is the base layer.
  */
-export function getActiveStyleTab(activeBreakpointId: string | undefined): string {
-  return activeBreakpointId && activeBreakpointId !== 'desktop' ? activeBreakpointId : 'base'
+export function getActiveStyleTab(
+  activeBreakpointId: string | undefined,
+  breakpoints: ReadonlyArray<{ readonly id: string }> | undefined,
+): string {
+  if (!activeBreakpointId || activeBreakpointId === 'desktop') return 'base'
+  return breakpoints?.some((bp) => bp.id === activeBreakpointId) ? activeBreakpointId : 'base'
 }

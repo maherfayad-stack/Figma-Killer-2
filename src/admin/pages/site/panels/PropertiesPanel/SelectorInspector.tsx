@@ -17,6 +17,7 @@ import { StyleRuleComposer } from './StyleRuleComposer'
 import { StyleCategoryRail } from './StyleCategoryRail'
 import { GeneratedUtilityLockedState } from './StyleSurface'
 import { useScrollSpy } from './useScrollSpy'
+import { useEditorStore } from '@site/store/store'
 import { CLASS_STYLE_SECTIONS, getClassStyleSectionSetCounts, getActiveStyleTab } from './classStyleSections'
 import styles from './PropertiesPanel.module.css'
 
@@ -35,6 +36,7 @@ interface SelectorInspectorProps {
 
 export function SelectorInspector({ cls, activeBreakpointId }: SelectorInspectorProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
+  const siteBreakpoints = useEditorStore((s) => s.site?.breakpoints)
   const [styleQuery, setStyleQuery] = useState('')
   const clearStyleQuery = () => setStyleQuery('')
   const selectorLabel = styleRuleDisplaySelector(cls)
@@ -52,7 +54,7 @@ export function SelectorInspector({ cls, activeBreakpointId }: SelectorInspector
     )
   }
 
-  const activeTab = getActiveStyleTab(activeBreakpointId)
+  const activeTab = getActiveStyleTab(activeBreakpointId, siteBreakpoints)
   const storedStyles = activeTab !== 'base' ? (cls.contextStyles[activeTab] ?? {}) : cls.styles
   const sectionSetCounts = getClassStyleSectionSetCounts(storedStyles)
 

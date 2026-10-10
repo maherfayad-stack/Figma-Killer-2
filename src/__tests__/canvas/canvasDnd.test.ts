@@ -312,4 +312,57 @@ describe('canvasDnd', () => {
     expect(afterLeaf?.index).toBe(2)
     expect(afterLeaf?.position).toBe('after')
   })
+
+  describe('a press in a container empty space lands where the pointer is, not at the end', () => {
+    const tree = page({
+      root: node('root', 'base.body', ['main']),
+      main: node('main', 'base.container', ['a', 'b', 'c']),
+      a: node('a', 'base.text'),
+      b: node('b', 'base.text'),
+      c: node('c', 'base.text'),
+    })
+    const stack = [
+      candidate('main', 1, { left: 0, top: 0, width: 200, height: 600 }),
+      candidate('a', 2, { left: 0, top: 0, width: 200, height: 50 }),
+      candidate('b', 2, { left: 0, top: 200, width: 200, height: 50 }),
+      candidate('c', 2, { left: 0, top: 400, width: 200, height: 50 }),
+    ]
+
+    it('vertical flow: between the children inserts before the next child', () => {
+      const target = resolveCanvasInsertionTarget({ tree, candidates: stack, point: { x: 100, y: 120 }, canHaveChildren })
+      expect(target).toMatchObject({ parentId: 'main', index: 1, position: 'inside' })
+    })
+
+    it('below the last child still appends', () => {
+      const target = resolveCanvasInsertionTarget({ tree, candidates: stack, point: { x: 100, y: 550 }, canHaveChildren })
+      expect(target).toMatchObject({ parentId: 'main', index: 3 })
+    })
+
+    it('above the first child lands first', () => {
+      const target = resolveCanvasInsertionTarget({
+        tree,
+        candidates: [candidate('main', 1, { left: 0, top: 0, width: 200, height: 600 }), ...stack.slice(1).map((c) => ({ ...c, rect: { ...c.rect, top: c.rect.top + 100, bottom: c.rect.bottom + 100 } }))],
+        point: { x: 100, y: 40 },
+        canHaveChildren,
+      })
+      expect(target).toMatchObject({ parentId: 'main', index: 0 })
+    })
+
+    it('horizontal flow compares x inside the pointer row, and reversed flow flips it', () => {
+      const row = [
+        candidate('main', 1, { left: 0, top: 0, width: 600, height: 100 }),
+        candidate('a', 2, { left: 0, top: 0, width: 100, height: 50 }, 'horizontal'),
+        candidate('b', 2, { left: 200, top: 0, width: 100, height: 50 }, 'horizontal'),
+        candidate('c', 2, { left: 400, top: 0, width: 100, height: 50 }, 'horizontal'),
+      ]
+      expect(resolveCanvasInsertionTarget({ tree, candidates: row, point: { x: 320, y: 30 }, canHaveChildren })).toMatchObject({ index: 2 })
+      const reversed = row.map((c, i) => (i === 0 ? c : { ...c, reversed: true }))
+      expect(resolveCanvasInsertionTarget({ tree, candidates: reversed, point: { x: 320, y: 30 }, canHaveChildren })).toMatchObject({ index: 0 })
+    })
+
+    it('with no child measured it keeps the append', () => {
+      const target = resolveCanvasInsertionTarget({ tree, candidates: [stack[0]!], point: { x: 100, y: 120 }, canHaveChildren })
+      expect(target).toMatchObject({ parentId: 'main', index: 3 })
+    })
+  })
 })

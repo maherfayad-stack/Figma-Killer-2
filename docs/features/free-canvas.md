@@ -189,6 +189,7 @@ byte-exact (`transplantJsxElement.canvas.test.ts`,
 | Drag a loose layer on the board | Moves it; snaps to frames, notes, docs and other layers (`computeSnap`); zero React commits per move; one board undo entry | board undo |
 | Drag a loose layer over a frame and release | Placed into the frame at the drop line (`canvas-layer-place`); ⌥ copies | one ⌘Z: element deleted from the page, module and placement back |
 | Drag an element out of a frame and release over the empty board | Lifted (`canvas-layer-lift`), keeping the grab offset; ⌥ copies | one ⌘Z: placed back into its old slot, module and placement gone |
+| Armed R / O / T, release on the empty board | `placeDrawOnBoard.ts`: the tool's element (same JSX as in a frame, `drawInsertStyles`) becomes a loose layer at the drawn rect in board units; a click gives a box 100 x 100; the pen does the same with its `<svg>` | one ⌘Z |
 | Delete / Backspace | `canvas-layer-delete` for the selection, one write | one ⌘Z: exact bytes and placements back |
 | Arrow keys | Nudge the selection (board undo, one entry per key-hold) | board undo |
 | ⌘C, then ⌘V with an element in a frame selected | Copies the layer's root; the paste writes it into that page as `canvas-layer-place` with `copy` (the ⌥-drag's write — a module's root has no siblings, so the frame transplant cannot read it) | one ⌘Z per layer: the copy deleted |
@@ -236,7 +237,7 @@ back (its rollback).
 | FC-3/FC-7 | Editing a loose layer's content in the inspector beyond a root `<svg>`'s Vector paint (a loose layer is selected as a whole; its nodes are not selectable, and any other root says "edit it inside a frame"); Layers-panel "Canvas" section; Measures X/Y on a placement; context menu; ⌘X and ⌘V ONTO the board |
 | FC-4 | Registering layers as drop targets for an ELEMENT drag (drop into a loose layer's children) |
 | FC-5 | Marquee selection of loose layers; resize handles; z-order keys; lock/hide UI (the placement fields exist and are honoured) |
-| FC-6 | Assets-panel drag, paste and armed-tool drawing onto the empty board (P5-A / P5-D / P5-E call `createCanvasLayer`); a multi-file drop as ONE undo step (today one per layer) |
+| FC-6 | A text drawn on the board does not open for editing (a loose layer's nodes are not selectable yet); a multi-file drop as ONE undo step (today one per layer) |
 | FC-8 | `studio_list_canvas_layers` / `studio_canvas_layer` MCP tools; a digest section |
 | FC-9 | Group / ungroup loose layers |
 | FC-10 | The 50-layer perf budgets |

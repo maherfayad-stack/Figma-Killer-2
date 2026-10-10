@@ -10,7 +10,7 @@
 import { Node, SyntaxKind, type BindingElement, type JsxAttribute } from 'ts-morph'
 import type { FunctionLike } from '@core/page-parser'
 import type { JsxOpeningLikeElement } from './locateJsxElement'
-import type { Literal } from './detachConstantFold'
+import { literalField, type Literal } from './detachConstantFold'
 
 export type DetachRefusalReason =
   | 'not-a-component'
@@ -290,6 +290,31 @@ export function jsxStringValue(raw: string, attrText: string | undefined, free: 
     ...(HTML_ENTITY_RE.test(raw) ? {} : { literal: { v: raw } }),
     intrinsicTag: INTRINSIC_TAG_RE.test(raw) ? raw : undefined,
   }
+}
+
+/** The `Value` a source expression is, spelled as `text` once rewritten, reading `free` from its surroundings. */
+export function nodeValue(node: Node, text: string, free: ReadonlySet<string>): Value {
+  const literal = Node.isStringLiteral(node) || Node.isNoSubstitutionTemplateLiteral(node) ? node.getLiteralValue() : undefined
+  return {
+    expr: () => text,
+    primary: isPrimary(node),
+    free,
+    numeric: Node.isNumericLiteral(node),
+    jsString: literal,
+    ...literalField(node),
+    jsx: isJsxNode(node),
+    tagChain: (Node.isIdentifier(node) || Node.isPropertyAccessExpression(node)) && TAG_CHAIN_RE.test(text) ? text : undefined,
+    intrinsicTag: literal !== undefined && INTRINSIC_TAG_RE.test(literal) ? literal : undefined,
+  }
+}
+
+/** How attribute `name` is written with `value`, or `undefined` to drop it (an absent prop renders no attribute). */
+export function attributeText(name: string, value: Value): string | undefined {
+  if (value.isUndefined) return undefined
+  if (value.isTrue) return name
+  if (value.jsxString?.attrText) return `${name}=${value.jsxString.attrText}`
+  if (value.jsString !== undefined && isJsxAttributeSafe(value.jsString)) return `${name}="${value.jsString}"`
+  return `${name}={${value.expr()}}`
 }
 
 /** Whether `site` needs parentheses around a non-primary value — only where the grammar would otherwise re-associate it. */

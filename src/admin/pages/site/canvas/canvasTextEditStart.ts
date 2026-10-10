@@ -63,13 +63,18 @@ export function findTextEditRendering(nodeId: string, frameId: string | null): T
 /**
  * Start a text edit on `nodeId`. `false` — and no session — when it is not a
  * text layer, no portal frame renders it, or `startInlineEdit` refuses (a
- * text set in code says so out loud).
+ * text set in code says so out loud). `selectAll` opens with the whole text
+ * selected (the text tool's placeholder).
  */
-export function startCanvasTextEdit(nodeId: string, preferredFrameId?: string | null): boolean {
+export function startCanvasTextEdit(
+  nodeId: string,
+  preferredFrameId?: string | null,
+  options?: { selectAll?: boolean },
+): boolean {
   const state = useEditorStore.getState()
   const node = selectActiveCanvasPage(state)?.nodes[nodeId]
   if (!node || !registry.get(node.moduleId)?.inlineTextEdit) return false
   const rendering = findTextEditRendering(nodeId, preferredFrameId ?? state.selectedNodeFrameId)
   if (!rendering) return false
-  return state.startInlineEdit(nodeId, rendering.breakpointId, rendering.frameId)
+  return state.startInlineEdit(nodeId, rendering.breakpointId, rendering.frameId, options)
 }

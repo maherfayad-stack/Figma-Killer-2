@@ -71,11 +71,9 @@ function renderToolbarBrand(props: { siteName: string | null; faviconUrl?: strin
 
 beforeEach(() => {
   localStorage.clear()
-  useAdminUi.setState({ activeLivePath: null })
 })
 
 afterEach(() => {
-  useAdminUi.setState({ activeLivePath: null })
   cleanup()
 })
 

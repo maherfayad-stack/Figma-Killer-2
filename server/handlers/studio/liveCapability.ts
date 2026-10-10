@@ -32,16 +32,21 @@
  * the cached profile can lag (a project probed before the shell existed says
  * `unknown` for good). The script text is what runs; judge that.
  *
- * Deliberately NOT a check for a lockfile or `node_modules` either: a dev
- * server with nothing installed simply fails to boot, `devServer.ts` records
- * `'failed'` with the log, and the board stays on its static fallback — the
- * honest outcome, and the Dependencies panel is the fix.
+ * ## The second condition: Vite is installed
+ *
+ * A vite script with no `node_modules/vite` cannot boot: the dev server dies
+ * with "Vite is not installed" and the board stays on Studio's static render.
+ * Reporting that as `capable: true` made the pill say "Live" over a render
+ * that was not live. It is reported as `not-installed` instead, so the pill
+ * names the real state and offers the Dependencies panel as the one-click fix.
+ * Deliberately NOT a lockfile check: a lockfile says the project WAS installed,
+ * not that `node_modules` is there now.
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { resolveAppRoot } from './appRoot'
 
-export type LiveBlockedReason = 'not-vite'
+export type LiveBlockedReason = 'not-vite' | 'not-installed'
 
 export interface LiveCapability {
   /** The real app can be run and framed: its dev script is a `vite` invocation. */
@@ -88,7 +93,11 @@ export function resolveDevScript(appRoot: string): DevScript | null {
 const VITE_INVOCATION = /^\s*(?:(?:npx|bunx|pnpm|yarn)\s+(?:exec\s+)?)?vite(?:\s+[\w./:=-]+)*\s*$/
 
 export function resolveLiveCapability(dir: string): LiveCapability {
-  const script = resolveDevScript(resolveAppRoot(dir))
+  const appRoot = resolveAppRoot(dir)
+  const script = resolveDevScript(appRoot)
   if (!script || !VITE_INVOCATION.test(script.command)) return { capable: false, reason: 'not-vite' }
+  // The app root, or the project root for a hoisted workspace install.
+  const viteInstalled = [appRoot, dir].some((root) => existsSync(join(root, 'node_modules', 'vite', 'package.json')))
+  if (!viteInstalled) return { capable: false, reason: 'not-installed' }
   return { capable: true }
 }

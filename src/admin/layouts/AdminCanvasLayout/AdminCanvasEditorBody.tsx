@@ -8,7 +8,6 @@ import {
 import { lazy, Suspense, useEffect } from 'react'
 import { CanvasRoot } from '@admin/pages/site/canvas'
 import { CodeEditorPanel, CodeEditorSkeleton } from '@admin/pages/site/code-editor'
-import { useActiveLivePath } from '@admin/pages/site/hooks/useActiveLivePath'
 import { installEditorWindowDiagnostics } from '@admin/pages/site/canvas/editorWindowDiagnostics'
 import { useAutoResolveDependencies } from '@admin/pages/site/hooks/useAutoResolveDependencies'
 import { useRegisterProjectModules } from '@admin/pages/site/studio/canvasModuleSet'
@@ -87,11 +86,6 @@ export function AdminCanvasEditorBody({
   // from the project's own navigation code. Same editor-only reasoning as the
   // comments loader above; see the hook's own doc.
   useStudioPrototypeLoad()
-  // Own the toolbar's "Open live page" target. Resolves templates to the
-  // page / post they're previewed against (templates have no routable slug of
-  // their own); lives here, in the lazy body, so the CMS fetch it needs for
-  // postTypes templates stays out of the admin-shell bundle.
-  useActiveLivePath()
   // ERR-26 — the editor window's own `error` / `unhandledrejection` sink: logs
   // and records into the diagnostics buffer the canvas frames already feed,
   // never a toast. In the lazy body, like every hook above, so the route shell

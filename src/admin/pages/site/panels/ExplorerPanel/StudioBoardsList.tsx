@@ -200,6 +200,8 @@ function BoardRow({ board, isActive, canDelete, onActivate, onRename, onDelete }
       onClick={onActivate}
       onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); rename.start(board.name) }}
       onKeyDown={(e) => {
+        // Only the row's own keys: a key bubbling from the rename input is the input's.
+        if (e.target !== e.currentTarget) return
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onActivate() }
       }}
       onContextMenu={(e) => {

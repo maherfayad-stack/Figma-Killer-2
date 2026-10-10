@@ -17,9 +17,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { cleanup, renderHook } from '@testing-library/react'
 import type { PageNode, StyleRule } from '@core/page-tree'
 import { useEditorStore } from '@site/store/store'
+import { flushPendingGestures } from '@site/store/pendingGestures'
 import { useEditorKeyDispatcher } from '@site/canvas/useEditorKeyDispatcher'
 import { useCanvasNodeShortcuts } from '@site/canvas/useCanvasNodeShortcuts'
-import { useCanvasNodeArrowKeys } from '@site/canvas/useCanvasNodeArrowKeys'
+import { NUDGE_SETTLE_MS, useCanvasNodeArrowKeys } from '@site/canvas/useCanvasNodeArrowKeys'
 import { dispatchEditorKeyUp } from '@site/canvas/editorKeyDispatcher'
 import {
   authoredOffsets,
@@ -39,6 +40,7 @@ import {
 } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
 import type { FrameDocumentAdapter, NodeMeasurement } from '@site/canvas/frameAdapter/FrameDocumentAdapter'
 import { EDITOR_SAVE_REQUEST_EVENT } from '@admin/state/adminEvents'
+import { subscribeToasts } from '@ui/components/Toast/toastBus'
 import { makeNode, makePage, makeSite } from '../fixtures'
 
 // ---------------------------------------------------------------------------
@@ -337,8 +339,15 @@ function press(target: EventTarget, init: KeyboardEventInit): boolean {
   return event.defaultPrevented
 }
 
-function release(target: EventTarget, key: string) {
+/** A keyup alone: the burst is released but still waiting out its settle window. */
+function releaseOnly(target: EventTarget, key: string) {
   target.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true, key }))
+}
+
+/** A keyup, then the burst settling — the write a nudge makes once the user stops. */
+function release(target: EventTarget, key: string) {
+  releaseOnly(target, key)
+  flushPendingGestures()
 }
 
 /** Lets the layout read (a promise, even in a portal frame) land. */
@@ -423,7 +432,7 @@ describe('an absolute layer nudges (IX-1)', () => {
     select('abs')
     press(document, { key: 'ArrowRight', shiftKey: true })
     await settle()
-    release(document, 'Shift')
+    releaseOnly(document, 'Shift')
     press(document, { key: 'ArrowRight', repeat: true })
     expect(historyLength()).toBe(0)
     release(document, 'ArrowRight')
@@ -447,6 +456,7 @@ describe('an absolute layer nudges (IX-1)', () => {
     await settle()
     press(document, { key: 'ArrowDown', repeat: true })
     dispatchEditorKeyUp(null)
+    flushPendingGestures()
     expect(node('abs').inlineStyles?.top).toBe('42px')
     expect(historyLength()).toBe(1)
   })
@@ -455,11 +465,63 @@ describe('an absolute layer nudges (IX-1)', () => {
     mount()
     select('abs')
     press(document, { key: 'ArrowLeft' })
-    release(document, 'ArrowLeft')
+    releaseOnly(document, 'ArrowLeft')
     await settle()
+    flushPendingGestures()
     expect(node('abs').inlineStyles?.left).toBe('99px')
     expect(historyLength()).toBe(1)
     expect(useEditorStore.getState().previewNodeStyles).toBeNull()
+  })
+})
+
+describe('a burst of taps is one gesture (edit-speed)', () => {
+  it('15 taps: previewed each time, ONE history entry, ONE save, written when the burst settles', async () => {
+    mount()
+    select('abs')
+    for (let i = 0; i < 15; i++) {
+      press(document, { key: 'ArrowRight', shiftKey: true })
+      if (i === 0) await settle()
+      releaseOnly(document, 'ArrowRight')
+    }
+    // Painted, not written: the canvas shows 150px of travel, the document and the disk do not.
+    expect(useEditorStore.getState().previewNodeStyles?.stylesByNode).toEqual({ abs: { left: '250px' } })
+    expect(node('abs').inlineStyles?.left).toBe('100px')
+    expect(historyLength()).toBe(0)
+    expect(saveRequests).toBe(0)
+
+    await new Promise((resolve) => setTimeout(resolve, NUDGE_SETTLE_MS + 100))
+    expect(node('abs').inlineStyles?.left).toBe('250px')
+    expect(useEditorStore.getState().previewNodeStyles).toBeNull()
+    expect(historyLength()).toBe(1)
+    expect(saveRequests).toBe(1)
+  })
+
+  it('an undo pressed inside the settle window commits the burst first, then undoes it', async () => {
+    mount()
+    select('abs')
+    press(document, { key: 'ArrowRight' })
+    await settle()
+    releaseOnly(document, 'ArrowRight')
+    press(document, { key: 'ArrowRight' })
+    releaseOnly(document, 'ArrowRight')
+    expect(historyLength()).toBe(0)
+
+    useEditorStore.getState().undo()
+    expect(node('abs').inlineStyles?.left).toBe('100px')
+    expect(historyLength()).toBe(0)
+    expect(useEditorStore.getState().canRedo).toBe(true)
+  })
+
+  it('another edit inside the window lands after the nudge, never under it', async () => {
+    mount()
+    select('abs')
+    press(document, { key: 'ArrowRight' })
+    await settle()
+    releaseOnly(document, 'ArrowRight')
+    useEditorStore.getState().setNodeInlineStyles('abs', { top: '7px' })
+    expect(node('abs').inlineStyles?.left).toBe('101px')
+    expect(node('abs').inlineStyles?.top).toBe('7px')
+    expect(historyLength()).toBe(2)
   })
 })
 
@@ -488,6 +550,21 @@ describe('a layout child reorders (IX-1)', () => {
     await settle()
     release(document, 'ArrowDown')
     expect(childOrder('row')).toEqual(['b', 'a', 'c'])
+  })
+
+  it('a cross-axis arrow is never silent: it says the parent places the layer and how to move it', async () => {
+    const seen: { title: string; body?: string }[] = []
+    const unsubscribe = subscribeToasts((list) => {
+      seen.splice(0, seen.length, ...list)
+    })
+    mount()
+    select('b')
+    press(document, { key: 'ArrowDown' })
+    await settle()
+    release(document, 'ArrowDown')
+    unsubscribe()
+    expect(seen.map((toast) => toast.title)).toContain("This layer can't be nudged")
+    expect(seen.map((toast) => toast.body).join(' ')).toContain('position: absolute')
   })
 
 })

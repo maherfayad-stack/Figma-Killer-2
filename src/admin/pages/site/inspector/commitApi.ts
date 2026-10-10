@@ -179,6 +179,7 @@ function bareClassName(selector: string): string {
 
 export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
   const activeBreakpointId = useEditorStore((s) => s.activeBreakpointId)
+  const siteBreakpoints = useEditorStore((s) => s.site?.breakpoints)
   const activeConditionId = useEditorStore((s) => {
     const id = s.activeConditionId
     if (id === null) return null
@@ -214,7 +215,7 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
       : []
 
   const onCondition = activeConditionId !== null
-  const activeTab = getActiveStyleTab(activeBreakpointId)
+  const activeTab = getActiveStyleTab(activeBreakpointId, siteBreakpoints)
   // `speed-01` — the breakpoint id to scope an optimistic style broadcast to.
   // Non-null only when the active context IS a breakpoint one: `activeTab`
   // reflects the panel's selected breakpoint tab regardless of whether a
@@ -360,8 +361,8 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
     if (!selectedNodeId || isMultiSelect) return
     const def = moduleId ? registry.get(moduleId) : null
     const isOverridable = def?.schema[key]?.breakpointOverridable === true
-    if (activeBreakpointId && activeBreakpointId !== 'desktop' && isOverridable) {
-      setBreakpointOverride(selectedNodeId, activeBreakpointId, { [key]: value })
+    if (activeTab !== 'base' && isOverridable) {
+      setBreakpointOverride(selectedNodeId, activeTab, { [key]: value })
     } else {
       updateNodeProps(selectedNodeId, { [key]: value })
     }

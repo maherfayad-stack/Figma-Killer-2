@@ -54,6 +54,7 @@ import type { Draft } from 'mutative'
 import type { BoardsFile } from '@core/studio-board'
 import type { EditorStore, EditorStoreSliceCreator } from '@site/store/types'
 import { commitHistoryEntry } from './site/historyStack'
+import { flushPendingGestures } from '../pendingGestures'
 import type { BoardHistorySnapshot, HistoryEntry } from './site/types'
 
 type BoardSet = Parameters<EditorStoreSliceCreator<EditorStore>>[0]
@@ -127,6 +128,7 @@ export function commitBoardChange(
   nextBoards: BoardsFile,
   extras: BoardCommitExtras = {},
 ): void {
+  flushPendingGestures()
   const current = get()
   const before: BoardHistorySnapshot = {
     boards: current.boards,

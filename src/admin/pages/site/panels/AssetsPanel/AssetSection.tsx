@@ -14,7 +14,8 @@ import styles from './AssetsPanel.module.css'
 
 interface AssetSectionProps {
   title: string
-  count: number
+  /** How many cards the section holds, or `null` while that is not known yet (a lazily-fetched section) — never a misleading 0. */
+  count: number | null
   collapsed: boolean
   onToggle: () => void
   /** Rendered between the header and the grid — e.g. the package-bundle notice. */
@@ -46,7 +47,7 @@ export function AssetSection({
           </span>
           {title}
         </span>
-        <span className={styles.sectionCount}>{count}</span>
+        {count !== null && <span className={styles.sectionCount}>{count}</span>}
       </Button>
       {notice}
       {!collapsed && <div className={styles.sectionBody}>{children}</div>}

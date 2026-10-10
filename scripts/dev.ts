@@ -282,6 +282,8 @@ const processes: DevProcess[] = [
     logPath: './.tmp/dev-cms.log',
     env: {
       PORT: String(CMS_PORT),
+      // Headless capture (share, thumbnails) loads the admin app from Vite.
+      VITE_PORT: String(VITE_PORT),
       DATABASE_URL,
       STATIC_DIR: process.env.STATIC_DIR ?? './dist',
       UPLOADS_DIR: process.env.UPLOADS_DIR ?? './uploads',

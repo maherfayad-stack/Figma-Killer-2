@@ -54,10 +54,10 @@ import {
 } from '@core/studio-board'
 
 const DEFAULT_NOTE_COLOR: NoteColor = 'yellow'
-const DEFAULT_NOTE_WIDTH = 180
-const DEFAULT_NOTE_HEIGHT = 120
-const DEFAULT_DOC_WIDTH = 320
-const DEFAULT_DOC_HEIGHT = 200
+export const DEFAULT_NOTE_WIDTH = 180
+export const DEFAULT_NOTE_HEIGHT = 120
+export const DEFAULT_DOC_WIDTH = 320
+export const DEFAULT_DOC_HEIGHT = 200
 
 // --- sticky notes ---------------------------------------------------------
 

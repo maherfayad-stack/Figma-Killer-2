@@ -72,25 +72,6 @@ interface AdminUiState {
   setSiteSummary: (summary: { name: string | null; faviconUrl: string | null }) => void
 
   /**
-   * Full public path of the document currently being edited. `null` on every
-   * non-editor admin route (Plugins / Users / Account / Dashboard / …) and
-   * whenever no specific document is in focus (e.g. VC edit mode, an empty
-   * Content workspace).
-   *
-   * Powers the toolbar's "Open live page" icon button — clicking opens this
-   * path in a new tab. Stored as the full path (including leading slash and
-   * any route-base prefix) so the same field can serve both a Site-editor
-   * page (`/about`) and a Content-workspace entry (`/blog/getting-started`)
-   * without the button needing to know which workspace published it.
-   *
-   * Written by the active workspace on every render; cleared on unmount.
-   * Non-editor layouts never write it, so the field naturally stays `null`
-   * there without either layout knowing about the other.
-   */
-  activeLivePath: string | null
-  setActiveLivePath: (path: string | null) => void
-
-  /**
    * The active Studio project's directory + DISPLAY name (from
    * `.studio/meta.json`, distinct from `siteName` — the "Studio" product
    * wordmark never changes per-project). `null` outside studio mode and
@@ -161,9 +142,6 @@ export const useAdminUi = create<AdminUiState>((set) => ({
   siteFaviconUrl: null,
   setSiteSummary: ({ name, faviconUrl }) =>
     set({ siteName: name, siteFaviconUrl: faviconUrl }),
-
-  activeLivePath: null,
-  setActiveLivePath: (path) => set({ activeLivePath: path }),
 
   studioProject: null,
   setStudioProject: (project) => set({ studioProject: project }),

@@ -125,7 +125,7 @@ function runPlacementGesture(
   })
 }
 
-/** The slot `nodeId` occupies in `page` — `transplantActions.ts`'s `originSlot`, for a lift's undo. */
+/** The slot `nodeId` occupies in `page`, for a lift's undo (`canvas-layer-lift-back`). */
 function originSlot(page: Page, nodeId: string): { parentNodeId: string; index: number } {
   const parentNodeId = page.nodes[nodeId]?.parentId ?? page.rootNodeId
   const index = page.nodes[parentNodeId]?.children.indexOf(nodeId) ?? -1

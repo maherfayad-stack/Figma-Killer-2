@@ -38,6 +38,7 @@ export {
   bagToCSS,
   bagToInlineStyle,
   bagToReactStyle,
+  buildSidesShorthand,
   createStyleRuleCssEmitter,
   generateClassCSS,
   isEmittableProperty,

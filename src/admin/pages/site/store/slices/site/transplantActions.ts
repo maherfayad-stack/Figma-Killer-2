@@ -35,6 +35,7 @@
  * backstop so a caller that gets the routing wrong gets a sentence rather than
  * a cross-file codemod pointed at one file.
  */
+import { openSourceFile } from '../../openSourceFile'
 import { commitStudioTransplant } from '@site/studio/studioStructuralCommits'
 import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
 import { STRUCTURAL_REFUSAL_TITLE, planSourceTransplant, presentStructuralRefusal } from './structuralSourceEdits'
@@ -125,6 +126,7 @@ export function createTransplantActions(helpers: SiteSliceHelpers): TransplantAc
         anchorNodeId: commit.anchorNodeId,
         position: commit.position,
         copy: commit.copy,
+        openSource: (origin) => openSourceFile(get(), origin),
       })
     },
   }

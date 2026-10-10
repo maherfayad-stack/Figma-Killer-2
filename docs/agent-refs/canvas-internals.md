@@ -693,6 +693,18 @@ can render the same page (a "duplicate as variant" sibling, WS-10 Phase 2), and
 a drop between those two is an ordinary same-file reparent that must keep going
 through `moveNodes`.
 
+**The cross-frame question is asked BEFORE the free-move one** (`runCanvasDragFrame`,
+`commitCanvasDrag`). An absolutely positioned element released over another
+screen is a transplant (it keeps its own offsets, relative to its new containing
+block); K6's free move only applies while the pointer is in the origin frame.
+Releasing on a position the store would refuse presents the same refusal the drag
+painted (`dropRefusal`), never silence.
+
+**The Layers panel shares the resolver.** A drop on a row of another page's tree
+(`PageLayerSubtree`, wired by `LayerDragBridge`) resolves through
+`resolveTransplantDropOver` (`canvasDnd.ts`) and commits `transplantNodes`, the
+same action the canvas drag commits.
+
 **Released over no frame at all** (the empty board of a Studio board), the drag
 is a LIFT (P5-G): the element leaves its page and becomes a loose layer on the
 free canvas, keeping the grab offset (`BoardCanvasLayer/canvasLayerLift.ts`,
@@ -1055,6 +1067,13 @@ The rules the ladder replaced prose with:
   a LAYER" above); a Space-pan that STARTS in a portal frame marks its press as
   a drag (`useCanvasBodyDragTrigger` → `markCanvasPressDragged`), so its
   release click deselects nothing.
+- **Inline text edit keys:** Enter commits the edit, ⇧Enter is the hard line
+  break of a multiline module (`enterCommitsInlineEdit`, matching the live
+  frame's `inlineTextEdit.ts`); a plain Enter that fell through to the browser
+  stored `\n\n`. The text tool's new text opens with its placeholder selected
+  (`startInlineEdit(…, { selectAll: true })`). The placeholder is the module's
+  literal default; moving a literal into the project's `t()` dictionary is
+  `POST /i18n-setup`'s job (re-runnable), not the draw gesture's.
 - **Enter (P5-E, IX-7):** on ONE text layer it opens the inline edit, the
   double-click path (`canvasTextEditStart.ts` — portal frames only, because a
   live frame's text edit is started by its runtime and a session opened from
@@ -1084,7 +1103,8 @@ The rules the ladder replaced prose with:
   offsets 1 px / ⇧ 10 px; a flow child of a `flex` / `grid` parent (inline
   or not — `isAutoLayout`) reorders along its parent's axis
   (`reorderStep`: reversed for `*-reverse` and an RTL row; a cross-axis arrow
-  does nothing; in a GRID ↑ / ↓ move a whole row — the resolved
+  moves nothing and SAYS so with an info toast — a press is never silent, nor
+  is one whose layer could not be measured; in a GRID ↑ / ↓ move a whole row — the resolved
   `grid-template-columns` count — and ← / → one cell, P2-C2). **Any other
   flow layer (block / inline / flow-root parent) nudges too (canvas-48)**,
   through `position: relative` (`planFlowNudge`): already `relative` → its
@@ -1131,14 +1151,23 @@ The rules the ladder replaced prose with:
   row, ⇧ extends the range, nothing is written) and →/← expand and collapse.
   A rename field keeps its caret (P2-B's input guard, and its target is not a
   row).
-- **A held arrow is one undo entry and one source write.** A nudge previews
-  every repeat through the inspector's scrub channel (`setPreviewNodeStyles`
-  + the optimistic style broadcast for live frames), then writes ONE
-  inline-style transaction on the arrow's keyup (the dispatcher's release
-  broadcast — P2-B routes frame keyups there) and flushes the autosave. A
-  focus loss (`handleKeyUp(null)`) commits where the preview was. A reorder is
-  one step per PRESS: the repeats are claimed and dropped, because a
-  structural write per repeat would queue thirty a second.
+- **A held arrow - or a burst of taps - is one undo entry and one source write.**
+  A nudge previews every keydown through the inspector's scrub channel
+  (`setPreviewNodeStyles` + the optimistic style broadcast for live frames).
+  Releasing the key does NOT write: it arms a `NUDGE_SETTLE_MS` (400 ms, the
+  Vector section's `BURST_SETTLE_MS`) timer, and the next tap inside the window
+  resumes the same session (no new layout read, no store write). When the burst
+  settles the session writes ONE inline-style transaction and flushes the
+  autosave. Measured by the 2026-10-10 audit before this: 15 Shift+Arrow taps =
+  15 `/studio/save` POSTs, 7 long tasks (379 ms). Because the document is
+  behind the canvas for up to 400 ms, **anything else that records history
+  commits the pending burst first**: `store/pendingGestures.ts`
+  (`registerPendingGesture` / `flushPendingGestures`) is called by
+  `runHistoricMutation`, `mutateTreesForNodeIds`, `commitBoardChange`, `undo`
+  and `redo`. A new painted-but-uncommitted gesture registers there; it must
+  not invent a second flush path. A focus loss (`handleKeyUp(null)`) releases
+  the same way. A reorder is one step per PRESS: the repeats are claimed and
+  dropped, because a structural write per repeat would queue thirty a second.
 - **A nudge writes the offsets the source authored**, not always `left`/`top`
   (`authoredOffsets`: inline over class base styles, `inset` read side by side, so `inset: 124px 0 auto 0` never gains a `bottom`). A
   computed inset on a positioned element is its used px value, so the DOM
@@ -1265,12 +1294,18 @@ has points). The whole session is ONE write: an `insert` of
 (`planSourceInsert` + `commitStudioInsert` with element children), or a loose
 free-canvas layer (`createCanvasLayer`) when it started on the empty board.
 
-**The empty board is P5-G's.** A press outside every frame is offered to
-`registerBoardDrawHandler`'s handler (`canvasDrawTool.ts`) with the drawn
-rectangle in BOARD units; with none registered it is ignored and the ghost
-says "draw inside a frame". The one exception is **B, the board tool** (P5-F,
+**A press in a container's own empty space lands where the pointer is.**
+`resolveCanvasInsertionTarget` (draw tools, pen, Assets drag) inserts BEFORE
+the first child that follows the point in reading order (`nearestFlowIndex`:
+y for a vertical flow, row then x for a horizontal one, flipped for reversed),
+and only appends past the last; the transplant/move resolvers are unchanged.
+
+**The empty board is the free canvas's.** A press outside every frame creates a
+loose layer at the drawn rectangle (BOARD units; `placeDrawOnBoard.ts` →
+`createCanvasLayer`, spelled by `moduleSourceElement` + `drawInsertStyles` so it
+is the same JSX a frame draw writes). The one exception is **B, the board tool** (P5-F,
 IX-13): inside a frame it is the F tool, and on the empty board it never
-reaches that handler — it opens the add-page picker at the release point
+makes a loose layer — it opens the add-page picker at the release point
 (`BoardDrawPagePicker`, through the store's `boardDrawRequest`), and the pick
 lands at the drawn rect (`boardDrawTool.ts`: a click is a point at the default
 size, a drag its size floored at `MIN_FRAME_SIZE`, a width within 8 units of
@@ -1570,8 +1605,12 @@ a component in a live frame selected the element inside it.
 - **Padding and gap handles (P5-E, IX-17).** `CanvasSpacingHandles` renders
   INSIDE the resize-handle frame (before the handles, so an edge strip wins
   at the edge), so the bands ride the ring's one measurement. Shown for a
-  single flex / grid container; gap bands between consecutive children
-  (`columnGap` side by side, `rowGap` stacked). The one layout read
+  single flex / grid container; gap handles between consecutive children
+  (`columnGap` side by side, `rowGap` stacked). A handle is a SHORT PILL
+  (`HANDLE_LENGTH` 32 x `MIN_BAND_THICKNESS` 6 frame px) centred in its padding
+  side / gap, never the whole region: the region is where a press means "move
+  this container", and a handle that filled it wrote `row-gap: 31px` when a
+  stack was dragged by its middle. The one layout read
   (`spacingHandleMeasure.ts`) runs in a rAF on mount, on a store change to
   the node and on a `ResizeObserver` tick; during a drag the bands follow the
   preview arithmetically. Positions are `--band-*` custom properties read by
@@ -1588,10 +1627,17 @@ a component in a live frame selected the element inside it.
   `useSelectionModel` + `useInspectorCommit` only while one waits, runs it in
   a layout effect (so a canvas preview cleared inside it and the committed
   value paint together), then unmounts. One write-target rule, zero idle cost.
-- **In-frame marquee (P5-E, IX-16, OD-6).** A press on the page ROOT itself
-  (no child under the pointer) that travels 4 px sweeps a rectangle painted
-  in the overlay root; it selects the touched layers at the shallowest hit
+- **In-frame marquee (P5-E, IX-16, OD-6).** A press on the frame's
+  BACKGROUND (`isFrameBackgroundHit`: the synthetic `<body>` OR the screen
+  element — the root's only child, which in a real project is nearly every
+  empty pixel) that travels 4 px sweeps a rectangle painted
+  in the overlay root; it selects the touched layers BELOW the screen element
+  (`frameContentRootId`) at the shallowest hit
   depth (⌥ the deepest, ⇧ adds), live, and swallows the release's click.
+  `planCanvasPressDrag` is null for the same hits, so the body drag and the
+  marquee never both claim the press. A press outside an open inline text edit
+  ends that edit first (`isPressInsideInlineEditor`), in the drag trigger and
+  the marquee alike.
   `useInFrameMarquee` (a capture listener on the frame document beside the
   body drag trigger), rules in `inFrameMarquee.ts`. ⌘-drag stays free move.
 - **Alt-hover measurement (K5).** `MeasureLayer.tsx` + `canvasMeasureGeometry.ts`.
@@ -1681,6 +1727,10 @@ a component in a live frame selected the element inside it.
 | O(pages × nodes) scan in a store selector, runs on **every** store change | `PropertiesPanelBody.tsx` (`sharedTextOriginCount`), `InPlaceInspector.tsx` (`findNodeById`) | precomputed indexes in the site slice |
 | Overlay coordinate conversion across zoom | `canvasSelectionOverlayPositioning.ts` | render rings inside the iframe |
 | A permanent rAF loop per mounted frame while anything is selected | `BreakpointSelectionOverlay.tsx` | **fixed (S4)** — `overlayMeasureScheduler.ts`, below |
+| The right sidebar opened on selection with a 180 ms `width` transition: the canvas root resized every frame, re-rendering `BoardFramesLayer` and repainting both rulers each time | `RightSidebar.module.css` | **fixed (edit-speed)** - no transition; the panel just is there |
+| `ClassPicker` subscribed to the whole `s.site`, so every nudge/keystroke re-ran its selector model (`Element.matches()` per ambient rule) | `ClassPicker.tsx`, `useClassPickerDerivedState.ts` | **fixed (edit-speed)** - subscribes to `site.styleRules` only |
+| `LiveBoardFrame` mounted its bridge `<iframe>` (no `src`) beside the fallback for every frame of a Tier-2 board whose dev server was not ready: 2 documents per frame | `LiveBoardFrame.tsx` | **fixed (edit-speed)** - the bridge mounts once the dev server is ready |
+| React's dev double-mount sent `/load`, `boards` and `frame-defaults` twice (the first aborted, but the server still parsed) | `usePersistence.ts`, `AdminCanvasLayout.tsx` | **fixed (edit-speed)** - a superseded run never reaches the network |
 | Frames mount all iframes once the doc is in the store | `CanvasTransformLayer.tsx` | virtualize iframe mounting; frozen poster for offscreen frames |
 | Every on-screen frame's node-tree mount was its own `startTransition`, but React groups all pending transition lanes into ONE commit — ten frames committed together, 1.3–1.9 s after their shells | `IframeFrameSurface.tsx` | **fixed (perf-17)** — `frameTreeMountQueue.ts`, below |
 | React re-render per pointermove during pan | `useCanvas.ts` | write `transform` to a ref, commit on pointerup |

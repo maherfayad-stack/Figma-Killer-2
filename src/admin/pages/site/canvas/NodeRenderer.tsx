@@ -30,7 +30,7 @@
 
 import { memo, use, useLayoutEffect, useRef, useSyncExternalStore } from 'react'
 import type { InlineEditBinding } from '@core/module-engine'
-import { readInlineEditableText, seedInlineEditableContent } from '@modules/base/shared/inlineText'
+import { enterCommitsInlineEdit, readInlineEditableText, seedInlineEditableContent } from '@modules/base/shared/inlineText'
 import { useEditorStore, selectCanvasPageFor } from '@site/store/store'
 import { isInlineEditSessionFor } from '@site/store/slices/inlineEditSlice'
 import { resolveProps } from '@core/page-tree'
@@ -276,7 +276,9 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
     if (!sel) return
     const range = doc.createRange()
     range.selectNodeContents(el)
-    range.collapse(false)
+    // A freshly drawn text opens with its placeholder selected, so the first
+    // keystroke replaces it; every other session drops the caret at the end.
+    if (useEditorStore.getState().activeInlineEdit?.selectAll !== true) range.collapse(false)
     sel.removeAllRanges()
     sel.addRange(range)
   }, [isInlineEditing])
@@ -556,10 +558,11 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
             return
           }
           if (e.key === 'Enter') {
-            // Cmd/Ctrl+Enter always commits. Plain Enter commits for
-            // single-line modules; for multiline it falls through so the
-            // browser inserts the hard break the author wants.
-            if (e.metaKey || e.ctrlKey || !state.activeInlineEdit?.multiline) {
+            // Enter commits (Figma, and the live-frame editor in
+            // `studio-runtime/inlineTextEdit.ts`). Shift+Enter is the hard
+            // break in a multiline module; a plain Enter that fell through to
+            // the browser wrote a doubled newline into the source.
+            if (enterCommitsInlineEdit(e, state.activeInlineEdit?.multiline === true)) {
               e.preventDefault()
               state.endInlineEdit()
             }

@@ -153,6 +153,7 @@ for (let attempt = 1; attempt <= VITE_BOOT_ATTEMPTS; attempt += 1) {
 const sharedEnv = {
   ...process.env,
   PORT: E2E_CMS_PORT,
+  VITE_PORT: E2E_VITE_PORT,
   DATABASE_URL: `sqlite:${DATABASE_PATH}`,
   UPLOADS_DIR,
   STUDIO_WORKSPACE_DIR: E2E_WORKSPACE_DIR,

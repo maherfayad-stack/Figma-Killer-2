@@ -9,6 +9,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { zipSync, strToU8 } from 'fflate'
 import { listWorkspaceFiles, WORKSPACE_MAX_FILE_BYTES, WORKSPACE_MAX_FILES } from '@core/page-parser'
+import { projectDisplayName, safeProjectFolderName } from './studioProjects'
 import { ensureDesignSystemFiles } from './studio/designSystemFiles'
 import { ensurePrototypeShell } from './studio/prototypeShell'
 import { jsonResponse } from '../http'
@@ -101,6 +102,12 @@ function synthesizedPackageJson(): Uint8Array {
   )
 }
 
+/** `<project-slug>.zip` — the download is named after the project, not a generic constant. */
+export function downloadFileName(dir: string): string {
+  const slug = safeProjectFolderName(projectDisplayName(dir))
+  return `${slug || 'studio-workspace'}.zip`
+}
+
 /**
  * Builds the `GET /admin/api/studio/download` response for `dir`: a zip of
  * every real source file, with a synthesized `package.json` when the
@@ -111,7 +118,7 @@ function synthesizedPackageJson(): Uint8Array {
  */
 export function buildStudioDownloadResponse(dir: string): Response {
   if (!existsSync(dir)) {
-    return jsonResponse({ error: `Workspace directory not found: ${dir}` }, { status: 404 })
+    return jsonResponse({ error: 'Workspace directory not found.' }, { status: 404 })
   }
 
   // Regenerate the preview shell's `.generated` half FIRST, so the zip carries
@@ -144,7 +151,7 @@ export function buildStudioDownloadResponse(dir: string): Response {
   return binaryResponse(zipped, {
     headers: {
       'content-type': 'application/zip',
-      'content-disposition': 'attachment; filename="studio-workspace.zip"',
+      'content-disposition': `attachment; filename="${downloadFileName(dir)}"`,
     },
   })
 }

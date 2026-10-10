@@ -51,8 +51,17 @@ export interface SpacingModifiers {
   allSides: boolean
 }
 
-/** A band is never thinner than this on screen-independent frame px, so a `0` padding still has a handle. */
+/** A handle is this many frame px thick, so a `0` padding or gap still has something to grab. */
 export const MIN_BAND_THICKNESS = 6
+
+/**
+ * How far a handle runs along its side, frame px. A handle is a short pill in
+ * the middle of its padding / gap region, NOT the whole region. The region is
+ * where a press means "move this container" (a stack is dragged by its padding
+ * or between its rows); a handle that filled it stole that press and wrote
+ * `row-gap` instead (Figma shows a small grip, not the gap itself).
+ */
+export const HANDLE_LENGTH = 32
 
 const OPPOSITE: Record<PaddingSide, PaddingSide> = { top: 'bottom', bottom: 'top', left: 'right', right: 'left' }
 const PADDING_PROPERTY: Record<PaddingSide, 'paddingTop' | 'paddingRight' | 'paddingBottom' | 'paddingLeft'> = {
@@ -69,10 +78,10 @@ export function isSpacingLayout(display: string): boolean {
 
 /**
  * The bands, RELATIVE to the container's border box (so they ride the handle
- * frame the overlay already positions on the selection ring). A padding band
- * spans the padding box's side; a gap band spans the space between two
- * consecutive children that sit side by side (column gap) or one above the
- * other (row gap), across the extent the two share.
+ * frame the overlay already positions on the selection ring). A band is a
+ * handle: a short pill centred in a padding side's region, or in the space
+ * between two consecutive children that sit side by side (column gap) or one
+ * above the other (row gap). The region around it stays the container's own.
  */
 export function spacingBands(geometry: SpacingGeometry): SpacingBand[] {
   const { rect, padding, border } = geometry
@@ -84,19 +93,35 @@ export function spacingBands(geometry: SpacingGeometry): SpacingBand[] {
   const sideTop = border.top + thick(padding.top)
   const sideHeight = Math.max(0, innerHeight - thick(padding.top) - thick(padding.bottom))
   const bands: SpacingBand[] = [
-    { kind: 'padding', side: 'top', value: padding.top, rect: { x: border.left, y: border.top, width: innerWidth, height: thick(padding.top) } },
+    {
+      kind: 'padding',
+      side: 'top',
+      value: padding.top,
+      rect: handleWithin({ x: border.left, y: border.top, width: innerWidth, height: thick(padding.top) }, true),
+    },
     {
       kind: 'padding',
       side: 'bottom',
       value: padding.bottom,
-      rect: { x: border.left, y: rect.height - border.bottom - thick(padding.bottom), width: innerWidth, height: thick(padding.bottom) },
+      rect: handleWithin(
+        { x: border.left, y: rect.height - border.bottom - thick(padding.bottom), width: innerWidth, height: thick(padding.bottom) },
+        true,
+      ),
     },
-    { kind: 'padding', side: 'left', value: padding.left, rect: { x: border.left, y: sideTop, width: thick(padding.left), height: sideHeight } },
+    {
+      kind: 'padding',
+      side: 'left',
+      value: padding.left,
+      rect: handleWithin({ x: border.left, y: sideTop, width: thick(padding.left), height: sideHeight }, false),
+    },
     {
       kind: 'padding',
       side: 'right',
       value: padding.right,
-      rect: { x: rect.width - border.right - thick(padding.right), y: sideTop, width: thick(padding.right), height: sideHeight },
+      rect: handleWithin(
+        { x: rect.width - border.right - thick(padding.right), y: sideTop, width: thick(padding.right), height: sideHeight },
+        false,
+      ),
     },
   ]
 
@@ -133,13 +158,26 @@ function overlap(startA: number, sizeA: number, startB: number, sizeB: number): 
   return Math.min(startA + sizeA, startB + sizeB) - Math.max(startA, startB)
 }
 
-/** A gap band centred on the gap, at least `MIN_BAND_THICKNESS` thick. */
+/** A gap handle centred on the gap and on the extent the two children share. */
 function centredBand(gapStart: number, gap: number, crossStart: number, crossSize: number, axis: 'column' | 'row'): SpacingRect {
   const thickness = Math.max(MIN_BAND_THICKNESS, gap)
   const along = gapStart + gap / 2 - thickness / 2
-  return axis === 'column'
-    ? { x: along, y: crossStart, width: thickness, height: crossSize }
-    : { x: crossStart, y: along, width: crossSize, height: thickness }
+  return handleWithin(
+    axis === 'column'
+      ? { x: along, y: crossStart, width: thickness, height: crossSize }
+      : { x: crossStart, y: along, width: crossSize, height: thickness },
+    axis === 'row',
+  )
+}
+
+/**
+ * The handle pill inside a padding / gap `region`: `MIN_BAND_THICKNESS` across,
+ * at most `HANDLE_LENGTH` along (`horizontal` regions run along x), centred.
+ */
+function handleWithin(region: SpacingRect, horizontal: boolean): SpacingRect {
+  const width = Math.min(region.width, horizontal ? HANDLE_LENGTH : MIN_BAND_THICKNESS)
+  const height = Math.min(region.height, horizontal ? MIN_BAND_THICKNESS : HANDLE_LENGTH)
+  return { x: region.x + (region.width - width) / 2, y: region.y + (region.height - height) / 2, width, height }
 }
 
 /**

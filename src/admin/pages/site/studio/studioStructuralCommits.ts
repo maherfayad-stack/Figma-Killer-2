@@ -24,6 +24,7 @@
  *  - `structuralUndoPlan.ts` — what each gesture's ⌘Z is, expressed in the edit
  *    kinds the writeback protocol already has.
  */
+import { decodeSourceNodeId } from '@core/page-tree'
 import type { OptimisticPreviewHandle } from '@site/store/slices/site/structuralOptimism'
 import type { StructuralCommitRollback } from '@site/store/slices/site/structuralCommitRollback'
 import { commitStructural, type StructuralCommitOptions } from './studioStructuralCommitEngine'
@@ -157,6 +158,8 @@ export async function commitStudioTransplant(transplant: {
   anchorNodeId: string | null
   position: 'before' | 'after'
   copy: boolean
+  /** Opens a source file in the code panel - the remedy for a binding that cannot travel. */
+  openSource: (origin: { rel: string; line: number; col: number }) => void
 }): Promise<void> {
   await commitStructural(
     [
@@ -172,6 +175,14 @@ export async function commitStudioTransplant(transplant: {
     ],
     'Cannot move this between frames',
     {
+      // `captured-scope` - the element reads state that lives in its own
+      // screen's code (an input bound to `useState`). Nothing in the carry can
+      // move that binding, so the way forward is to show where it is declared.
+      refusalRemedy: (refusal) => {
+        if (refusal.reason !== 'captured-scope') return null
+        const origin = decodeSourceNodeId(refusal.nodeId)
+        return origin ? { label: 'Open code', onSelect: () => transplant.openSource(origin) } : null
+      },
       undo: {
         label: transplant.copy ? 'Copy into another frame' : 'Move into another frame',
         template: transplant.copy
@@ -464,6 +475,8 @@ export async function commitStudioInsert(insert: {
    * package component, which is imported from this specifier.
    */
   importSpecifier?: string
+  /** `'default'` when `name` is the default export of `importSpecifier`; omitted for a named export. */
+  importStyle?: 'default'
   /**
    * DS-3 — the component comes from Studio's built-in design system, which a
    * project reaches through its own `design-system/` folder. There is no
@@ -501,6 +514,7 @@ export async function commitStudioInsert(insert: {
         // branches on `importSpecifier === undefined` to choose intrinsic vs
         // component, and the wire schema has it optional for the same reason.
         ...(insert.importSpecifier === undefined ? {} : { importSpecifier: insert.importSpecifier }),
+        ...(insert.importStyle === undefined ? {} : { importStyle: insert.importStyle }),
         ...(insert.designSystemImport === undefined ? {} : { designSystemImport: insert.designSystemImport }),
         ...(insert.children === undefined ? {} : { children: insert.children }),
         props: insert.props,

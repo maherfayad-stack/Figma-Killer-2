@@ -23,6 +23,22 @@ export function nextRuleOrder(classes: Record<string, StyleRule>): number {
   return max + 1
 }
 
+/**
+ * Whether `contextId` is a context the CSS emitter can paint: a breakpoint in
+ * `site.breakpoints` or a condition in `site.conditions`. Anything else (the
+ * board frames' synthetic `'studio'` viewport id, a deleted breakpoint) is
+ * dropped at emission, so a style written under it is invisible.
+ */
+export function isRegisteredStyleContext(
+  site: Pick<SiteDocument, 'breakpoints' | 'conditions'>,
+  contextId: string,
+): boolean {
+  return (
+    site.breakpoints.some((bp) => bp.id === contextId)
+    || (site.conditions ?? []).some((c) => c.id === contextId)
+  )
+}
+
 export function hasStylePatchChanges(
   current: Record<string, unknown>,
   patch: Partial<CSSPropertyBag>,

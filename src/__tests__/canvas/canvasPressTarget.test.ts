@@ -11,6 +11,8 @@
 import { describe, expect, it } from 'bun:test'
 import {
   clampToComponentBoundary,
+  frameContentRootId,
+  isFrameBackgroundHit,
   planCanvasPressDrag,
   resolveCanvasDrillTarget,
   resolveCanvasPressTarget,
@@ -177,6 +179,23 @@ describe('planCanvasPressDrag — what a body drag carries', () => {
   it('a press on the frame’s own background drags nothing — it is the in-frame marquee’s', () => {
     expect(planCanvasPressDrag(page, 'body', context(['card']), shallow)).toBeNull()
     expect(planCanvasPressDrag(page, 'body', context(), shallow)).toBeNull()
+  })
+
+  it('the screen element’s own background is background too: a press there is the marquee’s, ⌘ still reaches it', () => {
+    expect(isFrameBackgroundHit(page, 'screen', context())).toBe(true)
+    expect(planCanvasPressDrag(page, 'screen', context(), shallow)).toBeNull()
+    expect(planCanvasPressDrag(page, 'screen', context(['card']), shallow)).toBeNull()
+    expect(planCanvasPressDrag(page, 'screen', context(), { deep: true })?.preferredDraggedId).toBe('screen')
+  })
+
+  it('a layer inside the screen is not background, and the sweep starts below the screen element', () => {
+    expect(isFrameBackgroundHit(page, 'card', context())).toBe(false)
+    expect(isFrameBackgroundHit(page, 'ctaLabel', context())).toBe(false)
+    expect(frameContentRootId(page)).toBe('screen')
+  })
+
+  it('a press inside a closed component is the component, never background', () => {
+    expect(isFrameBackgroundHit(page, 'widgetInner', context())).toBe(false)
   })
 })
 

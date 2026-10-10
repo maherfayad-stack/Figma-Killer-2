@@ -16,7 +16,7 @@
  * doesn't.
  */
 import { afterEach, describe, expect, it, mock } from 'bun:test'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useEditorStore } from '@site/store/store'
 import { TokenizedColorField } from '@site/property-controls/TokenizedColorField'
 import type { FrameworkColorToken } from '@core/framework-schema'
@@ -274,5 +274,55 @@ describe('TokenizedColorField — WCAG contrast badge (T9)', () => {
     )
     const badge = screen.getByTitle('WCAG contrast against the resolved background')
     expect(badge.textContent).toMatch(/^\d+(\.\d+)?:1$/)
+  })
+})
+
+describe('TokenizedColorField - Enter commits what was typed', () => {
+  function renderField(value: string, handlers: { onTextBlur?: () => void; onTokenSelect?: (v: string) => void }) {
+    setFrameworkColors([brandToken()])
+    render(
+      <TokenizedColorField
+        value={value}
+        inputLabel="Fill colour"
+        swatchLabel="Fill colour swatch"
+        onTextChange={noop}
+        onTextBlur={handlers.onTextBlur ?? noop}
+        onSwatchChange={noop}
+        onTokenSelect={handlers.onTokenSelect ?? noop}
+      />,
+    )
+    const input = screen.getByLabelText('Fill colour') as HTMLInputElement
+    act(() => input.focus())
+    return input
+  }
+
+  it('typing a hex and pressing Enter commits the typed text, not the first token suggestion', () => {
+    const onTokenSelect = mock((_v: string) => {})
+    const onTextBlur = mock(() => {})
+    const input = renderField('#ff0000', { onTokenSelect, onTextBlur })
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(onTokenSelect).not.toHaveBeenCalled()
+    expect(onTextBlur).toHaveBeenCalledTimes(1)
+  })
+
+  it('Enter leaves the field so Ctrl+Z reaches the editor undo', () => {
+    const input = renderField('#ff0000', {})
+    expect(document.activeElement).toBe(input)
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(document.activeElement).not.toBe(input)
+  })
+
+  it('Enter applies a suggestion once the user has moved the highlight onto it', () => {
+    const onTokenSelect = mock((_v: string) => {})
+    const input = renderField('bra', { onTokenSelect })
+
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(onTokenSelect).toHaveBeenCalledWith('var(--brand)')
   })
 })

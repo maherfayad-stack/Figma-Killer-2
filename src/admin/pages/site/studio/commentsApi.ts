@@ -42,6 +42,7 @@ export type CommentOp =
   | { kind: 'set-resolved'; threadId: string; resolved: boolean }
   | { kind: 'move'; threadId: string; anchor: CommentAnchor }
   | { kind: 'delete-thread'; threadId: string }
+  | { kind: 'restore-thread'; threadId: string }
 
 /** Fetch and parse the comments file for `dir` (server default workspace when omitted). */
 export async function fetchComments(dir?: string): Promise<CommentsFile> {

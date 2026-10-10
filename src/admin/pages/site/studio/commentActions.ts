@@ -107,7 +107,35 @@ export async function moveThreadPin(threadId: string, anchor: CommentAnchor): Pr
   await run({ kind: 'move', threadId, anchor }, 'Failed to move comment')
 }
 
-export async function deleteThreadById(threadId: string): Promise<void> {
+/**
+ * Delete a thread, then offer to take it back. Deleting a review thread used to
+ * be immediate and final — one mis-click on the menu item lost the whole
+ * conversation. The toast's Undo restores the thread the server just removed
+ * (`restore-thread`: by id, within a few minutes — the server keeps the copy,
+ * never the browser). `announce: false` is for a caller deleting several at once
+ * that raises one toast for the lot (`deleteThreadsById`).
+ */
+export async function deleteThreadById(threadId: string, options?: { announce?: boolean }): Promise<boolean> {
   const ok = await run({ kind: 'delete-thread', threadId }, 'Failed to delete thread')
-  if (ok) useEditorStore.getState().setActiveCommentThread(null)
+  if (!ok) return false
+  useEditorStore.getState().setActiveCommentThread(null)
+  if (options?.announce !== false) announceDeletedThreads([threadId])
+  return true
+}
+
+/** The "Deleted — Undo" toast for threads that were just removed. */
+export function announceDeletedThreads(threadIds: readonly string[]): void {
+  if (threadIds.length === 0) return
+  pushToast({
+    kind: 'info',
+    title: threadIds.length === 1 ? 'Thread deleted' : `${threadIds.length} threads deleted`,
+    action: { label: 'Undo', onSelect: () => void restoreThreadsById(threadIds) },
+    durationMs: 8000,
+  })
+}
+
+export async function restoreThreadsById(threadIds: readonly string[]): Promise<void> {
+  for (const threadId of threadIds) {
+    await run({ kind: 'restore-thread', threadId }, 'Failed to restore thread')
+  }
 }

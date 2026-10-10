@@ -59,6 +59,7 @@ import {
   EMPTY_RESOLUTION,
   EMPTY_TRANSPLANT_RESOLUTION,
   dragLabel,
+  dropRefusal,
   followDragSessionThroughReparse,
   resolveDraggedIds,
   runCanvasDragFrame,
@@ -312,7 +313,9 @@ export function useCanvasReorderDrag({
     const commit = {
       draggedId: session.draggedId,
       resolution: session.resolution,
-      free: session.free,
+      // Over another screen the free-move answer is stale (and its step with it):
+      // that gesture is a transplant, or a refused one - never an offset.
+      free: session.foreign ? null : session.free,
       freeStep: session.freeStep,
       // K2 — the modifier state at RELEASE decides, which is the only reading
       // that matches what the ghost was showing the instant before.
@@ -328,6 +331,7 @@ export function useCanvasReorderDrag({
             }
           : null,
       // P5-G — over no frame at all: the element leaves for the free canvas.
+      refusal: dropRefusal(session),
       lift: session.free || session.foreign
         ? null
         : resolveCanvasLiftDrop({ ...session, canvasRoot: canvasRootRef?.current ?? null }),

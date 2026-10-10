@@ -9,8 +9,8 @@
  * Covers, ported from the pre-migration `panels/PropertiesPanel/
  * __tests__/strokeSection.test.tsx`:
  *   1. Law 1 — nothing set renders the empty header (title + a single "+"),
- *      no resident controls, no chevron; clicking "+" reveals the resident
- *      row without writing anything.
+ *      no resident controls, no chevron; clicking "+" writes a real default
+ *      stroke (1px solid #000000, every side) and shows the resident row.
  *   2. The colour entry appears once any border longhand is set, and its
  *      inline `%` opacity field (`02-measurements.md`'s "Color field
  *      chrome" — NEW in this migration, closing the same gap Fill's own
@@ -84,7 +84,7 @@ describe('StrokeSection — Law 1', () => {
     expect(screen.getByRole('button', { name: /add stroke/i })).toBeTruthy()
   })
 
-  it('clicking "+" reveals the resident row without writing anything', () => {
+  it('clicking "+" writes a real 1px solid stroke on every side and shows the full controls', () => {
     selectNode()
     render(<StrokeSection />)
 
@@ -94,7 +94,14 @@ describe('StrokeSection — Law 1', () => {
     expect(screen.getByTestId('stroke-weight-all')).toBeTruthy()
     expect(screen.getByTestId('stroke-settings-trigger')).toBeTruthy()
     expect(screen.getByTestId('stroke-sides-trigger')).toBeTruthy()
-    expect(currentNode()?.inlineStyles?.borderTopWidth).toBeUndefined()
+    // The colour entry exists because the colour does.
+    expect(screen.getByLabelText('Stroke color')).toBeTruthy()
+    const styles = currentNode()?.inlineStyles
+    for (const side of ['Top', 'Right', 'Bottom', 'Left']) {
+      expect(styles?.[`border${side}Width` as 'borderTopWidth']).toBe('1px')
+      expect(styles?.[`border${side}Style` as 'borderTopStyle']).toBe('solid')
+      expect(styles?.[`border${side}Color` as 'borderTopColor']).toBe('#000000')
+    }
   })
 
   it('shows the resident row directly (no "+" needed) once any border longhand is set', () => {
@@ -182,7 +189,7 @@ describe('StrokeSection — sides menu', () => {
     expect(currentNode()?.inlineStyles?.borderLeftWidth).toBe('3px')
   })
 
-  it('"Custom" reveals four independent weight fields and writes nothing on its own', () => {
+  it('"Custom" reveals four independent weight fields and changes no weight on its own', () => {
     selectNode()
     render(<StrokeSection />)
     fireEvent.click(screen.getByRole('button', { name: /add stroke/i }))
@@ -198,7 +205,8 @@ describe('StrokeSection — sides menu', () => {
     expect(screen.getByTestId('stroke-weight-left')).toBeTruthy()
     expect(screen.queryByTestId('stroke-weight-all')).toBeNull()
 
-    expect(currentNode()?.inlineStyles?.borderTopWidth).toBeUndefined()
+    // Still the default stroke's 1px - Custom only changes which fields are drawn.
+    expect(currentNode()?.inlineStyles?.borderTopWidth).toBe('1px')
   })
 
   it('editing one of the four Custom fields writes only that side', () => {

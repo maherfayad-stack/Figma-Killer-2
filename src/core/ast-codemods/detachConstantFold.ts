@@ -48,6 +48,12 @@ export function literalOfNode(node: Node): Literal | undefined {
   return undefined
 }
 
+/** `{ literal }` for a node that IS a primitive, nothing otherwise — spread into a detach `Value`. */
+export function literalField(node: Node): { literal?: Literal } {
+  const literal = literalOfNode(node)
+  return literal ? { literal } : {}
+}
+
 export function isTruthy(literal: Literal): boolean {
   return Boolean(literal.v)
 }

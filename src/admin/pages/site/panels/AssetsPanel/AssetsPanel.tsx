@@ -19,6 +19,9 @@
  *     the rest, because there is no JSX Studio could write for them.
  *   - **Layouts** — saved layouts, then one group per plugin pack.
  *   - **Saved components** — the project's Visual Components.
+ *   - **Project components** — components the open project declares itself
+ *     (`ProjectComponentsSection`): click or drag to write `<Card />` and its
+ *     import into the source file.
  *   - **Images** — the project's own image files (`ImagesSection`, IMG-6):
  *     drag one onto a frame, or click to add it beside the selection. Nothing
  *     is uploaded; the insert references the file where it already is.
@@ -68,6 +71,7 @@ import { ColorsSection } from './ColorsSection'
 import { IconsSection } from './IconsSection'
 import { ImagesSection } from './ImagesSection'
 import { PackageBundleNotice } from './PackageBundleNotice'
+import { ProjectComponentsSection } from './ProjectComponentsSection'
 import { SavedLayoutManageMenu, type SavedLayoutMenuState } from './SavedLayoutManageMenu'
 import { subscribeAssetsSearchFocus } from './assetsPanelFocus'
 import styles from './AssetsPanel.module.css'
@@ -107,6 +111,7 @@ type SectionId =
   | 'elements'
   | 'layouts'
   | 'components'
+  | 'projectComponents'
   | 'images'
   | 'icons'
   | 'colors'
@@ -340,6 +345,12 @@ export function AssetsPanel() {
             <AssetGrid>{renderCards(rankedComponents)}</AssetGrid>
           )}
         </AssetSection>
+
+        <ProjectComponentsSection
+          query={query}
+          collapsed={collapsed.has('projectComponents')}
+          onToggle={() => toggleSection('projectComponents')}
+        />
 
         <ImagesSection
           query={query}

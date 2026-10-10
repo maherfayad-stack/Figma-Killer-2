@@ -10,6 +10,7 @@ import {
   type EditConstraint,
   type PageTreeDropPosition,
   type PageTreeDropTarget,
+  type StructuralTransplantPreview,
 } from '@core/page-tree'
 
 interface CanvasPoint {
@@ -326,25 +327,20 @@ export function resolveCanvasTransplantTarget({
   if (!candidate) return { target: null, invalid: null }
 
   const zone = getCanvasDropZone(candidate, point, zoom)
-  const target = resolvePageTreeInsertionTarget({
-    tree: destinationTree,
+  const verdict = resolveTransplantDropOver({
+    originTree,
+    destinationTree,
+    draggedIds,
     overId: candidate.nodeId,
     zone,
     canHaveChildren,
-  })
-  if (!target) {
-    return { target: null, invalid: { overId: candidate.nodeId, rect: candidate.rect, axis: candidate.axis } }
-  }
-
-  const preview = previewStructuralTransplant({
-    originTree,
-    nodeIds: draggedIds,
-    destinationTree,
-    newParentId: target.parentId,
-    newIndex: target.index,
     copy,
   })
-  if (!preview.ok) {
+  if (!verdict.target) {
+    return { target: null, invalid: { overId: candidate.nodeId, rect: candidate.rect, axis: candidate.axis } }
+  }
+  if (verdict.preview && !verdict.preview.ok) {
+    const preview = verdict.preview
     // The refusal names one end of the gesture; the chip is rendered beside
     // the pointer either way, so the node it is dressed against is whichever
     // `previewStructuralTransplant` says it is about.
@@ -365,7 +361,60 @@ export function resolveCanvasTransplantTarget({
     }
   }
 
-  return { target: { ...target, rect: candidate.rect, axis: candidate.axis }, invalid: null }
+  return { target: { ...verdict.target, rect: candidate.rect, axis: candidate.axis }, invalid: null }
+}
+
+interface ResolveTransplantDropOverInput {
+  originTree: NodeTree<PageNode>
+  destinationTree: NodeTree<PageNode>
+  draggedIds: readonly string[]
+  /** The destination node the pointer is over. */
+  overId: string
+  zone: PageTreeDropPosition
+  canHaveChildren: (moduleId: string) => boolean
+  copy: boolean
+}
+
+/**
+ * The ONE cross-page drop question, asked by the canvas (pointer over a frame)
+ * and by the Layers panel (pointer over another page's row): given the node
+ * under the pointer and the zone of it, which container and index in the
+ * DESTINATION tree, and would `transplantNodes` accept it?
+ *
+ * `target` is `null` when the destination has no valid position there at all;
+ * `preview` is the store gate's own verdict for a position that exists, and a
+ * refusal in it carries the sentence both surfaces show while the pointer is
+ * down. Geometry (rects, axis) is deliberately not part of this: it is the
+ * canvas's.
+ */
+export function resolveTransplantDropOver({
+  originTree,
+  destinationTree,
+  draggedIds,
+  overId,
+  zone,
+  canHaveChildren,
+  copy,
+}: ResolveTransplantDropOverInput): {
+  target: Omit<CanvasInsertionTarget, 'rect' | 'axis'> | null
+  preview: StructuralTransplantPreview | null
+} {
+  const target = resolvePageTreeInsertionTarget({
+    tree: destinationTree,
+    overId,
+    zone,
+    canHaveChildren,
+  })
+  if (!target) return { target: null, preview: null }
+  const preview = previewStructuralTransplant({
+    originTree,
+    nodeIds: draggedIds,
+    destinationTree,
+    newParentId: target.parentId,
+    newIndex: target.index,
+    copy,
+  })
+  return { target, preview }
 }
 
 export function resolveCanvasInsertionTarget({
@@ -387,11 +436,63 @@ export function resolveCanvasInsertionTarget({
   })
   if (!target) return null
 
+  // A press in a container's own empty space lands among its children where
+  // the pointer is, not always at the end (Figma's auto-layout insert).
+  const index =
+    target.position === 'inside' && target.overId === target.parentId
+      ? nearestFlowIndex(tree, target.parentId, candidates, point)
+      : target.index
+
   return {
     ...target,
+    index: index ?? target.index,
     rect: candidate.rect,
     axis: candidate.axis,
   }
+}
+
+/**
+ * The child index a point inside a flow container nearest belongs at: before
+ * the first child that comes AFTER the point in reading order, else the end.
+ * `null` when none of the container's children were measured (nothing to
+ * compare against — the caller keeps the append).
+ *
+ * Vertical flow compares centre-y. Horizontal flow compares rows first (a
+ * child wholly above the point is earlier; wholly below it is later) so a
+ * wrapped row resolves in its own row, then centre-x. A reversed flow
+ * (`row-reverse`, rtl) counts a child as later when it sits visually before the
+ * point.
+ */
+export function nearestFlowIndex(
+  tree: NodeTree<PageNode>,
+  containerId: string,
+  candidates: readonly CanvasDropCandidate[],
+  point: CanvasPoint,
+): number | null {
+  const children = tree.nodes[containerId]?.children
+  if (!children || children.length === 0) return null
+  const byId = new Map(candidates.map((candidate) => [candidate.nodeId, candidate]))
+  let measured = false
+  for (let index = 0; index < children.length; index += 1) {
+    const candidate = byId.get(children[index]!)
+    if (!candidate) continue
+    measured = true
+    const { rect, axis, reversed } = candidate
+    const centreX = rect.left + rect.width / 2
+    const centreY = rect.top + rect.height / 2
+    let after: boolean
+    if (axis === 'vertical') {
+      after = reversed ? centreY < point.y : centreY > point.y
+    } else if (rect.bottom < point.y) {
+      after = false
+    } else if (rect.top > point.y) {
+      after = true
+    } else {
+      after = reversed ? centreX < point.x : centreX > point.x
+    }
+    if (after) return index
+  }
+  return measured ? children.length : null
 }
 
 interface ResolvePageTreeInsertionTargetInput {

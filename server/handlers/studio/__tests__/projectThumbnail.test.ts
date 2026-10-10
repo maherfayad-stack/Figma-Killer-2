@@ -77,10 +77,10 @@ function get(dir: string | null, headers: Record<string, string> = {}): Response
 }
 
 describe('GET /admin/api/studio/thumbnail', () => {
-  it('404s a project that has no thumbnail yet, uncached', () => {
+  it('answers 204 (not a console-noisy 404) for a project with no thumbnail yet, uncached', () => {
     const res = get(makeProject('alpha'))
 
-    expect(res.status).toBe(404)
+    expect(res.status).toBe(204)
     // The capture is very likely running right now — a browser that cached
     // this miss would keep the folder glyph up after the image lands.
     expect(res.headers.get('cache-control')).toBe('no-store')

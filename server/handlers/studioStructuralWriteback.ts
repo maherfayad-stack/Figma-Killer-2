@@ -125,6 +125,8 @@ const InsertEditSchema = Type.Object({
   position: Type.Optional(Type.Union([Type.Literal('before'), Type.Literal('after')])),
   name: Type.String(),
   importSpecifier: Type.Optional(Type.String()),
+  /** `'default'` when `name` is the default export of `importSpecifier` (a project's own component). Omitted = named export. */
+  importStyle: Type.Optional(Type.Literal('default')),
   designSystemImport: Type.Optional(DesignSystemImportSchema),
   children: Type.Optional(Type.Union([Type.String(), Type.Array(InsertNodeSchema)])),
   props: Type.Optional(InsertPropsSchema),
@@ -550,6 +552,7 @@ export function applyStructuralEdit(
         name: edit.name,
         props: edit.props,
         ...(importSpecifier === undefined ? {} : { importSpecifier }),
+        ...(edit.importStyle === undefined ? {} : { importStyle: edit.importStyle }),
         ...(children === undefined ? {} : { children }),
         ...(siblings === undefined ? {} : { siblings }),
       })

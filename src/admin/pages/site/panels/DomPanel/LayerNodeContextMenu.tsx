@@ -2,7 +2,7 @@
  * LayerNodeContextMenu — right-click menu for nodes in the DOM panel and
  * canvas. Hosts rename / duplicate / componentize / save-as-layout / cut /
  * copy / paste / wrap / delete
- * actions and an "Insert module here" `ContextMenuSubmenu` that shows the
+ * actions and an "Insert element here" `ContextMenuSubmenu` that shows the
  * shared `ModulePicker` (search + categorized module list, including site
  * Visual Components) as a true second-level dropdown — same primitive,
  * same styling, same hover/focus/colors as every other submenu.
@@ -23,7 +23,7 @@
  *   that selection, the menu acts on every selected node:
  *     - Rename → hidden (only meaningful for one node).
  *     - Duplicate / Copy / Cut / Wrap / Delete → multi-aware actions.
- *     - "Insert module here" → hidden (anchored to one parent).
+ *     - "Insert element here" → hidden (anchored to one parent).
  * - Wrap is now a SUBMENU with two choices: Container and Loop. The
  *   underlying action is `wrapNode` (single) or `wrapNodes` (multi, with
  *   closest-common-ancestor semantics).
@@ -94,7 +94,6 @@ import { BoxStackSolidIcon } from 'pixel-art-icons/icons/box-stack-solid'
 import { CodeIcon } from 'pixel-art-icons/icons/code'
 import { BoxSolidIcon } from 'pixel-art-icons/icons/box-solid'
 import { Copy2SolidIcon } from 'pixel-art-icons/icons/copy-2-solid'
-import { LayoutSolidIcon } from 'pixel-art-icons/icons/layout-solid'
 import { EyeSolidIcon } from 'pixel-art-icons/icons/eye-solid'
 import { isNarrowEditorChromeViewport } from '@site/layout/responsiveChrome'
 import { ConstraintNotice } from '@site/ui/ConstraintNotice'
@@ -270,22 +269,6 @@ export function LayerNodeContextMenu({
     return canComponentizeNode(s.activeDocument, node)
   })
 
-  // "Save as layout" mirrors Componentize's mode gate (page mode, single
-  // selection) but stays VISIBLE on the page root — disabled with the reason
-  // inline, so authors learn why the whole body can't be a layout.
-  const isPageRoot = nodeId !== null && activePage?.rootNodeId === nodeId
-  const showSaveAsLayout = useEditorStore((s) => {
-    if (isMulti || !nodeId || lockedSlotInstance) return false
-    if (s.activeDocument?.kind === 'visualComponent') return false
-    return selectActiveCanvasPage(s)?.nodes[nodeId] !== undefined
-  })
-
-  const dispatchSaveAsLayout = () => {
-    if (!nodeId) return
-    useEditorStore.getState().openLayoutNameDialog({ mode: 'create', nodeId })
-    onClose()
-  }
-
   // P5-C — offered only when every target is a component call site; a
   // design-system or package one is shown greyed out WITH its reason, never
   // hidden (hiding it is what read as "detach is broken").
@@ -304,7 +287,7 @@ export function LayerNodeContextMenu({
     ? shouldHideSelection ? 'Hide selected' : 'Unhide selected'
     : shouldHideSelection ? 'Hide' : 'Unhide'
 
-  // "Insert module here" is hidden ONLY for multi-select (the new node has no
+  // "Insert element here" is hidden ONLY for multi-select (the new node has no
   // single anchor in that case) — for single-select every node is a legal
   // target because resolveInsertLocation handles container vs. leaf targets
   // uniformly (leaves land as sibling-after under their parent).
@@ -484,17 +467,6 @@ export function LayerNodeContextMenu({
             </ContextMenuItem>
           )}
 
-          {showSaveAsLayout && (
-            <ContextMenuItem
-              onClick={dispatchSaveAsLayout}
-              disabled={isPageRoot}
-              title={isPageRoot ? 'The page body cannot be saved as a layout — save a section inside it instead.' : undefined}
-            >
-              <span aria-hidden="true"><LayoutSolidIcon size={13} /></span>
-              Save as layout…
-            </ContextMenuItem>
-          )}
-
           <ContextMenuSeparator />
 
           <ContextMenuItem onClick={dispatchCopy} shortcut={shortcutLabelFor('layers.copy')}>
@@ -565,7 +537,7 @@ export function LayerNodeContextMenu({
       )}
 
       {/*
-        "Insert module here" is hidden only for multi-select (the new node has
+        "Insert element here" is hidden only for multi-select (the new node has
         no single anchor when 2+ layers are selected). For single-select it is
         always offered: container targets receive the new node as a last child,
         leaf targets (Text, Button, Image, etc.) receive a sibling-after under
@@ -573,7 +545,7 @@ export function LayerNodeContextMenu({
       */}
       {showInsertHere && (
         <ContextMenuSubmenu
-          label="Insert module here"
+          label="Insert element here"
           icon={<AppGridPlusGlyphIcon size={13} />}
           onClose={onClose}
           width={280}

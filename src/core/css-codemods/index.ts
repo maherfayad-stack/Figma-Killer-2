@@ -16,6 +16,15 @@
  * a cleared declaration used to reach no code path at all, so it was silently
  * restored on the next reload. `cssAtRuleScope.ts` (WB-31) names the
  * `@media`/`@container`/`@supports` block a declaration is written inside.
+ *
+ * ## Two entries: this server barrel and `./browser`
+ *
+ * Everything above that edits a stylesheet does it through postcss, which the
+ * browser must not load (it drags `path`/`fs`/`url`/`source-map-js` shims and a
+ * console warning per access). The editor imports `@core/css-codemods/browser`
+ * — the pure half this barrel re-exports — and reaches the postcss writers only
+ * through a dynamic `import('@core/css-codemods')`. Gate:
+ * `postcss-not-in-admin-bundle.test.ts`.
  */
 export {
   setDeclaration,
@@ -35,24 +44,20 @@ export { insertRule, type InsertRuleResult, type InsertRuleOptions } from './ins
 export {
   analyzeKeyframesTarget,
   insertKeyframes,
-  keyframesNameFromSelector,
-  readKeyframeSteps,
   removeDeclarationAtKeyframe,
   setDeclarationAtKeyframe,
-  type KeyframeStep,
   type KeyframesTargetAnalysis,
   type KeyframesTargetRefusal,
 } from './keyframes'
+export * from './browser'
 export {
   analyzeDeclarationTarget,
   type DeclarationTargetAnalysis,
   type DeclarationTargetRefusal,
 } from './analyzeDeclarationTarget'
-export { classifyStylesheetEditability, type StylesheetEditability } from './classifyStylesheetEditability'
 export {
   listCustomPropertyDeclarations,
   setCustomPropertyValueAtLine,
   type CustomPropertyDeclaration,
   type CustomPropertyEditResult,
 } from './customProperty'
-export { camelToKebabCssProperty } from './cssPropertyCase'

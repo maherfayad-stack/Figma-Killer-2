@@ -43,7 +43,7 @@
  * creates the stylesheet; the animation is writable from then on.
  */
 import type { Page, StyleRule } from '@core/page-tree'
-import { keyframesNameFromSelector, readKeyframeSteps, type KeyframeStep } from '@core/css-codemods'
+import { keyframesNameFromSelector, readKeyframeSteps, type KeyframeStep } from '@core/css-codemods/browser'
 import {
   buildClassPageIndex,
   getStudioStyleRuleSources,

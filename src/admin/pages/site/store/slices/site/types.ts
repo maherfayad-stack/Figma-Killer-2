@@ -21,7 +21,6 @@ import type {
   SiteSettings,
   PageTemplateConfig,
   ConditionDef,
-  StyleRule,
   SequencedMove,
   StructuralExplorerRowOrder,
   StructuralSiteExplorerSectionId,
@@ -31,6 +30,7 @@ import type { ImportFragment } from '@core/htmlImport'
 import type { NewStyleRule, SiteImportTransaction } from '@core/siteImport'
 import type { FrameworkChangeImpact, FrameworkPreset } from '@core/framework'
 import type { EditorStore } from '@site/store/types'
+import type { LocalComponentSpec } from '@site/property-controls/componentPropKind'
 import type { PendingStructuralHistory } from '@site/studio/pendingStructuralOutcome'
 import type { SlotOwnerEntry } from './nodeIndex'
 import type { ImportedNodesResult } from './importedNodesResult'
@@ -41,27 +41,8 @@ import type { ImageDropRequest, LandableImageSource, SubtreeInsertRequest, Uploa
 // the EditorStore.
 // ---------------------------------------------------------------------------
 
-/** Input to `SiteSlice.patchPages` — see that method's doc for the full contract. */
-export interface PatchPagesInput {
-  /** Freshly re-parsed pages that still exist — upserted by id, appended if new. */
-  pages: Page[]
-  /** Ids that were part of the touched set but no longer resolve to a page. */
-  removedPageIds?: string[]
-  /**
-   * The project-wide style registry the same reload recomputed.
-   *
-   * NOT optional-because-nice-to-have: a re-parsed page's `classIds` name
-   * rules from the registry that was computed WITH it, and rendering it
-   * against the previous one resolves those nodes to no class at all — an
-   * unstyled, collapsed page that looks broken until a manual refresh.
-   * Omitted only by a caller that genuinely has no fresher registry (a test,
-   * or a patch that never re-read the project), in which case the current one
-   * stands.
-   */
-  styleRules?: Record<string, StyleRule>
-  /** The project-wide condition set from the same reload — same contract as `styleRules`. */
-  conditions?: ConditionDef[]
-}
+import type { PatchPagesInput } from './patchPagesInput'
+export type { PatchPagesInput }
 
 /**
  * The framework and font token action inputs. They live in
@@ -203,6 +184,8 @@ export interface SiteSlice {
     index?: number,
     inlineStyles?: Record<string, string>,
   ) => string
+  /** Writes `<Card />` + its import for a component the project declares itself; `false` on a CMS tree (no source). */
+  insertProjectComponent: (component: LocalComponentSpec, parentId: string, index?: number) => boolean
 
   /**
    * Insert a fragment of imported HTML nodes into the active tree under `parentId`.

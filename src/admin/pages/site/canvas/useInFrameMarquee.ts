@@ -4,8 +4,9 @@
  * The board already has a marquee for frames and notes
  * (`BoardFramesLayer/useMarqueeSelection.ts`); inside a frame a drag was
  * always a move, so a row of layers could only be gathered by ⇧-clicking each.
- * The trigger is OD-6's: a press on the frame's ROOT layer itself — the page
- * background, where no child is under the pointer — that travels past the
+ * The trigger is OD-6's: a press on the frame's background — the page body or
+ * the screen element itself (`isFrameBackgroundHit`), where no layer is under
+ * the pointer — that travels past the
  * threshold. A press that does not travel is still an ordinary click — on
  * the frame's empty background, which lets go of everything, as on Figma
  * (`canvasPressTarget.ts`) — and ⌘-drag stays free move. Which layers the rectangle
@@ -29,9 +30,10 @@ import { guardDragSession } from '@core/studio-runtime'
 import { useEditorStore } from '@site/store/store'
 import { resolveSelectableNode } from '@site/store/slices/selectionResolve'
 import { isCanvasSpacePanActive, shouldStartCanvasPointerPan } from './canvasPanInput'
-import { CANVAS_NODE_SELECTOR, isElementLike } from './canvasEventTargets'
+import { CANVAS_NODE_SELECTOR, isElementLike, isPressInsideInlineEditor } from './canvasEventTargets'
 import { presentedElementForNode } from './canvasNodeLookup'
 import { nodeVisualRect } from './canvasDomGeometry'
+import { canvasPressContext, frameContentRootId, isFrameBackgroundHit } from './canvasPressTarget'
 import { marqueeBetween, marqueeHits, type MarqueeCandidate, type MarqueeRect } from './inFrameMarquee'
 
 /** Frame px the pointer travels before a root press becomes a marquee rather than a click. */
@@ -60,7 +62,8 @@ function collectCandidates(doc: Document, tree: NodeTree<PageNode>): MarqueeCand
       walk(childId, depth + 1)
     }
   }
-  walk(tree.rootNodeId, 1)
+  // Below the screen element: the layers a sweep means are its children.
+  walk(frameContentRootId(tree), 1)
   return candidates
 }
 
@@ -93,8 +96,13 @@ export function useInFrameMarquee({ enabled, overlayRoot, frameId }: InFrameMarq
       if (event.button !== 0 || event.defaultPrevented) return
       if (event.metaKey || event.ctrlKey) return // ⌘-drag is free move
       if (shouldStartCanvasPointerPan(event, { spaceHeld: isCanvasSpacePanActive(document) })) return
-      const state = useEditorStore.getState()
-      if (state.activeInlineEdit || state.canvasTool !== 'move') return
+      let state = useEditorStore.getState()
+      if (state.activeInlineEdit) {
+        if (isPressInsideInlineEditor(event.target)) return
+        state.endInlineEdit()
+        state = useEditorStore.getState()
+      }
+      if (state.canvasTool !== 'move') return
       const target = event.target
       if (!isElementLike(target)) return
       // Editor chrome in the same document (rings, resize and spacing
@@ -103,7 +111,7 @@ export function useInFrameMarquee({ enabled, overlayRoot, frameId }: InFrameMarq
       const nodeId = target.closest(CANVAS_NODE_SELECTOR)?.getAttribute('data-node-id')
       if (!nodeId) return
       const resolved = resolveSelectableNode(state, nodeId)
-      if (!resolved || resolved.tree.rootNodeId !== nodeId) return
+      if (!resolved || !isFrameBackgroundHit(resolved.tree, nodeId, canvasPressContext(state, frameId))) return
       const tree = resolved.tree
 
       const start = { x: event.clientX, y: event.clientY }

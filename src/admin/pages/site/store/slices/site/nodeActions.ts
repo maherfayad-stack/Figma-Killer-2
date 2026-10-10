@@ -40,6 +40,7 @@ import type { NodeTree, PageNode } from '@core/page-tree'
 import { subtreeHasOutlet, treeHasOutlet } from '@core/templates'
 import { wouldCreateCycle, syncSlotInstances, applySlotSyncResult } from '@core/visualComponents'
 import { pushToast } from '@ui/components/Toast'
+import { openSourceFile } from '../../openSourceFile'
 import { commitStudioDelete, commitStudioMove, commitStudioReparent, commitStudioTransplant } from '@site/studio/studioStructuralCommits'
 import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
 import { broadcastOptimisticDelete, broadcastOptimisticMove } from '@site/canvas/frameAdapter/optimisticStructuralBroadcast'
@@ -69,6 +70,7 @@ type NodeActions = Pick<
   SiteSlice,
   | 'insertNode'
   | 'insertComponentRef'
+  | 'insertProjectComponent'
   | 'insertImportedNodes'
   | 'refuseImportedNodesInto'
   | 'deleteNode'
@@ -149,11 +151,19 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
     anchorNodeId: string | null,
     position: 'before' | 'after',
   ): void => {
-    void commitStudioTransplant({ nodeId, parentNodeId, anchorNodeId, position, copy: false })
+    void commitStudioTransplant({
+      nodeId,
+      parentNodeId,
+      anchorNodeId,
+      position,
+      copy: false,
+      openSource: (origin) => openSourceFile(get(), origin),
+    })
   }
   const {
     refuseInsertInto,
     writeInsertToSource,
+    writeInsertProjectComponentToSource,
     writeDuplicateToSource,
     writeWrapToSource,
   } = sourceWrites
@@ -202,6 +212,9 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
     // `mcp-21` — an HTML fragment merged into the active tree, or refused on a
     // studio-imported one. See `importedNodesActions.ts`.
     ...createImportedNodesActions(helpers, sourceWrites.refuseImportedNodesInto),
+
+    insertProjectComponent: (component, parentId, index) =>
+      writeInsertProjectComponentToSource(component, parentId, index),
 
     insertComponentRef: (parentId, componentId, index) => {
       if (!componentId) return null

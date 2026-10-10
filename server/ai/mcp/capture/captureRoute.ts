@@ -31,9 +31,9 @@ import {
 import { jsonResponse } from '../../../http'
 import { readStudioAssetTarget, resolveStudioAssetResponse } from '../../../handlers/studioAsset'
 import { buildCapturePayload } from './capturePayload'
+import { viteDevOrigin } from './captureOrigin'
 import { resolveCaptureToken } from './captureToken'
 
-const VITE_DEV_URL = 'http://localhost:5173'
 const VITE_CAPTURE_ENTRY = '/agent-capture.html'
 
 /**
@@ -118,5 +118,5 @@ async function serveCaptureEntry(url: URL): Promise<Response> {
       headers: { 'content-type': 'text/html; charset=utf-8', ...NO_STORE },
     })
   }
-  return Response.redirect(`${VITE_DEV_URL}${VITE_CAPTURE_ENTRY}${url.search}`, 302)
+  return Response.redirect(`${viteDevOrigin()}${VITE_CAPTURE_ENTRY}${url.search}`, 302)
 }
