@@ -10,6 +10,7 @@ import { PaintBucketSolidIcon } from 'pixel-art-icons/icons/paint-bucket-solid'
 import { ColorsSwatchSolidIcon } from 'pixel-art-icons/icons/colors-swatch-solid'
 import { GlobeSolidIcon } from 'pixel-art-icons/icons/globe-solid'
 import { CloudUploadSolidIcon } from 'pixel-art-icons/icons/cloud-upload-solid'
+import { PackageSolidIcon } from 'pixel-art-icons/icons/package-solid'
 import { Button } from '@ui/components/Button'
 import {
   assignRailAccents,
@@ -87,6 +88,17 @@ const PRIMARY_RAIL_ITEMS: PrimaryRailItem[] = [
     icon: GlobeSolidIcon,
     iconName: 'globe-solid',
     group: 'content',
+  },
+  // Dependencies - the project's own package.json and whether it is installed.
+  // It has a rail entry because the Live pill and a missing-package banner both
+  // send people here; a destination with no door was how "Install dependencies"
+  // opened a panel nobody could find.
+  {
+    id: 'dependencies',
+    label: 'Dependencies',
+    icon: PackageSolidIcon,
+    iconName: 'package-solid',
+    group: 'navigate',
   },
   // Version control (W4-3). Sits in the primary group, last: it is where a
   // session of canvas edits ends up, so it reads as the bottom of the

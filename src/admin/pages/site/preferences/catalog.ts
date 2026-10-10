@@ -235,8 +235,8 @@ export const PREFERENCE_CATALOG = [
     id: 'layersShowIcon',
     type: 'boolean',
     category: 'layers',
-    label: 'Show module icon',
-    description: 'Display the module type icon (Container, Text, Image, …) at the start of each layer row.',
+    label: 'Show element type icon',
+    description: 'Display the element type icon (Container, Text, Image, …) at the start of each layer row.',
     default: true,
   },
   {
@@ -278,7 +278,7 @@ export const PREFERENCE_CATALOG = [
     type: 'boolean',
     category: 'properties',
     label: 'Smooth scroll on tab change',
-    description: 'Animate the properties panel when switching between Style / Module / Component tabs.',
+    description: 'Animate the properties panel when switching between its tabs.',
     default: true,
   },
   {
@@ -286,7 +286,7 @@ export const PREFERENCE_CATALOG = [
     type: 'boolean',
     category: 'properties',
     label: 'Expand style sections by default',
-    description: 'Open every property section that has controls to show (Module, Position, Size, Layout, Spacing, …) when an element is selected. Turn off to start with all sections collapsed. Sections that carry nothing — Background, Border, Effects, Interaction, Typography with no value set anywhere — stay a single “+” header line either way; this preference does not expand an empty section.',
+    description: 'Open every property section that has controls to show (Position, Size, Layout, Spacing, …) when an element is selected. Turn off to start with all sections collapsed. Sections that carry nothing — Background, Border, Effects, Interaction, Typography with no value set anywhere — stay a single “+” header line either way; this preference does not expand an empty section.',
     default: true,
   },
 

@@ -26,7 +26,7 @@ The feature is **catalog-driven**: one declarative array drives the schema, the 
   id: 'layersShowIcon',
   type: 'boolean',
   category: 'layers',
-  label: 'Show module icon',
+  label: 'Show element type icon',
   description: 'Display the module type icon next to each layer row.',
   default: true,
 }

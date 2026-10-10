@@ -9,6 +9,7 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { useAdminUi } from '@admin/state/adminUi'
 import { setStudioTrustTier } from '@site/studio/studioProjectTrust'
 import { __resetDevServerReadinessForTests } from '@site/studio/useDevServerReadiness'
+import { __resetLiveCapabilityForTests } from '@site/studio/liveCapabilityStore'
 import { LiveRuntimePill } from '@site/canvas/LiveRuntimePill'
 import { liveEntryBreakpointId } from '@site/canvas/liveEntryBreakpoint'
 import type { Breakpoint } from '@core/page-tree'
@@ -35,6 +36,7 @@ afterEach(() => {
   cleanup()
   globalThis.fetch = realFetch
   __resetDevServerReadinessForTests()
+  __resetLiveCapabilityForTests()
   act(() => setStudioTrustTier('static'))
   useAdminUi.setState({ studioProject: null })
 })

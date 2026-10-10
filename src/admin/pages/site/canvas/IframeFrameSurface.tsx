@@ -546,7 +546,12 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
           ref={iframeRef}
           src={liveFrame ? resolveLiveFrameSrc(liveFrame) : undefined}
           className={cn(styles.iframe, isLive && styles.iframeLive, className)}
-          style={isLive ? { ...style, width: '100%', height: '100%' } : { ...style, width: `${width}px` }}
+          // A design bridge frame starts at the SAME device viewport portal frames
+          // pin `vh` to. Without this the CSS `min-height: 100vh` (the editor
+          // window) made the page's own `100vh` the editor's height, so a
+          // `min-height: 100vh` screen with a bottom-pinned footer drew that
+          // footer far below where the static render puts it.
+          style={isLive ? { ...style, width: '100%', height: '100%' } : { ...style, width: `${width}px`, minHeight: `${CANVAS_VIEWPORT_HEIGHT}px` }}
           title={`Canvas frame for ${breakpointId}`}
           data-preview-scheme={frameAxes.colorScheme}
           // Stamped on the outer element itself (not just the framed

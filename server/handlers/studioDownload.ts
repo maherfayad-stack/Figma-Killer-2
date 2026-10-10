@@ -15,6 +15,19 @@ import { ensurePrototypeShell } from './studio/prototypeShell'
 import { jsonResponse } from '../http'
 import { binaryResponse } from '../binary'
 
+/**
+ * Directories that belong to the tools used on a project, not to the project.
+ * An agent's settings (`.claude/settings.local.json` carries local permission
+ * grants) and editor state have no business in a zip the user hands to someone
+ * else. Applies to the download only: a walk for parsing never sees these
+ * either way, they hold no app source.
+ */
+const DOWNLOAD_EXCLUDED_DIR_NAMES: ReadonlySet<string> = new Set(['.claude', '.cursor', '.codex', '.windsurf', '.aider'])
+
+function isToolFile(relPath: string): boolean {
+  return relPath.split('/').some((segment) => DOWNLOAD_EXCLUDED_DIR_NAMES.has(segment.toLowerCase()))
+}
+
 /** One real source file collected from the workspace for the download zip. */
 export interface WorkspaceFile {
   /** Path relative to the workspace root, using `/` separators (zip-safe). */
@@ -55,6 +68,7 @@ export function collectWorkspaceFiles(
   const results: WorkspaceFile[] = []
 
   for (const relPath of listWorkspaceFiles(dir)) {
+    if (isToolFile(relPath)) continue
     if (results.length >= maxFiles) break
     const filePath = join(dir, ...relPath.split('/'))
     let size: number
@@ -102,16 +116,21 @@ function synthesizedPackageJson(): Uint8Array {
   )
 }
 
+/** The project's slug - the archive's name and the single folder everything in it sits under. */
+export function downloadRootName(dir: string): string {
+  return safeProjectFolderName(projectDisplayName(dir)) || 'studio-workspace'
+}
+
 /** `<project-slug>.zip` — the download is named after the project, not a generic constant. */
 export function downloadFileName(dir: string): string {
-  const slug = safeProjectFolderName(projectDisplayName(dir))
-  return `${slug || 'studio-workspace'}.zip`
+  return `${downloadRootName(dir)}.zip`
 }
 
 /**
  * Builds the `GET /admin/api/studio/download` response for `dir`: a zip of
- * every real source file, with a synthesized `package.json` when the
- * workspace doesn't ship its own. `node_modules` is never bundled either way —
+ * every real source file under one `<project>/` folder, with a synthesized
+ * `package.json` when the workspace doesn't ship its own. Tool directories
+ * (`.claude/`, `.cursor/`, ...) are left out. `node_modules` is never bundled either way —
  * which is exactly why a DS-backed project's design system is a
  * `design-system/` folder of real source rather than an installed package: the
  * zip has to build on its own, with only what npm can still serve.
@@ -137,14 +156,17 @@ export function buildStudioDownloadResponse(dir: string): Response {
   ensureDesignSystemFiles(dir)
 
   const files = collectWorkspaceFiles(dir)
+  // Everything under one folder named for the project: unzipping scatters
+  // nothing into the folder the person is standing in.
+  const root = downloadRootName(dir)
   const zipInput: Record<string, Uint8Array> = {}
   let hasPackageJson = false
   for (const file of files) {
-    zipInput[file.relPath] = file.contents
+    zipInput[`${root}/${file.relPath}`] = file.contents
     if (file.relPath === 'package.json') hasPackageJson = true
   }
   if (!hasPackageJson) {
-    zipInput['package.json'] = synthesizedPackageJson()
+    zipInput[`${root}/package.json`] = synthesizedPackageJson()
   }
 
   const zipped = zipSync(zipInput)

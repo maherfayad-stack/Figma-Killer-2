@@ -327,8 +327,37 @@ export async function apiBlobRequest(
   path: string,
   options: Omit<ApiRequestOptions, 'schema'> = {},
 ): Promise<Blob> {
+  return (await apiFileRequest(path, options)).blob
+}
+
+/**
+ * {@link apiBlobRequest} plus the file name the server chose
+ * (`Content-Disposition`), for a download whose name belongs to the server - a
+ * project's zip is named after the project, and a client that hard-codes its own
+ * name overrides that. `fileName` is `null` when the server named nothing usable.
+ */
+export async function apiFileRequest(
+  path: string,
+  options: Omit<ApiRequestOptions, 'schema'> = {},
+): Promise<{ blob: Blob; fileName: string | null }> {
   const res = await requestResponse(path, options)
-  return res.blob()
+  return { blob: await res.blob(), fileName: fileNameFromContentDisposition(res.headers.get('content-disposition')) }
+}
+
+const CONTROL_CHARACTERS = new RegExp(`[${String.fromCharCode(0)}-${String.fromCharCode(31)}${String.fromCharCode(127)}]`, 'g')
+
+/**
+ * The `filename` of a `Content-Disposition` header, reduced to a bare name: no
+ * directory part (either separator), no control characters. A header is input
+ * from the network, and the result becomes a name the browser saves under.
+ */
+export function fileNameFromContentDisposition(header: string | null): string | null {
+  if (!header) return null
+  const match = /filename\s*=\s*(?:"([^"]*)"|([^;\s]+))/i.exec(header)
+  const raw = match?.[1] ?? match?.[2]
+  if (!raw) return null
+  const bare = (raw.split(/[\\/]/).pop() ?? '').replace(CONTROL_CHARACTERS, '').trim()
+  return bare && bare !== '.' && bare !== '..' ? bare : null
 }
 
 /**

@@ -51,6 +51,7 @@ import { getStudioProjectKey, subscribeStudioProjectKey } from '@site/studio/stu
 import { FramePosterPlaceholder } from './FramePosterPlaceholder'
 import { getFramePoster } from './frameSnapshotCache'
 import { useAdapterReady } from './useAdapterReady'
+import { useFramesHeldStatic } from './staticFrameHold'
 import { useBridgeFrameDiagnostics } from '../useBridgeFrameDiagnostics'
 import { useBridgeFrameInteraction } from './useBridgeFrameInteraction'
 
@@ -81,7 +82,10 @@ export function LiveBoardFrame({
   const axes = useResolvedFrameAxes(axesOverride)
 
   const [adapter, setAdapter] = useState<FrameDocumentAdapter | null>(null)
-  const ready = useAdapterReady(adapter)
+  // Held static while a capture needs to read this frame's pixels - a cross-origin
+  // live iframe cannot be photographed from here (see `staticFrameHold.ts`).
+  const heldStatic = useFramesHeldStatic()
+  const ready = useAdapterReady(adapter) && !heldStatic
   // The fallback's node tree has committed (`IframeFrameSurface`'s stage 3);
   // until then its poster, if one is cached, stays painted over it.
   const [fallbackContentReady, setFallbackContentReady] = useState(false)

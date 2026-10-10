@@ -463,6 +463,7 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
       'panel-rail-framework',
       'panel-rail-selectors',
       'panel-rail-content',
+      'panel-rail-dependencies',
       'panel-rail-git',
     ])
     expect(primaryButtons.map((button) => button.getAttribute('data-icon'))).toEqual([
@@ -471,6 +472,7 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
       'colors-swatch',
       'paint-bucket',
       'globe-solid',
+      'package-solid',
       'cloud-upload',
     ])
     // Rail colour is semantic, not a hash: each button's accent names the JOB
@@ -484,6 +486,7 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
       'mint', // framework — style
       'mint', // selectors — style
       'lilac', // content  — content
+      'gold', // dependencies — navigate (project-level)
       'gold', // git       — navigate (project-level, like the explorer)
     ])
     // Comments joins the AI assistant in the global group rather than the

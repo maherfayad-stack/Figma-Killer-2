@@ -7,6 +7,17 @@
     color: var(--text-muted);
 }
 
+.captureError {
+    margin: 0 0 var(--space-l);
+    padding: var(--space-m) var(--space-l);
+    font-size: var(--text-s);
+    line-height: 1.5;
+    color: var(--danger-text);
+    background: var(--danger-10);
+    border-radius: var(--radius-sm);
+    overflow-wrap: anywhere;
+}
+
 .empty {
     margin: 0;
     padding: var(--space-xl);

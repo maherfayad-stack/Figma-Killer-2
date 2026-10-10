@@ -67,6 +67,7 @@ import { FRAME_WIDTH, FRAME_HEIGHT } from '@core/studio-board'
 import { getAgentStoreApi } from './storeRef'
 import { agentRenderFrameMountReason, captureAgentRenderSnapshot, waitForAgentRenderFrame } from './renderEvidence'
 import { settleCaptureDocument } from '../canvas/canvasCaptureSettle'
+import { holdFramesStatic } from '../canvas/BoardFramesLayer/staticFrameHold'
 
 type StudioExportFramesInput = Static<typeof StudioExportFramesInputSchema>
 
@@ -138,6 +139,9 @@ async function exportFrames(input: StudioExportFramesInput): Promise<AiToolOutpu
 
   const results: Array<FrameExportSuccess | FrameExportFailure> = []
   const images: AiToolImage[] = []
+  // Tier-2 frames are cross-origin dev-server iframes this document cannot
+  // photograph; hold them on their static render for the batch.
+  const releaseStaticHold = holdFramesStatic()
 
   try {
     for (const pageId of input.pageIds) {
@@ -231,6 +235,7 @@ async function exportFrames(input: StudioExportFramesInput): Promise<AiToolOutpu
       })
     }
   } finally {
+    releaseStaticHold()
     getStoreState().setCanvasTransform(original.zoom, original.panX, original.panY)
     if (original.activePageId) getStoreState().openPageInCanvas(original.activePageId)
     if (input.axes) getStoreState().setPreviewAxes(originalAxes)

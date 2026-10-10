@@ -13,6 +13,9 @@ At trust tier `run-project` (Tier 2, the default: [`trust-tiers.md`](trust-tiers
 - **The editor never touches a live frame's `Document`.** Every canvas feature talks to a frame through `FrameDocumentAdapter`: `PortalFrameAdapter` for static frames, `BridgeFrameAdapter` (TypeBox-validated `postMessage`) for live ones.
 - **A live frame shows its static render until the runtime says `ready`**, then swaps (`LiveBoardFrame.tsx`). A frame whose dev server fails stays on the static render.
 - Non-Vite projects never go live; the Live pill says "Live needs Vite".
+- The Live view draws what the pill says. Once Tier 2, the dev server's phase is `ready` and the live origin + project key are known (`canvas/useLiveSurfaceSource.ts`), `CanvasLiveSurface` loads the real app in a bridge iframe beside the static render and hands over when the frame reports `ready` (the same hand-off `LiveBoardFrame` makes); until then it is the static render.
+- One client copy of "can this project run?" (`studio/liveCapabilityStore.ts`) feeds the pill, the dev-server prewarm (which no longer POSTs `start` into a refusal) and the readiness poll (which does not poll a project that cannot run). A finished install/remove calls `refreshProjectAfterInstall`, so the pill and the Dependencies list update without a reload. Each refusal in `devServer.ts` has its own sentence (`describeLiveRefusal`).
+- Photographing a board through the open editor tab (`studio_export_frames`, the share fallback) holds Tier-2 frames on their static render for the batch (`BoardFramesLayer/staticFrameHold.ts`): a cross-origin dev-server iframe cannot be photographed from the editor document.
 
 ## Architecture
 

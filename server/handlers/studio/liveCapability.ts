@@ -101,3 +101,20 @@ export function resolveLiveCapability(dir: string): LiveCapability {
   if (!viteInstalled) return { capable: false, reason: 'not-installed' }
   return { capable: true }
 }
+
+/**
+ * One sentence per refusal, so the log and the console say what is actually
+ * wrong. Every reason used to be reported as "the script is not a vite
+ * invocation" - which told the owner of a plain `"dev": "vite"` project with no
+ * `node_modules` that their script was the problem. No filesystem path: this
+ * text reaches the client.
+ */
+export function describeLiveRefusal(dir: string, reason: LiveBlockedReason): string {
+  if (reason === 'not-installed') {
+    return 'Live needs an install: Vite is not installed in this project (there is no node_modules/vite), so its dev server cannot start. Install the dependencies from the Dependencies panel.'
+  }
+  if (!resolveDevScript(resolveAppRoot(dir))) {
+    return 'Live needs a dev script: package.json has no "dev" or "start" script, so there is nothing for Studio to run.'
+  }
+  return 'Live needs Vite: this project's dev/start script is not a vite invocation, so Studio does not run it.'
+}

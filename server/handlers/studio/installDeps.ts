@@ -7,7 +7,7 @@
  * which is not something an HTTP request should sit inside.
  *
  *   POST /admin/api/studio/install          body: { dir }  → { jobId }
- *   GET  /admin/api/studio/install/status?dir=<abs>
+ *   GET  /admin/api/studio/install/status?dir=<abs>   (+ the project's dependencies, devDependencies and installedPackages)
  *       → { hasPackageJson, hasNodeModules, dependencyCount, packageManager,
  *           job }
  *       Lets the client decide whether to offer the "Install dependencies"
@@ -124,6 +124,7 @@ import {
 import { captureSubprocess, minimalSubprocessEnv, type SpawnedProcessLike } from './subprocessRunner'
 import { readInstallJobFile, writeInstallJobFile, type PersistedInstallJob } from './installJobStore'
 import { reprobeProjectProfile } from './projectProbe'
+import { readProjectManifest } from './projectManifest'
 import { withProjectWriteLock } from './projectWriteLock'
 
 // ---------------------------------------------------------------------------
@@ -615,7 +616,9 @@ export async function tryServeStudioInstall(req: Request, url: URL, pathname: st
     try {
       const dir = resolveProjectDir(url.searchParams.get('dir'))
       if (!isDirWithinWorkspace(dir)) return new Response('Not found', { status: 404 })
-      return jsonResponse(probeInstallStatus(dir))
+      // The probe answers "should the install prompt show"; the manifest is the
+      // project's own package.json, which the Dependencies panel lists.
+      return jsonResponse({ ...probeInstallStatus(dir), ...readProjectManifest(dir) })
     } catch (err) {
       rethrowProjectDirRefusal(err)
       console.error('[studio:install]', err)

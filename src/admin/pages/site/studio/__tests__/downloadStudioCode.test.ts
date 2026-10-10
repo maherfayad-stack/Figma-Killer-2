@@ -18,7 +18,7 @@ afterEach(() => {
 
 describe('readStudioCodeZip', () => {
   it('returns the zip blob when the server responds with application/zip', async () => {
-    const blob = await readStudioCodeZip({
+    const { blob } = await readStudioCodeZip({
       fetchImpl: async () =>
         new Response(new Uint8Array([1, 2, 3]), {
           headers: { 'content-type': 'application/zip' },
@@ -65,8 +65,25 @@ describe('readStudioCodeZip', () => {
   })
 })
 
+describe('readStudioCodeZip file name', () => {
+  const zipResponse = (disposition?: string) => async () =>
+    new Response(new Uint8Array([1]), {
+      headers: { 'content-type': 'application/zip', ...(disposition ? { 'content-disposition': disposition } : {}) },
+    })
+
+  it('falls back to a generic name only when the server names nothing', async () => {
+    expect((await readStudioCodeZip({ fetchImpl: zipResponse() })).fileName).toBe('studio-workspace.zip')
+  })
+
+  it('never lets a header choose a directory', async () => {
+    expect((await readStudioCodeZip({ fetchImpl: zipResponse('attachment; filename="../../etc/evil.zip"') })).fileName).toBe('evil.zip')
+    expect((await readStudioCodeZip({ fetchImpl: zipResponse('attachment; filename="..\\..\\evil.zip"') })).fileName).toBe('evil.zip')
+    expect((await readStudioCodeZip({ fetchImpl: zipResponse('attachment; filename=".."') })).fileName).toBe('studio-workspace.zip')
+  })
+})
+
 describe('downloadStudioCode', () => {
-  it('triggers a browser download named studio-workspace.zip and releases the object URL', async () => {
+  it('saves the download under the name the server chose - the project, not a generic constant', async () => {
     const createDescriptor = Object.getOwnPropertyDescriptor(URL, 'createObjectURL')
     const revokeDescriptor = Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL')
     const clickDescriptor = Object.getOwnPropertyDescriptor(HTMLAnchorElement.prototype, 'click')
@@ -100,9 +117,11 @@ describe('downloadStudioCode', () => {
     try {
       await downloadStudioCode({
         fetchImpl: async () =>
-          new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'application/zip' } }),
+          new Response(new Uint8Array([1, 2, 3]), {
+            headers: { 'content-type': 'application/zip', 'content-disposition': 'attachment; filename="test4.zip"' },
+          }),
       })
-      expect(downloadName).toBe('studio-workspace.zip')
+      expect(downloadName).toBe('test4.zip')
       expect(revokedUrl).toBe('blob:studio-workspace')
     } finally {
       restoreProperty(URL, 'createObjectURL', createDescriptor)

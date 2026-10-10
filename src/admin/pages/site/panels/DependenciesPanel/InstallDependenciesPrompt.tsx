@@ -18,6 +18,7 @@ import { getErrorMessage } from '@core/utils/errorMessage'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { PackageSolidIcon } from 'pixel-art-icons/icons/package-solid'
 import { getStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
+import { refreshProjectAfterInstall } from '@site/studio/projectInstallRefresh'
 import {
   getDependencyInstallJob,
   probeDependencyInstall,
@@ -69,6 +70,7 @@ export function InstallDependenciesPrompt() {
           // components, ?raw icon resolution) only light up after the
           // workspace re-parses with a real node_modules on disk.
           requestCmsSiteReload()
+          refreshProjectAfterInstall()
           probeDependencyInstall(dir)
             .then(setProbe)
             .catch((err) => console.error('[InstallDependenciesPrompt] re-probe failed:', err))
