@@ -27,7 +27,7 @@ import {
 } from '@site/canvas/canvasDropSurfaceRegistry'
 import { registerFrameAdapter, unregisterFrameAdapter } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
 import { PortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
-import type { TransplantDestination } from '@site/store/slices/site/types'
+import type { TransplantDestination } from '@site/store/slices/site/transplantDestination'
 import { makeNode, makePage, makeSite } from '../fixtures'
 import '@modules/base/index'
 

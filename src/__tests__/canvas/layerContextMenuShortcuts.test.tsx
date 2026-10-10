@@ -92,7 +92,7 @@ describe('the verbs the audit found missing (IX-27)', () => {
       [/^lock/i, 'layers.toggleLock'],
       [/bring to front/i, 'layers.bringToFront'],
       [/send to back/i, 'layers.sendToBack'],
-      [/flex layout/i, 'layers.toggleFlexLayout'],
+      [/auto layout/i, 'layers.toggleFlexLayout'],
       [/^copy style/i, 'layers.copyStyle'],
     ] as const) {
       const item = screen.getByRole('menuitem', { name })

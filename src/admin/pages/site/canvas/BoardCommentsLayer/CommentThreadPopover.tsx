@@ -119,21 +119,21 @@ export function CommentThreadPopover({ thread }: CommentThreadPopoverProps) {
         >
           {thread.resolved ? 'Reopen' : 'Resolve'}
         </Button>
-        {startedByMe ? (
-          <CommentKebab ariaLabel={`Thread ${thread.seq} actions`} onOpenChange={setMenuOpen}>
-            {(close) => (
-              <ContextMenuItem
-                danger
-                onClick={() => {
-                  close()
-                  void deleteThreadById(thread.id)
-                }}
-              >
-                Delete thread
-              </ContextMenuItem>
-            )}
-          </CommentKebab>
-        ) : null}
+        <CommentKebab ariaLabel={`Thread ${thread.seq} actions`} onOpenChange={setMenuOpen}>
+          {(close) => (
+            <ContextMenuItem
+              danger
+              disabled={!startedByMe}
+              tooltip={startedByMe ? undefined : 'Only the person who started this thread can delete it.'}
+              onClick={() => {
+                close()
+                void deleteThreadById(thread.id)
+              }}
+            >
+              Delete thread
+            </ContextMenuItem>
+          )}
+        </CommentKebab>
         <Button
           variant="ghost"
           size="sm"

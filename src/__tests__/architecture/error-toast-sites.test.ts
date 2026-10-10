@@ -61,8 +61,9 @@ const ALLOWED_ERROR_TOAST_SITES: ReadonlyMap<string, number> = new Map([
   // P5-B3 (IMG-11): the user confirmed "Delete unused…" and the server did
   // not delete — an operation they asked for that failed.
   ['admin/pages/site/panels/AssetsPanel/UnusedImagesFooter.tsx', 1],
-  // Inspector: explicit detach/swap/export/copy actions.
-  ['admin/pages/site/inspector/sections/ComponentSection.tsx', 2],
+  // Inspector: explicit export/copy actions, and the swap picker (CV-1 moved its
+  // two sites out of ComponentSection when the slot row started sharing it).
+  ['admin/pages/site/property-controls/InstanceSwapPopover.tsx', 2],
   ['admin/pages/site/inspector/sections/ExportSection.tsx', 4],
   ['admin/pages/site/panels/InspectPanel/InspectPanel.tsx', 2],
   ['admin/pages/site/panels/PropertiesPanel/ImageSourcePicker.tsx', 1],

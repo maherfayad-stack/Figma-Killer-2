@@ -409,6 +409,33 @@ describe('LayoutSection — padding cluster', () => {
     expect(currentNode()?.inlineStyles?.paddingRight).toBe('12px')
   })
 
+  it('an H or V edit is ONE history entry, so one Ctrl+Z undoes both sides', () => {
+    selectNode()
+    renderLayout()
+    setPaddingState('collapsed')
+    useEditorStore.setState({ _historyPast: [], _historyCoalesceKey: null } as Parameters<
+      typeof useEditorStore.setState
+    >[0])
+
+    const horizontal = screen.getByTestId('css-padding-horizontal') as HTMLInputElement
+    fireEvent.change(horizontal, { target: { value: '8px' } })
+    fireEvent.blur(horizontal)
+
+    expect(currentNode()?.inlineStyles?.paddingLeft).toBe('8px')
+    expect(currentNode()?.inlineStyles?.paddingRight).toBe('8px')
+    expect(useEditorStore.getState()._historyPast.length).toBe(1)
+  })
+
+  it("the all-sides field reads Mixed when only two sides are padded, never one side's value", () => {
+    selectNode({ inlineStyles: { paddingLeft: '16px', paddingRight: '16px' } })
+    renderLayout()
+    setPaddingState('all')
+
+    const all = screen.getByTestId('css-padding-all') as HTMLInputElement
+    expect(all.value).not.toContain('16')
+    expect(all.placeholder).toBe('Mixed')
+  })
+
   it('the link state is ONE field writing all four sides in a single history entry', () => {
     selectNode()
     renderLayout()

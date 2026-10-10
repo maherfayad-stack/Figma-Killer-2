@@ -37,7 +37,7 @@ export function getEditorCommands(): Command[] {
     {
       id: 'editor.save',
       title: 'Save',
-      subtitle: 'Save the current draft',
+      subtitle: 'Write pending edits to your project files',
       group: 'editor',
       iconName: 'save-solid',
       keywords: ['save', 'draft', 'write'],

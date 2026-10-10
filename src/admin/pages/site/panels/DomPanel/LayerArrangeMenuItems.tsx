@@ -66,7 +66,16 @@ export function LayerArrangeMenuItems({ targetIds, layerIdsUnderPointer, onClose
   const locked = nodes.every((node) => node.locked === true)
   // Not "Wrap in …": that is the Wrap submenu's name, and one menu must not
   // offer two items a reader (or a screen reader) cannot tell apart.
-  const flexLabel = single && isContainer ? 'Toggle flex layout' : 'Add flex layout'
+  const flexLabel = single && isContainer ? 'Add / remove auto layout' : 'Add auto layout'
+  // A group is the bare container Studio's own Group writes: no classes, no
+  // inline styles, no breakpoint overrides. Any other container carries
+  // styling of its own, and dissolving it would silently drop that.
+  const isPlainGroup =
+    single !== undefined &&
+    single.moduleId === 'base.container' &&
+    single.classIds.length === 0 &&
+    Object.keys(single.inlineStyles ?? {}).length === 0 &&
+    Object.keys(single.breakpointOverrides).length === 0
   const labelOf = (id: string) => {
     const node = page?.nodes[id]
     return node ? getNodeDisplayName(node, registry.get(node.moduleId), visualComponents) : id
@@ -75,13 +84,13 @@ export function LayerArrangeMenuItems({ targetIds, layerIdsUnderPointer, onClose
   return (
     <>
       <ContextMenuSeparator />
-      {nodes.length > 1 && (
+      {!isRoot && (
         <ContextMenuItem onClick={run(() => { store().groupNodes([...targetIds]) })} shortcut={shortcutLabelFor('layers.group')}>
           <span aria-hidden="true"><BoxStackSolidIcon size={13} /></span>
           Group
         </ContextMenuItem>
       )}
-      {single && isContainer && !isRoot && single.children.length > 0 && (
+      {single && isPlainGroup && !isRoot && single.children.length > 0 && (
         <ContextMenuItem onClick={run(() => store().ungroupNode(single.id))} shortcut={shortcutLabelFor('layers.ungroup')}>
           <span aria-hidden="true"><ContainerSolidIcon size={13} /></span>
           Ungroup

@@ -32,7 +32,7 @@ describe('getSiteImportCommands', () => {
     const [command] = getSiteImportCommands()
     expect(command).toMatchObject({
       id: 'editor.importSite',
-      title: 'Import Site',
+      title: 'Import project…',
       group: 'editor',
       workspaces: ['any'],
     })

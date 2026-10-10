@@ -106,6 +106,29 @@ describe('parsePageFile', () => {
     expect(div.inlineStyles).toEqual({ display: 'flex', flexDirection: 'column', marginTop: 40 })
   })
 
+  it('reads an inline padding / margin shorthand back into the four per-side keys', () => {
+    const file = writeFixture(
+      'inline-shorthand.tsx',
+      [
+        'export default function Page() {',
+        '  return <div style={{ padding: "12px 20px", margin: 8, marginLeft: "auto", display: "flex" }}>hi</div>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    expect(byName(parsePageFile(file, tmpDir), 'div').inlineStyles).toEqual({
+      paddingTop: '12px',
+      paddingRight: '20px',
+      paddingBottom: '12px',
+      paddingLeft: '20px',
+      marginTop: 8,
+      marginRight: 8,
+      marginBottom: 8,
+      marginLeft: 'auto',
+      display: 'flex',
+    })
+  })
+
   it('leaves inlineStyles absent for an element with no style attribute', () => {
     const file = writeFixture(
       'no-style.tsx',

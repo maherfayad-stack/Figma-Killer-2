@@ -87,6 +87,13 @@ export async function editCommentBody(
 }
 
 export async function deleteCommentById(threadId: string, commentId: string): Promise<void> {
+  // The only comment of a thread: the server drops the whole thread with it, so
+  // this IS a thread delete and gets the same "Thread deleted - Undo" toast.
+  const thread = useEditorStore.getState().comments.threads.find((t) => t.id === threadId)
+  if (thread && thread.comments.length === 1 && thread.comments[0]?.id === commentId) {
+    await deleteThreadById(threadId)
+    return
+  }
   await run({ kind: 'delete-comment', threadId, commentId }, 'Failed to delete comment')
 }
 

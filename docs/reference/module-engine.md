@@ -144,7 +144,7 @@ The `schema` field maps prop keys to `PropertyControl` descriptors. Full union i
 | `richtext`  | No visible site-editor control; hidden/internal sanitized HTML prop | HTML string              |
 | `number`    | `<Input type="number">`                           | `number`                 |
 | `toggle`    | `<Switch>`                                        | `boolean`                |
-| `select`    | `<Select>` or `<ContextMenu>` for long lists      | option value string      |
+| `select`    | `<Select>` or `<ContextMenu>` for long lists; `display: 'segmented'` draws 2–4 options as a connected button group (a component's variant axis) | option value string      |
 | `collection-index` | `<Select>` whose options are a sibling collection prop's own entries (resolved from the node at render time), writing back the chosen index | `number` (index into the sibling `collection` prop) |
 | `color`     | `<ColorInput>`                                    | hex string               |
 | `url`       | URL text input                                    | `string`                 |

@@ -22,9 +22,10 @@
  * shows them. Gaps need two children.
  */
 import { useEffect, useState, type CSSProperties } from 'react'
+import { isAutoLayoutDisplay } from '@core/studio-runtime'
 import { useEditorStore } from '@site/store/store'
 import { findNodeById } from './InPlaceInspector/findNodeById'
-import { isSpacingLayout, spacingBands, type SpacingBand, type SpacingGeometry } from './spacingHandleRules'
+import { spacingBands, type SpacingBand, type SpacingGeometry } from './spacingHandleRules'
 import { readSpacingGeometry } from './spacingHandleMeasure'
 import { SPACING_BAND_ATTR, useSpacingHandleDrag } from './useSpacingHandleDrag'
 
@@ -90,7 +91,7 @@ export function CanvasSpacingHandles({ nodeId, iframeDoc, target }: CanvasSpacin
     const measure = () => {
       frame = null
       const display = view.getComputedStyle(target).display
-      setGeometry(isSpacingLayout(display) ? readSpacingGeometry(iframeDoc, target, childIds) : null)
+      setGeometry(isAutoLayoutDisplay(display) ? readSpacingGeometry(iframeDoc, target, childIds) : null)
     }
     const schedule = () => {
       frame = frame ?? view.requestAnimationFrame(measure)

@@ -43,10 +43,20 @@ import {
   type TypeNode,
   type VariableDeclaration,
 } from 'ts-morph'
-import { isDesignSystemPath, isPrototypeShellPath } from '@core/page-parser'
+import {
+  analyzeVariantBinding,
+  createComponentAnalysisContext,
+  isDesignSystemPath,
+  isPrototypeShellPath,
+  readPropDefault,
+  sourceRangeOf,
+  type ComponentAnalysisContext,
+} from '@core/page-parser'
+import { PropVariantFieldsSchema, type PropVariantFields, type UnionHome, type VariantMember } from '@core/component-variants'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import type { ComponentSpec, PropKind, PropSpec } from './packageManifestSchema'
 import { PropSpecSchema } from './packageManifestSchema'
+import { componentRole } from './componentRole'
 
 // ---------------------------------------------------------------------------
 // Path helper — shared by both producers
@@ -105,16 +115,30 @@ function typeAliasIndex(project: Project): Map<string, TypeNode> {
   return index
 }
 
+/** `undefined`/`null` members stripped — an optional prop's syntactic type is `T | undefined`, which must read exactly like `T`. */
+function nonNullishMembers(union: TypeNode): TypeNode[] {
+  return union.asKindOrThrow(SyntaxKind.UnionType).getTypeNodes().filter((m) => {
+    const t = normalizedTypeText(m)
+    return t !== 'undefined' && t !== 'null'
+  })
+}
+
+/** The nodes themselves when EVERY one is a string literal type, else `undefined`. */
+function allStringLiterals(nodes: TypeNode[]): TypeNode[] | undefined {
+  return nodes.every((n) => stringLiteralValue(n) !== undefined) ? nodes : undefined
+}
+
 /**
- * K3 — resolves a NAMED type reference (`ButtonVariant`) to a `PropKind.enum`
- * when the alias it names is itself a union of string literals, chasing an
- * alias-to-alias chain (`type A = B; type B = 'x' | 'y'`) up to the same
- * depth bound `findNamedTypeMembers` already uses. `undefined` for
- * everything else — a reference that isn't an alias at all, an alias whose
- * body isn't a union, or a union with a non-literal member — so the caller
- * falls through to `unknown` instead of guessing.
+ * K3 — resolves a NAMED type reference (`ButtonVariant`) to the string-literal
+ * type NODES of the union it names, chasing an alias-to-alias chain
+ * (`type A = B; type B = 'x' | 'y'`) up to the same depth bound
+ * `findNamedTypeMembers` already uses. `undefined` for everything else — a
+ * reference that isn't an alias at all, an alias whose body isn't a union, or a
+ * union with a non-literal member — so the caller falls through to `unknown`
+ * instead of guessing. Returning the nodes (not just their text) is what lets
+ * the variant read model point at the literal that DEFINES each member.
  */
-function resolveNamedUnionAlias(project: Project, typeNode: TypeNode, depth: number): PropKind | undefined {
+function resolveNamedUnionAliasNodes(project: Project, typeNode: TypeNode, depth: number): TypeNode[] | undefined {
   if (depth > 3 || typeNode.getKind() !== SyntaxKind.TypeReference) return undefined
   const ref = typeNode.asKindOrThrow(SyntaxKind.TypeReference)
   const name = ref.getTypeName().getText().split('.').pop()
@@ -124,15 +148,32 @@ function resolveNamedUnionAlias(project: Project, typeNode: TypeNode, depth: num
   if (!aliasBody) return undefined
 
   if (aliasBody.getKind() === SyntaxKind.UnionType) {
-    const literalValues = aliasBody.asKindOrThrow(SyntaxKind.UnionType).getTypeNodes().map(stringLiteralValue)
-    if (literalValues.every((v): v is string => v !== undefined)) {
-      return { kind: 'enum', values: literalValues }
-    }
-    return undefined // a union with a non-literal member — not this function's job to guess
+    // A union with a non-literal member — not this function's job to guess.
+    return allStringLiterals(aliasBody.asKindOrThrow(SyntaxKind.UnionType).getTypeNodes())
   }
 
   // An alias-to-alias chain (`type ButtonVariant = BaseVariant`) — chase it, bounded.
-  return resolveNamedUnionAlias(project, aliasBody, depth + 1)
+  return resolveNamedUnionAliasNodes(project, aliasBody, depth + 1)
+}
+
+function enumOfLiteralNodes(nodes: TypeNode[]): PropKind {
+  return { kind: 'enum', values: nodes.map((n) => stringLiteralValue(n)!) }
+}
+
+/**
+ * The string-literal type nodes that DEFINE an enum prop's members — the
+ * inline union, or the named alias's — or `undefined` when the prop is not an
+ * enum. `classifyPropType` is built on the same two helpers, so "is this an
+ * enum" and "where are its members written" can never disagree.
+ */
+export function enumLiteralNodes(project: Project, typeNode: TypeNode | undefined): TypeNode[] | undefined {
+  if (!typeNode) return undefined
+  if (typeNode.getKind() === SyntaxKind.UnionType) {
+    const nonNullish = nonNullishMembers(typeNode)
+    if (nonNullish.length === 1) return enumLiteralNodes(project, nonNullish[0])
+    return nonNullish.length > 1 ? allStringLiterals(nonNullish) : undefined
+  }
+  return resolveNamedUnionAliasNodes(project, typeNode, 0)
 }
 
 /** A single (already non-nullish) type node -> `PropKind`. Never touches the checker — see module doc. */
@@ -151,8 +192,8 @@ function classifyNonNullish(project: Project, name: string, node: TypeNode): Pro
   if (node.getKind() === SyntaxKind.BooleanKeyword) return { kind: 'boolean' }
 
   if (node.getKind() === SyntaxKind.TypeReference) {
-    const resolved = resolveNamedUnionAlias(project, node, 0)
-    if (resolved) return resolved
+    const literals = resolveNamedUnionAliasNodes(project, node, 0)
+    if (literals) return enumOfLiteralNodes(literals)
   }
 
   return { kind: 'unknown' }
@@ -172,19 +213,12 @@ export function classifyPropType(project: Project, name: string, typeNode: TypeN
   if (!typeNode) return { kind: 'unknown' }
 
   if (typeNode.getKind() === SyntaxKind.UnionType) {
-    const members = typeNode.asKindOrThrow(SyntaxKind.UnionType).getTypeNodes()
-    const nonNullish = members.filter((m) => {
-      const t = normalizedTypeText(m)
-      return t !== 'undefined' && t !== 'null'
-    })
+    const nonNullish = nonNullishMembers(typeNode)
     if (nonNullish.length === 0) return { kind: 'unknown' }
     if (nonNullish.length === 1) return classifyNonNullish(project, name, nonNullish[0]!)
 
-    const literalValues = nonNullish.map(stringLiteralValue)
-    if (literalValues.every((v): v is string => v !== undefined)) {
-      return { kind: 'enum', values: literalValues }
-    }
-    return { kind: 'unknown' }
+    const literals = allStringLiterals(nonNullish)
+    return literals ? enumOfLiteralNodes(literals) : { kind: 'unknown' }
   }
 
   return classifyNonNullish(project, name, typeNode)
@@ -373,6 +407,18 @@ export function buildComponentSpec(
  * (e.g. recording which page(s) actually use a local component) doesn't
  * retroactively change what a package manifest's `file` field means.
  */
+/**
+ * One declared prop of a LOCAL component: the package-agnostic `PropSpec`
+ * plus the variant read model (`defaultValue`, union `members` with their
+ * source ranges, and the `binding` analysis). Package manifests keep the
+ * narrower `PropSpecSchema` — they have no source the analyzer can read.
+ */
+export const LocalPropSpecSchema = Type.Object({
+  ...PropSpecSchema.properties,
+  ...PropVariantFieldsSchema.properties,
+})
+export type LocalPropSpec = Static<typeof LocalPropSpecSchema>
+
 export const LocalComponentSpecSchema = Type.Object({
   /** Display name — the export's own name, or a name recovered from the file's basename for an anonymous default export (`pascalCaseFromFileBase`). */
   name: Type.String(),
@@ -381,9 +427,98 @@ export const LocalComponentSpecSchema = Type.Object({
   /** The literal export name at `file` — `'default'` for a default export, otherwise identical to `name`. */
   exportName: Type.String(),
   isDefaultExport: Type.Boolean(),
-  props: Type.Array(PropSpecSchema),
+  /**
+   * What the declaration IS in the project: a reusable `component`, a route
+   * `page` (under the project's detected pages directory, or a framework route
+   * file such as `app/page.tsx`), or a `provider` (a context wrapper whose
+   * render is only `{children}` inside `<X.Provider>`). Pages and providers are
+   * declared components too, but they are not parts a designer places.
+   */
+  role: Type.Union([Type.Literal('component'), Type.Literal('page'), Type.Literal('provider')]),
+  props: Type.Array(LocalPropSpecSchema),
 })
 export type LocalComponentSpec = Static<typeof LocalComponentSpecSchema>
+
+/** Whether a literal's file is the project's own source — a `.d.ts` under `node_modules` is not a place Studio may point a writer. */
+function isWorkspaceFile(workspaceRoot: string, node: Node): boolean {
+  const rel = toPosix(node.getSourceFile().getFilePath()).replace(toPosix(workspaceRoot), '').replace(/^\/+/, '')
+  return rel !== '' && !rel.split('/').includes('node_modules') && !rel.startsWith('..')
+}
+
+/**
+ * Where the union that defines an enum's members is written. `other-file`
+ * wins whenever the literals live outside the component's own file (an
+ * imported alias, or a props interface declared elsewhere); otherwise the
+ * members are `inline` when the prop's own type is the union, and a
+ * `same-file-alias` when it names one.
+ */
+function unionHomeOf(componentFile: SourceFile, propType: TypeNode | undefined, literals: TypeNode[]): UnionHome {
+  if (literals[0]?.getSourceFile() !== componentFile) return 'other-file'
+  const writtenInline = propType !== undefined && propType.getKind() === SyntaxKind.UnionType && nonNullishMembers(propType).length > 1
+  return writtenInline ? 'inline' : 'same-file-alias'
+}
+
+/**
+ * The variant read model for one enum/boolean prop: default, member origins,
+ * and how the component's own code consumes it. Every field is read off the
+ * AST (and the component's imported stylesheets); a prop of any other kind,
+ * or a component the analyzer cannot read (a class), gets none.
+ */
+function variantFieldsFor(
+  project: Project,
+  workspaceRoot: string,
+  declaration: Node,
+  context: ComponentAnalysisContext | undefined,
+  prop: PropSpec,
+  signature: PropertySignature | undefined,
+): PropVariantFields {
+  if (prop.kind.kind !== 'enum' && prop.kind.kind !== 'boolean') return {}
+  const fields: PropVariantFields = {}
+  const defaultValue = readPropDefault(declaration, prop.name)
+  if (defaultValue !== undefined) fields.defaultValue = defaultValue
+
+  let memberNames: string[] = ['true']
+  if (prop.kind.kind === 'enum') {
+    memberNames = prop.kind.values
+    const propType = signature?.getTypeNode()
+    const literals = enumLiteralNodes(project, propType)
+    if (literals && literals.length === memberNames.length) {
+      fields.members = literals.map((node, index): VariantMember => {
+        const name = memberNames[index]!
+        return isWorkspaceFile(workspaceRoot, node) ? { name, origin: sourceRangeOf(workspaceRoot, node) } : { name }
+      })
+      fields.unionHome = unionHomeOf(declaration.getSourceFile(), propType, literals)
+    } else {
+      fields.members = memberNames.map((name): VariantMember => ({ name }))
+    }
+  }
+  if (context) fields.binding = analyzeVariantBinding(context, { name: prop.name, kind: prop.kind.kind, members: memberNames })
+  return fields
+}
+
+/** `buildComponentSpec`, plus the variant read model for every enum/boolean prop. */
+function buildLocalComponentSpec(
+  project: Project,
+  workspaceRoot: string,
+  exportName: string,
+  declaration: Node,
+  relFile: string,
+  isDefaultExport: boolean,
+): Omit<LocalComponentSpec, 'role'> | undefined {
+  const spec = buildComponentSpec(project, exportName, declaration, relFile, isDefaultExport)
+  if (!spec) return undefined
+  const signatures = new Map(
+    (resolveTypeNodeToMembers(project, resolvePropsTypeNode(declaration))?.getProperties() ?? []).map((p) => [p.getName(), p] as const),
+  )
+  const context = createComponentAnalysisContext(declaration, workspaceRoot)
+  return {
+    ...spec,
+    props: spec.props.map((prop) => ({
+      ...prop,
+      ...variantFieldsFor(project, workspaceRoot, declaration, context, prop, signatures.get(prop.name)),
+    })),
+  }
+}
 
 /** `export default Card` — an identifier referencing an ALREADY-declared local binding — read off the file's own export assignment. `undefined` for every other default-export shape (an inline arrow/anonymous function, a class expression, a non-identifier expression): those are read directly off their own declaration node (`FunctionDeclaration.isDefaultExport()` / `ClassDeclaration.isDefaultExport()`, both consulted separately below) rather than through this lookup. */
 function identifierDefaultExportName(sourceFile: SourceFile): string | undefined {
@@ -393,6 +528,22 @@ function identifierDefaultExportName(sourceFile: SourceFile): string | undefined
     if (Node.isIdentifier(expr)) return expr.getText()
   }
   return undefined
+}
+
+/** A declaration in the workspace -> its catalog entry, with the role the project's own layout gives it. */
+function localSpec(
+  project: Project,
+  workspaceRoot: string,
+  pagesPrefix: string | null,
+  exportName: string,
+  declaration: Node,
+  relFile: string,
+  isDefaultExport: boolean,
+): LocalComponentSpec | undefined {
+  const spec = buildLocalComponentSpec(project, workspaceRoot, exportName, declaration, relFile, isDefaultExport)
+  if (!spec) return undefined
+  const role = componentRole(relFile, pagesPrefix, declaration)
+  return { ...spec, role }
 }
 
 /**
@@ -424,8 +575,14 @@ function identifierDefaultExportName(sourceFile: SourceFile): string | undefined
  * source-fallback tier already gives; this module never fabricates a prop
  * kind it can't read from a type annotation.
  */
-export function extractLocalComponentCatalog(project: Project, workspaceRoot: string): LocalComponentSpec[] {
+export function extractLocalComponentCatalog(
+  project: Project,
+  workspaceRoot: string,
+  /** The project's detected pages directory, POSIX, relative to `workspaceRoot` (`.studio/meta.json` `profile.pagesDir`). */
+  pagesDir?: string,
+): LocalComponentSpec[] {
   const specs: LocalComponentSpec[] = []
+  const pagesPrefix = pagesDir ? `${toPosix(pagesDir).replace(/^\.?\/+|\/+$/g, '')}/` : null
 
   for (const sourceFile of project.getSourceFiles()) {
     const relFile = toPosix(sourceFile.getFilePath()).replace(toPosix(workspaceRoot), '').replace(/^\/+/, '')
@@ -443,20 +600,20 @@ export function extractLocalComponentCatalog(project: Project, workspaceRoot: st
 
     for (const fn of sourceFile.getFunctions()) {
       if (fn.isDefaultExport()) {
-        const spec = buildComponentSpec(project, 'default', fn, relFile, true)
+        const spec = localSpec(project, workspaceRoot, pagesPrefix, 'default', fn, relFile, true)
         if (spec) specs.push(spec)
       } else if (fn.isExported() && fn.getName()) {
-        const spec = buildComponentSpec(project, fn.getName()!, fn, relFile, false)
+        const spec = localSpec(project, workspaceRoot, pagesPrefix, fn.getName()!, fn, relFile, false)
         if (spec) specs.push(spec)
       }
     }
 
     for (const cls of sourceFile.getClasses()) {
       if (cls.isDefaultExport()) {
-        const spec = buildComponentSpec(project, 'default', cls, relFile, true)
+        const spec = localSpec(project, workspaceRoot, pagesPrefix, 'default', cls, relFile, true)
         if (spec) specs.push(spec)
       } else if (cls.isExported() && cls.getName()) {
-        const spec = buildComponentSpec(project, cls.getName()!, cls, relFile, false)
+        const spec = localSpec(project, workspaceRoot, pagesPrefix, cls.getName()!, cls, relFile, false)
         if (spec) specs.push(spec)
       }
     }
@@ -464,7 +621,7 @@ export function extractLocalComponentCatalog(project: Project, workspaceRoot: st
     for (const stmt of sourceFile.getVariableStatements()) {
       if (!stmt.isExported()) continue
       for (const decl of stmt.getDeclarations()) {
-        const spec = buildComponentSpec(project, decl.getName(), decl, relFile, false)
+        const spec = localSpec(project, workspaceRoot, pagesPrefix, decl.getName(), decl, relFile, false)
         if (spec) specs.push(spec)
       }
     }
@@ -481,7 +638,7 @@ export function extractLocalComponentCatalog(project: Project, workspaceRoot: st
         sourceFile.getClass(defaultIdentifierName) ??
         sourceFile.getVariableDeclaration(defaultIdentifierName)
       if (declaration) {
-        const spec = buildComponentSpec(project, 'default', declaration, relFile, true)
+        const spec = localSpec(project, workspaceRoot, pagesPrefix, 'default', declaration, relFile, true)
         if (spec) specs.push(spec)
       }
     }

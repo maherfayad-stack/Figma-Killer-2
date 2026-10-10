@@ -12,13 +12,16 @@
  * Spread into the object `createNodeActions` returns, so the store surface
  * is unchanged and `SiteSlice` still declares all five.
  */
-import { isStylePatchWritableToSource } from '@core/page-tree'
+import { describeStructuralRefusal, isStylePatchWritableToSource, refusePlacement } from '@core/page-tree'
 import type { PageNode } from '@core/page-tree'
+import { resolveActiveTreeTarget } from './helpers'
+import { STRUCTURAL_REFUSAL_TITLE, presentStructuralRefusal } from './structuralSourceEdits'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 
 type InlineStyleActions = Pick<
   SiteSlice,
   | 'setNodeInlineStyles'
+  | 'setNodeInlineStylesFromGesture'
   | 'setNodesInlineStyles'
   | 'setNodesInlineStylesPerNode'
   | 'removeNodeInlineStyleProperty'
@@ -60,7 +63,7 @@ export function applyInlineStylePatch(
 }
 
 export function createInlineStyleActions(helpers: SiteSliceHelpers): InlineStyleActions {
-  const { mutateActiveTree, mutateTreesForNodeIds } = helpers
+  const { mutateActiveTree, mutateTreesForNodeIds, get, set } = helpers
 
   const inlineStyleActions: InlineStyleActions = {
   setNodeInlineStyles: (nodeId, patch) => {
@@ -73,6 +76,21 @@ export function createInlineStyleActions(helpers: SiteSliceHelpers): InlineStyle
       if (!isStylePatchWritableToSource(node, patch)) return false
       return applyInlineStylePatch(node, patch)
     })
+  },
+
+  setNodeInlineStylesFromGesture: (nodeId, patch, gesture) => {
+    const node = resolveActiveTreeTarget(get())?.tree.nodes[nodeId]
+    const refusal = node ? refusePlacement(node, gesture) : null
+    if (node && refusal?.reason === 'shared-component') {
+      presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.resize, describeStructuralRefusal({ refusal, node }), {
+        nodeId,
+        retry: (mapId) => get().setNodeInlineStyles(mapId(nodeId), patch),
+        getState: get,
+        set,
+      })
+      return
+    }
+    get().setNodeInlineStyles(nodeId, patch)
   },
 
   setNodesInlineStyles: (nodeIds, patch) => {

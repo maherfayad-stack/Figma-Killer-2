@@ -26,8 +26,8 @@
 import { useState } from 'react'
 import { WarningDiamondSolidIcon } from 'pixel-art-icons/icons/warning-diamond-solid'
 import { useEditorStore } from '@site/store/store'
-import { callSitePosition, decodeSourceNodeId, inlineDepth, isInlinedNodeId, type PageNode } from '@core/page-tree'
-import { inlineTailKey } from '@site/store/slices/site/nodeIndex'
+import { callSitePosition, decodeSourceNodeId, inlineDepth, type PageNode } from '@core/page-tree'
+import { inlinedSourceInstanceCount } from '@site/store/slices/site/nodeIndex'
 import { commitStudioExposeProp } from '@site/studio/studioStructuralCommits'
 import { invalidateLocalComponentCatalog } from '@site/studio/componentCatalog'
 import { Button } from '@ui/components/Button'
@@ -63,12 +63,7 @@ export function SharedComponentNotice({ componentName, nodeId, node, textOrigin 
   // `callSite~component:line:col` and its writeback target is that tail, so
   // two nodes with the same tail are two instances of one shared component
   // writing to the same line (`studioEditLocation`, server-side).
-  const instanceCount = useEditorStore((s) => {
-    if (!isInlinedNodeId(nodeId)) return 1
-    const tail = inlineTailKey(nodeId)
-    if (!tail) return 1
-    return s._inlineTailToCount.get(tail) ?? 1
-  })
+  const instanceCount = useEditorStore((s) => inlinedSourceInstanceCount(s, nodeId))
   const [exposing, setExposing] = useState(false)
 
   const componentFile = decodeSourceNodeId(nodeId)?.rel

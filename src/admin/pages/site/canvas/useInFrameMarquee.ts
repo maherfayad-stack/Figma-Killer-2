@@ -33,7 +33,8 @@ import { isCanvasSpacePanActive, shouldStartCanvasPointerPan } from './canvasPan
 import { CANVAS_NODE_SELECTOR, isElementLike, isPressInsideInlineEditor } from './canvasEventTargets'
 import { presentedElementForNode } from './canvasNodeLookup'
 import { nodeVisualRect } from './canvasDomGeometry'
-import { canvasPressContext, frameContentRootId, isFrameBackgroundHit } from './canvasPressTarget'
+import { createBareWrapperProbe } from './canvasBareWrapperProbe'
+import { canvasPressContext, isFrameBackgroundHit, marqueeRootId } from './canvasPressTarget'
 import { collectMarqueeCandidates, marqueeBetween, marqueeHits, type MarqueeCandidate, type MarqueeRect } from './inFrameMarquee'
 
 /** Frame px the pointer travels before a root press becomes a marquee rather than a click. */
@@ -90,8 +91,11 @@ export function useInFrameMarquee({ enabled, overlayRoot, frameId }: InFrameMarq
       const nodeId = target.closest(CANVAS_NODE_SELECTOR)?.getAttribute('data-node-id')
       if (!nodeId) return
       const resolved = resolveSelectableNode(state, nodeId)
-      if (!resolved || !isFrameBackgroundHit(resolved.tree, nodeId, canvasPressContext(state, frameId))) return
-      const tree = resolved.tree
+      const tree = resolved?.tree
+      if (!tree) return
+      const isBareWrapper = createBareWrapperProbe(doc, tree)
+      if (!isFrameBackgroundHit(tree, nodeId, canvasPressContext(state, frameId), isBareWrapper)) return
+      const sweepRootId = marqueeRootId(tree, nodeId, isBareWrapper)
 
       const start = { x: event.clientX, y: event.clientY }
       const additive = event.shiftKey
@@ -125,7 +129,7 @@ export function useInFrameMarquee({ enabled, overlayRoot, frameId }: InFrameMarq
         if (!candidates) {
           if (Math.hypot(moveEvent.clientX - start.x, moveEvent.clientY - start.y) < MARQUEE_THRESHOLD_PX) return
           // The marquee starts: one read of every layer's box, then chrome.
-          candidates = collectMarqueeCandidates(tree, frameContentRootId(tree), (id) => {
+          candidates = collectMarqueeCandidates(tree, sweepRootId, (id) => {
             const element = presentedElementForNode(doc, id)
             const rect = element ? nodeVisualRect(element) : null
             return rect ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : null

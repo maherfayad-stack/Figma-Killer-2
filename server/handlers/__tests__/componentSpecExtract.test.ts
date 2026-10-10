@@ -169,4 +169,130 @@ describe('extractLocalComponentCatalog', () => {
     expect(button!.props.some((p) => p.name === 'onPress')).toBe(false)
     expect(button!.props.some((p) => p.name === 'label')).toBe(true)
   })
+
+  describe('variant read model (CV-1)', () => {
+    it('reports defaults, member source ranges and the css-module binding for an inline union', () => {
+      write(
+        'src/components/Tag.tsx',
+        [
+          "import styles from './Tag.module.css'",
+          'export interface TagProps {',
+          "  tone?: 'info' | 'warn' | 'danger'",
+          '  pinned?: boolean',
+          '  label: string',
+          '}',
+          "export function Tag({ tone = 'info', pinned = false, label }: TagProps) {",
+          '  return <span className={styles[tone]}>{label}</span>',
+          '}',
+        ].join('\n'),
+      )
+      write('src/components/Tag.module.css', '.info { color: blue; }\n.warn { color: orange; }\n')
+
+      const tag = catalog().find((c) => c.name === 'Tag')!
+      const tone = tag.props.find((p) => p.name === 'tone')!
+      expect(tone.kind).toEqual({ kind: 'enum', values: ['info', 'warn', 'danger'] })
+      expect(tone.defaultValue).toBe('info')
+      expect(tone.unionHome).toBe('inline')
+      // Each member points at its own literal (line 3: `  tone?: 'info' | …`).
+      expect(tone.members?.map((m) => [m.name, m.origin?.file, m.origin?.line, m.origin?.column])).toEqual([
+        ['info', 'src/components/Tag.tsx', 3, 10],
+        ['warn', 'src/components/Tag.tsx', 3, 19],
+        ['danger', 'src/components/Tag.tsx', 3, 28],
+      ])
+      expect(tone.binding?.kind).toBe('css-module-class')
+
+      const pinned = tag.props.find((p) => p.name === 'pinned')!
+      expect(pinned.defaultValue).toBe(false)
+      // Declared, but never read: the model says so instead of staying silent.
+      expect(pinned.binding).toMatchObject({ kind: 'opaque' })
+      // A string prop is not a variant axis: none of the variant fields.
+      const label = tag.props.find((p) => p.name === 'label')!
+      expect(label.binding).toBeUndefined()
+      expect(label.members).toBeUndefined()
+      expect(label.defaultValue).toBeUndefined()
+    })
+
+    it('calls a union written inside the prop type `inline`', () => {
+      write(
+        'src/components/Seg.tsx',
+        ["export function Seg({ mode }: { mode?: 'a' | 'b' | undefined | null }) {", '  return <i>{mode}</i>', '}'].join('\n'),
+      )
+      const mode = catalog().find((c) => c.name === 'Seg')!.props[0]!
+      // Classification is exactly what it was before the read model: values and order.
+      expect(mode.kind).toEqual({ kind: 'enum', values: ['a', 'b'] })
+      expect(mode.unionHome).toBe('inline')
+      expect(mode.members?.map((m) => m.name)).toEqual(['a', 'b'])
+    })
+
+    it('distinguishes a same-file alias from an alias declared in another file', () => {
+      write('src/components/sizes.ts', "export type Size = 'sm' | 'md'\n")
+      write(
+        'src/components/Chip.tsx',
+        [
+          "import type { Size } from './sizes'",
+          "type Tone = 'plain' | 'bold'",
+          'export function Chip({ tone, size }: { tone: Tone; size: Size }) {',
+          '  return <i>{tone}{size}</i>',
+          '}',
+        ].join('\n'),
+      )
+
+      const chip = catalog().find((c) => c.name === 'Chip')!
+      const tone = chip.props.find((p) => p.name === 'tone')!
+      const size = chip.props.find((p) => p.name === 'size')!
+      expect(tone.unionHome).toBe('same-file-alias')
+      expect(tone.members?.[0]?.origin).toMatchObject({ file: 'src/components/Chip.tsx', line: 2 })
+      expect(size.unionHome).toBe('other-file')
+      expect(size.members?.[1]?.origin).toMatchObject({ file: 'src/components/sizes.ts', line: 1 })
+    })
+
+    it('gives a class component members but no binding (the analyzer reads function components only)', () => {
+      write(
+        'src/components/Old.tsx',
+        [
+          "import { Component } from 'react'",
+          "export class Old extends Component<{ tone: 'a' | 'b' }> {",
+          '  render() { return null }',
+          '}',
+        ].join('\n'),
+      )
+      const tone = catalog().find((c) => c.name === 'Old')!.props[0]!
+      expect(tone.binding).toBeUndefined()
+      expect(tone.members?.map((m) => m.name)).toEqual(['a', 'b'])
+    })
+  })
+})
+
+describe('extractLocalComponentCatalog roles', () => {
+  it('marks a flat pages/ screen as a page via the detected pagesDir, not only Next route files', () => {
+    write('pages/Home.tsx', 'export default function Home() {\n  return <main />\n}')
+    write('components/Hero.tsx', 'export default function Hero() {\n  return <section />\n}')
+    const project = createWorkspaceProject(tmpDir)
+    const roles = Object.fromEntries(extractLocalComponentCatalog(project, tmpDir, 'pages').map((c) => [c.name, c.role]))
+    expect(roles).toEqual({ Home: 'page', Hero: 'component' })
+  })
+
+  it('marks a children-only context wrapper as a provider, never a component with real markup', () => {
+    write(
+      'components/LanguageProvider.tsx',
+      [
+        "import { createContext } from 'react'",
+        'const Ctx = createContext<string>("en")',
+        'export function LanguageProvider({ children }: { children: React.ReactNode }) {',
+        '  const lang = "en"',
+        '  return <Ctx.Provider value={lang}>{children}</Ctx.Provider>',
+        '}',
+      ].join('\n'),
+    )
+    write(
+      'components/Shell.tsx',
+      'export const Shell = ({ children }: { children: React.ReactNode }) => (\n  <div className="shell">{children}</div>\n)',
+    )
+    write(
+      'components/Providers.tsx',
+      'export const Providers = ({ children }) => <A.Provider value={1}><BProvider>{children}</BProvider></A.Provider>',
+    )
+    const roles = Object.fromEntries(catalog().map((c) => [c.name, c.role]))
+    expect(roles).toEqual({ LanguageProvider: 'provider', Shell: 'component', Providers: 'provider' })
+  })
 })

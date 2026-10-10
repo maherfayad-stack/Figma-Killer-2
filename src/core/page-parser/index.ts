@@ -97,6 +97,13 @@ export { createEvalScope, createPageEvalBudget, evaluateExpression } from './sta
 export type { EvalScope, PageEvalBudget, StaticEvalOptions, StaticValue, ValueOrigin } from './staticEval'
 export { CLASS_NAME_JOIN_BUILTIN_NAMES, isContextReaderHook } from './staticEvalCalls'
 export { reactExportNameOf } from './reactImports'
+export {
+  analyzeVariantBinding,
+  createComponentAnalysisContext,
+  readPropDefault,
+  sourceRangeOf,
+} from './componentVariantBindings'
+export type { AnalyzedProp, ComponentAnalysisContext } from './componentVariantBindings'
 export { CANONICAL_JSX_RULES, canonicalRuleDef, checkCanonicalJsx, summarizeCanonicalFindings } from './canonicalCheck'
 export type {
   CanonicalCheckInput,

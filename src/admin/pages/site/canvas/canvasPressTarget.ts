@@ -179,20 +179,52 @@ export function frameContentRootId(tree: NodeTree<PageNode>): string {
 }
 
 /**
- * Whether a press on `hitId` landed on the frame's own background — the
- * synthetic `<body>` or the screen element — rather than on a layer inside it.
- * Neither moves, so such a press is the in-frame marquee's (`useInFrameMarquee`);
- * ⌘/Ctrl (`deep`) still reaches the innermost layer and is never background.
+ * Whether a press on `hitId` landed on the frame's own background rather than
+ * on a layer inside it. Background does not move, so such a press is the
+ * in-frame marquee's (`useInFrameMarquee`); ⌘/Ctrl (`deep`) still reaches the
+ * innermost layer and is never background. Figma's rule, in tree terms:
+ *
+ *  - the synthetic `<body>` and the screen element are background;
+ *  - a press inside a SELECTED layer is never background (it moves that layer);
+ *  - an unselected ANCESTOR of the selection is background: dragging a
+ *    container's empty area while something inside it is selected sweeps;
+ *  - a container the caller's `isBareWrapper` probe calls a full-frame wrapper
+ *    with no paint of its own is background: real pages wrap the whole screen
+ *    in one, and every blank point of the page hits it.
  */
 export function isFrameBackgroundHit(
   tree: NodeTree<PageNode>,
   hitId: string,
-  context: Pick<CanvasPressContext, 'enteredInstanceIds' | 'vcLockdown'>,
+  context: Pick<CanvasPressContext, 'enteredInstanceIds' | 'vcLockdown'> & { selectedIds?: readonly string[] },
+  isBareWrapper?: (nodeId: string) => boolean,
 ): boolean {
   // An authored page root (a Visual Component's own root element) is a layer.
   if (tree.nodes[tree.rootNodeId]?.moduleId !== 'base.body') return false
   const leaf = clampToComponentBoundary(tree, hitId, context)
-  return leaf === tree.rootNodeId || leaf === frameContentRootId(tree)
+  if (leaf === tree.rootNodeId || leaf === frameContentRootId(tree)) return true
+  const selectedIds = context.selectedIds ?? []
+  if (pathTo(tree, leaf).some((id) => selectedIds.includes(id))) return false
+  if (selectedIds.some((id) => pathTo(tree, id).includes(leaf))) return true
+  return (tree.nodes[leaf]?.children.length ?? 0) > 0 && isBareWrapper?.(leaf) === true
+}
+
+/**
+ * Where an in-frame sweep starts: the background node the press landed on,
+ * then down through any chain of bare wrappers holding a single visible child,
+ * so a screen wrapped in unpainted divs still sweeps its sections.
+ */
+export function marqueeRootId(
+  tree: NodeTree<PageNode>,
+  hitId: string,
+  isBareWrapper: (nodeId: string) => boolean,
+): string {
+  let current = hitId === tree.rootNodeId ? frameContentRootId(tree) : hitId
+  for (;;) {
+    const visible = (tree.nodes[current]?.children ?? []).filter((id) => !tree.nodes[id]?.hidden)
+    const only = visible.length === 1 ? visible[0]! : null
+    if (only === null || (tree.nodes[only]?.children.length ?? 0) === 0 || !isBareWrapper(only)) return current
+    current = only
+  }
 }
 
 /** What a double-click selects before it does anything else — see {@link resolveCanvasDrillTarget}. */
@@ -259,9 +291,9 @@ export function planCanvasPressDrag(
   tree: NodeTree<PageNode>,
   hitId: string,
   context: CanvasPressContext,
-  { deep }: { deep: boolean },
+  { deep, isBareWrapper }: { deep: boolean; isBareWrapper?: (nodeId: string) => boolean },
 ): CanvasPressDragPlan | null {
-  if (!deep && isFrameBackgroundHit(tree, hitId, context)) return null
+  if (!deep && isFrameBackgroundHit(tree, hitId, context, isBareWrapper)) return null
   const target = resolveCanvasPressTarget(tree, hitId, context, { deep })
   if (target === null) return null
   const inSelection = context.selectedIds.includes(target)

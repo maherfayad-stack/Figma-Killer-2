@@ -67,7 +67,7 @@ export function SelectorInputArea({
         }}
         onFocus={onFocus}
         onKeyDown={onKeyDown}
-        placeholder="Add or create selector…"
+        placeholder="Add class…"
         aria-label="Add or create a CSS selector"
         data-testid="class-picker-input"
         trailingSlot={

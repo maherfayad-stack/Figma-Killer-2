@@ -50,6 +50,7 @@ import {
 } from './canvasDrawTool'
 import { armCreatedNodeFollowUp } from './createdNodeFollowUp'
 import { boardDrawPlacement } from './boardDrawTool'
+import { absolutePlacementForDraw } from './canvasDrawAbsolutePlacement'
 import { placeDrawOnBoard } from './placeDrawOnBoard'
 import { pushToast } from '@ui/components/Toast'
 import { startCanvasTextEdit } from './canvasTextEditStart'
@@ -75,6 +76,8 @@ interface DrawSession {
   drop: CanvasPointerInsertionDrop | null
   /** The pressed frame's on-screen scale, to turn the drawn screen px into CSS px. */
   scale: number
+  /** The pressed frame's iframe (`null` outside a frame) — what an absolute layout is read from. */
+  iframe: HTMLIFrameElement | null
   /** The board frame pressed in (`null` outside a board) — where T's new text opens. */
   frameId: string | null
 }
@@ -169,6 +172,7 @@ export function CanvasDrawToolLayer({ tool, transformLayerRef }: CanvasDrawToolL
       current: start,
       drop: viewport ? resolveDrop(start.x, start.y) : null,
       scale: viewport ? getViewportZoom(viewport) : 1,
+      iframe: viewport ? viewport.querySelector<HTMLIFrameElement>('iframe') : null,
       frameId: viewport?.closest<HTMLElement>('[data-frame-id]')?.dataset.frameId ?? null,
     }
     setDrawGestureActive(true)
@@ -190,13 +194,14 @@ export function CanvasDrawToolLayer({ tool, transformLayerRef }: CanvasDrawToolL
     const dragged = isDrawDrag(session.start, end)
     const rect = dragged ? drawnRect(session.start, end, { square: event.shiftKey, fromCenter: event.altKey }) : null
     if (session.drop) {
-      commitFrameDraw(session.drop, rect, session.scale, session.frameId)
+      commitFrameDraw(session, session.drop, rect)
       return
     }
     commitBoardDraw(session.start, rect)
   }
 
-  const commitFrameDraw = (drop: CanvasPointerInsertionDrop, rect: DrawRect | null, scale: number, frameId: string | null) => {
+  const commitFrameDraw = (session: DrawSession, drop: CanvasPointerInsertionDrop, rect: DrawRect | null) => {
+    const { scale, frameId } = session
     const definition = registry.get(spec.moduleId)
     if (!definition) return
     const store = useEditorStore.getState()
@@ -204,7 +209,9 @@ export function CanvasDrawToolLayer({ tool, transformLayerRef }: CanvasDrawToolL
     // active before it runs (`useCanvasInsertionDrag` does the same).
     if (drop.pageId !== selectActiveCanvasPage(store)?.id) store.openPageInCanvas(drop.pageId)
     if (tool === 'text') armCreatedNodeFollowUp((nodeId) => { startCanvasTextEdit(nodeId, frameId, { selectAll: true }) })
-    const nodeId = insertModule(definition, drop.location, { inlineStyles: drawInsertStyles(spec, rect, scale) })
+    // In an absolutely-laid-out container the draw lands where it was drawn.
+    const placement = absolutePlacementForDraw(session.iframe, drop.location.parentId, rect ?? session.start)
+    const nodeId = insertModule(definition, drop.location, { inlineStyles: { ...drawInsertStyles(spec, rect, scale), ...placement } })
     if (nodeId !== null) useEditorStore.getState().setActiveBreakpoint(drop.breakpointId)
     useEditorStore.getState().setCanvasTool('move')
   }

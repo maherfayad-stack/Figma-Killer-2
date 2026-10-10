@@ -1016,7 +1016,9 @@ by **mount order**. There is now exactly one:
   four files under two names.
 - `useCanvas` registers the `global`-rung viewport scope
   (`hooks/useCanvasViewportKeys.ts`, P2-B / IX-15): + / = / − / _ zoom, ⌘0 and
-  ⇧0 zoom to 100%, ⇧1 fit, ⇧2 fit the selection, Space held to pan. They were a
+  ⇧0 zoom to 100%, ⇧1 fit (W3-d: measures the whole frame CARD, title bar
+  included, plus sticky notes and docs, and keeps `measureCanvasFitInsets`
+  clear of the notch at the top), ⇧2 fit the selection, Space held to pan. They were a
   React `onKeyDown` on the canvas div (dead after one click into a panel) and
   two raw `document` listeners. The canvas div binds no key handler at all now,
   and `@use-gesture`'s own arrow-key drag is off (`drag.keys: false`).
@@ -1101,7 +1103,7 @@ The rules the ladder replaced prose with:
   Sibling selection went to Tab / ⇧Tab, not the arrows.
 - **Arrows on a layer (IX-1).** An `absolute | fixed` layer nudges its
   offsets 1 px / ⇧ 10 px; a flow child of a `flex` / `grid` parent (inline
-  or not — `isAutoLayout`) reorders along its parent's axis
+  or not — `isAutoLayoutDisplay` in `placementKind.ts`) reorders along its parent's axis
   (`reorderStep`: reversed for `*-reverse` and an RTL row; a cross-axis arrow
   moves nothing and SAYS so with an info toast — a press is never silent, nor
   is one whose layer could not be measured; in a GRID ↑ / ↓ move a whole row — the resolved
@@ -1254,7 +1256,13 @@ press. Hover shows the insertion drag's own drop line
 (`resolveCanvasPointerInsertionDrop` + a per-arming candidate snapshot); a
 click inserts there (a box gets Figma's 100 × 100, text its natural size), a
 drag also writes the drawn `width` / `height` (screen px ÷ the frame's zoom;
-⇧ square, ⌥ from the centre), and the tool puts itself away. Space / the hand
+⇧ square, ⌥ from the centre), and the tool puts itself away. W3-d: when the
+destination container already positions a child `position: absolute` (an
+exported mobile layout), the draw also writes `position: absolute` + `left` /
+`top` relative to that child's containing block (`canvasDrawAbsolutePlacement.ts`),
+so it lands where it was drawn instead of at the container's origin; a flow
+container still gets a flow insert, and a live (cross-origin) frame cannot be
+inspected so it stays a flow insert. Space / the hand
 tool make the layer click-through (the pan owns the pointer). T opens the new
 text for typing through `createdNodeFollowUp.ts` → `canvasTextEditStart.ts`.
 ⏎ with a tool armed is the old immediate insert (`T` / `F` inside the
@@ -1427,6 +1435,12 @@ comment (`server/handlers/studio/prototypeShell/shellFiles.ts`).
 
 ---
 
+## Placement: one classifier, one offset function (PA-1 / PA-2)
+
+- `core/studio-runtime/placementKind.ts` is the ONLY place that decides whether a parent places its children: `isAutoLayoutDisplay` / `autoLayoutFamily` (flex, grid, inline or not), `parentPlacementKind` (`auto-layout` | `free-frame` | `flow`, from computed style, never a source marker) and `resolvePlacement` (`free` | `reorder` | `free-from-flow`). Free-move, arrow nudge, align, spacing handles and (PA-3) draw/drop call it. Gate: `placement-kind-single-source.test.ts` (a canvas or site-store file that tests `display.includes('flex'|'grid')` fails). `dropAxisRules.ts` is exempt: it resolves a flow AXIS and ships inside the runtime bundle.
+- `core/studio-runtime/containingBlockOffsets.ts` turns a rect into `left/top/right/bottom` against the block that REALLY contains an absolute box (`readContainingBlock`: nearest ancestor that is positioned, or has transform / perspective / filter / contain / will-change), minus its border, plus its scroll, divided by its scale. Never use `offsetLeft` against `offsetParent`: `offsetParent` ignores transformed ancestors, so the inset is measured from the wrong box (the `left:-421px` class). Used by `canvasFreeMove.ts` and `canvasImageDropPlacement.ts`; draw (PA-3) must use it too.
+- A free-move onto a static parent that is not the containing block still refuses (`planFreeMoveProperties(own, parentContains)`); a transformed parent now counts as containing.
+
 ## Vector editing (P5-D)
 
 Double-clicking a literal `base.svg` (`vectorEditEntry.ts`, before
@@ -1487,6 +1501,11 @@ Module contract: `ModuleDefinition.inlineTextEdit?: { prop, multiline? }`.
 Declared by `base.text`, `base.button`, `base.link`. Values store `\n`, render
 `<br>` on both the canvas and publish paths.
 
+**One session = one write.** `applyInlineEditValue` only updates the session
+`draft`; `endInlineEdit` writes it once (one undo entry, one source write — a
+translation-dictionary literal included); `cancelInlineEdit` (Escape) drops the
+draft, writing nothing. The bridge-frame editor already worked this way.
+
 **Other starts than a double-click.** `startCanvasTextEdit` (the text tool's new
 text, Enter on a selected text) finds the frame by its board frame id: a portal
 frame by searching its document, a READY live bridge frame by id alone (its DOM
@@ -1505,9 +1524,8 @@ hears it) or a text just drawn on the empty board (`placeDrawOnBoard` → `whenL
 — the module is read back after the gesture) starts the ordinary session keyed
 on the surface's `'studio'` breakpoint and the layer's `canvas:<id>` page id,
 which is what its `NodeRenderer`s already match. The layer's tree is not in the
-page, so `applyInlineEditValue` writes nothing per keystroke
-(`activeInlineEdit.layerValue` holds the text); `endInlineEdit` shows the new
-text in the layer's tree and posts ONE `text` (or origin `literal`) edit with a
+page, so its draft is committed by `endInlineEdit` as a source write of its
+own: the new text shows in the layer's tree and ONE `text` (or origin `literal`) edit goes out with a
 known inverse (`studio/canvasLayerTextCommit.ts`) — one undo entry; a write that
 does not land puts the old text back. Escape writes nothing. The caret follows
 the keyboard only: the surface iframe is `pointer-events: none`, so a click
@@ -1591,8 +1609,13 @@ a component in a live frame selected the element inside it.
     apply — portal frames only: `ResizeSnapContext` carries neither guides
     nor toggles to a live frame yet, so it snaps to peers with both on.
   - **Double-click a handle: Hug** (P5-F, IX-6f). `hugPatchForHandle` is the
-    inspector's own `sizingPatch('hug', …)` on the axes the handle owns (an
-    edge one, a corner both), in one `setNodeInlineStyles`. Detected as a
+    inspector's own `sizingPatch('hug', …)` on the axes the handle owns, in one
+    `setNodeInlineStylesFromGesture` (W3-d: CORNER handles only — the edge
+    handles are invisible strips along the whole side, so a double-click on the
+    selection ring's edge is not a double-click on a handle; and on markup in a
+    shared component that action detaches this instance and replays the write,
+    `instanceOnlyGesture.ts`, exactly as a structural gesture does, instead of
+    silently restyling every instance — a resize drag takes the same road). Detected as a
     SECOND PRESS on the same handle within 400 ms of a press that moved
     nothing — never from the native `dblclick`, which a real browser did not
     deliver after the handle's cancelled `pointerdown` (measured by the e2e).
@@ -1671,6 +1694,16 @@ a component in a live frame selected the element inside it.
   the marquee alike.
   `useInFrameMarquee` (a capture listener on the frame document beside the
   body drag trigger), rules in `inFrameMarquee.ts`. ⌘-drag stays free move.
+  W3-d: "background" is wider than body + screen element, because real pages
+  wrap the whole screen in full-bleed layout `<div>`s and every blank point hit
+  one. `isFrameBackgroundHit` also counts (a) an unselected ANCESTOR of the
+  selection and (b) a container the caller's `isBareWrapper` probe
+  (`canvasBareWrapperProbe.ts`: covers >= 90% of the screen element and has no
+  fill, image, shadow or border in COMPUTED style, read once per pointerdown)
+  calls a bare wrapper. A press inside a SELECTED layer is never background — it
+  moves that layer — and a click that does not travel still selects as before.
+  The sweep starts below the wrapper chain (`marqueeRootId`). Bridge frames pass
+  no probe, so only the selection-ancestor rule applies there.
   A **live (bridge) frame** gets the same sweep from `useBridgeFrameMarquee`:
   the runtime's `pointer` messages carry the press, moves and release (frame
   pixels), `measureDropCandidates` supplies every box once the sweep starts, the

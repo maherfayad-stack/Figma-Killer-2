@@ -48,10 +48,11 @@ topology below first.
   (D2 G3). One `transplant` edit (`transplantJsxElement`) removes the markup
   from one `.tsx` and writes it into the other, carrying whatever imports it
   needs; Alt copies instead. Refuses — while the pointer is still down, as the
-  same chip a same-frame refusal shows — when the element reads a binding local
-  to the component it is leaving (`captured-scope`), when the destination
+  same chip a same-frame refusal shows — when the element reads a value its
+  component owns - a prop, state, a ref, a list row (`captured-scope`; plain
+  constants and handlers it reads are copied along, G-1a), when the destination
   already means something else by a name it would carry
-  (`binding-conflict`), when it reads a helper or local component the origin
+  (`binding-conflict`), when it reads a local component the origin
   declares but does not export (`unexported-binding`, `sec-17` — the import it
   would carry would resolve to nothing), or for any of the four reasons a
   same-frame move refuses on either end. **Two frames of the same PAGE are not cross-frame** —

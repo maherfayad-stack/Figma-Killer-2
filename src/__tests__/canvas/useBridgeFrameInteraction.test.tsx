@@ -398,7 +398,7 @@ describe('useBridgeFrameInteraction', () => {
               localeOverride: null,
               multiline: false,
               initialValue: 'canonical text',
-              committed: false,
+              draft: '',
             },
           } as Parameters<typeof useEditorStore.setState>[0])
           return true
@@ -439,7 +439,7 @@ describe('useBridgeFrameInteraction', () => {
           localeOverride: null,
           multiline: false,
           initialValue: 'x',
-          committed: false,
+          draft: '',
         },
         applyInlineEditValue: (value: string) => applied.push(value),
         endInlineEdit: () => { ended += 1 },
@@ -466,7 +466,7 @@ describe('useBridgeFrameInteraction', () => {
           localeOverride: null,
           multiline: false,
           initialValue: 'x',
-          committed: false,
+          draft: '',
         },
         applyInlineEditValue: (value: string) => applied.push(value),
       } as Parameters<typeof useEditorStore.setState>[0])
@@ -491,7 +491,7 @@ describe('useBridgeFrameInteraction', () => {
           localeOverride: null,
           multiline: false,
           initialValue: 'x',
-          committed: false,
+          draft: '',
         },
         cancelInlineEdit: () => { cancelled += 1 },
       } as Parameters<typeof useEditorStore.setState>[0])

@@ -16,7 +16,6 @@ import {
   planFreeMoveOffsets,
   planFreeMoveProperties,
   stepFreeMove,
-  type FreeMoveElementBox,
   type FreeMoveMember,
   type FreeMovePlan,
   type FreeMoveStep,
@@ -40,27 +39,27 @@ function style(overrides: Partial<FreeMoveStyleInput> = {}): FreeMoveStyleInput 
 }
 
 const NOTHING_AUTHORED: ReadonlySet<NudgeOffsetProperty> = new Set()
-const BOX: FreeMoveElementBox = { offsetLeft: 40, offsetTop: 12, offsetWidth: 50, containerWidth: 300 }
+const BOX = { left: 40, top: 12, right: 210, bottom: 0 }
 
 describe('planFreeMoveProperties — when a coordinate write is honest', () => {
   it('an already-absolute element moves, and changes no position', () => {
-    expect(planFreeMoveProperties(style({ position: 'absolute' }), 'static')).toEqual({ needsAbsolute: false })
+    expect(planFreeMoveProperties(style({ position: 'absolute' }), false)).toEqual({ needsAbsolute: false })
   })
 
   it('a fixed element does not care what its parent is — the viewport contains it', () => {
-    expect(planFreeMoveProperties(style({ position: 'fixed' }), 'static')).not.toBeNull()
+    expect(planFreeMoveProperties(style({ position: 'fixed' }), false)).not.toBeNull()
   })
 
   it('a flow element inside a RELATIVE parent also writes position: absolute', () => {
     // Writing offsets alone on a static element does nothing at all, and a
     // declaration with no effect is the silent no-op this codebase refuses.
-    expect(planFreeMoveProperties(style(), 'relative')).toEqual({ needsAbsolute: true })
+    expect(planFreeMoveProperties(style(), true)).toEqual({ needsAbsolute: true })
   })
 
   it('REFUSES a flow element inside a STATIC parent', () => {
     // Absolutely positioning here hands the element to some other ancestor, or
     // to the viewport — not to the container the user dropped it in.
-    expect(planFreeMoveProperties(style(), 'static')).toBeNull()
+    expect(planFreeMoveProperties(style(), false)).toBeNull()
   })
 })
 
