@@ -33,7 +33,16 @@
  * so a project with its own component library writes its own components.
  */
 import { registry } from '@core/module-engine'
-import { describeStructuralRefusal, planListRowCopy, planListRowCopyTo, type NodeTree, type PageNode } from '@core/page-tree'
+import {
+  decodeSourceNodeId,
+  describeStructuralRefusal,
+  planListRowCopy,
+  planListRowCopyTo,
+  type NodeTree,
+  type PageNode,
+} from '@core/page-tree'
+import type { LocalComponentSpec } from '@site/property-controls/componentPropKind'
+import { relativeImportSpecifier } from '@site/property-controls/relativeImportSpecifier'
 import { broadcastOptimisticInsert } from '@site/canvas/frameAdapter/optimisticStructuralBroadcast'
 import {
   commitStudioDuplicate,
@@ -53,6 +62,7 @@ import {
   planSourceUngroup,
   planSourceWrap,
   presentStructuralRefusal,
+  type SourceInsertCommit,
 } from './structuralSourceEdits'
 import { moduleInsertProps, moduleSourceElement } from './moduleSourceElement'
 import { createStudioSourceRefusals, type StudioSourceRefusals } from './studioSourceRefusals'
@@ -98,6 +108,13 @@ export interface StudioSourceWrites extends StudioSourceRefusals {
     containerModuleId: string,
     defaults: Record<string, unknown>,
   ) => boolean
+  /**
+   * Insert a component declared in the user's own project (the Assets panel's
+   * "Project components"). Same contract as `writeInsertToSource`: true when the
+   * caller must stop (written, parked, or refused out loud), false on an ordinary
+   * CMS tree.
+   */
+  writeInsertProjectComponentToSource: (component: LocalComponentSpec, parentId: string, index?: number) => boolean
   /** K3 - Cmd+Shift+G: a container dissolved, its children taking its place. */
   writeUngroupToSource: (nodeId: string) => boolean
 }
@@ -129,6 +146,86 @@ export function createStudioSourceWrites(
    * "one-shot commit, then re-sync with disk" shape `move`/`delete` use, minus
    * the optimistic mutation they can afford and this cannot.
    */
+  /**
+   * The questions every source insert asks before it writes, shared by the
+   * registry-module insert and the project-component insert so the two cannot
+   * drift: defer behind an in-flight structural commit, find the tree, ask
+   * `planSourceInsert`. `'stop'` — parked, or refused out loud (the caller
+   * returns true). `'cms'` — an ordinary CMS tree (the caller returns false and
+   * takes the in-memory path).
+   */
+  const planInsertToSource = (
+    parentId: string,
+    index: number | undefined,
+    again: (parentId: string) => void,
+  ): { kind: 'commit'; commit: SourceInsertCommit } | { kind: 'stop' } | { kind: 'cms' } => {
+    // `store-14` — a second structural gesture fired while a prior one is
+    // still being written+resynced runs NEXT rather than being refused. It is
+    // parked as a thunk and re-planned against the tree that commit's resync
+    // leaves behind; see `structuralCommitQueue.ts`.
+    if (deferWhileStructuralCommitInFlight((relocate) => again(relocate(parentId)), [parentId])) {
+      return { kind: 'stop' }
+    }
+    const tree = readTree()
+    if (!tree) return { kind: 'cms' }
+    const plan = planSourceInsert(tree, parentId, index)
+    if (!plan.ok) {
+      presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.constraint, {
+        nodeId: plan.nodeId,
+        // The refused node here is the CONTAINER (`parentId`) — re-issue the
+        // same insert against whatever replaces it once detach/extract lands.
+        retry: (mapId) => again(mapId(parentId)),
+        getState: get,
+        set,
+      })
+      return { kind: 'stop' }
+    }
+    if (!plan.commit) return { kind: 'cms' } // an ordinary CMS tree — nothing to write
+    return { kind: 'commit', commit: plan.commit }
+  }
+
+  /**
+   * A component declared in the user's OWN project (`components/Card.tsx`) —
+   * the Assets panel's "Project components". Not a registry module: it has no
+   * canvas definition to render, so there is no optimistic local preview, only
+   * the bridge ghost; the write's resync brings in the real parsed element.
+   *
+   * The import specifier is computed HERE, relative to the file the element is
+   * written into — the file is the one `parentNodeId` decodes to — because the
+   * catalog names the component file workspace-relative and the codemod writes
+   * whatever specifier it is handed. `importStyle: 'default'` for a default
+   * export, which is how most project components are declared.
+   */
+  const writeInsertProjectComponentToSource = (
+    component: LocalComponentSpec,
+    parentId: string,
+    index?: number,
+  ): boolean => {
+    const planned = planInsertToSource(parentId, index, (relocated) => {
+      writeInsertProjectComponentToSource(component, relocated, index)
+    })
+    if (planned.kind === 'stop') return true
+    if (planned.kind === 'cms') return false
+    const { commit } = planned
+    const targetFile = decodeSourceNodeId(commit.parentNodeId)?.rel
+    if (!targetFile) return false
+    broadcastOptimisticInsert(
+      `optimistic:${crypto.randomUUID()}`,
+      commit.parentNodeId,
+      index ?? Number.MAX_SAFE_INTEGER,
+      'div',
+      undefined,
+    )
+    void commitStudioInsert({
+      ...commit,
+      name: component.exportName,
+      importSpecifier: relativeImportSpecifier(targetFile, component.file),
+      ...(component.isDefaultExport ? { importStyle: 'default' as const } : {}),
+      props: {},
+    })
+    return true
+  }
+
   const writeInsertToSource = (
     moduleId: string,
     defaults: Record<string, unknown> | undefined,
@@ -136,32 +233,11 @@ export function createStudioSourceWrites(
     index?: number,
     inlineStyles?: Record<string, string>,
   ): boolean => {
-    // `store-14` — a second structural gesture fired while a prior one is
-    // still being written+resynced runs NEXT rather than being refused. It is
-    // parked as a thunk and re-planned against the tree that commit's resync
-    // leaves behind; see `structuralCommitQueue.ts`.
-    if (
-      deferWhileStructuralCommitInFlight((relocate) => {
-        writeInsertToSource(moduleId, defaults, relocate(parentId), index, inlineStyles)
-      }, [parentId])
-    ) {
-      return true
-    }
-    const tree = readTree()
-    if (!tree) return false
-    const plan = planSourceInsert(tree, parentId, index)
-    if (!plan.ok) {
-      presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.constraint, {
-        nodeId: plan.nodeId,
-        // The refused node here is the CONTAINER (`parentId`) — re-issue the
-        // same insert against whatever replaces it once detach/extract lands.
-        retry: (mapId) => writeInsertToSource(moduleId, defaults, mapId(parentId), index, inlineStyles),
-        getState: get,
-        set,
-      })
-      return true
-    }
-    if (!plan.commit) return false // an ordinary CMS tree — nothing to write
+    const plan = planInsertToSource(parentId, index, (relocated) => {
+      writeInsertToSource(moduleId, defaults, relocated, index, inlineStyles)
+    })
+    if (plan.kind === 'stop') return true
+    if (plan.kind === 'cms') return false
 
     const element = moduleSourceElement(moduleId, defaults, inlineStyles)
     if (!element) {
@@ -470,6 +546,7 @@ export function createStudioSourceWrites(
   return {
     ...refusals,
     writeInsertToSource,
+    writeInsertProjectComponentToSource,
     writeDuplicateToSource,
     writeWrapToSource,
     writeGroupToSource,

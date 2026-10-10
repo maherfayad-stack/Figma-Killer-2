@@ -111,6 +111,8 @@ export interface InsertJsxElementParams {
    * Omit to write an intrinsic HTML tag, which needs no import.
    */
   importSpecifier?: string
+  /** `'default'` when `name` is the module's default export; see {@link InsertJsxNode.importStyle}. */
+  importStyle?: 'default'
   /**
    * The new element's content — literal text (`<span>Sign in</span>`), or a
    * nested subtree written in the SAME call. Omit for an empty element.
@@ -167,7 +169,7 @@ export type InsertJsxElementResult =
   | { ok: false; refusal: InsertJsxRefusal }
 
 export function insertJsxElement(params: InsertJsxElementParams): InsertJsxElementResult {
-  const { file, line, col, name, importSpecifier, children } = params
+  const { file, line, col, name, importSpecifier, importStyle, children } = params
   const project = params.project ?? createProject()
   const sourceFile = loadSourceFile(project, file)
 
@@ -177,6 +179,7 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
       name,
       props: params.props,
       ...(importSpecifier === undefined ? {} : { importSpecifier }),
+      ...(importStyle === undefined ? {} : { importStyle }),
       ...(children === undefined ? {} : { children }),
     },
     ...(params.siblings ?? []),

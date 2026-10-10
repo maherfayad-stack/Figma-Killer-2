@@ -1,5 +1,5 @@
 /**
- * PublishingSection — self-hosted CMS publishing details.
+ * PublishingSection — publishing details and framework CSS output.
  */
 import { useSiteSettingsController } from '../useSiteSettingsController'
 import { resolveFrameworkPreferences } from '@core/framework'
@@ -24,7 +24,7 @@ export function PublishingSection() {
   return (
     <div>
       <p className={s.sectionDescription}>
-        Published pages are served by this self-hosted CMS.
+        Publishing settings for this project's generated site.
       </p>
 
       <section aria-labelledby="pub-runtime-heading" className={s.sectionBlock}>
@@ -40,10 +40,6 @@ export function PublishingSection() {
           <div>
             <dt>Admin</dt>
             <dd>/admin</dd>
-          </div>
-          <div>
-            <dt>Draft source</dt>
-            <dd>Database</dd>
           </div>
         </dl>
       </section>

@@ -70,6 +70,7 @@ type NodeActions = Pick<
   SiteSlice,
   | 'insertNode'
   | 'insertComponentRef'
+  | 'insertProjectComponent'
   | 'insertImportedNodes'
   | 'refuseImportedNodesInto'
   | 'deleteNode'
@@ -166,6 +167,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
   const {
     refuseInsertInto,
     writeInsertToSource,
+    writeInsertProjectComponentToSource,
     writeDuplicateToSource,
     writeWrapToSource,
   } = sourceWrites
@@ -214,6 +216,9 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
     // `mcp-21` — an HTML fragment merged into the active tree, or refused on a
     // studio-imported one. See `importedNodesActions.ts`.
     ...createImportedNodesActions(helpers, sourceWrites.refuseImportedNodesInto),
+
+    insertProjectComponent: (component, parentId, index) =>
+      writeInsertProjectComponentToSource(component, parentId, index),
 
     insertComponentRef: (parentId, componentId, index) => {
       if (!componentId) return null

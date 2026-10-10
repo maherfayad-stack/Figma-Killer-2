@@ -33,7 +33,7 @@ import {
   type Page,
   type StyleRule,
 } from '@core/page-tree'
-import { classifyStylesheetEditability } from '@core/css-codemods'
+import { classifyStylesheetEditability } from '@core/css-codemods/browser'
 import { Type } from '@core/utils/typeboxHelpers'
 
 /**

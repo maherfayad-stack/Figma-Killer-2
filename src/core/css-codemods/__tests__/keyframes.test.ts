@@ -9,14 +9,14 @@
  * all of it survives.
  */
 import { describe, it, expect } from 'bun:test'
+import postcss from 'postcss'
 import {
   analyzeKeyframesTarget,
   insertKeyframes,
-  keyframesNameFromSelector,
-  readKeyframeSteps,
   removeDeclarationAtKeyframe,
   setDeclarationAtKeyframe,
 } from '../keyframes'
+import { keyframesNameFromSelector, readKeyframeSteps } from '../keyframesText'
 
 const MULTI_STEP = `.card {
   color: red;
@@ -216,4 +216,60 @@ describe('analyzeKeyframesTarget — the refusal', () => {
     const prefixed = `${MULTI_STEP}\n@-webkit-keyframes fade-in { to { opacity: 1; } }`
     expect(analyzeKeyframesTarget(prefixed, 'fade-in').ok).toBe(false)
   })
+})
+
+// ---------------------------------------------------------------------------
+// readKeyframeSteps is a postcss-free scanner (so the browser can read a block
+// without loading postcss). These cases pin the places a scanner and a CST
+// parser most easily disagree, with postcss itself as the oracle.
+// ---------------------------------------------------------------------------
+
+function postcssSteps(css: string, name: string): ReturnType<typeof readKeyframeSteps> {
+  let root
+  try {
+    root = postcss.parse(css)
+  } catch (_err) {
+    // The oracle's "cannot parse" is the scanner's null.
+    return null
+  }
+  let found: ReturnType<typeof readKeyframeSteps> = null
+  root.each((node) => {
+    if (found || node.type !== 'atrule' || !/^(?:-[a-z]+-)?keyframes$/i.test(node.name)) return
+    if (node.params.trim() !== name.trim()) return
+    const steps: NonNullable<typeof found> = []
+    node.each((child) => {
+      if (child.type !== 'rule') return
+      const declarations: Record<string, string> = {}
+      child.each((d) => {
+        if (d.type === 'decl') declarations[d.prop.trim()] = d.value.trim()
+      })
+      steps.push({ keyText: child.selector.trim(), declarations })
+    })
+    found = steps
+  })
+  return found
+}
+
+describe('readKeyframeSteps — scanner agrees with postcss', () => {
+  const CASES: Array<[string, string]> = [
+    ['comments inside a value and between steps', '@keyframes a { /* c */ from { opacity: /* x */ 0 } to { opacity: 1 /* y */ } }'],
+    ['a semicolon and brace inside url() and a string', '@keyframes a { to { background: url(data:image/svg+xml;base64,AA}) ; content: "};{" } }'],
+    ['no trailing semicolon and a trailing !important', '@keyframes a { 0%, 100% { color: red !important } 50% { color: blue; margin: 0 }}'],
+    ['a step that only holds a comment', '@keyframes a { from { /* nothing yet */ } to { opacity: 1 } }'],
+    ['the target block after other rules and a media query', '.a{color:red}@media (min-width:1px){.b{color:blue}}@keyframes a{to{opacity:1}}'],
+    ['a second same-named block (first wins)', '@keyframes a { to { opacity: 1 } } @keyframes a { to { opacity: 0 } }'],
+    ['uppercase vendor-prefixed at-rule', '@-MOZ-KEYFRAMES a { FROM { OPACITY: 0 } }'],
+    ['custom property values with spaces and colons', '@keyframes a { to { --x: calc(1px + 2px); background: url(http://x/y.png) } }'],
+    ['CRLF line endings', '@keyframes a {\r\n  from {\r\n    opacity: 0;\r\n  }\r\n}\r\n'],
+    ['a different name', '@keyframes b { to { opacity: 1 } }'],
+    ['an unclosed block', '@keyframes a { to { opacity: 1 }'],
+    ['a stray closing brace', '@keyframes a { to { opacity: 1 } } }'],
+    ['a declaration with no colon', '@keyframes a { to { opacity } }'],
+    ['an empty block', '@keyframes a {}'],
+  ]
+  for (const [label, css] of CASES) {
+    it(label, () => {
+      expect(readKeyframeSteps(css, 'a')).toEqual(postcssSteps(css, 'a'))
+    })
+  }
 })

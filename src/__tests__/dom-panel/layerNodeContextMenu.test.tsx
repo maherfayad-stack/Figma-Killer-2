@@ -1,7 +1,7 @@
 /**
  * layerNodeContextMenu.test.tsx
  *
- * Tests for the LayerNodeContextMenu "Insert module here" submenu:
+ * Tests for the LayerNodeContextMenu "Insert element here" submenu:
  * - The submenu trigger is always present.
  * - Hovering it opens a `ContextMenuSubmenu` containing the shared ModulePicker
  *   (search + module/VC list).
@@ -101,17 +101,17 @@ function renderMenu(nodeId = 'container-node', vcs: VisualComponent[] = []) {
 
 function openInsertSubmenu() {
   // ContextMenuSubmenu opens on mouseEnter — fire that to open the panel.
-  const trigger = screen.getByRole('menuitem', { name: /insert module here/i })
+  const trigger = screen.getByRole('menuitem', { name: /insert element here/i })
   fireEvent.mouseEnter(trigger)
   return trigger
 }
 
 beforeEach(() => resetStore())
 
-describe('LayerNodeContextMenu — Insert module here', () => {
-  it('renders the "Insert module here" submenu trigger', () => {
+describe('LayerNodeContextMenu — Insert element here', () => {
+  it('renders the "Insert element here" submenu trigger', () => {
     renderMenu()
-    expect(screen.getByRole('menuitem', { name: /insert module here/i })).toBeDefined()
+    expect(screen.getByRole('menuitem', { name: /insert element here/i })).toBeDefined()
   })
 
   it('opens the module picker submenu on hover', () => {
@@ -120,7 +120,7 @@ describe('LayerNodeContextMenu — Insert module here', () => {
 
     // ContextMenuSubmenu renders a panel with role="menu" and aria-label
     // matching the trigger label. The picker's search input lives inside.
-    expect(screen.getByRole('menu', { name: 'Insert module here' })).toBeDefined()
+    expect(screen.getByRole('menu', { name: 'Insert element here' })).toBeDefined()
     expect(screen.getByRole('searchbox', { name: 'Search modules' })).toBeDefined()
   })
 
@@ -128,7 +128,7 @@ describe('LayerNodeContextMenu — Insert module here', () => {
     renderMenu('container-node')
     openInsertSubmenu()
 
-    const submenu = screen.getByRole('menu', { name: 'Insert module here' })
+    const submenu = screen.getByRole('menu', { name: 'Insert element here' })
     const textOption = within(submenu).getAllByRole('menuitem').find(
       (el) => el.getAttribute('data-module-id') === 'base.text',
     )
@@ -150,7 +150,7 @@ describe('LayerNodeContextMenu — Insert module here', () => {
     renderMenu('container-node', [vc])
     openInsertSubmenu()
 
-    const submenu = screen.getByRole('menu', { name: 'Insert module here' })
+    const submenu = screen.getByRole('menu', { name: 'Insert element here' })
     const vcItem = submenu.querySelector('[data-vc-id="vc-abc"]') as HTMLElement
     expect(vcItem).not.toBeNull()
     fireEvent.click(vcItem)
@@ -187,7 +187,7 @@ describe('LayerNodeContextMenu — Insert module here', () => {
 
     openInsertSubmenu()
 
-    const submenu = screen.getByRole('menu', { name: 'Insert module here' })
+    const submenu = screen.getByRole('menu', { name: 'Insert element here' })
     const vcItem = submenu.querySelector('[data-vc-id="vc-1"]') as HTMLElement
     fireEvent.click(vcItem)
 
@@ -333,16 +333,16 @@ describe('LayerNodeContextMenu — slot-instance lock-down', () => {
     expect(screen.queryByRole('menuitem', { name: /^rename$/i })).toBeNull()
   })
 
-  it('C6: "Insert module here" IS present for a slot-instance node', () => {
+  it('C6: "Insert element here" IS present for a slot-instance node', () => {
     renderSlotInstanceMenu()
-    expect(screen.getByRole('menuitem', { name: /insert module here/i })).toBeDefined()
+    expect(screen.getByRole('menuitem', { name: /insert element here/i })).toBeDefined()
   })
 
   it('C7: picking a base module from the submenu inserts it INSIDE the slot-instance', () => {
     renderSlotInstanceMenu()
     openInsertSubmenu()
 
-    const submenu = screen.getByRole('menu', { name: 'Insert module here' })
+    const submenu = screen.getByRole('menu', { name: 'Insert element here' })
     const textOption = within(submenu).getAllByRole('menuitem').find(
       (el) => el.getAttribute('data-module-id') === 'base.text',
     )
@@ -431,7 +431,7 @@ describe('LayerNodeContextMenu — orphan slot-instance is NOT locked', () => {
 })
 
 /**
- * "Insert module here" is offered for every single-select target — container
+ * "Insert element here" is offered for every single-select target — container
  * AND leaf alike. Right-clicking a leaf (Text, Button, Image, etc.) and
  * inserting must land the new node as the next sibling under the leaf's
  * parent; the shared `resolveInsertLocation` helper handles that fallback
@@ -439,7 +439,7 @@ describe('LayerNodeContextMenu — orphan slot-instance is NOT locked', () => {
  * old bug — see the right-click "place doesn't do anything on non-container"
  * report that motivated this gate.
  */
-describe('LayerNodeContextMenu — "Insert module here" sibling fallback on leaf targets', () => {
+describe('LayerNodeContextMenu — "Insert element here" sibling fallback on leaf targets', () => {
   function setupPageWithMixedNodes() {
     localStorage.clear()
     const home = makePage({
@@ -487,33 +487,33 @@ describe('LayerNodeContextMenu — "Insert module here" sibling fallback on leaf
     )
   }
 
-  it('"Insert module here" IS shown for a base.container node', () => {
+  it('"Insert element here" IS shown for a base.container node', () => {
     renderMenuFor('ctr')
     expect(
-      screen.getByRole('menuitem', { name: /insert module here/i }),
+      screen.getByRole('menuitem', { name: /insert element here/i }),
     ).toBeDefined()
   })
 
-  it('"Insert module here" IS shown for a base.text node (leaf — places as sibling)', () => {
+  it('"Insert element here" IS shown for a base.text node (leaf — places as sibling)', () => {
     renderMenuFor('txt')
     expect(
-      screen.getByRole('menuitem', { name: /insert module here/i }),
+      screen.getByRole('menuitem', { name: /insert element here/i }),
     ).toBeDefined()
   })
 
-  it('"Insert module here" IS shown for a base.button node (leaf — places as sibling)', () => {
+  it('"Insert element here" IS shown for a base.button node (leaf — places as sibling)', () => {
     renderMenuFor('btn')
     expect(
-      screen.getByRole('menuitem', { name: /insert module here/i }),
+      screen.getByRole('menuitem', { name: /insert element here/i }),
     ).toBeDefined()
   })
 
   it('inserts a module as the NEXT SIBLING when the target is a leaf', () => {
     renderMenuFor('txt')
-    const trigger = screen.getByRole('menuitem', { name: /insert module here/i })
+    const trigger = screen.getByRole('menuitem', { name: /insert element here/i })
     fireEvent.mouseEnter(trigger)
 
-    const submenu = screen.getByRole('menu', { name: 'Insert module here' })
+    const submenu = screen.getByRole('menu', { name: 'Insert element here' })
     // `base.container` — not `base.button` (no `sourceIntrinsic` of its
     // own, so `moduleAvailability`'s intrinsic-element gate hides it from
     // every picker now that Studio is the only editor mode; only
@@ -565,9 +565,9 @@ describe('LayerNodeContextMenu — "Insert module here" sibling fallback on leaf
         onPaste={noop}
       />,
     )
-    const trigger = screen.getByRole('menuitem', { name: /insert module here/i })
+    const trigger = screen.getByRole('menuitem', { name: /insert element here/i })
     fireEvent.mouseEnter(trigger)
-    const submenu = screen.getByRole('menu', { name: 'Insert module here' })
+    const submenu = screen.getByRole('menu', { name: 'Insert element here' })
     const vcItem = submenu.querySelector('[data-vc-id="vc-sibling"]') as HTMLElement
     expect(vcItem).not.toBeNull()
     fireEvent.click(vcItem)
@@ -642,10 +642,10 @@ describe('LayerNodeContextMenu — "Insert module here" sibling fallback on leaf
         onPaste={noop}
       />,
     )
-    const trigger = screen.getByRole('menuitem', { name: /insert module here/i })
+    const trigger = screen.getByRole('menuitem', { name: /insert element here/i })
     fireEvent.mouseEnter(trigger)
 
-    const submenu = screen.getByRole('menu', { name: 'Insert module here' })
+    const submenu = screen.getByRole('menu', { name: 'Insert element here' })
     const textOption = within(submenu).getAllByRole('menuitem').find(
       (el) => el.getAttribute('data-module-id') === 'base.text',
     )

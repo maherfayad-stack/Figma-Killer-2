@@ -129,7 +129,7 @@ export function ImagesSection({ query, collapsed, onToggle }: ImagesSectionProps
   return (
     <AssetSection
       title="Images"
-      count={assets === null ? 0 : matches.length}
+      count={assets === null ? null : matches.length}
       collapsed={collapsed}
       onToggle={onToggle}
     >

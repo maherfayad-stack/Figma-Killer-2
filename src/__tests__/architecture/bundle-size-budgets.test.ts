@@ -273,7 +273,13 @@ const BUDGETS: ChunkBudget[] = [
     // than one dense new dependency, and neither `SitePage.tsx` nor
     // `AdminCanvasEditorBody.tsx` themselves changed in that diff. Measured
     // 930,682 B; ~4 KB headroom left on purpose — audit before raising again.
-    maxBytes: 935_000,
+    //
+    // Raised 935,000 -> 937,500 B for the cleanup-and-assets wave: the Assets
+    // panel's Project components section + `insertProjectComponent` source write,
+    // the `restore-thread` undo toast, the postcss-free keyframes/`@layer`
+    // scanners (which REPLACED postcss in the editor's static graph), and the
+    // note/doc placement. Measured 935,503 B; ~2 KB headroom.
+    maxBytes: 937_500,
     rationale:
       'post-paint Site editor body (canvas + panels + modules + publisher). ' +
       'Current ~815 KB raw / ~271 KB gzipped after the 2026-09-14 P3/Track-L/R2 ' +

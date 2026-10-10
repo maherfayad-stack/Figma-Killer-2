@@ -9,16 +9,9 @@
  */
 import { readdirSync, type Dirent } from 'node:fs'
 import { join } from 'node:path'
+import { EXCLUDED_WORKSPACE_DIR_NAMES } from '@core/utils/excludedWorkspaceDirs'
 
-/** Directory names skipped entirely — never descended into, anywhere in the tree. */
-export const EXCLUDED_WORKSPACE_DIR_NAMES: ReadonlySet<string> = new Set([
-  '.studio', // editor-owned spatial metadata (boards.json) — not app code
-  '.git',
-  'node_modules',
-  'dist',
-  '.next',
-  '.turbo',
-])
+export { EXCLUDED_WORKSPACE_DIR_NAMES }
 
 /**
  * The directory Studio scaffolds its runnable preview app into

@@ -38,6 +38,12 @@ Never a parallel `interface Foo` beside a `FooSchema`.
 `no-tailwind-deps.test.ts`, `noTailwindUtilities.test.ts`,
 `admin-router-usage.test.ts`, `direct-icon-imports.test.ts`.
 
+**Not in the editor bundle:** `postcss`, `ts-morph`, `@babel/*` and Node builtins
+must not be reachable by a static import from `src/admin/` (each one is a console
+warning per access in the browser). Import the pure leaf — `@core/css-codemods/browser`,
+`@core/utils/excludedWorkspaceDirs` — never the server barrel, or put the work behind a
+dynamic `import()`. **Gate:** `postcss-not-in-admin-bundle.test.ts`.
+
 Icons: `import { FooIcon } from 'pixel-art-icons/icons/foo'` then `bun run icons:sync`.
 
 ---

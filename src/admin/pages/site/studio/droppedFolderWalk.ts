@@ -36,7 +36,7 @@
  * 90%+ of the files, and the browser would otherwise read every one of them
  * into memory before the upload could start.
  */
-import { EXCLUDED_WORKSPACE_DIR_NAMES } from '@core/page-parser'
+import { EXCLUDED_WORKSPACE_DIR_NAMES } from '@core/utils/excludedWorkspaceDirs'
 
 /**
  * Files one drop may carry. Well above a real React app (a large one is a few

@@ -95,6 +95,13 @@ export interface InsertJsxNode {
   name: string
   props?: Record<string, InsertableJsxPropValue | undefined>
   importSpecifier?: string
+  /**
+   * How `name` is exported from `importSpecifier`: omitted means a NAMED export
+   * (`import { Button } from …`), `'default'` a default export (`import Card from …`).
+   * A project's own components are usually default exports, so a named-only
+   * insert could not place most of them. Meaningless without `importSpecifier`.
+   */
+  importStyle?: 'default'
   children?: InsertJsxChildren
 }
 
@@ -270,7 +277,12 @@ function* walkPropElements(value: InsertableJsxPropValue): Generator<InsertJsxNo
 export function collectSubtreeImports(root: InsertJsxNode): Map<string, ImportRequirement> {
   const required = new Map<string, ImportRequirement>()
   for (const node of walkSubtree(root)) {
-    if (node.importSpecifier !== undefined) required.set(node.name, { specifier: node.importSpecifier })
+    if (node.importSpecifier !== undefined) {
+      required.set(node.name, {
+        specifier: node.importSpecifier,
+        ...(node.importStyle === undefined ? {} : { style: node.importStyle }),
+      })
+    }
   }
   return required
 }

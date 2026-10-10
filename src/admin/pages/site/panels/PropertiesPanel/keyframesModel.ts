@@ -31,22 +31,19 @@
  *
  * ## Editing a step
  *
- * `applyKeyframeStepEdit` computes the new `rawCss` with
- * `@core/css-codemods`'s `setDeclarationAtKeyframe` /
- * `removeDeclarationAtKeyframe` — the SAME functions the server runs against
- * the real `.css` file. The canvas preview and the disk write therefore cannot
- * disagree about what an edit means; the client is not modelling the write, it
- * is performing it against a copy of the text.
+ * Lives in `keyframesStepEdit.ts`, not here: it computes the new `rawCss` with
+ * `@core/css-codemods`' postcss writers — the SAME functions the server runs
+ * against the real `.css` file — and postcss must stay out of the editor's
+ * static graph. This module is everything that needs only text reading, so it
+ * can be imported at load.
  */
 import type { StyleRule } from '@core/page-tree'
 import {
-  insertKeyframes,
+  keyframesBlockText,
   keyframesNameFromSelector,
   readKeyframeSteps,
-  removeDeclarationAtKeyframe,
-  setDeclarationAtKeyframe,
   type KeyframeStep,
-} from '@core/css-codemods'
+} from '@core/css-codemods/browser'
 import { classCssWriteLockReason, resolveClassCssEditability } from './classCssWritability'
 
 /**
@@ -105,44 +102,15 @@ export function resolveKeyframes(
 }
 
 /**
- * The new `rawCss` for one step declaration being set or cleared, or `null`
- * when nothing changed (an already-correct value, or a step/block the text
- * does not contain).
- *
- * `value: undefined` clears. Property names are CSS kebab-case here, not the
- * editor's camelCase: a keyframes body is CSS text, and `readKeyframeSteps`
- * hands its declarations back exactly as authored.
- */
-export function applyKeyframeStepEdit(
-  rawCss: string,
-  name: string,
-  keyText: string,
-  property: string,
-  value: string | undefined,
-): string | null {
-  const result =
-    value === undefined
-      ? removeDeclarationAtKeyframe(rawCss, name, keyText, property)
-      : setDeclarationAtKeyframe(rawCss, name, keyText, property, value)
-  return result.changed ? result.css : null
-}
-
-/** The new `rawCss` with `step` added (or merged into an existing step of the same offset), or `null` when nothing changed. */
-export function applyKeyframeStepInsert(rawCss: string, name: string, step: KeyframeStep): string | null {
-  const result = insertKeyframes(rawCss, name, [step])
-  return result.changed ? result.css : null
-}
-
-/**
  * The `@keyframes` text a newly-created animation starts from: a two-step
  * fade, the least surprising thing a "new animation" can mean and the one
  * whose effect is visible on any element without further editing.
  */
 export function newKeyframesCss(name: string): string {
-  return insertKeyframes('', name, [
+  return keyframesBlockText(name, [
     { keyText: 'from', declarations: { opacity: '0' } },
     { keyText: 'to', declarations: { opacity: '1' } },
-  ]).css
+  ])
 }
 
 /**

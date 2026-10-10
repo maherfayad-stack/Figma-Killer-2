@@ -123,7 +123,7 @@ export function IconsSection({ query, collapsed, onToggle }: IconsSectionProps) 
   return (
     <AssetSection
       title="Icons"
-      count={icons === null ? 0 : matches.length}
+      count={icons === null ? null : matches.length}
       collapsed={collapsed}
       onToggle={onToggle}
     >
