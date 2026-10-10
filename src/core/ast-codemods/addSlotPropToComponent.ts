@@ -73,6 +73,7 @@ import { findJsxElementAtLocationOrThrow, loadSourceFile, resolveJsxWholeElement
 import { buildParamBindings } from './detachComponent'
 import { findComponentCallSites, type ComponentCallSite } from './componentCallSites'
 import { addOptionalPropToSignature } from './componentPropSignature'
+import { freshName } from './freshName'
 
 export interface AddSlotPropToComponentParams {
   /** Absolute path to the component's own file. */
@@ -102,7 +103,7 @@ export interface AddSlotPropToComponentParams {
   project?: Project
 }
 
-export type AddSlotPropRefusalReason = 'not-found' | 'no-jsx-parent' | 'unsupported-params' | 'unsupported-props-type' | 'prop-name-taken'
+export type AddSlotPropRefusalReason = 'not-found' | 'no-jsx-parent' | 'unsupported-params' | 'unsupported-props-type'
 
 export interface AddSlotPropRefusal {
   reason: AddSlotPropRefusalReason
@@ -137,13 +138,14 @@ function isWithin(node: Node, ancestor: Node): boolean {
 }
 
 export function addSlotPropToComponent(params: AddSlotPropToComponentParams): AddSlotPropToComponentResult {
-  const { file, exportName, line, col, workspaceRoot, slotName } = params
-  if (!SLOT_NAME_RE.test(slotName)) {
+  const { file, exportName, line, col, workspaceRoot } = params
+  const requestedName = params.slotName
+  if (!SLOT_NAME_RE.test(requestedName)) {
     // Caller-contract violation — the picker UI is responsible for only ever
     // sending a valid identifier (already shown for correction via
     // `subtreeSlotChildren.ts`'s `suggestSlotNames`), same trust level
     // `extractSubtreeToComponent.ts`'s `componentName` format check extends.
-    throw new Error(`addSlotPropToComponent: "${slotName}" is not a valid prop name.`)
+    throw new Error(`addSlotPropToComponent: "${requestedName}" is not a valid prop name.`)
   }
 
   const project = params.project ?? createWorkspaceProject(workspaceRoot)
@@ -187,9 +189,9 @@ export function addSlotPropToComponent(params: AddSlotPropToComponentParams): Ad
     existingAttrNames.add('children')
     existingParamNames.add(childrenParam)
   }
-  if (existingAttrNames.has(slotName) || existingParamNames.has(slotName)) {
-    return refuse('prop-name-taken', `"${exportName}" already has a "${slotName}" prop.`)
-  }
+  // A prop of that name already exists: the new slot takes the next free one
+  // (`footer` -> `footer2`) instead of refusing. The result reports it.
+  const slotName = freshName(requestedName, (candidate) => existingAttrNames.has(candidate) || existingParamNames.has(candidate))
 
   const typeResult = addOptionalPropToSignature(sourceFile, fn, {
     name: slotName,

@@ -14,11 +14,12 @@
  */
 import * as path from 'node:path'
 import { existsSync, readFileSync } from 'node:fs'
-import { NewLineKind, Node, Project, QuoteKind, type SourceFile } from 'ts-morph'
+import { NewLineKind, Node, Project, QuoteKind, SyntaxKind, type SourceFile } from 'ts-morph'
 import { EolPreservingFileSystem, createSourceFileExclusive, createWorkspaceProject, isWorkspaceWritablePath } from '@core/page-parser'
 import { findJsxElementAtLocationOrThrow, loadSourceFile } from './locateJsxElement'
 import { resolveComponentCallSite } from './resolveComponentCallSite'
 import { relativeSpecifier, removeImportIfLastUsage } from './importReconcile'
+import { freshName } from './freshName'
 
 export interface ExtractComponentCopyParams {
   /** Absolute path to the page file holding the call site to repoint. */
@@ -29,7 +30,7 @@ export interface ExtractComponentCopyParams {
   project?: Project
 }
 
-export type ExtractComponentCopyRefusalReason = 'not-a-component' | 'unresolvable' | 'copy-exists' | 'unwritable-target'
+export type ExtractComponentCopyRefusalReason = 'not-a-component' | 'unresolvable' | 'unwritable-target'
 
 export interface ExtractComponentCopyRefusal {
   reason: ExtractComponentCopyRefusalReason
@@ -53,13 +54,6 @@ export type ExtractComponentCopyResult = ExtractComponentCopySuccess | ExtractCo
 
 function refuse(reason: ExtractComponentCopyRefusalReason, message: string): ExtractComponentCopyFailure {
   return { ok: false, refusal: { reason, message } }
-}
-
-/** `Card` -> `Card2`, `Card9` -> `Card10`, … — the first name with no existing sibling file or in-scope binding. */
-function nextAvailableName(baseName: string, isTaken: (candidate: string) => boolean): string {
-  let n = 2
-  while (isTaken(`${baseName}${n}`)) n += 1
-  return `${baseName}${n}`
 }
 
 export function extractComponentCopy(params: ExtractComponentCopyParams): ExtractComponentCopyResult {
@@ -87,9 +81,16 @@ export function extractComponentCopy(params: ExtractComponentCopyParams): Extrac
   const ext = path.extname(targetPath)
   const baseName = path.basename(targetPath, ext)
 
-  const newName = nextAvailableName(baseName, (candidate) => existsSync(path.join(dir, `${candidate}${ext}`)))
+  // `Card` -> `Card2`, `Card9` -> `Card10`: the first name that is neither a file
+  // beside the component nor an identifier the call-site file already uses
+  // (retagging to a `Card2` that file binds to something else would silently
+  // point the JSX at the wrong thing). A taken name is never a refusal.
+  const usedInCallSite = new Set(sourceFile.getDescendantsOfKind(SyntaxKind.Identifier).map((id) => id.getText()))
+  const newName = freshName(
+    baseName,
+    (candidate) => candidate === baseName || usedInCallSite.has(candidate) || existsSync(path.join(dir, `${candidate}${ext}`)),
+  )
   const newPath = path.join(dir, `${newName}${ext}`)
-  if (existsSync(newPath)) return refuse('copy-exists', `${newName}${ext} already exists next to ${baseName}${ext}.`)
   // P1-G — the copy lands beside the component's OWN file, which the call
   // site's import chose, not the writeback guard: `import { Card } from
   // '../.studio/Card'` would otherwise create `.studio/Card2.tsx`. The shared

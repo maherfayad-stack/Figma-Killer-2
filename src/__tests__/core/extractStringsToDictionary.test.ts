@@ -107,7 +107,7 @@ describe('extractStringsToDictionary', () => {
     expect(result.text).toContain("const HEADING = 'Welcome aboard'")
   })
 
-  it('refuses the whole file when `t` already means something else there', () => {
+  it('binds the dictionary under a free name when `t` already means something else there', () => {
     const source = [
       'export default function Page({ t }) {',
       '  return <Banner title="Profile verified" />',
@@ -116,9 +116,12 @@ describe('extractStringsToDictionary', () => {
     ].join('\n')
 
     const result = run(source, [at(source, 'Profile verified', 'page.profileVerified')])
-    expect(result.applied).toEqual([])
-    expect(result.refused[0]).toMatchObject({ reason: 'name-taken' })
-    expect(result.text).toBe(source)
+    expect(result.refused).toEqual([])
+    expect(result.applied).toEqual(['page.profileVerified'])
+    // The user's `t` prop is untouched; Studio's lookups read the alias.
+    expect(result.text).toContain('const { t: t2 } = useLanguage()')
+    expect(result.text).toContain('title={t2.page.profileVerified}')
+    expect(result.text).toContain('Page({ t })')
   })
 
   it('refuses a position whose text has changed since it was scanned', () => {
@@ -179,7 +182,7 @@ describe('extractStringsToDictionary', () => {
     expect(result.text.match(/from '\.\.\/i18n\/LanguageContext'/g)).toHaveLength(1)
   })
 
-  it('still refuses a file where `t` means something else', () => {
+  it('reuses the alias an earlier run gave the dictionary in a file where `t` means something else', () => {
     const source = [
       'export default function Page({ t }) {',
       '  return <Banner title="Profile verified" />',
@@ -187,8 +190,12 @@ describe('extractStringsToDictionary', () => {
       '',
     ].join('\n')
 
-    const result = run(source, [at(source, 'Profile verified', 'page.profileVerified')])
-    expect(result.refused[0]).toMatchObject({ reason: 'name-taken' })
+    const first = run(source, [at(source, 'Profile verified', 'page.profileVerified')])
+    const withSecond = first.text.replace('<Banner', '<Banner subtitle="Welcome aboard"')
+    const second = run(withSecond, [at(withSecond, 'Welcome aboard', 'page.welcomeAboard')])
+    expect(second.refused).toEqual([])
+    expect(second.text.match(/useLanguage\(\)/g)).toHaveLength(1)
+    expect(second.text).toContain('subtitle={t2.page.welcomeAboard}')
   })
 
   it('refuses a key that is not a valid property path, without losing the rest of the file', () => {

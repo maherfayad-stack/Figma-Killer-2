@@ -106,4 +106,25 @@ describe('extractComponentCopy', () => {
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.refusal.reason).toBe('not-a-component')
   })
+
+  it('skips a name the call-site file already uses for something else, instead of shadowing it', () => {
+    write('components/Counter.tsx', 'export function Counter() {\n  return <span>1</span>\n}\n')
+    const pageFile = write('pages/Home.tsx', [
+      "import { Counter } from '../components/Counter'",
+      'const Counter2 = () => <b>mine</b>',
+      'export default function Home() {',
+      '  return <main><Counter /><Counter2 /></main>',
+      '}',
+      '',
+    ].join('\n'))
+
+    const result = extractComponentCopy({ file: pageFile, line: 4, col: 17, workspaceRoot: tmpDir })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.newComponentName).toBe('Counter3')
+    expect(fs.existsSync(path.join(tmpDir, 'components', 'Counter2.tsx'))).toBe(false)
+    const page = read('pages/Home.tsx')
+    expect(page).toContain('<Counter3 /><Counter2 />')
+    expect(page).toContain('const Counter2 = () => <b>mine</b>')
+  })
 })
