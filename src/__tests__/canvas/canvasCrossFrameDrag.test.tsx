@@ -18,6 +18,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
 import { act, cleanup, renderHook } from '@testing-library/react'
+import { subscribeToasts } from '@ui/components/Toast/toastBus'
 import { useEditorStore } from '@site/store/store'
 import { useCanvasReorderDrag } from '@site/canvas/useCanvasReorderDrag'
 import {
@@ -576,5 +577,49 @@ describe('cross-frame drag - an absolutely positioned element', () => {
     expect(transplantCalls).toHaveLength(0)
     expect(inlineStyleCalls).toHaveLength(1)
     expect(inlineStyleCalls[0]!.nodeId).toBe(HOME_A)
+  })
+})
+
+describe('cross-frame drag - releasing on a refused position', () => {
+  it('says why instead of ending in silence', async () => {
+    registerAboutSurface()
+    useEditorStore.setState({
+      selectedNodeIds: [HOME_A, HOME_B],
+      structuralRefusalDialog: null,
+    } as unknown as Parameters<typeof useEditorStore.setState>[0])
+    const toasts: { title: string; kind: string }[] = []
+    const unsubscribe = subscribeToasts((all) => {
+      toasts.splice(0, toasts.length, ...all)
+    })
+
+    const viewportRef = { current: homeViewport }
+    const { result } = renderHook(() =>
+      useCanvasReorderDrag({
+        viewportRef,
+        canvasRootRef: { current: homeViewport },
+        iframeElement: null,
+        overlayRoot: null,
+        selectedNodeIds: [HOME_A, HOME_B],
+        frameId: 'frame-home',
+        pageId: 'home',
+        enabled: true,
+        bodyDragEnabled: false,
+      }),
+    )
+    mountOriginLayer(result.current.dropLayerRef)
+
+    await beginDragOverHome(result)
+    await act(async () => {
+      dispatchPointer('pointermove', 700, 100)
+    })
+    await nextFrame()
+    await act(async () => {
+      dispatchPointer('pointerup', 700, 100)
+    })
+    unsubscribe()
+
+    expect(transplantCalls).toHaveLength(0)
+    const dialog = (useEditorStore.getState() as unknown as { structuralRefusalDialog: unknown }).structuralRefusalDialog
+    expect(dialog !== null || toasts.some((toast) => toast.kind === 'warning')).toBe(true)
   })
 })

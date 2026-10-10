@@ -379,8 +379,8 @@ export function useDomPanelDnd({
   // Mirror the live drop state to the other pages' rows so a cross-page drop
   // paints its insertion line / refusal where the pointer actually is.
   useEffect(() => {
-    bridge?.publishDropState(dropState)
-  }, [bridge, dropState])
+    bridge?.publishDropState({ activeId, target, invalidOverId, invalidReason })
+  }, [bridge, activeId, target, invalidOverId, invalidReason])
 
   return {
     /** Re-published on every drag move — consumed ONLY by the windowed list. */

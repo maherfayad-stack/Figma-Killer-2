@@ -40,7 +40,7 @@ import { useState } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSelectors'
 import { selectPageDirectory, type PageDirectoryEntry } from '@site/store/slices/pageDirectory'
-import { DomPanel, PageLayerSubtree } from '@site/panels/DomPanel'
+import { DomPanel, LayerDragBridgeContext, PageLayerSubtree, createLayerDragBridge } from '@site/panels/DomPanel'
 import { AddPagePicker } from '@site/canvas/BoardFramesLayer'
 import { Input } from '@ui/components/Input'
 import { TreeChevron, TreeContainer, TreeIconSlot, TreeLabel, TreeRow } from '@site/ui/Tree'
@@ -89,6 +89,10 @@ export function StudioPagesTree({ editable = true }: StudioPagesTreeProps) {
     }
   }
 
+  // One bridge for the whole list: the active page's drag reaches the other
+  // pages' rows through it (a Layers drop onto another page is a transplant).
+  const [dragBridge] = useState(createLayerDragBridge)
+
   const toggleExpanded = (pageId: string) => {
     setExpandedIds((prev) => {
       const next = new Set(prev)
@@ -111,20 +115,22 @@ export function StudioPagesTree({ editable = true }: StudioPagesTreeProps) {
           <AddPagePicker iconOnly ariaLabel="Add page" size="micro" />
         </div>
       </div>
-      <TreeContainer ariaLabel="Pages" testId="studio-pages-tree" className={styles.scroll}>
-        {pages.map((page) => (
-          <PageRow
-            key={page.id}
-            page={page}
-            isActive={page.id === activePageId}
-            expanded={expandedIds.has(page.id)}
-            editable={editable}
-            onToggleExpand={() => toggleExpanded(page.id)}
-            onActivate={() => openPageInCanvas(page.id)}
-            onRename={(title) => renamePage(page.id, title)}
-          />
-        ))}
-      </TreeContainer>
+      <LayerDragBridgeContext.Provider value={dragBridge}>
+        <TreeContainer ariaLabel="Pages" testId="studio-pages-tree" className={styles.scroll}>
+          {pages.map((page) => (
+            <PageRow
+              key={page.id}
+              page={page}
+              isActive={page.id === activePageId}
+              expanded={expandedIds.has(page.id)}
+              editable={editable}
+              onToggleExpand={() => toggleExpanded(page.id)}
+              onActivate={() => openPageInCanvas(page.id)}
+              onRename={(title) => renamePage(page.id, title)}
+            />
+          ))}
+        </TreeContainer>
+      </LayerDragBridgeContext.Provider>
     </div>
   )
 }

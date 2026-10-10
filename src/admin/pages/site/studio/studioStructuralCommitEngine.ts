@@ -97,6 +97,12 @@ export interface StructuralCommitOptions {
   /** P3-D (OD-7) — say nothing when the write is refused: the caller has its own answer (the refusal dialog). */
   quiet?: true
   /**
+   * The one-click way forward for a refusal only the server's AST analysis can
+   * make (the sentence alone leaves the user with nothing to press), or `null`
+   * when there is none. Shown as the warning toast's action.
+   */
+  refusalRemedy?: (refusal: { nodeId: string; reason: string }) => { label: string; onSelect: () => void } | null
+  /**
    * P5-C — handed the server's answer as soon as it arrives (again for the
    * one silent re-plan after `element-moved`, so the last call is the one
    * that counts). `detachInstances` reads its refusals and `detachDetails`
@@ -192,7 +198,14 @@ async function commitStructuralBody(
     const [firstRefusal] = refusals
     if (firstRefusal && !options.quiet) {
       const more = refusals.length > 1 ? ` (${refusals.length - 1} more like this.)` : ''
-      pushToast({ kind: 'warning', title: refusalTitle, body: `${firstRefusal.message}${more}`, location: 'site-editor' })
+      const remedy = options.refusalRemedy?.(firstRefusal) ?? null
+      pushToast({
+        kind: 'warning',
+        title: refusalTitle,
+        body: `${firstRefusal.message}${more}`,
+        location: 'site-editor',
+        ...(remedy ? { action: remedy } : {}),
+      })
     }
     // trap #5 — reload only when a write actually landed (`rollback` above
     // takes a refused one back). Track C5: `resyncBoardAfterWrite` is narrow
