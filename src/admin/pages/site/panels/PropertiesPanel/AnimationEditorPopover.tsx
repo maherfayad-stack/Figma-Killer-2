@@ -56,6 +56,7 @@ import {
   type AnimationField,
   type ResolvedAnimation,
 } from './animationValue'
+import { applyKeyframeStepEditLazily } from './applyKeyframeStepEditLazily'
 import type { ResolvedKeyframes } from './keyframesModel'
 import type { ResolvedTransition, TransitionField } from './transitionValue'
 import styles from './AnimationsSection.module.css'
@@ -336,8 +337,7 @@ function KeyframesTab({ target }: { target: Extract<AnimationEditorTarget, { kin
   // (see keyframesStepEdit.ts), so the edit itself is asynchronous.
   async function editStep(keyText: string, property: string, value: string | undefined) {
     try {
-      const { applyKeyframeStepEdit } = await import('./keyframesStepEdit')
-      const next = applyKeyframeStepEdit(rawCss, animation.name, keyText, property, value)
+      const next = await applyKeyframeStepEditLazily(rawCss, animation.name, keyText, property, value)
       if (next !== null) onKeyframesChange(keyframes!.rule.id, next)
     } catch (err) {
       console.error('[AnimationEditorPopover] could not apply the keyframe edit:', err)

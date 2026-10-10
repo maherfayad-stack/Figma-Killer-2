@@ -1,5 +1,5 @@
 /**
- * ProjectComponentsSection — which catalog entries the Assets panel offers as
+ * projectComponents — which catalog entries the Assets panel offers as
  * parts of a project, and how search narrows them. (The click/drag write is
  * `insertProjectComponent`; its wire shape is covered by the codemod's
  * `importStyle` tests and the structural-writeback suites.)
@@ -8,7 +8,7 @@ import { describe, it, expect } from 'bun:test'
 import {
   insertableProjectComponents,
   matchProjectComponents,
-} from '@site/panels/AssetsPanel/ProjectComponentsSection'
+} from '@site/panels/AssetsPanel/projectComponents'
 import type { LocalComponentSpec } from '@site/property-controls/componentPropKind'
 
 function spec(name: string, file: string): LocalComponentSpec {

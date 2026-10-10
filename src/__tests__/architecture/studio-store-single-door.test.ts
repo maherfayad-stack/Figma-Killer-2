@@ -49,7 +49,7 @@ const SPELLING_ALLOWED: ReadonlyMap<string, string> = new Map([
   ['server/handlers/studio/projectDuplicate.ts', 'A directory NAME kept in a copy filter. It reads no store.'],
   ['src/core/studio-board/canvasLayers.ts', '`CANVAS_LAYER_DIR` / `canvasLayerRelPath`: the layer id grammar. Rule 4 polices who uses them.'],
   ['src/core/data/bundleArchive.ts', '`BUNDLE_ARCHIVE_MANIFEST_PATH`: an entry name inside a CMS export ZIP, never a file on disk. Rule 4 polices it.'],
-  ['src/core/page-parser/workspaceFiles.ts', 'A directory NAME in the walk exclusions. It opens nothing.'],
+  ['src/core/utils/excludedWorkspaceDirs.ts', 'A directory NAME in the walk exclusions. It opens nothing.'],
   ['src/core/studio-runtime/vitePlugin.ts', 'A directory NAME in the Vite plugin’s walk exclusions. It opens nothing.'],
 ])
 

@@ -101,7 +101,7 @@ function renderMenu(nodeId = 'container-node', vcs: VisualComponent[] = []) {
 
 function openInsertSubmenu() {
   // ContextMenuSubmenu opens on mouseEnter — fire that to open the panel.
-  const trigger = screen.getByRole('menuitem', { name: /insert module here/i })
+  const trigger = screen.getByRole('menuitem', { name: /insert element here/i })
   fireEvent.mouseEnter(trigger)
   return trigger
 }
@@ -111,7 +111,7 @@ beforeEach(() => resetStore())
 describe('LayerNodeContextMenu — Insert element here', () => {
   it('renders the "Insert element here" submenu trigger', () => {
     renderMenu()
-    expect(screen.getByRole('menuitem', { name: /insert module here/i })).toBeDefined()
+    expect(screen.getByRole('menuitem', { name: /insert element here/i })).toBeDefined()
   })
 
   it('opens the module picker submenu on hover', () => {
@@ -335,7 +335,7 @@ describe('LayerNodeContextMenu — slot-instance lock-down', () => {
 
   it('C6: "Insert element here" IS present for a slot-instance node', () => {
     renderSlotInstanceMenu()
-    expect(screen.getByRole('menuitem', { name: /insert module here/i })).toBeDefined()
+    expect(screen.getByRole('menuitem', { name: /insert element here/i })).toBeDefined()
   })
 
   it('C7: picking a base module from the submenu inserts it INSIDE the slot-instance', () => {
@@ -490,27 +490,27 @@ describe('LayerNodeContextMenu — "Insert element here" sibling fallback on lea
   it('"Insert element here" IS shown for a base.container node', () => {
     renderMenuFor('ctr')
     expect(
-      screen.getByRole('menuitem', { name: /insert module here/i }),
+      screen.getByRole('menuitem', { name: /insert element here/i }),
     ).toBeDefined()
   })
 
   it('"Insert element here" IS shown for a base.text node (leaf — places as sibling)', () => {
     renderMenuFor('txt')
     expect(
-      screen.getByRole('menuitem', { name: /insert module here/i }),
+      screen.getByRole('menuitem', { name: /insert element here/i }),
     ).toBeDefined()
   })
 
   it('"Insert element here" IS shown for a base.button node (leaf — places as sibling)', () => {
     renderMenuFor('btn')
     expect(
-      screen.getByRole('menuitem', { name: /insert module here/i }),
+      screen.getByRole('menuitem', { name: /insert element here/i }),
     ).toBeDefined()
   })
 
   it('inserts a module as the NEXT SIBLING when the target is a leaf', () => {
     renderMenuFor('txt')
-    const trigger = screen.getByRole('menuitem', { name: /insert module here/i })
+    const trigger = screen.getByRole('menuitem', { name: /insert element here/i })
     fireEvent.mouseEnter(trigger)
 
     const submenu = screen.getByRole('menu', { name: 'Insert element here' })
@@ -565,7 +565,7 @@ describe('LayerNodeContextMenu — "Insert element here" sibling fallback on lea
         onPaste={noop}
       />,
     )
-    const trigger = screen.getByRole('menuitem', { name: /insert module here/i })
+    const trigger = screen.getByRole('menuitem', { name: /insert element here/i })
     fireEvent.mouseEnter(trigger)
     const submenu = screen.getByRole('menu', { name: 'Insert element here' })
     const vcItem = submenu.querySelector('[data-vc-id="vc-sibling"]') as HTMLElement
@@ -642,7 +642,7 @@ describe('LayerNodeContextMenu — "Insert element here" sibling fallback on lea
         onPaste={noop}
       />,
     )
-    const trigger = screen.getByRole('menuitem', { name: /insert module here/i })
+    const trigger = screen.getByRole('menuitem', { name: /insert element here/i })
     fireEvent.mouseEnter(trigger)
 
     const submenu = screen.getByRole('menu', { name: 'Insert element here' })
