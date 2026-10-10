@@ -1101,7 +1101,7 @@ The rules the ladder replaced prose with:
   Sibling selection went to Tab / ⇧Tab, not the arrows.
 - **Arrows on a layer (IX-1).** An `absolute | fixed` layer nudges its
   offsets 1 px / ⇧ 10 px; a flow child of a `flex` / `grid` parent (inline
-  or not — `isAutoLayout`) reorders along its parent's axis
+  or not — `isAutoLayoutDisplay` in `placementKind.ts`) reorders along its parent's axis
   (`reorderStep`: reversed for `*-reverse` and an RTL row; a cross-axis arrow
   moves nothing and SAYS so with an info toast — a press is never silent, nor
   is one whose layer could not be measured; in a GRID ↑ / ↓ move a whole row — the resolved
@@ -1421,6 +1421,12 @@ it; it does not replace it. The generated `vite.config.js` template says so in a
 comment (`server/handlers/studio/prototypeShell/shellFiles.ts`).
 
 ---
+
+## Placement: one classifier, one offset function (PA-1 / PA-2)
+
+- `core/studio-runtime/placementKind.ts` is the ONLY place that decides whether a parent places its children: `isAutoLayoutDisplay` / `autoLayoutFamily` (flex, grid, inline or not), `parentPlacementKind` (`auto-layout` | `free-frame` | `flow`, from computed style, never a source marker) and `resolvePlacement` (`free` | `reorder` | `free-from-flow`). Free-move, arrow nudge, align, spacing handles and (PA-3) draw/drop call it. Gate: `placement-kind-single-source.test.ts` (a canvas or site-store file that tests `display.includes('flex'|'grid')` fails). `dropAxisRules.ts` is exempt: it resolves a flow AXIS and ships inside the runtime bundle.
+- `core/studio-runtime/containingBlockOffsets.ts` turns a rect into `left/top/right/bottom` against the block that REALLY contains an absolute box (`readContainingBlock`: nearest ancestor that is positioned, or has transform / perspective / filter / contain / will-change), minus its border, plus its scroll, divided by its scale. Never use `offsetLeft` against `offsetParent`: `offsetParent` ignores transformed ancestors, so the inset is measured from the wrong box (the `left:-421px` class). Used by `canvasFreeMove.ts` and `canvasImageDropPlacement.ts`; draw (PA-3) must use it too.
+- A free-move onto a static parent that is not the containing block still refuses (`planFreeMoveProperties(own, parentContains)`); a transformed parent now counts as containing.
 
 ## Vector editing (P5-D)
 

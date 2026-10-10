@@ -29,7 +29,7 @@
 import type { AlignEdge } from '@ui/components/AlignBar'
 import type { NodeTree, PageNode, StyleRule } from '@core/page-tree'
 import { getAncestors } from '@core/page-tree'
-import { isPositionedFreely } from '@core/studio-runtime'
+import { autoLayoutFamily, isPositionedFreely } from '@core/studio-runtime'
 import { pushToast } from '@ui/components/Toast'
 import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 import { resolveAlignWrite, type ParentLayoutInfo } from '@site/inspector/sections/resolveAlignWrite'
@@ -75,7 +75,7 @@ const HORIZONTAL: ReadonlySet<AlignEdge> = new Set(['left', 'center', 'right'])
 /** `inline-flex` aligns like `flex`; anything else has no children to align. */
 function parentLayoutInfo(layer: AlignLayer): ParentLayoutInfo | null {
   if (!layer.layout) return null
-  const display = layer.layout.display.includes('grid') ? 'grid' : layer.layout.display.includes('flex') ? 'flex' : layer.layout.display
+  const display = autoLayoutFamily(layer.layout.display) ?? layer.layout.display
   return { display, flexDirection: layer.layout.flexDirection || 'row', siblingCount: layer.siblingCount }
 }
 

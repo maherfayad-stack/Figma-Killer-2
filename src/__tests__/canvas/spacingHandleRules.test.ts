@@ -8,7 +8,6 @@ import { describe, expect, it } from 'bun:test'
 import {
   HANDLE_LENGTH,
   bandDelta,
-  isSpacingLayout,
   MIN_BAND_THICKNESS,
   spacingBands,
   spacingPatch,
@@ -98,12 +97,6 @@ describe('spacingBands', () => {
     const [gap] = spacingBands(column).filter((band) => band.kind === 'gap')
     expect(gap).toMatchObject({ kind: 'gap', axis: 'row', value: 6 })
     expect(gap!.rect).toEqual({ x: 89, y: 33, width: HANDLE_LENGTH, height: MIN_BAND_THICKNESS })
-  })
-
-  it('only flex and grid get handles', () => {
-    expect(isSpacingLayout('flex')).toBe(true)
-    expect(isSpacingLayout('inline-grid')).toBe(true)
-    expect(isSpacingLayout('block')).toBe(false)
   })
 })
 

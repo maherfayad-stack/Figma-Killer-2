@@ -24,7 +24,6 @@ import { NUDGE_SETTLE_MS, useCanvasNodeArrowKeys } from '@site/canvas/useCanvasN
 import { dispatchEditorKeyUp } from '@site/canvas/editorKeyDispatcher'
 import {
   authoredOffsets,
-  isAutoLayout,
   nudgeStylePatch,
   planFlowNudge,
   planNudge,
@@ -142,12 +141,6 @@ describe('a flow layer nudges through `position: relative` (canvas-48)', () => {
 })
 
 describe('which parent reorders instead of nudging', () => {
-  it('flex and grid, inline or not, are auto-layout; block, inline and flow-root are not', () => {
-    for (const display of ['flex', 'inline-flex', 'grid', 'inline-grid']) expect(isAutoLayout(layout({ display }))).toBe(true)
-    for (const display of ['block', 'inline', 'flow-root', 'table-cell', 'list-item']) expect(isAutoLayout(layout({ display }))).toBe(false)
-    expect(isAutoLayout(null)).toBe(false)
-  })
-
   it('classifies a selection: auto-layout children reorder, other flow layers nudge, sticky / box-less refuse', () => {
     const tree = makePage({
       id: 'p',
