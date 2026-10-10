@@ -727,7 +727,7 @@ describe('inlineLocalComponents — cross-cutting (§2.8)', () => {
   })
 })
 
-describe('inlineLocalComponents: a call-site value outranks the evaluator's dynamic-key guess (CV-2)', () => {
+describe('inlineLocalComponents: a call-site value outranks the dynamic-key guess (CV-2)', () => {
   it('renders the member the call site names, not the first entry of the lookup', () => {
     write(
       'components/Tag.jsx',
@@ -737,8 +737,7 @@ describe('inlineLocalComponents: a call-site value outranks the evaluator's dyna
         '  return <span className={CLASSES[tone]}>x</span>',
         '}',
         '',
-      ].join('
-'),
+      ].join('\n'),
     )
     const pageFile = write(
       'pages/Home.jsx',
@@ -748,8 +747,7 @@ describe('inlineLocalComponents: a call-site value outranks the evaluator's dyna
         '  return <main><Tag tone="ghost" /><Tag /></main>',
         '}',
         '',
-      ].join('
-'),
+      ].join('\n'),
     )
     const project = createWorkspaceProject(tmpDir)
     const parsed = parsePageFile(pageFile, tmpDir, project)

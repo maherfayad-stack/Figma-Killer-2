@@ -61,7 +61,8 @@ function valuesOf(axis: GalleryAxisInput): readonly GalleryValue[] {
 function pinnedValueOf(axis: GalleryAxisInput): GalleryValue {
   const values = valuesOf(axis)
   const declared = axis.defaultValue
-  if (declared !== undefined && values.includes(declared)) return declared
+  const match = values.find((value) => value === declared)
+  if (match !== undefined) return match
   return values[0] as GalleryValue
 }
 
