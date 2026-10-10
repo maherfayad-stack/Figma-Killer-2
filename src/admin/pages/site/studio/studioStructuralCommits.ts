@@ -146,9 +146,10 @@ export async function commitStudioReparent(reparent: {
  * covers both files (the batch reports both as touched), so the two frames
  * update together.
  *
- * `origin` is where the element came from, which is the whole of this
- * gesture's undo: a MOVE is taken back by transplanting it home, and a COPY by
- * deleting what it made.
+ * The undo: a MOVE is taken back by the undo journal's `restore` (both files
+ * back, byte for byte — an id recorded before the write cannot name the
+ * container the element left, because the write pruned the import above it),
+ * and a COPY by deleting what it made.
  */
 export async function commitStudioTransplant(transplant: {
   nodeId: string
@@ -156,8 +157,6 @@ export async function commitStudioTransplant(transplant: {
   anchorNodeId: string | null
   position: 'before' | 'after'
   copy: boolean
-  /** Where it was written before this gesture: the container it left, and which of that container's children it was. */
-  origin: { parentNodeId: string; index: number }
 }): Promise<void> {
   await commitStructural(
     [
@@ -177,7 +176,7 @@ export async function commitStudioTransplant(transplant: {
         label: transplant.copy ? 'Copy into another frame' : 'Move into another frame',
         template: transplant.copy
           ? { kind: 'delete-created' }
-          : { kind: 'transplant-back', parentNodeId: transplant.origin.parentNodeId, index: transplant.origin.index },
+          : { kind: 'restore-journal' },
       },
     },
   )

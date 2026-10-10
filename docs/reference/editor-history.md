@@ -366,7 +366,7 @@ Where the protocol can say it, the inverse is an ordinary edit:
 | insert / duplicate / paste / image drop | `delete` what it created |
 | wrap / group | `ungroup` the container it created |
 | ungroup | `group` the children it released, into the same container |
-| transplant (move) | `transplant` back to the parent it left |
+| transplant (move) | `restore` the undo-journal entry the write recorded. A cross-frame move cuts markup from one file, prunes the import only that markup used, and carries imports into the other, so every `line:col` below the cut moves in BOTH files — including the container the element left, which an inverse `transplant` would have had to name from an id recorded at drag time. That id was stale the moment the import line went (the undo then refused as a changed file). The pre-image has no ids, and puts both files back byte for byte |
 | transplant (copy) | `delete` the copy it created |
 | delete / detach / expose-prop / swap / extract, a `.map` row's delete (OD-8) | `restore` the undo-journal entry the write recorded (P3-F) |
 | vector drag / nudge (P5-D) | `svg-attr` on the same part carrying the previous literals, `remove` for the attributes that were absent — a `known` template, fixed at gesture time (`svgPartCommits.ts`) |
@@ -494,8 +494,8 @@ the file. Now:
   `openPageInCanvas` — the way Figma takes you to the page an undo changes —
   before calling `moveNodes`, which routes through `mutateActiveTree`.
 - `reissueStructuralSourceEdits` checks every id against `_nodeIdToPageIds`,
-  i.e. the whole board, and reads a `transplant-back` parent's children off the
-  page that owns it. Nothing is activated: the write does not need a tree.
+  i.e. the whole board, and reads a `canvas-layer-lift-back` parent's children
+  off the page that owns it. Nothing is activated: the write does not need a tree.
 
 ### A step that can never happen is skipped (ERR-2 stop-gap, ERR-28)
 

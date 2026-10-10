@@ -140,26 +140,16 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
   /**
    * ERR-16 — a move whose new container is written in another file. Posted
    * as a `transplant` and nothing mutated here: the element that arrives is a
-   * freshly parsed node in the other file, and its undo (`transplant-back`)
-   * rides the write's own history entry — the cross-frame drop's contract.
+   * freshly parsed node in the other file, and its undo (the journal's
+   * `restore`) rides the write's own history entry — the cross-frame drop's contract.
    */
   const writeCrossFileMove = (
-    tree: NodeTree<PageNode>,
     nodeId: string,
     parentNodeId: string,
     anchorNodeId: string | null,
     position: 'before' | 'after',
   ): void => {
-    const originParentId = tree.nodes[nodeId]?.parentId ?? tree.rootNodeId
-    const index = tree.nodes[originParentId]?.children.indexOf(nodeId) ?? -1
-    void commitStudioTransplant({
-      nodeId,
-      parentNodeId,
-      anchorNodeId,
-      position,
-      copy: false,
-      origin: { parentNodeId: originParentId, index: index < 0 ? Number.MAX_SAFE_INTEGER : index },
-    })
+    void commitStudioTransplant({ nodeId, parentNodeId, anchorNodeId, position, copy: false })
   }
   const {
     refuseInsertInto,
@@ -481,7 +471,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       // which leaves the tree alone (the resync brings the element in) and
       // records its own undo, exactly as a cross-frame drop does.
       if (plan?.commit?.crossFile && plan.commit.destinationParentNodeId && tree) {
-        writeCrossFileMove(tree, plan.commit.nodeId, plan.commit.destinationParentNodeId, plan.commit.anchorNodeId, plan.commit.position)
+        writeCrossFileMove(plan.commit.nodeId, plan.commit.destinationParentNodeId, plan.commit.anchorNodeId, plan.commit.position)
         return
       }
       // `store-08` — where the node is NOW, captured before the mutation, is

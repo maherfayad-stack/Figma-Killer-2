@@ -12,8 +12,9 @@
  * {@link isJournaled}: the one-shot rewrites whose undo no other edit kind
  * can express — `delete`, `detach`, `expose-prop` (P5-C: a component AND its
  * call site), `swap`, `promote-component` (extract a subtree into a new
- * component), and a `list-item` remove (OD-8: a `.map`
- * row's delete cuts array elements whose bytes no op carries back). A batch holding any of them records ONE
+ * component), a `list-item` remove (OD-8: a `.map`
+ * row's delete cuts array elements whose bytes no op carries back), and a
+ * `transplant` that MOVES (a cross-frame drag: two files, one pruned import). A batch holding any of them records ONE
  * entry covering every file the batch changed, so one gesture is one token,
  * however many elements a multi-select delete removed and across however
  * many files.
@@ -38,7 +39,18 @@ import { captureUndoPreImage, recordUndoJournal, restoreUndoJournal, undoJournal
 const JOURNALED_KINDS = new Set<StudioEdit['kind']>(['delete', 'detach', 'expose-prop', 'swap', 'promote-component'])
 
 function isJournaled(edit: StudioEdit): boolean {
-  return JOURNALED_KINDS.has(edit.kind) || (edit.kind === 'list-item' && edit.op.kind === 'remove')
+  return (
+    JOURNALED_KINDS.has(edit.kind) ||
+    (edit.kind === 'list-item' && edit.op.kind === 'remove') ||
+    // A cross-file MOVE (a COPY is taken back by deleting what it made). The
+    // move cuts markup from one file, prunes the import only that markup used,
+    // and carries imports into the other — every `line:col` below the cut in
+    // BOTH files shifts, including the container the element left, which is
+    // the only place an inverse `transplant` could put it back. No id recorded
+    // before the write survives it; the pre-image does, and restoring it is
+    // also byte-exact (blank lines, import order and all).
+    (edit.kind === 'transplant' && edit.copy !== true)
+  )
 }
 
 export interface BatchUndoJournal {
