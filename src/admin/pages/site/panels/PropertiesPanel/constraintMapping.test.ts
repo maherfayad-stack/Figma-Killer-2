@@ -41,7 +41,7 @@ describe('resolvePositionedContext', () => {
     const result = resolvePositionedContext({ position: 'absolute', parentIsContainingBlock: false })
     expect(result.ok).toBe(false)
     if (result.ok) throw new Error('expected a refusal')
-    expect(result.reason).toContain('position: relative')
+    expect(result.reason).toContain('Allow free placement')
   })
 
   it('refuses rather than guesses when no frame can verify the containing block', () => {

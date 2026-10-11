@@ -163,7 +163,7 @@ export function resolvePositionedContext({
     return {
       ok: false,
       reason:
-        "This element's parent isn't positioned, so these offsets anchor to a further ancestor, not to the parent. Set the parent to position: relative first.",
+        "This layer's container does not allow free placement, so these offsets would anchor to a different container. Allow free placement in the container first.",
     }
   }
   return { ok: true }

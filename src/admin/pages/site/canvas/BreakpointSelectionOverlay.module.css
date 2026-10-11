@@ -308,8 +308,8 @@
 /* Reason-on-drag. A zero-size anchor pinned to the refused rect's top-left,
    counter-scaled out of the canvas transform so the sentence is the same
    physical size at every zoom (the same trick `CommentPin` uses). The label
-   itself hangs above the anchor, so it never covers the element the user is
-   pointing at. */
+   itself hangs BELOW the refused rect: the selection toolbar sits above it, and
+   a label there covered the toolbar's buttons. */
 .dropRefusalChip {
     position: absolute;
     top: 0;
@@ -323,7 +323,7 @@
 
 .dropRefusalChipLabel {
     position: absolute;
-    bottom: var(--space-3xs);
+    top: calc(var(--canvas-drop-h) * var(--canvas-zoom) + var(--space-3xs));
     left: 0;
     width: max-content;
     max-width: 260px;
@@ -339,12 +339,9 @@
     font-size: var(--text-2xs);
     font-weight: 500;
     line-height: 1.35;
-    /* Cap at three lines — the engine's sentences are one or two, and a
-       runaway one must not curtain the frame it is explaining. */
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
+    /* Refusal copy is at most two sentences (a gate holds it), so it wraps
+       whole inside max-width: never clamped, never cut mid-sentence. */
+    overflow-wrap: anywhere;
 }
 
 /* The drag ghost (S2/K2). A zero-size anchor pinned to the pointer, counter-

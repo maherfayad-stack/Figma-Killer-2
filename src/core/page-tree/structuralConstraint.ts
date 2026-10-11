@@ -228,8 +228,8 @@ export function explainStaticParentConstraint(parentLabel: string): EditConstrai
   return {
     reason: 'static-parent',
     scope: 'gesture',
-    explanation: `\`<${parentLabel}>\` is \`position: static\`, so placing this element by coordinates inside it would hand it to another ancestor. Make it position: relative.`,
-    actions: [{ label: `Make <${parentLabel}> position: relative`, kind: 'position-parent-relative' }],
+    explanation: `This layer follows its container's layout, so it can't be placed freely yet. Allow free placement in the ${parentLabel} container.`,
+    actions: [{ label: `Allow free placement in <${parentLabel}>`, kind: 'position-parent-relative' }],
   }
 }
 
@@ -252,10 +252,10 @@ export function explainSharedParentConstraint(
   return {
     reason: 'static-parent',
     scope: 'gesture',
-    explanation: `\`<${parentLabel}>\` needs \`position: relative\` for this element to stay put once it ignores auto layout, and it ${where}. Make it position: relative everywhere it is used.`,
+    explanation: `The ${parentLabel} container must allow free placement for this layer to stay put, and it ${where}. Allow free placement everywhere it is used.`,
     actions: [
       {
-        label: sharing.kind === 'component' ? `Make <${parentLabel}> position: relative in all ${sharing.count}` : `Make <${parentLabel}> position: relative in every row`,
+        label: sharing.kind === 'component' ? `Allow free placement in all ${sharing.count} <${parentLabel}>` : `Allow free placement in every <${parentLabel}> row`,
         kind: 'position-parent-relative',
       },
     ],
