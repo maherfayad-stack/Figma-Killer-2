@@ -33,7 +33,13 @@ export interface VariableCell {
 export interface VariableRow {
   readonly token: CatalogToken
   readonly cells: readonly VariableCell[]
-  /** Declarations under conditions that are not a mode (a width `@media`): shown as a count, not a column. */
+  /**
+   * Values the token has inside a rule of its own (`.card { --x: #000 }`, a CSS Module):
+   * not a mode, so not a column, but a real declaration with a value, a selector and a
+   * file, each shown and edited where it is declared.
+   */
+  readonly scoped: readonly VariableCell[]
+  /** Declarations under conditions that are neither a mode nor a scope (a width `@media`): shown as a count. */
   readonly otherDeclarations: number
   /** Every declaration is a project file Studio edits in place. */
   readonly editable: boolean
@@ -61,6 +67,23 @@ function cellFor(token: CatalogToken, column: VariableColumn): VariableCell {
   return { column, decl: matches.find((decl) => decl.winning) ?? matches.at(-1) ?? null }
 }
 
+/** One cell per distinct rule a token is declared in outside the mode columns, in source order. */
+function scopedCells(token: CatalogToken): VariableCell[] {
+  const byKey = new Map<string, TokenDecl[]>()
+  for (const decl of token.decls) {
+    if (decl.gate.kind !== 'scope') continue
+    const key = gateKey(decl.gate)
+    const group = byKey.get(key)
+    if (group) group.push(decl)
+    else byKey.set(key, [decl])
+  }
+  return [...byKey].map(([id, decls]) => {
+    const gate = decls[0]!.gate
+    const label = gate.kind === 'scope' ? gate.selector : id
+    return { column: { id, label, gate }, decl: decls.find((decl) => decl.winning) ?? decls.at(-1) ?? null }
+  })
+}
+
 export function buildVariableGroups(
   catalog: TokenCatalog,
   usage: ReadonlyMap<string, TokenUsage> | null,
@@ -75,7 +98,8 @@ export function buildVariableGroups(
     const row: VariableRow = {
       token,
       cells: columns.map((column) => cellFor(token, column)),
-      otherDeclarations: token.decls.filter((decl) => !columnIds.has(gateKey(decl.gate))).length,
+      scoped: scopedCells(token),
+      otherDeclarations: token.decls.filter((decl) => decl.gate.kind !== 'scope' && !columnIds.has(gateKey(decl.gate))).length,
       editable: token.decls.every((decl) => decl.origin === 'project'),
       usage: usage?.get(token.name) ?? null,
     }

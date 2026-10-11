@@ -40,6 +40,7 @@
  * compiled output. A token reader answering "no tokens" is a real answer; a
  * token reader that throws takes a whole measurement down with it.
  */
+import { join } from 'node:path'
 import { collectEntryStylesheets } from '@core/studio-sync/collectPageStylesheets'
 import { resolveProjectProfile } from './projectProbe'
 import type { TokenCssSource } from './projectTokenIndex'
@@ -54,10 +55,16 @@ const RAW_READABLE_STYLESHEET_RE = /(?<!\.module)\.css$/i
 /** Studio's built-in design-system sheet, named the way the agent can find it — see `readBuiltinDesignSystemCss`. */
 const BUILTIN_DESIGN_SYSTEM_FILE = 'vendor/alm-design-system/dist/index.css'
 
-function chunkSource(chunk: StyleChunk): TokenCssSource {
+function chunkSource(dir: string, chunk: StyleChunk): TokenCssSource | null {
   switch (chunk.kind) {
-    case 'css module':
-      return { file: chunk.label, origin: 'project', css: chunk.css }
+    case 'css module': {
+      // The chunk is the COMPILED module (class names hashed). A token write is
+      // planned against, and lands in, the file the person edits, so the source
+      // is the module's own text: the plan's `original` is then byte-equal to the
+      // disk and a write can never put hashed selectors into the user's file.
+      const css = readCappedFile(join(dir, ...chunk.label.split('/')))
+      return css === undefined ? null : { file: chunk.label, origin: 'project', css }
+    }
     case 'vendor':
       return { file: chunk.label, origin: 'package', css: chunk.css }
     case 'compiled':
@@ -77,8 +84,14 @@ export async function collectProjectTokenSources(dir: string): Promise<TokenCssS
 
   try {
     const compiled = await compileProjectStyles(dir, resolveProjectProfile(dir))
-    for (const chunk of splitCompiledStyleChunks(compiled.styles.vendorCss)) sources.push(chunkSource(chunk))
-    for (const chunk of splitCompiledStyleChunks(compiled.styles.css)) sources.push(chunkSource(chunk))
+    for (const chunk of splitCompiledStyleChunks(compiled.styles.vendorCss)) {
+      const source = chunkSource(dir, chunk)
+      if (source) sources.push(source)
+    }
+    for (const chunk of splitCompiledStyleChunks(compiled.styles.css)) {
+      const source = chunkSource(dir, chunk)
+      if (source) sources.push(source)
+    }
   } catch (err) {
     console.error('[projectTokenSources] could not compile project styles; continuing without them:', err)
   }

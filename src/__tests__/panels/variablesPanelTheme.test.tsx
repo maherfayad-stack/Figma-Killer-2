@@ -113,6 +113,12 @@ afterEach(() => {
   useEditorStore.setState({ variablesPanelOpen: false, selectedNodeIds: [], selectedNodeId: null })
 })
 
+/** Opens a row's actions menu and picks an item. */
+function chooseRowAction(token: string, item: string): void {
+  fireEvent.click(screen.getByLabelText(`Actions for ${token}`))
+  fireEvent.click(screen.getByRole('menuitem', { name: item }))
+}
+
 async function renderPanel() {
   render(<VariablesPanel />)
   await screen.findByTestId('theme-entry-tailwind.config.js#colors.berry')
@@ -200,12 +206,12 @@ describe('VariablesPanel - apply by utility class', () => {
     stubServer()
     useEditorStore.setState({ selectedNodeIds: [NODE], selectedNodeId: NODE })
     await renderPanel()
-    fireEvent.click(screen.getByLabelText('Apply --color-crust as a class'))
+    chooseRowAction('--color-crust', 'Apply as a class')
     for (const className of ['bg-crust', 'text-crust', 'border-crust']) expect(screen.getByRole('button', { name: className })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'text-crust' }))
     await waitFor(() => expect(saved).toHaveLength(1))
     expect(saved[0]).toMatchObject([{ kind: 'class', add: [{ kind: 'literal', token: 'text-crust' }] }])
-    expect(screen.getByLabelText('Rename --color-crust')).toBeTruthy()
+    expect(screen.getByLabelText('Actions for --color-crust')).toBeTruthy()
   })
 
   it('a variable outside any Tailwind namespace has no class to apply', async () => {
@@ -217,7 +223,7 @@ describe('VariablesPanel - apply by utility class', () => {
   it('a rename says which classes built in code it could not follow, beside the Undo', async () => {
     stubServer()
     await renderPanel()
-    fireEvent.click(screen.getByLabelText('Rename --color-crust'))
+    chooseRowAction('--color-crust', 'Rename')
     const input = screen.getByLabelText('New name for --color-crust')
     fireEvent.change(input, { target: { value: '--color-toast' } })
     fireEvent.keyDown(input, { key: 'Enter' })

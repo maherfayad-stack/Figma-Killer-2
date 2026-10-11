@@ -46,6 +46,13 @@ const CATALOG: TokenCatalog = {
       usage: { count: 0, sites: [] },
     },
     {
+      name: '--status-cutout',
+      family: 'other',
+      collection: 'src/tokens.css#status',
+      decls: [decl({ value: '#000', gate: { kind: 'scope', selector: '.card' }, selector: '.card', file: 'src/Card.module.css', line: 6 })],
+      usage: { count: 1, sites: [{ file: 'src/Card.module.css', line: 7 }] },
+    },
+    {
       name: '--pkg-gap',
       family: 'space',
       collection: '@acme/ui/dist/style.css#pkg',
@@ -55,6 +62,7 @@ const CATALOG: TokenCatalog = {
   ],
   collections: [
     { id: 'src/tokens.css#color', label: 'color', file: 'src/tokens.css', origin: 'project', editable: true },
+    { id: 'src/tokens.css#status', label: 'status', file: 'src/Card.module.css', origin: 'project', editable: true },
     { id: '@acme/ui/dist/style.css#pkg', label: 'pkg', file: '@acme/ui/dist/style.css', origin: 'package', editable: false },
   ],
   axes: [{ id: 'color-scheme', label: 'Color scheme', modes: [{ id: 'dark', label: 'Dark', gate: DARK }] }],
@@ -96,6 +104,12 @@ afterEach(() => {
   useEditorStore.setState({ variablesPanelOpen: false })
 })
 
+/** Opens a row's actions menu and picks an item - the row has no inline buttons any more. */
+function chooseRowAction(token: string, item: 'Rename' | 'Remove'): void {
+  fireEvent.click(screen.getByLabelText(`Actions for ${token}`))
+  fireEvent.click(screen.getByRole('menuitem', { name: item }))
+}
+
 async function renderPanel() {
   render(<VariablesPanel />)
   await screen.findByTestId('variable-row---color-brand')
@@ -127,6 +141,28 @@ describe('VariablesPanel', () => {
     await waitFor(() => expect(getStudioTokenPreview()).toBeNull())
   })
 
+  it('shows a token declared inside a rule with its value and selector, and writes it to that scope', async () => {
+    const posted = stubServer()
+    await renderPanel()
+    const field = screen.getByLabelText('--status-cutout in .card') as HTMLInputElement
+    expect(field.value).toBe('#000')
+    expect((screen.getByLabelText('--status-cutout Default') as HTMLInputElement).value).toBe('')
+    fireEvent.change(field, { target: { value: '#111111' } })
+    fireEvent.keyDown(field, { key: 'Enter' })
+    await waitFor(() => expect(posted).toHaveLength(1))
+    expect(posted[0]!.edits).toEqual([{ op: 'set', name: '--status-cutout', value: '#111111', target: { kind: 'scope', selector: '.card' } }])
+  })
+
+  it('a refused write is shown in the row it came from', async () => {
+    stubServer({ refuse: { status: 422, body: { error: 'The project has no global stylesheet to declare a token in.', code: 'no-project-stylesheet', entryIndex: 0 } } })
+    await renderPanel()
+    const field = screen.getByLabelText('--status-cutout Default')
+    fireEvent.change(field, { target: { value: '#111111' } })
+    fireEvent.keyDown(field, { key: 'Enter' })
+    const alert = await screen.findByRole('alert')
+    expect(screen.getByTestId('variable-row---status-cutout').contains(alert)).toBe(true)
+  })
+
   it('Escape cancels: no write, no preview', async () => {
     const posted = stubServer()
     await renderPanel()
@@ -152,7 +188,7 @@ describe('VariablesPanel', () => {
   it('renames in one write and says how many places moved', async () => {
     const posted = stubServer()
     await renderPanel()
-    fireEvent.click(screen.getByLabelText('Rename --color-accent'))
+    chooseRowAction('--color-accent', 'Rename')
     const input = screen.getByLabelText('New name for --color-accent')
     fireEvent.change(input, { target: { value: '--color-pop' } })
     fireEvent.keyDown(input, { key: 'Enter' })
@@ -165,12 +201,12 @@ describe('VariablesPanel', () => {
     const posted = stubServer()
     await renderPanel()
 
-    fireEvent.click(screen.getByLabelText('Remove --color-accent'))
+    chooseRowAction('--color-accent', 'Remove')
     fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
     await waitFor(() => expect(posted).toHaveLength(1))
     expect(posted[0]!.edits).toEqual([{ op: 'remove', name: '--color-accent' }])
 
-    fireEvent.click(screen.getByLabelText('Remove --color-brand'))
+    chooseRowAction('--color-brand', 'Remove')
     expect((screen.getByRole('button', { name: 'Replace and remove' }) as HTMLButtonElement).disabled).toBe(true)
     expect(screen.getByText(/is used 3 times/)).toBeTruthy()
   })
@@ -180,14 +216,15 @@ describe('VariablesPanel', () => {
     await renderPanel()
     const row = screen.getByTestId('variable-row---pkg-gap')
     expect(row.querySelector('input')).toBeNull()
-    expect(screen.getByLabelText('Rename --pkg-gap').getAttribute('aria-disabled')).toBe('true')
+    fireEvent.click(screen.getByLabelText('Actions for --pkg-gap'))
+    expect((screen.getByRole('menuitem', { name: 'Rename' }) as HTMLButtonElement).disabled).toBe(true)
     expect(row.textContent).toContain('Declared outside the project')
   })
 
   it('shows a refusal next to its row, not as a toast', async () => {
     stubServer({ refuse: { status: 422, body: { error: '--color-pop is already declared at src/tokens.css:9.', code: 'already-declared', entryIndex: 0 } } })
     await renderPanel()
-    fireEvent.click(screen.getByLabelText('Rename --color-accent'))
+    chooseRowAction('--color-accent', 'Rename')
     const input = screen.getByLabelText('New name for --color-accent')
     fireEvent.change(input, { target: { value: '--color-pop' } })
     fireEvent.keyDown(input, { key: 'Enter' })

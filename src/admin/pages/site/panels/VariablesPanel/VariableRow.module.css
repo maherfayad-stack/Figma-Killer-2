@@ -1,21 +1,38 @@
 /* VariableRow - one token across the panel's mode columns.
  *
- * The column count comes from the list (`--mode-count`, set by
- * VariablesPanel); the row is a grid of: name | one value per mode | actions.
- * Notes, the remove confirmation and a refusal span every column. */
+ * The column widths and count come from the table (`--name-col`,
+ * `--mode-col`, `--mode-count`, set by VariablesPanel); a row is: name (sticky,
+ * with its actions menu) | one value per mode. Notes, scoped values, the
+ * rename/remove confirmation and a refusal are as wide as the visible table. */
 
 .row {
-    display: grid;
-    align-items: center;
+    min-width: calc(var(--name-col) + var(--mode-count) * (var(--mode-col) + var(--space-xs)));
     padding: var(--space-3xs) 0;
     border-bottom: 1px solid var(--border-subtle);
-    column-gap: var(--space-xs);
-    grid-template-columns: minmax(8rem, 1.4fr) repeat(var(--mode-count), minmax(6rem, 1fr)) 5.5rem;
     list-style: none;
-    row-gap: var(--space-3xs);
+}
+
+.line {
+    display: flex;
+    align-items: center;
+    column-gap: var(--space-xs);
 }
 
 .nameCell {
+    position: sticky;
+    z-index: 1;
+    left: 0;
+    display: flex;
+    width: var(--name-col);
+    min-width: 0;
+    flex: none;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--bg-surface);
+    gap: var(--space-4xs);
+}
+
+.nameText {
     display: flex;
     min-width: 0;
     flex-direction: column;
@@ -39,25 +56,45 @@
 
 .valueCell {
     min-width: 0;
+    flex: 1 0 var(--mode-col);
 }
 
-.actions {
+/* A value the token has inside a rule of its own (a component scope, a CSS Module). */
+.scopeRow {
     display: flex;
-    justify-content: flex-end;
-    gap: var(--space-4xs);
-    opacity: 0;
+    align-items: center;
+    padding-top: var(--space-3xs);
+    gap: var(--space-xs);
 }
 
-/* Revealed on hover or keyboard focus - never the only way to reach them. */
-.row:hover .actions,
-.row:focus-within .actions {
-    opacity: 1;
+.scopeLabel {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    flex: none;
+    color: var(--text-muted);
+    font-family: monospace;
+    font-size: var(--text-2xs);
+    inline-size: var(--name-col);
 }
 
+.scopeFile {
+    overflow: hidden;
+    color: var(--text-subtle);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Spans the visible width of the table, not its scrolled width, so a note, a
+ * confirmation or a refusal is never off-screen to the right. */
 .note,
 .confirm,
-.error {
-    grid-column: 1 / -1;
+.error,
+.scopeRow {
+    position: sticky;
+    left: 0;
+    box-sizing: border-box;
+    width: 100cqw;
     margin: 0;
 }
 
