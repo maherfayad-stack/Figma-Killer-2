@@ -190,6 +190,9 @@ export function renderModuleTabContent(args: ModuleTabContentArgs): React.ReactN
           // element (unlike `studio.instance`, there's no separate call
           // site), so the owner IS the selected node.
           ownerNodeId={selectedNodeId ?? undefined}
+          // Text that resolves to an attribute or to another file's literal has no
+          // honest line break to write; only the node's own JSX text does.
+          multiline={selectedNode.textOrigin === undefined && !selectedNode.codeProps?.includes(key)}
         />
       )
 

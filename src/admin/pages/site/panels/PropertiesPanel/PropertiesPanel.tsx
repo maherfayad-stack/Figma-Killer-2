@@ -190,6 +190,7 @@ export function PropertiesPanel({ variant = 'floating' }: PropertiesPanelProps) 
     <aside
       ref={setDragPanelElementRef}
       data-panel=""
+      data-toast-avoid=""
       data-testid="properties-panel"
       role="complementary"
       aria-label="Properties"
@@ -237,7 +238,7 @@ export function PropertiesPanel({ variant = 'floating' }: PropertiesPanelProps) 
           isCanvasLayerSelection ? (
             <span>{canvasLayerCount === 1 ? 'Loose layer' : `${canvasLayerCount} loose layers`}</span>
           ) : isFrameMultiSelect ? (
-            <span>{selectedFrameIds.length} frames selected</span>
+            <span>{selectedFrameIds.length === 1 ? '1 frame selected' : `${selectedFrameIds.length} frames selected`}</span>
           ) : (
             <HeaderTitleContent
               selectedSelectorClass={data.selectedSelectorClass}

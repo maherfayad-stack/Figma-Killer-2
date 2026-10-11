@@ -69,6 +69,11 @@ interface RenderControlOptions {
    * entry of `items`. Only that control reads it.
    */
   siblingProps?: Record<string, unknown>
+  /**
+   * Whether a text area may hold a line break (Shift+Enter). False when the text
+   * lands in a JSX attribute or a string literal elsewhere. Only `textarea` reads it.
+   */
+  multiline?: boolean
 }
 
 /**
@@ -158,6 +163,7 @@ export function PropertyControlRenderer({
   constraint,
   ownerNodeId,
   siblingProps,
+  multiline,
 }: RenderControlOptions) {
   const layout = resolveControlLayout(control)
 
@@ -233,6 +239,7 @@ export function PropertyControlRenderer({
           value={String(value ?? '')}
           rows={control.rows}
           placeholder={control.placeholder}
+          multiline={multiline}
         />
       )
       break

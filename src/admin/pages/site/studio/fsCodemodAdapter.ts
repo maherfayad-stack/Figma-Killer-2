@@ -48,6 +48,7 @@ import { elementMovedNodeIds, retryAfterElementMoved, warnElementMoved } from '.
 import { structuralEditNodeIds } from './structuralUndoPlan'
 import { resyncBoardAfterWrite } from './studioBoardResync'
 import { recordStyleLandings } from './styleLandings'
+import { claimNewStyleHistoryEntry, journalStyleBatch } from './styleWriteJournal'
 import { commitClassIdsBaseline, commitNodeValuesBaseline, dropNodeValuesBaseline } from './loadedValuesBaseline'
 import { collectClassNameEdits } from './classNameWriteback'
 import {
@@ -134,6 +135,8 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
   loadSite: (_id, options) => loadStudioProject(options),
 
   async saveSite(site: SiteDocument, opts: SaveSiteOptions = {}): Promise<void> {
+    // ⌘Z for an override/expanded style landing is the journal's `restore`: which history entry this save belongs to is known only now, before anything awaits.
+    const historyTarget = claimNewStyleHistoryEntry(useEditorStore.getState()._historyPast)
     // Every source-backed node's literal props + inline styles, DIFFED against
     // `loadedValues` — an unchanged value must never be re-written, or a
     // resolved expression gets baked into a literal. Synthetic nodes (e.g.
@@ -248,6 +251,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       const result = await postEdits(edits, identities)
       // G-5 — the chip's "Saved in …": where each style edit in this batch went.
       recordStyleLandings(result.styleLandings ?? [], cssPlan.ruleIdsByNodeId, result.undoToken)
+      journalStyleBatch(historyTarget, result.styleLandings ?? [], edits, result.undoToken)
       const moved = elementMovedNodeIds(result.refusals)
       if (moved.size > 0) {
         const movedEdits = edits.filter((edit) => moved.has(edit.nodeId))

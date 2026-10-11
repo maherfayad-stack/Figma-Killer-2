@@ -529,9 +529,12 @@ invention.
 - **G5.5 — The radius link writes the shorthand (P9).** The cluster's toggle is
   a chain link, and it chooses the *declaration*: **linked** writes
   `border-radius: 12px` and clears the four longhands, **unlinked** writes the
-  four longhands and clears the shorthand. Never both — a shorthand and a
-  longhand in one rule resolve by source order, which a property bag does not
-  model. Before P9 the linked field wrote four longhands regardless, so a
+  **one corner's longhand, written after the shorthand** (a longhand after a
+  shorthand wins by order, and the cluster reads the longhand over it) — the
+  author's `border-radius: 8px` and the other three corners are never rewritten
+  into four lines by one corner's edit (r3-inspector). Linking again writes the
+  shorthand and clears the longhands, so the pair never outlives a linked edit.
+  Before P9 the linked field wrote four longhands regardless, so a
   hand-written `border-radius: 12px` came back as four lines the first time
   anything touched it.
 
@@ -1316,6 +1319,9 @@ Escape's revert needs care: the blur it triggers fires *before* React has
 re-rendered the reverted draft, so both `ScrubInput` and `TokenAwareInput` set
 a flag that makes that one blur discard instead of commit — otherwise Escape
 writes the very value it was pressed to abandon.
+
+`TextareaControl` (a module's multi-line text, e.g. a Text node's `text`) uses the same draft: it used to write on every keystroke and Enter inserted a newline, so `title="First"` became `title={"Alpha
+"}` and unwinding took one undo per character. Enter or blur now commits once (one history entry); **Shift+Enter is a line break only when the text is the node's own JSX text** (`multiline`, from `renderModuleTabContent`: no `textOrigin`, not code-bound). Text that lands in a call-site attribute (`ComponentSection`) or another file's string literal has no honest newline: there Shift+Enter commits like Enter and pasted line breaks fold to spaces, so a plain string attribute stays a plain string attribute. **Escape on a token-aware field (padding, margin, gap...) now also clears the as-you-type canvas preview** (`TokenAwareInput` called only `onDraftClear`, leaving the abandoned value painted and the panel reading the stale computed value).
 
 **A parked caret commits nothing (ERR-1).** Keeping focus means the caret
 usually sits in a field that has nothing left to say. `ScrubInput` tracks one
