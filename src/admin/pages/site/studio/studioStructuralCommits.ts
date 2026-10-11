@@ -52,7 +52,7 @@ import type { InsertPropValue, SlotJsxNode, StudioSaveResponse } from './studioS
 export async function commitStudioSequence(
   edits: readonly StructuralEditPayload[],
   refusalTitle: string,
-  options: Pick<StructuralCommitOptions, 'undo' | 'rollback' | 'optimistic' | 'select'> = {},
+  options: Pick<StructuralCommitOptions, 'undo' | 'rollback' | 'optimistic' | 'select' | 'onAnswer' | 'onLanded'> = {},
 ): Promise<void> {
   if (edits.length === 0) return
   await commitStructural(edits, refusalTitle, { ...options, sequence: true })
@@ -240,7 +240,8 @@ export async function commitStudioDuplicate(
  * Several copies (ERR-7) are one SEQUENCE: they land as a run at one place, so
  * each is written against the file the one before it left, in the order
  * `planSourceDuplicateTo` returned them. One write, one entry, and its undo
- * deletes every copy.
+ * deletes every copy (the journal's `restore` when any of them crossed into
+ * another file).
  */
 export async function commitStudioDuplicateTo(
   copies: readonly { nodeId: string; parentNodeId: string; anchorNodeId: string | null; position: 'before' | 'after'; crossFile?: true }[],
@@ -252,7 +253,18 @@ export async function commitStudioDuplicateTo(
     ...(copy.anchorNodeId ? { anchorNodeId: copy.anchorNodeId, position: copy.position } : {}),
     ...(copy.crossFile ? { copy: true } : {}),
   }))
-  const options = { undo: { label: 'Duplicate', template: { kind: 'delete-created' as const } } }
+  // A copy into another file (G-1) may write state, constants and imports beside
+  // its markup, which deleting what it made would leave behind: its undo is the
+  // journal's `restore`, and what it copied is told once it has landed.
+  const crossFile = copies.some((copy) => copy.crossFile)
+  let carried: StudioSaveResponse['carried']
+  const options = {
+    undo: { label: 'Duplicate', template: crossFile ? { kind: 'restore-journal' as const } : { kind: 'delete-created' as const } },
+    onAnswer: (answer: StudioSaveResponse) => {
+      carried = answer.carried
+    },
+    onLanded: () => announceCarried(carried),
+  }
   if (edits.length > 1) await commitStudioSequence(edits, 'Duplicate refused', options)
   else if (edits.length === 1) await commitStructural(edits, 'Duplicate refused', options)
 }

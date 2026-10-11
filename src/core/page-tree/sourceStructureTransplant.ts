@@ -312,8 +312,10 @@ export function isTransplantDestinationTree(destinationTree: NodeTree<PageNode>)
  * The other two stay refused for both, because they are statements about THIS
  * element:
  *
- *  - `list-row` — a `.map` row has no source range of its own at all, so a
- *    copy has nothing to read, never mind anywhere to put it;
+ *  - `list-row` — a `.map` row has no source range of its own at all. Where its
+ *    array is written in the same file a cross-frame drag does not come through
+ *    here at all: `rowCopyOf` turns it into a COPY of the row (G-1c). What
+ *    reaches this refusal is a row the array cannot place;
  *  - `code-placed` — the code itself decides this element (a spread, a slot
  *    fill, an SVG built in code). Those are exactly the shapes whose meaning
  *    does not survive being lifted into another module, and a copy changes

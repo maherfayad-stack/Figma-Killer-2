@@ -260,6 +260,8 @@ interface TransplantOrigin {
   text: string
   /** G-1c: where the values the element reads come from. */
   carry?: CarryOrigin
+  /** Set when state may not follow the element to this destination - the sentence saying why. */
+  noState?: string
 }
 
 /** Where it lands: a container (and optionally a sibling) in another, already-read file. */
@@ -306,7 +308,7 @@ function landInDestination(
   const bodyAnchor = destinationBody ? container.getAncestors().find((ancestor) => ancestor.getParent() === destinationBody) : undefined
   const moduleAnchor = container.getAncestors().find((ancestor) => Node.isSourceFile(ancestor.getParent()))
   const bodyIndent = bodyAnchor ? lineIndentAt(destination.text, bodyAnchor.getStart()) : '  '
-  const hooksRefusal = destinationComponent ? stateHookRefusal(destinationComponent, origin.source) : undefined
+  const hooksRefusal = origin.noState ?? (destinationComponent ? stateHookRefusal(destinationComponent, origin.source) : undefined)
   const carried = resolveCarriedBindings(
     origin.element,
     origin.source,
@@ -404,6 +406,14 @@ export function canvasLayerModuleRoot(source: SourceFile): Node | undefined {
   return Node.isJsxElement(root) || Node.isJsxSelfClosingElement(root) || Node.isJsxFragment(root) ? root : undefined
 }
 
+/**
+ * Why state does not follow an element onto the free canvas (or off it). A layer
+ * is a module of its own whose undo and notice are not the frame-to-frame move's:
+ * copying a `useState` into one, or back out of one, would not be taken back by
+ * its undo. Between frames the copy is real (G-1b) - this names that remedy.
+ */
+const CANVAS_LAYER_STATE_REFUSAL = 'a canvas layer is a module of its own, and Studio does not copy state onto it or off it. Drag the element into another frame instead.'
+
 export interface PlaceCanvasLayerRootParams {
   /** Absolute path of the layer module (`.studio/canvas/<id>.tsx`). */
   moduleFile: string
@@ -449,7 +459,7 @@ export function placeCanvasLayerRoot(params: PlaceCanvasLayerRootParams): Transp
     )
   }
   const landed = landInDestination(
-    { element: root, source: moduleSource, text: moduleText },
+    { element: root, source: moduleSource, text: moduleText, noState: CANVAS_LAYER_STATE_REFUSAL },
     { ...params, source: destinationSource, text: destinationText },
   )
   if (!landed.ok) return landed
@@ -533,6 +543,7 @@ export function liftJsxElementToCanvasModule(params: LiftJsxElementParams): Lift
     file: params.moduleFile,
     bodyIndent: '  ',
     body: emptyLayer.getFunctionOrThrow('CanvasLayer').getBodyOrThrow().asKindOrThrow(SyntaxKind.Block),
+    hooksRefusal: CANVAS_LAYER_STATE_REFUSAL,
   })
   if (!carried.ok) return refuseTransplant(carried.refusal.reason, carried.refusal.message)
 

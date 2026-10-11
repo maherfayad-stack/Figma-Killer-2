@@ -285,8 +285,10 @@ export function applyStudioEditSequence(
   const removed: StudioEditBatchResult['removed'] = []
   // P3-F — a step records no journal entry of its own (it would be an
   // orphan): a move, group or delete sequence's undo is the gesture's own
-  // inverse. A DETACH has no inverse but the journal, so a sequence holding
-  // one (P5-C, a multi-selection detach) is journaled ONCE, below, from
+  // inverse. A DETACH has no inverse but the journal, and a cross-file
+  // TRANSPLANT's inverse must also give back the state and constants it copied
+  // (G-1), so a sequence holding either (P5-C, a multi-selection detach; several
+  // copies pasted into another frame) is journaled ONCE, below, from
   // `originals` — every file as it was before the first step, which is
   // exactly what its ⌘Z has to put back.
   const stepOptions: StudioEditBatchOptions = { ...options, journal: undefined }
@@ -401,7 +403,10 @@ export function applyStudioEditSequence(
     const after = existsSync(file) ? readFileSync(file, 'utf8').split('\n').length : -1
     if (after !== lineCountBefore.get(file)) shifted = true
   }
-  const undoToken = options.journal === true && edits.some((edit) => edit.kind === 'detach') ? recordUndoJournal(dir, originals) : null
+  const undoToken =
+    options.journal === true && edits.some((edit) => edit.kind === 'detach' || edit.kind === 'transplant')
+      ? recordUndoJournal(dir, originals)
+      : null
   return {
     written: edits.length,
     skipped: 0,

@@ -333,7 +333,7 @@ export function resolveCarriedBindings(
       refusal: {
         reason: 'captured-scope',
         message: destinationBody
-          ? `It uses the state ${names}, and Studio cannot give the other file its own copy: ${destination.hooksRefusal}`
+          ? `It uses the state ${names}, and Studio cannot give the destination its own copy: ${destination.hooksRefusal}`
           : `It uses the state ${names}, which needs a component to live in, and the place it is going to has none. Drop it into a component.`,
       },
     }

@@ -367,7 +367,7 @@ Where the protocol can say it, the inverse is an ordinary edit:
 | wrap / group | `ungroup` the container it created |
 | ungroup | `group` the children it released, into the same container |
 | transplant (move) | `restore` the undo-journal entry the write recorded. A cross-frame move cuts markup from one file, prunes the import only that markup used, and carries imports into the other, so every `line:col` below the cut moves in BOTH files — including the container the element left, which an inverse `transplant` would have had to name from an id recorded at drag time. That id was stale the moment the import line went (the undo then refused as a changed file). The pre-image has no ids, and puts both files back byte for byte |
-| transplant (copy) | `delete` the copy it created |
+| transplant (copy) | `restore` the undo-journal entry too (G-1): a copy can write state, constants and imports beside its markup, which deleting what it made would leave behind |
 | delete / detach / expose-prop / swap / extract, a `.map` row's delete (OD-8) | `restore` the undo-journal entry the write recorded (P3-F) |
 | vector drag / nudge (P5-D) | `svg-attr` on the same part carrying the previous literals, `remove` for the attributes that were absent — a `known` template, fixed at gesture time (`svgPartCommits.ts`) |
 | pen path (P5-D) | `delete` the `<svg>` it created (an `insert`); on the empty board, the free canvas's own layer delete |

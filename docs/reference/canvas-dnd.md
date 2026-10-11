@@ -49,8 +49,11 @@ topology below first.
   from one `.tsx` and writes it into the other, carrying whatever imports it
   needs; Alt copies instead. Refuses — while the pointer is still down, as the
   same chip a same-frame refusal shows — when the element reads a value its
-  component owns - a prop, state, a ref, a list row (`captured-scope`; plain
-  constants and handlers it reads are copied along, G-1a), when the destination
+  component owns and no rule carries - a prop nothing gives a value to, a custom
+  hook's result (`captured-scope`; plain constants and handlers it reads are
+  copied along (G-1a), state as the destination's own copy with an info notice
+  and Undo (G-1b), and a `.map` row's data as constants - dragging an element of
+  a row copies that row (G-1c)), when the destination
   already means something else by a name it would carry
   (`binding-conflict`), when it reads a local component the origin
   declares but does not export (`unexported-binding`, `sec-17` — the import it

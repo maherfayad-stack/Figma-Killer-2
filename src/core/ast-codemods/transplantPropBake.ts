@@ -44,7 +44,7 @@ export interface RowRef {
 /** What a baked name is initialised with: an expression of the origin file, or text of our own (a row index). */
 export type BakedSource = { kind: 'node'; node: Node } | { kind: 'text'; text: string }
 
-export type RowBinding =
+type RowBinding =
   | { ok: true; sources: Map<string, BakedSource> }
   | { ok: false; message: string }
 

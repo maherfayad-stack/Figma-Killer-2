@@ -13,6 +13,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { applyStudioEditBatch, type StudioEdit } from '../studioWriteback'
+import { applyStudioEditSequence } from '../studioEditSequence'
 import { locateTag } from '../../../src/core/ast-codemods/__tests__/fixtureLocation'
 
 let tmpDir: string
@@ -149,6 +150,33 @@ export default function DayPass() {
     expect(result.refusals[0]!.message).toContain('useFavourite()')
     expect(result.carried).toBeUndefined()
     expect(read(BOARD_REL)).toBe(custom)
+    expect(read(PASS_REL)).toBe(PASS)
+  })
+})
+
+describe('several cross-file copies pasted as one sequence', () => {
+  it('report what they carried and are taken back by ONE restore, byte for byte', () => {
+    write(BOARD_REL, BOARD)
+    write(PASS_REL, PASS)
+    const result = applyStudioEditSequence(
+      tmpDir,
+      [
+        { kind: 'transplant', nodeId: id(BOARD_REL, BOARD, 'button'), parentNodeId: id(PASS_REL, PASS, 'main'), copy: true },
+        { kind: 'transplant', nodeId: id(BOARD_REL, BOARD, 'h1'), parentNodeId: id(PASS_REL, PASS, 'main'), copy: true },
+      ],
+      {},
+      { journal: true },
+    )
+
+    expect(result.refusals).toEqual([])
+    expect(result.written).toBe(2)
+    expect(result.carried?.some((entry) => entry.how === 'state')).toBe(true)
+    expect(read(PASS_REL)).toContain('useState')
+    expect(result.undoToken).toBeDefined()
+
+    const undone = batch([{ kind: 'restore', nodeId: `undo-journal:${result.undoToken}`, token: result.undoToken! }])
+    expect(undone.refusals).toEqual([])
+    expect(read(BOARD_REL)).toBe(BOARD)
     expect(read(PASS_REL)).toBe(PASS)
   })
 })
