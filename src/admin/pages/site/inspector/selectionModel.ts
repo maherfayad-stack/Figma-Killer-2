@@ -77,6 +77,7 @@
  * `setNodesInlineStyles` (one history entry for the whole selection) instead
  * of `setNodeInlineStyles`.
  */
+import { isStyledWritableValue } from '@core/css-codemods/browser'
 import { useEditorStore, selectActiveCanvasPage, selectSelectedNode } from '@site/store/store'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import { useMutableBox } from '@site/hooks/useMutableBox'
@@ -258,8 +259,13 @@ export interface SelectionModel {
   /** True while a Tier 2 bridge-mode measurement for `computedValues` is in flight — always `false` on a Tier 0/1 (portal) board. P5, STATE.md `panel-26`. Additive-only: existing readers that don't destructure this field are unaffected. */
   computedValuesLoading: boolean
 
-  /** The P1 rule, exposed per-property so a section never calls `resolveWriteTarget` itself. */
-  writeTargetFor(property: string, opts?: { existing?: boolean }): WriteTarget
+  /**
+   * The P1 rule, exposed per-property so a section never calls
+   * `resolveWriteTarget` itself. `values` are the values this commit writes: a
+   * class that cannot hold one (G-5, `WriteTargetClassCandidate.holds`) steps
+   * aside so the value lands on the element instead of being refused.
+   */
+  writeTargetFor(property: string, opts?: { existing?: boolean; values?: ReadonlyArray<string | number | null> }): WriteTarget
 }
 
 // ---------------------------------------------------------------------------
@@ -441,15 +447,28 @@ export function useSelectionModel(): SelectionModel {
 
   const writableClassCandidates: WriteTargetClassCandidate[] = writableClasses
     .filter((entry) => entry.lockReason === null)
-    .map((entry) => ({ classId: entry.classId, selector: entry.selector }))
+    .map((entry) => {
+      const rule = assignedClassRules.find((cls) => cls.id === entry.classId)
+      const templateClass = rule !== undefined && resolveClassCssEditability(rule).kind === 'styled-template'
+      return {
+        classId: entry.classId,
+        selector: entry.selector,
+        // G-5 — a styled template cannot spell every value a CSS file can.
+        ...(templateClass ? { holds: (value: string | number | null) => typeof value !== 'string' || isStyledWritableValue(value) } : {}),
+      }
+    })
 
-  function writeTargetFor(property: string, opts?: { existing?: boolean }): WriteTarget {
+  function writeTargetFor(
+    property: string,
+    opts?: { existing?: boolean; values?: ReadonlyArray<string | number | null> },
+  ): WriteTarget {
     const provenance = provenanceByProperty.get(property)
     const inlineWritableForProperty = inlineWritable && !lockedPropertySet.has(property)
     const params = {
       provenance,
       inlineWritable: inlineWritableForProperty,
       writableClasses: writableClassCandidates,
+      ...(opts?.values ? { values: opts.values } : {}),
     }
     return opts?.existing ? resolveExistingWriteTarget(params) : resolveWriteTarget(params)
   }

@@ -97,6 +97,9 @@ export const LocalComponentSpecSchema = Type.Object({
   file: Type.String(),
   exportName: Type.String(),
   isDefaultExport: Type.Boolean(),
+  /** 1-based position of the declaration's name in `file` — the `file:line:col` an edit to the component is addressed by. */
+  line: Type.Integer({ minimum: 1 }),
+  column: Type.Integer({ minimum: 1 }),
   role: Type.Union([Type.Literal('component'), Type.Literal('page'), Type.Literal('provider')]),
   props: Type.Array(LocalPropSpecSchema),
 })

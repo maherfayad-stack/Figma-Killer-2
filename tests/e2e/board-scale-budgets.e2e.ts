@@ -3,6 +3,7 @@ import { expect, test, type Frame, type Locator, type Page } from '@playwright/t
 import { profileGesture, readBoardCounts } from './helpers/canvasPerf'
 import { profileCpu, readDomCounters, traceGesture, traceMainThreadTasks } from './helpers/cdpTrace'
 import { visibleCanvasIframe } from './helpers/canvasIframe'
+import { FIRST_RING_ATTRIBUTES, FIRST_RING_SELECTOR } from './helpers/pressRingProbe'
 import { LARGE_BOARD_SHAPE, largeBoardPageId, openLargeBoardAtWorkingZoom, SCALE_BOARD_SHAPE, writeLargeBoardCorpus } from './helpers/largeBoardCorpus'
 import { frameForPage, removeFixtureProject, selectInFrame, type FixtureProject } from './helpers/studioFixtureProject'
 
@@ -132,22 +133,24 @@ async function clickTargets(page: Page, frameEl: Locator, content: Frame): Promi
 
 /** Ctrl-click one target and return pointerdown -> first animation frame after its ring exists, ms. */
 async function clickToRing(page: Page, content: Frame, target: ClickTarget): Promise<number> {
-  await content.evaluate((id) => {
+  await content.evaluate(({ id, ringSelector, attributes }) => {
     const state = { downAt: 0, ringAt: 0, paintAt: 0, observer: null as MutationObserver | null }
     ;(window as unknown as { __sb0Click: typeof state }).__sb0Click = state
     document.addEventListener('pointerdown', () => { if (state.downAt === 0) state.downAt = performance.now() }, { capture: true, once: true })
     const check = () => {
       if (state.ringAt !== 0) return
-      const ring = Array.from(document.querySelectorAll('[data-canvas-selection-ring="true"]')).find(
-        (el) => el.getAttribute('data-canvas-overlay-node-id') === id && (el as HTMLElement).style.display !== 'none',
+      // The first ring the press shows: the borrowed hover ring (`data-canvas-press-ring`, which names no
+      // layer of its own) or the real selection ring on the target.
+      const ring = Array.from(document.querySelectorAll(ringSelector)).find(
+        (el) => (el.hasAttribute('data-canvas-press-ring') || el.getAttribute('data-canvas-overlay-node-id') === id) && (el as HTMLElement).style.display !== 'none',
       )
       if (!ring) return
       state.ringAt = performance.now()
       requestAnimationFrame(() => { state.paintAt = performance.now() })
     }
     state.observer = new MutationObserver(check)
-    state.observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['style', 'data-canvas-overlay-node-id'] })
-  }, target.id)
+    state.observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: attributes })
+  }, { id: target.id, ringSelector: FIRST_RING_SELECTOR, attributes: FIRST_RING_ATTRIBUTES })
   await page.keyboard.down('ControlOrMeta')
   await page.mouse.click(target.x, target.y)
   await page.keyboard.up('ControlOrMeta')

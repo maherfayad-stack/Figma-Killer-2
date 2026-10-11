@@ -245,6 +245,45 @@ describe('untrusted on read', () => {
     expect(read('pages/Home.tsx')).toBe('mine\n')
   })
 
+  it('restores a plain hand-authored stylesheet (the rule a variant adds), and refuses every hostile .css an entry could name', () => {
+    write('components/Chip.module.css', '.info { color: blue; }\n')
+    const token = journaledWrite({ 'components/Chip.module.css': '.info { color: blue; }\n\n.danger { color: blue; }\n' })
+    expect(restoreUndoJournal(dir, token!).ok).toBe(true)
+    expect(read('components/Chip.module.css')).toBe('.info { color: blue; }\n')
+
+    fs.writeFileSync(path.join(outside, 'victim.css'), 'victim\n')
+    const sha = (text: string) => new Bun.CryptoHasher('sha256').update(text).digest('hex')
+    for (const rel of [
+      path.relative(dir, path.join(outside, 'victim.css')).split(path.sep).join('/'),
+      '.studio/theme.css',
+      'node_modules/pkg/dist.css',
+      'components/../../victim.css',
+      'C:/Windows/x.css',
+    ]) {
+      const planted = plant({ version: 1, at: 1, files: [{ rel, before: 'pwned', afterSha256: sha('victim\n') }] })
+      expect(restoreUndoJournal(dir, planted)).toMatchObject({ ok: false, reason: 'restore-unavailable' })
+    }
+    expect(fs.readFileSync(path.join(outside, 'victim.css'), 'utf8')).toBe('victim\n')
+  })
+
+  it('refuses a hand-edited entry naming a .css file outside the project, under .studio, or in node_modules (CT-3)', () => {
+    write('src/index.css', 'mine\n')
+    fs.writeFileSync(path.join(outside, 'x.css'), 'victim\n')
+    const sha = new Bun.CryptoHasher('sha256').update('victim\n').digest('hex')
+    const hostile = [
+      path.relative(dir, path.join(outside, 'x.css')).split(path.sep).join('/'),
+      '../x.css',
+      '.studio/x.css',
+      'node_modules/pkg/x.css',
+    ]
+    for (const rel of hostile) {
+      const token = plant({ version: 1, at: 1, files: [{ rel, before: 'pwned', afterSha256: sha }] })
+      expect(restoreUndoJournal(dir, token)).toMatchObject({ ok: false, reason: 'restore-unavailable' })
+    }
+    expect(fs.readFileSync(path.join(outside, 'x.css'), 'utf8')).toBe('victim\n')
+    expect(read('src/index.css')).toBe('mine\n')
+  })
+
   it('refuses a malformed entry, and one over the size cap, rather than trusting it', () => {
     write('pages/Home.tsx', 'mine\n')
     expect(restoreUndoJournal(dir, plant({ version: 2, files: [] }))).toMatchObject({ ok: false, reason: 'restore-unavailable' })

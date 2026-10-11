@@ -33,7 +33,7 @@
  * | wrap / group | `ungroup` the container it created |
  * | ungroup | `group` the children it released, back into the same container |
  * | transplant (move), a free-canvas lift or place (move) | the undo journal's `restore` — every file the write touched, byte for byte |
- * | transplant (copy) | `delete` the copy it created |
+ * | transplant (copy) | `delete` the copy; the journal's `restore` when it asked for `exactUndo` (G-1: it may carry state and constants) |
  * | a `.map` row's reorder / copy (OD-8) | the inverse `list-item` edit, known at gesture time |
  * | delete / detach / swap / extract, a `.map` row's delete | `restore` the undo-journal entry the write recorded |
  *

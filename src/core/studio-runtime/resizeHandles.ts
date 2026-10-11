@@ -64,6 +64,7 @@
  */
 import { Value } from '@sinclair/typebox/value'
 import { guardDragSession } from './dragSessionGuard'
+import { anchorResizePatch, resizeAnchorPlan } from './elementResizeAnchors'
 import { readResizeBoxStart } from './elementResizeMeasure'
 import {
   isSizeableDisplay,
@@ -85,6 +86,7 @@ import { readResizeSnapInput, resizeSnapEdges, snapRectOf, snapResizeDelta } fro
 import { presentedElementOf, rectRelativeToBody } from './nodeDom'
 import {
   ResizeCommitPatchSchema,
+  type ResizeAnchors,
   type ResizeCommitPatch,
   type ResizeSizingMarkers,
   type ResizeSnapContext,
@@ -129,13 +131,15 @@ export interface ResizeTargetRef {
   occurrenceIndex: number
 }
 
-/** What the parent knows about the target that the frame cannot: its stored sizing markers, and its tree siblings, parent and zoom. */
+/** What the parent knows about the target that the frame cannot: its stored sizing markers, its tree siblings, parent and zoom, and the offsets its source authors. */
 export interface ResizeTargetContext {
   sizing: ResizeSizingMarkers
   snap: ResizeSnapContext | null
+  /** PA-8 — which offsets the source anchors the target by; `null` writes the default `left` / `top`. */
+  anchors: ResizeAnchors | null
 }
 
-const NO_CONTEXT: ResizeTargetContext = { sizing: {}, snap: null }
+const NO_CONTEXT: ResizeTargetContext = { sizing: {}, snap: null, anchors: null }
 
 export interface ResizeHandlesOptions {
   doc: Document
@@ -287,6 +291,10 @@ export function installResizeHandles(options: ResizeHandlesOptions): ResizeHandl
     // IX-6b — the Fixed companions, and what each cleared one renders at.
     const plan = planResizeSizing(view, dragged, start, context.sizing)
     const cleared = readClearedValues(view, dragged, plan)
+    // PA-8 / IX-21 — the offsets the source anchors the layer by, so a W drag on
+    // a `right`-anchored layer writes the width alone. Read once, like `plan`.
+    const anchors = start.offsets && context.anchors ? resizeAnchorPlan(context.anchors, view.getComputedStyle(dragged)) : null
+    const patchAt = (resized: typeof last) => anchorResizePatch(resizeInlinePatch(start, resized, plan), start, resized, anchors)
     // IX-6e — what the moving edge snaps to, read once, before the first write.
     const snap = context.snap
     const snapInput = snap
@@ -333,7 +341,7 @@ export function installResizeHandles(options: ResizeHandlesOptions): ResizeHandl
     const caf = view.cancelAnimationFrame?.bind(view) ?? cancelAnimationFrame
     const applyPending = () => {
       pendingFrame = null
-      writePreview(dragged, resizeInlinePatch(start, last, plan), cleared)
+      writePreview(dragged, patchAt(last), cleared)
       reposition()
       onPreview()
       postGuides()
@@ -377,7 +385,7 @@ export function installResizeHandles(options: ResizeHandlesOptions): ResizeHandl
       }
       guides = []
       postGuides()
-      const patch = commit ? resizeInlinePatch(start, last, plan) : null
+      const patch = commit ? patchAt(last) : null
       const wire = patch ? toCommitPatch(patch) : null
       if (!patch || !wire) {
         // Nothing to wait for from the source: a cancelled drag, one that came

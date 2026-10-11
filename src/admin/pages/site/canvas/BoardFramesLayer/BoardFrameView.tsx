@@ -60,6 +60,7 @@ import { FramePosterPlaceholder } from './FramePosterPlaceholder'
 import { LiveBoardFrame } from './LiveBoardFrame'
 import { resolveFrameMount } from './framePool'
 import { FrameDiagnosticsBadge } from './FrameDiagnosticsBadge'
+import { GalleryAddVariantButton } from './GalleryAddVariantButton'
 import { describePinnedAxes } from './pinnedAxesLabel'
 import {
   getColorSchemeCapability,
@@ -456,6 +457,7 @@ function BoardFrameViewImpl({
             `useBridgeFrameDiagnostics`), so the badge does not branch on
             trust. */}
         <FrameDiagnosticsBadge scopeKey={frame.id} />
+        <GalleryAddVariantButton page={page} />
       </div>
 
       {contextMenu && createPortal(

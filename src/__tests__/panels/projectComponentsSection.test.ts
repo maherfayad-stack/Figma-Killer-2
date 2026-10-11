@@ -12,7 +12,7 @@ import {
 import { localComponentJsxName, type LocalComponentSpec } from '@site/property-controls/componentPropKind'
 
 function spec(name: string, file: string, role: LocalComponentSpec['role'] = 'component'): LocalComponentSpec {
-  return { name, file, exportName: name, isDefaultExport: true, role, props: [] }
+  return { name, file, exportName: name, isDefaultExport: true, line: 1, column: 1, role, props: [] }
 }
 
 const CATALOG = [
@@ -46,12 +46,12 @@ describe('matchProjectComponents', () => {
 
 describe('localComponentJsxName', () => {
   it("writes a default export under its declared name, never the catalog's literal 'default'", () => {
-    const sheet: LocalComponentSpec = { name: 'SheetHeader', file: 'components/SheetHeader.tsx', exportName: 'default', isDefaultExport: true, props: [] }
+    const sheet: LocalComponentSpec = { name: 'SheetHeader', file: 'components/SheetHeader.tsx', exportName: 'default', isDefaultExport: true, line: 1, column: 1, props: [] }
     expect(localComponentJsxName(sheet)).toBe('SheetHeader')
   })
 
   it('writes a named export under its export name', () => {
-    const card: LocalComponentSpec = { name: 'CardImpl', file: 'components/Card.tsx', exportName: 'Card', isDefaultExport: false, props: [] }
+    const card: LocalComponentSpec = { name: 'CardImpl', file: 'components/Card.tsx', exportName: 'Card', isDefaultExport: false, line: 1, column: 1, props: [] }
     expect(localComponentJsxName(card)).toBe('Card')
   })
 })

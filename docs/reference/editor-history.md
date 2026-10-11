@@ -377,9 +377,9 @@ Where the protocol can say it, the inverse is an ordinary edit:
 | wrap / group | `ungroup` the container it created |
 | ungroup | `group` the children it released, into the same container |
 | transplant (move) | `restore` the undo-journal entry the write recorded. A cross-frame move cuts markup from one file, prunes the import only that markup used, and carries imports into the other, so every `line:col` below the cut moves in BOTH files — including the container the element left, which an inverse `transplant` would have had to name from an id recorded at drag time. That id was stale the moment the import line went (the undo then refused as a changed file). The pre-image has no ids, and puts both files back byte for byte |
-| transplant (copy) | `delete` the copy it created (into a childless parent: `restore`, as above) |
+| transplant (copy) | `restore` the undo-journal entry (the editor sends `exactUndo`, G-1): a copy can write state, constants and imports beside its markup, which deleting what it made would leave behind |
 | free-canvas lift / place (move) | `restore` the undo-journal entry — the page and the layer module, byte for byte. A lift prunes the import only the element used, so a parent id recorded at drag time (the old `canvas-layer-lift-back`) was a line off by ⌘Z; a place removes the module, which the pre-image recreates. A COPY is taken back by deleting the layer or element it made |
-| delete / detach / expose-prop / swap / extract, a `.map` row's delete (OD-8) | `restore` the undo-journal entry the write recorded (P3-F) |
+| delete / detach / expose-prop / promote-override / swap / extract, a `.map` row's delete (OD-8) | `restore` the undo-journal entry the write recorded (P3-F) |
 | vector drag / nudge (P5-D) | `svg-attr` on the same part carrying the previous literals, `remove` for the attributes that were absent — a `known` template, fixed at gesture time (`svgPartCommits.ts`) |
 | pen path (P5-D) | `delete` the `<svg>` it created (an `insert`); on the empty board, the free canvas's own layer delete |
 
@@ -393,8 +393,8 @@ skipped like any stale step.
 
 ### The undo journal — the one-shot writes (P3-F: ERR-2, DET-4)
 
-A delete, a detach, a swap and an extract replace source text no edit kind can
-describe: the deleted element's own bytes, the call site a detach inlined, the
+A delete, a detach, a swap, an extract and (CV-3) Add/Remove variant and Add
+property replace source text no edit kind can describe: the deleted element's own bytes, the call site a detach inlined, the
 attributes a swap dropped. So their undo is not an inverse edit. It is the
 server's **undo journal** (`server/handlers/studio/undoJournal.ts`): the
 editor's `/save` batch (`journal: true`, `studioBatchUndoJournal.ts`) reads
@@ -426,8 +426,17 @@ The rules that keep it narrow:
 - **Untrusted on read.** A token is 32 lowercase hex digits before it meets a
   path; the folder and entry are refused if reached through a link; an entry is
   size-capped (8 MiB) and TypeBox-validated; every `rel` is re-derived through
-  `canonicalSourceRel`, so an entry naming anything outside app source is
+  `canonicalSourceRel` in the editor's scope (`journalStylesheets: 'allow'`,
+  which admits a hand-authored `.css`), so an entry naming
+  anything outside app source and hand-authored stylesheets is
   `restore-unavailable`, never a write.
+- **A style edit is journaled only when a value-set cannot undo it (G-5).** A
+  `css`/`styled` edit that lands as an `override` (a new line after the one it
+  shadows) or `expanded` a shorthand leaves bytes "set the old value back" does
+  not remove, so its batch records a pre-image of the stylesheets it may write
+  (`cssEditStylesheet`) and the chip's Undo (`styleLandings.ts`) posts the
+  `restore`. A batch of plain rewrites records nothing. ⌘Z for these stays the
+  value-level patch undo; the byte-exact one is the chip's.
 - **All or none, even on failure.** A write that throws part-way puts back
   the files already restored and refuses `restore-failed`; the entry survives
   for a retry.
@@ -462,7 +471,11 @@ moved hook or every row) wrote nothing and pushes nothing; the confirmed
 re-post is the entry. Redo re-posts the gesture's `forward` edits — for a
 confirmed detach, without the `dryRun`. "Expose as prop" (`expose-prop`)
 writes two files (the component and its one call site) in one journaled
-batch, one entry.
+batch, one entry — however many values the gesture set. OD-19: this is what a
+text, attribute or inline-style edit inside a component instance posts; its
+canvas preview is outside history, so the landing write is the only entry.
+"Apply to all (N)" (`promote-override`) is the same two files, the same kind
+of entry.
 
 Because the inverse addresses elements the write had not made yet (or, for
 `delete`, discarded bytes the write had not yet reported), the gesture records

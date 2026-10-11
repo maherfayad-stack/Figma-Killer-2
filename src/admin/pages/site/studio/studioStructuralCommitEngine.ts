@@ -29,6 +29,7 @@ import { resyncBoardAfterWrite } from './studioBoardResync'
 import { postEditsRetryingUnreachable } from './structuralWriteRetry'
 import { captureIdentities, type IdentityCapture } from './sourceIdentity'
 import { elementMovedNodeIds, replanAfterElementMoved, warnElementMoved } from './elementMovedRecovery'
+import { invalidateCatalogAfterWrite } from './componentCatalog'
 
 /**
  * What a structural commit does beyond posting: what it means for the undo
@@ -228,6 +229,8 @@ async function commitStructuralBody(
           history: resolvePendingHistory(edits, options, outcome),
         },
       })
+      // CV-3 — a component's props or values moved (or were put back by ⌘Z): the panel's catalog is stale.
+      invalidateCatalogAfterWrite(edits)
       options.onLanded?.(outcome)
     }
     // P1-A — the file changed under the board. Re-read it and re-plan ONCE,

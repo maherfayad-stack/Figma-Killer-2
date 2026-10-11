@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { exposeLiteralAsProp, type ExposeLiteralAsPropParams, type ExposeLiteralRefusalReason, type ExposeTarget } from '../exposeLiteralAsProp'
+import { exposeLiteralAsProp, type ExposeLiteralRefusalReason, type ExposeOverride, type ExposeTarget } from '../exposeLiteralAsProp'
 import { locateTag } from './fixtureLocation'
 
 let tmpDir: string
@@ -56,7 +56,9 @@ function expose(input: {
   elementTag: string
   target: ExposeTarget
   propName: string
-  value?: ExposeLiteralAsPropParams['value']
+  value?: ExposeOverride['value']
+  /** More literals of the same element, exposed in the same call. */
+  also?: ExposeOverride[]
 }) {
   const call = locateTag(read(input.pageRel), input.callTag, input.occurrence ?? 1)
   const element = locateTag(read(input.componentRel), input.elementTag)
@@ -68,9 +70,7 @@ function expose(input: {
     line: element.line,
     col: element.col,
     workspaceRoot: tmpDir,
-    target: input.target,
-    propName: input.propName,
-    ...(input.value !== undefined ? { value: input.value } : {}),
+    overrides: [{ target: input.target, propName: input.propName, ...(input.value !== undefined ? { value: input.value } : {}) }, ...(input.also ?? [])],
   })
 }
 
@@ -125,7 +125,7 @@ describe('expose a literal as a prop — every other instance renders byte-ident
     write('pages/About.tsx', ABOUT)
     const result = expose({ pageRel: 'pages/Home.tsx', callTag: 'Card', componentRel: 'components/Card.tsx', elementTag: 'h2', target: { kind: 'text' }, propName: 'heading', value: 'New text' })
     if (!result.ok) throw new Error(result.refusal.message)
-    expect(result).toEqual({ ok: true, propName: 'heading', callSites: 3 })
+    expect(result).toEqual({ ok: true, propNames: ['heading'], callSites: 3 })
 
     const card = read('components/Card.tsx')
     expect(card).toContain("export function Card({ title, heading = 'Current text' }: { title: string; heading?: string }) {")
@@ -181,11 +181,75 @@ describe('expose a literal as a prop — every other instance renders byte-ident
     write('pages/About.tsx', ABOUT.replace('<Card title="Three" />', '<Card title="Three" heading="data-attr" />'))
     const result = expose({ pageRel: 'pages/Home.tsx', callTag: 'Card', componentRel: 'components/Card.tsx', elementTag: 'h2', target: { kind: 'text' }, propName: 'heading', value: 'New' })
     if (!result.ok) throw new Error(result.refusal.message)
-    expect(result.propName).toBe('heading2')
+    expect(result.propNames).toEqual(['heading2'])
     const card = read('components/Card.tsx')
     expect(card).toContain("{ title, heading2 = 'Current text', ...rest }")
     expect(card).toContain('<h2>{heading2}</h2>')
     expect(read('pages/Home.tsx')).toContain('<Card title="One" heading2="New" />')
+  })
+})
+
+describe('expose several literals of one element in one call (OD-19: one gesture, one write)', () => {
+  const BADGE = [
+    'interface BadgeProps { tone: string }',
+    'export function Badge({ tone }: BadgeProps) {',
+    '  return <span className={tone} title="Status" style={{ width: 40, color: "gray" }}>Active</span>',
+    '}',
+    '',
+  ].join('\n')
+  const PAGE = [
+    "import { Badge } from '../components/Badge'",
+    'export default function Home() {',
+    '  return (',
+    '    <div>',
+    '      <Badge tone="ok" />',
+    '      <Badge tone="warn" />',
+    '    </div>',
+    '  )',
+    '}',
+    '',
+  ].join('\n')
+
+  it('text, an attribute and two style values land in one splice per file, and every other instance is unchanged', () => {
+    write('components/Badge.tsx', BADGE)
+    write('pages/Home.tsx', PAGE)
+    const result = expose({
+      pageRel: 'pages/Home.tsx', callTag: 'Badge', componentRel: 'components/Badge.tsx', elementTag: 'span',
+      target: { kind: 'text' }, propName: 'label', value: 'Paused',
+      also: [
+        { target: { kind: 'attribute', name: 'title' }, propName: 'titleText', value: 'Paused for now' },
+        { target: { kind: 'style', property: 'width' }, propName: 'widthValue', value: '80px' },
+        { target: { kind: 'style', property: 'color' }, propName: 'colorValue', value: 'red' },
+      ],
+    })
+    if (!result.ok) throw new Error(result.refusal.message)
+    expect(result.propNames).toEqual(['label', 'titleText', 'widthValue', 'colorValue'])
+    const badge = read('components/Badge.tsx')
+    expect(badge).toContain("export function Badge({ tone, label = 'Active', titleText = 'Status', widthValue = 40, colorValue = 'gray' }: BadgeProps) {")
+    // `width` was the number 40 and this instance hands '80px': the type admits both.
+    expect(badge).toContain('interface BadgeProps { tone: string; label?: string; titleText?: string; widthValue?: number | string; colorValue?: string }')
+    expect(badge).toContain('title={titleText} style={{ width: widthValue, color: colorValue }}>{label}</span>')
+    const page = read('pages/Home.tsx')
+    expect(page).toContain('<Badge tone="ok" label="Paused" titleText="Paused for now" widthValue="80px" colorValue="red" />')
+    expect(page).toContain('<Badge tone="warn" />')
+  })
+
+  it('refuses the same target listed twice, writing nothing', () => {
+    write('components/Badge.tsx', BADGE)
+    write('pages/Home.tsx', PAGE)
+    expectRefused({
+      pageRel: 'pages/Home.tsx', callTag: 'Badge', componentRel: 'components/Badge.tsx', elementTag: 'span',
+      target: { kind: 'text' }, propName: 'label', value: 'A', also: [{ target: { kind: 'text' }, propName: 'other', value: 'B' }],
+    }, 'not-a-literal')
+  })
+
+  it('is all-or-nothing: one literal that is a binding refuses the whole call', () => {
+    write('components/Badge.tsx', BADGE.replace('title="Status"', 'title={tone}'))
+    write('pages/Home.tsx', PAGE)
+    expectRefused({
+      pageRel: 'pages/Home.tsx', callTag: 'Badge', componentRel: 'components/Badge.tsx', elementTag: 'span',
+      target: { kind: 'text' }, propName: 'label', value: 'A', also: [{ target: { kind: 'attribute', name: 'title' }, propName: 'titleText', value: 'B' }],
+    }, 'not-a-literal')
   })
 })
 

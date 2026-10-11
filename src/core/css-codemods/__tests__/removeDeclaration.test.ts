@@ -14,7 +14,6 @@
  */
 import { describe, expect, it } from 'bun:test'
 import { removeDeclaration } from '../removeDeclaration'
-import { analyzeDeclarationTarget } from '../analyzeDeclarationTarget'
 import type { DeclarationWriteResult } from '../setDeclaration'
 
 /** The rewritten text of a removal that must succeed. */
@@ -118,35 +117,5 @@ describe('removeDeclaration — every declaration of it, so the class stops sett
   it('leaves a covering shorthand alone — clearing padding-top is not clearing padding', () => {
     const css = '.card {\n  padding-top: 4px;\n  padding: 8px;\n}\n'
     expect(removed(removeDeclaration(css, '.card', 'padding-top')).css).toBe('.card {\n  padding: 8px;\n}\n')
-  })
-})
-
-describe('analyzeDeclarationTarget — still the gate for a styled template, scoped by atRule', () => {
-  it('refuses the first of two duplicate blocks — the second would still win', () => {
-    const css = '.card {\n  color: red;\n}\n\n.card {\n  color: blue;\n}\n'
-    const analysis = analyzeDeclarationTarget(css, '.card', 'color')
-    expect(analysis.ok).toBe(false)
-    if (!analysis.ok) expect(analysis.refusal.reason).toBe('duplicate-selector')
-  })
-
-  it('scopes the analysis to the block the write will land in', () => {
-    // Two `.card` blocks at the TOP level, both setting `color`, would refuse —
-    // but the write is going inside `@media print`, where there is only one.
-    const css =
-      '.card {\n  color: red;\n}\n\n.card {\n  color: green;\n}\n\n@media print {\n  .card {\n    color: blue;\n  }\n}\n'
-    expect(analyzeDeclarationTarget(css, '.card', 'color', { atRule: 'media print' }).ok).toBe(true)
-    expect(analyzeDeclarationTarget(css, '.card', 'color').ok).toBe(false)
-  })
-
-  it('catches a duplicate INSIDE the block, which is the whole point of scoping it', () => {
-    const css =
-      '@media print {\n  .card {\n    color: red;\n  }\n}\n\n@media print {\n  .card {\n    color: blue;\n  }\n}\n'
-    const analysis = analyzeDeclarationTarget(css, '.card', 'color', { atRule: 'media print' })
-    expect(analysis.ok).toBe(false)
-    if (!analysis.ok) expect(analysis.refusal.reason).toBe('duplicate-selector')
-  })
-
-  it('allows a write into a block that does not exist yet', () => {
-    expect(analyzeDeclarationTarget('.card {\n  color: red;\n}\n', '.card', 'color', { atRule: 'media print' }).ok).toBe(true)
   })
 })

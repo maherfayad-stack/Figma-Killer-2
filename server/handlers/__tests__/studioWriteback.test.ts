@@ -1017,7 +1017,7 @@ describe('applyStudioEditBatch — css edits land on the declaration that takes 
     expect(read('src/screens/Home.css')).toBe('.hero {\n  padding-top: 2px;\n  padding: 0;\n  padding-top: 12px;\n}\n')
   })
 
-  it('refuses when an !important shorthand outranks the edited longhand from any position', () => {
+  it('rewrites an !important shorthand in place when it outranks the edited longhand from any position (G-5)', () => {
     const before = '.hero {\n  margin: 0 !important;\n  margin-left: 4px;\n}\n'
     write('src/screens/Home.css', before)
 
@@ -1031,8 +1031,9 @@ describe('applyStudioEditBatch — css edits land on the declaration that takes 
       value: '9px',
     }])
 
-    expect(result.refusals[0]).toMatchObject({ kind: 'css', reason: 'important-override' })
-    expect(read('src/screens/Home.css')).toBe(before)
+    expect(result.refusals).toEqual([])
+    expect(result.styleLandings.map((landing) => landing.rung)).toEqual(['expanded'])
+    expect(read('src/screens/Home.css')).toBe('.hero {\n  margin: 0 0 0 9px !important;\n  margin-left: 4px;\n}\n')
   })
 
   it('writes the second of a property declared twice inside one rule', () => {
@@ -1092,8 +1093,8 @@ describe('applyStudioEditBatch — css edits land on the declaration that takes 
   })
 
   it('one refusal does not abort the rest of the batch', () => {
-    // A covering `!important` is the cascade refusal that survives P3-C (WB-16).
-    write('src/screens/Bad.css', '.a {\n  padding-top: 1px;\n  padding: 0 !important;\n}\n')
+    // A stylesheet that does not parse is the style refusal that survives G-5.
+    write('src/screens/Bad.css', '.a {\n  padding-top: 1px;\n  padding: 0')
     write('src/screens/Good.css', '.b {\n  color: red;\n}\n')
 
     const result = applyStudioEditBatch(tmpDir, [

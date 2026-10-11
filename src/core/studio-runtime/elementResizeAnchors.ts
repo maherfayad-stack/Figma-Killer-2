@@ -1,5 +1,5 @@
 /**
- * elementResizeAnchoring — a resize of a positioned layer writes the offsets
+ * elementResizeAnchors — a resize of a positioned layer writes the offsets
  * its source ANCHORS it by (P5-E, IX-21).
  *
  * `elementResizeRules.ts` (shared with the live runtime's handles) keeps the
@@ -17,14 +17,68 @@
  *     layer writes the width alone, an E drag moves `right` in by the growth;
  *   - `left` + `right` (a stretched layer) both follow their edges.
  *
- * Portal frames only. A live frame's resize snaps and plans its flex/align
- * companions from what `setResizeTarget` sends (`resizeTargetContext.ts`),
- * but the authored OFFSETS are not on that wire yet, so a live W-drag on a
- * right-anchored layer still writes `left`.
+ * Shared by both kinds of frame (PA-8). A portal drag reads the authored
+ * offsets off the store; a live (Tier 2) frame has no store, so the parent
+ * sends WHICH offsets are authored with the target (`ResizeAnchors`,
+ * `resizeTargetContext.ts`) and the frame reads their used values itself
+ * ({@link resizeAnchorPlan}). A live W-drag on a right-anchored layer therefore
+ * writes the width alone, exactly as a portal drag does.
  */
-import type { ResizeBoxStart, ResizeStep } from '@core/studio-runtime'
-import type { NudgePlan, NudgeTerm } from './canvasNodeArrowMove'
-import type { ResizeInlinePatch } from '@core/studio-runtime'
+import type { ResizeBoxStart, ResizeStep } from './elementResizeRules'
+import type { OffsetProperty, ResizeAnchors } from './resizeMessages'
+import { inlineOffsetProperty } from './elementResizeMeasure'
+import type { ResizeInlinePatch } from './elementResizeSizing'
+
+/** One offset a gesture moves: `base + sign × delta`, in CSS px. */
+export interface OffsetTerm {
+  property: OffsetProperty
+  /** `+1` when a move to visual right / down GROWS this offset (`left`, `top`), `-1` when it shrinks it (`right`, `bottom`). */
+  sign: 1 | -1
+  base: number
+}
+
+/** The offsets a layer is anchored by, with the values they have now. */
+export interface OffsetPlan {
+  horizontal: OffsetTerm[]
+  vertical: OffsetTerm[]
+}
+
+/** The computed-style facts a term is read from — plain strings, so the rules are testable without a DOM. */
+export interface OffsetStyle {
+  direction: string
+  left: string
+  right: string
+  top: string
+  bottom: string
+}
+
+function px(value: string): number {
+  const parsed = Number.parseFloat(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+/** The term for one offset: a logical inset IS one physical side for the element's direction. */
+export function offsetTerm(property: OffsetProperty, style: OffsetStyle): OffsetTerm {
+  const rtl = style.direction === 'rtl'
+  const physical =
+    property === 'insetInlineStart' ? (rtl ? 'right' : 'left')
+      : property === 'insetInlineEnd' ? (rtl ? 'left' : 'right')
+        : property
+  if (physical === 'top' || physical === 'bottom') {
+    return { property, sign: physical === 'top' ? 1 : -1, base: px(physical === 'top' ? style.top : style.bottom) }
+  }
+  return { property, sign: physical === 'left' ? 1 : -1, base: px(physical === 'left' ? style.left : style.right) }
+}
+
+/** The plan for `anchors`, the offsets' bases read from the element's computed style. */
+export function resizeAnchorPlan(anchors: ResizeAnchors, style: OffsetStyle): OffsetPlan {
+  const terms = (properties: readonly OffsetProperty[], fallback: OffsetProperty): OffsetTerm[] =>
+    (properties.length > 0 ? properties : [fallback]).map((property) => offsetTerm(property, style))
+  return {
+    horizontal: terms(anchors.horizontal, inlineOffsetProperty(style.direction)),
+    vertical: terms(anchors.vertical, 'top'),
+  }
+}
 
 /** The offset keys the shared rules may put in a patch — replaced wholesale here. */
 const RULE_OFFSET_KEYS = ['left', 'insetInlineStart', 'top'] as const
@@ -52,7 +106,7 @@ export function resizeEdgeShifts(start: ResizeBoxStart, step: ResizeStep): {
   return { left, right: left + growX, top, bottom: top + growY }
 }
 
-function termValue(term: NudgeTerm, startShift: number, endShift: number): number {
+function termValue(term: OffsetTerm, startShift: number, endShift: number): number {
   // `sign: 1` is a start-side offset (left / top): it grows as that edge moves
   // right / down. `sign: -1` is an end-side one (right / bottom): it shrinks.
   return term.sign === 1 ? term.base + startShift : term.base - endShift
@@ -67,7 +121,7 @@ export function anchorResizePatch(
   patch: ResizeInlinePatch | null,
   start: ResizeBoxStart,
   step: ResizeStep,
-  plan: NudgePlan | null,
+  plan: OffsetPlan | null,
 ): ResizeInlinePatch | null {
   if (!patch || !plan || !start.offsets) return patch
   const next: Record<string, string | undefined> = { ...patch }

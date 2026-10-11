@@ -48,11 +48,13 @@ import {
   type StudioPromoteComponentDetail,
 } from './studioSlotWriteback'
 import { StructuralEditSchemas } from './studioStructuralWriteback'
+import { VariantEditSchemas } from './studioVariantWriteback'
 import { CanvasLayerEditSchemas, type CanvasLayerRemovedText } from './studioCanvasLayerWriteback'
 import { SvgEditSchemas } from './studioSvgWriteback'
 import { ListItemEditSchema } from './studioListItemWriteback'
 import { UndoJournalTokenSchema } from './studio/undoJournalToken'
 import type { CreatedJsxLocation } from '@core/ast-codemods'
+import type { StyleLanding, StyleLandingRung } from '@core/page-tree'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
 /**
@@ -267,25 +269,47 @@ const DetachEditSchema = Type.Object({
 })
 
 /**
- * P5-C (DET-7) — "Expose as prop": the literal `target` of an element inside
- * a component's markup becomes an optional prop of that component whose
- * default IS the literal (`exposeLiteralAsProp`), so every other instance
- * renders byte-identical; `value`, when given, is written at this one call
- * site. `nodeId` is the element's inlined id, exactly one call site deep
- * (`page~component:line:col`) — the call site is its head, and the codemod
- * checks the element really is that component's. Two files, one gesture,
- * journaled (⌘Z is `restore`).
+ * P5-C (DET-7), OD-19 — "Expose as prop", the write behind every edit made to
+ * an element inside a component instance: each of `overrides` names a literal
+ * of that ONE element (its text, an attribute, or one inline-style property)
+ * that becomes an optional prop of the component whose default IS the literal
+ * (`exposeLiteralAsProp`), so every other instance renders byte-identical;
+ * `value`, when given, is written at this one call site. `nodeId` is the
+ * element's inlined id, exactly one call site deep (`page~component:line:col`)
+ * — the call site is its head, and the codemod checks the element really is
+ * that component's. Two files, one gesture however many overrides, journaled
+ * (⌘Z is `restore`).
  */
-const ExposePropEditSchema = Type.Object({
-  kind: Type.Literal('expose-prop'),
-  nodeId: Type.String(),
+const ExposeOverrideSchema = Type.Object({
   target: Type.Union([
     Type.Object({ kind: Type.Literal('text') }),
     Type.Object({ kind: Type.Literal('attribute'), name: Type.String({ pattern: '^[A-Za-z_$][A-Za-z0-9_$:-]*$', maxLength: 64 }) }),
     Type.Object({ kind: Type.Literal('style'), property: Type.String({ pattern: '^[A-Za-z_$][A-Za-z0-9_$-]*$', maxLength: 64 }) }),
   ]),
   propName: Type.String({ pattern: '^[A-Za-z_$][A-Za-z0-9_$]*$', maxLength: 64 }),
-  value: Type.Optional(Type.Union([Type.String(), Type.Number(), Type.Boolean()])),
+  value: Type.Optional(Type.Union([Type.String({ maxLength: 10_000 }), Type.Number(), Type.Boolean()])),
+})
+
+const ExposePropEditSchema = Type.Object({
+  kind: Type.Literal('expose-prop'),
+  nodeId: Type.String(),
+  overrides: Type.Array(ExposeOverrideSchema, { minItems: 1, maxItems: 16 }),
+})
+
+/**
+ * OD-19 — "Apply to all": the values the instance overrides through `propNames`
+ * become the component's defaults and the call site stops passing it
+ * (`promoteOverrideToDefault`). `nodeId` is the inlined id of ANY element of
+ * that instance, exactly one call site deep (`page~component:line:col`): its
+ * head is the call site, its tail names the component's file, and both go
+ * through the one path decoder. Which element is irrelevant — the override's
+ * own write may have moved the one that was edited. Journaled (⌘Z is
+ * `restore`).
+ */
+const PromoteOverrideEditSchema = Type.Object({
+  kind: Type.Literal('promote-override'),
+  nodeId: Type.String(),
+  propNames: Type.Array(Type.String({ pattern: '^[A-Za-z_$][A-Za-z0-9_$]*$', maxLength: 64 }), { minItems: 1, maxItems: 16 }),
 })
 
 /**
@@ -332,12 +356,15 @@ export const StudioEditSchema = Type.Union([
   AssetEditSchema,
   DetachEditSchema,
   ExposePropEditSchema,
+  PromoteOverrideEditSchema,
   SwapEditSchema,
   RestoreEditSchema,
   ...StructuralEditSchemas,
   // OD-8 — a `.map` row's structure, written to its array (`studioListItemWriteback.ts`).
   ListItemEditSchema,
   ...SlotEditSchemas,
+  // CV-3 — add / remove a variant, add a component property (`studioVariantWriteback.ts`).
+  ...VariantEditSchemas,
   // P5-G — the free canvas's five kinds (`studioCanvasLayerWriteback.ts`).
   ...CanvasLayerEditSchemas,
   // P5-D SVG-4 — one element inside an inline `<svg>` (`studioSvgWriteback.ts`).
@@ -418,6 +445,8 @@ export interface StudioEditApplyOutcome {
   /** P5-C — every `detach` that did not refuse; `written: false` is a held dry run, counted as neither written nor skipped. */
   detachDetail?: StudioDetachDetail
   createdStylesheet?: { file: string }
+  /** G-5 — the rung a style edit took (`css` set/insert/create, `styled`, `style`); see `@core/page-tree`'s `styleLanding.ts`. */
+  styleLanding?: { rung: StyleLandingRung; file: string }
   promoteDetail?: StudioPromoteComponentDetail
   addSlotPropDetail?: StudioAddSlotPropDetail
   /**
@@ -460,6 +489,23 @@ export interface StudioEditApplyOutcome {
    * own bytes, which its undo writes back (`canvas-layer-restore`).
    */
   removed?: readonly CanvasLayerRemovedText[]
+  /**
+   * G-1 - what a `transplant` wrote into the destination besides the markup:
+   * plain constants and handlers (`copy`), the element's own copy of the state it
+   * used (`state`, OD-17), a row's data or a prop's default as a literal
+   * constant (`value`). Absent when it carried none. Never includes a copy the
+   * destination already had.
+   */
+  carried?: readonly StudioCarriedDeclaration[]
+}
+
+/** One thing a move copied to the destination - see {@link StudioEditApplyOutcome.carried}. */
+export interface StudioCarriedDeclaration {
+  /** The name it had in the origin. */
+  name: string
+  /** The name it has at the destination - different only after a clash. */
+  as: string
+  how: 'copy' | 'state' | 'value'
 }
 
 /**
@@ -532,6 +578,14 @@ export interface StudioEditBatchResult {
    * path on its very next edit, with no reload.
    */
   createdStylesheets: { nodeId: string; file: string }[]
+  /**
+   * G-5 — where every style edit that wrote LANDED: the declaration, an
+   * expanded shorthand, an override, or the element's own `style=""`
+   * (`StyleLanding`). `nodeId` is the edit's own id — a `css` edit's synthetic
+   * one, a styled edit's template tag, an inline edit's element — the join key
+   * the client already holds for it. Empty array when none did.
+   */
+  styleLandings: StyleLanding[]
   /**
    * E2.4 — every `promote-component` edit that SUCCEEDED, with the new
    * file/component name it minted and the free-variable partition it
@@ -637,4 +691,10 @@ export interface StudioEditBatchResult {
    * when the batch held no `list-item` edit that wrote.
    */
   listArrays: { nodeId: string; to: string }[]
+  /**
+   * G-1 - everything a `transplant` in this batch copied to its destination
+   * besides the markup (see {@link StudioEditApplyOutcome.carried}); the board
+   * tells the user when state or data was copied. Absent when nothing was.
+   */
+  carried?: StudioCarriedDeclaration[]
 }

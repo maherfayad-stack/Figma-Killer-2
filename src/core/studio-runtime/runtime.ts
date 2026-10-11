@@ -578,7 +578,7 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
         applyMode(message.mode)
         return
       case 'setResizeTarget':
-        resize.setTarget(message.ref, message.proportional, { sizing: message.sizing ?? {}, snap: message.snap ?? null })
+        resize.setTarget(message.ref, message.proportional, { sizing: message.sizing ?? {}, snap: message.snap ?? null, anchors: message.anchors ?? null })
         return
       case 'text:edit':
         textEdit.handleReply(message)
