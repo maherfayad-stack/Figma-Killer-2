@@ -240,3 +240,32 @@ export function explainStaticParentConstraint(parentLabel: string): EditConstrai
     actions: [{ label: `Make <${parentLabel}> position: relative`, kind: 'position-parent-relative' }],
   }
 }
+
+/**
+ * PA-4 (OD-P2) — "Ignore auto layout" needs `position: relative` on the
+ * container, and normally writes it in the same undo step. It refuses when
+ * that one declaration would not stay on one element: a container inlined
+ * from a component shared by `sharedBy` places, or one that renders once per
+ * `.map` row. The remedy is the same single write, offered as an explicit
+ * choice that names its blast radius instead of being made silently.
+ */
+export function explainSharedParentConstraint(
+  parentLabel: string,
+  sharing: { kind: 'component'; count: number } | { kind: 'list-row' },
+): EditConstraint {
+  const where =
+    sharing.kind === 'component'
+      ? `is shared by ${sharing.count} places that use the same component`
+      : 'is repeated once per row of a list'
+  return {
+    reason: 'static-parent',
+    scope: 'gesture',
+    explanation: `\`<${parentLabel}>\` needs \`position: relative\` for this element to stay where it is once it ignores auto layout, and it ${where} — one write there changes all of them.`,
+    actions: [
+      {
+        label: sharing.kind === 'component' ? `Make <${parentLabel}> position: relative in all ${sharing.count}` : `Make <${parentLabel}> position: relative in every row`,
+        kind: 'position-parent-relative',
+      },
+    ],
+  }
+}

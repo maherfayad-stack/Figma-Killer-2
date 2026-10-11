@@ -80,6 +80,20 @@ describe('prewarmCaptureBrowser', () => {
     expect(launches).toBe(1)
   })
 
+  it('a capture that arrives while Chromium is still starting joins that launch instead of starting a second one', async () => {
+    let launches = 0
+    let finishLaunch!: () => void
+    const gate = new Promise<void>((resolve) => { finishLaunch = resolve })
+    const launch = async () => { launches++; await gate; return fakeBrowser() }
+
+    prewarmCaptureBrowser(launch)
+    const capture = withCapturePage({ viewport: { width: 100, height: 100 }, launchBrowser: launch }, async () => 'done')
+    await settle()
+    finishLaunch()
+    expect(await capture).toBe('done')
+    expect(launches).toBe(1)
+  })
+
   it('swallows a launch failure and records it, so a host with no Chromium loads the board unchanged', async () => {
     let launches = 0
     const launch = async () => {

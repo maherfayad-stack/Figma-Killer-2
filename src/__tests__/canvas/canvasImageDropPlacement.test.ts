@@ -42,9 +42,17 @@ describe('clampImageSize', () => {
 describe('resolveAbsolutePlacement — K6', () => {
   const box = (overrides: Partial<DropContainerBox> = {}): DropContainerBox => ({
     contentWidth: 360,
-    paddingOrigin: { x: 20, y: 30 },
-    paddingWidth: 400,
-    position: 'relative',
+    block: {
+      rect: { left: 20, top: 30, width: 400, height: 300 },
+      borderLeft: 0,
+      borderTop: 0,
+      borderRight: 0,
+      borderBottom: 0,
+      scale: 1,
+      scrollLeft: 0,
+      scrollTop: 0,
+    },
+    containsAbsolute: true,
     direction: 'ltr',
     ...overrides,
   })
@@ -64,7 +72,7 @@ describe('resolveAbsolutePlacement — K6', () => {
   })
 
   it('refuses a static container — the image would escape it', () => {
-    expect(resolveAbsolutePlacement(box({ position: 'static' }), { x: 120, y: 80 })).toEqual({
+    expect(resolveAbsolutePlacement(box({ containsAbsolute: false }), { x: 120, y: 80 })).toEqual({
       ok: false,
       reason: 'static-parent',
     })

@@ -24,6 +24,13 @@ interface TokenizedColorFieldProps {
   fieldSize?: 'xs' | 'sm' | 'md'
   onTextChange: (value: string) => void
   onTextBlur: () => void
+  /**
+   * Esc: abandon the typed draft and restore the committed value. When
+   * supplied, Esc also leaves the field WITHOUT firing `onTextBlur`, so a
+   * cancelled draft never reaches the source. Omit for a live-edit caller
+   * (no draft buffer) — Esc then only closes the suggestion list.
+   */
+  onTextCancel?: () => void
   onSwatchChange: (value: string) => void
   onTokenSelect: (value: string) => void
   /**
@@ -88,6 +95,7 @@ export function TokenizedColorField({
   fieldSize = 'sm',
   onTextChange,
   onTextBlur,
+  onTextCancel,
   onSwatchChange,
   onTokenSelect,
   onTokenPreview,
@@ -106,6 +114,8 @@ export function TokenizedColorField({
   const [highlightMoved, setHighlightMoved] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
   const swatchButtonRef = useRef<HTMLButtonElement>(null)
+  // Set by Esc so the blur it triggers cancels the draft instead of committing.
+  const cancelledRef = useRef(false)
   const variables = generateFrameworkColorVariableSets(colorSettings).light
     .filter((variable) => variable.tokenId !== excludeTokenId)
   const filteredVariables = computeFilteredVariables(value, variables)
@@ -159,7 +169,8 @@ export function TokenizedColorField({
   }
 
   function handleTextBlur(event: FocusEvent<HTMLInputElement>) {
-    onTextBlur()
+    if (cancelledRef.current) cancelledRef.current = false
+    else onTextBlur()
     if (event.relatedTarget instanceof HTMLElement && event.currentTarget.parentElement?.contains(event.relatedTarget)) {
       return
     }
@@ -222,6 +233,26 @@ export function TokenizedColorField({
       // Blurring runs `onTextBlur`, the one commit path for typed text.
       onTokenPreviewClear?.()
       setOpen(false)
+      event.currentTarget.blur()
+      return
+    }
+
+    if (event.key === 'Tab') {
+      // Tab commits the typed text exactly like Enter (the blur it causes runs
+      // `onTextBlur`). The list and any hover preview must go first: left
+      // open, its option buttons would take the focus and the field would
+      // never blur.
+      onTokenPreviewClear?.()
+      setOpen(false)
+      return
+    }
+
+    if (event.key === 'Escape' && onTextCancel) {
+      event.preventDefault()
+      onTokenPreviewClear?.()
+      setOpen(false)
+      cancelledRef.current = true
+      onTextCancel()
       event.currentTarget.blur()
       return
     }
@@ -365,6 +396,7 @@ export function TokenizedColorField({
                     key={`${variable.tokenId}-${variable.variantId}`}
                     type="button"
                     role="option"
+                    tabIndex={-1}
                     aria-selected={index === activeIndex}
                     className={styles.colorTokenOption}
                     onMouseEnter={() => {

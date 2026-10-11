@@ -14,6 +14,8 @@
  * selectable by a sweep.
  */
 
+import type { NodeTree, PageNode } from '@core/page-tree'
+
 export interface MarqueeRect {
   x: number
   y: number
@@ -26,6 +28,33 @@ export interface MarqueeCandidate {
   /** Depth below the root: its children are 1. */
   depth: number
   rect: MarqueeRect
+}
+
+/**
+ * Every selectable layer below `rootId`, in tree order with its depth. Where a
+ * layer's box comes from is the caller's (`rectOf`): a portal frame reads its
+ * own DOM, a live frame the rects the runtime measured. Hidden, locked and
+ * box-less layers are left out; their children are still walked.
+ */
+export function collectMarqueeCandidates(
+  tree: NodeTree<PageNode>,
+  rootId: string,
+  rectOf: (nodeId: string) => MarqueeRect | null,
+): MarqueeCandidate[] {
+  const candidates: MarqueeCandidate[] = []
+  const walk = (nodeId: string, depth: number) => {
+    const node = tree.nodes[nodeId]
+    if (!node) return
+    for (const childId of node.children) {
+      const child = tree.nodes[childId]
+      if (!child || child.hidden) continue
+      const rect = rectOf(childId)
+      if (rect && !child.locked) candidates.push({ nodeId: childId, depth, rect })
+      walk(childId, depth + 1)
+    }
+  }
+  walk(rootId, 1)
+  return candidates
 }
 
 export function rectsIntersect(a: MarqueeRect, b: MarqueeRect): boolean {

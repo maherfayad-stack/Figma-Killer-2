@@ -89,7 +89,7 @@ describe('a file link inside .studio', () => {
     expect(fs.readFileSync(victim, 'utf8')).toBe(outsideBoards)
   })
 
-  it('thumbnail.png -> a private key: the route answers 404, never the key', () => {
+  it('thumbnail.png -> a private key: the route answers "no thumbnail" (204), never the key', () => {
     const key = path.join(outside, 'id_rsa')
     fs.writeFileSync(key, SECRET)
     if (!linkFile(key, path.join(studioDir(), 'thumbnail.png'))) return
@@ -97,7 +97,8 @@ describe('a file link inside .studio', () => {
     expect(readProjectThumbnailStat(dir)).toBeNull()
     expect(readProjectThumbnailBytes(dir)).toBeNull()
     const res = serveProjectThumbnail(new Request('http://localhost/admin/api/studio/thumbnail'), dir)
-    expect(res.status).toBe(404)
+    expect(res.status).toBe(204)
+    expect(res.body).toBeNull()
 
     // …and a capture never overwrites it either.
     expect(() => writeProjectThumbnail(dir, new Uint8Array([0x89, 0x50, 0x4e, 0x47]))).toThrow(StudioStoreLinkError)

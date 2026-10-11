@@ -325,11 +325,29 @@ export default function CanvasLayer() {
     expect(nameErrors([moduleFile])).toEqual([])
   })
 
+  it('carries a plain body const into the layer module instead of refusing it (G-1a)', () => {
+    writeFixture('lib/theme.ts', THEME)
+    const recipe = writeFixture('src/recipes/RecipeCard.tsx', RECIPE)
+    const { moduleFile, result } = lift(recipe, RECIPE, 'small', true)
+
+    expect(result.ok).toBe(true)
+    expect(read(moduleFile)).toBe(`/* eslint-disable */
+// Studio free-canvas layer. Not part of your app: nothing imports this file.
+
+export default function CanvasLayer() {
+  const servings = 4
+  return (
+    <small>{servings}</small>
+  )
+}
+`)
+    expect(nameErrors([moduleFile])).toEqual([])
+  })
+
   for (const [what, tag, name] of [
     ['a prop', 'header', 'dish'],
     ['a `.map` row', 'b', 'step'],
     ['a non-context hook (useState)', 'footer', 'open'],
-    ['a plain body const', 'small', 'servings'],
   ] as const) {
     it(`still refuses ${what}, writes nothing, and says so in plain words`, () => {
       writeFixture('lib/theme.ts', THEME)

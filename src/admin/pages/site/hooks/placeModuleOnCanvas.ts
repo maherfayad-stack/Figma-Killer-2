@@ -14,6 +14,9 @@
  * zero-size loose layer is invisible and cannot be grabbed. It is written at
  * `EMPTY_BOX_SIZE`, the way the frame tool writes the size you drew.
  */
+import { CANVAS_LAYER_DIR } from '@core/studio-board'
+import { relativeImportSpecifier } from '@site/property-controls/relativeImportSpecifier'
+import type { LocalComponentSpec } from '@site/property-controls/componentPropKind'
 import { moduleSourceElement } from '@site/store/slices/site/moduleSourceElement'
 import { useEditorStore } from '@site/store/store'
 
@@ -36,4 +39,25 @@ export function placeModuleOnCanvas(
   if (!element) return false
   const { intrinsic: _intrinsic, ...spec } = element
   return useEditorStore.getState().createCanvasLayer(spec, at) !== null
+}
+
+/**
+ * A component declared in the user's OWN project, dropped on the empty board.
+ * It has no registry module, so the layer's root is spelled the way
+ * `insertProjectComponent` spells it in a page — `<Card />` plus an import —
+ * with the specifier relative to the layer module (every layer sits directly
+ * in `.studio/canvas/`, so the specifier does not depend on the layer's id).
+ * Its size comes from the component itself; the layer is not given a box.
+ */
+export function placeProjectComponentOnCanvas(
+  component: LocalComponentSpec,
+  at: { x: number; y: number },
+): boolean {
+  const element = {
+    name: component.exportName,
+    importSpecifier: relativeImportSpecifier(`${CANVAS_LAYER_DIR}/layer.tsx`, component.file),
+    ...(component.isDefaultExport ? { importStyle: 'default' as const } : {}),
+    props: {},
+  }
+  return useEditorStore.getState().createCanvasLayer(element, at) !== null
 }

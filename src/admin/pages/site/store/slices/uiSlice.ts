@@ -469,7 +469,13 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
 
   setFrameworkManagerOpen: (open) => set({ frameworkManagerOpen: open }),
 
-  setDependenciesPanelOpen: (open) => set({ dependenciesPanelOpen: open }),
+  // Opening goes through `setLeftSidebarPanel`: the sidebar shows ONE panel and
+  // picks the first open flag in a fixed order, so flipping this flag alone left
+  // Explorer on screen and the Dependencies panel mounted behind it.
+  setDependenciesPanelOpen: (open) => {
+    if (open) get().setLeftSidebarPanel('dependencies')
+    else set({ dependenciesPanelOpen: false })
+  },
 
   setContentPanelOpen: (open) => set({ contentPanelOpen: open }),
 

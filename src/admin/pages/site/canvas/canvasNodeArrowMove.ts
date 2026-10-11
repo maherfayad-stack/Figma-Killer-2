@@ -80,6 +80,8 @@ import {
 } from '@core/page-tree'
 import {
   inlineOffsetProperty,
+  autoLayoutFamily,
+  isAutoLayoutDisplay,
   isPositionedFreely,
   resolveCanvasAxisFromStyle,
 } from '@core/studio-runtime'
@@ -287,11 +289,6 @@ export function planFlowNudge(style: ArrowTargetStyle, authored: ReadonlySet<Nud
   }
 }
 
-/** A parent that PLACES its flow children (`flex` / `grid`, inline or not) — the arrows reorder there. */
-export function isAutoLayout(layout: ArrowParentLayout | null): layout is ArrowParentLayout {
-  return layout !== null && (layout.display.includes('flex') || layout.display.includes('grid'))
-}
-
 /** Why a flow layer has no pixel an arrow could move (canvas-48). */
 export type FlowNudgeRefusal = 'sticky' | 'unboxed' | 'reanchors'
 
@@ -334,7 +331,7 @@ export function resolveArrowSelectionMove(
       continue
     }
     if (!node.parentId) continue
-    if (isAutoLayout(layout)) {
+    if (layout !== null && isAutoLayoutDisplay(layout.display)) {
       layouts.set(node.parentId, layout)
       continue
     }
@@ -429,7 +426,7 @@ function trackCount(resolved: string): number {
  */
 export function reorderStep(layout: ArrowParentLayout, delta: { dx: number; dy: number }): number | null {
   const sign = (value: number) => (value > 0 ? 1 : -1)
-  if (layout.display.includes('grid')) {
+  if (autoLayoutFamily(layout.display) === 'grid') {
     const mirror = layout.direction === 'rtl' ? -1 : 1
     const columnFlow = layout.gridAutoFlow.includes('column')
     if (delta.dx !== 0) return sign(delta.dx) * mirror * (columnFlow ? layout.gridRows : 1)

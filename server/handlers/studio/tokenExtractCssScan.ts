@@ -93,7 +93,7 @@
  * This is now the ONE classification engine for both this module's own
  * `project-css`/`vendor-css` sources AND the manual "Import design tokens"
  * wizard (`designImport.ts`'s `buildTokenCandidates`) — `classifyDeclaration`,
- * `resolveVarValue`, `collectRootScopeMaps`, and `toPx` are exported for that
+ * `collectRootScopeMaps` and `toPx` (and `@core/studio-tokens`' `resolveVarValue`) are exported for that
  * caller. Before this, `designImport`'s own `classifyToken` duplicated a
  * NAME-hint-first heuristic that never resolved `var()` — see that module's
  * doc comment for the (now historical) correctness gap this closed.
@@ -118,74 +118,11 @@
  */
 import { isCssColorValue, isRootScopeSelector } from '@core/siteImport'
 import type { DesignTokenFamily } from '@core/design-tokens'
+import { resolveVarValue, scanRulesAtOneLevel } from '@core/studio-tokens'
 
 // ---------------------------------------------------------------------------
 // :root declaration scanning
 // ---------------------------------------------------------------------------
-
-interface CssRule {
-  selector: string
-  body: string
-  /** Offset of `body`'s first character within the text this level scanned — so a declaration can be traced back to its line. */
-  bodyOffset: number
-}
-
-/**
- * Every rule at ONE level of `{ }` nesting in `css`, comment-aware — used
- * both for the outermost scan and, recursively, for the body of every
- * at-rule (`@media`/`@layer`/`@supports`) found at that level (see
- * `collectScopedRules`). An at-rule's own selector is the raw prelude text
- * (e.g. `@media (prefers-color-scheme:dark)`), always starting with `@`, and
- * its body is the untouched nested text — this function does not know or
- * care whether a rule is an at-rule; that decision lives in the caller.
- */
-function scanRulesAtOneLevel(css: string): CssRule[] {
-  const rules: CssRule[] = []
-  let buffer = ''
-  let i = 0
-  const n = css.length
-  while (i < n) {
-    if (css[i] === '/' && css[i + 1] === '*') {
-      const end = css.indexOf('*/', i + 2)
-      i = end === -1 ? n : end + 2
-      buffer = ''
-      continue
-    }
-    const ch = css[i]
-    if (ch === '{') {
-      const selector = buffer.trim()
-      buffer = ''
-      i++
-      const bodyStart = i
-      let depth = 1
-      while (i < n && depth > 0) {
-        if (css[i] === '/' && css[i + 1] === '*') {
-          const end = css.indexOf('*/', i + 2)
-          i = end === -1 ? n : end + 2
-          continue
-        }
-        if (css[i] === '{') depth++
-        else if (css[i] === '}') depth--
-        if (depth > 0) i++
-      }
-      const body = css.slice(bodyStart, i)
-      i++ // consume the matching close brace
-      if (selector.length > 0) rules.push({ selector, body, bodyOffset: bodyStart })
-      continue
-    }
-    if (ch === '}') {
-      // A stray/unmatched close — resync rather than corrupting the rest of
-      // the scan (or, one level down inside an at-rule body, the close of
-      // that at-rule itself once its own scan of the body runs dry).
-      buffer = ''
-      i++
-      continue
-    }
-    buffer += ch
-    i++
-  }
-  return rules
-}
 
 const WRAPPED_HOST_RE = /^:(?:where|is)\(\s*(.+?)\s*\)$/i
 
@@ -389,26 +326,6 @@ export function collectRootScopeDeclarations(css: string): RootScopeDeclarations
   const dark = new Map<string, ScopedDeclaration>()
   collectScopedRules(css, 0, 0, null, light, dark)
   return { light, dark }
-}
-
-// ---------------------------------------------------------------------------
-// var() resolution — bounded, cycle-safe
-// ---------------------------------------------------------------------------
-
-const VAR_REF_RE = /^var\(\s*(--[a-zA-Z0-9_-]+)\s*(?:,\s*([\s\S]+))?\)$/
-const MAX_VAR_RESOLUTION_DEPTH = 8
-
-/** Resolves `raw` through `map`'s `var(--x)` references to a leaf value. An unresolvable reference falls back to its `var(--x, fallback)` fallback text when present, else the unresolved `var(...)` text itself — never throws, never loops (depth + a per-call `seen` set catch both a too-long chain and a genuine cycle). Exported for `designImport/parseCssTokens.ts` (see module doc, "Shared with designImport"). */
-export function resolveVarValue(raw: string, map: ReadonlyMap<string, string>, seen: Set<string> = new Set()): string {
-  const trimmed = raw.trim()
-  const m = VAR_REF_RE.exec(trimmed)
-  if (!m) return trimmed
-  const refName = m[1]!
-  if (seen.has(refName) || seen.size >= MAX_VAR_RESOLUTION_DEPTH) return trimmed
-  const refRaw = map.get(refName)
-  if (refRaw === undefined) return (m[2] ?? trimmed).trim()
-  seen.add(refName)
-  return resolveVarValue(refRaw, map, seen)
 }
 
 // ---------------------------------------------------------------------------

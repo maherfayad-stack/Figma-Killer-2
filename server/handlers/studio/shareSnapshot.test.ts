@@ -178,6 +178,15 @@ describe('writeShareSnapshot', () => {
     if (!result.ok) expect(result.error).toContain('nothing to share')
   })
 
+  it('says WHY nothing could be photographed instead of blaming the board', async () => {
+    const result = await writeShareSnapshot(
+      { dir, token, board, userId: 'user-1' },
+      { captureFrames: fakeCapture([]), titles },
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error).toContain('Reason: nope')
+  })
+
   it('surfaces a capture failure instead of writing a half-share', async () => {
     const result = await writeShareSnapshot(
       { dir, token, board, userId: 'user-1' },

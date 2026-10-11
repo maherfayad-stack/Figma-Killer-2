@@ -18,12 +18,20 @@
  */
 import type { PropertyControl } from '@core/module-engine'
 import { studioSlotNodeId } from '@core/utils/studioSlotSentinel'
-import { controlForPropKind, type LocalComponentSpec, type PropSpec } from '@site/property-controls/componentPropKind'
+import {
+  controlForPropKind,
+  controlForVariantProp,
+  type LocalComponentSpec,
+  type LocalPropSpec,
+} from '@site/property-controls/componentPropKind'
 
 export interface ComponentCallSiteRow {
   key: string
   control: PropertyControl
+  /** What the call site writes, or `undefined` when it does not pass the prop. */
   value: unknown
+  /** The component's own destructuring default — what an unset prop renders as. Display only; never written back on its own. */
+  defaultValue?: string | number | boolean
 }
 
 /**
@@ -50,11 +58,16 @@ export function buildComponentCallSiteRows(
   const declaredKeys = new Set<string>()
 
   for (const prop of spec?.props ?? []) {
-    const control = controlForPropKind(prop.name, prop.kind)
+    const control = controlForVariantProp(prop)
     if (!control) continue
     if (!propAppliesToCallSite(prop, callSiteProps)) continue
     declaredKeys.add(prop.name)
-    declaredRows.push({ key: prop.name, control, value: callSiteProps[prop.name] })
+    declaredRows.push({
+      key: prop.name,
+      control,
+      value: callSiteProps[prop.name],
+      ...(prop.defaultValue !== undefined ? { defaultValue: prop.defaultValue } : {}),
+    })
   }
 
   const extraRows: ComponentCallSiteRow[] = []
@@ -83,7 +96,7 @@ export function buildComponentCallSiteRows(
  * un-discoverable, which is a worse failure than one always-visible row that
  * occasionally does nothing.
  */
-function propAppliesToCallSite(prop: PropSpec, callSiteProps: Record<string, unknown>): boolean {
+function propAppliesToCallSite(prop: LocalPropSpec, callSiteProps: Record<string, unknown>): boolean {
   const gate = prop.appliesWhen
   if (!gate) return true
   if (callSiteProps[prop.name] !== undefined) return true

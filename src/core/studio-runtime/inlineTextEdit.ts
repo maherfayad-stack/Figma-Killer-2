@@ -19,8 +19,8 @@
  *
  * ## Nothing is written to the store until commit
  *
- * Unlike the portal editor (which live-commits every keystroke through
- * `applyInlineEditValue`, coalesced into one undo entry), this module keeps
+ * Like the portal editor (whose `applyInlineEditValue` only records a session
+ * draft until `endInlineEdit` writes it once), this module keeps
  * the typed text ENTIRELY inside the frame's own DOM — the user is typing
  * directly into the real `contentEditable` element, which already is the
  * final text. Only the FINAL value crosses the wire, once, on commit. That
@@ -35,7 +35,7 @@
  */
 import { TEXT_EDIT_MAX_LENGTH, type OutboundRuntimeMessage, type RuntimeMode, type TextEditReplyMessage } from './messages'
 import { stampedAncestors } from './nodeDom'
-import { findNthNodeById, type NodeIdOccurrence } from './nodeIdIndexing'
+import { NODE_ID_ATTR, findNthNodeById, type NodeIdOccurrence } from './nodeIdIndexing'
 import { SELECTION_OVERLAY_ROOT_ID } from './selectionChromeCss'
 
 export interface InlineTextEditOptions {
@@ -87,6 +87,9 @@ function selectAllContent(view: Window, el: HTMLElement): void {
   selection.addRange(range)
 }
 
+/** How long a parent-started edit waits for its element to reach the frame's DOM (the file write, Vite's rebuild and React's commit all sit between). */
+const BEGIN_WAIT_MS = 8000
+
 interface EditSession {
   element: HTMLElement
   nodeId: string
@@ -106,6 +109,8 @@ export function installInlineTextEdit(options: InlineTextEditOptions): InlineTex
    */
   let pending: NodeIdOccurrence[] | null = null
   let session: EditSession | null = null
+  /** A parent-started edit whose element is not in the DOM yet. Survives an HMR update on purpose: that update is what brings the element. */
+  let awaiting: { observer: MutationObserver; timer: ReturnType<typeof setTimeout> } | null = null
 
   function isInsideSession(target: EventTarget | null): boolean {
     return session !== null && target instanceof Node && session.element.contains(target)
@@ -156,19 +161,58 @@ export function installInlineTextEdit(options: InlineTextEditOptions): InlineTex
     post({ type: 'text:editStart', nodeId: occurrence.nodeId, occurrenceIndex: occurrence.occurrenceIndex, ancestors: chain })
   }
 
-  function handleReply(message: TextEditReplyMessage): void {
-    if (!pending?.some((ref) => ref.nodeId === message.nodeId && ref.occurrenceIndex === message.occurrenceIndex)) return
-    pending = null
-    if (!message.allowed) return
+  /** Open the editor on the reply's element. `false` when the element is not in the DOM (yet). */
+  function openSession(message: TextEditReplyMessage): boolean {
     const element = findNthNodeById(doc, message.nodeId, message.occurrenceIndex)
-    if (!(element instanceof HTMLElement)) return
+    if (!(element instanceof HTMLElement)) return false
     const seedText = message.text ?? element.textContent ?? ''
     element.textContent = seedText
     beginContentEditable(element)
+    // A parent-started edit begins while the PARENT has focus.
+    view.focus()
     element.focus()
     selectAllContent(view, element)
     element.addEventListener('blur', onBlur)
     session = { element, nodeId: message.nodeId, occurrenceIndex: message.occurrenceIndex, originalText: seedText }
+    return true
+  }
+
+  function stopAwaiting(): void {
+    if (!awaiting) return
+    awaiting.observer.disconnect()
+    clearTimeout(awaiting.timer)
+    awaiting = null
+  }
+
+  /** The parent starts an edit (see `TextEditReplyMessageSchema.begin`): now if the element is here, else as soon as it appears. */
+  function beginFromParent(message: TextEditReplyMessage): void {
+    stopAwaiting()
+    cancel()
+    pending = null
+    if (openSession(message)) return
+    const observer = new view.MutationObserver(() => {
+      if (!openSession(message)) return
+      stopAwaiting()
+    })
+    observer.observe(doc.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: [NODE_ID_ATTR] })
+    // Gave up: tell the parent, whose store session would otherwise sit open
+    // over an element that never came (and swallow keys until Escape).
+    const giveUp = () => {
+      stopAwaiting()
+      post({ type: 'text:cancel', nodeId: message.nodeId, occurrenceIndex: message.occurrenceIndex })
+    }
+    awaiting = { observer, timer: setTimeout(giveUp, BEGIN_WAIT_MS) }
+  }
+
+  function handleReply(message: TextEditReplyMessage): void {
+    if (message.begin === true) {
+      if (message.allowed) beginFromParent(message)
+      return
+    }
+    if (!pending?.some((ref) => ref.nodeId === message.nodeId && ref.occurrenceIndex === message.occurrenceIndex)) return
+    pending = null
+    if (!message.allowed) return
+    openSession(message)
   }
 
   // Every keystroke/click inside the editor is the editor's, not the app's —
@@ -211,6 +255,7 @@ export function installInlineTextEdit(options: InlineTextEditOptions): InlineTex
       cancel()
     },
     dispose() {
+      stopAwaiting()
       cancel()
       pending = null
       doc.removeEventListener('dblclick', onDblClick, true)

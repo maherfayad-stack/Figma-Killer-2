@@ -13,6 +13,7 @@
  * evaluator when the caller opted in (`ctx.eval` present), so a page that uses
  * nothing but literals costs exactly what it did before §7 existed.
  */
+import { expandSideShorthand, isSideShorthandKey } from './sideShorthand'
 import {
   Node,
   type JsxAttribute,
@@ -407,6 +408,17 @@ export function extractProps(
 }
 
 /**
+ * File a literal style entry. A `padding` / `margin` shorthand is read back
+ * into its four sides (the bag is per-side only — see `./sideShorthand`), in
+ * source order so a later longhand still overrides it, as in CSS.
+ */
+function assignLiteralStyle(styles: Record<string, string | number>, key: string, value: string | number): void {
+  const sides = isSideShorthandKey(key) ? expandSideShorthand(key, value) : undefined
+  if (sides) Object.assign(styles, sides)
+  else styles[key] = value
+}
+
+/**
  * Flatten an element's `style={{ … }}` object-literal attribute into its
  * literal (string/number) entries, so the canvas renders the inline styles
  * actually authored in source (`node.inlineStyles` → `NodeRenderer`). Mirrors
@@ -466,12 +478,8 @@ export function extractInlineStyles(
     // syntax differs.
     const valueNode = Node.isShorthandPropertyAssignment(property) ? nameNode : property.getInitializer()
     if (valueNode === undefined) continue
-    if (Node.isStringLiteral(valueNode)) {
-      styles[key] = valueNode.getLiteralValue()
-      continue
-    }
-    if (Node.isNumericLiteral(valueNode)) {
-      styles[key] = valueNode.getLiteralValue()
+    if (Node.isStringLiteral(valueNode) || Node.isNumericLiteral(valueNode)) {
+      assignLiteralStyle(styles, key, valueNode.getLiteralValue())
       continue
     }
     // Non-literal values (var refs, calls, templates, nested objects) fall

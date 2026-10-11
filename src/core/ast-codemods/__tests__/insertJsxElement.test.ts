@@ -1029,6 +1029,10 @@ describe('insertJsxElement — a project component exported as default', () => {
     expect(written).toContain("import Card from '../components/Card'")
     expect(written).not.toContain('{ Card }')
     expect(written).toContain('<Card />')
+    // The undo of the insert deletes what was created: it must be addressable,
+    // or Ctrl+Z has nothing to point at (a project component insert once could
+    // not be undone).
+    expect(result.ok && result.created).toHaveLength(1)
   })
 
   it('reuses the default import the file already has instead of adding a second', () => {

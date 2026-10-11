@@ -373,6 +373,14 @@ classifies each axis against the parent's *computed* `display`/`flex-direction`
 | flex, **cross** axis | `align-self: stretch` (clears the axis length) | `width\|height: fit-content` |
 | grid | `justify-self` (inline) / `align-self` (block) `: stretch`, clears the axis length | `width\|height: fit-content` |
 | block | `width\|height: 100%` | `width\|height: fit-content` |
+| **absolute / fixed** (PA-5), whatever the parent | both insets, axis length cleared: the Left-and-right / Top-and-bottom constraint, planned by `constraintMapping`'s `planConstraintChange(axis, 'stretch')` so the size field and the crosshair share one write | `width\|height: fit-content`; a stretch's end inset is released |
+
+An element that is `absolute`/`fixed` has left the parent's layout, so its role
+is `absolute` regardless of the parent (`SizingParentLayout.childPosition`,
+read from the element's own `position`). Fixed there freezes the measured
+length and drops a stretch's end inset. Fill is disabled with the constraints
+gate's reason (e.g. an unpositioned parent) when the stretch has no honest
+patch.
 
 The earlier model wrote `fit-content`/`100%` unconditionally. `100%` on a flex
 child resolves against the container's content box and ignores `gap`, so a
@@ -393,6 +401,25 @@ layout comes from `useSizingParentLayout` — a live `getComputedStyle` read of
 the parent's rendered element, the same source `SingleNodeAlignRow` uses for
 G10; a stored declaration cannot tell you what the cascade resolved `display`
 to.
+
+#### Ignore auto layout (PA-4)
+
+A child of a flex/grid container shows an **Ignore auto layout** switch in the
+"Flex element" section. On: `setIgnoreAutoLayout` writes `position: absolute`
+and the `left`/`top` the layer already occupies (measured against the container
+by `containingBlockOffsets`, margin taken off) on the child and, when the
+container does not yet contain absolute children, `position: relative` on the
+container, **in one undo step**. The container write happens only when that one
+declaration stays on one element: a container inlined from a component used in
+N places, or repeated per `.map` row, refuses with a dialog naming N and
+offering the same write as an explicit remedy (OD-P2). Off: position and every
+inset are cleared (the layer's source index never changed) and a container
+`relative` that nothing else needs is released, so on-then-off restores the
+file. A position that comes from a class is refused with that reason. A
+container whose children are all absolute shows a derived **Free frame** chip
+(`useParentPlacementKind`); the menu items read "Add auto layout" / "Add /
+remove auto layout" to match shift-A. Live (Tier 2) frames cannot be measured
+and say so.
 
 ### G3 — Layout: the settings popover (F3–F8)
 
@@ -441,7 +468,9 @@ state is Figma's link: one field, writing the four longhands in a single
 history entry (`LinkedSidesField.tsx`). It is not the `padding` shorthand —
 here the link is about how many fields are drawn, unlike corner radius (G5.5),
 where the shorthand is what a human writes and the link picks the declaration.
-Before P9 the H/V pair was the whole collapsed state, so the most common
+The all-sides field shows **Mixed** unless all four sides render equal
+(`padding-inline: 16px` alone leaves top/bottom at 0), and an H or V edit is one
+`onChangeMany` patch, so its two sides undo together. Before P9 the H/V pair was the whole collapsed state, so the most common
 padding gesture of all — one number on every side — took two edits. The `SpacingBoxControl`
 diagram — the tallest single block in the panel — survives as an opt-in behind
 the Spacing `⚙` (*Box model*), because it is the best control for "which side is
@@ -636,6 +665,14 @@ ships only the values we can honestly write (§7).
 
 What remained was small enough that `BorderControl` was **deleted**, not left as
 a shell (**G7.6**).
+
+Adding a stroke writes ONE `border: 1px solid #808080` (mid grey, visible on a
+light and a dark canvas), not twelve longhands: `studio/sideShorthandWrites.ts`
+collapses the twelve side/width/style/color writes into the shorthand when every
+side agrees, exactly as it does for `padding`/`margin`, and removes the shorthand
+when all twelve are cleared. The section reads it back through
+`borderShorthand.ts` (`withBorderShorthandExpanded`): a side's own longhand wins
+over `border`.
 
 ### G7b — Vector: an inline `<svg>`'s own paint
 
@@ -2024,20 +2061,34 @@ written into the source as `var(--name)`.
 
 ### §10.1 Where the variables come from
 
-`projectVariables.ts` (`src/admin/pages/site/property-controls/`) scans the
-raw CSS the client **already has** for the canvas — `studioRawCssStores.ts`'s
-`authoredCss` (the project's own `.css`, concatenated in cascade order) and
-`vendorCss` (a design system's package stylesheets) — plus a third string it
-generates locally with `generateFrameworkRootCss`, the same generator
-`canvasClassCss.ts` feeds the canvas. No server change, no second wire
-format, and the catalog can never disagree with what the canvas is rendering,
-because it *is* what the canvas is rendering.
+The server's **token catalog** (CT-1): `GET /admin/api/studio/token-catalog`
+(`server/handlers/studio/tokenCatalog.ts`) reads the exact stylesheet stack the
+canvas loads (`projectTokenSources.ts` — Studio's design-system sheet, package
+CSS, compiled Sass/PostCSS/Tailwind output, the entry module's global
+stylesheets, in cascade order, each with the file it came from) and returns
+every custom property with **every declaration of it, gated by the mode it is
+written under** (`:root`, `[data-theme="dark"]`, `.dark`, `@media …`, Tailwind
+v4 `@theme`, a component's own `.btn { --btn-pad }`). `@core/studio-tokens`
+holds the pure half — the gate classifier (`gates.ts`), the gated declaration
+scan (`scan.ts`), the wire schema — and the same module backs `studio_set_tokens`
+through the shared write planner (§10.7). The catalog is cheap to refetch and
+is re-read whenever the load's raw CSS changes (`projectVariables.ts` →
+`studioTokenCatalog.ts`'s external store), so it can still never disagree with
+the canvas. **There is no CSS scan in the client any more.**
 
-Each entry carries a name, a **resolved** value (chains of `var(--a)` →
-`var(--b)` → `4px` are followed, bounded and cycle-safe), a kind, and the
-bundle it came from. Groups in the picker read Project / Package / Framework.
-A package re-declaring a name the user's own stylesheet already declares does
-**not** relabel it — the user's own value and label win.
+Provisional model decisions (CT-OD-1…5, owner to confirm): tokens are the
+project's own CSS custom properties plus Tailwind v4 `@theme`; **modes are
+inferred** from the gates found (nothing is stored beside the CSS); Studio's
+**Framework scales stay a generator** — `@core/framework` still generates them
+and the picker lists them as a separate, read-only "Framework" group, never
+shadowing a project variable of the same name.
+
+Each picker row carries a name, a **resolved** value (`var(--a)` → `var(--b)`
+→ `4px` chains followed per mode, bounded and cycle-safe), a kind, the bundle
+that owns the declaration (Project / Package / Framework), its **file**, its
+collection, and its value in every other mode (the row's tooltip). A package
+re-declaring a name the user's own stylesheet already declares does **not**
+relabel it — the user's own value and label win.
 
 `ProjectVariablesProvider` publishes the catalog on the panel's root
 `<aside>`, the same altitude as `data-field-skin="inspector"` and for the
@@ -2049,9 +2100,11 @@ threaded through all of them.
 A field only offers variables **compatible with its property**, and the kind
 is inferred from the *resolved value*, never from the name (`--brand-4` is a
 colour in one project and a spacing step in another). `classifyVariableValue`
-buckets into `color` / `length` / `number` / `other`. A width field that
-offered `--color-primary` would let one click write a declaration the browser
-drops, leaving a field that reads as bound while rendering nothing.
+buckets into `color` / `length` / `number` / `duration` / `font-family` /
+`shadow` / `other`. A width field that offered `--color-primary` — or a
+`box-shadow` field that offered a length — would let one click write a
+declaration the browser drops, leaving a field that reads as bound while
+rendering nothing.
 
 Corollary: **when nothing compatible exists, no icon is rendered at all.** An
 icon that opens an empty list is the same defect in a different costume.
@@ -2130,7 +2183,43 @@ inherits from them — `ScrubTokenField`, `AddablePropertyField`,
 `SpacingBoxControl`, `ClassPropertyRow`'s generic rows, and the bespoke
 Size / Spacing / Position / Typography / Stroke / Appearance fields.
 `TokenizedColorField` (and therefore `ColorValueInput`) carries the trigger
-for colour variables.
+for colour variables. The plain text style fields opt in with
+`TextControl`'s `variableKinds` (`variableKindsForProperty.ts` is the explicit
+map: `letterSpacing`, `lineHeight`, `boxShadow`, `transitionDuration`, …) and
+`FontFamilyControl` takes `font-family` variables; a property not in the map
+gets no affordance rather than a guess.
+
+### §10.7 Create from a value, detach, and the one write path (CT-2)
+
+The picker's footer (the hook feeds it, `VariablePickerPopover` draws it):
+
+- **Detach variable** — bound fields only; writes the resolved literal, the
+  same write as the chip's ×.
+- **Use `--x` — same value** — when a variable of an accepted kind already
+  holds exactly this literal, it is offered first so no duplicate is made.
+- **Create variable from `<value>`** — only for a literal the field's own kinds
+  can take (a `width: auto` field has nothing to turn into a variable), and
+  only inside the site editor (`VariableActionsContext`). It asks for a name
+  (`suggestVariableName`: from what the value is, in the prefix the project
+  already uses, unique against the catalog), POSTs `{ op: 'insert' }` to
+  `/admin/api/studio/token-catalog`, re-syncs the board
+  (`resyncBoardAfterWrite`) and binds the field to `var(--name)`. A refusal
+  (no project stylesheet, name already declared, stale file) shows inline next
+  to the control with its remedy; the field stays unbound. Undoing the field
+  edit un-binds the field but leaves the declared token — it is a real project
+  token now.
+
+`server/handlers/studio/tokenWrite.ts`'s `planTokenEdits` is the single planner
+behind both `studio_set_tokens` and this route: `set` edits the ONE declaration
+that is a token for a mode (`light` / `dark` / an explicit gate), `insert`
+declares a new token or a new mode of one (or the project's override of a
+package token) in a hand-written global `.css` file — beside its siblings in the
+same rule, inside `@theme` for a Tailwind namespace when the file already has
+one, in a new gate block otherwise. `insertCustomProperty`
+(`@core/css-codemods`) is the CST codemod; line endings and every other byte
+are kept. Refusals are the same from both writers: `no-such-token`,
+`read-only-source`, `ambiguous-declaration`, `already-declared`,
+`no-project-stylesheet`, `invalid-input`, `stale-source`.
 ## §11. What an inspector gesture costs the undo stack
 
 Two defects made Ctrl+Z read as broken from the Properties panel. Both were

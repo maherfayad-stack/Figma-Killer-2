@@ -66,7 +66,8 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { QualityFinding } from '../../../../handlers/studio/qualityAudit'
-import { collectRootScopeMaps, resolveVarValue } from '../../../../handlers/studio/tokenExtractCssScan'
+import { resolveVarValue } from '@core/studio-tokens'
+import { collectRootScopeMaps } from '../../../../handlers/studio/tokenExtractCssScan'
 import type { PageStylesheet } from '@core/studio-sync/pageStylesheet'
 
 /**

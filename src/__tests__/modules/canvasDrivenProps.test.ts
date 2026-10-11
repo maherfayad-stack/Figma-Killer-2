@@ -90,6 +90,7 @@ describe('canvas-driven props', () => {
         file: 'src/Card.tsx',
         exportName: 'Card',
         isDefaultExport: false,
+        role: 'component',
         props: [
           { name: 'dir', kind: { kind: 'enum', values: ['ltr', 'rtl'] }, required: false },
           { name: 'onPress', kind: { kind: 'handler' }, required: false },

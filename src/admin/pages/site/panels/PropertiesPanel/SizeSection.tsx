@@ -62,10 +62,12 @@ import { SlidersHorizontalIcon } from 'pixel-art-icons/icons/sliders-horizontal'
 import { ClassPropertyRow } from './ClassPropertyRow'
 import { getCSSPropertyDefaultValue } from './cssControlTypes'
 import { resolveStyleFieldDisplay } from './styleFieldDisplay'
-import { hasStyleValue } from './styleValueUtils'
+import { hasStyleValue, readString } from './styleValueUtils'
+import { useConstraintAxes } from './useConstraintAxes'
 import {
   SIZING_OPTIONS,
   currentSizingMode,
+  sizingAxisRole,
   sizingPatch,
   sizingUnavailableReason,
   type SizingMode,
@@ -150,6 +152,12 @@ const CONSTRAINTS: ReadonlyArray<ConstraintSpec> = [
   },
 ]
 
+/** Why Hug and Fill are off, each on its own: an absolute axis can Hug with no parent check, but Fill needs the constraint gate. */
+interface SizingUnavailableReasons {
+  hug?: string
+  fill?: string
+}
+
 /** Per-axis mode menu — `SIZING_OPTIONS` plus an axis-worded, value-quoting
  *  `activeLabel` on `fixed` (F30's "Fixed width (54)").
  *
@@ -158,7 +166,7 @@ const CONSTRAINTS: ReadonlyArray<ConstraintSpec> = [
  *  than dropping the rows — W8-4. */
 function sizingModes(
   axisNoun: 'width' | 'height',
-  unavailableReason: string | undefined,
+  unavailableReason: SizingUnavailableReasons,
 ): AddablePropertyFieldMode[] {
   return SIZING_OPTIONS.map((option) => {
     if (option.value !== 'fixed') {
@@ -166,7 +174,7 @@ function sizingModes(
         value: option.value,
         label: option.label,
         word: option.word,
-        disabledReason: unavailableReason,
+        disabledReason: unavailableReason[option.value],
       }
     }
     return {
@@ -247,6 +255,21 @@ export function SizeSection({
     ? undefined
     : (parentLayoutReason ?? sizingUnavailableReason(parentLayout))
 
+  // PA-5 — an absolute element's sizing role ignores the parent's layout, and
+  // its Fill is the constraints crosshair's stretch, planned by the same
+  // `planConstraintChange`, so the two controls cannot disagree.
+  const constraintAxes = useConstraintAxes({ storedStyles, currentStyles, onChangeMany })
+  const ownPosition = readString(currentStyles, 'position')
+  const sizingLayout: SizingParentLayout | null =
+    parentLayout && ownPosition ? { ...parentLayout, childPosition: ownPosition } : parentLayout
+
+  function unavailableReasons(property: 'width' | 'height'): SizingUnavailableReasons {
+    if (sizingAxisRole(property, sizingLayout) !== 'absolute') {
+      return { hug: modeUnavailableReason, fill: modeUnavailableReason }
+    }
+    return { fill: constraintAxes.refusalFor(property === 'width' ? 'x' : 'y', 'stretch') ?? undefined }
+  }
+
   /**
    * Apply one mode switch. A parent-aware switch is not always a single
    * property — Fill on a flex main axis writes `flex` AND clears `width` —
@@ -258,11 +281,16 @@ export function SizeSection({
    * `null`.
    */
   function handleModeChange(property: 'width' | 'height', nextMode: SizingMode) {
-    if (nextMode !== 'fixed' && modeUnavailableReason) return
+    const absolute = sizingAxisRole(property, sizingLayout) === 'absolute'
+    if (absolute && nextMode === 'fill') {
+      constraintAxes.applyMode(property === 'width' ? 'x' : 'y', 'stretch')
+      return
+    }
+    if (!absolute && nextMode !== 'fixed' && modeUnavailableReason) return
     const patch = sizingPatch(
       nextMode,
       property,
-      parentLayout,
+      sizingLayout,
       storedStyles,
       currentStyles[property],
     )
@@ -289,7 +317,7 @@ export function SizeSection({
       fallback: getCSSPropertyDefaultValue(property),
     })
     const mixed = isMixed(display.value)
-    const mode = mixed ? 'fixed' : currentSizingMode(property, parentLayout, storedStyles)
+    const mode = mixed ? 'fixed' : currentSizingMode(property, sizingLayout, storedStyles)
 
     const additions: AddablePropertyFieldAddition[] = CONSTRAINTS.filter(
       (c) => c.axis === property && !isRevealed(c.prop),
@@ -307,7 +335,7 @@ export function SizeSection({
           onChange={(next) => onChange(property, next)}
           onPreview={previewProperty ? (next) => previewProperty(property, next) : undefined}
           onClearPreview={onClearPreview}
-          modes={sizingModes(axisNoun, modeUnavailableReason)}
+          modes={sizingModes(axisNoun, unavailableReasons(property))}
           mode={mode}
           onModeChange={(next) => handleModeChange(property, next as SizingMode)}
           numericMode="fixed"

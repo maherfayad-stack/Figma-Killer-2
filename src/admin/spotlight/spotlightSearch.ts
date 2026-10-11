@@ -17,7 +17,7 @@
  */
 
 import type { Command, CommandContext, CommandGroup, SpotlightProvider } from './types'
-import { rankCommands, type ScoredCommand } from './matcher'
+import { groupOrder, rankCommands, type ScoredCommand } from './matcher'
 import { filterCommands, getAllCommands, getScope } from './commandRegistry'
 import { readRecentCommands } from './recentStore'
 
@@ -112,6 +112,10 @@ export function getCappedResults(
   // match the rendered row order — which keeps arrow-key navigation in
   // sync with what the user sees.
   const capped = scored.slice(0, PHASE1_CAP)
+  // The empty query is the default list: groups in their designed order
+  // (recent, navigation, editor, ...), not whichever group holds the top score.
+  // Array.sort is stable, so within a group the score order is kept.
+  if (query.trim() === '') capped.sort((a, b) => groupOrder(a.command.group) - groupOrder(b.command.group))
   return orderScoredByVisualGroup(capped)
 }
 

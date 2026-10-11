@@ -132,6 +132,7 @@ export {
 export {
   describeStructuralRefusal,
   explainGestureConstraint,
+  explainSharedParentConstraint,
   explainStaticParentConstraint,
   explainMintedInsertConstraint,
   explainStructuralConstraint,

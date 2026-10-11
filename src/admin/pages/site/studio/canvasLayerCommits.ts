@@ -27,6 +27,8 @@ import type { InsertPropValue, SlotJsxNode } from './studioSaveRequests'
 export interface CanvasLayerElement {
   name: string
   importSpecifier?: string
+  /** `'default'` for a default-exported component (a project's own components usually are). */
+  importStyle?: 'default'
   designSystemImport?: true
   props?: Record<string, InsertPropValue>
   /** Text, or child elements (P5-D: a drawn `<svg>`'s `<path>`). */

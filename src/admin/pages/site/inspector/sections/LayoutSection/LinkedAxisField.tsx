@@ -26,7 +26,8 @@ interface LinkedAxisFieldProps {
   storedStyles: Record<string, unknown>
   currentStyles: Record<string, unknown>
   tokens: ReadonlyArray<Token>
-  onChange: (property: keyof CSSPropertyBag, value: string | number | undefined) => void
+  /** One patch, one history entry: an axis edit is ONE gesture, so its two sides must undo together. */
+  onChangeMany: (patch: Record<string, string | number | null>) => void
   onPreview?: (patch: Partial<CSSPropertyBag>) => void
   onClearPreview?: () => void
   'data-testid'?: string
@@ -40,7 +41,7 @@ export function LinkedAxisField({
   storedStyles,
   currentStyles,
   tokens,
-  onChange,
+  onChangeMany,
   onPreview,
   onClearPreview,
   'data-testid': dataTestId,
@@ -65,8 +66,7 @@ export function LinkedAxisField({
   })
 
   function commit(resolved: string | undefined) {
-    onChange(propA, resolved)
-    onChange(propB, resolved)
+    onChangeMany({ [propA]: resolved ?? null, [propB]: resolved ?? null })
   }
 
   function preview(resolved: string | undefined) {

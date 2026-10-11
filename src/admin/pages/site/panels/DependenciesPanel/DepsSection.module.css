@@ -222,6 +222,18 @@
     letter-spacing: 0.02em;
 }
 
+.depNotInstalled {
+    flex-shrink: 0;
+    padding: var(--space-px) var(--space-2xs);
+    border: 1px solid color-mix(in srgb, var(--warning-text) 22%, transparent);
+    border-radius: 999px;
+    background: var(--warning-10);
+    color: var(--warning-text);
+    font-size: var(--text-3xs);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+
 /* ── Inline remove confirmation ──────────────────────────────────────────── */
 .depRowConfirm {
     display: flex;

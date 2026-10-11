@@ -113,6 +113,7 @@ import { hasStyleValue, pickMixedString, plainString } from '../../panels/Proper
 import { resolveStyleFieldDisplay } from '../../panels/PropertiesPanel/styleFieldDisplay'
 import { isMixed, type Mixed } from '@ui/components/MixedValue'
 import { ColorOpacityField } from './FillSectionParts'
+import { withBorderShorthandExpanded } from './borderShorthand'
 import { useSelectionModel } from '../selectionModel'
 import { useInspectorCommit } from '../commitApi'
 import { buildContextOnlyClassChain, buildCollapsedCurrentStyles, buildCollapsedStoredStyles } from '../collapsedStyleBag'
@@ -196,9 +197,13 @@ const STROKE_PROPERTIES: ReadonlyArray<keyof CSSPropertyBag> = [
   ...SETTINGS_PROPERTIES,
 ]
 
+/** Mid grey: readable on a light and on a dark canvas (black vanished on dark). */
+const DEFAULT_STROKE_COLOR = '#808080'
+
 /**
- * What "+" writes: a real, visible `1px solid #000000` stroke on every side,
- * in one history entry - Figma's default stroke. The earlier "reveal only,
+ * What "+" writes: a real, visible `1px solid #808080` stroke on every side,
+ * in one history entry (the writeback collapses the twelve longhands to one
+ * `border` declaration). The earlier "reveal only,
  * write nothing" contract produced a half-built row (a truncated weight, no
  * colour entry, nothing in the source) because the colour row is derived from
  * what is stored; a stroke that does not exist cannot be edited.
@@ -207,7 +212,7 @@ const DEFAULT_STROKE_PATCH: Partial<Record<keyof CSSPropertyBag, string>> = {}
 for (const side of SIDES) {
   DEFAULT_STROKE_PATCH[sideKey(side, 'Width')] = '1px'
   DEFAULT_STROKE_PATCH[sideKey(side, 'Style')] = 'solid'
-  DEFAULT_STROKE_PATCH[sideKey(side, 'Color')] = '#000000'
+  DEFAULT_STROKE_PATCH[sideKey(side, 'Color')] = DEFAULT_STROKE_COLOR
 }
 
 // Stroke position — only the two CSS-honest values. See the file doc for why
@@ -259,7 +264,10 @@ export function StrokeSection() {
   // (`collapsedStyleBag.ts`), scoped to Stroke's own claimed properties.
   const inlineStyles = selectedNode.inlineStyles ?? {}
   const contextOnlyClassChain = buildContextOnlyClassChain(assignedClassRules, activeContextId)
-  const { storedStyles } = buildCollapsedStoredStyles(STROKE_PROPERTIES, contextOnlyClassChain, inlineStyles)
+  const { storedStyles: declaredStyles } = buildCollapsedStoredStyles(STROKE_PROPERTIES, contextOnlyClassChain, inlineStyles)
+  // `border: 1px solid #808080` (what "+" writes, and what hand-written source
+  // uses) is read back onto the per-side fields the rows edit.
+  const storedStyles = withBorderShorthandExpanded(declaredStyles)
   const effectiveClassChain = buildClassChain(assignedClassRules, activeContextId)
   const currentStyles = buildCollapsedCurrentStyles(computedValues, effectiveClassChain, inlineStyles, storedStyles)
 
@@ -386,6 +394,7 @@ export function StrokeSection() {
   }
 
   function clearStroke() {
+    onClearProperty('border')
     for (const side of SIDES) {
       for (const field of ['Width', 'Style', 'Color'] as SideField[]) {
         onClearProperty(sideKey(side, field))

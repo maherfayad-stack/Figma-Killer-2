@@ -27,7 +27,7 @@ import { hasCapability } from '@admin/access'
 import { useCurrentAdminUser } from '@admin/sessionContext'
 import { cmsAdapter } from '@core/persistence/cms'
 import { useAdminUi } from './adminUi'
-import { CMS_SITE_RELOAD_EVENT } from './adminEvents'
+import { CMS_SITE_RELOAD_EVENT, type CmsSiteReloadEventDetail } from './adminEvents'
 
 let initialFetchPromise: Promise<void> | null = null
 
@@ -58,7 +58,11 @@ export function useSiteSummary(): void {
       initialFetchPromise = fetchAndPublishSummary()
     }
 
-    function onReload() {
+    function onReload(event: Event) {
+      // A project switch reloads the editor, not the site shell this summary reads.
+      const detail: Partial<CmsSiteReloadEventDetail> | null =
+        event instanceof CustomEvent && typeof event.detail === 'object' ? event.detail : null
+      if (detail?.siteShellUnchanged === true) return
       // Discard the cached promise so the next mount triggers a fresh fetch.
       initialFetchPromise = fetchAndPublishSummary()
     }

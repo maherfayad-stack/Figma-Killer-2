@@ -105,6 +105,25 @@ describe('canvas-layer-create', () => {
     expect(result.touchedFiles.some((file) => file.endsWith(`${LAYER_ID}.tsx`))).toBe(true)
   })
 
+  it("writes a project component as a default import relative to the layer module", () => {
+    const result = applyStudioEditBatch(
+      wsDir,
+      [
+        {
+          kind: 'canvas-layer-create',
+          nodeId: `canvas-layer:${LAYER_ID}`,
+          layerId: LAYER_ID,
+          element: { name: 'Card', importSpecifier: '../../components/Card', importStyle: 'default', props: {} },
+        },
+      ],
+      {},
+      allow,
+    )
+    expect(result.refusals).toEqual([])
+    expect(read(LAYER_REL)).toContain("import Card from '../../components/Card'")
+    expect(read(LAYER_REL)).toContain('<Card')
+  })
+
   it('never overwrites an existing module', () => {
     write(LAYER_REL, 'keep me\n')
     const result = applyStudioEditBatch(

@@ -30,6 +30,7 @@ One row per doc. This page holds no orientation of its own: what Studio is, what
 | [`server.md`](server.md) | the server in depth: boot, router, handlers, auth, database, publishing, plugin runtime, the single-operator posture | adding or changing an HTTP route or server subsystem | current |
 | [`editor.md`](editor.md) | the admin shell and visual editor in depth: routing, store, canvas, sidebars, panels | changing the editor UI or its store wiring | current |
 | [`design.md`](design.md) | the visual design system: principles, tokens, surfaces, primitives and the inspector in design language | changing any admin UI styling | current |
+| [`programs/`](programs/refusals.md) | the five live Figma-parity design plans: [`refusals.md`](programs/refusals.md), [`board-speed.md`](programs/board-speed.md), [`positioning.md`](programs/positioning.md), [`components-tokens.md`](programs/components-tokens.md), [`multiplayer.md`](programs/multiplayer.md); `ROADMAP.md` §14 holds their work-order rows | before starting or reviewing a bundle of that program | live design, not built |
 | [`decisions.md`](decisions.md) | every settled owner decision, with its date, source and consequence | before re-opening a product question, or when a work order cites a decision id (OD-n, D-n, FEEL §6.n, BUILTIN §0.n) | current |
 | [`CONVENTIONS.md`](CONVENTIONS.md) | how docs in this repo are written, headed, placed and retired | before adding, moving or rewriting any doc | rule |
 
@@ -65,6 +66,7 @@ Compressed, agent-facing summaries. Start here for any task; follow their links 
 | [`features/modules.md`](features/modules.md) | the module engine, the base and alm.* packs, and the built-in design system manifest | adding or changing a module | current |
 | [`features/prototype-export.md`](features/prototype-export.md) | the runnable preview shell Studio scaffolds into a project, and "Download the code" | touching the generated prototype shell or the download | current |
 | [`features/spotlight.md`](features/spotlight.md) | the ⌘K command palette | adding a command or a palette provider | current |
+| [`features/multiplayer.md`](features/multiplayer.md) | live presence: the WebSocket channel, roster, cursors, selections, follow | touching `/admin/api/studio/live`, `@core/studio-live` or the peer overlay | current |
 | [`features/studio-comments.md`](features/studio-comments.md) | review threads pinned to the board and the agent loop over them | touching comments or the anchor model | current |
 | [`features/studio-deploy.md`](features/studio-deploy.md) | preview deploys through the project's own Vercel/Netlify CLI | touching deploys | current |
 | [`features/studio-git.md`](features/studio-git.md) | version control against the project's own repository, GitHub sign-in, the agent commit tool | touching the Git panel or git routes | current |
@@ -130,7 +132,7 @@ Accurate, and much of it load-bearing for Studio under a CMS-shaped name (see [`
 
 | Path | What it holds | Trust |
 |---|---|---|
-| [`archive/`](archive/README.md) | Finished plans (`plans/`, filenames unchanged so code citations still resolve), the 2026-08-07 parity handoffs, one-off e2e records | historical |
+| [`archive/`](archive/README.md) | Finished plans (`programs/`, filenames unchanged so code citations still resolve), the 2026-08-07 parity handoffs, one-off e2e records | historical |
 | [`state-archive/`](state-archive/INDEX.md) | Every `STATE.md` entry that left the file, verbatim, one file per month; `INDEX.md` lists them all | historical |
 | [`audits/2026-09-23-studio-audit/`](audits/2026-09-23-studio-audit/README.md) | The ten audits behind `ROADMAP.md`; every bundle's finding IDs resolve here | historical |
 | [`audits/2026-08-06/`](audits/2026-08-06/) | The twelve audits behind the finished parity plan | historical |

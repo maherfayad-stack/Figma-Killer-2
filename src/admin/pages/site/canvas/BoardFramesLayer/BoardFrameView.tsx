@@ -53,6 +53,7 @@ import { RESIZE_HANDLES, type ResizeHandle } from '@core/studio-runtime'
 import { resizeRect, type ResizeRect } from '../rectResize'
 import { useBoardFrameMoveDrag } from './useBoardFrameMoveDrag'
 import { useFramePosterCapture } from './useFramePosterCapture'
+import { afterPressPaint } from '../pressRing'
 import { getFramePoster } from './frameSnapshotCache'
 import { FramePosterPlaceholder } from './FramePosterPlaceholder'
 import { LiveBoardFrame } from './LiveBoardFrame'
@@ -283,8 +284,14 @@ function BoardFrameViewImpl({
   // logic runs (see the module doc's "Activation + edit routing" note).
   const activatePage = activatePageHandler(page.id)
 
-  const handleActivateCapture = () => {
-    if (!isActive) activatePage()
+  const handleActivateCapture = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (isActive) return
+    // A press inside the frame's own document is painted first: the page
+    // activation queues behind the press ring and runs, in one flush with the
+    // selection it precedes, a frame later (`pressRing.ts`).
+    const win = (e.target as Node).ownerDocument?.defaultView
+    if (win && win !== window) afterPressPaint(win, activatePage)
+    else activatePage()
   }
 
   // The header move-drag, end to end (press, snap, Alt-copy, Escape,
@@ -457,6 +464,12 @@ function BoardFrameViewImpl({
           >
             <span aria-hidden="true"><PenSquareSolidIcon size={13} /></span>
             Rename
+          </ContextMenuItem>
+          <ContextMenuItem
+            onClick={() => { setContextMenu(null); handleDuplicateAsVariant({ ...frame.axes }) }}
+          >
+            <span aria-hidden="true"><CopyPlusSolidIcon size={13} /></span>
+            Duplicate frame
           </ContextMenuItem>
           {/* WS-10 Phase 2 (§4.3-§4.4) — "duplicate as variant": a second
               frame of the SAME page, beside this one, with one preview axis

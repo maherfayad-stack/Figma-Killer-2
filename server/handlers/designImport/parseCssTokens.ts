@@ -54,10 +54,10 @@
 import {
   classifyDeclaration,
   collectRootScopeMaps,
-  resolveVarValue,
   toPx,
   type Classification,
 } from '../studio/tokenExtractCssScan'
+import { resolveVarValue } from '@core/studio-tokens'
 
 export interface ExtractedCssVar {
   /** Custom property name, without the leading `--`. */

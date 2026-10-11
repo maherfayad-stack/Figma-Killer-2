@@ -52,9 +52,9 @@ import {
   collectRootScopeMaps,
   ELEVATION_NAME_HINT_RE,
   RADIUS_NAME_HINT_RE,
-  resolveVarValue,
   toPx,
 } from './tokenExtractCssScan'
+import { resolveVarValue } from '@core/studio-tokens'
 import type { DesignSystemRef } from './projectProfileSchema'
 
 // ---------------------------------------------------------------------------

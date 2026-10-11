@@ -73,6 +73,7 @@ import type {
  * door — every consumer already imports them from `./types`.
  */
 import type { HistoryEntry } from './historyTypes'
+import type { TransplantDestination } from './transplantDestination'
 
 export type {
   HistoryEntry,
@@ -255,6 +256,16 @@ export interface SiteSlice {
    */
   setNodeInlineStyles: (nodeId: string, patch: Record<string, string | number | null | undefined>) => void
   /**
+   * `setNodeInlineStyles` for a canvas GESTURE (a resize, a Hug double-click)
+   * on the element the user pointed at. On markup that lives in a shared
+   * component's own file the plain write would silently restyle every
+   * instance, so it takes the same road a structural gesture does: this
+   * instance is detached, the write replayed on it, one undo
+   * (`instanceOnlyGesture.ts`), with the refusal dialog only when that cannot
+   * happen. Anywhere else it is exactly `setNodeInlineStyles`.
+   */
+  setNodeInlineStylesFromGesture: (nodeId: string, patch: Record<string, string | number | null | undefined>, gesture: string) => void
+  /**
    * Bulk sibling of `setNodeInlineStyles` — applies ONE patch to every id in
    * `nodeIds` within a single history transaction, so an inspector edit made
    * against an N-node multi-selection is ONE undo step (W8-3 phase 1). A
@@ -287,6 +298,22 @@ export interface SiteSlice {
   removeNodeInlineStyleProperty: (nodeId: string, propKey: string) => void
   /** Remove ALL inline styles from a node (clears the `inlineStyles` field). */
   clearNodeInlineStyles: (nodeId: string) => void
+  /**
+   * PA-4 — Figma's "Ignore auto layout". `ignore: true` takes an in-flow child
+   * of a flex / grid container out of the flow (`position: absolute` at the
+   * place it already is, plus `position: relative` on the container when it
+   * does not yet contain it); `ignore: false` returns it to flow. The writes
+   * to the child and the container are ONE undo step. `refused` means a
+   * dialog explained why (a shared container, a position set in code); the
+   * tree is untouched. `offsets` are measured by the caller against the box
+   * that will contain the child (`containingBlockOffsets`).
+   */
+  setIgnoreAutoLayout: (
+    nodeId: string,
+    request:
+      | { ignore: true; parentContains: boolean; offsets: { left: number; top: number } }
+      | { ignore: false; releaseParent: boolean },
+  ) => 'applied' | 'refused' | 'noop'
   setBreakpointOverride: (nodeId: string, breakpointId: string, patch: Record<string, unknown>) => void
   clearBreakpointOverride: (nodeId: string, breakpointId: string) => void
   renameNode: (nodeId: string, label: string) => void
@@ -576,28 +603,6 @@ export type SiteMutationResult = void | boolean
  * one function it takes.
  */
 export type EditorStoreSetter = (recipe: SiteSliceRecipe) => void
-
-/**
- * Where a cross-frame drop landed, and where it came from — the argument
- * `transplantNodes` takes.
- *
- * `originPageId` is named explicitly rather than derived from the active
- * document: a cross-frame drag ACTIVATES the destination frame on the way
- * (`openPageInCanvas` fires from `onPointerDownCapture`), so by the time the
- * drop commits, "the active page" is already the wrong end of the gesture.
- */
-export interface TransplantDestination {
-  /** The page the dragged element is written in. */
-  originPageId: string
-  /** The page the drop landed in — a DIFFERENT page. */
-  pageId: string
-  /** The container the drop resolved to, in `pageId`'s tree. */
-  parentId: string
-  /** Where among that container's canvas children the drop landed. */
-  index: number
-  /** Alt held: copy across frames instead of moving. */
-  copy?: boolean
-}
 
 export interface SiteSliceHelpers {
   /** Raw set/get from the slice creator. Use only when no helper covers the case. */

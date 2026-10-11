@@ -118,10 +118,14 @@ describe('classifyVariableValue', () => {
     expect(classifyVariableValue('-3')).toBe('number')
   })
 
+  it('buckets a font stack, a shadow and a duration as their own kinds', () => {
+    expect(classifyVariableValue('Inter, sans-serif')).toBe('font-family')
+    expect(classifyVariableValue('0 1px 2px rgba(0,0,0,.2)')).toBe('shadow')
+    expect(classifyVariableValue('150ms')).toBe('duration')
+  })
+
   it('buckets everything else as other', () => {
-    expect(classifyVariableValue('Inter, sans-serif')).toBe('other')
     expect(classifyVariableValue('cubic-bezier(0.4, 0, 0.2, 1)')).toBe('other')
-    expect(classifyVariableValue('0 1px 2px rgba(0,0,0,.2)')).toBe('other')
     expect(classifyVariableValue('   ')).toBe('other')
   })
 

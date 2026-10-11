@@ -35,6 +35,19 @@ describe('centredAnnotationPosition', () => {
     expect(second).toEqual({ x: first.x + 24, y: first.y + 24 })
     expect(third).toEqual({ x: first.x + 48, y: first.y + 48 })
   })
+
+  it('a bigger doc created after a sticky does not cover it, whatever their top-lefts', () => {
+    const sticky = { ...centredAnnotationPosition(base), w: 180, h: 120 }
+    const doc = centredAnnotationPosition({ ...base, width: 360, height: 400, existing: [sticky] })
+    const overlaps = doc.x < sticky.x + sticky.w && sticky.x < doc.x + 360 && doc.y < sticky.y + sticky.h && sticky.y < doc.y + 400
+    expect(overlaps).toBe(false)
+    // …and a third lands clear of both.
+    const docBox = { ...doc, w: 360, h: 400 }
+    const third = centredAnnotationPosition({ ...base, existing: [sticky, docBox] })
+    for (const r of [sticky, docBox]) {
+      expect(third.x < r.x + r.w && r.x < third.x + 180 && third.y < r.y + r.h && r.y < third.y + 120).toBe(false)
+    }
+  })
 })
 
 describe('annotation edit request', () => {

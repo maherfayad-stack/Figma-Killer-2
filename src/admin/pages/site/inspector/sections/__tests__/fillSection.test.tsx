@@ -624,7 +624,7 @@ describe('FillSection — rendered, not stored', () => {
 
     const row = screen.getByRole('listitem')
     const input = within(row).getByRole('textbox', { name: 'Solid fill colour' })
-    expect(input).toHaveProperty('value', 'rgb(255, 255, 255)')
+    expect(input).toHaveProperty('value', '#ffffff')
     expect(row.dataset.muted).toBe('true')
     expect(screen.queryByRole('button', { name: /remove solid fill/i })).toBeNull()
 
@@ -667,7 +667,7 @@ describe('FillSection — rendered, not stored', () => {
     render(<FillSection />)
 
     const row = screen.getByRole('listitem')
-    expect(within(row).getByRole('textbox', { name: 'Text colour' })).toHaveProperty('value', 'rgb(10, 20, 30)')
+    expect(within(row).getByRole('textbox', { name: 'Text colour' })).toHaveProperty('value', '#0a141e')
     expect(row.dataset.muted).toBe('true')
     expect(within(row).queryByRole('button', { name: 'Remove Text' })).toBeNull()
   })
@@ -722,7 +722,7 @@ describe('FillSection — computed-values loading state (Tier 2 bridge measureme
 
     await waitFor(() => expect(screen.getByRole('list', { name: 'Fill' })).toBeTruthy())
     const row = screen.getByRole('listitem')
-    expect(within(row).getByRole('textbox', { name: 'Solid fill colour' })).toHaveProperty('value', 'rgb(255, 255, 255)')
+    expect(within(row).getByRole('textbox', { name: 'Solid fill colour' })).toHaveProperty('value', '#ffffff')
     expect(row.dataset.muted).toBe('true')
   })
 })

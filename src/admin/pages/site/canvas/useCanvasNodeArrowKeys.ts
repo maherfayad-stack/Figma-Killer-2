@@ -119,9 +119,22 @@ const UNMEASURED_BODY = 'It is not rendered in a frame that can report where it 
 /** What the flow nudge says when a layer has no pixel to move (canvas-48) — the reason, and the way out. */
 const FLOW_NUDGE_REFUSAL: Record<FlowNudgeRefusal, string> = {
   sticky: "It is position: sticky, so its offsets say where it sticks, not where it sits. Change its position in the inspector to move it.",
-  unboxed: 'It renders no box of its own (a component call site or display: contents), so an offset would move nothing. Select the element inside it.',
+  unboxed: 'It is display: contents, so it has no box of its own and an offset would move nothing. Select the element inside it.',
   reanchors:
     'Moving it makes it position: relative, which would shift the absolutely positioned layers inside it. Nudge those, or set its position in the inspector.',
+}
+
+/**
+ * A component call site draws its component's elements (the selection ring
+ * around it shows their box) but is no element itself, so there is nothing at
+ * the call site to offset — "no box" would contradict the ring.
+ */
+const INSTANCE_NUDGE_REFUSAL =
+  "It is a component call site: the component decides where its elements sit, so an offset here would move nothing. Double-click to enter it and nudge the element inside, or edit the component."
+
+/** The body of a flow-nudge refusal for the layer it named. */
+export function flowNudgeRefusalBody(reason: FlowNudgeRefusal, moduleId: string | undefined): string {
+  return reason === 'unboxed' && moduleId === 'studio.instance' ? INSTANCE_NUDGE_REFUSAL : FLOW_NUDGE_REFUSAL[reason]
 }
 
 /** Each nudged layer's patch for the hold so far. */
@@ -215,7 +228,7 @@ async function resolveSession(
     else pushToast({ kind: 'info', title: REFUSAL_TITLE, body: ACROSS_AXIS_BODY })
   } else if (move?.kind === 'refuse') {
     session.state = 'spent'
-    pushToast({ kind: 'info', title: REFUSAL_TITLE, body: FLOW_NUDGE_REFUSAL[move.reason] })
+    pushToast({ kind: 'info', title: REFUSAL_TITLE, body: flowNudgeRefusalBody(move.reason, page?.nodes[move.nodeId]?.moduleId) })
   } else if (move?.kind === 'nudge') {
     // All or nothing: a selection moves together, or not at all.
     const promoted = promotedNodeIds(move.plans)

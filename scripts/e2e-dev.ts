@@ -94,8 +94,8 @@ const viteLogFor = (attempt: number): string =>
 const VITE_BOOT_CEILING_MS = existsSync('node_modules/.vite/deps/_metadata.json')
   ? 60_000
   : 180_000
-/** How long a LISTENING Vite may go without answering before it counts as stuck. */
-const VITE_ANSWER_GRACE_MS = 30_000
+/** How long a LISTENING Vite may go without answering before it counts as stuck. `E2E_VITE_ANSWER_GRACE_MS` raises it on a loaded machine, where the first `/admin` (dependency optimisation) has been measured at 64 s. */
+const VITE_ANSWER_GRACE_MS = Number(process.env.E2E_VITE_ANSWER_GRACE_MS ?? 30_000)
 /** Worst case 3 × the ceiling above, which stays inside `playwright.config.ts`'s `webServer.timeout`. */
 const VITE_BOOT_ATTEMPTS = 3
 const VITE_PROBE_INTERVAL_MS = 500
@@ -157,6 +157,9 @@ const sharedEnv = {
   DATABASE_URL: `sqlite:${DATABASE_PATH}`,
   UPLOADS_DIR,
   STUDIO_WORKSPACE_DIR: E2E_WORKSPACE_DIR,
+  // Vite's proxy cannot carry the presence WebSocket under Bun; the editor
+  // connects to the backend directly (studioLiveConnection.ts).
+  VITE_STUDIO_LIVE_BACKEND_PORT: E2E_CMS_PORT,
 }
 
 const children: StackChild[] = []
