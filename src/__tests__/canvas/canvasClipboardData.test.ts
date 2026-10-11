@@ -179,7 +179,7 @@ describe('snapshotFromClipboardItems — the async API fallback', () => {
 
 describe('looksLikeHtmlDesign', () => {
   it('accepts markup with structure, rejects a span of text', () => {
-    for (const html of ['<div>x</div>', '<P>x</P>', '<ul><li>a</li></ul>', '<img src="a.png">', '<h3 class="t">x</h3>', '<svg viewBox="0 0 1 1"></svg>']) {
+    for (const html of ['<style>.a{color:red}</style><span class="a">x</span>', '<div>x</div>', '<P>x</P>', '<ul><li>a</li></ul>', '<img src="a.png">', '<h3 class="t">x</h3>', '<svg viewBox="0 0 1 1"></svg>']) {
       expect(looksLikeHtmlDesign(html)).toBe(true)
     }
     for (const html of ['<span>x</span>', '<b>x</b><i>y</i>', '<a href="/x">link</a>', 'plain text', '<divider>x</divider>']) {

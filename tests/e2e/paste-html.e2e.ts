@@ -166,8 +166,9 @@ test.describe('G-10 - pasting HTML onto a board backed by real files', () => {
     })
     const pasted = read(TRAILS)
     expect(pasted).toContain('<div className="plan" style={{ backgroundColor: "#fff7ed" }}>')
-    expect(pasted).toContain('<img src="/ridge.png" alt="Ridge at dawn" />')
-    expect(pasted).toContain('<a href="/trails/ridge" className="go">Plan the hike</a>')
+    // The browser resolves a copied page's relative URLs against the page it was copied from.
+    expect(pasted).toMatch(/<img src="https?:\/\/[^"]+\/ridge\.png" alt="Ridge at dawn" \/>/)
+    expect(pasted).toMatch(/<a href="https?:\/\/[^"]+\/trails\/ridge" className="go">Plan the hike<\/a>/)
     expect(pasted).toContain('<p className="trails__note">Select me, then paste.</p>')
 
     const styles = read(TRAILS_STYLES)
@@ -204,7 +205,7 @@ test.describe('G-10 - pasting HTML onto a board backed by real files', () => {
 
   test('a page that imports a CSS Module reaches the pasted classes through its own binding', async ({ page }) => {
     const frame = await openPage(page, 'camp')
-    await selectInFrame(page, frame.locator('#anchor').first())
+    await selectInFrame(page, frame.locator(`[data-node-id="${sourceNodeId(CAMP_PAGE, CAMP, 'p')}"]`).first())
     await copyHtmlToOsClipboard(page, '<style>.badge { padding: 4px 10px; border-radius: 99px }</style><span class="badge">Full</span>')
 
     await page.keyboard.press('Control+v')

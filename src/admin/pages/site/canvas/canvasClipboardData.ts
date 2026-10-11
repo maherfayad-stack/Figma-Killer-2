@@ -97,10 +97,11 @@ export const UNREADABLE_CLIPBOARD: ClipboardSnapshot = { readable: false, marker
 /**
  * Elements whose presence says "this is a piece of a page", not a styled run of
  * text. A copy of plain text arrives as `<span>`s and `<meta>`; those are not
- * enough.
+ * enough. A `<style>` block is the other signal: a run of text carries no
+ * stylesheet, a copied component does.
  */
 const DESIGN_ELEMENT =
-  /<(?:div|section|article|header|footer|nav|main|aside|p|h[1-6]|ul|ol|li|dl|table|form|button|input|select|textarea|img|picture|video|figure|label|blockquote|pre|hr|svg)[\s>/]/i
+  /<(?:div|section|article|header|footer|nav|main|aside|p|h[1-6]|ul|ol|li|dl|table|form|button|input|select|textarea|img|picture|video|figure|label|blockquote|pre|hr|svg|style)[\s>/]/i
 
 /** Whether clipboard `text/html` is markup worth pasting as elements. */
 export function looksLikeHtmlDesign(html: string): boolean {
