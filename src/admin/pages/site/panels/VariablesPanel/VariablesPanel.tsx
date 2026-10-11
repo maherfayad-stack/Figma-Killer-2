@@ -38,7 +38,7 @@ interface VariablesPanelProps {
 
 export function VariablesPanel({ variant = 'docked' }: VariablesPanelProps) {
   const isOpen = useEditorStore((s) => s.variablesPanelOpen)
-  const setVariablesPanelOpen = useEditorStore((s) => s.setVariablesPanelOpen)
+  const setLeftSidebarPanel = useEditorStore((s) => s.setLeftSidebarPanel)
   const undo = useEditorStore((s) => s.undo)
   const tokenState = useSyncExternalStore(subscribeStudioTokenCatalog, getStudioTokenState)
   const authoredCss = useSyncExternalStore(subscribeStudioAuthoredCss, getStudioAuthoredCss)
@@ -82,7 +82,7 @@ export function VariablesPanel({ variant = 'docked' }: VariablesPanelProps) {
   const groups = catalog ? buildVariableGroups(catalog, usage, columns, query) : []
 
   return (
-    <Panel ref={panelRef} panelId="variables" title="Variables" testId="variables-panel" onClose={() => setVariablesPanelOpen(false)}>
+    <Panel ref={panelRef} panelId="variables" title="Variables" testId="variables-panel" onClose={() => setLeftSidebarPanel(null)}>
       <SearchBar value={query} onValueChange={setQuery} placeholder="Search variables" aria-label="Search variables" />
 
       {status ? (

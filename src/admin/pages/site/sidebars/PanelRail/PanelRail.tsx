@@ -83,21 +83,21 @@ const PRIMARY_RAIL_ITEMS: PrimaryRailItem[] = [
     iconName: 'paint-bucket',
     group: 'style',
   },
-  {
-    id: 'content',
-    label: 'Content',
-    icon: GlobeSolidIcon,
-    iconName: 'globe-solid',
-    group: 'content',
-  },
   // Variables - the project's design tokens (CSS custom properties), modes and
-  // usage. Next to Framework and Classes: it is the third thing you style FROM.
+  // usage. After Framework and Classes: the third thing you style FROM.
   {
     id: 'variables',
     label: 'Variables',
     icon: Settings2SolidIcon,
     iconName: 'settings-2-solid',
     group: 'style',
+  },
+  {
+    id: 'content',
+    label: 'Content',
+    icon: GlobeSolidIcon,
+    iconName: 'globe-solid',
+    group: 'content',
   },
   // Dependencies - the project's own package.json and whether it is installed.
   // It has a rail entry because the Live pill and a missing-package banner both

@@ -190,7 +190,6 @@ interface UiSlice {
   setDependenciesPanelOpen: (open: boolean) => void
   setContentPanelOpen: (open: boolean) => void
   setGitPanelOpen: (open: boolean) => void
-  setVariablesPanelOpen: (open: boolean) => void
   setLeftSidebarPanel: (panel: LeftSidebarPanelId | null) => void
   toggleLeftSidebarPanel: (panel: LeftSidebarPanelId) => void
 
@@ -486,12 +485,6 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
   setContentPanelOpen: (open) => set({ contentPanelOpen: open }),
 
   setGitPanelOpen: (open) => set({ gitPanelOpen: open }),
-
-  // Through `setLeftSidebarPanel` for the same reason as Dependencies above.
-  setVariablesPanelOpen: (open) => {
-    if (open) get().setLeftSidebarPanel('variables')
-    else set({ variablesPanelOpen: false })
-  },
 
   setLeftSidebarPanel: (panel) =>
     set((state) => {

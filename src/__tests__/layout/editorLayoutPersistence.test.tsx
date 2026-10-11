@@ -462,6 +462,7 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
       'panel-rail-assets',
       'panel-rail-framework',
       'panel-rail-selectors',
+      'panel-rail-variables',
       'panel-rail-content',
       'panel-rail-dependencies',
       'panel-rail-git',
@@ -471,6 +472,7 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
       'box-stack-solid',
       'colors-swatch',
       'paint-bucket',
+      'settings-2-solid',
       'globe-solid',
       'package-solid',
       'cloud-upload',
@@ -485,6 +487,7 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
       'gold', // assets    — navigate (find the thing, same job as the explorer)
       'mint', // framework — style
       'mint', // selectors — style
+      'mint', // variables — style
       'lilac', // content  — content
       'gold', // dependencies — navigate (project-level)
       'gold', // git       — navigate (project-level, like the explorer)
