@@ -40,7 +40,7 @@ export function isWrappableClassExpression(expr: Expression): boolean {
 }
 
 /** The class-join helper this file already has in scope, if any — its own idiom wins over a template. */
-function joinerInScope(sourceFile: SourceFile): string | undefined {
+export function joinerInScope(sourceFile: SourceFile): string | undefined {
   const names = topLevelBindingNames(sourceFile)
   return [...CLASS_NAME_JOIN_BUILTIN_NAMES].find((name) => names.has(name))
 }

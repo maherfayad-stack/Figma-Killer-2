@@ -36,7 +36,7 @@
  * Posts edits, never mints a tree: `no-vc-mode-branches-in-mutations` does not
  * apply (the posture `instanceActions.ts` has).
  */
-import { callSitePosition, inlineDepth, isInlinedNodeId, styleValueKey, type NodeTree, type PageNode } from '@core/page-tree'
+import { callSitePosition, inlineDepth, isInlinedNodeId, styleValueKey, type CSSPropertyBag, type NodeTree, type PageNode } from '@core/page-tree'
 import { registry } from '@core/module-engine'
 import { pushToast } from '@ui/components/Toast'
 import { invalidateLocalComponentCatalog } from '@site/studio/componentCatalog'
@@ -44,11 +44,14 @@ import { getLoadedNodeValues } from '@site/studio/loadedValuesBaseline'
 import { holdInstanceOverride } from '@site/studio/instanceOverrideHold'
 import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
 import type { StudioSaveResponse } from '@site/studio/studioSaveRequests'
-import { commitStudioInstanceOverride, commitStudioPromoteOverride, type InstanceOverrideWire } from '@site/studio/studioInstanceOverrideCommits'
+import { getStudioStyleRuleSources } from '@site/studio/cssInsertDestination'
+import { atRuleForContext } from '@site/studio/styleRuleWriteback'
+import { commitStudioClassOverride, commitStudioInstanceOverride, commitStudioPromoteClassOverride, commitStudioPromoteOverride, type InstanceOverrideWire } from '@site/studio/studioInstanceOverrideCommits'
 import { resolveActiveTreeTarget } from './helpers'
 import { inlineTailKey } from './nodeIndex'
 import { planInstanceOverride, refusalSentence, type OverrideChange, type PlannedOverride } from './instanceOverridePlan'
-import type { InstanceOverrideSlice } from './instanceOverrideTypes'
+import { CLASS_FALLBACK_REASONS, classRefusalSentence, planClassOverride, type ClassOverrideEdit } from './classOverridePlan'
+import type { ClassOverrideRequest, InstanceOverrideSlice } from './instanceOverrideTypes'
 import { isEditingComponent } from './mainEditMode'
 import type { OptimisticPreviewHandle } from './structuralOptimism'
 import type { SiteSliceHelpers } from './types'
@@ -100,7 +103,7 @@ function declinesFedEdit(node: PageNode, change: OverrideChange): boolean {
 
 export function createInstanceOverrideActions(helpers: SiteSliceHelpers): {
   router: InstanceOverrideRouter
-  slice: Pick<InstanceOverrideSlice, 'setVariantEditAxis'>
+  slice: Pick<InstanceOverrideSlice, 'setVariantEditAxis' | 'overrideClassOnInstance' | 'instanceClassEditIsLocal'>
 } {
   const { get, set, previewActiveTreeMutation } = helpers
 
@@ -235,6 +238,157 @@ export function createInstanceOverrideActions(helpers: SiteSliceHelpers): {
     announceWholeComponent(sentence)
   }
 
+  // --- G-2b: a class edit made inside one instance -------------------------------------------------------------
+
+  /** The instance (call site) an inlined element is the root of. */
+  function instanceOf(tree: NodeTree<PageNode>, nodeId: string): PageNode | undefined {
+    return Object.values(tree.nodes).find((candidate) => candidate.moduleId === 'studio.instance' && candidate.children.includes(nodeId))
+  }
+
+  function classPlanFor(request: ClassOverrideRequest) {
+    const state = get()
+    const target = resolveActiveTreeTarget(state)
+    if (!target || target.vc) return null
+    const node = target.tree.nodes[request.nodeId]
+    if (!node || !isInlinedNodeId(request.nodeId)) return null
+    if (isEditingComponent(state.mainEditTarget, node.fromComponent)) return null
+    const atRule =
+      request.contextId === null
+        ? undefined
+        : atRuleForContext(request.contextId, { ...(state.site?.breakpoints ? { breakpoints: state.site.breakpoints } : {}), ...(state.site?.conditions ? { conditions: state.site.conditions } : {}) })
+    const plan = planClassOverride({ nodeId: request.nodeId, node, instance: instanceOf(target.tree, request.nodeId), source: getStudioStyleRuleSources()[request.classId], atRule, patch: request.patch })
+    return { node, plan }
+  }
+
+  /** The ordinary class write, after the override could not be made. */
+  function writeClassOrdinarily(request: ClassOverrideRequest): void {
+    try {
+      const patch = request.patch as Partial<CSSPropertyBag>
+      if (request.contextId) get().setClassContextStyles(request.classId, request.contextId, patch)
+      else get().updateClassStyles(request.classId, patch)
+    } catch (err) {
+      console.error('[instanceOverrideActions] the ordinary class write after a refused override failed:', err)
+    }
+  }
+
+  async function applyClassToAll(callSiteId: string, edit: ClassOverrideEdit, componentName: string): Promise<void> {
+    const element = findNode(callSiteId)?.children[0]
+    if (element === undefined || !isInlinedNodeId(element)) {
+      pushToast({ kind: 'warning', title: 'Could not apply to every instance', body: `That ${componentName} moved on the board. Select it and use the component's own controls.`, location: 'site-editor' })
+      return
+    }
+    await commitStudioPromoteClassOverride({ nodeId: element, file: edit.file, selector: edit.selector, properties: Object.keys(edit.declarations), ...(edit.atRule !== undefined ? { atRule: edit.atRule } : {}) }, `Apply to all ${componentName}`)
+    invalidateLocalComponentCatalog()
+  }
+
+  /**
+   * The variables an override replaced on this instance: a value the class binds to `var(--x)` that the user set to
+   * something else. The component's rule keeps the binding (the override lives in the instance's own rule), and the
+   * notice says so instead of leaving a literal that looks like it ate the variable.
+   */
+  function replacedVariables(request: ClassOverrideRequest): { property: string; variable: string; value: string }[] {
+    const rule = get().site?.styleRules[request.classId]
+    const base = (request.contextId ? rule?.contextStyles?.[request.contextId] : undefined) ?? rule?.styles ?? {}
+    const replaced: { property: string; variable: string; value: string }[] = []
+    for (const [property, value] of Object.entries(request.patch)) {
+      const current = (base as Record<string, unknown>)[property]
+      if (typeof current !== 'string' || typeof value !== 'string' || value.trim().startsWith('var(')) continue
+      const variable = /^\s*var\(\s*(--[\w-]+)/.exec(current)?.[1]
+      if (variable) replaced.push({ property, variable, value })
+    }
+    return replaced
+  }
+
+  function announceClassOnly(nodeId: string, edit: ClassOverrideEdit, componentName: string, replaced: readonly { property: string; variable: string; value: string }[]): void {
+    const callSiteId = callSitePosition(nodeId)
+    const count = instancesOnBoard(nodeId)
+    const others = count - 1
+    const kept = replaced.map((entry) => `${entry.property} is ${entry.value} here instead of var(${entry.variable}); ${componentName} keeps the variable.`).join(' ')
+    pushToast({
+      kind: 'info',
+      title: `Changed on this ${componentName} only`,
+      ...(others > 0 || kept ? { body: [others > 0 ? `The other ${others} ${others === 1 ? 'place' : 'places'} on the board stay as they were.` : '', kept].filter(Boolean).join(' ') } : {}),
+      location: 'site-editor',
+      durationMs: replaced.length > 0 ? 14000 : 9000,
+      dedupeKey: `instance-class-override:${callSiteId}`,
+      ...(others > 0
+        ? {
+            action: {
+              label: `Apply to all (${count})`,
+              onSelect: () =>
+                new Promise<void>((resolve) => {
+                  const queued = deferWhileStructuralCommitInFlight((relocate) => void applyClassToAll(relocate(callSiteId), edit, componentName).then(resolve), [callSiteId])
+                  if (!queued) void applyClassToAll(callSiteId, edit, componentName).then(resolve)
+                }),
+            },
+          }
+        : {}),
+    })
+  }
+
+  async function runClassOverride(request: ClassOverrideRequest, edit: ClassOverrideEdit): Promise<void> {
+    const { nodeId } = request
+    const componentName = findNode(nodeId)?.fromComponent ?? 'component'
+    const styles = Object.fromEntries(Object.entries(request.patch).map(([property, value]) => [property, String(value)]))
+    const replaced = replacedVariables(request)
+    // The canvas shows the instance's new look at once, as an inline preview (outside history and dirty tracking): the
+    // shared class is not touched, so no other instance moves while the write is on the wire.
+    const rollbackPreview = previewActiveTreeMutation((tree) => {
+      const element = tree.nodes[nodeId]
+      if (!element) return false
+      element.inlineStyles = { ...element.inlineStyles, ...styles }
+      return true
+    })
+    if (!rollbackPreview) return
+    const release = holdInstanceOverride(nodeId, Object.keys(styles).map(styleValueKey))
+    const outcome: { answer: StudioSaveResponse | null; landed: boolean } = { answer: null, landed: false }
+    const handle: OptimisticPreviewHandle = { nodeIds: [], rollback: rollbackPreview, settle: () => undefined }
+    try {
+      await commitStudioClassOverride({ nodeId, ...edit }, `Edit ${componentName}`, {
+        optimistic: handle,
+        onAnswer: (received) => {
+          outcome.answer = received
+        },
+        onLanded: () => {
+          outcome.landed = true
+        },
+      })
+    } finally {
+      release()
+    }
+    if (outcome.landed) {
+      invalidateLocalComponentCatalog()
+      announceClassOnly(nodeId, edit, componentName, replaced)
+      return
+    }
+    const refusal = outcome.answer?.refusals?.[0]
+    if (!refusal) return
+    const sentence = CLASS_FALLBACK_REASONS.has(refusal.reason) ? classRefusalSentence(refusal.reason, componentName) : null
+    if (sentence === null) {
+      pushToast({ kind: 'warning', title: 'Could not change this instance', body: refusal.message, location: 'site-editor' })
+      return
+    }
+    writeClassOrdinarily(request)
+    announceWholeComponent(sentence)
+  }
+
+  const overrideClassOnInstance: InstanceOverrideSlice['overrideClassOnInstance'] = (request) => {
+    const planned = classPlanFor(request)
+    if (!planned || planned.plan.kind === 'direct') return false
+    if (planned.plan.kind === 'whole-component') {
+      announceWholeComponent(planned.plan.reason)
+      return false
+    }
+    const { edit } = planned.plan
+    // A write is on the wire: this gesture waits for it, then is aimed at the element it named.
+    if (deferWhileStructuralCommitInFlight((relocate) => void runClassOverride({ ...request, nodeId: relocate(request.nodeId) }, edit), [request.nodeId])) return true
+    void runClassOverride(request, edit)
+    return true
+  }
+
+  const instanceClassEditIsLocal: InstanceOverrideSlice['instanceClassEditIsLocal'] = (nodeId, classId) =>
+    classPlanFor({ nodeId, classId, patch: { preview: 'x' }, contextId: null })?.plan.kind === 'override'
+
   const router: InstanceOverrideRouter = {
     route: (request) => {
       const state = get()
@@ -270,6 +424,8 @@ export function createInstanceOverrideActions(helpers: SiteSliceHelpers): {
   return {
     router,
     slice: {
+      overrideClassOnInstance,
+      instanceClassEditIsLocal,
       setVariantEditAxis: (prop) => {
         set((draft) => {
           draft.variantEditAxis = prop

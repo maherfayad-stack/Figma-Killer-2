@@ -59,3 +59,35 @@ export async function commitStudioPromoteOverride(edit: { nodeId: string; propNa
     undo: { label, template: { kind: 'restore-journal' } },
   })
 }
+
+/** What `expose-class` carries on the wire: one stylesheet rule's new declarations, for the instance whose root `nodeId` is. */
+export interface ClassOverrideWire {
+  file: string
+  selector: string
+  declarations: Readonly<Record<string, string>>
+  atRule?: string
+}
+
+/**
+ * G-2b - `expose-class`: a class-styled value edited inside one instance. The
+ * instance's call site takes a modifier class, the component's root takes the
+ * `className`, and the stylesheet gains a rule one class more specific. Three
+ * files, one gesture, one journal entry. A refusal is the caller's to answer
+ * (it falls back to the ordinary write), so it is `quiet`.
+ */
+export async function commitStudioClassOverride(edit: { nodeId: string } & ClassOverrideWire, label: string, hooks: InstanceOverrideHooks): Promise<void> {
+  await commitStructural(
+    [{ kind: 'expose-class', nodeId: edit.nodeId, file: edit.file, selector: edit.selector, declarations: { ...edit.declarations }, ...(edit.atRule !== undefined ? { atRule: edit.atRule } : {}) }],
+    'Could not change this instance',
+    { undo: { label, template: { kind: 'restore-journal' } }, optimistic: hooks.optimistic, onAnswer: hooks.onAnswer, onLanded: hooks.onLanded, quiet: true },
+  )
+}
+
+/** G-2b - "Apply to all (N)" for a class override: the instance's values go into the component's own rule and the modifier goes. */
+export async function commitStudioPromoteClassOverride(edit: { nodeId: string; file: string; selector: string; properties: readonly string[]; atRule?: string }, label: string): Promise<void> {
+  await commitStructural(
+    [{ kind: 'promote-class-override', nodeId: edit.nodeId, file: edit.file, selector: edit.selector, properties: [...edit.properties], ...(edit.atRule !== undefined ? { atRule: edit.atRule } : {}) }],
+    'Could not apply to every instance',
+    { undo: { label, template: { kind: 'restore-journal' } } },
+  )
+}
