@@ -27,7 +27,7 @@
  * seen the full press/release pair, so its tap state is correct.
  */
 import { describe, it, expect } from 'bun:test'
-import { readSource, walkSourceTree } from './helpers/sourceTree'
+import { readSource, toRepoRelativePosix, walkSourceTree } from './helpers/sourceTree'
 
 import { join } from 'node:path'
 
@@ -154,7 +154,7 @@ describe('canvas overlays do not swallow pointerdown', () => {
     const offenders = tsxFiles(CANVAS_ROOT)
       .filter((file) => ![...ALLOWLIST].some((allowed) => file.endsWith(allowed)))
       .filter((file) => swallowsPointerDown(readSource(file)))
-      .map((file) => file.slice(file.indexOf('src/')))
+      .map((file) => toRepoRelativePosix(file))
 
     expect(offenders).toEqual([])
   })

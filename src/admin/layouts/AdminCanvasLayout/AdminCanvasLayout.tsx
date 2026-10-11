@@ -51,6 +51,7 @@ import { shouldSeedDefaultBoard } from './studioDefaultBoardSeed'
 import { collectFrameIds, shouldRefuseBoardsSave } from './boardsSaveGuard'
 import { pushToast } from '@ui/components/Toast'
 import { retryWhileUnreachable } from '@core/http'
+import { selectBoardPageCount } from '@site/store/slices/pageDirectory'
 import { isGalleryPage } from '@core/component-variants'
 import { useAdminUi } from '@admin/state/adminUi'
 import { CMS_SITE_RELOAD_EVENT, requestCmsSiteReload } from '@admin/state/adminEvents'
@@ -585,7 +586,7 @@ function useStudioDefaultBoardSeed(): void {
   const activeBoard = useEditorStore(selectActiveBoard)
   const activeBoardFrameCount = activeBoard?.frames.length ?? null
   // A variants gallery is derived and lives on the server-placed Components board: never seeded onto this one.
-  const pageCount = useEditorStore((s) => s.site?.pages.filter((page) => !isGalleryPage(page)).length ?? 0)
+  const pageCount = useEditorStore(selectBoardPageCount)
   const frameDefaultsSettled = useEditorStore((s) => s.frameDefaultsSettled)
   const pagesArriving = useEditorStore((s) => s.pendingPages.length > 0)
 
