@@ -121,7 +121,11 @@ export function planSourceMove(
   // OD-8 — `listRow` is a reorder of `.map` rows, written to their array:
   // `commit` is `null` and the caller must NOT mutate the tree.
   if (preview.ok) return { ok: true, commit: preview.commit, ...(preview.listRow ? { listRow: preview.listRow } : {}) }
-  const node = nodeIds[0] === undefined ? undefined : tree.nodes[nodeIds[0]]
+  const moved = nodeIds[0] === undefined ? undefined : tree.nodes[nodeIds[0]]
+  // A refusal about the CONTAINER (a drop into an instance's own markup) is
+  // about that node: its origin is what "show me" opens, and its instance is
+  // the one OD-7 detaches.
+  const node = (preview.refusal.aboutNodeId !== undefined ? tree.nodes[preview.refusal.aboutNodeId] : undefined) ?? moved
   return {
     ok: false,
     constraint: describeStructuralRefusal({ refusal: preview.refusal, ...(node ? { node } : {}) }),
@@ -314,7 +318,8 @@ export function planSourceDuplicateTo(
     if (!tree.nodes[nodeId]) continue
     const landing = previewStructuralMove(tree, [nodeId], newParentId, newIndex)
     if (!landing.ok) {
-      return { ok: false, constraint: describeStructuralRefusal({ refusal: landing.refusal, node }), nodeId }
+      const about = (landing.refusal.aboutNodeId !== undefined ? tree.nodes[landing.refusal.aboutNodeId] : undefined) ?? node
+      return { ok: false, constraint: describeStructuralRefusal({ refusal: landing.refusal, node: about }), nodeId: about.id }
     }
   }
 
@@ -585,6 +590,7 @@ export function presentStructuralRefusal(
       set: context.set,
       refusedNodeId: context.nodeId,
       retry: context.retry,
+      placing: title === STRUCTURAL_REFUSAL_TITLE.move || title === STRUCTURAL_REFUSAL_TITLE.transplant || title === STRUCTURAL_REFUSAL_TITLE.insert,
       // OD-7 — both the detach and the component copy refused: ONE warning,
       // never the dialog (its remedies are the two writes that just refused).
       onRefused: () =>
