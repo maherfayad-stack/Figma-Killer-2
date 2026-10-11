@@ -31,7 +31,7 @@
  */
 import { resolveWorkspaceReadPath } from '@core/page-parser'
 import type { ClassNameToken } from '@core/ast-codemods'
-import type { StudioClassNameToken } from './studioEditSchemas'
+import type { StudioClassNameToken } from './studioClassEditSchema'
 
 /**
  * Validates a client-supplied, workspace-relative path a studio edit REFERS

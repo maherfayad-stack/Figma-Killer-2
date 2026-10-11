@@ -20,7 +20,7 @@ import {
   refuseMintedNodeInsert,
   refuseStructuralEdit,
   type SourceStructureNode,
-  type StructuralEditKind,
+  type StructuralEditQuestion,
   type StructuralRefusal,
   type StructuralRefusalReason,
 } from './sourceStructure'
@@ -112,12 +112,6 @@ const STRUCTURAL_ACTIONS: Record<StructuralRefusalReason, (node?: SourceStructur
   // run. Nothing on disk to jump to, so the sentence is the whole answer.
   'group': () => [],
   'ungroup': () => [],
-  // K3 — the container carries behaviour (a handler, a ref, a `key`, a
-  // spread, or it is a component). Dissolving it would drop that, and the one
-  // honest way forward is to look at what it is doing: `origin` is the
-  // wrapper's own `rel:line:col`, so this is the R1 jump every other
-  // "the code decides this" refusal already offers.
-  'has-behaviour': jumpToSourceAction,
   // `struct-11` — the wrapper would be invalid HTML where it lands. `node` is
   // the CONTAINER whose content model forbids it (the `<p>`, the `<ul>`), so
   // "go and look at it" is both true and the fastest way to the fix: the user
@@ -168,11 +162,7 @@ export function describeStructuralRefusal(input: {
  * `refuseStructuralEdit` — same input shape, same refusal, now carrying an
  * explanation + actions instead of a bare `{reason, message}`.
  */
-export function explainStructuralConstraint(input: {
-  kind: StructuralEditKind
-  node: SourceStructureNode
-  anchor?: SourceStructureNode | null
-}): EditConstraint | null {
+export function explainStructuralConstraint(input: StructuralEditQuestion): EditConstraint | null {
   const refusal = refuseStructuralEdit(input)
   if (!refusal) return null
   return describeStructuralRefusal({ refusal, node: input.node })

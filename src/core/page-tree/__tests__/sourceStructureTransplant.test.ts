@@ -331,7 +331,7 @@ describe('previewStructuralTransplant - what a COPY escapes, and what it does no
     expect(moved.refusal.reason).toBe('route-chrome')
   })
 
-  it('still REFUSES copying a `.map` row - there is no source range to read', () => {
+  it('still REFUSES copying a `.map` row the parser could not tie to an array', () => {
     const result = previewStructuralTransplant({
       originTree: homePage(),
       nodeIds: [HOME_ROW],
@@ -359,5 +359,87 @@ describe('previewStructuralTransplant - what a COPY escapes, and what it does no
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.refusal.reason).toBe('code-placed')
+  })
+})
+
+describe('previewStructuralTransplant - a node of a `.map` row (G-1c)', () => {
+  const ARRAY = 'pages/Home.tsx:3:16'
+  const HOME_ROW_ROOT = 'pages/Home.tsx:8:7#1'
+  const HOME_ROW_CHILD = 'pages/Home.tsx:9:9#1'
+
+  function rowsPage(listRow: PageNode['listRow']): Page {
+    const root = { ...node(HOME_ROW_ROOT, [HOME_ROW_CHILD]), ...(listRow ? { listRow } : {}) }
+    return page(
+      'home',
+      {
+        [HOME_ROOT]: node(HOME_ROOT, [HOME_MAIN]),
+        [HOME_MAIN]: node(HOME_MAIN, [HOME_ROW_ROOT]),
+        [HOME_ROW_ROOT]: root,
+        [HOME_ROW_CHILD]: node(HOME_ROW_CHILD),
+      },
+      HOME_ROOT,
+    )
+  }
+
+  const editable: PageNode['listRow'] = { kind: 'array', array: ARRAY, index: 1, length: 3, key: { kind: 'none' }, source: 'ROWS' }
+
+  it('commits a COPY of the row from the TEMPLATE, naming the array element, for the row root and for a node inside it', () => {
+    for (const nodeId of [HOME_ROW_ROOT, HOME_ROW_CHILD]) {
+      const result = previewStructuralTransplant({
+        originTree: rowsPage(editable),
+        nodeIds: [nodeId],
+        destinationTree: aboutPage(),
+        newParentId: ABOUT_MAIN,
+        newIndex: 0,
+      })
+      expect(result).toEqual({
+        ok: true,
+        commit: {
+          nodeId: nodeId.replace(/#1$/, ''),
+          destinationParentNodeId: ABOUT_MAIN,
+          anchorNodeId: ABOUT_H1,
+          position: 'before',
+          // Asked as a move, answered as a copy: one piece of JSX renders every row.
+          copy: true,
+          row: { array: ARRAY, index: 1, length: 3 },
+        },
+      })
+    }
+  })
+
+  it('keeps refusing a row whose array is not written in this file, with the sentence that names why', () => {
+    const result = previewStructuralTransplant({
+      originTree: rowsPage({ kind: 'refused', reason: 'imported', source: 'ROWS' }),
+      nodeIds: [HOME_ROW_CHILD],
+      destinationTree: aboutPage(),
+      newParentId: ABOUT_MAIN,
+      newIndex: 0,
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.refusal.reason).toBe('list-row')
+  })
+
+  it('keeps refusing a row inlined out of a shared component', () => {
+    const inlinedRoot = 'pages/Home.tsx:6:7~ui/List.tsx:8:7#1'
+    const origin = page(
+      'home',
+      {
+        [HOME_ROOT]: node(HOME_ROOT, [HOME_MAIN]),
+        [HOME_MAIN]: node(HOME_MAIN, [inlinedRoot]),
+        [inlinedRoot]: { ...node(inlinedRoot), listRow: editable },
+      },
+      HOME_ROOT,
+    )
+    const result = previewStructuralTransplant({
+      originTree: origin,
+      nodeIds: [inlinedRoot],
+      destinationTree: aboutPage(),
+      newParentId: ABOUT_MAIN,
+      newIndex: 0,
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.refusal.reason).toBe('list-row')
   })
 })

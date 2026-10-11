@@ -38,7 +38,7 @@
  * re-reads it), so that sentence had become false — and a refusal that is no
  * longer true is worse than no refusal at all.
  */
-import { isPropWritableToSource, isStyleWritableToSource, styleValueKey, type SourceWritableNode } from './sourceWritability'
+import { canUnbindProp, isPropWritableToSource, isStyleWritableToSource, styleValueKey, type SourceWritableNode } from './sourceWritability'
 import {
   refusePlacement,
   type StructuralRefusalReason,
@@ -208,6 +208,13 @@ export interface EditConstraint {
   origin?: { rel: string; line: number; col: number }
   /** Zero or more legitimate ways forward. An empty array is an honest terminal refusal, not a bug. */
   actions: EditConstraintAction[]
+  /**
+   * G-6 (OD-20) - the refused prop is code the user may TYPE OVER: committing a
+   * value replaces the code with the literal (the editor names what it replaced
+   * and offers Undo). Set only where `canUnbindProp` holds, so a field that
+   * offers to be typed into always has exactly one place to write.
+   */
+  unbindable?: true
 }
 
 // ---------------------------------------------------------------------------
@@ -274,6 +281,7 @@ export function explainPropConstraint(
 
   const resolved = node.resolvedProps?.[propKey]
   if (resolved) {
+    const unbindable = canUnbindProp(node, propKey)
     return {
       reason: 'resolved-expression',
       scope: 'prop',
@@ -281,6 +289,7 @@ export function explainPropConstraint(
         ? `Reads \`${resolved.source}\` — ${resolved.note}.`
         : `Reads \`${resolved.source}\` from code. Writing here would replace the binding with a fixed value.`,
       actions: [],
+      ...(unbindable ? { unbindable: true as const } : {}),
     }
   }
 
@@ -292,6 +301,7 @@ export function explainPropConstraint(
     scope: 'prop',
     explanation: node.lockReason ? `The code decides this value (${node.lockReason}).` : 'Set in code.',
     actions: [],
+    ...(canUnbindProp(node, propKey) ? { unbindable: true as const } : {}),
   }
 }
 

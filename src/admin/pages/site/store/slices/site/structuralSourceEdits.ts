@@ -407,7 +407,8 @@ export function planSourceGroup(
  * children, in the same file and the same scope, so an ordinary element at a
  * known location is the whole requirement here. The question only the AST can
  * answer — is this container ONLY a container, or does it carry a handler, a
- * ref, a `key`, a spread — arrives at save time as `has-behaviour`.
+ * ref, a `key`, a spread — decides, at save time, whether it is removed or
+ * kept (emptied) with its children handed to the parent (G-7).
  */
 export function planSourceUngroup(
   tree: NodeTree<PageNode>,
@@ -447,6 +448,8 @@ export const STRUCTURAL_REFUSAL_TITLE = {
   freeMove: 'Cannot place this by hand',
   /** PA-4 — "Ignore auto layout" whose container cannot take the `position: relative` it needs, or whose own position cannot be written. */
   ignoreAutoLayout: 'Cannot ignore auto layout here',
+  /** PA-7 / PA-8 — Add / Remove auto layout rewrites a container and all its children; one element that cannot take the write refuses the lot. */
+  layoutConversion: 'Cannot change auto layout here',
   /** P5-C — the Detach verb (`instanceActions.ts`): a refusal names why this instance's markup can't be written in place. */
   detach: 'Detach refused',
   /** A canvas resize / Hug on markup that lives in a shared component (`inlineStyleActions.ts`). */

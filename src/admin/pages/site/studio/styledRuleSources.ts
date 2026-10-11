@@ -24,14 +24,17 @@
  * VALUE edits (through `setStyledDeclaration`); a rule not in it is unmapped
  * exactly as before.
  *
- * ## Value edits, and nothing else
+ * ## Value edits that always land, and nothing else
  *
- * There is deliberately no insert, no unset, and no class-token spelling here.
+ * There is deliberately no unset and no class-token spelling here. A SET lands
+ * every time (G-5): rewritten where the template writes the value, appended to
+ * the same block as an override where it does not — `setStyledDeclaration`'s
+ * ladder.
  *
- *   - **Adding or removing a declaration** means adding or deleting a line in
- *     a template the user wrote, around interpolations whose position decides
- *     what the CSS means. That is a restructuring edit, not the value edit the
- *     inspector's controls make.
+ *   - **Removing a declaration** means deleting a line in a template the user
+ *     wrote, around interpolations whose position decides what the CSS means.
+ *     That is a restructuring edit, not the value edit the inspector's
+ *     controls make.
  *   - **A class token** does not exist at all. The synthetic class is a HASH
  *     Studio computed (`syntheticClassName`); styled-components generates its
  *     own name at runtime and there is no `className` attribute in the `.tsx`

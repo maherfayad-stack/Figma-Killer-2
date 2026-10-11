@@ -8,7 +8,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { loadStudioPages } from '../../studioPageLoad'
-import { galleryPageIdFromRoutePath } from '../componentGallery'
+import { galleryPageIdFromRoutePath, parseGalleryRouteKey } from '../componentGallery'
 
 const FILES: Record<string, string> = {
   'pages/Home.tsx': `import { Button } from '../components/Button'
@@ -111,7 +111,11 @@ describe('the Components variants gallery', () => {
   })
 
   it('names its cache key so a narrowed reload can read the page id back', () => {
-    expect(galleryPageIdFromRoutePath('component-gallery:component-components-button')).toBe('component-components-button')
+    expect(galleryPageIdFromRoutePath('component-gallery:component-components-button@components/Button.tsx')).toBe('component-components-button')
     expect(galleryPageIdFromRoutePath('pages/Home.tsx')).toBeNull()
+    expect(parseGalleryRouteKey('component-gallery:component-components-button@components/Button.tsx')).toEqual({
+      pageId: 'component-components-button',
+      file: 'components/Button.tsx',
+    })
   })
 })

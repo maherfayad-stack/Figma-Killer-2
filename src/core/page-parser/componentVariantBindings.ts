@@ -310,7 +310,7 @@ function entriesOf(ctx: ComponentAnalysisContext, object: ObjectLiteralExpressio
   return entries
 }
 
-/** The imported name (`cva`, `tv`) a call's callee resolves to through a `from 'class-variance-authority'`-style import, or `undefined`. */
+/** The imported name (`cva`, `tv`) a call's callee resolves to through a package-import of the cva family, or `undefined`. */
 function cvaHelperName(ctx: ComponentAnalysisContext, call: Node): string | undefined {
   if (!Node.isCallExpression(call)) return undefined
   const callee = call.getExpression()
@@ -527,7 +527,15 @@ function cssClassBinding(
     if (found) rules.push({ member, selector: found.selector, range: found.range })
   }
   if (rules.length === 0) return undefined
-  return { kind: 'css-module-class', scope, expr: expression.getText(), range: sourceRangeOf(ctx.workspaceRoot, expression), rules }
+  return {
+    kind: 'css-module-class',
+    scope,
+    expr: expression.getText(),
+    classPrefix: prefix,
+    classSuffix: suffix,
+    range: sourceRangeOf(ctx.workspaceRoot, expression),
+    rules,
+  }
 }
 
 // ---------------------------------------------------------------------------

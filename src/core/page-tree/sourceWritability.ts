@@ -27,6 +27,8 @@
  * isolated source location — everything except a text that resolved to its own
  * string literal elsewhere.
  */
+import { hasWritableSourceLocation, isInlinedNodeId } from './sourceNodeId'
+
 /**
  * The only two fields these rules read. Deliberately structural rather than
  * `PageNode`: the same question is asked of a Visual Component's nodes and of the
@@ -112,6 +114,33 @@ export function isPropWritableToSource(node: SourceWritableNode, prop: string): 
   // Inline styles keep the strict rule — see the doc above.
   if (prop.startsWith('style:')) return false
   return node.resolvedProps?.[prop]?.origin !== undefined
+}
+
+/**
+ * G-6 (OD-20) - true when typing over this CODE-BOUND value may replace the
+ * code with the literal, instead of being refused.
+ *
+ * It is the one place the "never destroy a binding" rule yields to explicit
+ * intent, so the conditions are narrow and every one of them is "there is
+ * exactly one place to write, and Undo can take it back":
+ *
+ *   - the prop is code (`codeProps`) with no `origin` literal one hop away (an
+ *     origin means the dictionary string is edited instead - that edit already
+ *     exists and loses nothing);
+ *   - the node's id is one plain source location: not a `.map` row (one JSX
+ *     site renders every row), not inlined (the binding lives in a shared
+ *     component's file and every other instance reads through it);
+ *   - an element attribute or the element's text, not an inline-style property
+ *     or an instance's call-site prop (those have their own surfaces).
+ *
+ * Whether the code is a plain VALUE (not markup, a function, a whole list) is
+ * the server's call, from the AST (`unbindableExpression.ts`); the panel does not
+ * pretend to know.
+ */
+export function canUnbindProp(node: SourceWritableNode & { id?: string }, prop: string): boolean {
+  if (node.id === undefined || !hasWritableSourceLocation(node.id) || isInlinedNodeId(node.id)) return false
+  if (prop.startsWith('style:') || prop.startsWith('callSiteProps:')) return false
+  return (node.codeProps ?? []).includes(prop) && node.resolvedProps?.[prop]?.origin === undefined
 }
 
 /** True when `property`'s inline-style value can be written back to source. */

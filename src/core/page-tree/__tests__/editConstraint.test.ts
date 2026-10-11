@@ -348,7 +348,6 @@ describe('structuralActions — compile-time-exhaustive remedy map (R1)', () => 
     'wrap': true,
     'group': true,
     'ungroup': true,
-    'has-behaviour': true,
     'content-model': true,
     'multi-select': true,
     'cross-file': true,
@@ -380,11 +379,6 @@ describe('structuralActions — compile-time-exhaustive remedy map (R1)', () => 
     expect(describeStructuralRefusal({ refusal: { reason: 'code-placed', message: 'x' }, node: plain }).actions.length).toBeGreaterThan(0)
     expect(describeStructuralRefusal({ refusal: { reason: 'cross-file', message: 'x' }, node: plain }).actions.length).toBeGreaterThan(0)
     expect(describeStructuralRefusal({ refusal: { reason: 'list-row', message: 'x' }, node: row }).actions.length).toBeGreaterThan(0)
-    // K3 — `has-behaviour` (a container carrying a handler, a ref, a `key`, a
-    // spread) is the one new reason with a remedy: go look at what it is doing.
-    expect(describeStructuralRefusal({ refusal: { reason: 'has-behaviour', message: 'x' }, node: plain }).actions).toEqual([
-      { label: 'Open it in code', kind: 'jump-to-source', target: { rel: 'src/screens/Home.jsx', line: 9, col: 1 } },
-    ])
     // `struct-11` — `content-model` names the CONTAINER whose content model
     // forbids the wrapper, so the remedy is the same jump: go and look at it.
     expect(describeStructuralRefusal({ refusal: { reason: 'content-model', message: 'x' }, node: plain }).actions).toEqual([

@@ -21,8 +21,14 @@ field model into it, which added a section without renumbering one.)
 > one `INSPECTOR_SECTIONS` manifest entry per section, each re-skinned to the
 > measured Penpot baseline (`docs/audits/penpot-inspector-baseline/`); the write
 > target is resolved by `resolveWriteTarget.ts` ("the write target is a rule, not
-> a mode"), and computed values are read through `SelectionModel` (from the live
-> DOM at Tier 2). `SelectorInspector.tsx`, the separate surface for a bare CSS
+> a mode"; G-5: a class that cannot hold the typed value — a styled template
+> cannot spell a `;` or a backtick — steps aside through `holds`, so the value
+> lands on the element instead of being refused), a style edit never refuses
+> and `StyleLandingChip` says where it went after the write ("Saved in
+> `Card.module.css`" / "as an override" / "shorthand expanded" / "inline", with
+> an Undo for the two rungs a value-set cannot take back — see
+> `docs/features/studio-import.md` "CSS write-back"), and computed values are read
+> through `SelectionModel` (from the live DOM at Tier 2). `SelectorInspector.tsx`, the separate surface for a bare CSS
 > selector, keeps its search bar and category rail. Every law and primitive below
 > applies to all of it. The same rules in design language are in
 > [`docs/design.md`](../design.md) → "The inspector"; why the panel was rebuilt this
@@ -420,6 +426,36 @@ container whose children are all absolute shows a derived **Free frame** chip
 (`useParentPlacementKind`); the menu items read "Add auto layout" / "Add /
 remove auto layout" to match shift-A. Live (Tier 2) frames cannot be measured
 and say so.
+
+#### Add auto layout / Remove auto layout, keeping positions (PA-7, PA-8)
+
+⇧A, the layer menu's **Add auto layout / Remove (keep positions)** and the
+palette are one command, `toggleFlexLayout`, and it reads the frame before it
+writes. On a container that is not auto layout it **adds** it: the children's
+measured rects go through `core/studio-runtime/inferAutoLayout.ts` (direction
+from how they overlap vertically, gap from the spaces between their MARGIN
+boxes, `align-items` from the edge they share, `flex-wrap` plus a row gap when
+they form lines, padding from the container's padding box to the first
+child), and `convertLayout` writes `display: flex` with those values. A free
+frame's absolute children flow back in visual order (their `position`, insets
+and `translate` cleared; if the source order differs the reorder is the usual
+structural move written first and the restyle follows it, so that case is two
+undo entries, the move and the layout; in order it is one). Block children that
+fill their parent get `align-items: stretch` so they keep filling it; a bare
+content-box container that gains padding becomes `border-box` so it keeps its
+outer size. An absolute badge on a flow container stays pinned. On a container
+that **is** auto layout it **removes** it without moving anything
+(`freezePositions`): each in-flow child becomes `position: absolute` at the
+offset from the container's padding box (border and its own margin taken off)
+with its measured width and height, and the container leaves flex, becomes
+`position: relative` if it was static and keeps its height. Either way the
+container and all its children are written in one `convertLayout` call, all or
+nothing: a `.map` row, markup shared by other call sites or a style set in code
+refuses the whole gesture and a dialog names the element. Uneven spacing is
+averaged and the toast says a few layers move; live (Tier 2) frames cannot be
+measured and say so. Undo restores the same declarations, but a key the write
+removed returns at the END of its `style` object (style undo is a patch replay,
+not a journal restore).
 
 ### G3 — Layout: the settings popover (F3–F8)
 
@@ -2253,6 +2289,53 @@ opens and when the project's stylesheets change). The contract of a value cell:
 
 `studio_set_tokens` takes `rename` / `remove` (each its own call) next to
 `set`, through the same planner.
+
+### §10.9 Text and effect styles (CT-5)
+
+Figma's text and effect styles are a library the document owns. Here they are
+the project's own classes: **a text style is a class whose declarations are one
+typography bundle, an effect style one shadow/blur bundle** (`studio/
+textStyleDiscovery.ts`, read from the registry the board loaded, so it covers
+`.css` and `*.module.css` alike; a CSS Module class is listed by its local
+name). Text: at least two declarations, one of them family/size/weight/line
+height/letter spacing, and nothing but typography (alignment, colour and
+wrapping are tolerated companions; `margin` or `display` make it a component's
+class). Effect: only `box-shadow`, `filter`, `backdrop-filter`, `text-shadow`,
+at least one not `text-shadow`. Framework-generated utilities, ambient rules,
+`@keyframes` and styled-component classes are never styles.
+
+The Text and Effects section headers carry a styles button (single selection
+only) whose menu lists the project's styles of that family, then **Create ...
+style from selection** and, while one is applied, **Detach style**; the applied
+style also shows as a chip at the top of the section with its detach button.
+Each gesture is planned by `studio/textStylePlan.ts` into edits the writeback
+already has and posted as ONE structural commit (`textStyleCommit.ts`):
+
+| gesture | edits |
+|---|---|
+| apply | `class` add (and take off the family's other style) + `style` strip of the inline values the class now owns - an inline value outranks a class, so leaving it would make the click do nothing |
+| create | `css` insert (the new `.text-<name>` / `.effect-<name>` rule, from the values the layer shows: its classes in cascade order, then its inline values; a value the layer computes in code is not copied) + `class` add + `style` strip. The rule goes where the class picker puts a new class (`resolveCssInsertDestination`); with no stylesheet at all the server makes a plain global `studio.css` |
+| detach | `class` remove + `style` set of the class's declarations inline, except the ones the element already set itself. Refused for a style that also changes at a breakpoint (a `style=""` attribute cannot be media-queried) |
+
+Every `class` edit carries `restyle: true` (`studioEditSchemas.ts`), which asks
+the batch for two things no other class edit gets: it is **journaled** - the
+journal's pre-image also holds the stylesheet a `css` edit names (a CSS edit
+names a file, not a `line:col`, so it is not in the touched-file set) and the
+stylesheet a create made - and it is **all or nothing**
+(`BatchUndoJournal.rollbackRestyle`): if any edit of the batch refuses, every
+file goes back to the pre-image, a created stylesheet is removed, `written` is
+0, and the edits that had run are reported `restyle-rolled-back` after the real
+refusal. Without that, a refused `className` (an expression the codemod cannot
+rewrite) would have left the inline values stripped and no class on the layer.
+Cmd+Z is the journal's `restore` (all files byte for byte); Cmd+Shift+Z posts
+the same edits again.
+
+A refusal the client can know (a name taken, a layer computed in code, a
+generated `.map` row) is a sentence in the name popover or a warning toast
+("Style not applied"), never a silent no-op. Not built: hover preview of a
+style on the canvas (an inline value would mask it), multi-selection, and
+breakpoint-aware create.
+
 ## §11. What an inspector gesture costs the undo stack
 
 Two defects made Ctrl+Z read as broken from the Properties panel. Both were

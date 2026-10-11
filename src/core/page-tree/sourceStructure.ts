@@ -92,6 +92,16 @@ import {
 import { listRowRefusalMessage, type ListRowSource } from './listRowSource'
 import { isEditedLayoutNodeId } from './layoutEdit'
 
+/**
+ * What `refuseStructuralEdit` is asked. A `reparent` names the container it
+ * lands in; every other gesture may name the sibling it is written against
+ * (`reorder` needs one, the rest ignore it). One shape per gesture so a move
+ * with no destination is not a question that can be asked.
+ */
+export type StructuralEditQuestion =
+  | { kind: 'reparent'; node: SourceStructureNode; destination: SourceStructureNode }
+  | { kind: Exclude<StructuralEditKind, 'reparent'>; node: SourceStructureNode; anchor?: SourceStructureNode | null }
+
 /** The structural gestures the editor offers. One refusal vocabulary for all of them. */
 export type StructuralEditKind =
   | 'reorder'
@@ -120,12 +130,6 @@ export type StructuralRefusalReason =
   | 'wrap'
   | 'group'
   | 'ungroup'
-  // K3 — the wrapper is doing more than holding its children (a handler, a
-  // ref, a `key`, a spread, or a component tag), so dissolving it would drop
-  // behaviour the code relies on. Decided by the AST alone
-  // (`unwrapJsxElement`), which is why it arrives at save time like
-  // `out-of-scope` rather than from the id.
-  | 'has-behaviour'
   // `struct-11` — the container a group would write cannot legally sit where
   // it would land, or cannot legally hold what it would hold: a `<div>` inside
   // a `<p>`, any wrapper inside a `<ul>`, a wrapper around an `<li>`. Decided
@@ -180,14 +184,8 @@ const GESTURE: Record<StructuralEditKind, string> = {
  * lands INSIDE. It has to satisfy the same "ordinary, singly-placed element"
  * test the moved node does, and live in the same file.
  */
-export function refuseStructuralEdit(input: {
-  kind: StructuralEditKind
-  node: SourceStructureNode
-  anchor?: SourceStructureNode | null
-  /** The new parent, for `reparent`. */
-  destination?: SourceStructureNode | null
-}): StructuralRefusal | null {
-  const { kind, node, anchor, destination } = input
+export function refuseStructuralEdit(input: StructuralEditQuestion): StructuralRefusal | null {
+  const { kind, node } = input
   if (!isSourceDerivedNodeId(node.id)) return null
 
   const gesture = GESTURE[kind]
@@ -195,7 +193,7 @@ export function refuseStructuralEdit(input: {
   const placement = refusePlacement(node, gesture)
   if (placement) return placement
 
-  switch (kind) {
+  switch (input.kind) {
     case 'insert':
       // An insert is asked about the CONTAINER, not about a node that exists —
       // the new element has no id yet, and it never gets a canvas-minted one:
@@ -239,13 +237,10 @@ export function refuseStructuralEdit(input: {
       // (`has-behaviour`).
       return null
     case 'reparent': {
-      if (!destination) {
-        return {
-          reason: 'reparent',
-          message:
-            'Studio writes a move into a new parent as "put this element inside that one", so it needs a container that is itself an ordinary element in the code.',
-        }
-      }
+      // A move into a new parent always names its container (the type says so):
+      // "put this element inside that one" has no meaning without one, so there is
+      // no refusal for its absence - only for a container that cannot take it.
+      const { destination } = input
       const destinationPlacement = refusePlacement(destination, 'Moved into')
       if (destinationPlacement) {
         return {
@@ -267,6 +262,7 @@ export function refuseStructuralEdit(input: {
       break
   }
 
+  const anchor = input.anchor
   if (!anchor) {
     return {
       reason: 'no-sibling-anchor',

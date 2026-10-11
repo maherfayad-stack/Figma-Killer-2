@@ -456,37 +456,6 @@ ${source.replace('      <Button />\n', '      <Button />\n      <Button2 />\n')}
     expect(fs.readFileSync(file, 'utf8')).toBe(PAGE)
   })
 
-  it('refuses when the anchor is not a child of the container', () => {
-    const source = `export default function Page() {
-  return (
-    <section>
-      <div className="a">
-        <span>inner</span>
-      </div>
-      <p>outer</p>
-    </section>
-  )
-}
-`
-    const file = writeFixture(source)
-    const parent = locateTag(source, 'div')
-    const anchor = locateTag(source, 'p')
-
-    const result = insertJsxElement({
-      file,
-      ...parent,
-      anchorLine: anchor.line,
-      anchorCol: anchor.col,
-      position: 'after',
-      name: 'Button',
-      importSpecifier: DS,
-    })
-
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.refusal.reason).toBe('not-siblings')
-    expect(fs.readFileSync(file, 'utf8')).toBe(source)
-  })
-
   it('measures its splice against the file on disk, not a stale parsed copy', () => {
     const file = writeFixture(PAGE)
     // Parse once, then change the file underneath the parsed copy. `loadSourceFile`
@@ -792,17 +761,6 @@ export default function Page() {
 
     expect(insertJsxElement({ file, ...at, name: 'div', children: [] })).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toContain('<div />')
-  })
-
-  it('refuses a void element given nested children', () => {
-    const file = writeFixture(PAGE)
-    const at = locateTag(PAGE, 'section')
-
-    const result = insertJsxElement({ file, ...at, name: 'img', children: [{ name: 'span' }] })
-    expect(result.ok).toBe(false)
-    if (result.ok) throw new Error('unreachable')
-    expect(result.refusal.reason).toBe('void-element-children')
-    expect(fs.readFileSync(file, 'utf8')).toBe(PAGE)
   })
 
   it('escapes text inside nested levels too', () => {

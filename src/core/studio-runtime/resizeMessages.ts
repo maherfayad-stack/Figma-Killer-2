@@ -50,6 +50,29 @@ export const ResizeSnapContextSchema = Type.Object({
 })
 export type ResizeSnapContext = Static<typeof ResizeSnapContextSchema>
 
+/** An offset a positioned layer may be anchored by — a key of the element's `style={{…}}` object. */
+export const OffsetPropertySchema = Type.Union([
+  Type.Literal('left'),
+  Type.Literal('right'),
+  Type.Literal('insetInlineStart'),
+  Type.Literal('insetInlineEnd'),
+  Type.Literal('top'),
+  Type.Literal('bottom'),
+])
+export type OffsetProperty = Static<typeof OffsetPropertySchema>
+
+/**
+ * PA-8 — which offsets the node's SOURCE authors, per axis. Only the parent
+ * has the page tree and the style rules; the frame reads the offsets' used
+ * values itself. With them a W-drag on a `right`-anchored layer writes the
+ * width alone, as a portal frame's drag does (`elementResizeAnchors.ts`).
+ */
+export const ResizeAnchorsSchema = Type.Object({
+  horizontal: Type.Array(OffsetPropertySchema, { maxItems: 4 }),
+  vertical: Type.Array(OffsetPropertySchema, { maxItems: 2 }),
+})
+export type ResizeAnchors = Static<typeof ResizeAnchorsSchema>
+
 /**
  * `live-13` — which node, if any, carries resize handles right now, decided
  * by the parent (a single selection whose module can carry an inline style —
@@ -65,6 +88,7 @@ export const SetResizeTargetMessageSchema = Type.Object({
   proportional: Type.Boolean(),
   sizing: Type.Optional(ResizeSizingMarkersSchema),
   snap: Type.Optional(ResizeSnapContextSchema),
+  anchors: Type.Optional(ResizeAnchorsSchema),
 })
 
 /** A committed size, as the source will spell it: an integer pixel count. Bounded so a forged value can never reach the store as an absurd width. */
@@ -87,6 +111,9 @@ export const ResizeCommitPatchSchema = Type.Object(
     left: Type.Optional(CssPixelOffsetSchema),
     insetInlineStart: Type.Optional(CssPixelOffsetSchema),
     top: Type.Optional(CssPixelOffsetSchema),
+    right: Type.Optional(CssPixelOffsetSchema),
+    insetInlineEnd: Type.Optional(CssPixelOffsetSchema),
+    bottom: Type.Optional(CssPixelOffsetSchema),
     flex: Type.Optional(Type.Union([Type.Literal(FLEX_MAIN_FIXED_VALUE), Type.Null()])),
     alignSelf: Type.Optional(Type.Null()),
     justifySelf: Type.Optional(Type.Null()),

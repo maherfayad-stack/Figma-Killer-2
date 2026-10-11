@@ -133,6 +133,28 @@ export interface InsertJsxRefusal {
   message: string
 }
 
+/**
+ * G-7 - a void element (`<img>`, `<input>`) cannot hold children, so nested
+ * elements asked of one have nowhere to go inside it. The nearest honest place
+ * is right after it, at the same level: the void element is written bare and its
+ * children follow as siblings (all of it still one splice). Text has no such
+ * place - a bare text node beside an element is the mixed content `InsertJsxChildren`
+ * rules out - so a void element asked to hold TEXT still refuses, in
+ * {@link validateSubtree}. Applies to intrinsic tags only; a component named like
+ * a void element is a component.
+ */
+export function liftVoidChildren(nodes: readonly InsertJsxNode[]): InsertJsxNode[] {
+  return nodes.flatMap((node): InsertJsxNode[] => {
+    // Deepest first: a void element nested in a container lifts within that container.
+    const children = Array.isArray(node.children) ? liftVoidChildren(node.children) : node.children
+    const lifted: InsertJsxNode = children === node.children ? node : { ...node, ...(children === undefined ? {} : { children }) }
+    if (node.importSpecifier !== undefined || !VOID_HTML_ELEMENTS.has(node.name.toLowerCase())) return [lifted]
+    if (!Array.isArray(children) || children.length === 0) return [lifted]
+    const { children: _held, ...bare } = lifted
+    return [bare, ...children]
+  })
+}
+
 /** One refusal, in the shape both codemods return it. */
 export function refuse(reason: InsertJsxRefusalReason, message: string): { ok: false; refusal: InsertJsxRefusal } {
   return { ok: false, refusal: { reason, message } }

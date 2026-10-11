@@ -49,6 +49,7 @@ export { classifyJsxTagKind } from './jsxTagKind'
 export type { JsxTagKind } from './jsxTagKind'
 export {
   isPropWritableToSource,
+  canUnbindProp,
   isPropPatchWritableToSource,
   isStyleWritableToSource,
   isStylePatchWritableToSource,
@@ -100,6 +101,7 @@ export type { UnrollListEdit, UnrollListPlan } from './listRowUnroll'
 // element "inside the page" means, and whether a selection is one run (K3).
 export {
   previewStructuralGroup,
+  isSiblingRun,
   previewStructuralMove,
   resolveContainerAnchor,
   resolveSourceContainer,
@@ -339,6 +341,14 @@ export {
   IMPORTED_RULE_TIMESTAMP,
   isImportedStyleRuleId,
 } from './styleRuleOrigin'
+
+export {
+  StyleLandingRungSchema,
+  StyleLandingSchema,
+  styleLandingNeedsJournal,
+  styleLandingText,
+} from './styleLanding'
+export type { StyleLanding, StyleLandingRung } from './styleLanding'
 
 export { getNodeDisplayName, getNodeHtmlTag, getNodeClassNames } from './nodeDisplayName'
 

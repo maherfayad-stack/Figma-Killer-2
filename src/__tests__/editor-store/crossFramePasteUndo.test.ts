@@ -2,8 +2,9 @@
  * P3-D / ERR-8 — ⌘Z after a CROSS-FRAME paste takes the copy back out.
  *
  * The paste is a `transplant` with `copy: true` into another page's file; its
- * undo deletes what the write created. A board re-read that lands the copy is
- * simulated, as the real reload does.
+ * undo is the undo journal's `restore` (G-1): a copy may have written state and
+ * constants beside its markup, which deleting what it made would leave behind.
+ * A board re-read that lands the copy is simulated, as the real reload does.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { useEditorStore } from '@site/store/store'
@@ -27,6 +28,7 @@ const D = `${HOME}:5:7`
 const COPY = `${HOME}:6:7`
 const ABOUT_MAIN = `${ABOUT}:3:5`
 const H2 = `${ABOUT}:4:7`
+const TOKEN = 'a'.repeat(32)
 
 function el(id: string, parentId: string | undefined, children: string[] = []): PageNode {
   return { id, moduleId: children.length > 0 ? 'base.container' : 'base.text', props: {}, breakpointOverrides: {}, children, classIds: [], ...(parentId ? { parentId } : {}) }
@@ -60,7 +62,7 @@ beforeEach(() => {
       const copy = edits.some((edit) => edit.kind === 'transplant')
       boardHasCopy = copy
       return new Response(
-        JSON.stringify({ ok: true, written: edits.length, skipped: 0, shifted: true, sharedComponents: false, touchedFiles: [ABOUT, HOME], createdNodeIds: copy ? [COPY] : [], removed: [] }),
+        JSON.stringify({ ok: true, written: edits.length, skipped: 0, shifted: true, sharedComponents: false, touchedFiles: [ABOUT, HOME], createdNodeIds: copy ? [COPY] : [], removed: [], ...(copy ? { undoToken: TOKEN } : {}) }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       )
     }
@@ -114,10 +116,10 @@ describe('ERR-8 — ⌘Z after a cross-frame paste', () => {
     store().undo()
     await settle()
     expect(posted[0]).toEqual([expect.objectContaining({ kind: 'transplant', nodeId: H2, copy: true })])
-    expect(posted[1]).toEqual([{ kind: 'delete', nodeId: COPY }])
+    expect(posted[1]).toEqual([{ kind: 'restore', nodeId: `undo-journal:${TOKEN}`, token: TOKEN }])
   })
 
-  it('deletes the copy the paste made, in the file it landed in', async () => {
+  it('restores the files the paste changed, byte for byte', async () => {
     store().setActivePage('about')
     expect(store().copyNode(H2)).toBe(true)
     store().setActivePage('home')
@@ -129,6 +131,6 @@ describe('ERR-8 — ⌘Z after a cross-frame paste', () => {
     store().undo()
     await settle()
     expect(toasts().filter((toast) => toast.kind !== 'info')).toEqual([])
-    expect(posted[1]).toEqual([{ kind: 'delete', nodeId: COPY }])
+    expect(posted[1]).toEqual([{ kind: 'restore', nodeId: `undo-journal:${TOKEN}`, token: TOKEN }])
   })
 })

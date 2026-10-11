@@ -21,7 +21,8 @@ import {
   type FreeMoveStep,
   type FreeMoveStyleInput,
 } from '@site/canvas/canvasFreeMove'
-import { authoredOffsets, type NudgeOffsetProperty } from '@site/canvas/canvasNodeArrowMove'
+import { authoredOffsets } from '@site/canvas/canvasNodeArrowMove'
+import type { OffsetProperty } from '@core/studio-runtime'
 import { isPositionedFreely } from '@core/studio-runtime'
 import { SNAP_THRESHOLD_SCREEN_PX } from '@core/studio-runtime'
 import { createInlineStylePreview } from '@site/canvas/elementResizeInlinePreview'
@@ -38,7 +39,7 @@ function style(overrides: Partial<FreeMoveStyleInput> = {}): FreeMoveStyleInput 
   }
 }
 
-const NOTHING_AUTHORED: ReadonlySet<NudgeOffsetProperty> = new Set()
+const NOTHING_AUTHORED: ReadonlySet<OffsetProperty> = new Set()
 const BOX = { left: 40, top: 12, right: 210, bottom: 0 }
 
 describe('planFreeMoveProperties — when a coordinate write is honest', () => {

@@ -44,10 +44,13 @@ import {
   unwrapJsxElement,
   wrapJsxElement,
   wrapJsxElements,
+  type CarriedDeclaration,
   frameJsxElements,
   type CreatedJsxLocation,
+  type RowRef,
 } from '@core/ast-codemods'
 import { designSystemImportSpecifier } from '@core/page-parser'
+import { isInlinedNodeId } from '@core/page-tree'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { DesignSystemImportSchema, InsertNodeSchema, InsertPropsSchema } from './studioInsertJsxSchemas'
 
@@ -201,9 +204,10 @@ const WrapEditSchema = Type.Object({
  * in source order — not one `nodeIds` array, because every other part of the
  * save route (bottom-to-top ordering, the touched-file set, the containment
  * guard) is keyed on `nodeId` and a group must sort by the topmost position it
- * changes. The codemod re-derives the run from the AST and refuses
- * (`not-contiguous`) if anything unnamed sits between the ends, so a
- * hand-crafted batch cannot widen the span.
+ * changes. The codemod re-derives the run from the AST: an unbroken run is one
+ * span wrapped in place, and anything else is GATHERED (G-7,
+ * `gatherGroupRun.ts`) - only the named elements move, so a hand-crafted batch
+ * cannot widen what the container holds.
  *
  * ⌘G on ONE element is not this kind: it is the existing `wrap`, unchanged.
  *
@@ -238,11 +242,10 @@ const GroupEditSchema = Type.Object({
  * children take its place at its own index, and the container's own bytes go.
  *
  * `nodeId` is the container, and it is the only field: everything else is
- * decided by what is written at that location. The codemod refuses
- * (`has-behaviour`) when the container carries anything but
- * `className`/`style`/`id`/`data-*`, because deleting an element that also
- * carries a handler, a ref, a `key` or a spread would drop behaviour no undo
- * in the editor can explain.
+ * decided by what is written at that location. A container carrying anything
+ * but `className`/`style`/`id`/`data-*` (a handler, a ref, a `key`, a spread,
+ * or a component tag) is KEPT, emptied (G-7) - deleting it would drop behaviour
+ * the code relies on.
  */
 const UngroupEditSchema = Type.Object({
   kind: Type.Literal('ungroup'),
@@ -298,6 +301,14 @@ const TransplantEditSchema = Type.Object({
   anchorNodeId: Type.Optional(Type.String()),
   position: Type.Optional(Type.Union([Type.Literal('before'), Type.Literal('after')])),
   copy: Type.Optional(Type.Boolean()),
+  /** G-1c - `nodeId` is a `.map` row's TEMPLATE; this names the row copied: the array's `[` (path-guarded, in `nodeId`'s file), its index and the length the board saw. The codemod re-derives the array from the AST (`stale-source` on a mismatch). Always a COPY. */
+  row: Type.Optional(
+    Type.Object({
+      array: Type.String(),
+      index: Type.Integer({ minimum: 0 }),
+      length: Type.Integer({ minimum: 1 }),
+    }),
+  ),
   /** A COPY into a childless parent: as on `insert`, the editor's undo is the journal's `restore`. */
   exactUndo: Type.Optional(Type.Literal(true)),
 })
@@ -410,7 +421,13 @@ export function resolveDesignSystemImports<TProps>(
  * never-guess rule.
  */
 export type StructuralEditOutcome =
-  | { ok: true; created?: readonly CreatedJsxLocation[]; relocated?: readonly CreatedJsxLocation[] }
+  | {
+      ok: true
+      created?: readonly CreatedJsxLocation[]
+      relocated?: readonly CreatedJsxLocation[]
+      /** G-1: what a `transplant` wrote into the destination besides the markup - see {@link CarriedDeclaration}. */
+      carried?: readonly CarriedDeclaration[]
+    }
   | { ok: false; reason: string; message: string }
 
 /** A single-element codemod's `created` in the outcome's list shape: its one location, or nothing when it could not confirm one. */
@@ -459,6 +476,8 @@ export function applyTransplantEdit(
   edit: Extract<StructuralEdit, { kind: 'transplant' }>,
   destination: ForeignJsxLocation | null,
   anchor: ForeignJsxLocation | null,
+  /** G-1c - the decoded, same-file `row` of the edit, or `null` when it carried none. */
+  row: RowRef | null,
 ): StructuralEditOutcome {
   if (!destination) {
     return {
@@ -477,6 +496,11 @@ export function applyTransplantEdit(
     destinationCol: destination.col,
     ...(anchor ? { anchorLine: anchor.line, anchorCol: anchor.col, position: edit.position } : {}),
     ...(edit.copy ? { copy: true } : {}),
+    ...(row ? { row } : {}),
+    // A default is the page's value only where nothing hands the component a
+    // different one: an element written in the page's own file, not one inlined
+    // out of a component (`pages/Home.tsx:4:5~components/Card.tsx:9:3`).
+    ...(isInlinedNodeId(edit.nodeId) ? {} : { propDefaults: true }),
   })
   if (!result.ok) return { ok: false, ...result.refusal }
   // `store-13`/`store-14` — the position is in the DESTINATION file, so
@@ -487,9 +511,11 @@ export function applyTransplantEdit(
   // through different fields because their undos differ — a copy is taken back
   // by deleting what it made, a move by transplanting the element home — and
   // `resolveStructuralInverse` reads exactly one of them per template.
-  return edit.copy
-    ? { ok: true, created: createdList(result.created) }
-    : { ok: true, relocated: createdList(result.created) }
+  // A row is copied whatever the gesture said, so it reports like a copy.
+  const carried = result.carriedDeclarations.filter((entry) => !entry.reused)
+  return edit.copy || row
+    ? { ok: true, created: createdList(result.created), carried }
+    : { ok: true, relocated: createdList(result.created), carried }
 }
 
 /**

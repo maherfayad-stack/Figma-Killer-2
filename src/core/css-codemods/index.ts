@@ -11,8 +11,9 @@
  * `POST /admin/api/studio/save`. `classifyStylesheetEditability` (is this file
  * hand-authored at all?) runs first; then `setDeclaration`/`removeDeclaration`
  * write the declaration the cascade reads (P3-C, WB-16) — they used to write
- * the first match behind `analyzeDeclarationTarget`'s refusals, which now
- * guards only a styled-component template. `style-03` added the removal half:
+ * the first match behind a refusing analyzer, and G-5 deleted it: a style edit
+ * lands on a ladder (the declaration, an override, the element) instead of
+ * refusing. `style-03` added the removal half:
  * a cleared declaration used to reach no code path at all, so it was silently
  * restored on the next reload. `cssAtRuleScope.ts` (WB-31) names the
  * `@media`/`@container`/`@supports` block a declaration is written inside.
@@ -28,6 +29,8 @@
  */
 export {
   setDeclaration,
+  type DeclarationLanding,
+  type DeclarationSetResult,
   type DeclarationWriteOptions,
   type DeclarationWriteRefusal,
   type DeclarationWriteResult,
@@ -50,11 +53,7 @@ export {
   type KeyframesTargetRefusal,
 } from './keyframes'
 export * from './browser'
-export {
-  analyzeDeclarationTarget,
-  type DeclarationTargetAnalysis,
-  type DeclarationTargetRefusal,
-} from './analyzeDeclarationTarget'
+export { expandShorthandSide, shorthandCovers } from './shorthandCoverage'
 export {
   insertCustomProperty,
   listCustomPropertyDeclarations,
@@ -66,3 +65,12 @@ export {
   type CustomPropertyRemoveResult,
   type InsertCustomPropertyOptions,
 } from './customProperty'
+export {
+  cloneRule,
+  removeRule,
+  rewriteAttributeSelector,
+  rewriteClassSelector,
+  type CloneRuleResult,
+  type RemoveRuleResult,
+  type VariantRuleRefusal,
+} from './variantRule'
