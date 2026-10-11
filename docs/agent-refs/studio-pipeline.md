@@ -638,6 +638,35 @@ by far the largest bucket.
 
 ---
 
+## Component-definition kinds (CV-3)
+
+`add-variant`, `remove-variant` and `add-component-prop` write a component's
+DEFINITION (its union, the stylesheet rule or lookup entry that styles each
+value, its signature), not a call site. All three are journaled: the batch
+records every file the plan will write before the first write, and ⌘Z is
+`restore`. Rules you will trip over:
+
+- `nodeId` is the component's declaration (`file:line:col`, the catalog's
+  `line`/`column`) + `exportName`; **no range, selector or path from the client
+  is a write target** — `variantEditPlan.ts` re-reads all of it from disk.
+- `variantEditTouchedFiles` plans ONCE before the batch (for the journal's
+  file set); the apply reuses that plan only while every file still holds the
+  text it was made against. `studioVariantWriteback.ts` must not import
+  `studioEditRouting.ts` (the routing imports it); the canonical-path rule is
+  injected.
+- A `.css` file is a legitimate write target here and in the journal
+  (`isJournalableRel`), under the CSS writeback's containment.
+- `reload-scope` rule 5: a touched component file whose gallery count differs
+  from the cache's widens (a gallery page appears or vanishes). Gallery cache
+  keys are `component-gallery:<pageId>@<file>`.
+- Send a variant edit alone: its writes land above and below other edits'
+  `line:col`s, and the batch's bottom-to-top order cannot know where.
+
+Full contract and refusals: `docs/features/studio-import.md`, "Add variant,
+Remove variant, Add property (CV-3)".
+
+---
+
 ## Structure decisions you will trip over
 
 **A call site is an instance, not a wrapper (WS-4.2, shipped).** `<SheetShell/>`

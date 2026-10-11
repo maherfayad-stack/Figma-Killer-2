@@ -127,7 +127,7 @@ function sourceMember(input: VariantPropInput, styled: readonly string[]): strin
 }
 
 function unreadable(rel: string): { ok: false; refusal: VariantPlanRefusal } {
-  return refuse('file-unreadable', `Studio could not read ${rel}, so nothing was written.`)
+  return refuse('file-unreadable', `Studio could not read ${rel}, or it is outside the files Studio may write, so nothing was written.`)
 }
 
 function membersWithOrigin(input: VariantPropInput): { members: Array<VariantMember & { origin: SourceRange }>; file: string } | VariantPlanRefusal {

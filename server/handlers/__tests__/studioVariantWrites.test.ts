@@ -268,6 +268,25 @@ describe('add-variant — refusals leave every file byte-identical', () => {
     expect(snapshot()).toEqual(before)
   })
 
+  it('refuses a stylesheet reached through a link that lands outside the project, writing neither it nor the union', () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-variant-link-'))
+    try {
+      fs.writeFileSync(path.join(outside, 'Chip.css'), '.btn-info { color: blue; }\n.btn-warn { color: orange; }\n')
+      // A junction (a directory link needing no privilege on Windows) inside the project that leads out of it.
+      fs.symlinkSync(outside, abs('components/styles'), 'junction')
+      write('components/Chip.tsx', CHIP.replace("import styles from './Chip.module.css'", "import './styles/Chip.css'").replace('styles[tone]', '`btn btn-${tone}`'))
+      const before = read('components/Chip.tsx')
+      const result = batch(addDanger())
+      expect(result.written).toBe(0)
+      expect(result.refusals.map((refusal) => refusal.reason)).toEqual(['file-unreadable'])
+      expect(read('components/Chip.tsx')).toBe(before)
+      expect(fs.readFileSync(path.join(outside, 'Chip.css'), 'utf8')).toBe('.btn-info { color: blue; }\n.btn-warn { color: orange; }\n')
+    } finally {
+      fs.rmSync(abs('components/styles'), { recursive: true, force: true })
+      fs.rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
   it('never writes outside the project: a node id with .. or an absolute path decodes to nothing', () => {
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-variant-outside-'))
     try {

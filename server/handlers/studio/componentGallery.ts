@@ -26,7 +26,8 @@
  *   its props are recorded in `codeProps` and the instance is locked. The
  *   inlined subtree is the shared component's: an edit there is a
  *   shared-component edit that lands on every instance, and the editor already
- *   says so. CV-3 (Add variant) is what makes the axes writable.
+ *   says so. The axes are written through the component's definition (CV-3:
+ *   `studioVariantWriteback.ts`), never through a cell.
  *
  * The cell grid itself is `planVariantGrid` (cap, pinned axes): this module
  * only turns a plan into nodes.

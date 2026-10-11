@@ -382,8 +382,8 @@ skipped like any stale step.
 
 ### The undo journal — the one-shot writes (P3-F: ERR-2, DET-4)
 
-A delete, a detach, a swap and an extract replace source text no edit kind can
-describe: the deleted element's own bytes, the call site a detach inlined, the
+A delete, a detach, a swap, an extract and (CV-3) Add/Remove variant and Add
+property replace source text no edit kind can describe: the deleted element's own bytes, the call site a detach inlined, the
 attributes a swap dropped. So their undo is not an inverse edit. It is the
 server's **undo journal** (`server/handlers/studio/undoJournal.ts`): the
 editor's `/save` batch (`journal: true`, `studioBatchUndoJournal.ts`) reads
@@ -416,7 +416,10 @@ The rules that keep it narrow:
   path; the folder and entry are refused if reached through a link; an entry is
   size-capped (8 MiB) and TypeBox-validated; every `rel` is re-derived through
   `canonicalSourceRel`, so an entry naming anything outside app source is
-  `restore-unavailable`, never a write.
+  `restore-unavailable`, never a write. App source includes (CV-3) a plain
+  hand-authored `.css` — a variant's rule lives there — under the CSS
+  writeback's own containment (`isJournalableRel`); `.studio/`, `.git/`,
+  `node_modules`, build output and `.min.css` are never journaled.
 - **All or none, even on failure.** A write that throws part-way puts back
   the files already restored and refuses `restore-failed`; the entry survives
   for a retry.
