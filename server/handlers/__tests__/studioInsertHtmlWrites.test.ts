@@ -164,7 +164,8 @@ export default function Classes() {
       'pages/Classes.tsx',
       'pages/classes.css',
     ])
-    expect(result.createdNodeIds).toHaveLength(2)
+    // One root element, however deep it goes: the board selects the paste's root.
+    expect(result.createdNodeIds).toHaveLength(1)
   })
 
   it('one restore puts the page and the stylesheet back byte for byte', () => {
