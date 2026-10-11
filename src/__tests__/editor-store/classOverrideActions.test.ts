@@ -45,7 +45,7 @@ const tierRule: StyleRule = {
   kind: 'class',
   selector: '.tier',
   order: 0,
-  styles: { padding: '8px' },
+  styles: { padding: '8px', color: 'var(--probe-accent)' },
   contextStyles: {},
   createdAt: 1,
   updatedAt: 1,
@@ -195,7 +195,7 @@ describe('a class edit on the root of a component instance', () => {
     // This instance shows it; the other and the shared rule do not.
     expect((store().site!.pages[0]!.nodes[ROOT_A]!.inlineStyles as { paddingTop?: string }).paddingTop).toBe('20px')
     expect(paddingOf(ROOT_B)).toBeUndefined()
-    expect(store().site!.styleRules[RULE_ID]!.styles).toEqual({ padding: '8px' })
+    expect(store().site!.styleRules[RULE_ID]!.styles).toEqual({ padding: '8px', color: 'var(--probe-accent)' })
     // Not a history entry, and the autosave diff does not write the preview to the element.
     expect(store().canUndo).toBe(false)
     expect(collectNodeDiffEdits(store().site!.pages, undefined).edits).toEqual([])
@@ -224,9 +224,6 @@ describe('a class edit on the root of a component instance', () => {
 
   it('a colour set over a variable binding is the instance alone, and the notice says the component keeps the variable', async () => {
     stubFetch([{ undoToken: TOKEN }])
-    const bound = { ...tierRule, styles: { padding: '8px', color: 'var(--probe-accent)' } } as StyleRule
-    store().loadSite(makeSite({ pages: [page()], styleRules: { [RULE_ID]: bound } }))
-    store().setActivePage(PAGE_ID)
     store().overrideClassOnInstance({ nodeId: ROOT_A, classId: RULE_ID, patch: { color: '#00aa00' }, contextId: null })
     await waitFor(() => saveCalls.length === 1)
     // The shared rule keeps its binding in the store as on disk; only the override edit carries the literal.
@@ -239,9 +236,6 @@ describe('a class edit on the root of a component instance', () => {
 
   it('a value set to another variable is not reported as a replaced binding', async () => {
     stubFetch([{ undoToken: TOKEN }])
-    const bound = { ...tierRule, styles: { color: 'var(--probe-accent)' } } as StyleRule
-    store().loadSite(makeSite({ pages: [page()], styleRules: { [RULE_ID]: bound } }))
-    store().setActivePage(PAGE_ID)
     store().overrideClassOnInstance({ nodeId: ROOT_A, classId: RULE_ID, patch: { color: 'var(--brand)' }, contextId: null })
     await waitFor(() => currentToasts().some((toast) => toast.title === 'Changed on this Tier only'))
     expect(currentToasts().find((candidate) => candidate.title === 'Changed on this Tier only')!.body).not.toContain('keeps the variable')
