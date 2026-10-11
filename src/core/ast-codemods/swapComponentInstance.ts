@@ -17,7 +17,7 @@ import { createWorkspaceProject, getFunctionLikeNode, resolveExportedDeclaration
 import { findJsxElementAtLocationOrThrow, loadSourceFile } from './locateJsxElement'
 import { buildParamBindings } from './detachComponent'
 import { relativeSpecifier, removeImportIfLastUsage } from './importReconcile'
-import { planImportBindings } from './jsxImportEdits'
+import { planImportBindings, type ImportBindingStyle } from './jsxImportEdits'
 
 export interface SwapComponentInstanceParams {
   /** Absolute path to the page file holding the call site. */
@@ -98,6 +98,25 @@ function resolveNewComponentParams(
   return buildParamBindings(fn)
 }
 
+/**
+ * How the new component is exported from its own file: `export default function Card` is imported as
+ * `import Card from`, never as `{ Card }` (a named import of a default export does not compile, round-4 N2). A
+ * target this cannot read keeps the named form Studio writes for components it authors.
+ */
+function exportStyleOf(project: Project, workspaceRoot: string, source: 'local' | 'package', file: string, name: string): ImportBindingStyle {
+  if (source !== 'local') return 'named'
+  const abs = path.resolve(workspaceRoot, file)
+  const target = project.getSourceFile(abs) ?? tryAddSourceFile(project, abs)
+  if (!target) return 'named'
+  const fn = target.getFunction(name)
+  if (fn) return fn.isDefaultExport() ? 'default' : 'named'
+  if (target.getVariableDeclaration(name)) {
+    const assignment = target.getExportAssignment((candidate) => !candidate.isExportEquals())
+    return assignment?.getExpression().getText() === name && !target.getExportedDeclarations().has(name) ? 'default' : 'named'
+  }
+  return 'named'
+}
+
 function tryAddSourceFile(project: Project, abs: string): SourceFile | undefined {
   try {
     return project.addSourceFileAtPath(abs)
@@ -145,7 +164,7 @@ export function swapComponentInstance(params: SwapComponentInstanceParams): Swap
     : newComponentFile
   // WB-19 — the local name the new component is written by: its own, an
   // existing import's, or an alias that shadows nothing.
-  const bindings = planImportBindings(sourceFile, new Map([[newComponentName, { specifier }]]))
+  const bindings = planImportBindings(sourceFile, new Map([[newComponentName, { specifier, style: exportStyleOf(project, workspaceRoot, newComponentSource, newComponentFile, newComponentName) }]]))
   const localName = bindings.localName(newComponentName)
   const requirement = bindings.required.get(localName)!
 
@@ -190,20 +209,27 @@ export function swapComponentInstance(params: SwapComponentInstanceParams): Swap
   }
 
   // Add the import — unless the file already binds this export to `localName`.
+  const style = requirement.style ?? 'named'
   const alreadyImported = sourceFile
     .getImportDeclarations()
     .some(
       (declaration) =>
         !declaration.isTypeOnly() &&
         declaration.getModuleSpecifierValue() === specifier &&
-        declaration.getNamedImports().some((named) => !named.isTypeOnly() && (named.getAliasNode() ?? named.getNameNode()).getText() === localName),
+        (style === 'default'
+          ? declaration.getDefaultImport()?.getText() === localName
+          : declaration.getNamedImports().some((named) => !named.isTypeOnly() && (named.getAliasNode() ?? named.getNameNode()).getText() === localName)),
     )
   if (!alreadyImported) {
     const imported = requirement.imported ?? localName
-    sourceFile.addImportDeclaration({
-      moduleSpecifier: specifier,
-      namedImports: [imported === localName ? localName : { name: imported, alias: localName }],
-    })
+    const sameModule = style === 'default' ? sourceFile.getImportDeclaration((declaration) => !declaration.isTypeOnly() && declaration.getModuleSpecifierValue() === specifier && !declaration.getDefaultImport() && !declaration.getNamespaceImport()) : undefined
+    if (sameModule) sameModule.setDefaultImport(localName)
+    else {
+      sourceFile.addImportDeclaration({
+        moduleSpecifier: specifier,
+        ...(style === 'default' ? { defaultImport: localName } : { namedImports: [imported === localName ? localName : { name: imported, alias: localName }] }),
+      })
+    }
   }
   if (identifier !== localName) removeImportIfLastUsage(sourceFile, identifier)
 

@@ -276,3 +276,50 @@ describe('swapComponentInstance — refusals', () => {
     if (!result.ok) expect(result.refusal.reason).toBe('same-component')
   })
 })
+
+describe('swapComponentInstance — default exports (round-4 N2)', () => {
+  const TARGET_LOC = { newComponentName: 'ProbeCard', newComponentSource: 'local' as const, newComponentFile: 'components/ProbeCard.tsx' }
+
+  it('reuses the default import the file already has instead of adding a named one', () => {
+    write('components/ProbeCard.tsx', 'export default function ProbeCard() {\n  return <div>Card</div>\n}\n')
+    write('components/ProbeBadge.tsx', 'export default function ProbeBadge() {\n  return <span>Badge</span>\n}\n')
+    const pageFile = write('pages/Probe.tsx', [
+      "import ProbeCard from '../components/ProbeCard'",
+      "import ProbeBadge from '../components/ProbeBadge'",
+      'export default function Probe() {',
+      '  return (',
+      '    <main>',
+      '      <ProbeCard />',
+      '      <ProbeBadge />',
+      '    </main>',
+      '  )',
+      '}',
+      '',
+    ].join('\n'))
+
+    const result = swapAt(pageFile, 7, 8, TARGET_LOC)
+    expect(result.ok).toBe(true)
+    const text = read('pages/Probe.tsx')
+    expect(text.match(/ProbeCard'/g)).toHaveLength(1)
+    expect(text).not.toContain('{ ProbeCard }')
+    expect(text).toContain('<ProbeCard />')
+    expect(text).not.toContain('ProbeBadge')
+  })
+
+  it('adds a DEFAULT import when the new component is a default export the file does not import yet', () => {
+    write('components/ProbeCard.tsx', 'export default function ProbeCard() {\n  return <div>Card</div>\n}\n')
+    write('components/ProbeBadge.tsx', 'export default function ProbeBadge() {\n  return <span>Badge</span>\n}\n')
+    const pageFile = write('pages/Probe.tsx', [
+      "import ProbeBadge from '../components/ProbeBadge'",
+      'export default function Probe() {',
+      '  return <ProbeBadge />',
+      '}',
+      '',
+    ].join('\n'))
+
+    expect(swapAt(pageFile, 3, 11, TARGET_LOC).ok).toBe(true)
+    const text = read('pages/Probe.tsx')
+    expect(text).toContain("import ProbeCard from '../components/ProbeCard'")
+    expect(text).not.toContain('{ ProbeCard }')
+  })
+})

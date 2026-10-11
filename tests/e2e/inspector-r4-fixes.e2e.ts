@@ -5,11 +5,12 @@ import {
   selectInFrame,
   createAuthoredFixtureProject,
   openFixtureBoard,
+  frameForPage,
   panIntoView,
   removeFixtureProject,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
-import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
+import { canvasContentFrame } from './helpers/canvasIframe'
 
 /**
  * Round-4 inspector fixes, each replayed with a real mouse and real keys and
@@ -132,9 +133,8 @@ test.afterEach(() => {
 
 async function openBoard(page: Page): Promise<{ canvasRoot: Locator; content: FrameLocator }> {
   const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: true })
-  const frame = page.locator('[data-page-id]').first()
-  await panIntoView(page, canvasRoot, frame)
-  await expect(visibleCanvasIframe(frame)).toBeVisible({ timeout: 60_000 })
+  // The board also holds the project's Components frames, and which frame is `.first()` is board geometry: name the page.
+  const frame = await frameForPage(page, canvasRoot, 'probe')
   return { canvasRoot, content: canvasContentFrame(frame) }
 }
 
@@ -184,7 +184,7 @@ test.describe('r4 inspector fixes', () => {
     await page.waitForTimeout(6_000)
     expect(readFile('components/ProbeCard.tsx'), 'the shared component gained an inline style').not.toContain('style=')
     expect(readFile('components/ProbeCard.tsx')).toContain('className')
-    expect(await cardPaddings(content), 'the other card must keep its look (N10)').toEqual(['30px', '12px'])
+    await expect.poll(() => cardPaddings(content), { message: 'the edited card keeps 30px and the other card keeps its class after the board re-read (N10)', timeout: 30_000 }).toEqual(['30px', '12px'])
     const otherBackground = await content.locator('h3').nth(1).locator('xpath=..').evaluate((el) => getComputedStyle(el).backgroundColor)
     expect(otherBackground, 'the second card lost its .card class on the canvas').not.toBe('rgba(0, 0, 0, 0)')
 
@@ -194,5 +194,19 @@ test.describe('r4 inspector fixes', () => {
     await expect.poll(() => readFile('pages/Probe.tsx'), { timeout: 30_000 }).toBe(PROBE_TSX)
     expect(readFile('components/ProbeCard.tsx')).toBe(cardBefore)
     expect(readFile('components/ProbeCard.module.css')).toBe(CARD_CSS)
+  })
+  // N2 - the swap added `import { ProbeCard }` next to the file's own `import ProbeCard from`.
+  test('N2: swapping an instance to a default-exported component reuses the default import', async ({ page }) => {
+    const { canvasRoot, content } = await openBoard(page)
+    const badge = content.locator('span', { hasText: 'Ghost' }).first()
+    await select(page, canvasRoot, badge)
+    await page.getByRole('button', { name: 'Swap instance' }).click()
+    await page.getByTestId('instance-swap-candidate-ProbeCard').click()
+
+    await expect.poll(() => readFile('pages/Probe.tsx'), { timeout: 30_000 }).toContain('<ProbeCard variant="ghost" label="Ghost" />')
+    const text = readFile('pages/Probe.tsx')
+    expect(text, 'a named import of a default export does not compile').not.toContain('{ ProbeCard }')
+    expect(text.match(/^import .*ProbeCard.* from /gm) ?? [], 'the file must bind ProbeCard exactly once').toHaveLength(1)
+    expect(text).toContain("import ProbeCard from '../components/ProbeCard'")
   })
 })
