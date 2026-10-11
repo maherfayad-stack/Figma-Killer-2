@@ -121,6 +121,16 @@ navigation target.
 - A flow is worth reading as a git diff on its own.
 - **A link outlives the board it was drawn on.** It is about a page and an element, not board furniture: removing a frame from a board must not destroy the flow through that screen.
 
+**A write touches only the link it names.** The reader repairs on read (a bare
+`"trigger": "click"` becomes `{ kind: "click" }`, a field it does not model is
+dropped), so serializing the parsed file back out rewrote every existing link —
+a 46-line diff for one connector. `prototypeStore.ts` applies each op
+(`upsert` / `remove` / `prune`) to the file's RAW links: the named link is added,
+replaced or removed, every other entry is written back exactly as it was read
+(an edited link keeps its `origin`). Drawing, editing or deleting a link is one
+undo step (`HistoryEntry.prototype`, see `docs/reference/editor-history.md`), and
+undoing a new link restores the file byte for byte.
+
 So `@core/studio-prototype` mirrors `@core/studio-comments`: its own core module, tolerant serializer, server store and file.
 
 ---

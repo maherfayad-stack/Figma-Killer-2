@@ -10,6 +10,9 @@
  *   - Enter or blur commits the trimmed value (no-op if empty).
  *   - Escape cancels without committing.
  *
+ * `startWith` opens the field already seeded, for a row that appears BECAUSE the
+ * author just made it (a new board): the name is the next thing they type.
+ *
  * Returns a `[state, inputRef]` tuple rather than one object bundling the
  * ref together with `value`/`commit`/etc. — `eslint-plugin-react-compiler`'s
  * ref-safety analysis taints an entire returned object once any of its
@@ -25,6 +28,8 @@ import { useRef, useState, type KeyboardEvent, type RefObject } from 'react'
 interface UseInlineRenameOptions {
   /** Called with the trimmed value on commit. Never called with an empty string. */
   onCommit: (trimmedValue: string) => void
+  /** Open the field at mount, seeded with this value (and its text selected). */
+  startWith?: string
 }
 
 interface UseInlineRenameState {
@@ -38,10 +43,10 @@ interface UseInlineRenameState {
 }
 
 export function useInlineRename(
-  { onCommit }: UseInlineRenameOptions,
+  { onCommit, startWith }: UseInlineRenameOptions,
 ): [UseInlineRenameState, RefObject<HTMLInputElement | null>] {
-  const [isRenaming, setIsRenaming] = useState(false)
-  const [value, setValue] = useState('')
+  const [isRenaming, setIsRenaming] = useState(startWith !== undefined)
+  const [value, setValue] = useState(startWith ?? '')
   const inputRef = useRef<HTMLInputElement>(null)
 
   const start = (currentValue: string) => {

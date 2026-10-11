@@ -46,6 +46,7 @@ import { Input } from '@ui/components/Input'
 import { TreeChevron, TreeContainer, TreeIconSlot, TreeLabel, TreeRow } from '@site/ui/Tree'
 import { FileTextSolidIcon } from 'pixel-art-icons/icons/file-text-solid'
 import { useInlineRename } from '@site/hooks/useInlineRename'
+import { revealPageFrame } from '@site/canvas/canvasRevealFrame'
 import styles from './StudioPagesTree.module.css'
 
 interface StudioPagesTreeProps {
@@ -126,6 +127,7 @@ export function StudioPagesTree({ editable = true }: StudioPagesTreeProps) {
               editable={editable}
               onToggleExpand={toggleExpanded}
               onActivate={openPageInCanvas}
+              onReveal={revealPageFrame}
               onRename={renamePage}
             />
           ))}
@@ -143,6 +145,8 @@ interface PageRowProps {
   /** Handlers take the page id, so ONE stable function serves every row (see `PageRow`). */
   onToggleExpand: (pageId: string) => void
   onActivate: (pageId: string) => void
+  /** A press on the row of the page that is already open: bring its frame into view if the board has been panned away from it. */
+  onReveal: (pageId: string) => void
   onRename: (pageId: string, title: string) => void
 }
 
@@ -155,7 +159,7 @@ interface PageRowProps {
  * that started - actually changed. Its props are therefore primitives and
  * store-stable handlers that take the page id.
  */
-const PageRow = memo(function PageRow({ page, isActive, expanded, editable, onToggleExpand, onActivate, onRename }: PageRowProps) {
+const PageRow = memo(function PageRow({ page, isActive, expanded, editable, onToggleExpand, onActivate, onReveal, onRename }: PageRowProps) {
   const [rename, renameInputRef] = useInlineRename({ onCommit: (title) => onRename(page.id, title) })
 
   // Capture phase — fires before any click inside this row (the header, or a
@@ -163,7 +167,13 @@ const PageRow = memo(function PageRow({ page, isActive, expanded, editable, onTo
   // page by the time selection/mutation logic runs. Mirrors
   // `BoardFramesLayer`'s `handleActivateCapture`.
   const handleActivateCapture = () => {
-    if (!isActive) onActivate(page.id)
+    // A row is a request for that page: open it, and put its frame in front of
+    // the author when the board is looking somewhere else.
+    if (isActive) onReveal(page.id)
+    else {
+      onActivate(page.id)
+      onReveal(page.id)
+    }
   }
 
   return (

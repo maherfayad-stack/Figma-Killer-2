@@ -381,8 +381,10 @@ A `BoardFrame` can carry its OWN `axes?: Partial<PreviewAxes>` (`direction`/
 overriding the board default PER AXIS via `IframeFrameSurface.tsx`'s
 `axesOverride` prop → `useApplyPreviewAxes`'s merge. "Duplicate as variant"
 (`BoardFramesLayer.tsx`'s context menu) creates a second `BoardFrame` of the
-SAME page, its own `id`, positioned beside the source — so an RTL and an LTR
-(or light/dark) copy of one screen sit side by side.
+SAME page, its own `id`, positioned beside the source in FREE space
+(`freeSlotBeside`: on the source's row, one `VARIANT_GAP` to its right, stepping
+past any frame, note or doc card in the way — never on top of the next frame) —
+so an RTL and an LTR (or light/dark) copy of one screen sit side by side.
 
 **Two frames of one page share every node id** (trap #2 — an id is a source
 location AND the one legitimate write target; the two variants parse from

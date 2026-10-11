@@ -38,6 +38,7 @@ import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { createStudioPage } from '@site/studio/studioPageRequests'
+import { revealPageFrame } from '../canvasRevealFrame'
 import { AppGridPlusGlyphIcon } from 'pixel-art-icons/icons/app-grid-plus-glyph'
 import {
   buildAddPageOptions,
@@ -155,10 +156,18 @@ export function AddPagePickerMenu({
     if (busy) return
     setBusy(true)
     try {
-      await createStudioPage(undefined, kind, board.id, placement)
+      const created = await createStudioPage(undefined, kind, board.id, placement)
       // The server already placed the frame — the reload picks up the new page
       // in `site.pages` AND the board frame that now references it.
-      requestCmsSiteReload()
+      await requestCmsSiteReload()
+      // A frame that landed at the board's far edge, or under the Properties
+      // panel, is not "in front of" the author: open the page they just made
+      // and show it whole. (A frame they drew themselves is already where they
+      // put it.)
+      if (!placement) {
+        useEditorStore.getState().openPageInCanvas(created.pageId)
+        revealPageFrame(created.pageId, { whole: true })
+      }
     } catch (err) {
       console.error('[AddPagePicker] create page failed:', err)
       pushToast({

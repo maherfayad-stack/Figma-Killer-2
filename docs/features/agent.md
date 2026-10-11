@@ -857,9 +857,9 @@ W9-6 makes both `execution: 'server'`. They write through `boardGeometry.ts`'s
 writes go through `studioStore.ts` (atomic, and never through a link) — then push
 a live-reload with `boardsChanged: true`, so an open board re-reads the file and
 the user watching sees the frame flip exactly as before. The variant's placement
-(`x = source.x + width + VARIANT_GAP`, same `y`) now comes from a single
-`VARIANT_GAP` in `@core/studio-board`, shared with `boardSlice.ts`, so the
-toolbar and the tool cannot drift apart.
+(`freeSlotBeside`: the same `y`, `x = source.x + width + VARIANT_GAP`, stepped
+past anything already there) comes from one function in `@core/studio-board`,
+shared with `boardSlice.ts`, so the toolbar and the tool cannot drift apart.
 
 `studio_upload_asset` did not move then; it moved later (security review of #248, F6). It
 posted real `FormData` to the canvas's own upload route, which serves the USER and so never

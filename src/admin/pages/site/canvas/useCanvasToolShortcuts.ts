@@ -23,7 +23,9 @@
  * at the selection exactly as the letter used to — `T` / `F` inside a
  * container target (`useInsertModule`'s default), `R` / `O` as the NEXT
  * SIBLING of the selection — and puts the tool away. A keyboard-only user is
- * never stranded by an armed tool.
+ * never stranded by an armed tool. With NOTHING selected there is nothing to
+ * place against (and the page the editor has open need not be on the board), so
+ * ⏎ makes a loose layer at the centre of the visible board instead.
  *
  * ## Why every tool toggles on its own key
  *

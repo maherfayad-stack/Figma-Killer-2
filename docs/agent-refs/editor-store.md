@@ -746,6 +746,27 @@ reduced frame set). Two hardenings live in `AdminCanvasLayout.tsx` /
 
 ---
 
+## Page and layer names are board state
+
+A Studio page is `pages/<Name>.tsx` (its id and route come from the file name)
+and a layer is a JSX element (the source has no name for it), so neither name
+can be written to the user's source. `renamePage` and `renameNode` on a source
+node therefore write **`.studio/boards.json`**: `pageNames` (page id to title)
+and `layerNames` (`{ pageId, hint: NodeHint, name }`, anchored like a prototype
+link and re-resolved by `resolveLayerNameTarget`, which accepts an id or a
+structural path only when it lands on the same kind of module). The write is
+`renamePageOnBoard` / `renameLayerOnBoard` (`boardNameActions.ts`), one
+`commitBoardChange`, so it is one undo entry, rides the boards autosave, and
+undo restores the file's bytes.
+
+The page `title` and node `label` in the site document are DERIVED from those
+names by `boardNamesSync.ts`, a store subscriber that re-applies them whenever
+`site.pages` or `boards` changes (so a reload, which hands the editor file-name
+titles and no labels, shows the names again). It only touches what it put there.
+Never set `page.title` / `node.label` for a Studio page by hand.
+
+---
+
 ## Frame multi-select and bulk actions (WS-7)
 
 **A board frame is not a node.** `boardSlice.selectedFrameIds` is a wholly

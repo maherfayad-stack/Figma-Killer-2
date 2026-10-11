@@ -23,6 +23,10 @@ import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
  *   #9  R then Enter on an empty board writes into no page that is not on the board
  *   #10 Escape in a sticky note keeps the typed text
  *   #11 a new prototype link is one undo step and rewrites no other link
+ *   #12 a new board opens with its name field up
+ *   #14 Ctrl+D and Delete work on a selected frame
+ *   #13 a page made from the Pages panel opens with its frame in view
+ *   #15 a click on a page row brings an off-screen frame into view
  *
  * SAFETY - writes only to this run's throwaway fixture under the e2e workspace.
  */
@@ -447,6 +451,105 @@ test.describe('#11 prototype links', () => {
     await expect
       .poll(() => (JSON.parse(readText('.studio/prototype.json')) as { links: unknown[] }).links.length)
       .toBe(2)
+  })
+})
+
+test.describe('#12 new board', () => {
+  test.setTimeout(240_000)
+
+  test('the first thing typed names it, and the name survives a reload', async ({ page }) => {
+    makeFixture({ 'pages/Home.tsx': HOME, '.studio/boards.json': boardsJson([frame('f-home', 'home', 0)]) })
+    await openBoard(page)
+
+    await mouseClick(page, page.getByRole('button', { name: 'New board' }))
+    // No click in the name field: the typed letters must land in it (they used to arm tools: R, F, ...).
+    await page.keyboard.type('Flows')
+    await page.keyboard.press('Enter')
+
+    await expectBoardsOnDisk(
+      (text) => (JSON.parse(text) as { boards: Array<{ name: string }> }).boards.some((board) => board.name === 'Flows'),
+      'the typed name never reached .studio/boards.json',
+    )
+    expect((JSON.parse(readText('.studio/boards.json')) as { boards: unknown[] }).boards).toHaveLength(2)
+
+    await page.reload()
+    await openBoard(page)
+    await expect(page.getByTestId('studio-boards-list').getByRole('treeitem', { name: 'Flows' })).toBeVisible({ timeout: 30_000 })
+  })
+})
+
+test.describe('#14 frame keyboard', () => {
+  test.setTimeout(240_000)
+
+  test('Ctrl+D duplicates a selected frame and Delete takes it off the board, each in one undo step', async ({ page }) => {
+    const original = boardsJson([frame('f-home', 'home', 0), frame('f-about', 'about', 900)])
+    makeFixture({ 'pages/Home.tsx': HOME, 'pages/About.tsx': ABOUT, '.studio/boards.json': original })
+    await openBoard(page)
+
+    await mouseClick(page, header(page, 'home'))
+    await page.keyboard.press('Control+d')
+    await expectBoardsOnDisk((text) => (JSON.parse(text) as ReturnType<typeof readBoards>).boards[0]!.frames.length === 3, 'Ctrl+D did not duplicate the selected frame')
+    const withCopy = readText('.studio/boards.json')
+
+    await page.keyboard.press('Delete')
+    await expectBoardsOnDisk((text) => (JSON.parse(text) as ReturnType<typeof readBoards>).boards[0]!.frames.length === 2, 'Delete did not take the selected frame off the board')
+    expect(fs.existsSync(studioFile('pages/Home.tsx')), 'Delete must never remove the page file').toBe(true)
+
+    await page.keyboard.press('Control+z')
+    await expectBoardsOnDisk((text) => text === withCopy, 'undo of Delete did not restore the board byte for byte')
+    await page.keyboard.press('Control+z')
+    await expectBoardsOnDisk((text) => text === original, 'undo of Ctrl+D did not restore the board byte for byte')
+  })
+})
+
+test.describe('#13 new page', () => {
+  test.setTimeout(300_000)
+
+  test('is opened and shown whole in the middle of the canvas, not left at the board edge', async ({ page }) => {
+    makeFixture({ 'pages/Home.tsx': HOME, '.studio/boards.json': boardsJson([frame('f-home', 'home', 0)]) })
+    const canvasRoot = await openBoard(page)
+
+    await mouseClick(page, page.getByRole('button', { name: 'Add page' }).first())
+    await mouseClick(page, page.getByRole('menuitem', { name: /Screen/ }).first())
+
+    await expect.poll(() => fs.existsSync(studioFile('pages/Page.tsx')), { timeout: 60_000, message: 'the page file was never written' }).toBe(true)
+    const created = page.locator('[data-page-id="page"]').first()
+    await expect(created).toBeAttached({ timeout: 60_000 })
+    const rootBox = (await canvasRoot.boundingBox())!
+    await expect
+      .poll(async () => {
+        const box = await created.boundingBox()
+        if (!box) return false
+        const centre = box.x + box.width / 2
+        // Centred in the visible canvas, give or take the panel inset - never at the far edge.
+        return centre > rootBox.x + rootBox.width * 0.2 && centre < rootBox.x + rootBox.width * 0.8
+      }, { timeout: 30_000, message: 'the new page frame was left at the edge of the board, out of the middle of the canvas' })
+      .toBe(true)
+  })
+})
+
+test.describe('#15 page row click', () => {
+  test.setTimeout(240_000)
+
+  test('brings the page frame into view when the board is looking elsewhere', async ({ page }) => {
+    makeFixture({
+      'pages/Home.tsx': HOME,
+      'pages/About.tsx': ABOUT,
+      '.studio/boards.json': boardsJson([frame('f-home', 'home', 0), frame('f-about', 'about', 4000)]),
+    })
+    const canvasRoot = await openBoard(page)
+    const aboutFrame = page.locator('[data-page-id="about"]').first()
+    const rootBox = (await canvasRoot.boundingBox())!
+    const insideCanvas = async (): Promise<boolean> => {
+      const box = await aboutFrame.boundingBox()
+      return box !== null && box.x < rootBox.x + rootBox.width && box.x + box.width > rootBox.x
+    }
+    expect(await insideCanvas(), 'the fixture must start with the About frame far off screen').toBe(false)
+
+    await mouseClick(page, pageRow(page, 'About'))
+
+    await expect.poll(insideCanvas, { timeout: 15_000, message: 'the About frame is still off screen after its row was clicked' }).toBe(true)
+    await expect(visibleCanvasIframe(aboutFrame)).toBeVisible({ timeout: 60_000 })
   })
 })
 

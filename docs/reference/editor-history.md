@@ -289,6 +289,12 @@ lands the undo.
   numbers shifted is exactly the bug `store-08` fixed for the site domain.
   `remapHistoryEntries` passes board entries through untouched (they carry no
   patch paths and no structural tag).
+- A **prototype-link** entry (`HistoryEntry.prototype`, `{ undo, redo }` as two
+  server ops on `.studio/prototype.json`) is also kept across a site reload for
+  the same reason, and `undo`/`redo` replay the op through
+  `POST /admin/api/studio/prototype` (one at a time, in order) and adopt the file
+  the server answers with. Removing the link a gesture added restores the file
+  byte for byte, because the server writes ops against the file's raw links.
 - A **boards** read (`loadBoards`, `markBoardsLoadFailed`) calls
   `dropBoardHistory`. A stored snapshot references the object graph the store
   held at the time; once the server hands back a different graph, replaying it

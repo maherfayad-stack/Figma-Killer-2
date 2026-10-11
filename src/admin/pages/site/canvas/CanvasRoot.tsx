@@ -66,6 +66,7 @@ import { usePrototypePlayTriggers } from './usePrototypePlayTriggers'
 import { usePrototypePlayback } from './usePrototypePlayback'
 import { useCanvasNodeInteraction } from './useCanvasNodeInteraction'
 import { useBoardFrameNudge } from './useBoardFrameNudge'
+import { useBoardFrameShortcuts } from './useBoardFrameShortcuts'
 import { useCanvasToolShortcuts } from './useCanvasToolShortcuts'
 import { useCanvasLayerCommandKeys } from './useCanvasLayerCommandKeys'
 import { useCreatedNodeFollowUp } from './createdNodeFollowUp'
@@ -401,6 +402,8 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // `board` — arrow-key frame nudge. Also broadcasts the keyup that closes an
   // arrow-nudge undo burst, for annotations as well as frames.
   useBoardFrameNudge(editable, isLive)
+  // `board` - the duplicate and delete keys for selected frames (the header menu's two items).
+  useBoardFrameShortcuts(editable, isLive)
 
   // `board` — bare-letter tool keys: V, C (comment), H (hand), K (scale), and
   // R / O / T / F arming a draw tool (P5-E, `CanvasDrawToolLayer` below).

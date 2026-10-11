@@ -61,6 +61,9 @@ export function StudioBoardsList() {
 
   const [collapsed, setCollapsed] = useState(getBoardsListCollapsed)
   const [height, setHeight] = useState(getBoardsListHeight)
+  // The board the "+" just made: its row opens with the name field up, so the
+  // next thing typed is the board's name rather than a tool shortcut.
+  const [justAddedId, setJustAddedId] = useState<string | null>(null)
 
   const canDelete = boards.length > 1
 
@@ -99,7 +102,7 @@ export function StudioBoardsList() {
           iconOnly
           aria-label="New board"
           tooltip="New board"
-          onClick={() => addBoard()}
+          onClick={() => setJustAddedId(addBoard())}
         >
           <PlusIcon size={11} aria-hidden="true" />
         </Button>
@@ -118,6 +121,7 @@ export function StudioBoardsList() {
                 board={board}
                 isActive={board.id === activeBoardId}
                 canDelete={canDelete}
+                startRenaming={board.id === justAddedId}
                 onActivate={() => setActiveBoard(board.id)}
                 onRename={(name) => renameBoard(board.id, name)}
                 onDelete={() => removeBoard(board.id)}
@@ -181,13 +185,15 @@ interface BoardRowProps {
   board: Board
   isActive: boolean
   canDelete: boolean
+  /** Mount with the name field open - see `justAddedId`. */
+  startRenaming: boolean
   onActivate: () => void
   onRename: (name: string) => void
   onDelete: () => void
 }
 
-function BoardRow({ board, isActive, canDelete, onActivate, onRename, onDelete }: BoardRowProps) {
-  const [rename, renameInputRef] = useInlineRename({ onCommit: onRename })
+function BoardRow({ board, isActive, canDelete, startRenaming, onActivate, onRename, onDelete }: BoardRowProps) {
+  const [rename, renameInputRef] = useInlineRename({ onCommit: onRename, startWith: startRenaming ? board.name : undefined })
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
 
   return (
@@ -218,6 +224,7 @@ function BoardRow({ board, isActive, canDelete, onActivate, onRename, onDelete }
           ref={renameInputRef}
           fieldSize="xs"
           autoFocus
+          onFocus={(e) => e.currentTarget.select()}
           value={rename.value}
           onChange={(e) => rename.setValue(e.target.value)}
           onKeyDown={rename.handleKeyDown}

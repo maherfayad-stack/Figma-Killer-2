@@ -124,6 +124,11 @@ the drag site — so a programmatic caller cannot produce an ungrabbable card
 either. Both cards set `overflow: visible`, because the handles sit just
 outside the box.
 
+**Escape commits.** Leaving a sticky note's editor with Escape keeps the typed
+text exactly as a click-away does (Figma's behaviour); it never restores the
+pre-edit text. Both go through one `commitText`, so the note's text is one undo
+step either way.
+
 **Right-click** opens a menu on either kind: edit, duplicate, colour (notes),
 bring to front / send to back, delete.
 
