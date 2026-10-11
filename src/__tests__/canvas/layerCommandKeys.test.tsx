@@ -25,6 +25,7 @@ import { resetSelectionStyleCommands } from '@site/canvas/selectionStyleCommands
 import { resetStyleClipboard } from '@site/canvas/layerCommands'
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
 import { registerFrameAdapter, unregisterFrameAdapter } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
+import { PortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
 import type { FrameDocumentAdapter, NodeMeasurement, NodeRect } from '@site/canvas/frameAdapter/FrameDocumentAdapter'
 import { makeNode, makePage, makeSite } from '../fixtures'
 // The module registry: ⇧A reads `canHaveChildren` to tell a container from a leaf.
@@ -218,12 +219,45 @@ describe('bring to front / send to back (IX-9)', () => {
 })
 
 describe('⇧A flex layout (IX-10)', () => {
+  /**
+   * PA-7: ⇧A reads the container and its children off the RENDERED frame (a
+   * portal frame's elements), not off the adapter's `measure` table. happy-dom
+   * has no layout, so each element answers its box from the TABLE.
+   */
+  function mountRenderedStack(): () => void {
+    const portalFrame = document.createElement('iframe')
+    document.body.appendChild(portalFrame)
+    const frameDoc = portalFrame.contentDocument!
+    frameDoc.body.setAttribute('data-breakpoint-id', 'desktop')
+    const mount = (id: string, parent: HTMLElement) => {
+      const element = frameDoc.createElement('div')
+      element.setAttribute('data-node-id', id)
+      const { x, y, width, height } = TABLE[id]!.rect
+      element.getBoundingClientRect = () =>
+        ({ x, y, left: x, top: y, width, height, right: x + width, bottom: y + height, toJSON: () => ({}) }) as DOMRect
+      element.style.display = 'block'
+      parent.appendChild(element)
+      return element
+    }
+    const stack = mount('stack', frameDoc.body)
+    mount('s1', stack)
+    mount('s2', stack)
+    const adapter = new PortalFrameAdapter(frameDoc)
+    registerFrameAdapter(portalFrame, adapter, 'desktop')
+    return () => {
+      unregisterFrameAdapter(portalFrame)
+      adapter.dispose()
+    }
+  }
+
   it('a block container of STACKED children becomes a flex COLUMN', async () => {
+    const unmountStack = mountRenderedStack()
     render(<Harness />)
     select('stack')
     expect(press({ key: 'A', code: 'KeyA', shiftKey: true })).toBe(true)
     await settle()
     expect(node('stack').inlineStyles).toMatchObject({ display: 'flex', flexDirection: 'column' })
+    unmountStack()
   })
 })
 

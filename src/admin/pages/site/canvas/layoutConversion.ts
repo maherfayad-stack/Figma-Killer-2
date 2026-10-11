@@ -81,7 +81,8 @@ function convert(parentId: string, plan: (parent: MeasuredBox, children: readonl
   const tree = selectActiveCanvasPage(state)
   const parent = tree?.nodes[parentId]
   if (!tree || !parent) return
-  const measured = measure(parentId, parent.children, (nodeId) => tree.nodes[nodeId]?.inlineStyles ?? {}, state.activeBreakpointId)
+  const inlineOf = (nodeId: string) => tree.nodes[nodeId]?.inlineStyles || {}
+  const measured = measure(parentId, parent.children, inlineOf, state.activeBreakpointId)
   if (!measured.ok) {
     pushToast({ kind: 'info', title: 'Auto layout', body: measured.reason })
     return
