@@ -160,10 +160,10 @@ export function hasUseClientDirective(source: SourceFile): boolean {
  */
 export function stateHookRefusal(destination: FunctionLike, origin: SourceFile): string | undefined {
   if (destination.isAsync()) {
-    return 'the component it is going into is an async component, and state cannot be added to one.'
+    return 'This element uses state, but the component it is going into is async and cannot hold state. Drop it into a client component.'
   }
   if (hasUseClientDirective(origin) && !hasUseClientDirective(destination.getSourceFile())) {
-    return "the file it is going into is a server component (it has no 'use client' at the top), and state cannot be added to one."
+    return 'This element uses state, but the file it is going into has no "use client" at the top and cannot hold state. Drop it into a client component.'
   }
   return undefined
 }

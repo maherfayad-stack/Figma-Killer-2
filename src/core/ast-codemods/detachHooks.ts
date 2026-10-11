@@ -254,7 +254,7 @@ export class DetachHookPlan {
     }
     // An `async` component is a server component: React never calls a hook in one.
     if (component.isAsync()) {
-      fail('uses-hooks', `${this.componentName} uses ${hook.label}(), and the component around this call site is async, which cannot call a hook.`)
+      fail('uses-hooks', `${this.componentName} uses ${hook.label}(), and the component around this call site is async, which cannot call a hook. Duplicate the component and edit the copy.`)
     }
     if (hook.state) {
       this.assertStateIsHoistable(component, hook)
@@ -278,7 +278,7 @@ export class DetachHookPlan {
     this.assertCallSiteRendersOnce(component, () =>
       fail(
         'uses-hooks',
-        `${this.componentName} keeps its own state in ${hook.label}(), and this call site sits inside a function that can run once per row or per call - hoisting one state into the page would share it between them.`,
+        `${this.componentName} keeps its own state in ${hook.label}(), and this call site can run once per row, so one hoisted state would be shared. Duplicate the component and edit the copy.`,
       ),
     )
   }
@@ -410,15 +410,15 @@ export class DetachHookPlan {
   emitLocal(preferred: string, initializer: string): string {
     const component = this.component
     if (!component) {
-      fail('body-local', `${this.componentName} computes \`${preferred}\` in its body, and this call site is not inside a function component - there is nowhere to compute it once.`)
+      fail('body-local', `${this.componentName} computes \`${preferred}\` in its body, and this call site is not inside a function component. Duplicate the component and edit the copy.`)
     }
     if (component.isAsync()) {
-      fail('body-local', `${this.componentName} computes \`${preferred}\` in its body, and the component around this call site is async, which cannot hold a computed value per render.`)
+      fail('body-local', `${this.componentName} computes \`${preferred}\` in its body, and the component around this call site is async. Duplicate the component and edit the copy.`)
     }
     this.assertCallSiteRendersOnce(component, () =>
       fail(
         'body-local',
-        `${this.componentName} computes \`${preferred}\` once per render, and this call site sits inside a function that can run once per row or per call - one value hoisted into the page would be shared between them.`,
+        `${this.componentName} computes \`${preferred}\` once per render, and this call site can run once per row, so one hoisted value would be shared. Duplicate the component and edit the copy.`,
       ),
     )
     const local = this.freshName(preferred)

@@ -289,10 +289,7 @@ function resolveTokens(
       return {
         reason: 'css-module-import-missing',
         message:
-          `this class lives in ${token.specifier}, a CSS Module, so it can only be attached as a binding ` +
-          `(e.g. \`styles.${token.local}\`) — but ${sourceFile.getBaseName()} does not import that stylesheet, and ` +
-          'adding the import would move every other pending edit in this file. Add ' +
-          `\`import styles from '${token.specifier}'\` to the file and try again.`,
+          `This class lives in the CSS Module ${token.specifier}, but this file does not import it. Add \`import styles from '${token.specifier}'\` to the file and try again.`,
       }
     }
     if (resolved.bind) pendingBinds.push(resolved.bind)
@@ -485,7 +482,7 @@ export function setJsxClassName(params: SetJsxClassNameParams): SetJsxClassNameR
       ok: false,
       refusal: {
         reason: 'spread-attribute',
-        message: 'the "className" attribute is a spread attribute — cannot edit an individual class token inside it.',
+        message: 'The "className" attribute is a spread attribute, so a single class cannot be edited in it. Edit the class in the code.',
       },
     }
   }
@@ -506,7 +503,7 @@ export function setJsxClassName(params: SetJsxClassNameParams): SetJsxClassNameR
       ok: false,
       refusal: {
         reason: 'unsupported-expression',
-        message: 'the "className" attribute has no rewritable value (a valueless shorthand, or a JSX-element/fragment initializer).',
+        message: 'The "className" attribute has no value Studio can rewrite. Set it to a string in the code.',
       },
     }
   }
@@ -517,7 +514,7 @@ export function setJsxClassName(params: SetJsxClassNameParams): SetJsxClassNameR
       ok: false,
       refusal: {
         reason: 'unsupported-expression',
-        message: 'the "className" attribute has an empty expression container ({}) — nothing to rewrite.',
+        message: 'The "className" attribute is an empty expression. Set it to a string in the code.',
       },
     }
   }
@@ -540,10 +537,7 @@ export function setJsxClassName(params: SetJsxClassNameParams): SetJsxClassNameR
           ok: false,
           refusal: {
             reason: 'template-dynamic',
-            message:
-              'className is a template literal with an interpolated value ("' +
-              expr.getText() +
-              '") — a class token could live in the dynamic part, so removing one cannot be done safely from source text alone.',
+            message: `className is a template with an interpolated value ("${expr.getText()}"), and a class could hide in the dynamic part. Remove the class in the code.`,
           },
         }
       }
@@ -618,8 +612,7 @@ export function setJsxClassName(params: SetJsxClassNameParams): SetJsxClassNameR
         refusal: {
           reason: 'css-module-binding',
           message:
-            `className is bound to a CSS Modules import ("${bindingText}") — that token comes from the module, so ` +
-            "removing it here would not remove it. Edit the class's own declaration in the stylesheet instead.",
+            `className is bound to a CSS Modules import ("${bindingText}"), so removing the token here would remove nothing. Edit the class's own declaration in the stylesheet.`,
         },
       }
     }
@@ -640,8 +633,7 @@ export function setJsxClassName(params: SetJsxClassNameParams): SetJsxClassNameR
         refusal: {
           reason: 'unsupported-call',
           message:
-            `className is set by a function call ("${expr.getText()}") this codemod does not recognize as a ` +
-            'class-name join (only cn/clsx/classNames/classnames) — a class it produces cannot be removed from source text.',
+            `className is set by a call ("${expr.getText()}") that Studio does not read as a class join (only cn, clsx, classNames and classnames). Remove the class in the code.`,
         },
       }
     }
@@ -650,8 +642,8 @@ export function setJsxClassName(params: SetJsxClassNameParams): SetJsxClassNameR
       refusal: {
         reason: 'unsupported-expression',
         message: isWrappableClassExpression(expr)
-          ? `className is set by an expression ("${expr.getText()}") — a class it produces cannot be removed from source text.`
-          : `className is set by an expression ("${expr.getText()}") that is not a class string — refusing rather than guess.`,
+          ? `className is set by an expression ("${expr.getText()}"), so a class it produces cannot be removed here. Remove the class in the code.`
+          : `className is set by an expression ("${expr.getText()}") that is not a class string. Set it to a string in the code.`,
       },
     }
   }

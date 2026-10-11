@@ -25,7 +25,7 @@ export function createImportedNodesActions(
 
   const actions: ImportedNodesActions = {
     insertImportedNodes: (parentId, fragment, opts) => {
-      if (fragment.rootIds.length === 0) return { ok: false, message: 'That HTML carried no elements to insert.' }
+      if (fragment.rootIds.length === 0) return { ok: false, message: 'That HTML carried no elements to insert. Paste HTML that has elements.' }
       // `mcp-21` — the studio-tree refusal rides the SAME guard as the
       // container check, so both reasons reach the caller as one sentence.
       const refusal = refuseImportedNodesInto(parentId, (newParentId) => {
@@ -94,7 +94,7 @@ export function createImportedNodesActions(
       })
       return insertedRootIds.length > 0
         ? { ok: true, rootIds: insertedRootIds }
-        : { ok: false, message: 'That container does not accept children.' }
+        : { ok: false, message: 'That container does not accept children. Pick a container that can hold them.' }
     },
 
   }

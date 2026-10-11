@@ -252,7 +252,7 @@ export function runCanvasFileDropPlan(plan: CanvasFileDropPlan): void {
     pushToast({
       kind: 'warning',
       title: `${plan.skipped.length} file${plan.skipped.length === 1 ? '' : 's'} left out`,
-      body: `${names} ${plan.skipped.length === 1 ? 'is not an image' : 'are not images'}, so only the images were added.`,
+      body: `${names} ${plan.skipped.length === 1 ? 'is not an image' : 'are not images'}. Drop images only.`,
       location: 'site-editor',
     })
   }
@@ -349,7 +349,7 @@ async function landOnCanvas(sources: readonly LandableImageSource[], at: { x: nu
       landed = requirePublicAsset(await landImageSource(source))
     } catch (err) {
       console.error('[canvas-file-drop] landing a dropped image on the free canvas failed:', err)
-      failures.push({ name: imageSourceName(source), message: getErrorMessage(err, 'The image could not be saved to your project.') })
+      failures.push({ name: imageSourceName(source), message: getErrorMessage(err, 'The image could not be saved to your project. Try dropping it again.') })
       continue
     }
     const size = landed.width !== null && landed.height !== null && landed.width > 0 && landed.height > 0

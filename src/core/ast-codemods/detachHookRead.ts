@@ -256,7 +256,7 @@ export function readComponentHooks(fn: FunctionLike, componentName: string): Mov
     if (identity === undefined && !state) {
       fail(
         'uses-hooks',
-        `${componentName} uses ${name} - detach moves a hook that reads a context (like useLanguage()) or holds state (useState, useReducer, useRef); effects and other hooks stay with a component.`,
+        `${componentName} uses ${name}, and detach only moves hooks that read a context or hold state. Duplicate the component and edit the copy.`,
       )
     }
     const decl = call.getParent()
@@ -268,12 +268,12 @@ export function readComponentHooks(fn: FunctionLike, componentName: string): Mov
       statement.getParent() !== body ||
       statement.getDeclarationKind() !== VariableDeclarationKind.Const
     ) {
-      fail('uses-hooks', `${componentName} calls ${name} somewhere other than a top-level \`const\` of its body, so there is no single call to move.`)
+      fail('uses-hooks', `${componentName} calls ${name} somewhere other than a top-level \`const\` of its body, so there is no single call to move. Duplicate the component and edit the copy.`)
     }
     if (state) {
       for (const type of call.getTypeArguments()) {
         if (!isPortableType(type)) {
-          fail('uses-hooks', `${componentName} types ${name}<${type.getText()}> with a type the page does not have, which detach can't carry over.`)
+          fail('uses-hooks', `${componentName} types ${name}<${type.getText()}> with a type the page does not have. Duplicate the component and edit the copy.`)
         }
       }
     }
@@ -290,8 +290,8 @@ export function readComponentHooks(fn: FunctionLike, componentName: string): Mov
       fail(
         'uses-hooks',
         state
-          ? `${componentName} starts ${name} from a value its body computes, which the enclosing component does not have.`
-          : `${componentName} passes ${name} a value its body computes, which the enclosing component does not have.`,
+          ? `${componentName} starts ${name} from a value its body computes, which the enclosing component does not have. Duplicate the component and edit the copy.`
+          : `${componentName} passes ${name} a value its body computes, which the enclosing component does not have. Duplicate the component and edit the copy.`,
       )
     }
     if (state) {
@@ -378,7 +378,7 @@ export function findHookBindingForName(fn: FunctionLike, name: string): Componen
 function readContextBinding(nameNode: Node, componentName: string, hookName: string): ComponentHook['binding'] {
   if (Node.isIdentifier(nameNode)) return { kind: 'whole', decl: nameNode.getParentOrThrow(), local: nameNode.getText() }
   if (!Node.isObjectBindingPattern(nameNode)) {
-    fail('uses-hooks', `${componentName} unpacks ${hookName}() in a way detach can't move (an array pattern).`)
+    fail('uses-hooks', `${componentName} unpacks ${hookName}() in a way detach cannot move (an array pattern). Duplicate the component and edit the copy.`)
   }
   const keys: HookKey[] = []
   for (const element of nameNode.getElements()) {
@@ -386,7 +386,7 @@ function readContextBinding(nameNode: Node, componentName: string, hookName: str
     const property = element.getPropertyNameNode()
     const key = property ? (Node.isIdentifier(property) ? property.getText() : Node.isStringLiteral(property) ? property.getLiteralValue() : undefined) : local.getText()
     if (element.getDotDotDotToken() || element.getInitializer() || !Node.isIdentifier(local) || key === undefined) {
-      fail('uses-hooks', `${componentName} unpacks ${hookName}() with a default, a rest or a nested pattern, which detach can't move.`)
+      fail('uses-hooks', `${componentName} unpacks ${hookName}() with a default, a rest or a nested pattern, which detach cannot move. Duplicate the component and edit the copy.`)
     }
     keys.push({ decl: element, key, local: local.getText() })
   }
@@ -396,7 +396,7 @@ function readContextBinding(nameNode: Node, componentName: string, hookName: str
 function readStateBinding(nameNode: Node, componentName: string, hookName: string): StateHook['binding'] {
   if (Node.isIdentifier(nameNode)) return { kind: 'whole', decl: nameNode.getParentOrThrow(), local: nameNode.getText() }
   if (!Node.isArrayBindingPattern(nameNode)) {
-    fail('uses-hooks', `${componentName} unpacks ${hookName}() in a way detach can't move (an object pattern).`)
+    fail('uses-hooks', `${componentName} unpacks ${hookName}() in a way detach cannot move (an object pattern). Duplicate the component and edit the copy.`)
   }
   return readSlots(nameNode, componentName, hookName)
 }
@@ -407,7 +407,7 @@ function readSlots(pattern: ArrayBindingPattern, componentName: string, hookName
     if (Node.isOmittedExpression(element)) return
     const local = element.getNameNode()
     if (element.getDotDotDotToken() || element.getInitializer() || !Node.isIdentifier(local)) {
-      fail('uses-hooks', `${componentName} unpacks ${hookName}() with a default, a rest or a nested pattern, which detach can't move.`)
+      fail('uses-hooks', `${componentName} unpacks ${hookName}() with a default, a rest or a nested pattern, which detach cannot move. Duplicate the component and edit the copy.`)
     }
     slots.push({ decl: element, index, local: local.getText() })
   })

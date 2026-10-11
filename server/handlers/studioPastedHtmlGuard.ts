@@ -71,10 +71,10 @@ export function guardPastedNodes(roots: readonly PastedNode[]): PastedGuardResul
       return refuse(`A paste may write at most ${MAX_PASTED_ELEMENTS} elements nested ${MAX_PASTED_DEPTH} deep. Paste a section at a time.`)
     }
     if (node.importSpecifier !== undefined || node.designSystemImport !== undefined) {
-      return refuse('Pasted HTML is written as plain HTML elements; a component import cannot come with it.')
+      return refuse('Pasted HTML is written as plain HTML elements, so it cannot carry a component import. Paste plain HTML.')
     }
     if (!isSafeIntrinsicTagName(node.name) || REFUSED_TAGS.has(node.name.toLowerCase())) {
-      return refuse(`"${node.name}" is not an HTML element Studio will write from a paste.`)
+      return refuse(`"${node.name}" is not an HTML element Studio will write from a paste. Remove it and paste again.`)
     }
     const tag = node.name.toLowerCase()
     // Text bounded BEFORE it is walked in depth: the wire schema caps one string, this caps the sum.
@@ -104,29 +104,29 @@ export function guardPastedNodes(roots: readonly PastedNode[]): PastedGuardResul
 function guardProp(tag: string, name: string, value: unknown): PastedGuardResult | null {
   const lower = name.toLowerCase().replace(/[-:]/g, '')
   if (!PROP_NAME.test(name) || !isAllowedPastedProp(name) || isEventHandlerAttributeName(name) || isReservedRuntimeDataAttributeName(name)) {
-    return refuse(`"${name}" on <${tag}> is not an attribute Studio will write from a paste.`)
+    return refuse(`"${name}" on <${tag}> is not an attribute Studio will write from a paste. Remove it and paste again.`)
   }
   if (lower === 'style') {
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) return refuse(`The style on <${tag}> must be an object of CSS values.`)
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return refuse(`The style on <${tag}> must be an object of CSS values. Fix it and paste again.`)
     for (const [property, cssValue] of Object.entries(value)) {
       if (typeof cssValue !== 'string' || sanitiseCssValue(cssValue) === null || cssValueLoadsExternalResource(cssValue)) {
-        return refuse(`The "${property}" value on <${tag}> is not a CSS value Studio will write from a paste.`)
+        return refuse(`The "${property}" value on <${tag}> is not a CSS value Studio will write from a paste. Remove it and paste again.`)
       }
     }
     return null
   }
   if (Array.isArray(value)) {
-    return value.every((item) => typeof item === 'string') ? null : refuse(`"${name}" on <${tag}> must be a list of text values.`)
+    return value.every((item) => typeof item === 'string') ? null : refuse(`"${name}" on <${tag}> must be a list of text values. Fix it and paste again.`)
   }
   if (typeof value !== 'string' && typeof value !== 'boolean' && typeof value !== 'number') {
-    return refuse(`"${name}" on <${tag}> must be text, a number or a flag.`)
+    return refuse(`"${name}" on <${tag}> must be text, a number or a flag. Fix it and paste again.`)
   }
   if (typeof value === 'string' && URL_PROPS.has(lower)) {
     if (!isAcceptableUrl(lower, value)) {
-      return refuse(`The ${name} on <${tag}> is not a URL Studio will write from a paste (scripts and non-image data URLs are refused).`)
+      return refuse(`The ${name} on <${tag}> is not a URL Studio will write from a paste (scripts and non-image data URLs are refused). Use a plain image or page URL.`)
     }
     if ((lower === 'href' || lower === 'xlinkhref') && FRAGMENT_HREF_TAGS.has(tag) && !isSvgFragmentReference(value)) {
-      return refuse(`The ${name} on <${tag}> may only point at a fragment of the same graphic.`)
+      return refuse(`The ${name} on <${tag}> may only point at a fragment of the same graphic. Point it at an id inside the graphic.`)
     }
   }
   return null
@@ -138,7 +138,7 @@ function guardAnimation(tag: string, props: Record<string, unknown>): PastedGuar
     const value = Object.entries(props).find(([name]) => name.toLowerCase() === key)?.[1]
     if (typeof value !== 'string') continue
     if (value.split(';').some((part) => !isSafeUrl(part))) {
-      return refuse(`The ${key} on <${tag}> carries a script URL, which Studio will not write from a paste.`)
+      return refuse(`The ${key} on <${tag}> carries a script URL, which Studio will not write. Remove it and paste again.`)
     }
   }
   return null

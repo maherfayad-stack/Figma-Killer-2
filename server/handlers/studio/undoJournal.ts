@@ -253,7 +253,7 @@ export function restoreUndoJournal(dir: string, token: string, deps: UndoJournal
     return {
       ok: false,
       reason: 'restore-unavailable',
-      message: 'Studio no longer has what that change replaced, so it cannot be undone here. Nothing was written.',
+      message: 'That change can no longer be undone here, because what it replaced is gone. Restore the file from Git instead.',
     }
   }
   const current: (Buffer | null)[] = []
@@ -264,7 +264,7 @@ export function restoreUndoJournal(dir: string, token: string, deps: UndoJournal
       return {
         ok: false,
         reason: 'restore-stale',
-        message: `${rel} has changed since that edit, so undoing it would overwrite the newer change. Nothing was written.`,
+        message: `${rel} changed after that edit, so undoing it would overwrite the newer change. Undo the newer change first.`,
       }
     }
   }
@@ -300,7 +300,7 @@ export function restoreUndoJournal(dir: string, token: string, deps: UndoJournal
     return {
       ok: false,
       reason: 'restore-failed',
-      message: `Studio could not write ${entry.files[restored.length]?.rel ?? 'a file'} back, so it left every file as it was.`,
+      message: `Studio could not write ${entry.files[restored.length]?.rel ?? 'a file'} back, so every file was left as it was. Check that the file is writable, then undo again.`,
     }
   }
   removeStudioStoreEntry(dir, entryRel(token)!)

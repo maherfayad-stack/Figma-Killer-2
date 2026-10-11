@@ -155,9 +155,9 @@ function resolvePropsShape(sourceFile: SourceFile, typeNode: Node): { ok: true; 
     if (iface) return { ok: true, shape: iface }
     const aliasType = sourceFile.getTypeAlias(typeName)?.getTypeNode()
     if (aliasType && Node.isTypeLiteral(aliasType)) return { ok: true, shape: aliasType }
-    return { ok: false, message: `Could not find "${typeName}"'s own declaration in this file to add a "<name>" property to.` }
+    return { ok: false, message: `The declaration of "${typeName}" is not in this file, so a "<name>" property cannot be added to it. Add the property in the code.` }
   }
-  return { ok: false, message: "This component's props type is not a plain object shape Studio can add a property to." }
+  return { ok: false, message: "This component's props type is not a plain object shape. Add the property in the code." }
 }
 
 /** Types that already accept any of the primitives a call site may hand a prop. */
@@ -179,13 +179,13 @@ export function widenPropType(sourceFile: SourceFile, fn: FunctionLike, name: st
   const resolved = resolvePropsShape(sourceFile, typeNode)
   if (!resolved.ok) return { ok: false, message: resolved.message.replace('<name>', name) }
   const member = resolved.shape.getMembers().find((candidate) => Node.isPropertySignature(candidate) && candidate.getName() === name)
-  if (!member || !Node.isPropertySignature(member)) return { ok: false, message: `Could not find a "${name}" property in this component's props type.` }
+  if (!member || !Node.isPropertySignature(member)) return { ok: false, message: `The props type has no "${name}" property. Add the property in the code.` }
   const declared = member.getTypeNode()
   if (!declared) return { ok: true }
   const parts = (Node.isUnionTypeNode(declared) ? declared.getTypeNodes() : [declared]).map((part) => part.getText().trim())
   if (parts.includes(add) || parts.some((part) => ACCEPTS_ANY_PRIMITIVE.has(part))) return { ok: true }
   if (!parts.every((part) => PRIMITIVE_KEYWORDS.has(part))) {
-    return { ok: false, message: `"${name}" is typed ${declared.getText()}, which does not accept a ${add} value.` }
+    return { ok: false, message: `"${name}" is typed ${declared.getText()}, which does not accept a ${add} value. Widen the type in the code.` }
   }
   member.setType(`${declared.getText()} | ${add}`)
   return { ok: true }

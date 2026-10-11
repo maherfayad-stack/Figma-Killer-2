@@ -109,12 +109,12 @@ function union(rects: readonly BoxRect[]): BoxRect {
 export function planFrameSelection(members: readonly FrameMemberFacts[], parent: FrameParentFacts): FrameSelectionPlan {
   if (members.length === 0) return refuse('Select the layers to put in a frame.')
   if (members.some((member) => member.style.position === 'fixed')) {
-    return refuse('A fixed layer is placed by the window, not by its container, so a frame around it would not hold it. Frame the layers that scroll with the page.')
+    return refuse('A fixed layer is placed by the window, so a frame around it would not hold it. Frame the layers that scroll with the page.')
   }
   const placed = members.filter((member) => isOutOfFlow(member.style.position))
   if (placed.length === 0) return planFlowFrame(members, parent)
   if (placed.length !== members.length) {
-    return refuse('These layers are a mix of placed ones (absolute) and ones that sit in the flow, and one frame cannot be both. Select either the placed layers or the flowing ones.')
+    return refuse('These layers mix placed (absolute) and in-flow ones, and one frame cannot be both. Select only the placed layers or only the flowing ones.')
   }
   return planPlacedFrame(members, parent)
 }
@@ -140,7 +140,7 @@ function planPlacedFrame(members: readonly FrameMemberFacts[], parent: FramePare
     const patch: Record<string, string | null> = {}
     for (const term of [...plan.horizontal, ...plan.vertical]) {
       if (member.expressive.has(term.property)) {
-        return refuse(`A layer in the selection is positioned with a percentage or an expression (${term.property}), and rewriting it to pixels would stop it following its container. Position it in pixels first, or frame the others.`)
+        return refuse(`A layer in the selection is positioned with a percentage or an expression (${term.property}), so a frame would pin it to pixels. Position it in pixels first.`)
       }
       patch[term.property] = px(term.base - offsets[physicalSide(term.property, member.style.direction)])
     }
@@ -153,7 +153,7 @@ function planFlowFrame(members: readonly FrameMemberFacts[], parent: FrameParent
   const memberStyles = members.map((): Record<string, string | null> => ({}))
   if (!isAutoLayoutDisplay(parent.display)) return { ok: true, wrapperStyle: {}, memberStyles }
   if (autoLayoutFamily(parent.display) === 'grid') {
-    return refuse('These layers are cells of a grid, and a frame around some of them would take them out of their grid cells. Frame the whole grid, or use Group on layers in flow.')
+    return refuse('These layers are cells of a grid, and a frame around some of them would take them out of their cells. Frame the whole grid.')
   }
   if (/^space-/.test(parent.justifyContent)) {
     return refuse('The container spaces these layers across its width (justify-content), which a frame around some of them cannot keep. Change the spacing to a fixed gap first.')

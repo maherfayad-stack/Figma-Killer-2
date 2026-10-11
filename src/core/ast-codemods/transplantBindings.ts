@@ -310,8 +310,7 @@ export function resolveCarriedBindings(
       refusal: {
         reason: 'captured-scope',
         message:
-          `It reads ${names}, which belong to the component it is written in and cannot follow it to another file. ` +
-          `Keep it inside its own frame, or move ${captured.size === 1 ? 'that value' : 'those values'} into a shared file first.`,
+          `It reads ${names}, which belong to the component it is written in and cannot follow it to another file. Keep it inside its own frame.`,
       },
     }
   }
@@ -321,7 +320,7 @@ export function resolveCarriedBindings(
       ok: false,
       refusal: {
         reason: 'unexported-binding',
-        message: `It uses "${name}", which its file keeps private, so the other file cannot import it. Export "${name}" from its own file first, then drag again.`,
+        message: `It uses "${name}", which its file keeps private, so the other file cannot import it. Export "${name}" from its own file, then drag again.`,
       },
     }
   }
@@ -332,9 +331,10 @@ export function resolveCarriedBindings(
       ok: false,
       refusal: {
         reason: 'captured-scope',
-        message: destinationBody
-          ? `It uses the state ${names}, and Studio cannot give the destination its own copy: ${destination.hooksRefusal}`
-          : `It uses the state ${names}, which needs a component to live in, and the place it is going to has none. Drop it into a component.`,
+        message:
+          destinationBody && destination.hooksRefusal
+            ? destination.hooksRefusal
+            : `It uses the state ${names}, which needs a component to live in, and the place it is going to has none. Drop it into a component.`,
       },
     }
   }
@@ -344,7 +344,7 @@ export function resolveCarriedBindings(
       ok: false,
       refusal: {
         reason: 'captured-scope',
-        message: `It reads ${names}, which need a component body to live in, and the place it is going to has none. Drop it into a component that has a body.`,
+        message: `It reads ${names}, which need a component body, and the place it is going to has none. Drop it into a component that has a body.`,
       },
     }
   }
@@ -385,7 +385,7 @@ export function resolveCarriedBindings(
         ok: false,
         refusal: {
           reason: 'captured-scope',
-          message: `This element reads \`${name}\` from ${group.hook.label}(), and the destination component already calls ${group.hook.label}() in a shape that has no "${name}" to reuse. Give it a matching binding first, then drag again.`,
+          message: `This element reads \`${name}\` from ${group.hook.label}(), and the destination calls ${group.hook.label}() in a shape with no "${name}" to reuse. Give the destination a matching binding, then drag again.`,
         },
       }
     }

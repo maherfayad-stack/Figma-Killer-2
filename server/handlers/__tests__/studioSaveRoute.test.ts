@@ -135,7 +135,7 @@ describe('POST /admin/api/studio/save — the undo journal crosses the route (P3
     const body = await save([{ kind: 'restore', nodeId: `undo-journal:${token}`, token }])
     expect(body.written).toBe(0)
     expect(body.refusals?.map((r) => r.reason)).toEqual(['restore-stale'])
-    expect(body.refusals?.[0]?.message).toContain('pages/Home.tsx has changed since')
+    expect(body.refusals?.[0]?.message).toContain('pages/Home.tsx changed after that edit')
     expect(fs.readFileSync(homeFile(), 'utf8')).toBe(beforeRestore)
   })
 

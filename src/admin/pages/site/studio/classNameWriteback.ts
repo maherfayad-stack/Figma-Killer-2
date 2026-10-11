@@ -102,6 +102,7 @@ export interface ClassNameEditPayload {
 
 /** One class that could not be turned into a writable token, and the sentence saying why. */
 export interface ClassTokenRefusal {
+  nodeId: string
   nodeLabel: string
   className: string
   reason: string
@@ -292,6 +293,7 @@ export function collectClassNameEdits(
         }
         if (resolved.kind === 'refused') {
           tokenRefusals.push({
+            nodeId: drift.nodeId,
             nodeLabel,
             className: styleRules[classId]?.displayName ?? styleRules[classId]?.name ?? classId,
             reason: resolved.reason,

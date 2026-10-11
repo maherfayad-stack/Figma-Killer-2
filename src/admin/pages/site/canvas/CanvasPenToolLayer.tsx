@@ -137,7 +137,7 @@ export function CanvasPenToolLayer({ transformLayerRef }: { transformLayerRef: R
     const children = [{ name: 'path', props: { d: element.d } }]
     if (!drop) {
       if (store.createCanvasLayer({ name: 'svg', props: element.props, children }, { x: element.origin.x, y: element.origin.y }) === null) {
-        pushToast({ kind: 'warning', title: 'Path not added', body: 'Draw inside a frame, or open a board to draw on the free canvas.', location: 'site-editor' })
+        pushToast({ kind: 'warning', title: 'Path not added', body: 'Drawing needs a frame to land in. Draw inside a frame.', location: 'site-editor' })
       }
       return
     }

@@ -569,7 +569,7 @@ export function applyStructuralEdit(
           ok: false,
           reason: 'cross-file',
           message:
-            'The element this move is written against is not in the same file, so there is no single place to write the new order.',
+            'That position is in a different file, so there is no single place to write the new order. Drop it next to an element from the same file.',
         }
       }
       const result = moveJsxElement({
@@ -625,7 +625,7 @@ export function applyStructuralEdit(
           ok: false,
           reason: 'cross-file',
           message:
-            'The container this copy would go into is in a different file. Studio can copy an element into a new parent within one file; across files the markup would land where the values it reads do not exist.',
+            'The container this copy would go into is in a different file. Copy it into a container from the same file.',
         }
       }
       const result = duplicateJsxElement({
@@ -655,7 +655,7 @@ export function applyStructuralEdit(
           ok: false,
           reason: 'cross-file',
           message:
-            'Some of the elements in this group are written in a different file, so there is no single place to write one container around them.',
+            'Some of these elements are written in a different file, so one container cannot wrap them all. Group only the ones from a single file.',
         }
       }
       const wrapperSpecifier = resolveNodeImport(edit, targetRel)
@@ -680,7 +680,7 @@ export function applyStructuralEdit(
           ok: false,
           reason: 'cross-file',
           message:
-            'The container this element would move into is in a different file. Studio can move an element to a new parent within one file; across files the markup would land where the values it reads do not exist.',
+            'The container this element would move into is in a different file. Drop it into a container from the same file.',
         }
       }
       const result = moveJsxElement({

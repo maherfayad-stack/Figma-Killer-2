@@ -124,7 +124,7 @@ export function SlotControl({ propKey, value, label, isOverride, layout, disable
         mode: pickerMode,
       })
       if (result.ok) setPickerMode(null)
-      else pushToast({ kind: 'error', title: `${verb} refused`, body: result.message })
+      else pushToast({ kind: 'warning', title: `${verb} refused`, body: result.message })
     } catch (err) {
       pushToast({ kind: 'error', title: `${verb} failed`, body: getErrorMessage(err, 'Unknown error') })
     }

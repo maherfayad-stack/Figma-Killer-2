@@ -65,6 +65,7 @@ import type { WrapJsxRefusalReason } from './wrapJsxElement'
 import { createdJsxLocation, offsetAfterEdits, type CreatedJsxLocation } from './createdJsxLocation'
 import { ancestorTagNames, intrinsicTagName, resolveWrapperTag } from './wrapperContentModel'
 import { jsStringSpelling, preferredQuote } from './stringSpelling'
+import { outOfScopeMessage, STALE_SOURCE_MESSAGE } from '@core/utils/refusalCopy'
 
 export interface WrapJsxElementsParams {
   file: string
@@ -139,7 +140,7 @@ function refuseWrap(reason: WrapJsxElementsRefusalReason, message: string): Wrap
 export function wrapJsxElements(params: WrapJsxElementsParams): WrapJsxElementsResult {
   const { file, targets, name, importSpecifier } = params
   if (targets.length === 0) {
-    return refuseWrap('no-targets', 'A group is written around elements, and none were named.')
+    return refuseWrap('no-targets', 'A group is written around elements, and none were named. Select the elements to group.')
   }
 
   const project = params.project ?? createProject()
@@ -157,17 +158,13 @@ export function wrapJsxElements(params: WrapJsxElementsParams): WrapJsxElementsR
   if (gathered && params.requireRun === true) {
     return refuseWrap(
       'not-contiguous',
-      'There are other elements in the code between the ones selected, and a frame is measured around where they sit, so it cannot gather them. Select siblings next to each other.',
+      'Other elements sit between the ones selected in the code, so one frame cannot gather them. Select siblings that sit next to each other.',
     )
   }
   if (gathered) {
     const lost = namesLostByGathering(sourceFile, run.ranges)
     if (lost.length > 0) {
-      const names = lost.map((variable) => `\`${variable}\``).join(', ')
-      return refuseWrap(
-        'out-of-scope',
-        `Grouping these would move an element that reads ${names} from the code around it, and ${lost.length === 1 ? 'that name is' : 'those names are'} not in scope where the container would sit — that would break the file. Group elements that sit in the same component, or pass ${lost.length === 1 ? 'the value' : 'those values'} through first.`,
-      )
+      return refuseWrap('out-of-scope', outOfScopeMessage(lost))
     }
   }
 
@@ -193,7 +190,7 @@ export function wrapJsxElements(params: WrapJsxElementsParams): WrapJsxElementsR
   if (verbatim === null) {
     return refuseWrap(
       'stale-source',
-      'This file changed on disk since the canvas last read it. Reload the project and try again.',
+      STALE_SOURCE_MESSAGE,
     )
   }
 

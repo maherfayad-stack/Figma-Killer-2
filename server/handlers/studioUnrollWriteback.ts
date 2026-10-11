@@ -50,7 +50,7 @@ export function applyUnrollListEdit(
   // The array must be in the file being written: a list whose items are written
   // elsewhere is not one this edit can unroll.
   if (!array || array.rel !== targetRel) {
-    return { ok: false, reason: 'not-literal', message: 'This list’s items are not written in the same file as its rows, so they cannot be copied into them.' }
+    return { ok: false, reason: 'not-literal', message: "This list's items are not written in the same file as its rows. Move the array into this file first." }
   }
   const result = unrollMapExpression({
     file: loc.file,

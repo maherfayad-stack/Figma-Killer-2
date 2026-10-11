@@ -105,7 +105,7 @@ describe('resolveCopyAsPngTarget', () => {
 
     expect(target.ok).toBe(false)
     if (target.ok) return
-    expect(target.reason).toBe('No screen is open, so there is nothing to copy.')
+    expect(target.reason).toBe('No screen is open, so there is nothing to copy. Open a screen.')
   })
 
   it('falls back to a generic label rather than an empty toast title', () => {

@@ -111,7 +111,7 @@ export function resolveChildPlacement(
     const end = parentOpening.getEnd()
     const selfCloseStart = text.lastIndexOf('/>', end)
     if (selfCloseStart < parentOpening.getStart()) {
-      return refuse('not-a-container', 'Studio could not read where this element closes, so it cannot add a child to it.')
+      return refuse('not-a-container', "Studio could not read where this element closes, so it cannot add a child to it. Check the element's syntax in the code.")
     }
     // Drop the whitespace the user had before `/>` — `<Foo />` closes as `<Foo>`.
     const beforeSlash = trimTrailingBlankBack(text, selfCloseStart)
@@ -129,7 +129,7 @@ export function resolveChildPlacement(
 
   const parentElement = parentOpening.getParent()
   if (!parentElement || !Node.isJsxElement(parentElement)) {
-    return refuse('not-a-container', 'Studio could not resolve this element to something that can hold children.')
+    return refuse('not-a-container', 'Studio could not resolve this element to something that can hold children. Pick a different container.')
   }
 
   const anchorEdit = resolveAnchorPlacement(sourceFile, text, parentElement, request, render, unit)
@@ -180,7 +180,7 @@ function resolveAnchorPlacement(
   if (resolved.range.parent !== parentElement && request.besideAnchorInItsParent !== true) {
     return refuse(
       'not-siblings',
-      'The element this would be written next to is not a child of the container it was dropped into, so there is no single place in the file to write it.',
+      'The element this would be written next to is not a child of the container it was dropped into. Drop it next to an element inside that container.',
     )
   }
   return {

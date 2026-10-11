@@ -124,7 +124,7 @@ export function resolveWrapperTag(
       ok: false,
       refusal: {
         reason: 'content-model',
-        message: `A <${requestedName}> cannot go where these elements are without making the HTML invalid, and Studio will not write markup your app would report as an error. Group them in a plain container instead, or add the <${requestedName}> in the file.`,
+        message: `A <${requestedName}> cannot go where these elements are without making the HTML invalid. Group them in a plain container instead.`,
       },
     }
   }

@@ -34,7 +34,7 @@ export class ClassNameTokens {
   constructor(parts: readonly ClassNamePart[]) {
     for (const part of parts) {
       if ('module' in part && !BINDING.test(part.module.binding)) {
-        throw new Error(`"${part.module.binding}" is not an identifier, so it cannot name a CSS Module import.`)
+        throw new Error(`"${part.module.binding}" is not an identifier, so it cannot name a CSS Module import. Pick a plain identifier.`)
       }
     }
     this.parts = parts

@@ -103,32 +103,32 @@ export function exposeLiteralAsProp(params: ExposeLiteralAsPropParams): ExposeLi
 
   try {
     if (path.relative(componentFile.getFilePath(), params.elementFile) !== '') {
-      refuse('not-in-component', `That element is not part of <${identifier}>'s own markup.`)
+      refuse('not-in-component', `That element is not part of <${identifier}>'s own markup. Select an element inside it.`)
     }
     const element = findJsxElementAtLocationOrThrow(componentFile, params.elementFile, params.line, params.col)
     if (element.getStart() < fn.getStart() || element.getEnd() > fn.getEnd()) {
-      refuse('not-in-component', `That element is not part of <${identifier}>'s own markup.`)
+      refuse('not-in-component', `That element is not part of <${identifier}>'s own markup. Select an element inside it.`)
     }
 
     const { params: bindings, childrenParam, hasUndestructuredParam } = buildParamBindings(fn)
     if (hasUndestructuredParam) {
-      refuse('unsupported-params', `${identifier} takes an undestructured props parameter — Studio can't add a named prop without rewriting every "props.x".`)
+      refuse('unsupported-params', `${identifier} takes an undestructured props parameter, so a named prop cannot be added. Destructure its props in the code first.`)
     }
     if (/\.tsx?$/.test(componentFile.getFilePath()) && isTypedThroughVariable(fn) && !fn.getParameters()[0]?.getTypeNode()) {
-      refuse('unsupported-props-type', `${identifier}'s props are typed through its variable (like FC<Props>), which Studio can't add a property to safely.`)
+      refuse('unsupported-props-type', `${identifier}'s props are typed through its variable (like FC<Props>), which Studio cannot extend. Add the property in the code.`)
     }
 
     const seenTargets = new Set<string>()
     const propNames = new Set([...bindings.keys(), ...(childrenParam ? [childrenParam] : [])])
     const planned = params.overrides.map((override): PlannedOverride => {
       const key = targetKey(override.target)
-      if (seenTargets.has(key)) refuse('not-a-literal', 'The same value was listed twice.')
+      if (seenTargets.has(key)) refuse('not-a-literal', 'The same value was listed twice. Reload the project and try again.')
       seenTargets.add(key)
       // OD-19 — a value that is already the bare read of a prop of this name: only the call site changes.
       const paramName = fedIdentifier(element, override.target)
       const binding = paramName !== undefined ? bindings.get(paramName) : undefined
       if (paramName !== undefined && binding?.attrName === override.propName) {
-        if (override.value === undefined) refuse('not-a-literal', `\`${override.propName}\` is already a prop here, so there is no literal to expose.`)
+        if (override.value === undefined) refuse('not-a-literal', `\`${override.propName}\` is already a prop here, so there is no literal to expose. Edit the prop in the code.`)
         const plan = planFedOverride({ fn, callSite, paramName, propName: override.propName, defaultText: binding.defaultText, value: override.value })
         if (!plan.ok) refuse(plan.reason, plan.message)
         return { fed: true, plan, name: override.propName }
@@ -144,7 +144,7 @@ export function exposeLiteralAsProp(params: ExposeLiteralAsPropParams): ExposeLi
     if (!sites.some((site) => site === callSite || (site.getSourceFile() === callFile && site.getStart() === callSite.getStart()))) sites.push(callSite)
     const spread = literals.length === 0 ? undefined : sites.find((site) => site.getAttributes().some((attr) => Node.isJsxSpreadAttribute(attr)))
     if (spread) {
-      refuse('call-site-spread', `A <${identifier}> in ${path.basename(spread.getSourceFile().getFilePath())} spreads an object into it, which could already set a prop of the new name — nothing was changed.`)
+      refuse('call-site-spread', `A <${identifier}> in ${path.basename(spread.getSourceFile().getFilePath())} spreads an object that could already set a prop of the new name. Pass the props explicitly in the code.`)
     }
 
     const taken = new Set<string>([

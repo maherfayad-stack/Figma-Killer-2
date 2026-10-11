@@ -102,7 +102,7 @@ describe('planListRowMove — a reorder written to the array', () => {
 
   it('refuses a node INSIDE a row, a row mixed with an element, and a list the board shows only part of', () => {
     const inside = planListRowMove(tree(), ['src/Board.tsx:12:30#1'], ROW(1), 0)
-    expect(!inside?.ok && inside?.refusal.message).toContain('select the whole row')
+    expect(!inside?.ok && inside?.refusal.message).toContain('Select the whole row')
     const mixed = planListRowMove(tree(), [ROW(0), 'src/Board.tsx:15:7'], MAIN, 0)
     expect(!mixed?.ok && mixed?.refusal.message).toContain('Select only rows')
     const partial = planListRowMove(tree((k) => row(k, 150)), [ROW(0)], MAIN, 3)
@@ -125,7 +125,7 @@ describe('planListRowMove — a reorder written to the array', () => {
     t.nodes[inlined] = { ...t.nodes[ROW(0)]!, id: inlined }
     t.nodes[MAIN]!.children = t.nodes[MAIN]!.children.map((id) => (id === ROW(0) ? inlined : id))
     const plan = planListRowMove(t, [inlined], MAIN, 3)
-    expect(!plan?.ok && plan?.refusal.message).toContain("shared component's own file")
+    expect(!plan?.ok && plan?.refusal.message).toContain("shared component's file")
   })
 
   it('previewStructuralMove reads the same verdict: ok with the list write, or the same refusal', () => {

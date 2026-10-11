@@ -125,17 +125,17 @@ function invalidValueReason(name: string, value: string): string | null {
  */
 export function setCustomPropertyValueAtLine(cssText: string, name: string, line: number, value: string): CustomPropertyEditResult {
   if (!CUSTOM_PROPERTY_NAME_RE.test(name)) {
-    return { ok: false, reason: 'not-a-custom-property', message: `"${name}" is not a CSS custom property name (it must start with "--").` }
+    return { ok: false, reason: 'not-a-custom-property', message: `"${name}" is not a CSS custom property name. Start the name with "--".` }
   }
   const invalid = invalidValueReason(name, value)
-  if (invalid) return { ok: false, reason: 'invalid-value', message: `The value for ${name} was not written: ${invalid}.` }
+  if (invalid) return { ok: false, reason: 'invalid-value', message: `The value for ${name} was not written: ${invalid}. Enter a valid value.` }
   const next = value.trim()
 
   // Located on the LF-normalised text `preservingLineEndings` will hand the
   // rewrite — same line numbers, since normalising never removes a line.
   const root = parse(toLf(cssText))
   if (!root) {
-    return { ok: false, reason: 'unparseable-stylesheet', message: `The stylesheet declaring ${name} does not parse as CSS, so no declaration in it can be edited safely.` }
+    return { ok: false, reason: 'unparseable-stylesheet', message: `The stylesheet declaring ${name} does not parse as CSS, so no declaration in it can be edited safely. Fix the CSS syntax and try again.` }
   }
   const atLine = declarationsAtLine(root, name, line)
   if (atLine.length !== 1) {
@@ -143,8 +143,8 @@ export function setCustomPropertyValueAtLine(cssText: string, name: string, line
       ok: false,
       reason: 'no-declaration-at-line',
       message: atLine.length === 0
-        ? `No declaration of ${name} starts on line ${line} any more — the file changed since it was read.`
-        : `Line ${line} holds ${atLine.length} declarations of ${name}, so it does not name one.`,
+        ? `No declaration of ${name} starts on line ${line} any more. Reload the project and try again.`
+        : `Line ${line} holds ${atLine.length} declarations of ${name}, so it does not name one. Edit the declaration in the code.`,
     }
   }
   const previous = atLine[0]!.value.trim()
@@ -251,13 +251,13 @@ function buildGateBlock(gate: ModeGate, name: string, value: string): postcss.Ch
 export function insertCustomProperty(cssText: string, options: InsertCustomPropertyOptions): CustomPropertyInsertResult {
   const { name, value, gate } = options
   if (!CUSTOM_PROPERTY_NAME_RE.test(name)) {
-    return { ok: false, reason: 'not-a-custom-property', message: `"${name}" is not a CSS custom property name (it must start with "--").` }
+    return { ok: false, reason: 'not-a-custom-property', message: `"${name}" is not a CSS custom property name. Start the name with "--".` }
   }
   const invalid = invalidValueReason(name, value)
-  if (invalid) return { ok: false, reason: 'invalid-value', message: `The value for ${name} was not written: ${invalid}.` }
+  if (invalid) return { ok: false, reason: 'invalid-value', message: `The value for ${name} was not written: ${invalid}. Enter a valid value.` }
   const next = value.trim()
   if (!parse(toLf(cssText))) {
-    return { ok: false, reason: 'unparseable-stylesheet', message: `The stylesheet does not parse as CSS, so ${name} cannot be added to it safely.` }
+    return { ok: false, reason: 'unparseable-stylesheet', message: `The stylesheet does not parse as CSS, so ${name} cannot be added to it safely. Fix the CSS syntax and try again.` }
   }
 
   let refusal: CustomPropertyInsertResult | null = null
@@ -269,7 +269,7 @@ export function insertCustomProperty(cssText: string, options: InsertCustomPrope
     let created: 'declaration' | 'rule'
     if (container) {
       if (container.some((child) => child.type === 'decl' && child.prop === name)) {
-        refusal = { ok: false, reason: 'already-declared', message: `${name} is already declared for this mode in that block.` }
+        refusal = { ok: false, reason: 'already-declared', message: `${name} is already declared for this mode in that block. Edit the existing declaration.` }
         return { css: source, changed: false }
       }
       const declaration = postcss.decl({ prop: name, value: next })
@@ -320,10 +320,10 @@ function removeWithEmptyAncestors(node: Node): void {
  */
 export function removeCustomPropertyDeclarations(cssText: string, name: string): CustomPropertyRemoveResult {
   if (!CUSTOM_PROPERTY_NAME_RE.test(name)) {
-    return { ok: false, reason: 'not-a-custom-property', message: `"${name}" is not a CSS custom property name (it must start with "--").` }
+    return { ok: false, reason: 'not-a-custom-property', message: `"${name}" is not a CSS custom property name. Start the name with "--".` }
   }
   if (!parse(toLf(cssText))) {
-    return { ok: false, reason: 'unparseable-stylesheet', message: `The stylesheet does not parse as CSS, so ${name} cannot be removed from it safely.` }
+    return { ok: false, reason: 'unparseable-stylesheet', message: `The stylesheet does not parse as CSS, so ${name} cannot be removed from it safely. Fix the CSS syntax and try again.` }
   }
   let removed = 0
   const rewrite = preservingLineEndings(cssText, (source) => {

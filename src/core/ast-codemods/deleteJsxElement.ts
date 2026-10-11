@@ -69,6 +69,7 @@ import {
   writeVerbatimSource,
   type JsxChildRangeReason,
 } from './jsxChildRange'
+import { STALE_SOURCE_MESSAGE } from '@core/utils/refusalCopy'
 
 export interface DeleteJsxElementParams {
   file: string
@@ -158,7 +159,7 @@ export function deleteJsxElement(params: DeleteJsxElementParams): DeleteJsxEleme
       ok: false,
       refusal: {
         reason: 'stale-source',
-        message: 'This file changed on disk since the canvas last read it. Reload the project and try again.',
+        message: STALE_SOURCE_MESSAGE,
       },
     }
   }

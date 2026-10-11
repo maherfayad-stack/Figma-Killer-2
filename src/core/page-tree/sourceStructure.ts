@@ -162,19 +162,6 @@ export interface SourceStructureNode {
   listRow?: ListRowSource
 }
 
-/** Human label for the gesture, used in every refusal sentence. */
-const GESTURE: Record<StructuralEditKind, string> = {
-  reorder: 'Moved',
-  reparent: 'Moved',
-  delete: 'Deleted',
-  // An insert is asked about the CONTAINER it lands in, not about a node that
-  // exists yet, so its refusals read "Added into <what this container is>".
-  insert: 'Added into',
-  duplicate: 'Duplicated',
-  wrap: 'Wrapped',
-  group: 'Grouped',
-  ungroup: 'Ungrouped',
-}
 
 /**
  * Whether this node's PLACE can be written back to the user's source, and if
@@ -192,12 +179,10 @@ const GESTURE: Record<StructuralEditKind, string> = {
  * test the moved node does, and live in the same file.
  */
 export function refuseStructuralEdit(input: StructuralEditQuestion): StructuralRefusal | null {
-  const { kind, node } = input
+  const { node } = input
   if (!isSourceDerivedNodeId(node.id)) return null
 
-  const gesture = GESTURE[kind]
-
-  const placement = refusePlacement(node, gesture)
+  const placement = refusePlacement(node)
   if (placement) return placement
 
   switch (input.kind) {
@@ -248,20 +233,15 @@ export function refuseStructuralEdit(input: StructuralEditQuestion): StructuralR
       // "put this element inside that one" has no meaning without one, so there is
       // no refusal for its absence - only for a container that cannot take it.
       const { destination } = input
-      const destinationPlacement = refusePlacement(destination, 'Moved into')
-      if (destinationPlacement) {
-        return {
-          reason: destinationPlacement.reason,
-          message: `The container this would move into is not an ordinary element: ${lowerFirst(destinationPlacement.message)}`,
-          aboutNodeId: destination.id,
-        }
-      }
+      const destinationPlacement = refusePlacement(destination)
+      // G-3: the refusal is about the CONTAINER, so detach-and-replay knows whose instance to detach.
+      if (destinationPlacement) return { ...destinationPlacement, aboutNodeId: destination.id }
       const fromFile = decodeSourceNodeId(node.id)?.rel
       const intoFile = decodeSourceNodeId(destination.id)?.rel
       if (fromFile !== intoFile) {
         return {
           reason: 'cross-file',
-          message: `This element is written in ${fromFile} and the container is in a different file (${intoFile}). Studio moves an element to a new parent within one file; across files the markup would land where the values it reads do not exist.`,
+          message: `This element is written in ${fromFile} and the container is in ${intoFile}. Drop it into a container from the same file.`,
         }
       }
       return null
@@ -275,22 +255,17 @@ export function refuseStructuralEdit(input: StructuralEditQuestion): StructuralR
     return {
       reason: 'no-sibling-anchor',
       message:
-        'This element has no plain sibling to be written next to. Studio records a reorder as "put this before that one", so it needs a neighbour that is itself an ordinary element in the same file.',
+        'This element has no plain sibling to be written next to. Drop it into a container instead.',
     }
   }
-  const anchorPlacement = refusePlacement(anchor, 'Moved')
-  if (anchorPlacement) {
-    return {
-      reason: 'no-sibling-anchor',
-      message: `The element this would be written next to is not an ordinary one: ${lowerFirst(anchorPlacement.message)}`,
-    }
-  }
+  const anchorPlacement = refusePlacement(anchor)
+  if (anchorPlacement) return { reason: 'no-sibling-anchor', message: anchorPlacement.message }
   const nodeFile = decodeSourceNodeId(node.id)?.rel
   const anchorFile = decodeSourceNodeId(anchor.id)?.rel
   if (nodeFile !== anchorFile) {
     return {
       reason: 'cross-file',
-      message: `These two elements come from different files (${nodeFile} and ${anchorFile}), so there is no single place to write the new order.`,
+      message: `These two elements come from different files (${nodeFile} and ${anchorFile}), so there is no single place to write the new order. Drop it next to an element from the same file.`,
     }
   }
   return null
@@ -327,31 +302,31 @@ export function refuseStructuralEdit(input: StructuralEditQuestion): StructuralR
  * own module doc for how it threads this through when a caller can supply it,
  * and what it checks independently from the AST when a caller cannot.
  */
-export function refusePlacement(node: SourceStructureNode, gesture: string): StructuralRefusal | null {
+export function refusePlacement(node: SourceStructureNode): StructuralRefusal | null {
   if (!hasWritableSourceLocation(node.id)) {
     // OD-8 — a row root whose array is editable is written THROUGH it by the
     // store (`listRowPlans.ts`) before this is asked; what reaches here is a
     // gesture the array cannot express, a node inside a row, or a list whose
     // array is not written here — each told apart in the sentence.
-    return { reason: 'list-row', message: listRowRefusalMessage(node, gesture, false) }
+    return { reason: 'list-row', message: listRowRefusalMessage(node, false) }
   }
   if (isInlinedNodeId(node.id) && !isSoleInstanceNodeId(node.id)) {
     return {
       reason: 'shared-component',
-      message: `${gesture} markup that lives in a shared component's own file, so the change would apply to every place that component is used, not just here.`,
+      message: 'This element lives in a shared component, so the change would apply to every place it is used. Detach this instance first.',
     }
   }
   // G-8 — not while the user is explicitly editing THIS layout file (`layoutEdit.ts`).
   if (isRouteChromeNodeId(node.id) && !isEditedLayoutNodeId(node.id)) {
     return {
       reason: 'route-chrome',
-      message: `${gesture} markup from a layout file, which every page below it renders — the change would apply to all of them, not just this frame.`,
+      message: 'This element lives in a layout every page renders, so the change would apply to all of them. Use Edit layout to change it.',
     }
   }
   if (node.lockReason) {
     return {
       reason: 'code-placed',
-      message: `The code decides where this element goes (${node.lockReason}), so its position is not something Studio can write.`,
+      message: `The code decides where this element goes (${node.lockReason}), so Studio cannot write its position. Change it in the code.`,
     }
   }
   return null
@@ -417,7 +392,7 @@ export function refuseMintedNodeInsert(input: {
   return {
     reason: 'insert',
     message:
-      'This element was created in the editor, so it has no markup in your project for Studio to write. Add a component from the canvas picker instead — that one writes the element and its import into the file.',
+      'This element was created in the editor, so it has no markup in your project to write. Add a component from the canvas picker instead.',
   }
 }
 
@@ -452,7 +427,7 @@ export function refuseMintedNodeCopy(input: {
   const noun = input.kind === 'reparent' ? 'move' : input.kind
   return {
     reason: input.kind,
-    message: `Studio ${noun}s imported markup by editing your project's source and re-reading it. This path changes the canvas tree only, so the ${noun} would never reach the file — do it from the editor, which writes it.`,
+    message: `Studio ${noun}s imported markup by editing your source, and this path changes the canvas tree only. Do it from the editor, which writes the file.`,
   }
 }
 
@@ -473,7 +448,3 @@ export class SourceStructureError extends Error {
   }
 }
 
-/** Lower-cases the first character so a refusal can be quoted mid-sentence. */
-function lowerFirst(text: string): string {
-  return text.length > 0 ? text[0]!.toLowerCase() + text.slice(1) : text
-}

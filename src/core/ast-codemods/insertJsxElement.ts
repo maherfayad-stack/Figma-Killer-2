@@ -87,6 +87,7 @@ import {
   type InsertJsxRefusal,
   type InsertableJsxPropValue,
 } from './jsxSubtree'
+import { ELEMENT_GONE_MESSAGE, STALE_SOURCE_MESSAGE } from '@core/utils/refusalCopy'
 
 export interface InsertJsxElementParams {
   file: string
@@ -193,7 +194,7 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
   // nothing the file already declares is shadowed.
   const assets = collectAssetImports(run)
   if (!assets.ok) {
-    return refuse('asset-import', `"${assets.specifier}" is not an image path Studio will write as an import.`)
+    return refuse('asset-import', `"${assets.specifier}" is not an image path Studio will write as an import. Use a path inside the project.`)
   }
 
   // Only a component name can collide: an intrinsic tag is a string to JSX,
@@ -218,7 +219,7 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
   if (!parentOpening) {
     return refuse(
       'not-found',
-      `No JSX element is written at line ${line}, column ${col} any more — the file changed since the canvas last read it. Reload and try again.`,
+      ELEMENT_GONE_MESSAGE,
     )
   }
 
@@ -228,7 +229,7 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
   if (verbatim === null) {
     return refuse(
       'stale-source',
-      'This file changed on disk since the canvas last read it. Reload the project and try again.',
+      STALE_SOURCE_MESSAGE,
     )
   }
 

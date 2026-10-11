@@ -45,6 +45,11 @@ import {
 } from './sourceStructure'
 import { bestEffortRowLocation, hasWritableSourceLocation, loopTemplateNodeId } from './sourceNodeId'
 
+/** The one thing to do about a value the code decides, when typing over it is not on offer. */
+const CODE_REMEDY = 'Edit it in the code.'
+/** The same, when the field accepts a typed value in place of the binding (OD-20). */
+const UNBIND_REMEDY = 'Type a new value to replace the binding.'
+
 
 // ---------------------------------------------------------------------------
 // The discriminated union — the taxonomy's 30 rows, absorbed rather than
@@ -98,33 +103,7 @@ export type ConstraintReason =
   | 'unbound-reference'
   // Row 22 — Swap refusal (component shape mismatch, etc).
   | 'swap-refused'
-  // Row 27 — inline text edit blocked before it starts. RESERVED, not
-  // currently produced: text is an ordinary prop key to `explainPropConstraint`
-  // (its resolvedProps entry is keyed `'text'`, remapped to the module's own
-  // text prop by `parsedPageToSitePage`), so a caller wiring row 27's actual
-  // site (`inlineEditSlice.ts`'s pre-edit-mode check — store territory, not
-  // touched by this additive-wrapper track) gets `resolved-expression` or
-  // `list-row` from that same function, not a bespoke reason. Kept in the
-  // union as the taxonomy's own name for the row, not as a promise this
-  // module emits it.
-  | 'inline-text-locked'
-  // Row 28 — the whole `htmlAttributes` bag locked as one JSX prop/object.
-  // RESERVED for the same reason as row 27: `explainPropConstraint(node,
-  // 'htmlAttributes')` already answers this generically (today's real gate,
-  // `PropertiesPanelBody.tsx`'s `isPropWritableToSource(selectedNode,
-  // 'htmlAttributes')`, is untouched and correct — see R7 scope notes).
-  | 'html-attributes-locked'
-  // Row 29 — a branch the parser did not select. NOT produced by this module
-  // on purpose: `BranchChoiceNotice` is not a REFUSAL (nothing is blocked —
-  // the alternative is simply not the default view), so it is handled
-  // directly by that component (R6's switcher) rather than routed through
-  // `EditConstraint`, which exists for things an edit surface refuses.
-  | 'branch-not-shown'
-  // Row 30 — package-sourced instance: detach/swap/duplicate not offered yet.
-  // RESERVED: already correctly handled today, before interaction, by
-  // `InstanceCallSiteView.tsx`'s own `source === 'package'` check + `Button`
-  // `disabled`/`tooltip` (E2.5-owned, not touched by this track).
-  | 'package-component-locked'
+
   // B2's `className` vocabulary (`src/core/ast-codemods/setJsxClassName.ts`),
   // absorbed by string value for the same import-cycle reason as Detach above.
   | 'css-module-binding'
@@ -251,7 +230,7 @@ export function explainPropConstraint(
   // structural. `node.id` is optional (a caller with only a bare prop bag has
   // no id to ask) — falls through to the ordinary value-shaped explanation.
   if (node.id !== undefined && !hasWritableSourceLocation(node.id)) {
-    const placement = refusePlacement({ id: node.id, lockReason: node.lockReason }, 'Edited')
+    const placement = refusePlacement({ id: node.id, lockReason: node.lockReason })
     if (placement) {
       // No `origin` — `decodeSourceNodeId` deliberately refuses to match a
       // `.map`-row id (that IS what "no writable source location" means), so
@@ -274,7 +253,7 @@ export function explainPropConstraint(
     return {
       reason: 'structured-value',
       scope: 'prop',
-      explanation: 'This value is an array or object set in code — there is no single line to write a scalar edit onto.',
+      explanation: 'This value is an array or object set in code, so a scalar edit has no line to write to. Edit it in the code.',
       actions: [],
     }
   }
@@ -286,8 +265,8 @@ export function explainPropConstraint(
       reason: 'resolved-expression',
       scope: 'prop',
       explanation: resolved.note
-        ? `Reads \`${resolved.source}\` — ${resolved.note}.`
-        : `Reads \`${resolved.source}\` from code. Writing here would replace the binding with a fixed value.`,
+        ? `Reads \`${resolved.source}\` — ${resolved.note}. ${unbindable ? UNBIND_REMEDY : CODE_REMEDY}`
+        : `Reads \`${resolved.source}\` from code, so a typed value would replace the binding. ${unbindable ? UNBIND_REMEDY : CODE_REMEDY}`,
       actions: [],
       ...(unbindable ? { unbindable: true as const } : {}),
     }
@@ -299,7 +278,9 @@ export function explainPropConstraint(
   return {
     reason: 'resolved-expression',
     scope: 'prop',
-    explanation: node.lockReason ? `The code decides this value (${node.lockReason}).` : 'Set in code.',
+    explanation: node.lockReason
+      ? `The code decides this value (${node.lockReason}). ${CODE_REMEDY}`
+      : `This value is set in code. ${CODE_REMEDY}`,
     actions: [],
     ...(canUnbindProp(node, propKey) ? { unbindable: true as const } : {}),
   }
@@ -347,9 +328,9 @@ export function explainStyleConstraint(node: ConstraintPropSource, property: str
     scope: 'style-property',
     explanation: resolved
       ? resolved.note
-        ? `Reads \`${resolved.source}\` — ${resolved.note}.`
-        : `Reads \`${resolved.source}\` from code.`
-      : 'Set in code.',
+        ? `Reads \`${resolved.source}\` — ${resolved.note}. ${CODE_REMEDY}`
+        : `Reads \`${resolved.source}\` from code. ${CODE_REMEDY}`
+      : `This value is set in code. ${CODE_REMEDY}`,
     // Unlike the mirror-image prop-scope branch above (`explainPropConstraint`'s
     // `resolved-expression`, which can NEVER reach this point with a populated
     // `origin` — `isPropWritableToSource` returns early whenever one exists),

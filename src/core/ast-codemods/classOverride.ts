@@ -142,7 +142,7 @@ function assertRoot(level: Level, element: JsxOpeningLikeElement): JsxOpeningLik
   const root = getReturnedJsxRoots(level.fn).find((candidate) => candidate.chosen)?.expr
   const opening = root && Node.isJsxElement(root) ? root.getOpeningElement() : root && Node.isJsxSelfClosingElement(root) ? root : undefined
   if (!opening || opening.getTagNameNode().getStart() !== element.getTagNameNode().getStart()) {
-    refuse('class-not-root', `Only the outermost element of <${level.identifier}> can take a class for one instance; this one is inside it, so its class is shared by every <${level.identifier}>.`)
+    refuse('class-not-root', `Only the outermost element of <${level.identifier}> can take a class for one instance, and this one is inside it. Select the outermost element.`)
   }
   return opening
 }
@@ -155,36 +155,36 @@ function assertForwarded(levels: readonly Level[]): void {
     const hop = hopKind(outer, inner.callSite)
     if (hop.kind === 'filtered') refuse('class-filtered', hop.message)
     if (hop.kind === 'explicit') {
-      refuse('class-not-forwarded', `<${outer.identifier}> does not pass its props on to <${inner.identifier}> as a whole, so a class set on the page's <${levels[0]!.identifier}> would not reach it.`)
+      refuse('class-not-forwarded', `<${outer.identifier}> does not pass its props on to <${inner.identifier}> as a whole, so a class set on the page's <${levels[0]!.identifier}> would not reach it. Pass the props on in the code.`)
     }
     if (hop.destructured.has('className')) {
-      refuse('class-filtered', `<${outer.identifier}> takes className for itself instead of passing it on to <${inner.identifier}>.`)
+      refuse('class-filtered', `<${outer.identifier}> takes className for itself instead of passing it on to <${inner.identifier}>. Pass className on in the code.`)
     }
     if (inner.callSite.getAttribute('className')) {
-      refuse('class-filtered', `<${outer.identifier}> sets className on <${inner.identifier}> itself, so the page's class would replace it.`)
+      refuse('class-filtered', `<${outer.identifier}> sets className on <${inner.identifier}> itself, so the page's class would replace it. Join the classes in the code.`)
     }
   }
 }
 
 /** Another call site that passes `className` (or an object that may carry one) would start applying it once the component takes the prop. */
 function assertNoStrayClassNames(project: Project, workspaceRoot: string, levels: readonly Level[]): void {
-  for (const [k, level] of levels.entries()) {
+  for (const level of levels) {
     const sites = allCallSites(project, workspaceRoot, level.componentFile, level.target.exportedName ?? level.identifier, exportNameOf(level.componentFile, level.target.declaration))
     for (const site of sites) {
       const sameAs = (other: JsxOpeningLikeElement): boolean => site.getSourceFile() === other.getSourceFile() && site.getStart() === other.getStart()
       if (sameAs(level.callSite)) continue
       const stray = site.getAttributes().find((attr) => Node.isJsxSpreadAttribute(attr) || (Node.isJsxAttribute(attr) && attr.getNameNode().getText() === 'className'))
       if (stray) {
-        refuse('call-site-class', `A <${level.identifier}> in ${path.basename(site.getSourceFile().getFilePath())} passes a className${k === 0 ? '' : ' or spreads props'} that <${levels[levels.length - 1]!.identifier}> does not apply today and would start to — nothing was changed.`)
+        refuse('call-site-class', `A <${level.identifier}> in ${path.basename(site.getSourceFile().getFilePath())} passes a className that <${levels[levels.length - 1]!.identifier}> does not apply today and would start to. Remove that className in the code.`)
       }
     }
   }
 }
 
 export function exposeClassOverride(params: ExposeClassOverrideParams): ClassOverrideResult {
-  if (params.callSites.length === 0) return refusal('not-in-component', 'Only an element of a component can take a class for one instance.')
+  if (params.callSites.length === 0) return refusal('not-in-component', 'Only an element of a component can take a class for one instance. Select an element inside a component.')
   if (params.callSites.length > MAX_INSTANCE_OVERRIDE_DEPTH) {
-    return refusal('not-in-component', `This element sits ${params.callSites.length} components deep; a class is only passed down ${MAX_INSTANCE_OVERRIDE_DEPTH} levels.`)
+    return refusal('not-in-component', `This element sits ${params.callSites.length} components deep, and a class is only passed down ${MAX_INSTANCE_OVERRIDE_DEPTH} levels. Select a shallower element.`)
   }
   const project = params.project ?? createWorkspaceProject(params.workspaceRoot)
   project.manipulationSettings.set({ quoteKind: QuoteKind.Single })
@@ -201,13 +201,13 @@ export function exposeClassOverride(params: ExposeClassOverrideParams): ClassOve
     const innermost = levels[levels.length - 1]!
 
     if (path.relative(innermost.componentFile.getFilePath(), params.element.file) !== '') {
-      refuse('not-in-component', `That element is not part of <${innermost.identifier}>'s own markup.`)
+      refuse('not-in-component', `That element is not part of <${innermost.identifier}>'s own markup. Select an element inside it.`)
     }
     const element = findJsxElementAtLocationOrThrow(innermost.componentFile, params.element.file, params.element.line, params.element.col)
     const root = assertRoot(innermost, element)
     assertForwarded(levels)
     if (page.callSite.getAttributes().some((attr) => Node.isJsxSpreadAttribute(attr))) {
-      refuse('call-site-spread', `This <${page.identifier}> spreads an object of props, which could carry a className of its own — nothing was changed.`)
+      refuse('call-site-spread', `This <${page.identifier}> spreads props that could carry a className of its own. Pass the props explicitly in the code.`)
     }
 
     // Which rule is being edited, and which modifier it belongs to.
@@ -216,10 +216,10 @@ export function exposeClassOverride(params: ExposeClassOverrideParams): ClassOve
     const parsed = parseModifierSelector(params.selector)
     const base = parsed && pageTokens.has(parsed.token) ? parsed.base : params.selector.trim()
     const baseName = singleClassName(base)
-    if (baseName === null) refuse('class-selector-unsupported', 'Only a rule that is one plain class (like .card) can be overridden for one instance.')
+    if (baseName === null) refuse('class-selector-unsupported', 'Only a rule that is one plain class (like .card) can be overridden for one instance. Edit the rule in the stylesheet.')
     const named = classNamesOnElement(root)
     if (!named.literals.has(baseName) && !named.members.has(baseName)) {
-      refuse('class-not-on-element', `<${innermost.identifier}>'s outermost element does not name .${baseName}, so Studio cannot tell this rule is the one it styles.`)
+      refuse('class-not-on-element', `<${innermost.identifier}>'s outermost element does not name .${baseName}, so Studio cannot tell the rule styles it. Add the class in the code.`)
     }
     const existing = existingModifier(params.css.text, base, pageTokens, convention)
     let token: string
@@ -264,7 +264,7 @@ export function exposeClassOverride(params: ExposeClassOverrideParams): ClassOve
     if (!pageTokens.has(token)) {
       const location = params.callSites[0]!
       const attached = setJsxClassName({ file: location.file, line: location.line, col: location.col, add: [{ kind: 'literal', token }], remove: [], project })
-      if (!attached.ok) refuse('call-site-class', `The page's <${page.identifier}> could not take the class: ${attached.refusal.message}`)
+      if (!attached.ok) refuse('call-site-class', `${attached.refusal.message}`)
     }
     return { ok: true, token }
   } catch (err) {
@@ -278,7 +278,7 @@ export function exposeClassOverride(params: ExposeClassOverrideParams): ClassOve
 /** "Apply to all": the instance's declarations for `properties` become the component's own rule, and the modifier goes once it is empty. */
 export function promoteClassOverride(params: PromoteClassOverrideParams): ClassOverrideResult {
   const location = params.callSites[0]
-  if (!location) return refusal('not-in-component', 'Only an instance placed on a page can have a class applied to every place its component is used.')
+  if (!location) return refusal('not-in-component', 'Only an instance placed on a page can apply a class to every place its component is used. Select that instance.')
   const project = params.project ?? createWorkspaceProject(params.workspaceRoot)
   project.manipulationSettings.set({ quoteKind: QuoteKind.Single })
   const originals = new Map<SourceFile, string>()
@@ -290,15 +290,15 @@ export function promoteClassOverride(params: PromoteClassOverrideParams): ClassO
     const callSite = findJsxElementAtLocationOrThrow(pageFile, location.file, location.line, location.col)
     // The panel may name the instance's own modifier rule; the base is what it is built on.
     const base = parseModifierSelector(params.selector)?.base ?? params.selector.trim()
-    if (singleClassName(base) === null) refuse('class-selector-unsupported', 'Only a rule that is one plain class (like .card) can take a value from one instance.')
+    if (singleClassName(base) === null) refuse('class-selector-unsupported', 'Only a rule that is one plain class (like .card) can take a value from one instance. Edit the rule in the stylesheet.')
     const tokens = classNamesOnElement(callSite).literals
     const found = existingModifier(params.css.text, base, tokens, params.css.convention)
-    if (!found) refuse('not-an-override', 'This instance has no class override of that rule to apply.')
+    if (!found) refuse('not-an-override', 'This instance has no class override of that rule to apply. Override the rule on this instance first.')
 
     const scope = params.atRule === undefined ? {} : { atRule: params.atRule }
     const declarations = readRuleDeclarations(params.css.text, found.selector, scope)
     const properties = params.properties.map((property) => property.toLowerCase()).filter((property) => declarations[property] !== undefined)
-    if (properties.length === 0) refuse('not-an-override', 'This instance does not override those values.')
+    if (properties.length === 0) refuse('not-an-override', 'This instance does not override those values. Override them on this instance first.')
 
     let css = params.css.text
     for (const property of properties) {
@@ -315,7 +315,7 @@ export function promoteClassOverride(params: PromoteClassOverrideParams): ClassO
     // The modifier is gone once no scope of its rule says anything.
     if (!ruleExists(css, found.selector)) {
       const detached = setJsxClassName({ file: location.file, line: location.line, col: location.col, add: [], remove: [{ kind: 'literal', token: found.token }], project })
-      if (!detached.ok) refuse('call-site-class', `The page's <${callSite.getTagNameNode().getText()}> could not drop the class: ${detached.refusal.message}`)
+      if (!detached.ok) refuse('call-site-class', `${detached.refusal.message}`)
     }
     return { ok: true, token: found.token }
   } catch (err) {

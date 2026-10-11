@@ -65,7 +65,7 @@ function ruleAt(root: Root, line: number, column: number): Rule | undefined {
 
 const NOT_FOUND = (selector: string): VariantRuleRefusal => ({
   reason: 'stale-source',
-  message: `The stylesheet changed since it was read: the rule \`${selector}\` is no longer where it was.`,
+  message: `The rule \`${selector}\` is no longer where the board read it. Reload the project and try again.`,
 })
 
 /** postcss's `end.offset` is already exclusive: `css.slice(start, end)` is the whole node. */
@@ -116,7 +116,7 @@ export function cloneRule(
   rewrite: (selector: string) => string,
 ): CloneRuleResult {
   const root = parse(css)
-  if (!root) return refuse('unparseable', 'This stylesheet is not plain CSS (Sass/Less syntax), so a rule cannot be copied safely.')
+  if (!root) return refuse('unparseable', 'This stylesheet is not plain CSS (Sass or Less syntax), so a rule cannot be copied safely. Copy the rule in the code.')
   const rule = ruleAt(root, at.line, at.column)
   const start = rule ? startOffset(rule) : null
   const end = rule ? endOffset(rule) : null
@@ -125,7 +125,7 @@ export function cloneRule(
   const selectorRaw = rule.raws.selector?.raw ?? rule.selector
   if (css.slice(start, start + selectorRaw.length) !== selectorRaw) return refuse('stale-source', NOT_FOUND(at.selector).message)
   const nextSelector = rewrite(selectorRaw)
-  if (nextSelector === selectorRaw) return refuse('selector-unchanged', `The copy of \`${at.selector}\` would have the same selector.`)
+  if (nextSelector === selectorRaw) return refuse('selector-unchanged', `The copy of \`${at.selector}\` would have the same selector. Give the copy a different selector.`)
 
   const wanted = normalizedSelector(nextSelector)
   let existed = false
@@ -163,7 +163,7 @@ export function cloneRule(
  */
 export function removeRule(css: string, at: { line: number; column: number; selector: string }): RemoveRuleResult {
   const root = parse(css)
-  if (!root) return refuse('unparseable', 'This stylesheet is not plain CSS (Sass/Less syntax), so a rule cannot be removed safely.')
+  if (!root) return refuse('unparseable', 'This stylesheet is not plain CSS (Sass or Less syntax), so a rule cannot be removed safely. Remove the rule in the code.')
   const rule = ruleAt(root, at.line, at.column)
   const start = rule ? startOffset(rule) : null
   const end = rule ? endOffset(rule) : null
@@ -195,7 +195,7 @@ export function removeRule(css: string, at: { line: number; column: number; sele
 
   return parse(applyTextSplices(css, splices))
     ? { ok: true, splices }
-    : refuse('unparseable', 'Removing that rule would leave this stylesheet unparseable.')
+    : refuse('unparseable', 'Removing that rule would leave this stylesheet unparseable. Remove it in the code.')
 }
 
 function escapeRegExp(text: string): string {

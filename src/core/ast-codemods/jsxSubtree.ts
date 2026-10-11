@@ -124,7 +124,7 @@ export type InsertJsxRefusalReason =
   | JsxChildRangeReason
   | 'not-a-container'
   | 'not-siblings'
-  | 'binding-conflict'
+
   | 'unsafe-tag'
   | 'void-element-children'
   | 'asset-import'
@@ -187,7 +187,7 @@ function jsxExpressionLiteral(value: InsertableJsxPropValue, unit: string): stri
     // `validateSubtree` refuses an unbound ref before any render; reaching
     // here means a caller skipped it, and writing the object literal would
     // put `{ __assetImport: … }` into someone's file.
-    throw new Error('An image import reached the renderer without being bound to a name.')
+    throw new Error('An image import reached the renderer without being bound to a name. Reload the project and try again.')
   }
   if (isJsxPropElement(value)) return renderJsxNode(value.__jsx, unit)
   if (Array.isArray(value)) {
@@ -368,8 +368,8 @@ export function validateSubtree(root: InsertJsxNode): { ok: false; refusal: Inse
       return refuse(
         'unsafe-tag',
         /^[A-Z]/.test(name)
-          ? `"${name}" starts with a capital letter, so JSX reads it as a component, not an HTML tag — pass importSpecifier to say where it is imported from.`
-          : `"${name}" is not a tag Studio will write: it must be a well-formed HTML element name and must not be one that executes script or loads external resources.`,
+          ? `"${name}" starts with a capital letter, so JSX reads it as a component, not an HTML tag. Pass importSpecifier to say where it is imported from.`
+          : `"${name}" is not a tag Studio will write, because it must be a plain HTML element name. Use a tag like div or span.`,
       )
     }
 
@@ -380,7 +380,7 @@ export function validateSubtree(root: InsertJsxNode): { ok: false; refusal: Inse
     if (Object.values(node.props ?? {}).some((value) => value !== undefined && containsUnboundAssetImport(value))) {
       return refuse(
         'asset-import',
-        'An image import can only be written as a prop of an element being inserted, so this write was refused.',
+        'An image import can only be written as a prop of an element being inserted. Insert the image as an element.',
       )
     }
 
@@ -388,7 +388,7 @@ export function validateSubtree(root: InsertJsxNode): { ok: false; refusal: Inse
     if (hasContent && VOID_HTML_ELEMENTS.has(name.toLowerCase())) {
       return refuse(
         'void-element-children',
-        `<${name}> is a void element and cannot hold children, so there is nowhere to write this content.`,
+        `<${name}> is a void element and cannot hold children. Insert the content next to it instead.`,
       )
     }
   }

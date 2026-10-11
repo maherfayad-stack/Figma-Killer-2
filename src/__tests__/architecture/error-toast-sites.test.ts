@@ -63,13 +63,13 @@ const ALLOWED_ERROR_TOAST_SITES: ReadonlyMap<string, number> = new Map([
   ['admin/pages/site/panels/AssetsPanel/UnusedImagesFooter.tsx', 1],
   // Inspector: explicit export/copy actions, and the swap picker (CV-1 moved its
   // two sites out of ComponentSection when the slot row started sharing it).
-  ['admin/pages/site/property-controls/InstanceSwapPopover.tsx', 2],
+  ['admin/pages/site/property-controls/InstanceSwapPopover.tsx', 1],
   ['admin/pages/site/inspector/sections/ExportSection.tsx', 4],
   ['admin/pages/site/panels/InspectPanel/InspectPanel.tsx', 2],
   ['admin/pages/site/panels/PropertiesPanel/ImageSourcePicker.tsx', 1],
   ['admin/pages/site/panels/PropertiesPanel/ImageSourceSection.tsx', 2],
-  ['admin/pages/site/property-controls/SlotControl.tsx', 2],
-  ['admin/pages/site/property-controls/SlotPicker.tsx', 4],
+  ['admin/pages/site/property-controls/SlotControl.tsx', 1],
+  ['admin/pages/site/property-controls/SlotPicker.tsx', 1],
   ['admin/pages/site/store/constraintActions.ts', 1],
   ['admin/pages/site/store/openSourceFile.ts', 1],
   ['admin/pages/site/store/slices/site/pageActions.ts', 1],

@@ -88,6 +88,7 @@ import {
   type InsertJsxRefusalReason,
   type InsertableJsxPropValue,
 } from './jsxSubtree'
+import { ELEMENT_GONE_MESSAGE } from '@core/utils/refusalCopy'
 
 /** The subtree written into the slot — identical shape to `insertJsxElement`'s own `InsertJsxNode`. */
 export interface InsertJsxIntoSlotPropNode {
@@ -174,7 +175,7 @@ export function insertJsxIntoSlotProp(params: InsertJsxIntoSlotPropParams): Inse
       // owns. Silently appending instead would be the wrong write; say so.
       return refuse(
         'replace-not-supported',
-        'The default slot holds ordinary child elements — select the one you want to change on the canvas and edit or delete it there, rather than replacing the whole slot.',
+        'The default slot holds ordinary child elements, so it cannot be replaced as a whole. Select the child you want to change and edit it.',
       )
     }
     // The default slot is the element's ordinary child list, not an
@@ -199,7 +200,7 @@ export function insertJsxIntoSlotProp(params: InsertJsxIntoSlotPropParams): Inse
   if (!element) {
     return refuse(
       'not-found',
-      `No JSX element is written at line ${line}, column ${col} any more — the file changed since the canvas last read it. Reload and try again.`,
+      ELEMENT_GONE_MESSAGE,
     )
   }
 
@@ -222,7 +223,7 @@ export function insertJsxIntoSlotProp(params: InsertJsxIntoSlotPropParams): Inse
     // defensive posture `setJsxStyle`/`setJsxClassName` already take.
     return refuse(
       'spread-attribute',
-      `The "${propName}" prop is a spread attribute — Studio can't tell what it currently holds, so it won't guess whether inserting here is safe.`,
+      `The "${propName}" prop is a spread attribute, so Studio cannot tell what it holds. Set the prop explicitly in the code.`,
     )
   } else {
     const outcome = fillExistingSlotAttribute(existingAttribute, propName, newNodeText, unit, mode)
@@ -265,7 +266,7 @@ function fillExistingSlotAttribute(
   if (!expr) {
     return refuse(
       'slot-ambiguous',
-      `The "${propName}" prop has no JSX value to ${mode === 'replace' ? 'replace' : 'insert alongside'} (a valueless shorthand, a plain string, or an empty expression container) — Studio won't guess what that currently means.`,
+      `The "${propName}" prop has no JSX value to ${mode === 'replace' ? 'replace' : 'insert alongside'} (it is a shorthand, a plain string or empty), and Studio will not guess. Set the prop to JSX in the code.`,
     )
   }
 
@@ -294,7 +295,7 @@ function fillExistingSlotAttribute(
   }
   return refuse(
     'slot-ambiguous',
-    `The "${propName}" prop is set to an expression ("${expr.getText()}") rather than JSX markup — Studio can't tell whether that currently means "empty" or is a real binding, so it refuses rather than guess.`,
+    `The "${propName}" prop is set to an expression ("${expr.getText()}"), and Studio cannot tell whether that means empty. Set the prop to JSX in the code.`,
   )
 }
 

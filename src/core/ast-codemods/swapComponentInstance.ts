@@ -134,10 +134,10 @@ export function swapComponentInstance(params: SwapComponentInstanceParams): Swap
   const fullTagName = opening.getTagNameNode().getText()
   const identifier = fullTagName.split('.')[0]!
   if (!/^[A-Z]/.test(fullTagName)) {
-    return refuse('not-a-component', `<${fullTagName}> is a plain HTML element, not a component instance.`)
+    return refuse('not-a-component', `<${fullTagName}> is a plain HTML element, not a component instance. Select a component instance.`)
   }
   if (identifier === newComponentName) {
-    return refuse('same-component', `Already an instance of ${newComponentName}.`)
+    return refuse('same-component', `This is already an instance of ${newComponentName}. Pick a different component.`)
   }
 
   const specifier = newComponentSource === 'local'

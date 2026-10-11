@@ -142,6 +142,6 @@ export async function undoStyleLanding(token: string): Promise<void> {
     await requestCmsSiteReload()
   } catch (err) {
     console.error('[styleLandings] undo failed:', err)
-    pushToast({ kind: 'warning', title: 'That style change could not be undone', body: 'Studio could not reach the server. Nothing was changed.' })
+    pushToast({ kind: 'warning', title: 'That style change could not be undone', body: 'Studio could not reach the server, so the style change stays. Try the undo again.' })
   }
 }

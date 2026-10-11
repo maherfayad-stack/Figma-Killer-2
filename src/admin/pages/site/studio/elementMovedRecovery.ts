@@ -90,7 +90,7 @@ export function warnElementMoved(nodeIds: Iterable<string>): void {
   pushToast({
     kind: 'warning',
     title: 'Not saved — the file changed',
-    body: `${files.join(', ')} changed outside Studio, and the element you edited is no longer where it was, so nothing was written. The board now shows the file as it is on disk; make the change again there.`,
+    body: `${files.join(', ')} changed outside Studio, so the element you edited is no longer where it was. Make the change again.`,
     location: 'site-editor',
   })
 }

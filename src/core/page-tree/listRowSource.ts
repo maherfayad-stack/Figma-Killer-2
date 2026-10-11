@@ -152,16 +152,14 @@ export function isListRowNodeId(nodeId: string): boolean {
   return loopTemplateNodeId(nodeId) !== null
 }
 
-const LEAD = 'Studio edits a list row by changing the array its .map() reads'
-
-/** The sentence for each code, completing {@link LEAD}. */
+/** The refusal for each code: what is true of the array, then where to edit it. */
 const LIST_ROW_REFUSAL_TEXT: Record<ListRowRefusalCode, (source: string) => string> = {
-  imported: (source) => `, and ${source} is imported from another file — its items are written there. Open that file to edit them.`,
-  computed: (source) => `, and ${source} is computed by the code rather than written out as an array here, so there is no array to change.`,
-  prop: (source) => `, and ${source} is handed to this component from outside, so the array is not written in this file.`,
-  spread: (source) => `, and ${source} spreads another list into it, so a row's place on the board is not its place in the source.`,
-  nested: () => `, and this list is drawn once inside every row of an outer list — its array is shared by all of them, so changing it here would change every copy.`,
-  'multi-root': (source) => `, and each item of ${source} renders several elements, so one of them cannot change without the others. Edit the array in code.`,
+  imported: (source) => `${source} is imported from another file, so its items are written there. Open that file to edit them.`,
+  computed: (source) => `${source} is computed by the code, so there is no array to change. Edit it in the code.`,
+  prop: (source) => `${source} is handed to this component from outside, so the array is not written in this file. Edit it where it is written.`,
+  spread: (source) => `${source} spreads another list into it, so a row's place on the board is not its place in the source. Edit the array in the code.`,
+  nested: () => `This list is drawn once inside every row of an outer list, so changing it here would change every copy. Edit the array in the code.`,
+  'multi-root': (source) => `Each item of ${source} renders several elements, so one cannot change without the others. Edit the array in the code.`,
 }
 
 /**
@@ -173,19 +171,15 @@ const LIST_ROW_REFUSAL_TEXT: Record<ListRowRefusalCode, (source: string) => stri
  * wrap, group, reparent, extract, an insert INTO a row — which keep the old
  * sentence: one piece of source JSX renders every row.
  */
-export function listRowRefusalMessage(
-  node: { id: string; listRow?: ListRowSource },
-  gesture: string,
-  gestureWritesArray: boolean,
-): string {
+export function listRowRefusalMessage(node: { id: string; listRow?: ListRowSource }, gestureWritesArray: boolean): string {
   const row = node.listRow
   if (isInlinedNodeId(node.id) && row) {
-    return `${LEAD}, and this list is written in a shared component's own file — its array is shared by every place the component is used.`
+    return `This list is written in a shared component's file, so its array is shared by every place the component is used. Detach this instance first.`
   }
-  if (row?.kind === 'refused') return `${LEAD}${LIST_ROW_REFUSAL_TEXT[row.reason](row.source)}`
+  if (row?.kind === 'refused') return LIST_ROW_REFUSAL_TEXT[row.reason](row.source)
   if (row?.kind === 'array' && gestureWritesArray) return '' // not refused — the caller writes the array
   if (row?.kind === 'array') {
-    return `${gesture} a row of a list that the code generates. Studio can reorder, duplicate or delete a row by editing the array it maps over, but one piece of source JSX renders every row, so this cannot change for one row alone.`
+    return 'One piece of source JSX renders every row of this list, so this cannot change for one row alone. Select the whole row to change the list.'
   }
-  return `${gesture} part of a row of a list that the code generates. One piece of source JSX renders every row, so this cannot change in one row alone — select the whole row to reorder, duplicate or delete it, which edits the array.`
+  return 'This is part of a row of a list the code generates, so it cannot change in one row alone. Select the whole row instead.'
 }

@@ -76,7 +76,7 @@ function unwritable(node: PageNode, property: string): IgnoreAutoLayoutPlan {
     explainStyleConstraint(node, property) ?? {
       reason: 'resolved-style-expression',
       scope: 'style-property',
-      explanation: `\`${property}\` is set in code here, so Studio cannot write it.`,
+      explanation: `\`${property}\` is set in code here, so Studio cannot write it. Edit it in the code.`,
       actions: [],
     },
   )

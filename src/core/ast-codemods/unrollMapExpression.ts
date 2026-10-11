@@ -56,6 +56,7 @@ import { createdJsxLocationsIn, type CreatedJsxLocation } from './createdJsxLoca
 import { applyTextEdits, ownedTextRange, verbatimSourceText, writeVerbatimSource, type TextEdit } from './jsxChildRange'
 import { createProject, findJsxElementAtLocation, loadSourceFile } from './locateJsxElement'
 import { introducesSyntaxErrors } from './syntaxRegression'
+import { ELEMENT_GONE_MESSAGE, STALE_SOURCE_MESSAGE, SYNTAX_REGRESSION_MESSAGE } from '@core/utils/refusalCopy'
 
 /** A list this long is data, not a layout: it is not written out by hand. */
 export const MAX_UNROLL_ITEMS = 100
@@ -118,34 +119,34 @@ export function unrollMapExpression(params: UnrollMapExpressionParams): UnrollMa
   const sourceFile = loadSourceFile(project, file)
   const verbatim = verbatimSourceText(sourceFile, file)
   if (verbatim === null) {
-    return refuse('stale-source', 'This file changed on disk since the canvas last read it. Reload the project and try again.')
+    return refuse('stale-source', STALE_SOURCE_MESSAGE)
   }
 
   const opening = findJsxElementAtLocation(sourceFile, line, col)
   if (!opening) {
-    return refuse('not-found', `No JSX element is written at line ${line}, column ${col} any more — the file changed since the canvas last read it.`)
+    return refuse('not-found', ELEMENT_GONE_MESSAGE)
   }
   const root = Node.isJsxSelfClosingElement(opening) ? opening : opening.getParentOrThrow()
 
   // The row root is the thing the callback returns.
   const callback = callbackReturning(root)
   if (!callback) {
-    return refuse('not-a-list', 'This element is not the whole row a .map() callback returns (or the callback does more than return it), so there is no list to write out.')
+    return refuse('not-a-list', 'This element is not the whole row a .map() callback returns, so there is no list to write out. Select the whole row.')
   }
   const call = callback.getParent()
   if (!call || !Node.isCallExpression(call) || call.getArguments().length !== 1 || call.getArguments()[0] !== callback) {
-    return refuse('not-a-list', 'This row is not drawn by a plain .map() with one callback.')
+    return refuse('not-a-list', 'This row is not drawn by a plain .map() with one callback. Rewrite it that way in the code.')
   }
   const callee = call.getExpression()
   if (!Node.isPropertyAccessExpression(callee) || callee.getName() !== 'map') {
-    return refuse('not-a-list', 'This row is not drawn by a .map() call.')
+    return refuse('not-a-list', 'This row is not drawn by a .map() call. Select a row of a list.')
   }
 
   const container = jsxChildContainer(call)
   if (!container) {
     return refuse(
       'not-a-child',
-      'This list is not written directly as a child of an element (it sits inside a condition or another expression), so there is no place in the markup to write its rows out.',
+      'This list sits inside a condition or another expression, so there is no place in the markup to write its rows. Move the list into the markup in the code.',
     )
   }
   const innerStart = container.expression.getStart()
@@ -153,7 +154,7 @@ export function unrollMapExpression(params: UnrollMapExpressionParams): UnrollMa
   const containerStart = container.node.getStart()
   const containerEnd = container.node.getEnd()
   if (verbatim.slice(containerStart + 1, innerStart).trim() !== '' || verbatim.slice(innerEnd, containerEnd - 1).trim() !== '') {
-    return refuse('unsupported-callback', 'A comment sits inside the braces of this list, and writing the rows out would drop it.')
+    return refuse('unsupported-callback', 'A comment sits inside the braces of this list, and writing the rows out would drop it. Move the comment out in the code.')
   }
 
   const array = receiverArray(callee.getExpression())
@@ -164,11 +165,11 @@ export function unrollMapExpression(params: UnrollMapExpressionParams): UnrollMa
   if (position.line !== params.array.line || position.column !== params.array.col || elements.length !== params.length) {
     return refuse(
       'list-changed',
-      'This list’s array is not the one the board read — it has a different number of items now. Nothing was changed; the board will catch up with the file.',
+      "This list's array has a different number of items than the board read. Reload the project and try again.",
     )
   }
   if (elements.length > MAX_UNROLL_ITEMS) {
-    return refuse('too-long', `This list has ${elements.length} items. Studio writes out at most ${MAX_UNROLL_ITEMS}; a list that long is data, not layout.`)
+    return refuse('too-long', `This list has ${elements.length} items, and Studio writes out at most ${MAX_UNROLL_ITEMS}. Keep a list that long as data.`)
   }
   const items: DataValue[] = []
   for (const [index, element] of elements.entries()) {
@@ -176,7 +177,7 @@ export function unrollMapExpression(params: UnrollMapExpressionParams): UnrollMa
     if (!value) {
       return refuse(
         'not-literal',
-        `Item ${index + 1} of this list is not a plain value (it calls something, spreads, or reads another variable), so copying it into each row could change what it means.`,
+        `Item ${index + 1} of this list is not a plain value (it calls something, spreads or reads a variable). Replace it with a plain value in the code.`,
       )
     }
     items.push(value)
@@ -188,7 +189,7 @@ export function unrollMapExpression(params: UnrollMapExpressionParams): UnrollMa
   for (const name of [names.item, names.index]) {
     if (name === null) continue
     if (declaresName(body, name)) {
-      return refuse('shadowed-param', `Something inside this row declares its own “${name}”, which would be confused with the list item.`)
+      return refuse('shadowed-param', `Something inside this row declares its own "${name}", which would be confused with the list item. Rename it in the code.`)
     }
   }
 
@@ -224,7 +225,7 @@ export function unrollMapExpression(params: UnrollMapExpressionParams): UnrollMa
 
   const candidate = applyTextEdits(verbatim, [{ start: owned.start, end: owned.end, text: replacement }])
   if (introducesSyntaxErrors(file, verbatim, candidate)) {
-    return refuse('invalid-source', 'This change would leave the file with a syntax error, so nothing was changed.')
+    return refuse('invalid-source', SYNTAX_REGRESSION_MESSAGE)
   }
   writeVerbatimSource(sourceFile, file, candidate)
 
@@ -275,13 +276,13 @@ function receiverArray(receiver: Node): { ok: true; node: ArrayLiteralExpression
   const expr = unwrap(receiver)
   if (Node.isArrayLiteralExpression(expr)) return { ok: true, node: expr }
   if (!Node.isIdentifier(expr)) {
-    return refuse('not-literal', 'This list is computed by the code rather than written out as an array in this file.')
+    return refuse('not-literal', 'This list is computed by the code rather than written out as an array in this file. Write the array out in the code.')
   }
   const name = expr.getText()
   for (let scope: Node | undefined = expr.getParent(); scope; scope = scope.getParent()) {
     if (Node.isFunctionLikeDeclaration(scope) || Node.isArrowFunction(scope) || Node.isFunctionExpression(scope)) {
       if (scope.getParameters().some((parameter) => bindingNames(parameter.getNameNode()).includes(name))) {
-        return refuse('not-literal', `${name} is handed to this component from outside, so its items are not written in this file.`)
+        return refuse('not-literal', `${name} is handed to this component from outside, so its items are not written in this file. Write the array in this file.`)
       }
     }
     const statements = Node.isSourceFile(scope) || Node.isBlock(scope) ? scope.getStatements() : null
@@ -293,13 +294,13 @@ function receiverArray(receiver: Node): { ok: true; node: ArrayLiteralExpression
         const init = declaration.getInitializer()
         const value = init ? unwrap(init) : undefined
         if (statement.getDeclarationKind() !== 'const' || !value || !Node.isArrayLiteralExpression(value)) {
-          return refuse('not-literal', `${name} is not a plain array written out in this file (it is reassignable or computed).`)
+          return refuse('not-literal', `${name} is not a plain array written out in this file (it is reassignable or computed). Make it a plain const array.`)
         }
         return { ok: true, node: value }
       }
     }
   }
-  return refuse('not-literal', `${name} is imported or declared outside this file, so its items are not written here.`)
+  return refuse('not-literal', `${name} is imported or declared outside this file, so its items are not written here. Move the array into this file.`)
 }
 
 function bindingNames(name: Node): string[] {
@@ -347,12 +348,12 @@ function readData(node: Node): DataValue | null {
 
 function parameterNames(callback: { getParameters(): ParameterDeclaration[] }): { ok: true; item: string | null; index: string | null } | ReturnType<typeof refuse> {
   const parameters = callback.getParameters()
-  if (parameters.length > 2) return refuse('unsupported-params', 'This list’s callback takes more than an item and an index.')
+  if (parameters.length > 2) return refuse('unsupported-params', "This list's callback takes more than an item and an index. Reduce it to `(item, index) =>` in the code.")
   const names: (string | null)[] = []
   for (const parameter of parameters) {
     const name = parameter.getNameNode()
     if (!Node.isIdentifier(name) || parameter.getInitializer() || parameter.isRestParameter()) {
-      return refuse('unsupported-params', 'This list’s callback destructures or defaults its item. Studio reads plain `(item, index) =>` callbacks.')
+      return refuse('unsupported-params', "This list's callback destructures or defaults its item. Use a plain `(item, index) =>` callback in the code.")
     }
     names.push(name.getText())
   }
@@ -390,7 +391,7 @@ function collectReferences(root: Node, names: { item: string | null; index: stri
     if (!kind || !isReference(id)) continue
     let top: Node = id
     for (let parent = top.getParent(); parent && (Node.isPropertyAccessExpression(parent) || Node.isElementAccessExpression(parent)) && parent.getExpression() === top; parent = top.getParent()) top = parent
-    if (isWriteTarget(top)) return refuse('param-assigned', `This row changes “${text}”, which a written-out row cannot do.`)
+    if (isWriteTarget(top)) return refuse('param-assigned', `This row changes "${text}", which a written-out row cannot do. Remove the assignment in the code.`)
     found.push({ node: id, kind })
   }
   return { ok: true, found }
@@ -458,7 +459,7 @@ function referenceEdit(reference: Reference, value: DataValue): { ok: true; star
 
   const parent = top.getParent()
   if ((current.kind === 'object' || current.kind === 'array') && current.text.includes('\n')) {
-    return refuse('multi-line-value', 'A row passes a whole multi-line item along, which cannot be copied into each row without reformatting it.')
+    return refuse('multi-line-value', 'A row passes a whole multi-line item along, which cannot be copied into each row without reformatting. Split the item into fields in the code.')
   }
 
   // `{row.label}` as a child / `title={row.label}` as an attribute: the braces go when the value reads as plain text.

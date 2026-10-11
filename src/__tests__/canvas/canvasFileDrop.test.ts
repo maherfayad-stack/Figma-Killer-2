@@ -369,7 +369,7 @@ describe('planCanvasFileDrop — refusals, all decided before the network', () =
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.refusal.reason).toBe('no-frame')
-    expect(result.refusal.message).toContain('Drop the image onto a frame')
+    expect(result.refusal.message).toContain('Drop it onto a frame')
   })
 
   it('refuses a drop with no image in it, and names what it is', () => {

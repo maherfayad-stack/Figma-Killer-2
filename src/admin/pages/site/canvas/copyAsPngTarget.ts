@@ -69,7 +69,7 @@ export function resolveCopyAsPngTarget(
   if (selection.isVisualComponentDocument) {
     return {
       ok: false,
-      reason: 'A Visual Component is open in the canvas, and only a screen can be photographed. Go back to a page first.',
+      reason: 'A Visual Component is open in the canvas, and only a screen can be photographed. Open a page first.',
     }
   }
 
@@ -77,7 +77,7 @@ export function resolveCopyAsPngTarget(
   //    and the store clears the frame selection when one is made anyway.
   if (selection.selectedNodeId) {
     if (!selection.activePageId) {
-      return { ok: false, reason: 'This element is not on an open screen, so there is nothing to photograph.' }
+      return { ok: false, reason: 'This element is not on an open screen, so there is nothing to photograph. Select an element on an open screen.' }
     }
     return {
       ok: true,
@@ -95,7 +95,7 @@ export function resolveCopyAsPngTarget(
 
   // 3. Nothing selected — the open screen.
   if (!selection.activePageId) {
-    return { ok: false, reason: 'No screen is open, so there is nothing to copy.' }
+    return { ok: false, reason: 'No screen is open, so there is nothing to copy. Open a screen.' }
   }
   return {
     ok: true,

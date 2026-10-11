@@ -208,7 +208,7 @@ export function refuseDroppedFile(facts: DroppedFileFacts): CanvasFileDropRefusa
     return {
       reason: 'not-an-image',
       headline: 'Studio could not read that file',
-      message: 'That drop carried no file Studio could read.',
+      message: 'That drop carried no file Studio could read. Drop an image file from your computer.',
     }
   }
   if (imageCount(facts) > 0) return null
@@ -217,7 +217,7 @@ export function refuseDroppedFile(facts: DroppedFileFacts): CanvasFileDropRefusa
   return {
     reason: 'not-an-image',
     headline: `${described} is not an image`,
-    message: `${facts.types.length > 1 ? 'None of those files is an image' : `${name ? `"${name}"` : 'That file'} is ${described}`}, and Studio only adds images this way. Drop a PNG, JPEG, WebP, AVIF, GIF or SVG.`,
+    message: `${facts.types.length > 1 ? 'None of those files is an image' : `${name ? `"${name}"` : 'That file'} is ${described}`}. Drop a PNG, JPEG, WebP, AVIF, GIF or SVG.`,
   }
 }
 
@@ -238,29 +238,29 @@ export const CANVAS_FILE_DROP_REFUSAL = {
     reason: 'no-frame',
     headline: 'Drop onto a frame',
     message:
-      'Drop the image onto a frame. The empty board is not a file, so there is nowhere for Studio to write the element.',
+      'The empty board is not a file, so there is nowhere to write the image. Drop it onto a frame.',
   },
   frameGone: {
     reason: 'no-frame',
     headline: 'That frame is gone',
-    message: 'That frame left the board while the image was being dropped, so nothing was added. Drop it onto a frame that is on the board now.',
+    message: 'That frame left the board while the image was being dropped. Drop the image onto a frame that is on the board.',
   },
   noPosition: {
     reason: 'no-position',
     headline: 'Nothing here can hold an image',
     message:
-      'Nothing under the pointer in that frame can hold an image. Drop it inside a container element instead.',
+      'Nothing under the pointer in that frame can hold an image. Drop it inside a container element.',
   },
   oneBackground: {
     reason: 'one-background',
     headline: 'A background takes one image',
-    message: `Hold ${KEY.shift} with ONE image to make it the background of the element under the pointer. Drop several images without ${KEY.shift} to add them all.`,
+    message: `Only one image can be the background of an element. Drop the images one at a time with ${KEY.shift} held.`,
   },
   lockedImage: {
     reason: 'locked-image',
     headline: 'This image comes from code',
     message:
-      `This image's src is computed in code, so there is no file path Studio could rewrite. Hold ${KEY.alt} to add the new image beside it instead, or change the expression in your editor.`,
+      `This image's src is computed in code, so there is no file path to rewrite. Hold ${KEY.alt} to add the new image beside it.`,
   },
 } as const satisfies Record<string, CanvasFileDropRefusal>
 
@@ -269,7 +269,7 @@ function staticParentRefusal(parent: PageNode | null): CanvasFileDropRefusal {
   return {
     reason: 'static-parent',
     headline: `Make this ${parentLabel} position: relative first`,
-    message: `${KEY.absolute}-drop places the image at the pointer, which needs a positioned container — this ${parentLabel} is position: static, so the image would be placed against some other element. Make it position: relative, or drop without ${KEY.absolute} to add the image in the flow.`,
+    message: `${KEY.absolute}-drop places the image at the pointer, and this ${parentLabel} is position: static. Make it position: relative.`,
     staticParent: { parentNodeId: parent?.id ?? null, parentLabel },
   }
 }

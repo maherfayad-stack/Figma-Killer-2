@@ -113,7 +113,7 @@ describe('svgToJsxNode', () => {
     const result = svgToJsxNode(`<svg viewBox="0 0 1 1">${many}</svg>`)
     expect(result.ok).toBe(false)
     if (!result.ok) {
-      expect(result.message).toContain('too large')
+      expect(result.message).toContain('too many')
       // P5-A — the one refusal a caller may route around (a paste lands it as an <img> instead).
       expect(result.reason).toBe('too-large')
     }

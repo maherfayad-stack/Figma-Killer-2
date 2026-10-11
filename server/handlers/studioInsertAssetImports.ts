@@ -65,7 +65,7 @@ export function resolveInsertAssetImports<T extends PropsCarrier>(
       ok: false,
       reason: 'asset-import',
       message:
-        'In a Next.js project an imported image is an object, not a URL, so <img src={…}> would render "[object Object]". Move the image into public/ and add it from there.',
+        'Next.js imports an image as an object, not a URL, so it would not display. Move the image into public/ and add it from there.',
     }
   }
 
@@ -79,7 +79,7 @@ export function resolveInsertAssetImports<T extends PropsCarrier>(
       if (rel === null) {
         refusal ??= {
           reason: 'asset-unavailable',
-          message: 'That image is not a file in this project any more, so there is nothing to import. Reload the project and try again.',
+          message: 'That image is no longer a file in this project. Reload the project and try again.',
         }
         continue
       }

@@ -29,6 +29,7 @@
  */
 import { Node, SyntaxKind, type SourceFile } from 'ts-morph'
 import { findJsxElementAtLocation, type JsxOpeningLikeElement } from './locateJsxElement'
+import { ELEMENT_GONE_MESSAGE } from '@core/utils/refusalCopy'
 
 /** A JSX child element resolved from a `line:col`, with the byte range that is exclusively its own. */
 export interface JsxChildRange {
@@ -114,7 +115,7 @@ export function resolveJsxChildRange(
     return {
       ok: false,
       reason: 'not-found',
-      message: `No JSX element is written at line ${line}, column ${col} any more — the file changed since the canvas last read it. Reload and try again.`,
+      message: ELEMENT_GONE_MESSAGE,
     }
   }
 
@@ -140,13 +141,13 @@ export function resolveJsxChildRange(
           ok: false,
           reason: 'expression-child',
           message:
-            'In the code this element is produced by an expression — a condition, a list, or a helper — rather than written directly as a child. Its position is decided when the app runs, so there is no place in the file to write a new one.',
+            'The code produces this element from an expression, so its position is decided when the app runs. Change it in the code.',
         }
       : {
           ok: false,
           reason: 'no-jsx-parent',
           message:
-            'This element is the outermost thing its component returns, so it has no siblings in the code to be placed among — and removing it would leave the component returning nothing.',
+            'This element is the outermost thing its component returns, so it has no siblings to be placed among. Select an element inside it instead.',
         }
   }
 

@@ -181,7 +181,7 @@ function mergeIntoObjectLiteral(
     // A shorthand (`{ color }`): deleting it would drop a binding whose value
     // this codemod never read. Same fail-closed posture as the set path.
     if (writers.some(({ member }) => !Node.isPropertyAssignment(member))) {
-      throw new JsxStyleTargetError(`style key "${key}" is not a plain "key: value" property — refusing to remove it`, path)
+      throw new JsxStyleTargetError(`The style key "${key}" is not a plain "key: value" property, so it cannot be removed. Remove it in the code.`, path)
     }
     // Absent: an idempotent re-send (or a key only a spread supplies, which
     // the canvas never showed) — nothing in the file to delete.
@@ -194,7 +194,7 @@ function mergeIntoObjectLiteral(
     if (writers.some(({ member }) => !Node.isPropertyAssignment(member))) {
       // Shorthand property (`{ color }`) — fail closed rather than guess at
       // what overwriting a binding this codemod never read should mean.
-      throw new JsxStyleTargetError(`style key "${key}" is not a plain "key: value" property — refusing to overwrite it`, path)
+      throw new JsxStyleTargetError(`The style key "${key}" is not a plain "key: value" property, so it cannot be overwritten. Change it in the code.`, path)
     }
     const spreadAt = lastSpreadIndex(object)
     const winner = writers.filter(({ index }) => index > spreadAt).at(-1)
@@ -270,7 +270,7 @@ export function setJsxStyle(params: SetJsxStyleParams): void {
     // equal the literal text "...expr", which should never occur for a real
     // attribute name — guard against silently clobbering one anyway.
     throw new JsxStyleTargetError(
-      'the "style" attribute is a spread attribute — cannot merge a literal style object into it',
+      'The "style" attribute is a spread attribute, so a style object cannot merge into it. Edit the style in the code.',
       path,
     )
   }
@@ -283,7 +283,7 @@ export function setJsxStyle(params: SetJsxStyleParams): void {
     // (`style="color:red"`, invalid at runtime but syntactically legal) — neither
     // is an object-literal expression this codemod can merge into.
     throw new JsxStyleTargetError(
-      'the "style" attribute has no object-literal expression to merge into',
+      'The "style" attribute has no object literal to merge into. Edit the style in the code.',
       path,
     )
   }
@@ -293,14 +293,14 @@ export function setJsxStyle(params: SetJsxStyleParams): void {
     // sit on top of it.
     if (remove.length > 0) {
       throw new JsxStyleTargetError(
-        'the "style" attribute is an expression, not an object literal — a property it supplies cannot be removed here',
+        'The "style" attribute is an expression, so a property it supplies cannot be removed here. Edit the style in the code.',
         path,
       )
     }
     const operand = spreadOperandText(expression)
     if (operand === null) {
       throw new JsxStyleTargetError(
-        'the "style" attribute is not an object (a string, template, or other value) — refusing to overwrite it',
+        'The "style" attribute is not an object (a string, a template or another value). Edit the style in the code.',
         path,
       )
     }

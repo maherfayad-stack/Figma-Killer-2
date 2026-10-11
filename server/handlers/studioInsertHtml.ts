@@ -181,7 +181,7 @@ export function applyPastedHtmlInsert(
   if (!guarded.ok) return { ok: false, reason: 'unsafe-paste', message: guarded.message }
   const css = insert.pastedHtml.css ?? ''
   if (css.length > MAX_PASTED_CSS_CHARS) {
-    return { ok: false, reason: 'unsafe-paste', message: 'The stylesheet in that HTML is too large to write into your project in one paste.' }
+    return { ok: false, reason: 'unsafe-paste', message: 'The stylesheet in that HTML is too large to write in one paste. Remove some of the styles and paste again.' }
   }
 
   const destination = css.trim() ? findPageStylesheet(dir, targetRel) : null
@@ -214,7 +214,7 @@ export function applyPastedHtmlInsert(
       return {
         ok: false,
         reason: 'stylesheet-write-failed',
-        message: `Studio could not write the pasted styles into ${destination.file}, so nothing was pasted and your files are as they were.`,
+        message: `Studio could not write the pasted styles into ${destination.file}, so nothing was pasted. Check that the file is writable, then paste again.`,
       }
     }
   }

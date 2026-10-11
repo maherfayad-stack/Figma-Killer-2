@@ -53,6 +53,7 @@ import {
 import { lineIndentAt } from './jsxChildPlacement'
 import { createdJsxLocationsIn, type CreatedJsxLocation } from './createdJsxLocation'
 import type { JsxOpeningLikeElement } from './locateJsxElement'
+import { STALE_SOURCE_MESSAGE } from '@core/utils/refusalCopy'
 
 export interface UnwrapJsxElementParams {
   file: string
@@ -115,7 +116,7 @@ export function unwrapJsxElement(params: UnwrapJsxElementParams): UnwrapJsxEleme
   if (verbatim === null) {
     return refuseUnwrap(
       'stale-source',
-      'This file changed on disk since the canvas last read it. Reload the project and try again.',
+      STALE_SOURCE_MESSAGE,
     )
   }
 

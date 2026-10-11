@@ -484,7 +484,7 @@ export default function Booking({ loading }: { loading: boolean }) {
     expectRefusal(
       FLEET,
       'button',
-      'async component',
+      'is async',
       `export default async function Booking() {
   return (
     <main className="booking">
@@ -499,7 +499,7 @@ export default function Booking({ loading }: { loading: boolean }) {
   it("refuses a 'use client' element going into a server component, and says why", () => {
     const originText = `'use client'
 ${FLEET}`
-    expectRefusal(originText, 'button', "server component")
+    expectRefusal(originText, 'button', 'use client')
   })
 
   it("lets a 'use client' element into another 'use client' file", () => {

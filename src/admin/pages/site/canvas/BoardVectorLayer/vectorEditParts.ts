@@ -104,14 +104,14 @@ function frameContentOrigin(iframe: HTMLIFrameElement): Point | null {
 export function resolveVectorHost(frameId: string | null, hostNodeId: string): VectorHostResolution {
   const found = findVectorHost(frameId, hostNodeId)
   if (!found) {
-    return { ok: false, message: 'Vector editing works on the design canvas. This frame is showing the running app, where Studio cannot reach the graphic.' }
+    return { ok: false, message: 'Vector editing works on the design canvas, and this frame is showing the running app. Switch the board to the design canvas.' }
   }
   const { iframe, host } = found
   if (host.localName !== 'svg') {
-    return { ok: false, message: 'This graphic is not an inline <svg> in your code, so its points cannot be edited here.' }
+    return { ok: false, message: 'This graphic is not an inline <svg> in your code, so its points cannot be edited here. Edit it in the code.' }
   }
   const origin = frameContentOrigin(iframe)
-  if (!origin) return { ok: false, message: 'Vector editing needs the board.' }
+  if (!origin) return { ok: false, message: 'Vector editing needs the board. Open a board.' }
 
   const parts: VectorPart[] = []
   let anchors = 0
@@ -153,7 +153,7 @@ export function resolveVectorHost(frameId: string | null, hostNodeId: string): V
       ok: false,
       message: readOnly > 0
         ? 'The paths in this graphic are drawn from code, so their points cannot be edited on the canvas. Change them in the code.'
-        : 'This graphic has no paths to edit.',
+        : 'This graphic has no paths to edit. Select a graphic that has paths.',
     }
   }
   if (anchors > MAX_EDITABLE_ANCHORS) {

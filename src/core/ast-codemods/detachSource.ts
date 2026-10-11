@@ -339,7 +339,7 @@ export function jsxStringValue(raw: string, attrText: string | undefined, free: 
       if (HTML_ENTITY_RE.test(raw)) {
         fail(
           'unsupported-params',
-          `A prop value "${raw}" contains an HTML entity, which means something different once it is moved into a JavaScript expression.`,
+          `A prop value "${raw}" contains an HTML entity, which means something different in a JavaScript expression. Replace the entity with the character in the code.`,
         )
       }
       return /[\\\r\n]/.test(raw) || raw.includes(quote) ? jsStringLiteral(raw) : `${quote}${raw}${quote}`

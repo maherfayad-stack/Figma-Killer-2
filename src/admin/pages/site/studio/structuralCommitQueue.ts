@@ -163,7 +163,7 @@ export function deferWhileStructuralCommitInFlight(
       pushToast({
         kind: 'warning',
         title: 'Not done — the file changed',
-        body: 'An element this change was aimed at moved or changed while Studio was writing your previous change, and it could not be found again with certainty, so nothing was written. Try it again on the board as it is now.',
+        body: 'An element this change was aimed at moved while Studio was writing your previous change, so nothing was written. Try it again on the board as it is now.',
         location: 'site-editor',
       })
       return

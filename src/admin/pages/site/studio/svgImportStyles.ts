@@ -100,8 +100,7 @@ const PROPERTY_NAME = /^(?:--[\w-]+|-?[a-zA-Z][a-zA-Z0-9-]*)$/
 const CLASS_SELECTOR = /^\.(-?[_a-zA-Z][\w-]*)$/
 
 /** Sentence tail every `<style>` refusal ends with: what the user can do about it. */
-const REEXPORT_HINT =
-  'Re-export the SVG with presentation attributes instead of internal CSS (Illustrator: Styling → Presentation Attributes), then try again.'
+const REEXPORT_HINT = 'Re-export the SVG with presentation attributes instead of internal CSS.'
 
 /**
  * Splits `text` on `separator` wherever it is not inside quotes or
@@ -192,7 +191,7 @@ export function parseClassStylesheet(css: string): ClassStylesheetResult {
 
     if (text[cursor] === '@') {
       const atName = /^@([\w-]+)/.exec(text.slice(cursor))?.[1] ?? 'at-'
-      return { ok: false, message: `This SVG's <style> block contains an @${atName} rule, which Studio cannot turn into attributes on the shapes it styles. ${REEXPORT_HINT}` }
+      return { ok: false, message: `This SVG's <style> block has an @${atName} rule Studio cannot turn into attributes. ${REEXPORT_HINT}` }
     }
 
     const open = indexOutsideQuotes(text, '{', cursor)
@@ -209,7 +208,7 @@ export function parseClassStylesheet(css: string): ClassStylesheetResult {
       if (className === undefined) {
         return {
           ok: false,
-          message: `This SVG styles its shapes with the CSS rule "${selector}", which Studio cannot turn into attributes — only single-class rules such as ".cls-1 { fill: red }" can be written inline. ${REEXPORT_HINT}`,
+          message: `This SVG styles its shapes with the rule "${selector}", and only single-class rules can become attributes. ${REEXPORT_HINT}`,
         }
       }
       rules.push({ className, declarations })

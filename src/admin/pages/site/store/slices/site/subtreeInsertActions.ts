@@ -58,7 +58,7 @@ export function createSubtreeInsertActions(helpers: SiteSliceHelpers): SubtreeIn
         pushToast({
           kind: 'warning',
           title: STRUCTURAL_REFUSAL_TITLE.insert,
-          body: 'This frame is not backed by a source file, so there is nowhere to write the element.',
+          body: 'This frame is not backed by a source file, so there is nowhere to write the element. Add the element to a frame that has a file.',
           location: 'site-editor',
         })
         return

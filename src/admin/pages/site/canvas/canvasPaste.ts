@@ -66,7 +66,7 @@ export function runCanvasPaste(snapshot: ClipboardSnapshot): void {
         pushToast({
           kind: 'warning',
           title: PASTE_TITLE,
-          body: 'This frame is not backed by a source file, so there is nowhere to write the pasted HTML.',
+          body: 'This frame is not backed by a source file, so there is nowhere to write the pasted HTML. Paste into a frame that has a file.',
           location: 'site-editor',
         })
       }
@@ -85,7 +85,7 @@ export function runCanvasPaste(snapshot: ClipboardSnapshot): void {
         pushToast({
           kind: 'warning',
           title: PASTE_TITLE,
-          body: 'The browser did not let Studio read the clipboard. Allow clipboard access for this site, or drop the file onto a frame instead.',
+          body: 'The browser did not let Studio read the clipboard. Allow clipboard access for this site.',
           location: 'site-editor',
           dedupeKey: 'canvas-paste:unreadable',
         })

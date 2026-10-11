@@ -94,7 +94,7 @@ export function promoteOverrideToDefault(params: PromoteOverrideParams): Promote
 
   try {
     if (path.relative(componentFile.getFilePath(), params.componentFile) !== '') {
-      refuse('not-in-component', `That element is not part of <${identifier}>'s own markup.`)
+      refuse('not-in-component', `That element is not part of <${identifier}>'s own markup. Select an element inside it.`)
     }
 
     // One splice per file, last position first; the call site and the
@@ -110,7 +110,7 @@ export function promoteOverrideToDefault(params: PromoteOverrideParams): Promote
       // A JSX attribute string decodes entities and a JS string does not, so an entity would mean something else once it is a default.
       const entity = initializer !== undefined && Node.isStringLiteral(initializer) && initializer.getLiteralText().includes('&')
       if (!attribute || value === undefined || entity) {
-        refuse('not-an-override', `This <${identifier}> does not pass \`${propName}\` as a plain value, so there is nothing to apply to the others.`)
+        refuse('not-an-override', `This <${identifier}> does not pass \`${propName}\` as a plain value, so there is nothing to apply to the others. Override the value on this instance first.`)
       }
 
       const binding = pattern && Node.isObjectBindingPattern(pattern)
@@ -118,7 +118,7 @@ export function promoteOverrideToDefault(params: PromoteOverrideParams): Promote
         : undefined
       const defaultNode = binding?.getInitializer()
       if (!defaultNode || literalSource(defaultNode) === undefined) {
-        refuse('no-default', `${identifier} has no plain default for \`${propName}\` to replace.`)
+        refuse('no-default', `${identifier} has no plain default for \`${propName}\` to replace. Add a default in the code.`)
       }
 
       push(componentFile, { pos: defaultNode.getStart(), remove: defaultNode.getEnd() - defaultNode.getStart(), text: value })

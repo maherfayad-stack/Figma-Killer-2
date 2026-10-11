@@ -192,7 +192,6 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
       state.setNodeInlineStylesFromGesture(
         nodeId,
         Object.fromEntries(Object.entries(patch).map(([key, value]) => [key, value ?? null])),
-        'Resized',
       )
     }
     iframeDoc.addEventListener('click', swallowHandleClick, true)
@@ -319,7 +318,6 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
                 useEditorStore.getState().setNodeInlineStylesFromGesture(
                   nodeId,
                   Object.fromEntries(Object.entries(patch).map(([key, value]) => [key, value ?? null])),
-                  'Resized',
                 )
               }
             },

@@ -128,7 +128,7 @@ describe('refuseStructuralEdit', () => {
       destination: { id: 'pages/About.tsx:9:4' },
     })
     expect(refusal?.reason).toBe('cross-file')
-    expect(refusal?.message).toContain('different file')
+    expect(refusal?.message).toContain('same file')
   })
 
   it('allows an INSERT into a plain container — the new element is written, not minted', () => {

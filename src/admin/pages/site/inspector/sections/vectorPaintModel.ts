@@ -316,15 +316,15 @@ export function viewBoxAspect(viewBox: string | null): number | null {
 export function vectorPaintRefusal(nodeId: string, node: PageNode, graphic: VectorGraphic | null): string | null {
   const markup = node.props.svg
   if (typeof markup !== 'string' || markup.length === 0) {
-    return 'This graphic is built in code, so its fill and stroke are set there.'
+    return 'This graphic is built in code, so its fill and stroke are set there. Edit it in the code.'
   }
   if (typeof node.props.tag === 'string' && node.props.tag.length > 0) {
-    return 'This icon’s markup comes from an .svg file (dangerouslySetInnerHTML), not from JSX elements in your code, so there is no attribute here to write. Edit the .svg file, or paste its markup into the page as an inline <svg>.'
+    return "This icon's markup comes from an .svg file, so there is no attribute to write. Paste its markup into the page as an inline <svg>."
   }
   if (!hasWritableSourceLocation(nodeId)) {
-    return 'This graphic is drawn once per row of a list, so there is no single place in your code to write its paint.'
+    return 'This graphic is drawn once per row of a list, so there is no single place to write its paint. Edit it in the code.'
   }
   if (node.locked) return node.lockReason ? `This graphic is locked: ${node.lockReason}` : 'This graphic is locked.'
-  if (!graphic) return 'This graphic is not one <svg> document, so Studio cannot read its paint.'
+  if (!graphic) return 'This graphic is not one <svg> document, so Studio cannot read its paint. Select a single <svg>.'
   return null
 }

@@ -66,7 +66,7 @@ export function planLayoutConversion(facts: LayoutConversionFacts): LayoutConver
       const constraint = explainStyleConstraint(node, property) ?? {
         reason: 'resolved-style-expression',
         scope: 'style-property',
-        explanation: `\`${property}\` is set in code here, so Studio cannot write it.`,
+        explanation: `\`${property}\` is set in code here, so Studio cannot write it. Edit it in the code.`,
         actions: [],
       }
       return { ok: false, refusal: { constraint, remedyNodeId: node.id } }

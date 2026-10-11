@@ -208,7 +208,7 @@ describe('previewStructuralTransplant — refusals', () => {
       newIndex: 0,
     })
     expect(result.refusal.reason).toBe('list-row')
-    expect(result.refusal.message).toContain('The container this would land in')
+    expect(result.refusal.message).toContain('part of a row of a list')
   })
 
   it('REFUSES a node minted on the canvas — there is no markup to move', () => {

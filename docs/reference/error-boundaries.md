@@ -349,7 +349,7 @@ const handler = useCallback(async () => {
 
 Pattern: `try/catch` in async handlers, log with `[<module>]` prefix, surface via toast + component state. See [docs/reference/typebox-patterns.md](typebox-patterns.md) and CLAUDE.md's "Error handling" rules.
 
-Which kind of toast (P3-A, `error-toast-sites.test.ts`): a request that got no answer is retried first (`@core/http`'s `retryWhileUnreachable`, only where running it twice is harmless); a refusal is a `warning` with its one-click remedy; a read nobody clicked for fails in place (an empty state, the save chip); a no-op is silent or `info`. `kind: 'error'` is left for an operation the user asked for that genuinely failed — and a new site has to be added to the gate's reviewed list.
+Which kind of toast (P3-A, `error-toast-sites.test.ts`): a request that got no answer is retried first (`@core/http`'s `retryWhileUnreachable`, only where running it twice is harmless); a refusal is a `warning` with its one-click remedy; a read nobody clicked for fails in place (an empty state, the save chip); a no-op is silent or `info`. `kind: 'error'` is left for an operation the user asked for that genuinely failed — and a new site has to be added to the gate's reviewed list. A refusal's words follow one shape: what is true, then the one remedy (`refusal-copy-shape.test.ts`, G-11).
 
 ### Use the error boundary's fallback to hide a feature
 

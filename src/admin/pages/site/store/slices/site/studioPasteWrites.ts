@@ -28,8 +28,8 @@ function copiedElementLabel(node: PageNode | undefined): string {
 export function missingPasteSourceMessage(missing: MissingPasteSource, copied: PageNode | undefined): string {
   const what = `What you copied${copiedElementLabel(copied)}`
   return missing === 'not-source'
-    ? `${what} is not an element written in this project's files — it is drawn by code (a component's own markup or a generated row), or it was copied from another project or an earlier session — so Studio has no source to copy. Copy the element that writes it, in this project, instead.`
-    : `${what} is not where it was in your project's code any more — its file changed after the copy — so Studio has no source to copy from, and pasting would put elements on the canvas that the files do not contain. Copy it again, then paste.`
+    ? `${what} is not written in this project's files (code draws it, or it came from another project), so Studio has no source to copy. Copy the element that writes it instead.`
+    : `${what} is not where it was in your code any more, so Studio has nothing to copy from. Copy it again, then paste.`
 }
 
 /** What a paste needs from the clipboard: its roots, and the snapshot that records who each one was (`sourceFingerprint`). */
@@ -150,7 +150,7 @@ export function createStudioPasteWrite(
           describeStructuralRefusal({
             refusal: {
               reason: 'insert',
-              message: 'What you copied mixes loose layers from the board with elements from a page. Paste them separately: copy the loose layers on their own, then the page elements.',
+              message: 'What you copied mixes loose layers from the board with elements from a page. Paste the loose layers and the page elements separately.',
             },
           }),
           { getState: get, set },

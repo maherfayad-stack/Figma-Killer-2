@@ -98,7 +98,7 @@ function convert(parentId: string, plan: (parent: MeasuredBox, children: readonl
     pushToast({
       kind: 'info',
       title: 'Auto layout',
-      body: 'These layers are not evenly spaced or aligned, so a few move slightly to fit one gap and one alignment.',
+      body: 'These layers are not evenly spaced or aligned, so a few move slightly to fit one gap. Undo if you want them where they were.',
     })
   }
 }

@@ -90,14 +90,14 @@ function mergedInitializer(attribute: JsxAttribute, sourceFile: SourceFile): { t
     return { text: `{[${staticText.getText()}, ${PROP}].filter(Boolean).join(' ')}` }
   }
   if (!expr) {
-    return { refusal: refusal('unsupported-class-expression', 'This element\'s className has no value Studio can join a class onto.') }
+    return { refusal: refusal('unsupported-class-expression', "This element's className has no value Studio can join a class onto. Set it to a string in the code.") }
   }
   if (Node.isTemplateExpression(expr)) {
     if (joiner) return { text: `{${joiner}(${expr.getText()}, ${PROP})}` }
     return { text: '{' + expr.getText().slice(0, -1) + ' ${' + PROP + " || ''}`}" }
   }
   if (!isWrappableClassExpression(expr)) {
-    return { refusal: refusal('unsupported-class-expression', `This element's className ("${expr.getText()}") is not a class string, so Studio did not join another class onto it.`) }
+    return { refusal: refusal('unsupported-class-expression', `This element's className ("${expr.getText()}") is not a class string, so Studio cannot join a class onto it. Set it to a string in the code.`) }
   }
   const callee = Node.isCallExpression(expr) ? expr.getExpression() : undefined
   if (Node.isCallExpression(expr) && callee && Node.isIdentifier(callee) && CLASS_NAME_JOIN_BUILTIN_NAMES.has(callee.getText())) {
@@ -116,7 +116,7 @@ function mergedInitializer(attribute: JsxAttribute, sourceFile: SourceFile): { t
 export function ensureRootTakesClassName(sourceFile: SourceFile, fn: FunctionLike, root: JsxOpeningLikeElement): ClassNamePropResult {
   const { params, hasUndestructuredParam } = buildParamBindings(fn)
   if (hasUndestructuredParam) {
-    return refusal('unsupported-params', 'This component takes its props as one object, so Studio can\'t add a named className without rewriting every "props.x".')
+    return refusal('unsupported-params', 'This component takes its props as one object, so a named className cannot be added. Destructure its props in the code first.')
   }
   const first = fn.getParameters()[0]
   const attribute = root.getAttribute('className')
@@ -128,19 +128,19 @@ export function ensureRootTakesClassName(sourceFile: SourceFile, fn: FunctionLik
     const onRoot = attribute !== undefined && Node.isJsxAttribute(attribute) && readsClassName(attribute, local)
     if (onRoot) return { ok: true, changed: false }
     if (paramReadCount(fn, local) > 0) {
-      return refusal('class-prop-elsewhere', 'This component already uses its className prop on another element, so passing a class to its root would apply it twice.')
+      return refusal('class-prop-elsewhere', 'This component already uses its className prop on another element, so a class on its root would apply twice. Remove that use in the code.')
     }
   } else {
     if (spreadOnRoot) {
-      return refusal('class-spread-root', "This component spreads an object of props onto its root, so a className would replace the root's own class rather than join it.")
+      return refusal('class-spread-root', "This component spreads props onto its root, so a className would replace the root's own class. Join the classes in the code.")
     }
     const used = readsClassName(fn, PROP) || topLevelBindingNames(sourceFile).has(PROP)
-    if (used) return refusal('class-prop-conflict', '`className` already means something else in this component, so Studio did not add it as a prop.')
+    if (used) return refusal('class-prop-conflict', '`className` already means something else in this component, so Studio did not add it as a prop. Rename that prop in the code.')
   }
   const local = existing?.[0] ?? PROP
 
   if (attribute !== undefined && !Node.isJsxAttribute(attribute)) {
-    return refusal('class-spread-root', 'The root\'s className is a spread, which Studio cannot join a class onto.')
+    return refusal('class-spread-root', "The root's className is a spread, which Studio cannot join a class onto. Set it to a string in the code.")
   }
   const merged = attribute === undefined ? { text: `{${local}}` } : mergedInitializer(attribute, sourceFile)
   if ('refusal' in merged) return merged.refusal
@@ -148,7 +148,7 @@ export function ensureRootTakesClassName(sourceFile: SourceFile, fn: FunctionLik
 
   if (!existing) {
     if (/\.tsx?$/.test(sourceFile.getFilePath()) && isTypedThroughVariable(fn) && !first?.getTypeNode()) {
-      return refusal('unsupported-props-type', "This component's props are typed through its variable (like FC<Props>), which Studio can't add a property to safely.")
+      return refusal('unsupported-props-type', "This component's props are typed through its variable (like FC<Props>), which Studio cannot extend. Add the property in the code.")
     }
   }
 

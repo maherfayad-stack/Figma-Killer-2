@@ -104,6 +104,12 @@ Icons: `import { FooIcon } from 'pixel-art-icons/icons/foo'` then `bun run icons
   changing. Field-local validation stays inline. The policy is in
   [`error-boundaries.md`](../reference/error-boundaries.md) → "Async error inside a component".
   **Gate:** `error-toast-sites.test.ts` (a reviewed per-file count of `kind: 'error'` sites).
+- **A refusal is two sentences at most: what is true, then the ONE thing to do**
+  (open with a verb: "Reload the project and try again."). No "Nothing was written.",
+  no "or" between two remedies. A sentence several refusals share lives once in
+  `src/core/utils/refusalCopy.ts`. A warning toast with an `action` may state only what
+  is true. **Gate:** `refusal-copy-shape.test.ts` (also ratchets the number of distinct
+  refusal reasons).
 - Server failures return `{ error: string }`; logs use `console.error('[<module>]', err)`.
 - **An unexpected server failure never sends its exception text.** Answer it with
   `server/http.ts`'s `internalServerError(label, err)`: the error is logged, the client

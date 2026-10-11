@@ -214,11 +214,11 @@ export class DetachPlanner {
     if (entry) return { kind: 'param', entry }
     if (decl === this.params.rest) return { kind: 'rest' }
     if (this.params.nested.has(decl)) {
-      fail('unsupported-params', `${this.componentName} reads \`${name}\` out of a nested destructure, which detach can't substitute from the call site.`)
+      fail('unsupported-params', `${this.componentName} reads \`${name}\` out of a nested destructure, which detach cannot substitute from the call site. Duplicate the component and edit the copy.`)
     }
     if (this.hooks.owns(decl)) return { kind: 'hook', decl }
     if (Node.isParameterDeclaration(decl)) {
-      fail('unsupported-params', `${this.componentName} reads \`${name}\`, a parameter other than its props, which a call site does not pass.`)
+      fail('unsupported-params', `${this.componentName} reads \`${name}\`, a parameter other than its props, which a call site does not pass. Duplicate the component and edit the copy.`)
     }
     if (Node.isVariableDeclaration(decl)) {
       const statement = decl.getVariableStatement()
@@ -293,10 +293,10 @@ export class DetachPlanner {
       return name
     }
     if (this.isInTypePosition(id, unit)) {
-      fail('unsupported-params', `${this.componentName} uses \`${id.getText()}\` in a type, where a call-site value can't be written.`)
+      fail('unsupported-params', `${this.componentName} uses \`${id.getText()}\` in a type, where a call-site value cannot be written. Duplicate the component and edit the copy.`)
     }
     if (ref.kind === 'rest') {
-      fail('spread-ambiguous', `${this.componentName} passes its whole \`...${id.getText()}\` along, which detach can't split into this call site's attributes.`)
+      fail('spread-ambiguous', `${this.componentName} passes its whole \`...${id.getText()}\` along, which detach cannot split into this call site's attributes. Duplicate the component and edit the copy.`)
     }
     return this.placeExpression(id, this.siteValueFor(id, ref, unit), unit)
   }
@@ -314,7 +314,7 @@ export class DetachPlanner {
       const ref = this.classify(expr, unit)
       if (ref.kind === 'param' || ref.kind === 'local' || ref.kind === 'hook') return this.siteValueFor(expr, ref, unit)
       if (ref.kind === 'rest') {
-        fail('spread-ambiguous', `${this.componentName} passes its whole \`...${expr.getText()}\` along, which detach can't split into this call site's attributes.`)
+        fail('spread-ambiguous', `${this.componentName} passes its whole \`...${expr.getText()}\` along, which detach cannot split into this call site's attributes. Duplicate the component and edit the copy.`)
       }
       return undefined
     }
@@ -351,7 +351,7 @@ export class DetachPlanner {
       if (decl && isWithin(decl, unit.node)) {
         fail(
           'name-collision',
-          `This call site passes a value that reads \`${name}\`, and ${this.componentName}'s own markup declares a \`${name}\` of its own around where that value lands — inlined, it would read the wrong one.`,
+          `This call site passes a value that reads \`${name}\`, and ${this.componentName} declares its own \`${name}\` where that value lands. Rename it in the code.`,
         )
       }
     }
@@ -501,11 +501,11 @@ export class DetachPlanner {
       rendered = this.names.outerName(rootId, ref.symbol, ref.decl)
       unit.free.add(rendered)
     } else if (ref.kind === 'rest') {
-      fail('spread-ambiguous', `${this.componentName} renders a tag out of its \`...${rootName}\`, which detach can't resolve.`)
+      fail('spread-ambiguous', `${this.componentName} renders a tag out of its \`...${rootName}\`, which detach cannot resolve. Duplicate the component and edit the copy.`)
     } else if (ref.kind === 'local' || ref.kind === 'hook') {
       fail(
         'body-local',
-        `${this.componentName} renders <${tag.getText()}> from \`${rootName}\`, a value its body computes — a tag name can't be written as that expression. Duplicate the component and edit the copy instead.`,
+        `${this.componentName} renders <${tag.getText()}> from \`${rootName}\`, a value its body computes, and a tag name cannot be that expression. Duplicate the component and edit the copy.`,
       )
     } else {
       const value = this.siteValueFor(rootId, ref, unit)
@@ -514,7 +514,7 @@ export class DetachPlanner {
       if (!spelled) {
         fail(
           'unsupported-params',
-          `${this.componentName} renders <${rootName}> from a prop, and this call site does not pass something that can be written as a tag name.`,
+          `${this.componentName} renders <${rootName}> from a prop, and this call site passes nothing that can be a tag name. Pass a tag name or a component.`,
         )
       }
       rendered = spelled
@@ -534,7 +534,7 @@ export class DetachPlanner {
 
   private computeParamValue(entry: ParamEntry): Value {
     if (entry.attrName === undefined) {
-      fail('unsupported-params', `${this.componentName} destructures a computed prop name, which no call site can be matched against.`)
+      fail('unsupported-params', `${this.componentName} destructures a computed prop name, which no call site can be matched against. Duplicate the component and edit the copy.`)
     }
     // React never passes `key` to a component.
     if (entry.attrName === 'key') return entry.default ? this.componentValue(entry.default) : UNDEFINED_VALUE
@@ -545,7 +545,7 @@ export class DetachPlanner {
   /** The component's own source for a default or a body value, rewritten for the page. */
   private componentValue(node: Node): Value {
     if (this.inProgress.has(node)) {
-      fail('unsupported-params', `${this.componentName}'s prop defaults refer to each other in a cycle.`)
+      fail('unsupported-params', `${this.componentName}'s prop defaults refer to each other in a cycle. Edit the component in the code.`)
     }
     this.inProgress.add(node)
     const unit: Unit = { node, free: new Set() }
@@ -567,7 +567,7 @@ export class DetachPlanner {
       if (this.names.expected.get(name)?.has('call-site')) {
         fail(
           'uses-hooks',
-          `${this.componentName} hands a hook a prop, and this call site gives it a value (\`${name}\`) the enclosing component may not have at the top of its body.`,
+          `${this.componentName} hands a hook a prop, and this call site gives it a value (\`${name}\`) the enclosing component may not have at the top of its body. Duplicate the component and edit the copy.`,
         )
       }
     }
@@ -623,11 +623,11 @@ export class DetachPlanner {
     if (spread) {
       fail(
         'spread-ambiguous',
-        `This call site spreads {...${spread.expr.getText()}} into ${this.componentName}, which forwards \`...rest\` — which props land where can't be known from source.`,
+        `This call site spreads {...${spread.expr.getText()}} into ${this.componentName}, which forwards \`...rest\`, so which props land where is unknown. Pass the props one by one.`,
       )
     }
     if (use === 'forward' && this.callSite.children && !this.params.restExcludes.has('children')) {
-      fail('spread-ambiguous', `This call site passes children, and ${this.componentName} forwards them through \`...rest\` rather than placing them.`)
+      fail('spread-ambiguous', `This call site passes children, and ${this.componentName} forwards them through \`...rest\` rather than placing them. Place the children in the component.`)
     }
   }
 

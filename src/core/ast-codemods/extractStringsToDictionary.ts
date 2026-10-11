@@ -313,13 +313,13 @@ export function extractStringsToDictionary(params: ExtractStringsParams): Extrac
       refused.push({
         key: extraction.key,
         reason: 'invalid-key',
-        message: `"${extraction.key}" is not a valid property path, so Studio won't write it into the source.`,
+        message: `"${extraction.key}" is not a valid property path. Use letters, digits and dots, like nav.title.`,
       })
       continue
     }
     const node = nodeAt(sourceFile, extraction.line, extraction.col)
     if (!node) {
-      refused.push({ key: extraction.key, reason: 'not-found', message: `No string literal at ${params.fileName}:${extraction.line}.` })
+      refused.push({ key: extraction.key, reason: 'not-found', message: `No string literal at ${params.fileName}:${extraction.line}. Run the scan again.` })
       continue
     }
     const current = Node.isJsxText(node)
@@ -328,7 +328,7 @@ export function extractStringsToDictionary(params: ExtractStringsParams): Extrac
         ? node.getLiteralValue()
         : undefined
     if (current !== extraction.text) {
-      refused.push({ key: extraction.key, reason: 'text-changed', message: `The text at ${params.fileName}:${extraction.line} changed since it was scanned.` })
+      refused.push({ key: extraction.key, reason: 'text-changed', message: `The text at ${params.fileName}:${extraction.line} changed since it was scanned. Run the scan again.` })
       continue
     }
     const body = enclosingComponentBody(node)
@@ -336,13 +336,13 @@ export function extractStringsToDictionary(params: ExtractStringsParams): Extrac
       refused.push({
         key: extraction.key,
         reason: 'outside-component',
-        message: `"${extraction.text}" sits outside any component (a shared constant, or a list built once at module load), so it stays as plain text for now — move it inside the component that renders it to make it translatable.`,
+        message: `"${extraction.text}" sits outside any component (a shared constant or a list built once), so it stays plain text. Move it inside the component that renders it.`,
       })
       continue
     }
     const bodyStart = body.getStart()
     if (!replaceWithAccessor(node, translator, extraction.key)) {
-      refused.push({ key: extraction.key, reason: 'not-found', message: `Studio does not know how to rewrite the literal at ${params.fileName}:${extraction.line}.` })
+      refused.push({ key: extraction.key, reason: 'not-found', message: `Studio cannot rewrite the literal at ${params.fileName}:${extraction.line}. Change it in the code.` })
       continue
     }
     componentBodyStarts.add(bodyStart)

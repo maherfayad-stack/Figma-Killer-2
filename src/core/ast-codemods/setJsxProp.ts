@@ -98,8 +98,8 @@ export function setJsxProp(params: SetJsxPropParams): void {
     if (!isLiteralJsxAttribute(existingAttribute) && !(params.unbind === true && isUnbindableAttribute(existingAttribute))) {
       throw new JsxPropTargetError(
         params.unbind === true
-          ? `"${prop}" holds markup, a function or a whole list or object (${existingAttribute.getInitializer()?.getText() ?? ''}), not a value a typed literal can stand in for, so Studio did not replace it. Change it in the code.`
-          : `"${prop}" is set from code here (${existingAttribute.getInitializer()?.getText() ?? ''}), not a literal, so writing a value would replace that code and delete the binding. Change it in the code, or edit the value it reads.`,
+          ? `"${prop}" holds markup, a function or a whole list or object (${existingAttribute.getInitializer()?.getText() ?? ''}), not a value a typed literal can replace. Change it in the code.`
+          : `"${prop}" is set from code here (${existingAttribute.getInitializer()?.getText() ?? ''}), so a typed value would delete that binding. Edit the value it reads in the code.`,
         `${file}:${line}:${col}`,
       )
     }
@@ -109,7 +109,7 @@ export function setJsxProp(params: SetJsxPropParams): void {
     // to equal the literal text "...expr", which should never occur for a
     // real prop name — guard against silently clobbering one anyway.
     throw new JsxPropTargetError(
-      `Attribute "${prop}" on the element at ${file}:${line}:${col} is a spread attribute and cannot be set as a literal prop.`,
+      `The "${prop}" attribute only comes from a spread, so there is no attribute to set. Change it in the code.`,
       `${file}:${line}:${col}`,
       'spread-attribute',
     )

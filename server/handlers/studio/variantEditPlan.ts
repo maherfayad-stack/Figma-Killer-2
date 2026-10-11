@@ -106,7 +106,7 @@ function toWrites(dir: string, canonicalRel: CanonicalSourceRel, files: Readonly
     const abs = writableTarget(dir, rel, canonicalRel)
     const original = abs === null ? undefined : readText(abs)
     if (abs === null || original === undefined) {
-      return refuse('unwritable-target', `${rel} is outside the files Studio may write (or no longer exists), so nothing was written.`)
+      return refuse('unwritable-target', `${rel} is not a file Studio can write. Reload the project and try again.`)
     }
     writes.push({ abs, rel, original, next: applyLineEnding(nextLf, detectLineEnding(original)) })
   }
@@ -138,7 +138,7 @@ function sharedUnionRefusal(project: Project, dir: string, componentRel: string,
   if (elsewhere.length === 0) return null
   return {
     reason: 'shared-union',
-    message: `The values of \`${prop}\` are the type \`${alias.getName()}\`, which ${listUses(elsewhere)} also use. Changing it would change those too, so edit it in code.`,
+    message: `\`${prop}\` shares its type \`${alias.getName()}\` with ${listUses(elsewhere)}, so changing it would change those too. Edit the type in the code.`,
   }
 }
 
@@ -149,10 +149,10 @@ interface ResolvedProp {
 
 function resolveEnumProp(project: Project, dir: string, componentRel: string, exportName: string, propName: string): ResolvedProp | { reason: string; message: string } {
   const spec = extractLocalComponentCatalog(project, dir, { onlyFile: componentRel }).find((candidate) => candidate.exportName === exportName)
-  if (!spec) return { reason: 'component-not-found', message: `The component "${exportName}" is no longer in ${componentRel}: the file changed since it was read.` }
+  if (!spec) return { reason: 'component-not-found', message: `The component "${exportName}" is no longer in ${componentRel}. Reload the project and try again.` }
   const prop = spec.props.find((candidate) => candidate.name === propName)
   if (!prop || prop.kind.kind !== 'enum') {
-    return { reason: 'not-a-variant-prop', message: `\`${propName}\` is not a set of fixed values on ${spec.name}, so it has no values to add or remove.` }
+    return { reason: 'not-a-variant-prop', message: `\`${propName}\` is not a set of fixed values on ${spec.name}. Pick a property that has fixed values.` }
   }
   return { spec, prop }
 }
@@ -167,7 +167,7 @@ export function planVariantEdit(dir: string, request: VariantEditRequest, compon
 
   if (request.kind === 'add-component-prop') {
     const original = readText(componentAbs)
-    if (original === undefined) return refuse('unwritable-target', `${componentRel} could not be read, so nothing was written.`)
+    if (original === undefined) return refuse('unwritable-target', `${componentRel} could not be read. Reload the project and try again.`)
     const result = addComponentProp(componentRel, toLf(original), request.exportName, request.prop)
     if (!result.ok) return refuse(result.refusal.reason, result.refusal.message)
     return fromPlan(dir, canonicalRel, { ok: true, files: new Map([[componentRel, result.source]]), styling: 'none' })

@@ -100,10 +100,10 @@ export function resolveComponentCallSite(
   const relFile = path.relative(workspaceRoot, absFile).split(path.sep).join('/')
   const source = classifyCallSiteComponent(project, callerFile, workspaceRoot, identifier, relFile, line, col)
   if (!source) {
-    return { ok: false, failure: { reason: 'unresolvable', message: `Could not resolve <${identifier}>'s declaration.` } }
+    return { ok: false, failure: { reason: 'unresolvable', message: `Could not resolve <${identifier}>'s declaration. Reload the project and try again.` } }
   }
   if (source.kind === 'package') {
-    return { ok: false, failure: { reason: 'package-component', message: `<${identifier}> comes from an installed package, not this project's own source.` } }
+    return { ok: false, failure: { reason: 'package-component', message: `<${identifier}> comes from an installed package, not this project's own source. Pick a component from your own source.` } }
   }
   // DS-3 - the project's `design-system/` folder is Studio-written and
   // Studio-managed (`@core/page-parser`'s `designSystemDir`). Its files are
@@ -117,7 +117,7 @@ export function resolveComponentCallSite(
       ok: false,
       failure: {
         reason: 'package-component',
-        message: `<${identifier}> comes from the built-in design system (the project's design-system/ folder), which Studio manages - it is not this project's own source.`,
+        message: `<${identifier}> comes from the built-in design system, which Studio manages, not from your own source. Pick a component from your own source.`,
       },
     }
   }
@@ -128,14 +128,14 @@ export function resolveComponentCallSite(
   } else {
     const declaring = resolveImportedDeclaringFile(callerFile, identifier)
     if (!declaring) {
-      return { ok: false, failure: { reason: 'unresolvable', message: `Could not find where the design system declares <${identifier}>.` } }
+      return { ok: false, failure: { reason: 'unresolvable', message: `Could not find where the design system declares <${identifier}>. Reload the project and try again.` } }
     }
     targetAbsPath = declaring.getFilePath()
   }
   const sourceLabel = path.relative(workspaceRoot, targetAbsPath).split(path.sep).join('/')
   const target = resolveCallTarget(callerFile, identifier, targetAbsPath, project)
   if (!target) {
-    return { ok: false, failure: { reason: 'unresolvable', message: `Could not resolve <${identifier}>'s declaration in ${sourceLabel}.` } }
+    return { ok: false, failure: { reason: 'unresolvable', message: `Could not resolve <${identifier}>'s declaration in ${sourceLabel}. Reload the project and try again.` } }
   }
 
   // `memo(…)`/`forwardRef(…)` read as the function they wrap (P3-B), so every
@@ -144,7 +144,7 @@ export function resolveComponentCallSite(
   if (!fn) {
     return {
       ok: false,
-      failure: { reason: 'unresolvable', message: `<${identifier}> is imported from ${sourceLabel}, but its declaration could not be read.` },
+      failure: { reason: 'unresolvable', message: `<${identifier}> is imported from ${sourceLabel}, but its declaration could not be read. Check that file for syntax errors.` },
     }
   }
 

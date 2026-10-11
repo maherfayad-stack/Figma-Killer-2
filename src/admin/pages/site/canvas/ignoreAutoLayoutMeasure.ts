@@ -30,7 +30,7 @@ export type IgnoreAutoLayoutMeasure =
   | { ok: false; reason: string }
 
 const UNMEASURABLE =
-  'This frame is rendered by the project itself, so Studio cannot measure where the layer sits. Switch the board to the editable canvas, or set position and offsets by hand.'
+  'This frame is rendered by the project itself, so Studio cannot measure where the layer sits. Switch the board to the editable canvas.'
 
 const px = (value: string) => {
   const parsed = Number.parseFloat(value)

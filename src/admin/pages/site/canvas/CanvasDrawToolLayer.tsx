@@ -256,7 +256,7 @@ export function CanvasDrawToolLayer({ tool, transformLayerRef }: CanvasDrawToolL
       useEditorStore.getState().setCanvasTool('move')
       return
     }
-    pushToast({ kind: 'warning', title: `${spec.label} not added`, body: 'Draw inside a frame, or open a board to draw on the free canvas.', location: 'site-editor' })
+    pushToast({ kind: 'warning', title: `${spec.label} not added`, body: 'Drawing needs a frame to land in. Draw inside a frame.', location: 'site-editor' })
   }
 
   const ghostLabel = hover && !hover.preview && tool === 'board' ? 'Board — draw a new page here' : spec.label

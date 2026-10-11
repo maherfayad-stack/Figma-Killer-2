@@ -297,7 +297,7 @@ export function reportLostUnsavedEdits(lost: readonly LostUnsavedEdit[]): void {
   pushToast({
     kind: 'warning',
     title: 'Not saved — the file changed',
-    body: `${LOSS_SENTENCE[first!.reason](first!.label)}${more} The board shows the file as it is now.`,
+    body: `${LOSS_SENTENCE[first!.reason](first!.label)}${more} Make the change again.`,
     location: 'site-editor',
   })
 }

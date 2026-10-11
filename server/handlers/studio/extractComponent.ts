@@ -65,7 +65,7 @@ export async function tryServeStudioExtractComponent(req: Request, _url: URL, pa
       return jsonResponse({
         ok: false,
         reason: 'unresolvable',
-        message: 'This node has no writable source location.',
+        message: 'This element is not written in your code. Select one that is, then extract it.',
       })
     }
 

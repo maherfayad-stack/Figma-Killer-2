@@ -86,8 +86,8 @@ const DRAG_THRESHOLD_PX = 3
 
 /** What a refused point edit says, by the gesture's undo label. */
 const POINT_EDIT_REFUSED: Readonly<Record<string, string>> = {
-  'Delete point': 'A path needs at least two points, and an arc cannot lose one here. Delete the whole graphic instead, or change it in the code.',
-  'Toggle point': 'This point cannot switch between corner and smooth (it starts a path, or sits next to an arc).',
+  'Delete point': 'A path needs at least two points, and an arc cannot lose one here. Delete the whole graphic instead.',
+  'Toggle point': 'This point starts a path or sits next to an arc, so it cannot switch between corner and smooth. Change it in the code.',
   'Add point': 'A point cannot be added on an arc here. Change it in the code.',
 }
 
@@ -413,7 +413,7 @@ function VectorEditOverlay({ target }: { target: VectorEditTarget }) {
     if (!part) return
     const parsed = nextD === null ? null : parsePathData(nextD)
     if (nextD === null || !parsed?.ok) {
-      pushToast({ kind: 'warning', title: 'Cannot edit points', body: POINT_EDIT_REFUSED[label] ?? 'Studio cannot make that change to this path.', location: 'site-editor' })
+      pushToast({ kind: 'warning', title: 'Cannot edit points', body: POINT_EDIT_REFUSED[label] ?? 'Studio cannot make that change to this path. Change it in the code.', location: 'site-editor' })
       return
     }
     const startModel = part.model

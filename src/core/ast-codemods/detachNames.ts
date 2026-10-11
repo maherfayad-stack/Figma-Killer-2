@@ -127,7 +127,7 @@ export class DetachNameResolver {
       if (atCallSite && this.declaredInPage(atCallSite)) {
         fail(
           'name-collision',
-          `${this.componentName} reads the global \`${name}\`, and this page declares its own \`${name}\` where the markup would land — a global can't be aliased.`,
+          `${this.componentName} reads the global \`${name}\`, and this page declares its own \`${name}\` where the markup would land. Rename the page's \`${name}\`.`,
         )
       }
       this.expect(name, 'global')
@@ -136,7 +136,7 @@ export class DetachNameResolver {
     if (this.componentFile === this.page) {
       fail(
         'name-collision',
-        `${this.componentName} reads \`${name}\` from this file's module scope, and the call site's component declares its own \`${name}\` — inlined, the markup would read the wrong one.`,
+        `${this.componentName} reads \`${name}\` from this file's module scope, and the call site's component declares its own \`${name}\`. Rename the call site's \`${name}\`.`,
       )
     }
     if (this.carry && decl && isTopLevelDeclaration(decl) && !isImportBinding(decl) && !this.exportsDeclaration(decl)) {
@@ -191,14 +191,14 @@ export class DetachNameResolver {
       if (exportName === undefined) {
         fail(
           'unbound-reference',
-          `${this.componentName}'s markup reads \`${name}\`, which ${this.componentFile.getBaseName()} declares but does not export — the page has no way to import it. Export it, or duplicate the component and edit the copy.`,
+          `${this.componentName}'s markup reads \`${name}\`, which ${this.componentFile.getBaseName()} declares but does not export. Export it from its file.`,
         )
       }
       return importRequestForExport(this.componentFile, exportName)
     }
     fail(
       'unbound-reference',
-      `${this.componentName}'s markup reads \`${name}\` from the scope around the component, which the page can't reach.`,
+      `${this.componentName}'s markup reads \`${name}\` from the scope around the component, which the page cannot reach. Duplicate the component and edit the copy.`,
     )
   }
 

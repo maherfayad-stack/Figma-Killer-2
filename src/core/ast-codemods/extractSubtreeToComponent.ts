@@ -359,11 +359,11 @@ export function extractSubtreeToComponent(params: ExtractSubtreeToComponentParam
 
   // Refuse FIRST — reasons 1-4, the vocabulary the user already sees on a
   // failed move/delete.
-  const placementRefusal = refusePlacement({ id: effectiveNodeId, lockReason: params.lockReason }, 'Extracted')
+  const placementRefusal = refusePlacement({ id: effectiveNodeId, lockReason: params.lockReason })
   if (placementRefusal) return refuse(placementRefusal.reason, placementRefusal.message)
 
   if (isInsideMapCallback(root)) {
-    const asLoopRow = refusePlacement({ id: `${effectiveNodeId}${LOOP_ID_SEPARATOR}0` }, 'Extracted')
+    const asLoopRow = refusePlacement({ id: `${effectiveNodeId}${LOOP_ID_SEPARATOR}0` })
     if (asLoopRow) return refuse(asLoopRow.reason, asLoopRow.message)
   }
 
@@ -403,7 +403,7 @@ export function extractSubtreeToComponent(params: ExtractSubtreeToComponentParam
   if (spreadsInKeptContent.length > 0) {
     return refuse(
       'spread-props',
-      "This element spreads an arbitrary prop bag ({...props}) — Studio can't read what it contains, so the new component's interface would be asserting a shape you didn't choose. Replace the spread with explicit props first.",
+      "This element spreads an arbitrary prop bag ({...props}), so the new component's interface would guess a shape. Replace the spread with explicit props first.",
     )
   }
 
@@ -419,14 +419,14 @@ export function extractSubtreeToComponent(params: ExtractSubtreeToComponentParam
   if (!isWorkspaceWritablePath(workspaceRoot, newPath)) {
     return refuse(
       'unwritable-target',
-      `${componentName}.tsx cannot be created next to this page — that path is a link Studio will not write through, or sits in a directory Studio does not write to.`,
+      `${componentName}.tsx cannot be created next to this page, because that path is a link or sits in a folder Studio does not write. Create the component in the code instead.`,
     )
   }
 
   // Reason 7a — two slot decisions naming the same slot.
   const duplicateSlotName = findDuplicate(resolvedSlots.map((s) => s.slotName))
   if (duplicateSlotName) {
-    return refuse('slot-name-conflict', `Two selected children both want the slot name "${duplicateSlotName}" — give each a distinct name.`)
+    return refuse('slot-name-conflict', `Two selected children both want the slot name "${duplicateSlotName}". Give each a distinct name.`)
   }
 
   // --- Analysis — no writes yet -----------------------------------------
@@ -444,7 +444,7 @@ export function extractSubtreeToComponent(params: ExtractSubtreeToComponentParam
   if (slotVsProp) {
     return refuse(
       'slot-name-conflict',
-      `The slot name "${slotVsProp.slotName}" collides with a forwarded prop of the same name — rename one.`,
+      `The slot name "${slotVsProp.slotName}" collides with a forwarded prop of the same name. Rename one of them.`,
     )
   }
 

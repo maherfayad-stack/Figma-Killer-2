@@ -85,6 +85,7 @@ import { applySubtreeRenames } from './transplantCarry'
 import { resolveCarriedBindings, type CarriedDeclaration, type CarryOrigin } from './transplantBindings'
 import { hookInsertionAnchor, stateHookRefusal } from './transplantStateCarry'
 import type { RowRef } from './transplantPropBake'
+import { ELEMENT_GONE_MESSAGE, STALE_SOURCE_MESSAGE } from '@core/utils/refusalCopy'
 
 export interface TransplantJsxElementParams {
   /** Absolute path to the file the element is written in today. */
@@ -193,7 +194,7 @@ export function transplantJsxElement(params: TransplantJsxElementParams): Transp
   if (fileIdentity(file) === fileIdentity(destinationFile)) {
     return refuseTransplant(
       'same-file',
-      'Both ends of this move are in the same file, which is an ordinary reparent — this write exists only for the cross-file case.',
+      'Both ends of this move are in the same file, which is an ordinary reparent. Drag it within the frame instead.',
     )
   }
 
@@ -228,7 +229,7 @@ export function transplantJsxElement(params: TransplantJsxElementParams): Transp
   if (originText === null || destinationText === null) {
     return refuseTransplant(
       'stale-source',
-      'One of these files changed on disk since the canvas last read it. Reload the project and try again.',
+      STALE_SOURCE_MESSAGE,
     )
   }
 
@@ -295,7 +296,7 @@ function landInDestination(
   if (!container) {
     return refuseTransplant(
       'not-found',
-      `No JSX element is written at line ${destination.destinationLine}, column ${destination.destinationCol} of the destination file any more — it changed since the canvas last read it. Reload and try again.`,
+      ELEMENT_GONE_MESSAGE,
     )
   }
 
@@ -413,7 +414,7 @@ export function canvasLayerModuleRoot(source: SourceFile): Node | undefined {
  * the element it wrote, which would leave the state's hook behind. A MOVE of the
  * layer (or a lift either way) is undone by the journal's `restore`, so it can.
  */
-const PLACE_COPY_STATE_REFUSAL = 'a copy of a canvas layer is taken back by deleting the element, which would leave its state behind. Move the layer into the frame instead.'
+const PLACE_COPY_STATE_REFUSAL = 'A copy of a canvas layer is taken back by deleting the element, which would leave its state behind. Move the layer into the frame instead.'
 
 export interface PlaceCanvasLayerRootParams {
   /** Absolute path of the layer module (`.studio/canvas/<id>.tsx`). */
@@ -441,7 +442,7 @@ export interface PlaceCanvasLayerRootParams {
  */
 export function placeCanvasLayerRoot(params: PlaceCanvasLayerRootParams): TransplantJsxElementResult {
   if (fileIdentity(params.moduleFile) === fileIdentity(params.destinationFile)) {
-    return refuseTransplant('same-file', 'A canvas layer cannot be placed into its own module.')
+    return refuseTransplant('same-file', 'A canvas layer cannot be placed into its own module. Drop it onto a page frame.')
   }
   const project = params.project ?? createProject()
   const moduleSource = loadSourceFile(project, params.moduleFile)
@@ -451,14 +452,14 @@ export function placeCanvasLayerRoot(params: PlaceCanvasLayerRootParams): Transp
   if (moduleText === null || destinationText === null) {
     return refuseTransplant(
       'stale-source',
-      'The canvas layer or the page changed on disk since the canvas last read it. Reload the project and try again.',
+      STALE_SOURCE_MESSAGE,
     )
   }
   const root = canvasLayerModuleRoot(moduleSource)
   if (!root) {
     return refuseTransplant(
       'not-found',
-      'This canvas layer no longer returns a single element, so there is nothing Studio can place. Open the file and give it one root element.',
+      'This canvas layer no longer returns a single element, so Studio has nothing to place. Give it one root element in the code.',
     )
   }
   const landed = landInDestination(
@@ -512,7 +513,7 @@ export function liftJsxElementToCanvasModule(params: LiftJsxElementParams): Lift
   const originSource = loadSourceFile(project, params.file)
   const originText = verbatimSourceText(originSource, params.file)
   if (originText === null) {
-    return refuseTransplant('stale-source', 'This page changed on disk since the canvas last read it. Reload the project and try again.')
+    return refuseTransplant('stale-source', STALE_SOURCE_MESSAGE)
   }
 
   const target = resolveJsxChildRange(originSource, params.line, params.col)

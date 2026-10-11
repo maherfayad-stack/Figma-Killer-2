@@ -83,7 +83,7 @@ export class ScopeLifts {
       if (this.names.expected.get(read)?.has('call-site')) {
         fail(
           'body-local',
-          `${this.componentName} computes \`${name}\` from a value this call site passes (\`${read}\`), which the enclosing component may not have at the top of its body.`,
+          `${this.componentName} computes \`${name}\` from a value this call site passes (\`${read}\`), which the page's component may not have yet. Duplicate the component and edit the copy.`,
         )
       }
     }
@@ -125,7 +125,7 @@ export class ScopeLifts {
     if (!statement || !copyable) {
       fail(
         'unbound-reference',
-        `${this.componentName}'s markup reads \`${name}\`, which ${this.componentFile.getBaseName()} declares but does not export, and it is not a plain function or constant detach can copy.`,
+        `${this.componentName}'s markup reads \`${name}\`, which ${this.componentFile.getBaseName()} declares but does not export, and detach cannot copy it. Export it from its file.`,
       )
     }
     // Registered first: a helper that reads itself, or a cycle of helpers, finds its own name.
@@ -137,10 +137,10 @@ export class ScopeLifts {
         this.names.expect(name, 'module')
         return name
       }
-      fail('name-collision', `${this.componentName} reads its own \`${name}\`, and this page already declares a different \`${name}\` - a name cannot be aliased in copied code.`)
+      fail('name-collision', `${this.componentName} reads its own \`${name}\`, and this page already declares a different \`${name}\`. Rename the page's \`${name}\`.`)
     }
     if (!this.names.isNameAvailable(name, name)) {
-      fail('name-collision', `${this.componentName} reads its own \`${name}\`, and this page already uses that name for something else.`)
+      fail('name-collision', `${this.componentName} reads its own \`${name}\`, and this page already uses that name for something else. Rename the page's \`${name}\`.`)
     }
     this.names.reserve(name)
     this.carriedText.push({ name, text })
