@@ -265,7 +265,8 @@ test.describe('loose layers', () => {
             frames: [{ id: 'f-home', pageId: 'home', x: 0, y: 0, width: 600, height: 400 }],
             notes: [],
             docs: [],
-            layers: [{ id: LAYER_ID, x: 800, y: 0, z: 1 }],
+            // Left of the frame, so it stays clear of the inspector the selection docks on the right.
+            layers: [{ id: LAYER_ID, x: -480, y: 20, z: 1 }],
           },
         ],
       }),
@@ -274,7 +275,6 @@ test.describe('loose layers', () => {
   test.afterEach(() => removeFixtureProject(fixture))
 
   const layerModules = () => fs.readdirSync(path.join(fixture.dir, '.studio', 'canvas')).filter((name) => /^cl[a-z0-9]{10}\.tsx$/.test(name))
-  const layerRing = (page: Page, id: string) => page.locator(`[data-canvas-layer-ring="${id}"]`)
   const layerBox = (page: Page, id: string) => page.frameLocator('iframe[data-studio-canvas-surface-frame]').locator(`[data-studio-layer-id="${id}"] > *`)
 
   test('the inspector edits a loose layer; a press with the rectangle tool draws even on top of one; no page is touched', async ({ page }) => {
@@ -307,7 +307,7 @@ test.describe('loose layers', () => {
 
     // ── size from the inspector ──────────────────────────────────────────────
     await page.mouse.click(at.x + at.width / 2, at.y + at.height / 2)
-    const width = page.getByLabel('Layer width')
+    const width = page.getByRole('textbox', { name: 'Layer width' })
     await width.click()
     await page.keyboard.press('Control+a')
     await page.keyboard.type('240')
@@ -323,7 +323,11 @@ test.describe('loose layers', () => {
     const onLayer = (await layerBox(page, LAYER_ID).boundingBox())!
     await page.getByRole('button', { name: 'Rectangle tool' }).click()
     await expect(page.getByRole('button', { name: 'Rectangle tool' })).toHaveAttribute('aria-pressed', 'true')
-    await drag(page, { x: onLayer.x + 10, y: onLayer.y + 10 }, { x: onLayer.x + 60, y: onLayer.y + 50 })
+    await expect(page.locator('[data-canvas-draw-layer="rectangle"]')).toBeVisible({ timeout: 15_000 })
+    // The press point is on the loose layer itself and the armed draw layer is what is under it.
+    const press = { x: onLayer.x + 10, y: onLayer.y + 10 }
+    expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.getAttribute('data-canvas-draw-layer'), press)).toBe('rectangle')
+    await drag(page, press, { x: onLayer.x + 60, y: onLayer.y + 50 })
 
     await expect.poll(() => layerModules().length, { message: 'a press on a loose layer did not draw a new rectangle', timeout: 30_000 }).toBe(2)
     await expect
@@ -341,7 +345,6 @@ test.describe('loose layers', () => {
     await expect.poll(() => layerModules().length, { timeout: 30_000 }).toBe(3)
     await page.waitForTimeout(1500)
     expect(read(fixture, 'pages/Home.tsx'), 'a stray element was written into the page').toBe(homeBefore)
-    void layerRing
   })
 })
 
@@ -386,11 +389,14 @@ test.describe('undo after Add variant', () => {
     await form.getByTestId('add-variant-name').fill('outline')
     await page.keyboard.press('Enter')
     await expect.poll(() => read(fixture, 'components/Button.tsx'), { timeout: 30_000 }).toContain("'outline'")
-    await expect(content.locator('button')).toHaveCount(16, { timeout: 60_000 })
 
-    // No click anywhere else: whatever has focus keeps it.
+    // No click anywhere else: whatever has focus keeps it. Pressed the moment the file changed,
+    // before the gallery has re-read it, the way a hand does it.
+    await expect(add, 'focus did not return to the + button the form was opened from').toBeFocused({ timeout: 10_000 })
     await page.keyboard.press('Control+z')
     await expect.poll(() => files.map((rel) => read(fixture, rel)), { message: 'Ctrl+Z was ignored', timeout: 30_000 }).toEqual(before)
     await expect(content.locator('button')).toHaveCount(12, { timeout: 60_000 })
+    await page.waitForTimeout(1500)
+    expect(files.map((rel) => read(fixture, rel)), 'the undo was undone or repeated').toEqual(before)
   })
 })
