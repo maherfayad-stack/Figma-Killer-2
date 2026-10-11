@@ -107,6 +107,9 @@ test.describe('G-2b - a class edit inside one instance changes only that instanc
     const second = contentFrame.locator('.tier').nth(1)
     await panIntoView(page, canvasRoot, second, 80)
     await selectInFrame(page, second)
+    // A click selects the instance; Enter steps into it, onto the element the component returns.
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('class-chip-tier'), 'stepping into the instance never bound the inspector to .tier').toBeVisible({ timeout: 20_000 })
 
     const field = page.getByTestId('css-padding-all')
     await expect(field, 'the inspector did not offer a padding control for the selected card').toBeVisible({ timeout: 20_000 })
