@@ -167,7 +167,7 @@ column or a grid, with an optional sticky note per frame — in the same
 token values as a formatting-preserving CST edit on each token's one
 declaration, all-or-nothing, through the agent write gate
 (`resolveAgentFilePath` / `agentWriteRefusal`), refusing a token declared twice
-or won by a package, Studio's design system or compiled output. It also renames a token everywhere it is declared or named (`rename`) and removes one (`remove`, refused while it is still read unless `replaceWith` says where its readers go), each as its own call through the same planner as the Variables panel.
+or won by a package, Studio's design system or compiled output. It also renames a token everywhere it is declared or named (`rename`) and removes one (`remove`, refused while it is still read unless `replaceWith` says where its readers go), each as its own call through the same planner as the Variables panel. A Tailwind v4 `@theme` variable renames with its utility classes (`rename-blocked` for `--spacing-*` / `--breakpoint-*` / `--container-*` or a name that leaves its namespace); `renamed[].unfollowed` lists classes built at runtime that no rename can follow.
 `studio_component_snippet` (read, ungated) returns a component's exact import
 for a named file and a prop-checked JSX usage. All three are in this registry
 AND on both in-canvas agent surfaces. `studio_screenshot` also takes `widths`:

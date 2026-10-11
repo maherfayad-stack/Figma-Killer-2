@@ -45,7 +45,7 @@ describe('token-catalog rename / remove', () => {
     const res = await post(dir, [{ op: 'rename', name: '--color-brand', to: '--color-primary' }])
     expect(res!.status).toBe(200)
     const body = (await res!.json()) as { renamed: unknown[]; undoToken: string | null; files: Array<{ path: string }> }
-    expect(body.renamed).toEqual([{ name: '--color-brand', to: '--color-primary', mentions: 5, files: 3 }])
+    expect(body.renamed).toEqual([{ name: '--color-brand', to: '--color-primary', mentions: 5, files: 3, unfollowed: [] }])
     expect(read('src/tokens.css')).toBe(TOKENS_CSS.replaceAll('--color-brand', '--color-primary'))
     expect(read('src/app.css')).toBe(APP_CSS.replace('--color-brand', '--color-primary'))
     expect(read('src/App.tsx')).toBe(APP_TSX.replaceAll('--color-brand', '--color-primary'))

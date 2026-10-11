@@ -23,8 +23,13 @@ export interface TokenWorkspaceFile {
   readonly text: string
 }
 
-/** Every project file that contains `--` somewhere, with its text. */
-export function readTokenWorkspaceFiles(dir: string): TokenWorkspaceFile[] {
+/**
+ * Every project file that contains `--` somewhere, with its text. A Tailwind
+ * theme rename (CT-6) also needs the files that spell the name as a CLASS
+ * (`bg-brand`), which hold no `--` at all: `allText` returns every readable
+ * file.
+ */
+export function readTokenWorkspaceFiles(dir: string, options: { allText?: boolean } = {}): TokenWorkspaceFile[] {
   const files: TokenWorkspaceFile[] = []
   let scanned = 0
   for (const rel of listWorkspaceFiles(dir)) {
@@ -35,7 +40,7 @@ export function readTokenWorkspaceFiles(dir: string): TokenWorkspaceFile[] {
       if (buffer.byteLength > MAX_FILE_BYTES) continue
       const text = buffer.toString('utf8')
       scanned++
-      if (!text.includes('--') || !Buffer.from(text, 'utf8').equals(buffer)) continue
+      if ((!options.allText && !text.includes('--')) || !Buffer.from(text, 'utf8').equals(buffer)) continue
       files.push({ file: rel, text })
     } catch (err) {
       console.error('[studio:tokenCatalog] could not read a file for the token scan:', rel, err)
