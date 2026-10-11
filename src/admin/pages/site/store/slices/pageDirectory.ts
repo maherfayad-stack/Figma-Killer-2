@@ -96,3 +96,12 @@ export function selectBoardPageCount(state: Pick<EditorStore, 'site'>): number {
   boardPageCount = pages ? pages.filter((page) => !isGalleryPage(page)).length : 0
   return boardPageCount
 }
+
+/**
+ * Ids of the pages a default board is seeded with (the same set
+ * `selectBoardPageCount` counts). Lives in the store chunk so the route shell
+ * does not carry the gallery filter.
+ */
+export function selectSeedablePageIds(state: Pick<EditorStore, 'site'>): string[] {
+  return (state.site?.pages ?? []).filter((page) => !isGalleryPage(page)).map((page) => page.id)
+}

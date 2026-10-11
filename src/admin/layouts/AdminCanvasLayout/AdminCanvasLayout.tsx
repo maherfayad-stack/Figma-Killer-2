@@ -51,8 +51,7 @@ import { shouldSeedDefaultBoard } from './studioDefaultBoardSeed'
 import { collectFrameIds, shouldRefuseBoardsSave } from './boardsSaveGuard'
 import { pushToast } from '@ui/components/Toast'
 import { retryWhileUnreachable } from '@core/http'
-import { selectBoardPageCount } from '@site/store/slices/pageDirectory'
-import { isGalleryPage } from '@core/component-variants'
+import { selectBoardPageCount, selectSeedablePageIds } from '@site/store/slices/pageDirectory'
 import { useAdminUi } from '@admin/state/adminUi'
 import { CMS_SITE_RELOAD_EVENT, requestCmsSiteReload } from '@admin/state/adminEvents'
 import {
@@ -593,10 +592,8 @@ function useStudioDefaultBoardSeed(): void {
   useEffect(() => {
     if (!shouldSeedDefaultBoard({ boardsLoaded, boardsLoadFailed, boardCount, activeBoardFrameCount, pageCount, frameDefaultsSettled, pagesArriving })) return
 
-    const sitePages = useEditorStore.getState().site?.pages
-    const pageIds = sitePages ? sitePages.filter((page) => !isGalleryPage(page)).map((p) => p.id) : []
-    if (pageIds.length === 0) return
-    useEditorStore.getState().seedFramesForActiveBoard(pageIds)
+    // `pageCount > 0` is part of the predicate above, and the action ignores an empty list.
+    useEditorStore.getState().seedFramesForActiveBoard(selectSeedablePageIds(useEditorStore.getState()))
   }, [boardsLoaded, boardsLoadFailed, boardCount, activeBoardFrameCount, pageCount, frameDefaultsSettled, pagesArriving])
 }
 

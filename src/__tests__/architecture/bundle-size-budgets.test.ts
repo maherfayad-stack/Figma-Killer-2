@@ -239,7 +239,21 @@ const BUDGETS: ChunkBudget[] = [
     // No component code entered this chunk. Measured 43,852 B. A 219 KB
     // post-paint saving for 636 B of table is the same trade as the boundaries
     // above; this is not first-paint code and nothing else here grew.
-    maxBytes: 43_900,
+    //
+    // LOWERED 43,900 -> 43,200 B with a real ~1 KB of headroom. The route shell's
+    // size was dominated by `__vite__mapDeps` (the body's preload table), and
+    // ~50 of its entries were sub-1.5 KB `src/ui/components/*` chunks (a .js and
+    // a .css each: Checkbox, Switch, Tabs, FilterBar, ...), split out only
+    // because the body and a lazy chunk both import them. `vite.config.ts` now
+    // folds every `src/ui/components` module into one `ui-components` chunk
+    // (same idea as the single `pixel-art-icons` chunk), so the table names one
+    // js + one css instead. Measured on the merged shell head (cb9b7636):
+    // 43,905 B before, 42,180 B after (-1,725 B), preload entries 209 -> 161;
+    // `AdminCanvasEditorBody` also fell 747,261 -> 726,921 B. Trade-off: the
+    // `ui-components` chunk is 190 KB raw and the admin entry preloads it, but
+    // the entry already preloads the editor store and runtime, and these
+    // primitives are shared by every route.
+    maxBytes: 43_200,
     rationale:
       'site route shell (current ~34 KB raw / ~12 KB gzipped). Must not ' +
       'pull the visual editor body, DnD, canvas, first-party modules, or ' +
