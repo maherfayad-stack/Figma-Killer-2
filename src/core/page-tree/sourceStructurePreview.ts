@@ -383,7 +383,7 @@ function nearestCallSiteAnchor(
 ): { anchorNodeId: string; position: 'before' | 'after' } | null {
   const slot = instanceChildrenSlot(tree, parentId)
   if (!slot) return null
-  const addressable = (id: string): boolean => isCallSiteChild(slot, id) && isSourceDerivedNodeId(id) && refusePlacement(tree.nodes[id] ?? { id }, 'Moved') === null
+  const addressable = (id: string): boolean => isCallSiteChild(slot, id) && isSourceDerivedNodeId(id) && refusePlacement(tree.nodes[id] ?? { id }) === null
   for (let i = at - 1; i >= 0; i -= 1) if (addressable(order[i]!)) return { anchorNodeId: order[i]!, position: 'after' }
   for (let i = at + 1; i < order.length; i += 1) if (addressable(order[i]!)) return { anchorNodeId: order[i]!, position: 'before' }
   return null
