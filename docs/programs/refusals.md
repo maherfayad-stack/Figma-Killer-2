@@ -87,7 +87,7 @@ parser-surgeon (G-1, G-3, G-4, G-5, G-7, G-9) · store-engineer (G-2a, G-6, mode
 
 ## G-3 as built (2026-10-11): what a detach refusal is now
 
-Built exactly as designed, plus OD-22's slot exception. Every `detachComponent` refusal reason is an outcome or a named impossibility:
+Built as designed, plus OD-22's slot exception, the carries and the hoists named below. Every `detachComponent` refusal reason is an outcome or a named impossibility:
 
 | Reason | Outcome now |
 |---|---|
