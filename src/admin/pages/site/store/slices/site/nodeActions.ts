@@ -52,6 +52,7 @@ import { createImageDropActions } from './imageDropActions'
 import { createSubtreeInsertActions } from './subtreeInsertActions'
 import { createInlineStyleActions } from './inlineStyleActions'
 import { createIgnoreAutoLayoutActions } from './ignoreAutoLayoutActions'
+import { createLayoutConversionActions } from './layoutConversionActions'
 import { createVisibilityActions } from './visibilityActions'
 import { createMoveSequenceActions, moveEditOf } from './moveSequenceActions'
 import { duplicateNodeWithScopedClasses } from './duplicateWithScopedClasses'
@@ -397,6 +398,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
 
     ...createInlineStyleActions(helpers),
     ...createIgnoreAutoLayoutActions(helpers),
+    ...createLayoutConversionActions(helpers),
 
     setBreakpointOverride: (nodeId, breakpointId, patch) => {
       mutateActiveTree(

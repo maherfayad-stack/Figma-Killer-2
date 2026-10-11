@@ -279,6 +279,14 @@ export {
 } from './containingBlockOffsets'
 
 export {
+  inferAutoLayout,
+  type CrossAlignment,
+  type InferredAutoLayout,
+  type InferredPadding,
+  type LayoutRect,
+} from './inferAutoLayout'
+
+export {
   cssPropertyName,
   planResizeSizing,
   readClearedValues,

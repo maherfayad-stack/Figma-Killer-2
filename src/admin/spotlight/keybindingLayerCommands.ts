@@ -107,12 +107,13 @@ export const LAYER_COMMAND_KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     ignoreInEditableField: true,
   },
 
-  // IX-10 — Figma's "add auto layout". A container becomes `display: flex`
-  // in the direction its children already run; pressed again it goes back to
-  // block. Two or more siblings are grouped first, then the group is laid out.
+  // IX-10 / PA-7 / PA-8 — Figma's "add auto layout". A container becomes
+  // `display: flex` with the direction, gap, padding, alignment and wrap its
+  // children already have; pressed again every child is pinned where it sits.
+  // Two or more siblings are grouped first, then the group is laid out.
   {
     commandId: 'layers.toggleFlexLayout',
-    displayName: 'Add auto layout (again removes it; several layers are grouped first)',
+    displayName: 'Add auto layout (again removes it, keeping positions; several layers are grouped first)',
     shortcut: { mac: '⇧A', win: 'Shift+A' },
     ariaKeyshortcuts: 'Shift+A',
     match: (e) => e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && isLetter(e, 'a'),

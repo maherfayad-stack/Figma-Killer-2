@@ -66,7 +66,7 @@ export function LayerArrangeMenuItems({ targetIds, layerIdsUnderPointer, onClose
   const locked = nodes.every((node) => node.locked === true)
   // Not "Wrap in …": that is the Wrap submenu's name, and one menu must not
   // offer two items a reader (or a screen reader) cannot tell apart.
-  const flexLabel = single && isContainer ? 'Add / remove auto layout' : 'Add auto layout'
+  const flexLabel = single && isContainer ? 'Add auto layout / Remove (keep positions)' : 'Add auto layout'
   // A group is the bare container Studio's own Group writes: no classes, no
   // inline styles, no breakpoint overrides. Any other container carries
   // styling of its own, and dissolving it would silently drop that.
