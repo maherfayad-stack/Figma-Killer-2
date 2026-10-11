@@ -100,17 +100,17 @@ type Bindings = ReturnType<typeof buildParamBindings>
  * one the editor named.
  */
 function fedEdit(levels: readonly Level[], bindingsOf: readonly Bindings[], hops: readonly (Hop | undefined)[], paramName: string, propName: string, value: string | number | boolean | undefined): { edit: Edit } {
-  if (value === undefined) refuse('not-a-literal', `\`${propName}\` is already a prop here, so there is no literal to expose.`)
+  if (value === undefined) refuse('not-a-literal', `\`${propName}\` is already a prop here, so there is no literal to expose. Edit the prop in the code.`)
   let k = levels.length - 1
   let local: string | undefined = paramName
   const innermost = bindingsOf[k]!.params.get(paramName)!
   let attrName = innermost.attrName
-  if (paramReadCount(levels[k]!.fn, paramName) !== 1) refuse('shared-prop', `\`${attrName}\` feeds more than one place in <${levels[k]!.identifier}>, so setting it here would change places you did not point at.`)
+  if (paramReadCount(levels[k]!.fn, paramName) !== 1) refuse('shared-prop', `\`${attrName}\` feeds more than one place in <${levels[k]!.identifier}>, so setting it here would change places you did not point at. Edit it in the code.`)
   while (k > 0) {
     const hop = hops[k]!
     if (hop.kind === 'spread') {
       // The page's attribute arrives under its own name; the forwarder never reads it.
-      if (hop.destructured.has(attrName)) refuse('not-a-literal', `<${levels[k - 1]!.identifier}> takes \`${attrName}\` itself instead of passing it on.`)
+      if (hop.destructured.has(attrName)) refuse('not-a-literal', `<${levels[k - 1]!.identifier}> takes \`${attrName}\` itself instead of passing it on. Pass it on in the code.`)
       local = undefined
       k -= 1
       continue
@@ -120,28 +120,28 @@ function fedEdit(levels: readonly Level[], bindingsOf: readonly Bindings[], hops
     const expression = initializer && Node.isJsxExpression(initializer) ? initializer.getExpression() : undefined
     const outer = expression && Node.isIdentifier(expression) ? bindingsOf[k - 1]!.params.get(expression.getText()) : undefined
     if (!expression || !outer) {
-      refuse('not-a-literal', `<${levels[k - 1]!.identifier}> sets \`${attrName}\` itself rather than passing one of its own props on, so it is shared by every one of them.`)
+      refuse('not-a-literal', `<${levels[k - 1]!.identifier}> sets \`${attrName}\` itself rather than passing one of its own props on, so every use shares it. Pass a prop on in the code.`)
     }
     if (paramReadCount(levels[k - 1]!.fn, expression.getText()) !== 1) {
-      refuse('shared-prop', `\`${outer.attrName}\` feeds more than one place in <${levels[k - 1]!.identifier}>, so setting it here would change places you did not point at.`)
+      refuse('shared-prop', `\`${outer.attrName}\` feeds more than one place in <${levels[k - 1]!.identifier}>, so setting it here would change places you did not point at. Edit it in the code.`)
     }
     local = expression.getText()
     attrName = outer.attrName
     k -= 1
   }
-  if (attrName !== propName) refuse('not-a-literal', `\`${propName}\` is not the prop this value is passed down as.`)
+  if (attrName !== propName) refuse('not-a-literal', `\`${propName}\` is not the prop this value is passed down as. Select the element again.`)
   const defaultText = local !== undefined ? bindingsOf[0]!.params.get(local)?.defaultText : innermost.defaultText
   const plan = planFedOverride({ fn: levels[0]!.fn, callSite: levels[0]!.callSite, paramName: local, propName, defaultText, value })
   if (!plan.ok) refuse(plan.reason, plan.message)
   if (needsWidening(plan, value) !== undefined) {
-    refuse('unsupported-props-type', `\`${propName}\` is passed down through ${levels.length} components, and a value of another type would need each of their declarations changed.`)
+    refuse('unsupported-props-type', `\`${propName}\` is passed down through ${levels.length} components, and a value of another type would need each declaration changed. Edit the types in the code.`)
   }
   return { edit: plan.edit }
 }
 
 export function exposeThroughLevels(params: ExposeLiteralAsPropParams, via: readonly CallSiteLocation[]): ExposeLiteralAsPropResult {
   if (via.length + 1 > MAX_INSTANCE_OVERRIDE_DEPTH) {
-    return { ok: false, refusal: { reason: 'not-in-component', message: `This element sits ${via.length + 1} components deep; a value is only passed down ${MAX_INSTANCE_OVERRIDE_DEPTH} levels.` } }
+    return { ok: false, refusal: { reason: 'not-in-component', message: `This element sits ${via.length + 1} components deep, and a value is only passed down ${MAX_INSTANCE_OVERRIDE_DEPTH} levels. Select a shallower element.` } }
   }
   const project = params.project ?? createWorkspaceProject(params.workspaceRoot)
   project.manipulationSettings.set({ quoteKind: QuoteKind.Single })
@@ -158,11 +158,11 @@ export function exposeThroughLevels(params: ExposeLiteralAsPropParams, via: read
 
     const innermost = levels[levels.length - 1]!
     if (path.relative(innermost.componentFile.getFilePath(), params.elementFile) !== '') {
-      refuse('not-in-component', `That element is not part of <${innermost.identifier}>'s own markup.`)
+      refuse('not-in-component', `That element is not part of <${innermost.identifier}>'s own markup. Select an element inside it.`)
     }
     const element = findJsxElementAtLocationOrThrow(innermost.componentFile, params.elementFile, params.line, params.col)
     if (element.getStart() < innermost.fn.getStart() || element.getEnd() > innermost.fn.getEnd()) {
-      refuse('not-in-component', `That element is not part of <${innermost.identifier}>'s own markup.`)
+      refuse('not-in-component', `That element is not part of <${innermost.identifier}>'s own markup. Select an element inside it.`)
     }
 
     // hops[k]: how level k-1 hands its props to level k. A spread hop makes level k-1 a forwarder: no prop of its own.
@@ -178,10 +178,10 @@ export function exposeThroughLevels(params: ExposeLiteralAsPropParams, via: read
       const bindings = buildParamBindings(level.fn)
       const gains = gainerOf[k] === k
       if (gains && bindings.hasUndestructuredParam) {
-        refuse('unsupported-params', `${level.identifier} takes an undestructured props parameter — Studio can't add a named prop without rewriting every "props.x".`)
+        refuse('unsupported-params', `${level.identifier} takes an undestructured props parameter, so a named prop cannot be added. Destructure its props in the code first.`)
       }
       if (/\.tsx?$/.test(level.componentFile.getFilePath()) && isTypedThroughVariable(level.fn) && !level.fn.getParameters()[0]?.getTypeNode()) {
-        refuse('unsupported-props-type', `${level.identifier}'s props are typed through its variable (like FC<Props>), which Studio can't add a property to safely.`)
+        refuse('unsupported-props-type', `${level.identifier}'s props are typed through its variable (like FC<Props>), which Studio cannot extend. Add the property in the code.`)
       }
       return bindings
     })
@@ -191,7 +191,7 @@ export function exposeThroughLevels(params: ExposeLiteralAsPropParams, via: read
     const innerPropNames = new Set([...innerBindings.params.keys(), ...(innerBindings.childrenParam ? [innerBindings.childrenParam] : [])])
     const planned: PlannedOverride[] = params.overrides.map((override) => {
       const key = targetKey(override.target)
-      if (seenTargets.has(key)) refuse('not-a-literal', 'The same value was listed twice.')
+      if (seenTargets.has(key)) refuse('not-a-literal', 'The same value was listed twice. Reload the project and try again.')
       seenTargets.add(key)
       const paramName = fedIdentifier(element, override.target)
       if (paramName !== undefined && innerBindings.params.has(paramName)) {
@@ -220,7 +220,7 @@ export function exposeThroughLevels(params: ExposeLiteralAsPropParams, via: read
           if (!sites.some((site) => site === level.callSite || (site.getSourceFile() === level.callFile && site.getStart() === level.callSite.getStart()))) sites.push(level.callSite)
           const spread = sites.find((site) => !verifiedSpreadSites.has(site) && !isSameSite(site, verifiedSpreadSites) && site.getAttributes().some((attr) => Node.isJsxSpreadAttribute(attr)))
           if (spread) {
-            refuse('call-site-spread', `A <${level.identifier}> in ${path.basename(spread.getSourceFile().getFilePath())} spreads an object into it, which could already set a prop of the new name — nothing was changed.`)
+            refuse('call-site-spread', `A <${level.identifier}> in ${path.basename(spread.getSourceFile().getFilePath())} spreads an object that could already set a prop of the new name. Pass the props explicitly in the code.`)
           }
           for (const id of level.fn.getDescendantsOfKind(SyntaxKind.Identifier)) taken.add(id.getText())
           for (const name of topLevelBindingNames(level.componentFile)) taken.add(name)

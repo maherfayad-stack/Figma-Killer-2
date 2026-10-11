@@ -113,7 +113,7 @@ export function planFedOverride(params: {
 }): FedPlan {
   const { fn, callSite, paramName, propName, defaultText, value } = params
   if (paramName !== undefined && paramReadCount(fn, paramName) !== 1) {
-    return { ok: false, reason: 'shared-prop', message: `\`${propName}\` feeds more than one place in this component, so setting it here would change places you did not point at.` }
+    return { ok: false, reason: 'shared-prop', message: `\`${propName}\` feeds more than one place in this component, so setting it here would change places you did not point at. Edit it in the code.` }
   }
 
   const attributes = callSite.getAttributes()
@@ -123,10 +123,10 @@ export function planFedOverride(params: {
   if (existing && Node.isJsxAttribute(existing)) {
     const currentType = attributeLiteralType(existing.getInitializer())
     if (currentType === undefined) {
-      return { ok: false, reason: 'not-a-literal', message: `This call site passes \`${propName}\` as a value read from code, which is never overwritten with a literal.` }
+      return { ok: false, reason: 'not-a-literal', message: `This call site passes \`${propName}\` as a value read from code, so it is never overwritten with a literal. Edit it in the code.` }
     }
     if (attributes.slice(index + 1).some((attr) => Node.isJsxSpreadAttribute(attr))) {
-      return { ok: false, reason: 'call-site-spread', message: `A spread after \`${propName}\` on this call site could still override the value written, so nothing was changed.` }
+      return { ok: false, reason: 'call-site-spread', message: `A spread after \`${propName}\` on this call site could still override the value written. Move the spread before it in the code.` }
     }
     const start = existing.getStart()
     return { ok: true, edit: { pos: start, remove: existing.getEnd() - start, text: attributeText(propName, value) }, currentType }

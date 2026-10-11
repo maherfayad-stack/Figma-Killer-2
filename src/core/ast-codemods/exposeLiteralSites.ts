@@ -117,7 +117,7 @@ function literalExpression(expr: Node): { text: string; type: LiteralSite['type'
 
 function textLiteral(opening: JsxOpeningLikeElement, file: SourceFile): LiteralSite {
   const element = Node.isJsxOpeningElement(opening) ? opening.getParent() : undefined
-  if (!element || !Node.isJsxElement(element)) refuse('not-a-literal', 'This element has no text to expose.')
+  if (!element || !Node.isJsxElement(element)) refuse('not-a-literal', 'This element has no text to expose. Select an element that has text.')
   const children = element.getJsxChildren().filter((child) => {
     if (Node.isJsxText(child)) return !child.containsOnlyTriviaWhiteSpaces()
     return !(Node.isJsxExpression(child) && child.getExpression() === undefined)
@@ -127,14 +127,14 @@ function textLiteral(opening: JsxOpeningLikeElement, file: SourceFile): LiteralS
     const raw = file.getFullText().slice(only.getPos(), only.getEnd())
     const lead = raw.length - raw.trimStart().length
     const span = raw.trim()
-    if (HTML_ENTITY_RE.test(span)) refuse('not-a-literal', 'This text contains an HTML entity, which means something different once it is a prop value.')
+    if (HTML_ENTITY_RE.test(span)) refuse('not-a-literal', 'This text contains an HTML entity, which means something different in a prop value. Replace the entity with the character.')
     const start = only.getPos() + lead
     return { start, end: start + span.length, asJsx: true, defaultText: jsStringLiteral(jsxTextValue(span)), type: 'string', anchor: only }
   }
   const expr = only && Node.isJsxExpression(only) ? only.getExpression() : undefined
   const literal = expr ? literalExpression(expr) : undefined
   if (!expr || !literal || literal.type !== 'string') {
-    refuse('not-a-literal', 'Only an element whose whole content is one piece of literal text can expose it as a prop.')
+    refuse('not-a-literal', 'Only an element whose whole content is one piece of literal text can expose it as a prop. Select such an element.')
   }
   return { start: expr.getStart(), end: expr.getEnd(), asJsx: false, defaultText: literal.text, type: 'string', anchor: expr }
 }
@@ -144,12 +144,12 @@ function attributeLiteral(opening: JsxOpeningLikeElement, name: string): Literal
   const initializer = attribute && Node.isJsxAttribute(attribute) ? attribute.getInitializer() : undefined
   if (initializer && Node.isStringLiteral(initializer)) {
     const value = initializer.getLiteralText()
-    if (value.includes('&')) refuse('not-a-literal', `The ${name} value contains an HTML entity, which means something different once it is a prop value.`)
+    if (value.includes('&')) refuse('not-a-literal', `The ${name} value contains an HTML entity, which means something different in a prop value. Replace the entity with the character.`)
     return { start: initializer.getStart(), end: initializer.getEnd(), asJsx: true, defaultText: jsStringLiteral(value), type: 'string', anchor: initializer }
   }
   const expr = initializer && Node.isJsxExpression(initializer) ? initializer.getExpression() : undefined
   const literal = expr ? literalExpression(expr) : undefined
-  if (!expr || !literal) refuse('not-a-literal', `\`${name}\` is not a literal on this element — it already reads a value, which stays as it is.`)
+  if (!expr || !literal) refuse('not-a-literal', `\`${name}\` is not a literal on this element, since it already reads a value. Edit the value in the code.`)
   return { start: expr.getStart(), end: expr.getEnd(), asJsx: false, defaultText: literal.text, type: literal.type, anchor: expr }
 }
 
@@ -157,7 +157,7 @@ function styleLiteral(opening: JsxOpeningLikeElement, property: string): Literal
   const attribute = opening.getAttributes().find((attr) => Node.isJsxAttribute(attr) && attr.getNameNode().getText() === 'style')
   const initializer = attribute && Node.isJsxAttribute(attribute) ? attribute.getInitializer() : undefined
   const object = initializer && Node.isJsxExpression(initializer) ? initializer.getExpression() : undefined
-  if (!object || !Node.isObjectLiteralExpression(object)) refuse('not-a-literal', 'This element has no inline style object to expose a value from.')
+  if (!object || !Node.isObjectLiteralExpression(object)) refuse('not-a-literal', 'This element has no inline style object to expose a value from. Select an element that has one.')
   for (const member of object.getProperties()) {
     if (!Node.isPropertyAssignment(member)) continue
     const key = member.getNameNode()
@@ -168,7 +168,7 @@ function styleLiteral(opening: JsxOpeningLikeElement, property: string): Literal
     if (!value || !literal || literal.type === 'boolean') break
     return { start: value.getStart(), end: value.getEnd(), asJsx: false, defaultText: literal.text, type: literal.type, anchor: value }
   }
-  refuse('not-a-literal', `\`${property}\` is not a literal value in this element's inline style.`)
+  refuse('not-a-literal', `\`${property}\` is not a literal value in this element's inline style. Edit it in the code.`)
 }
 
 function rootIdentifier(expr: Node): string | undefined {
@@ -185,7 +185,7 @@ export function assertNotMappedOverProps(anchor: Node, fn: FunctionLike, propNam
     const callee = ancestor.getExpression()
     if (!Node.isPropertyAccessExpression(callee) || callee.getName() !== 'map') continue
     const root = rootIdentifier(callee.getExpression())
-    if (root && propNames.has(root)) refuse('maps-over-props', 'This literal is rendered once per item of a list the component is handed, so a single prop cannot override it.')
+    if (root && propNames.has(root)) refuse('maps-over-props', 'This literal is rendered once per item of a list the component is handed, so one prop cannot override it. Edit it in the code.')
   }
 }
 

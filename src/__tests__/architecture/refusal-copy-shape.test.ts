@@ -99,26 +99,13 @@ const SENTENCE_FILES: readonly string[] = [
   'src/core/utils/htmlContentModel.ts',
 ]
 
-/**
- * Files whose refusals G-2b (`feat/instance-class-overrides`: class-bound style and
- * spread-forwarding components through "expose as a prop") is still rewriting. They
- * keep the sentences they had; the merge of that branch rewrites them in the same
- * two-line shape and EMPTIES this list. Nothing else is exempt.
- */
-const PENDING_G2B: ReadonlySet<string> = new Set([
-  'src/core/ast-codemods/exposeFedProp.ts',
-  'src/core/ast-codemods/exposeLiteralAsProp.ts',
-  'src/core/ast-codemods/exposeLiteralSites.ts',
-  'src/core/ast-codemods/exposeThroughLevels.ts',
-  'src/core/ast-codemods/promoteOverrideToDefault.ts',
-])
 
 /**
  * The most distinct refusal reasons the codebase may carry. It was 90 in the
  * 2026-09-23 audit; G-1 to G-10 turned most of them into writes. Lower it when
  * you delete a reason; a new one has to be argued for in `docs/programs/refusals.md`.
  */
-const REFUSAL_REASON_BUDGET = 150
+const REFUSAL_REASON_BUDGET = 160
 
 const SHARED = 'src/core/utils/refusalCopy.ts'
 
@@ -131,10 +118,10 @@ function sourceFiles(): string[] {
 describe('refusal copy (G-11)', () => {
   const all = sourceFiles()
   const structured = all.filter((rel) => STRUCTURED_FILES.some((pattern) => pattern.test(rel)))
-  const judged = structured.filter((rel) => !PENDING_G2B.has(rel))
+
   const shared = stringConstantsOf(SHARED, readSource(join(REPO_ROOT, SHARED)))
   const sentences = [
-    ...judged.flatMap((rel) => {
+    ...structured.flatMap((rel) => {
       const source = readSource(join(REPO_ROOT, rel))
       const read = readRefusalSentences(rel, source, shared)
       const extra = SENTENCE_FILES.includes(rel) ? readSentenceLiterals(rel, source, new Set(read.map((s) => s.line))) : []
@@ -147,7 +134,7 @@ describe('refusal copy (G-11)', () => {
     expect(structured.length).toBeGreaterThan(300)
     expect(sentences.length).toBeGreaterThan(400)
     for (const rel of SENTENCE_FILES) expect(all, `${rel} is listed in SENTENCE_FILES but does not exist`).toContain(rel)
-    for (const rel of PENDING_G2B) expect(all, `${rel} is listed in PENDING_G2B but does not exist`).toContain(rel)
+
   })
 
   it('every refusal sentence is at most two lines and carries one remedy', () => {

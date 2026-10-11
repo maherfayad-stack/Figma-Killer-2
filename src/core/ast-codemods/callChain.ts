@@ -52,7 +52,7 @@ export function resolveCallChain(
     const callSite = findJsxElementAtLocationOrThrow(callFile, location.file, location.line, location.col)
     const previous = levels[k - 1]
     if (previous && (path.relative(previous.componentFile.getFilePath(), location.file) !== '' || !inside(previous.fn, callSite))) {
-      return { ok: false, refusal: { reason: 'not-in-component', message: `That element is not part of the markup <${previous.identifier}> renders.` } }
+      return { ok: false, refusal: { reason: 'not-in-component', message: `That element is not part of the markup <${previous.identifier}> renders. Select an element inside it.` } }
     }
     const identifier = callSite.getTagNameNode().getText().split('.')[0]!
     const resolved = resolveComponentCallSite(project, callFile, workspaceRoot, identifier, location.file, location.line, location.col)
@@ -95,6 +95,6 @@ export function hopKind(outer: Level, innerCallSite: JsxOpeningLikeElement): Hop
   if (own && only && Node.isIdentifier(only) && own.names.has(only.getText())) return { kind: 'spread', destructured: own.destructured }
   return {
     kind: 'filtered',
-    message: `<${outer.identifier}> passes its props on through a spread Studio cannot read (${spreads.map((spread) => spread.getText()).join(', ')}), so a prop added here might not arrive.`,
+    message: `<${outer.identifier}> passes its props on through a spread Studio cannot read (${spreads.map((spread) => spread.getText()).join(', ')}), so a prop added here might not arrive. Pass the props explicitly in the code.`,
   }
 }
