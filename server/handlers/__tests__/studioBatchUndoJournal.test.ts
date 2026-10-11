@@ -84,6 +84,32 @@ describe('each one-shot write is undone byte for byte', () => {
     roundTrip([{ kind: 'delete', nodeId: nodeIdOf(PAGE, 'Badge') }])
   })
 
+  it('Frame selection — the wrapper AND every member’s rebased offsets, in one token (PA-6)', () => {
+    const forward = applyStudioEditBatch(
+      dir,
+      [
+        {
+          kind: 'group',
+          nodeId: nodeIdOf(PAGE, 'h1'),
+          siblingNodeIds: [nodeIdOf(PAGE, 'Badge')],
+          name: 'div',
+          frame: { wrapperStyle: { position: 'absolute', left: '10px', top: '20px' }, memberStyles: [{ left: '0px' }, { top: '0px' }] },
+        },
+      ],
+      {},
+      EDITOR,
+    )
+    expect(forward.refusals).toEqual([])
+    const framed = read('pages/Home.tsx')
+    expect(framed).toContain("<div style={{ position: 'absolute', left: '10px', top: '20px' }}>")
+    expect(framed).toContain("<h1 style={{ left: '0px' }}>")
+    expect(forward.undoToken).toMatch(/^[0-9a-f]{32}$/)
+
+    const back = applyStudioEditBatch(dir, [restore(forward.undoToken!)], {}, EDITOR)
+    expect(back.refusals).toEqual([])
+    expect(read('pages/Home.tsx')).toBe(PAGE)
+  })
+
   it('a multi-element delete is ONE token for the whole batch', () => {
     roundTrip([
       { kind: 'delete', nodeId: nodeIdOf(PAGE, 'h1') },
@@ -162,6 +188,23 @@ describe('refuses honestly', () => {
     expect(value.written).toBe(1)
     expect(value.undoToken).toBeUndefined()
     expect(journal()).toEqual([])
+  })
+
+  it('a sequence of moves is journaled ONCE: one token restores every file the steps changed', () => {
+    const before = read('pages/Home.tsx')
+    const result = applyStudioEditSequence(
+      dir,
+      [
+        { kind: 'move', nodeId: nodeIdOf(PAGE, 'h1'), anchorNodeId: nodeIdOf(PAGE, 'Badge'), position: 'after' },
+      ],
+      {},
+      EDITOR,
+    )
+    expect(result.written).toBe(1)
+    expect(result.undoToken).toBeDefined()
+    expect(journal()).toHaveLength(1)
+    applyStudioEditBatch(dir, [restore(result.undoToken!)], {}, EDITOR)
+    expect(read('pages/Home.tsx')).toBe(before)
   })
 
   it('a sequence records no journal entry for its steps', () => {

@@ -45,6 +45,18 @@ function studioPage(id: string, file: string, childIds: string[], extra: Record<
 const mainOf = (file: string) => `${file}:2:3`
 
 const store = () => useEditorStore.getState()
+
+/**
+ * The board's re-read after a move reports the write's undo-journal token on
+ * the entry the move already pushed (`recordStructuralSourceWrite` `fill`).
+ * These specs have no editor mounted to re-read, so they apply that step.
+ */
+function landJournalToken(): void {
+  store().recordStructuralSourceWrite({
+    kind: 'fill',
+    outcome: { createdNodeIds: [], relocatedNodeIds: [], removed: [], undoToken: '0123456789abcdef0123456789abcdef', listArrays: [] },
+  })
+}
 const childrenOf = (pageId: string, file = FILE) => {
   const page = store().site!.pages.find((candidate) => candidate.id === pageId)!
   return [...page.nodes[mainOf(file)]!.children]
@@ -69,7 +81,7 @@ beforeEach(() => {
     if (url.includes('/studio/save')) {
       posted.push({ edits: body.edits ?? [], sequence: body.sequence === true })
       return new Response(
-        JSON.stringify({ ok: true, written: (body.edits ?? []).length, skipped: 0, shifted: true, sharedComponents: false, touchedFiles: [FILE] }),
+        JSON.stringify({ ok: true, written: (body.edits ?? []).length, skipped: 0, shifted: true, sharedComponents: false, undoToken: '0123456789abcdef0123456789abcdef', touchedFiles: [FILE] }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       )
     }
@@ -120,7 +132,7 @@ describe('ERR-7 — a multi-selection drag is one gesture', () => {
 
     expect(childrenOf('page-1')).toEqual([u, v, a, b])
     expect(store()._historyPast).toHaveLength(1)
-    expect(store()._historyPast[0]!.structural?.gesture).toBe('moves')
+    expect(store()._historyPast[0]!.structural).toMatchObject({ gesture: 'source', source: { sequence: true, inverseTemplate: { kind: 'restore-journal' } } })
     await settle()
     expect(refusalToasts()).toEqual([])
     expect(posted).toHaveLength(1)
@@ -138,13 +150,14 @@ describe('ERR-7 — a multi-selection drag is one gesture', () => {
     store().setActivePage('page-1')
     store().moveNodes([a, b], mainOf(FILE), 4)
     await settle()
+    landJournalToken()
 
     store().undo()
-    expect(childrenOf('page-1')).toEqual([a, u, b, v])
     await settle()
+    // One journal restore puts every file back; no inverse moves are replayed.
     expect(posted).toHaveLength(2)
-    expect(posted[1]!.sequence).toBe(true)
-    expect(posted[1]!.edits).toHaveLength(2)
+    expect(posted[1]!.sequence).toBe(false)
+    expect(posted[1]!.edits).toEqual([expect.objectContaining({ kind: 'restore', token: '0123456789abcdef0123456789abcdef' })])
     expect(store()._historyPast).toHaveLength(0)
     expect(store()._historyFuture).toHaveLength(1)
   })

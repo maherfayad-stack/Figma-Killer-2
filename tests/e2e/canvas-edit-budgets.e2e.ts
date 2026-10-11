@@ -3,11 +3,14 @@ import { largeBoardPageId, openLargeBoardAtWorkingZoom, writeLargeBoardCorpus } 
 import { installReactRenderCounter, readRenderCounts, resetRenderCounts, topRenders } from './helpers/reactRenderCounter'
 import {
   SELECTION_RING,
+  createAuthoredFixtureProject,
+  openFixtureBoard,
+  panIntoView,
   selectInFrame,
   removeFixtureProject,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
-import { visibleCanvasIframe } from './helpers/canvasIframe'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 import { E2E_VITE_MODE } from '../../scripts/lib/e2eStack'
 
 /**
@@ -96,6 +99,18 @@ const BUDGET_HEAP_GROWTH_MB = 60
  * product's own work, not the target.
  */
 const BUDGET_FIRST_FRAME_INTERACTIVE_WARM_MS = PRODUCTION ? 2000 : 7000
+
+/**
+ * **Inline-style edit in the Properties panel -> the canvas element's computed
+ * style changed** (the field's `input` event to the first frame after the
+ * frame's computed style reads the new value), on a static portal frame with
+ * autosave ON so the save runs behind the paint. The 2026-10-10 audit measured
+ * 0.86-0.95 s against a 210-295 ms disk write; the paint must never wait for
+ * the write. Calibrated on the preview build, 2026-10-11: medians of 3 runs
+ * 27.6 / 26.5 / 32.7 ms, so about 20% over the 27.6 ms middle one, rounded up to
+ * leave one 16.7 ms frame of slack for a loaded runner.
+ */
+const BUDGET_INLINE_STYLE_EDIT_TO_PAINT_MS = 35
 
 const KEYSTROKE_SAMPLES = 12
 const TARGET_PAGE_ID = largeBoardPageId(0)
@@ -423,5 +438,90 @@ test.describe('P6-C edit and load budgets on the 40 x 300 corpus', () => {
     annotate('  of which: DOMContentLoaded', `${timing.domContentLoaded.toFixed(0)}ms`)
     annotate('  of which: /load response end', `${timing.loadDoneAt.toFixed(0)}ms`)
     expect(timing.interactiveAt).toBeLessThan(BUDGET_FIRST_FRAME_INTERACTIVE_WARM_MS)
+  })
+})
+
+const INLINE_FIXTURE_PAGE = `export default function Home() {
+  return (
+    <main style={{ padding: "40px" }}>
+      <div id="target" style={{ width: "200px", height: "80px", fontSize: "16px", background: "#ccc" }}>Inline</div>
+    </main>
+  )
+}
+`
+
+test.describe('inline-style edit -> paint', () => {
+  test.setTimeout(240_000)
+  let inlineFixture: FixtureProject
+
+  test.beforeEach(() => {
+    inlineFixture = createAuthoredFixtureProject('__e2e-inline-style-instant', {
+      'pages/Home.tsx': INLINE_FIXTURE_PAGE,
+      // Static tier: the portal frame is what is under test.
+      '.studio/meta.json': JSON.stringify({ pagesDir: 'pages', trust: 'static' }, null, 2) + '\n',
+    })
+  })
+
+  test.afterEach(() => {
+    if (inlineFixture) removeFixtureProject(inlineFixture)
+  })
+
+  test('a typed width is on the canvas within budget, and the save that follows repaints nothing', async ({ page }) => {
+    const canvasRoot = await openFixtureBoard(page, inlineFixture, { autoSave: true })
+    const frame = page.locator('[data-page-id]').first()
+    await panIntoView(page, canvasRoot, frame)
+    await expect(visibleCanvasIframe(frame)).toBeVisible({ timeout: 60_000 })
+    const content = canvasContentFrame(frame)
+    const element = content.getByText('Inline', { exact: true })
+    await panIntoView(page, canvasRoot, element, 80)
+    await selectInFrame(page, element)
+    const field = page.getByTestId('css-size-input-width').getByRole('textbox', { name: 'Width' })
+    await expect(field).toBeVisible({ timeout: 15_000 })
+
+    const samples: number[] = []
+    for (let i = 0; i < 6; i += 1) {
+      const next = 240 + i * 20
+      await field.click()
+      await field.press('ControlOrMeta+a')
+      await page.evaluate((expected) => {
+        const iframe = Array.from(document.querySelectorAll<HTMLIFrameElement>('iframe[title^="Canvas frame"]')).find((f) =>
+          f.contentDocument?.body.textContent?.includes('Inline'),
+        )
+        const target = Array.from(iframe?.contentDocument?.querySelectorAll<HTMLElement>('div') ?? []).find((el) => el.textContent === 'Inline')
+        if (!target) throw new Error('the Inline element is in no mounted frame')
+        const state = { downAt: 0, paintAt: 0, scheduled: false, widths: [getComputedStyle(target).width] }
+        ;(window as unknown as { __inlineEdit: typeof state }).__inlineEdit = state
+        document.addEventListener('input', () => { state.downAt = performance.now() }, { capture: true, once: true })
+        // Every frame for 2.2 s after the input event: the first frame that shows the new width is the paint, and
+        // every distinct width seen from the keydown on is recorded after the old one, so a save that lands and briefly puts the
+        // old value back (a flash) shows up as a second entry.
+        const tick = () => {
+          const width = getComputedStyle(target).width
+          if (state.downAt !== 0) {
+            if (state.widths[state.widths.length - 1] !== width) state.widths.push(width)
+            if (!state.scheduled && width === expected) {
+              state.scheduled = true
+              requestAnimationFrame(() => { state.paintAt = performance.now() })
+            }
+          }
+          if (state.downAt === 0 || performance.now() - state.downAt < 2200) requestAnimationFrame(tick)
+        }
+        requestAnimationFrame(tick)
+      }, `${next}px`)
+      await field.fill(`${next}px`)
+      await field.press('Enter')
+      const { ms, widths } = await page.evaluate(async () => {
+        const state = (window as unknown as { __inlineEdit: { downAt: number; paintAt: number; widths: string[] } }).__inlineEdit
+        for (let wait = 0; wait < 200 && state.paintAt === 0; wait += 1) await new Promise((r) => setTimeout(r, 10))
+        await new Promise((r) => setTimeout(r, Math.max(0, 2300 - (performance.now() - state.downAt))))
+        return { ms: state.downAt > 0 && state.paintAt > 0 ? state.paintAt - state.downAt : -1, widths: state.widths }
+      })
+      expect(ms, `edit ${i}: the canvas never showed the new width within 2 s`).toBeGreaterThan(0)
+      // Autosave is on: the write, the re-parse and the reload all land inside this window, and none of them may repaint a different value.
+      expect(widths.slice(1), `edit ${i}: the width changed again after the paint (a reconcile flash): ${widths.join(' -> ')}`).toEqual([`${next}px`])
+      samples.push(ms)
+    }
+    annotate('inline width edit -> canvas paint', `${spread(samples)} (${samples.map((n) => n.toFixed(0)).join(', ')})`)
+    expect(median(samples)).toBeLessThan(BUDGET_INLINE_STYLE_EDIT_TO_PAINT_MS)
   })
 })

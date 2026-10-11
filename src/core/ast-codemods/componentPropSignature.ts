@@ -131,30 +131,56 @@ function addToExistingParameter(sourceFile: SourceFile, first: ParameterDeclarat
   const typeNode = first.getTypeNode()
   if (!typeNode) return { ok: true }
 
-  const member = { name: prop.name, type: prop.type }
-  if (Node.isTypeLiteral(typeNode)) {
-    ensureTypeImport(sourceFile, prop.typeImport)
-    addMember(sourceFile, typeNode, member)
-    return { ok: true }
-  }
+  const shape = resolvePropsShape(sourceFile, typeNode)
+  if (!shape.ok) return { ok: false, message: shape.message.replace('<name>', prop.name) }
+  ensureTypeImport(sourceFile, prop.typeImport)
+  addMember(sourceFile, shape.shape, { name: prop.name, type: prop.type })
+  return { ok: true }
+}
+
+/** The object shape a props type names: an inline type literal, or a same-file `interface` / object `type` alias. */
+function resolvePropsShape(sourceFile: SourceFile, typeNode: Node): { ok: true; shape: TypeLiteralNode | InterfaceDeclaration } | { ok: false; message: string } {
+  if (Node.isTypeLiteral(typeNode)) return { ok: true, shape: typeNode }
   if (Node.isTypeReference(typeNode)) {
     const typeName = typeNode.getTypeName().getText()
     const iface = sourceFile.getInterface(typeName)
-    const alias = sourceFile.getTypeAlias(typeName)
-    const aliasType = alias?.getTypeNode()
-    if (iface) {
-      ensureTypeImport(sourceFile, prop.typeImport)
-      addMember(sourceFile, iface, member)
-      return { ok: true }
-    }
-    if (aliasType && Node.isTypeLiteral(aliasType)) {
-      ensureTypeImport(sourceFile, prop.typeImport)
-      addMember(sourceFile, aliasType, member)
-      return { ok: true }
-    }
-    return { ok: false, message: `Could not find "${typeName}"'s own declaration in this file to add a "${prop.name}" property to.` }
+    if (iface) return { ok: true, shape: iface }
+    const aliasType = sourceFile.getTypeAlias(typeName)?.getTypeNode()
+    if (aliasType && Node.isTypeLiteral(aliasType)) return { ok: true, shape: aliasType }
+    return { ok: false, message: `Could not find "${typeName}"'s own declaration in this file to add a "<name>" property to.` }
   }
   return { ok: false, message: "This component's props type is not a plain object shape Studio can add a property to." }
+}
+
+/** Types that already accept any of the primitives a call site may hand a prop. */
+const ACCEPTS_ANY_PRIMITIVE = new Set(['any', 'unknown', 'ReactNode', 'React.ReactNode'])
+const PRIMITIVE_KEYWORDS = new Set(['string', 'number', 'boolean', 'undefined', 'null'])
+
+/**
+ * Widens the declared type of an EXISTING prop so a call site may pass a value
+ * of another primitive (`padding?: number` handed `'12px'` becomes
+ * `number | string`). Nothing changes when the type already accepts it, when
+ * the parameter is untyped (a JS file, or TS inferring from a default — no type
+ * is guessed), or when the property has no written type. Refuses when the type
+ * is something Studio will not rewrite: a fixed set of values (`'sm' | 'md'`),
+ * a type from another file, a property it cannot find.
+ */
+export function widenPropType(sourceFile: SourceFile, fn: FunctionLike, name: string, add: 'string' | 'number' | 'boolean'): SignatureEditOutcome {
+  const typeNode = fn.getParameters()[0]?.getTypeNode()
+  if (!typeNode) return { ok: true }
+  const resolved = resolvePropsShape(sourceFile, typeNode)
+  if (!resolved.ok) return { ok: false, message: resolved.message.replace('<name>', name) }
+  const member = resolved.shape.getMembers().find((candidate) => Node.isPropertySignature(candidate) && candidate.getName() === name)
+  if (!member || !Node.isPropertySignature(member)) return { ok: false, message: `Could not find a "${name}" property in this component's props type.` }
+  const declared = member.getTypeNode()
+  if (!declared) return { ok: true }
+  const parts = (Node.isUnionTypeNode(declared) ? declared.getTypeNodes() : [declared]).map((part) => part.getText().trim())
+  if (parts.includes(add) || parts.some((part) => ACCEPTS_ANY_PRIMITIVE.has(part))) return { ok: true }
+  if (!parts.every((part) => PRIMITIVE_KEYWORDS.has(part))) {
+    return { ok: false, message: `"${name}" is typed ${declared.getText()}, which does not accept a ${add} value.` }
+  }
+  member.setType(`${declared.getText()} | ${add}`)
+  return { ok: true }
 }
 
 /**

@@ -64,6 +64,7 @@ import { validateSubtree } from './jsxSubtree'
 import type { WrapJsxRefusalReason } from './wrapJsxElement'
 import { createdJsxLocation, offsetAfterEdits, type CreatedJsxLocation } from './createdJsxLocation'
 import { ancestorTagNames, intrinsicTagName, resolveWrapperTag } from './wrapperContentModel'
+import { jsStringSpelling, preferredQuote } from './stringSpelling'
 
 export interface WrapJsxElementsParams {
   file: string
@@ -80,8 +81,23 @@ export interface WrapJsxElementsParams {
   name: string
   /** Module the wrapper is imported from. Omit for an intrinsic tag, which needs no import. */
   importSpecifier?: string
+  /**
+   * Inline style the wrapper is written with (`style={{ position: 'absolute',
+   * left: '10px' }}`), camelCase CSS keys in the order given. Frame selection
+   * (PA-6) is the caller: a frame is a container that is sized and placed.
+   * Omit for the bare container ⌘G writes.
+   */
+  wrapperStyle?: Readonly<Record<string, string>>
   /** Optional pre-existing project to reuse. */
   project?: Project
+}
+
+/** ` style={{ a: 'x', b: 'y' }}` — the attribute text, or `''` for no style. */
+function styleAttributeText(style: Readonly<Record<string, string>> | undefined, sourceFile: SourceFile): string {
+  const entries = Object.entries(style ?? {})
+  if (entries.length === 0) return ''
+  const quote = preferredQuote(sourceFile)
+  return ` style={{ ${entries.map(([key, value]) => `${key}: ${jsStringSpelling(value, quote)}`).join(', ')} }}`
 }
 
 /**
@@ -97,6 +113,8 @@ export type WrapJsxElementsRefusalReason =
   | WrapJsxRefusalReason
   | 'not-contiguous'
   | 'no-targets'
+  // PA-6 — `frameJsxElements` could not write a member's offsets, so the frame was taken back.
+  | 'frame-unwritable'
 
 export interface WrapJsxElementsRefusal {
   reason: WrapJsxElementsRefusalReason
@@ -170,9 +188,10 @@ export function wrapJsxElements(params: WrapJsxElementsParams): WrapJsxElementsR
   const baseIndent = lineIndentAt(verbatim, spanStart)
   const unit = indentUnit(verbatim)
 
+  const opening = `${tag}${styleAttributeText(params.wrapperStyle, sourceFile)}`
   const edit = !span.includes('\n') && !first.wholeLine
-    ? { start: spanStart, end: spanEnd, text: `<${tag}>${span}</${tag}>` }
-    : ownLinesWrap(verbatim, spanStart, spanEnd, span, tag, baseIndent, unit)
+    ? { start: spanStart, end: spanEnd, text: `<${opening}>${span}</${tag}>` }
+    : ownLinesWrap(verbatim, spanStart, spanEnd, span, tag, opening, baseIndent, unit)
 
   const importEdits = resolveImportEdits(sourceFile, verbatim, bindings.required)
 
@@ -192,6 +211,7 @@ function ownLinesWrap(
   spanEnd: number,
   span: string,
   tag: string,
+  opening: string,
   baseIndent: string,
   unit: string,
 ): { start: number; end: number; text: string } {
@@ -203,7 +223,7 @@ function ownLinesWrap(
   let trailing = spanEnd
   while (trailing < lineEnd && (verbatim[trailing] === ' ' || verbatim[trailing] === '\t')) trailing += 1
   const block = [
-    `${baseIndent}<${tag}>`,
+    `${baseIndent}<${opening}>`,
     `${baseIndent}${unit}${reindentBlock(span, baseIndent, baseIndent + unit)}`,
     `${baseIndent}</${tag}>`,
   ].join('\n')

@@ -2,6 +2,7 @@ import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
 import { resolveInsertLocation, type InsertLocation } from '@site/store/insertLocation'
 import type { AssetItem } from '@site/panels/AssetsPanel/assetsModel'
 import { useInsertModule } from './useInsertModule'
+import { newLayerPlacementStyles, type AbsoluteNewLayerPlacement } from '@site/canvas/canvasNewLayerPlacement'
 
 /**
  * Shared handler for the module inserter dialog's `onInsertItem` callback.
@@ -44,10 +45,14 @@ export function useInsertInserterItem() {
   return (
     item: AssetItem,
     target: InsertLocation | undefined,
+    placement: AbsoluteNewLayerPlacement | null = null,
   ): boolean => {
+    // PA-3 — a module dropped into a free frame is written absolute at the
+    // pointer. A saved layout or a Visual Component is a tree / a ref, not one
+    // element with a style bag, so it lands in flow.
     const inserted =
       item.kind === 'module'
-        ? Boolean(insertModule(item.module, target))
+        ? Boolean(insertModule(item.module, target, { inlineStyles: newLayerPlacementStyles(placement) }))
         : item.kind === 'savedLayout'
           ? Boolean(useEditorStore.getState().insertLayout(item.id, target))
           : item.kind === 'component'

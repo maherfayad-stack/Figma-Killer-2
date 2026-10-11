@@ -1,15 +1,11 @@
 /**
- * P2-I (PERF-5) — a poster rasterization (~1 s of main thread per 310-element
- * frame, measured) must not land on the frame the user is working in.
+ * Two decisions, one test each:
  *
- * Two defects, one test each:
- *
- * 1. `useFramePosterCapture` asked for a poster whenever an ON-SCREEN frame had
- *    none for its current `Page` object — every visible frame at load, and the
- *    edited frame after every edit (an edit makes a new `Page`). Pause 700 ms
- *    after typing and the queue rasterized the very frame being edited.
- *    `framePosterNeeded` is that decision; the e2e twin is
- *    `canvas-feel-budgets.e2e.ts`'s post-edit pause.
+ * 1. `framePosterNeeded` (SB-2) — a picture is taken while the frame is live
+ *    and settled, whenever the store has none for its content key. P2-I used
+ *    to forbid that (a rasterization cost ~1 s of main thread); the SVG
+ *    rasterizer made it cheap, and the queue still never runs it under the
+ *    user's hands.
  * 2. `framePosterQueue` only listened for input on the editor document. A
  *    press inside a frame never reaches it (only pan-starting presses are
  *    forwarded), so a click or a resize drag in a frame looked like "quiet".
@@ -24,19 +20,17 @@ import { PortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter
 import { registerFrameAdapter, unregisterFrameAdapter } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
 
 describe('framePosterNeeded — when a board frame asks for a poster', () => {
-  it('never rasterizes a frame that is on screen — not after an edit, not the first time', () => {
-    // After an edit the cached poster is stale (a new `Page`), but the user is
-    // looking at the live frame, not at a picture of it.
-    expect(framePosterNeeded({ hasFreshPoster: false, isOnScreen: true, isMounted: true })).toBe(false)
+  it('asks while the frame is live, its content has committed and no picture exists for its key', () => {
+    expect(framePosterNeeded({ hasPoster: false, isMounted: true, isContentReady: true })).toBe(true)
   })
 
-  it('captures once the frame has left the screen but is still pooled', () => {
-    expect(framePosterNeeded({ hasFreshPoster: false, isOnScreen: false, isMounted: true })).toBe(true)
+  it('does not photograph a mid-mount (empty) document', () => {
+    expect(framePosterNeeded({ hasPoster: false, isMounted: true, isContentReady: false })).toBe(false)
   })
 
-  it('asks for nothing without a live iframe, or with a fresh poster', () => {
-    expect(framePosterNeeded({ hasFreshPoster: false, isOnScreen: false, isMounted: false })).toBe(false)
-    expect(framePosterNeeded({ hasFreshPoster: true, isOnScreen: false, isMounted: true })).toBe(false)
+  it('asks for nothing without a live iframe, or when the store already has the picture', () => {
+    expect(framePosterNeeded({ hasPoster: false, isMounted: false, isContentReady: true })).toBe(false)
+    expect(framePosterNeeded({ hasPoster: true, isMounted: true, isContentReady: true })).toBe(false)
   })
 })
 

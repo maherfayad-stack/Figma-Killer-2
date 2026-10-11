@@ -140,11 +140,13 @@ This frame is transient editor-session state. It does not change the active view
 
 ### Frozen posters are queued, never raced against a gesture
 
-`useFramePosterCapture` rasterizes a settled on-screen frame into
-`frameSnapshotCache` so it can come back as a picture rather than an empty box.
-The rasterization is `html-to-image`'s `toCanvas`, which clones the whole
+`useFramePosterCapture` rasterizes a settled live frame into
+`framePosters` (`posterStore.ts`, memory + IndexedDB, keyed by content hash — see
+`posterKey.ts`) so it can come back as a picture rather than an empty box. Until
+SB-2 the rasterization was `html-to-image`'s `toCanvas`, which clones the whole
 document and reads and writes a computed style for every element in it —
-**measured at ~85–350 ms per frame** on an 18-frame board. Each frame used to
+**measured at ~85–350 ms per frame** on an 18-frame board. `posterRasterizer.ts`
+now serializes the frame's real document into one SVG `<foreignObject>` instead. Each frame used to
 arm its own settle timer, so a zoom-out that admitted a dozen frames ran a
 dozen of those inside the gesture.
 

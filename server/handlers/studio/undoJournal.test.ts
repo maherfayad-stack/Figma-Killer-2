@@ -268,6 +268,24 @@ describe('untrusted on read', () => {
     expect(fs.readFileSync(path.join(outside, 'victim.css'), 'utf8')).toBe('victim\n')
   })
 
+  it('refuses a hand-edited entry naming a .css file outside the project, under .studio, or in node_modules (CT-3)', () => {
+    write('src/index.css', 'mine\n')
+    fs.writeFileSync(path.join(outside, 'x.css'), 'victim\n')
+    const sha = new Bun.CryptoHasher('sha256').update('victim\n').digest('hex')
+    const hostile = [
+      path.relative(dir, path.join(outside, 'x.css')).split(path.sep).join('/'),
+      '../x.css',
+      '.studio/x.css',
+      'node_modules/pkg/x.css',
+    ]
+    for (const rel of hostile) {
+      const token = plant({ version: 1, at: 1, files: [{ rel, before: 'pwned', afterSha256: sha }] })
+      expect(restoreUndoJournal(dir, token)).toMatchObject({ ok: false, reason: 'restore-unavailable' })
+    }
+    expect(fs.readFileSync(path.join(outside, 'x.css'), 'utf8')).toBe('victim\n')
+    expect(read('src/index.css')).toBe('mine\n')
+  })
+
   it('refuses a malformed entry, and one over the size cap, rather than trusting it', () => {
     write('pages/Home.tsx', 'mine\n')
     expect(restoreUndoJournal(dir, plant({ version: 2, files: [] }))).toMatchObject({ ok: false, reason: 'restore-unavailable' })

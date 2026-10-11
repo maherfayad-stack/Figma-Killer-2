@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'bun:test'
 import { moveNode } from '../mutations'
 import { planSiblingSteps, type SiblingMove } from '../siblingSteps'
-import { invertMoveSequence, topLevelSelection } from '../moveSequence'
+import { topLevelSelection } from '../moveSequence'
 import type { NodeTree } from '../treeSchema'
 import type { PageNode } from '../pageNode'
 
@@ -107,12 +107,5 @@ describe('planSiblingSteps', () => {
     const t = tree()
     const moves = plan(t, ['b1', 'e'], (parentId) => (parentId === 'b' ? 1 : null))
     expect(moves).toEqual([{ nodeId: 'b1', parentId: 'b', index: 1 }])
-  })
-
-  it('the inverse batch restores the original order', () => {
-    const t = tree()
-    const moves = plan(t, ['a', 'c', 'd'], every(1))
-    const back = apply(apply(t, moves), invertMoveSequence(t, moves))
-    expect(back.nodes.root!.children).toEqual(t.nodes.root!.children)
   })
 })

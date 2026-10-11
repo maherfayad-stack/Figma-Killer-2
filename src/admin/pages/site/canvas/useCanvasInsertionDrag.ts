@@ -87,6 +87,9 @@ import {
 import { beginInsertionDragSnapshotSession } from './canvasInsertionDragSnapshot'
 import { clearCanvasPointerRelay, markCanvasPointerRelay } from './canvasPointerRelay'
 import { guardDragSession } from '@core/studio-runtime'
+import { pushToast } from '@ui/components/Toast'
+import type { AbsoluteNewLayerPlacement } from './canvasNewLayerPlacement'
+import { newLayerRefusalToast } from './newLayerRefusal'
 
 /** Pointer travel (screen px) before a press becomes a drag rather than a click. */
 const DRAG_THRESHOLD_PX = 6
@@ -105,8 +108,14 @@ interface UseCanvasInsertionDragOptions<TGhost> {
    * Insert at the resolved location. Return true when something actually
    * landed — that is what promotes the dropped-on frame to the active
    * breakpoint, so a drop into a frame you were not editing switches to it.
+   *
+   * `placement` is non-null when the layer lands ABSOLUTE at the pointer (PA-3):
+   * the target is a free frame, or ⌘/Ctrl was held at release. The caller writes
+   * it with the insert (`newLayerPlacementStyles`, or the image drop's own
+   * `absolute`); `null` is an ordinary flow insert at `location.index`. A drop
+   * the parent cannot take absolute is refused here, out loud, before `onDrop`.
    */
-  onDrop: (ghost: TGhost, location: InsertLocation) => boolean
+  onDrop: (ghost: TGhost, location: InsertLocation, placement: AbsoluteNewLayerPlacement | null) => boolean
   /**
    * Called when the gesture crosses the threshold, and again when it ends.
    * For chrome that has to get out of the way of its own drop target (the
@@ -163,7 +172,7 @@ export function useCanvasInsertionDrag<TGhost>({
     const canvasPage = selectActiveCanvasPage(useEditorStore.getState())
     const startX = event.clientX
     const startY = event.clientY
-    let lastPoint = { clientX: startX, clientY: startY }
+    let lastPoint = { clientX: startX, clientY: startY, metaKey: false, ctrlKey: false }
     let started = false
     const snapshot = beginInsertionDragSnapshotSession()
     const offersFreeCanvas = freeCanvas?.accepts(ghost) === true
@@ -240,7 +249,12 @@ export function useCanvasInsertionDrag<TGhost>({
     }
 
     const move = (moveEvent: PointerEvent) => {
-      lastPoint = { clientX: moveEvent.clientX, clientY: moveEvent.clientY }
+      lastPoint = {
+        clientX: moveEvent.clientX,
+        clientY: moveEvent.clientY,
+        metaKey: moveEvent.metaKey,
+        ctrlKey: moveEvent.ctrlKey,
+      }
       if (!started) {
         if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < DRAG_THRESHOLD_PX) return
         started = true
@@ -249,7 +263,7 @@ export function useCanvasInsertionDrag<TGhost>({
       scheduleResolve(moveEvent.clientX, moveEvent.clientY)
     }
 
-    const up = (upEvent: Pick<PointerEvent, 'clientX' | 'clientY'>) => {
+    const up = (upEvent: Pick<PointerEvent, 'clientX' | 'clientY' | 'metaKey' | 'ctrlKey'>) => {
       // Resolve BEFORE teardown, synchronously — never wait another
       // animation frame for a release that ends the gesture anyway. The
       // relay also has to still be armed for the drop point to hit-test
@@ -259,6 +273,10 @@ export function useCanvasInsertionDrag<TGhost>({
       // answers `[]` and the drop falls back to "page root" — the same
       // honest answer a pointer outside every frame gets, not a hang.
       const resolved = started ? resolveDrop(upEvent.clientX, upEvent.clientY) : null
+      // Measured here too: the relay and the frame's DOM are still as the
+      // pointer left them, and reading computed style belongs to the release.
+      const placement =
+        resolved?.kind === 'frame' ? resolved.drop.placeLayer(upEvent.metaKey || upEvent.ctrlKey) : ({ kind: 'flow' } as const)
       teardown()
       setDrag(null)
       if (!started) return
@@ -281,7 +299,11 @@ export function useCanvasInsertionDrag<TGhost>({
       if (drop.pageId !== canvasPage?.id) {
         useEditorStore.getState().openPageInCanvas(drop.pageId)
       }
-      if (onDrop(ghost, drop.location)) useEditorStore.getState().setActiveBreakpoint(drop.breakpointId)
+      if (placement.kind === 'refused') {
+        pushToast(newLayerRefusalToast(label.replace(/^Drop /, ''), placement.reason))
+        return
+      }
+      if (onDrop(ghost, drop.location, placement.kind === 'absolute' ? placement : null)) useEditorStore.getState().setActiveBreakpoint(drop.breakpointId)
     }
 
     const cancel = () => {

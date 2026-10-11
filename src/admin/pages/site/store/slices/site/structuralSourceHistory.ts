@@ -43,14 +43,12 @@
  * (`undoRedoActions.ts`). It used to stay on top behind a modal, so every
  * later ⌘Z hit the same refusal and nothing before it could be undone.
  */
-import type { NodeTree, PageNode } from '@core/page-tree'
 import { canvasLayerIdFromRel, canvasLayerPageId, isCanvasLayerEditNodeId } from '@core/studio-board'
 import type { EditorStore } from '@site/store/types'
 import { commitStudioStructuralReissue } from '@site/studio/studioStructuralCommits'
 import {
   addressesJournalEntry,
   addressesSourceLiteral,
-  anchorLiftBack,
   fileOfNodeId,
   structuralEditNodeIds,
   type StructuralEditPayload,
@@ -169,10 +167,7 @@ export function reissueStructuralSourceEdits(
     }
   }
 
-  const edits =
-    direction === 'undo'
-      ? anchorLiftBack(planned, inverseTemplate, parentChildIds(state, inverseTemplate))
-      : [...planned]
+  const edits = [...planned]
 
   const missing = unresolvedNodeIds(edits, state)
   if (missing.length > 0) {
@@ -191,22 +186,6 @@ export function reissueStructuralSourceEdits(
   const posted = placements && placements.length > 0 ? withPlacements(get, placements, side, rollback) : rollback
   void commitStudioStructuralReissue(edits, direction, label, posted, direction === 'redo' ? entry.source.sequence : undefined)
   return { kind: 'posted', pendingCommitId: rollback.id }
-}
-
-/**
- * The destination parent's current child list, for a `canvas-layer-lift-back` whose
- * anchor has to be resolved against the tree as it is now — read off the page
- * that owns the parent, which need not be the active one (ERR-3). Empty for
- * every other template, which `anchorLiftBack` ignores.
- */
-function parentChildIds(
-  state: Pick<EditorStore, 'site' | '_nodeIdToPageIds'>,
-  template: StructuralSourceHistory['source']['inverseTemplate'],
-): readonly string[] {
-  if (template.kind !== 'canvas-layer-lift-back') return []
-  const pageId = state._nodeIdToPageIds.get(template.parentNodeId)?.[0]
-  const page: NodeTree<PageNode> | undefined = state.site?.pages.find((candidate) => candidate.id === pageId)
-  return page?.nodes[template.parentNodeId]?.children ?? []
 }
 
 /**

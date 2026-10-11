@@ -167,7 +167,7 @@ column or a grid, with an optional sticky note per frame — in the same
 token values as a formatting-preserving CST edit on each token's one
 declaration, all-or-nothing, through the agent write gate
 (`resolveAgentFilePath` / `agentWriteRefusal`), refusing a token declared twice
-or won by a package, Studio's design system or compiled output.
+or won by a package, Studio's design system or compiled output. It also renames a token everywhere it is declared or named (`rename`) and removes one (`remove`, refused while it is still read unless `replaceWith` says where its readers go), each as its own call through the same planner as the Variables panel.
 `studio_component_snippet` (read, ungated) returns a component's exact import
 for a named file and a prop-checked JSX usage. All three are in this registry
 AND on both in-canvas agent surfaces. `studio_screenshot` also takes `widths`:

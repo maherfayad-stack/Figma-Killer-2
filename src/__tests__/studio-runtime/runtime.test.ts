@@ -359,6 +359,38 @@ describe('createStudioRuntimeBridge — optimistic style', () => {
     expect(document.getElementById(STYLE_TAG)).toBeNull()
   })
 
+  it('a cleared property (empty patch value) is removed from the element\'s inline style, and a taken-back preview puts it back', () => {
+    document.body.innerHTML = `<div data-node-id="n1" style="color: blue; width: 100px"></div>`
+    const { fakeWindow } = makeFakeParentWindow()
+    const { hot, fireBeforeUpdate } = makeFakeHot()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document, hot })
+    const el = document.querySelector<HTMLElement>('[data-node-id="n1"]')!
+
+    bridge.handleMessage({ type: 'optimistic.style', ref: { nodeId: 'n1', occurrenceIndex: 0 }, patch: { width: '' } })
+    expect(el.style.width).toBe('')
+    expect(el.style.color).toBe('blue')
+    // Nothing to paint as a rule: a clear is the absence of a declaration.
+    expect(document.getElementById(STYLE_TAG)?.textContent ?? '').not.toContain('width')
+
+    // A mixed set-and-clear patch applies both.
+    bridge.handleMessage({
+      type: 'optimistic.style',
+      ref: { nodeId: 'n1', occurrenceIndex: 0 },
+      patch: { color: 'red', width: '' },
+    })
+    expect(el.style.width).toBe('')
+    expect(document.getElementById(STYLE_TAG)?.textContent ?? '').toContain('color: red !important')
+
+    // The write did not land / the update is about to arrive: React's own render owns the style again.
+    bridge.handleMessage({ type: 'optimistic.style:clear', ref: { nodeId: 'n1', occurrenceIndex: 0 } })
+    expect(el.style.width).toBe('100px')
+
+    bridge.handleMessage({ type: 'optimistic.style', ref: { nodeId: 'n1', occurrenceIndex: 0 }, patch: { width: '' } })
+    expect(el.style.width).toBe('')
+    fireBeforeUpdate()
+    expect(el.style.width).toBe('100px')
+  })
+
   it('vite:beforeUpdate reverts every optimistic style rule and attribute; vite:afterUpdate does the same for a frame that missed the before', () => {
     document.body.innerHTML = `<div data-node-id="n1"></div><div data-node-id="n2" class="card"></div>`
     const { fakeWindow } = makeFakeParentWindow()

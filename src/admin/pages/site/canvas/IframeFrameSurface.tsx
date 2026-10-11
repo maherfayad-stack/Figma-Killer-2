@@ -98,6 +98,7 @@ import {
 import { createPortal } from 'react-dom'
 import { cn } from '@ui/cn'
 import { ClassStyleInjector } from './ClassStyleInjector'
+import { TokenPreviewInjector } from './TokenPreviewInjector'
 import { UserStylesheetInjector } from './UserStylesheetInjector'
 import { ProjectCssInjector } from './ProjectCssInjector'
 import { AuthoredCssInjector } from './AuthoredCssInjector'
@@ -658,6 +659,8 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
               <AuthoredCssInjector viewport={viewport} />
               <ClassStyleInjector viewport={viewport} />
               <UserStylesheetInjector viewport={viewport} />
+              {/* Variables panel: the token value being typed, painted over the real one until it is committed. */}
+              <TokenPreviewInjector />
               {/* Mount stage 3 — the node tree, one commit later than the
                   injectors above. See this module's header. */}
               {treeMounted && children}

@@ -20,11 +20,13 @@ export { PageNodeSchema, parsePageNode } from './pageNode'
 export {
   INLINE_ID_SEPARATOR,
   LOOP_ID_SEPARATOR,
+  MAX_INSTANCE_OVERRIDE_DEPTH,
   buildSourceNodeId,
   callSitePosition,
   decodeSourceNodeId,
   hasWritableSourceLocation,
   inlineDepth,
+  inlineSegments,
   isInlinedNodeId,
   isRouteChromeNodeId,
   isSourceDerivedNodeId,
@@ -276,7 +278,6 @@ export {
 // P3-D — every multi-element move as single-element moves applied in order.
 export {
   createScratchTree,
-  invertMoveSequence,
   moveOnScratch,
   planMoveSequence,
   topLevelSelection,
