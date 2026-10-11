@@ -99,6 +99,8 @@ async function select(page: Page, canvasRoot: Locator, target: Locator): Promise
 async function sideField(page: Page, cluster: 'padding' | 'radius', name: string): Promise<Locator> {
   const field = page.getByRole('textbox', { name, exact: true })
   const toggle = page.getByTestId(`expandable-field-cluster-${cluster}-toggle`)
+  // Padding lives in the Layout section, which opens collapsed.
+  if (cluster === 'padding' && !(await toggle.isVisible())) await page.getByRole('button', { name: 'Layout', exact: true }).click()
   for (let attempt = 0; attempt < 3 && !(await field.isVisible()); attempt += 1) {
     await toggle.click()
     await page.waitForTimeout(150)
@@ -121,7 +123,7 @@ async function undoAndExpect(page: Page, read: () => string, original: string, m
 }
 
 test.describe('r3 inspector fixes', () => {
-  test.setTimeout(240_000)
+  test.setTimeout(150_000)
 
   for (const side of ['Padding top', 'Padding bottom', 'Padding left'] as const) {
     test(`Cmd-Z after ${side} on padding: 20px 10px restores the stylesheet byte for byte`, async ({ page }) => {
@@ -179,9 +181,20 @@ test.describe('r3 inspector fixes', () => {
 
   test('the Text field of attribute-bound text commits once on Enter, as a plain attribute, with one undo', async ({ page }) => {
     const { canvasRoot, content } = await openBoard(page)
+    // A click inside a component selects its call site; Enter steps into the instance, and a second click then selects the h3 itself.
+    await select(page, canvasRoot, content.locator('h3').first())
+    await page.keyboard.press('Enter')
+    await expect
+      .poll(() =>
+        content
+          .locator('[data-canvas-selection-ring="true"]')
+          .evaluateAll((els) => els.map((el) => el.getAttribute('data-canvas-overlay-node-id'))),
+      )
+      .toEqual([expect.stringContaining('~')])
     await select(page, canvasRoot, content.locator('h3').first())
     const text = page.getByRole('textbox', { name: 'Text', exact: true })
     await expect(text).toBeVisible({ timeout: 15_000 })
+    await expect(text).toHaveValue('First')
 
     await text.click()
     await text.press('ControlOrMeta+a')

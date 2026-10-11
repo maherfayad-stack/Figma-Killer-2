@@ -2101,6 +2101,8 @@ thing that is actually real here: **a CSS custom property the open project's
 own stylesheets declare** — `--color-primary`, `--space-4`, `--radius-card` —
 written into the source as `var(--name)`.
 
+The hexagon is revealed after a **350 ms dwell** on the field (immediately while the field has focus or the picker is open), and is out of hit-testing until then (`VariableField.module.css`, `visibility`). On a narrow field - a radius corner, a padding side - the 24 px button covers most of the input, so a click that arrived with the pointer, the ordinary way to focus a field, used to open the picker and type into its search box.
+
 ### §10.1 Where the variables come from
 
 The server's **token catalog** (CT-1): `GET /admin/api/studio/token-catalog`
