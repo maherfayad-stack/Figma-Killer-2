@@ -514,7 +514,7 @@ export async function commitStudioInsert(insert: {
    * images are one insert, one resync and one undo step, whose inverse deletes
    * all three (`delete-created` reads every created id).
    */
-  siblings?: readonly SlotJsxNode[]
+  siblings?: readonly { name: string; props?: Record<string, InsertPropValue>; children?: string | readonly SlotJsxNode[] }[]
   /**
    * G-10 - this insert is a pasted HTML fragment: `css` is the text of the
    * `<style>` blocks that came with it. The server writes the elements AND the

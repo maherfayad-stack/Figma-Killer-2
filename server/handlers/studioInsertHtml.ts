@@ -27,7 +27,6 @@ import { createProject, insertJsxElement, loadSourceFile } from '@core/ast-codem
 import { classifyStylesheetEditability } from '@core/css-codemods'
 import { listWorkspaceFiles, writeSourceFile } from '@core/page-parser'
 import { MAX_PASTED_CSS_CHARS } from '@core/utils/pastedHtmlLimits'
-import { StudioEditRefusalError } from './studioEditRefusals'
 import { insertPastedRules } from './studioCssWriteback'
 import { resolveContainedRefPath } from './studioEditTargets'
 import { guardPastedNodes, type PastedNode } from './studioPastedHtmlGuard'
