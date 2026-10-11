@@ -88,7 +88,7 @@ export function applySvgAttrEdit(
 ): SetSvgPartAttributesResult {
   const part = edit.part === '' ? null : parseSvgPartLocation(edit.part)
   if (edit.part !== '' && part === null) {
-    return { ok: false, reason: 'svg-part-outside-host', message: 'That part of the graphic has no location Studio can write to.' }
+    return { ok: false, reason: 'svg-part-outside-host', message: 'That part of the graphic has no location Studio can write to. Edit the graphic in the code.' }
   }
   return setSvgPartAttributes({
     ...host,

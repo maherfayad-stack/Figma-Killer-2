@@ -60,7 +60,7 @@ function refusedLink(headline: string, message: string): DroppedImageIntake {
 
 const LINK_NOT_IMAGE = refusedLink(
   'That link is not an image',
-  'That drop carried a link to a page, not an image, so nothing was fetched. Drag the image itself, or save it and drop the file.',
+  'That drop carried a link to a page, not an image, so nothing was fetched. Drag the image itself.',
 )
 
 /** The first `<img src>` in the dragged HTML. `DOMParser` builds an inert document: nothing in it loads or runs. */
@@ -91,12 +91,12 @@ export function fileFromImageDataUrl(dataUrl: string): DroppedImageIntake {
   const payload = comma === -1 ? '' : dataUrl.slice(comma + 1)
   const [mime = '', ...params] = header.split(';')
   if (!/^image\/[a-z0-9.+-]+$/i.test(mime)) {
-    return refusedLink('That is not an image', 'That drop carried data that is not an image, so nothing was added.')
+    return refusedLink('That is not an image', 'That drop carried data that is not an image, so nothing was added. Drop an image file.')
   }
   const base64 = params.some((param) => param.toLowerCase() === 'base64')
   const estimated = base64 ? Math.floor((payload.length * 3) / 4) : payload.length
   if (estimated > MAX_DATA_URL_IMAGE_BYTES) {
-    return refusedLink('That image is too large', `The image is larger than the ${MAX_DATA_URL_IMAGE_BYTES / (1024 * 1024)} MB limit.`)
+    return refusedLink('That image is too large', `The image is larger than the ${MAX_DATA_URL_IMAGE_BYTES / (1024 * 1024)} MB limit. Drop a smaller image.`)
   }
   let bytes: Uint8Array<ArrayBuffer>
   try {
@@ -108,7 +108,7 @@ export function fileFromImageDataUrl(dataUrl: string): DroppedImageIntake {
       bytes = new TextEncoder().encode(decodeURIComponent(payload))
     }
   } catch {
-    return refusedLink('That image could not be read', 'The dropped image data is malformed, so nothing was added.')
+    return refusedLink('That image could not be read', 'The dropped image data is malformed, so nothing was added. Drop the image file again.')
   }
   const extension = mime.slice('image/'.length).split('+')[0]!.toLowerCase()
   const file = new File([bytes], `image.${extension === 'jpeg' ? 'jpg' : extension}`, { type: mime.toLowerCase() })
@@ -141,7 +141,7 @@ export function readDroppedImageIntake(transfer: DataTransfer | null): DroppedIm
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     return refusedLink(
       'Studio cannot fetch that',
-      'Studio fetches dropped images from http:// and https:// addresses only, so nothing was added.',
+      'Studio fetches dropped images from http:// and https:// addresses only, so nothing was added. Drop the image file itself.',
     )
   }
   // The dragged HTML naming this as an `<img>` is the browser saying "image";

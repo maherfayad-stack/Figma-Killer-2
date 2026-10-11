@@ -54,6 +54,7 @@ import type { ListItemOp, ListRowKey } from '@core/page-tree'
 import { createProject, loadSourceFile } from './locateJsxElement'
 import { applyTextEdits, verbatimSourceText, writeVerbatimSource, type TextEdit } from './jsxChildRange'
 import { introducesSyntaxErrors } from './syntaxRegression'
+import { STALE_SOURCE_MESSAGE, SYNTAX_REGRESSION_MESSAGE } from '@core/utils/refusalCopy'
 
 export interface EditListItemsParams {
   file: string
@@ -121,17 +122,17 @@ export function editListItems(params: EditListItemsParams): EditListItemsResult 
   const sourceFile = loadSourceFile(project, file)
   const verbatim = verbatimSourceText(sourceFile, file)
   if (verbatim === null) {
-    return refuse('stale-source', 'This file changed on disk since the canvas last read it. Reload the project and try again.')
+    return refuse('stale-source', STALE_SOURCE_MESSAGE)
   }
   const array = findArrayLiteralAt(sourceFile, line, col)
   if (!array) {
-    return refuse('not-found', `No array is written at line ${line}, column ${col} any more — the file changed since the canvas last read it.`)
+    return refuse('not-found', 'That list is no longer where the board read it. Reload the project and try again.')
   }
   const elements = array.getElements()
   if (elements.length !== length || elements.some((el) => Node.isSpreadElement(el) || Node.isOmittedExpression(el))) {
     return refuse(
       'list-changed',
-      'This list’s array is not the one the board read — it has a different number of items now. Nothing was changed; the board will catch up with the file.',
+      "This list's array has a different number of items than the board read. Reload the project and try again.",
     )
   }
   const indexError = checkIndices(op, length)
@@ -142,7 +143,7 @@ export function editListItems(params: EditListItemsParams): EditListItemsResult 
   if (!planned.ok) return planned
   const candidate = applyTextEdits(verbatim, [renderEdit(layout, planned.items)])
   if (introducesSyntaxErrors(file, verbatim, candidate)) {
-    return refuse('invalid-source', 'This change would leave the file with a syntax error, so nothing was changed.')
+    return refuse('invalid-source', SYNTAX_REGRESSION_MESSAGE)
   }
   writeVerbatimSource(sourceFile, file, candidate)
   return { ok: true }
@@ -169,11 +170,11 @@ function checkIndices(op: ListItemOp, length: number): string | null {
     case 'reorder':
       return op.order.length === length && distinct(op.order) && op.order.every((i) => inRange(i, length))
         ? null
-        : 'The new order does not name every item of this list exactly once.'
+        : 'The new order does not name every item of this list exactly once. Reload the project and try again.'
     case 'remove':
-      return distinct(op.indices) && op.indices.every((i) => inRange(i, length)) ? null : 'An item to remove is not in this list.'
+      return distinct(op.indices) && op.indices.every((i) => inRange(i, length)) ? null : 'An item to remove is not in this list any more. Reload the project and try again.'
     case 'copy':
-      return op.from.every((i) => inRange(i, length)) && inRange(op.at, length + 1) ? null : 'An item to copy is not in this list.'
+      return op.from.every((i) => inRange(i, length)) && inRange(op.at, length + 1) ? null : 'An item to copy is not in this list any more. Reload the project and try again.'
   }
 }
 
@@ -353,13 +354,13 @@ type CopiedItem = { ok: true; item: ItemText } | { ok: false; refusal: ListItemR
 function copyItem(item: ItemText, element: Node, key: ListRowKey | undefined, taken: Set<string | number>, text: string): CopiedItem {
   if (!key || key.kind === 'none') return { ok: true, item: { ...item, trail: withoutTrailingBlankLines(item.trail) } }
   if (key.kind !== 'field') {
-    return refuse('duplicate-key', 'This list’s rows are keyed by something Studio cannot make unique for a copy, so nothing was changed.')
+    return refuse('duplicate-key', "This list's rows are keyed by something Studio cannot make unique for a copy. Add the item in the code.")
   }
   const literal = keyLiteral(element, key.field)
   if (!literal) {
     return refuse(
       'duplicate-key',
-      `Each row's React key is its item's \`${key.field}\`, and this item's \`${key.field}\` is not a plain value Studio can make unique for the copy. Add the item in code.`,
+      `Each row's React key is its item's \`${key.field}\`, and this item's \`${key.field}\` is not a plain value Studio can make unique. Add the item in the code.`,
     )
   }
   const fresh = uniqueKey(literal.value, taken)

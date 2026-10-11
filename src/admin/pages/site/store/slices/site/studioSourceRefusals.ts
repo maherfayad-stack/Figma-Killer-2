@@ -107,4 +107,4 @@ export function createStudioSourceRefusals(
  * tool's error.
  */
 export const IMPORTED_NODES_ON_SOURCE_REFUSAL =
-  'Every element on this board is written back into your project’s React files, and a set of elements built in the editor has no JSX form to write there. Nothing was added. Paste the HTML instead, or add elements one at a time from the component picker, which writes real JSX.'
+  'A set of elements built in the editor has no JSX to write into your React files. Add the elements one at a time from the component picker.'

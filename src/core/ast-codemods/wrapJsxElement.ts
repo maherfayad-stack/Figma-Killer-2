@@ -55,6 +55,7 @@ import { planImportBindings, resolveImportEdits } from './jsxImportEdits'
 import { validateSubtree, type InsertJsxRefusalReason } from './jsxSubtree'
 import { ancestorTagNames, intrinsicTagName, resolveWrapperTag } from './wrapperContentModel'
 import { createdJsxLocation, offsetAfterEdits, type CreatedJsxLocation } from './createdJsxLocation'
+import { STALE_SOURCE_MESSAGE } from '@core/utils/refusalCopy'
 
 export interface WrapJsxElementParams {
   file: string
@@ -136,7 +137,7 @@ export function wrapJsxElement(params: WrapJsxElementParams): WrapJsxElementResu
   if (verbatim === null) {
     return refuse(
       'stale-source',
-      'This file changed on disk since the canvas last read it. Reload the project and try again.',
+      STALE_SOURCE_MESSAGE,
     )
   }
 

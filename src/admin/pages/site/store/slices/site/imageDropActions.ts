@@ -176,7 +176,7 @@ export function createImageDropActions(helpers: SiteSliceHelpers): ImageDropActi
             // the project's own asset folder stays where it was.
             const previous = typeof node.props.src === 'string' ? studioAssetRelFromPreviewUrl(node.props.src) : null
             if (!previous) {
-              reportUnlanded([{ name, message: 'Studio could not tell which file this image imports, so it left the import alone.' }], 0)
+              reportUnlanded([{ name, message: 'Studio could not tell which file this image imports, so it left the import alone. Drop the file onto the image itself.' }], 0)
               return
             }
             if (source.kind !== 'file') {
@@ -200,7 +200,7 @@ export function createImageDropActions(helpers: SiteSliceHelpers): ImageDropActi
           get().updateNodeProps(nodeId, { src: landed.src })
         } catch (err) {
           console.error('[image-drop] replacing an image failed:', err)
-          reportUnlanded([{ name, message: getErrorMessage(err, 'The image could not be saved to your project.') }], 0)
+          reportUnlanded([{ name, message: getErrorMessage(err, 'The image could not be saved to your project. Try dropping it again.') }], 0)
         } finally {
           paintProgress?.(nodeId, null)
         }
@@ -236,7 +236,7 @@ export function createImageDropActions(helpers: SiteSliceHelpers): ImageDropActi
           if (Object.keys(patch).length > 0) get().setNodeInlineStyles(nodeId, patch)
         } catch (err) {
           console.error('[image-drop] setting a background image failed:', err)
-          reportUnlanded([{ name: imageSourceName(source), message: getErrorMessage(err, 'The image could not be saved to your project.') }], 0)
+          reportUnlanded([{ name: imageSourceName(source), message: getErrorMessage(err, 'The image could not be saved to your project. Try dropping it again.') }], 0)
         }
       })()
     },
@@ -305,7 +305,7 @@ async function landAndInsert(
       if (result.status === 'fulfilled') landed.push({ source, asset: result.value, order: i })
       else {
         console.error('[image-drop] landing a dropped image failed:', result.reason)
-        failures.push({ name: imageSourceName(source), message: getErrorMessage(result.reason, 'The image could not be saved to your project.') })
+        failures.push({ name: imageSourceName(source), message: getErrorMessage(result.reason, 'The image could not be saved to your project. Try dropping it again.') })
       }
     })
 
@@ -370,9 +370,9 @@ function insertedImageProps(
  * asks where to write — rather than guessing.
  */
 export function refuseBackgroundTarget(node: PageNode, styleRules: Record<string, { styles?: Record<string, unknown> }>): string | null {
-  if (!isSourceDerivedNodeId(node.id)) return 'This element exists only on the canvas, so there is no source to write its background into.'
+  if (!isSourceDerivedNodeId(node.id)) return 'This element exists only on the canvas, so there is no source to write its background into. Select an element that is written in your code.'
   if (!canWriteInlineStyleForModule(node.moduleId)) {
-    return "This element's styles are written by its own component, so Studio cannot give it a background here."
+    return "This element's styles are written by its own component, so Studio cannot give it a background here. Set the background in that component."
   }
   const locked = node.codeProps ?? []
   if (locked.includes(styleValueKey('backgroundImage')) || locked.includes(styleValueKey('background'))) {

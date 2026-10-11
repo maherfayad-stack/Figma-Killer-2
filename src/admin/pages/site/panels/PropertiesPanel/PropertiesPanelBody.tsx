@@ -171,10 +171,7 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
   const structuralConstraint = selectedNode.lockReason === undefined
     ? null
     : (() => {
-        const refusal = refusePlacement(
-          { id: selectedNode.id, lockReason: selectedNode.lockReason },
-          'Moved or deleted',
-        )
+        const refusal = refusePlacement({ id: selectedNode.id, lockReason: selectedNode.lockReason })
         return refusal ? describeStructuralRefusal({ refusal, node: selectedNode }) : null
       })()
 

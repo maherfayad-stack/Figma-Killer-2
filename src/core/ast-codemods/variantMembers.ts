@@ -128,7 +128,7 @@ function sourceMember(input: VariantPropInput, styled: readonly string[]): strin
 }
 
 function unreadable(rel: string): { ok: false; refusal: VariantPlanRefusal } {
-  return refuse('file-unreadable', `Studio could not read ${rel}, or it is outside the files Studio may write, so nothing was written.`)
+  return refuse('file-unreadable', `Studio could not read ${rel}, or it is outside the files Studio may write. Reload the project and try again.`)
 }
 
 function membersWithOrigin(input: VariantPropInput): { members: Array<VariantMember & { origin: SourceRange }>; file: string } | VariantPlanRefusal {
@@ -137,7 +137,7 @@ function membersWithOrigin(input: VariantPropInput): { members: Array<VariantMem
   if (members.length !== input.members.length || members.length === 0 || file === undefined || members.some((member) => member.origin.file !== file)) {
     return {
       reason: 'union-not-writable',
-      message: `The values of \`${input.prop}\` are not all written as string literals in one file of your project, so a value cannot be added or removed here.`,
+      message: `The values of \`${input.prop}\` are not all string literals in one file of your project. Edit the type in the code.`,
     }
   }
   return { members, file }
@@ -149,16 +149,16 @@ type StyledBinding = Extract<VariantBinding, { kind: 'css-module-class' | 'data-
 function styledBindingOf(input: VariantPropInput): StyledBinding | VariantPlanRefusal {
   const { binding } = input
   if (!binding) {
-    return { reason: 'no-binding', message: `Studio could not read how ${input.componentName} styles \`${input.prop}\`, so it cannot extend it.` }
+    return { reason: 'no-binding', message: `Studio could not read how ${input.componentName} styles \`${input.prop}\`, so it cannot extend it. Edit the styling in the code.` }
   }
   if (binding.kind === 'opaque') {
     return {
       reason: 'opaque-binding',
-      message: `${input.componentName} chooses its styling from \`${input.prop}\` in code Studio cannot extend safely (${binding.reason}; ${binding.file}:${binding.line}). Edit it in code.`,
+      message: `${input.componentName} chooses its styling from \`${input.prop}\` in code Studio cannot extend safely (${binding.reason}; ${binding.file}:${binding.line}). Edit it in the code.`,
     }
   }
   if (binding.kind === 'boolean-class') {
-    return { reason: 'unsupported-binding', message: `\`${input.prop}\` is an on/off class, not a set of values, so it has nothing to add or remove.` }
+    return { reason: 'unsupported-binding', message: `\`${input.prop}\` is an on/off class, not a set of values, so it has nothing to add or remove. Pick a property with several values.` }
   }
   return binding
 }
@@ -182,9 +182,9 @@ function styleSheetTarget(binding: Extract<VariantBinding, { kind: 'css-module-c
 /** Plan adding the member `name` to the enum prop. */
 export function planAddVariant(input: VariantPropInput, read: ReadWorkspaceText, name: string): VariantPlan {
   if (!VARIANT_NAME_PATTERN.test(name)) {
-    return refuse('invalid-variant-name', `"${name}" is not a usable variant name: start with a letter, then letters, digits, "-" or "_".`)
+    return refuse('invalid-variant-name', `"${name}" is not a usable variant name. Start with a letter, then use letters, digits, "-" or "_".`)
   }
-  if (input.members.some((member) => member.name === name)) return refuse('variant-exists', `\`${input.prop}\` already has a "${name}" value.`)
+  if (input.members.some((member) => member.name === name)) return refuse('variant-exists', `\`${input.prop}\` already has a "${name}" value. Pick a different name.`)
   const located = membersWithOrigin(input)
   if ('reason' in located) return { ok: false, refusal: located }
   const binding = styledBindingOf(input)
@@ -203,7 +203,7 @@ export function planAddVariant(input: VariantPropInput, read: ReadWorkspaceText,
   if (binding.kind === 'css-module-class' || binding.kind === 'data-attr') {
     const from = sourceMember(input, binding.rules.map((rule) => rule.member))
     const target = from === undefined ? undefined : styleSheetTarget(binding, from)
-    if (!from || !target) return refuse('no-binding', `Studio found no rule styling any value of \`${input.prop}\`, so there is nothing to copy.`)
+    if (!from || !target) return refuse('no-binding', `Studio found no rule styling any value of \`${input.prop}\`, so there is nothing to copy. Add the styling in the code.`)
     const sheet = edits.text(target.rule.range.file)
     if (sheet === undefined) return unreadable(target.rule.range.file)
     const cloned = cloneRule(
@@ -218,7 +218,7 @@ export function planAddVariant(input: VariantPropInput, read: ReadWorkspaceText,
   } else {
     const from = sourceMember(input, binding.entries.map((entry) => entry.member))
     const entry: VariantEntry | undefined = binding.entries.find((candidate) => candidate.member === from)
-    if (!from || !entry) return refuse('no-binding', `Studio found no entry styling any value of \`${input.prop}\`, so there is nothing to copy.`)
+    if (!from || !entry) return refuse('no-binding', `Studio found no entry styling any value of \`${input.prop}\`, so there is nothing to copy. Add the styling in the code.`)
     const text = edits.text(entry.range.file)
     if (text === undefined) return unreadable(entry.range.file)
     const cloned = cloneObjectEntry(entry.range.file, text, { line: entry.range.line, column: entry.range.column, member: from }, name)
@@ -233,9 +233,9 @@ export function planAddVariant(input: VariantPropInput, read: ReadWorkspaceText,
 /** Plan removing the member `name` from the enum prop. */
 export function planRemoveVariant(input: VariantPropInput, read: ReadWorkspaceText, name: string): VariantPlan {
   const member = input.members.find((candidate) => candidate.name === name)
-  if (!member) return refuse('no-such-variant', `\`${input.prop}\` has no "${name}" value.`)
+  if (!member) return refuse('no-such-variant', `\`${input.prop}\` has no "${name}" value. Pick a value that exists.`)
   if (input.defaultValue === name) {
-    return refuse('default-variant', `"${name}" is the default of \`${input.prop}\`; pick another default in code first.`)
+    return refuse('default-variant', `"${name}" is the default of \`${input.prop}\`. Pick another default in the code first.`)
   }
   const located = membersWithOrigin(input)
   if ('reason' in located) return { ok: false, refusal: located }

@@ -35,13 +35,13 @@ export function vectorEditVerdict(state: EditorStore, nodeId: string): VectorEdi
   if (!page || !node || node.moduleId !== 'base.svg') return { kind: 'not-svg' }
   const markup = node.props.svg
   if (typeof markup !== 'string' || markup.length === 0) {
-    return { kind: 'refused', reason: 'This graphic is built in code, so there are no points to edit on the canvas.' }
+    return { kind: 'refused', reason: 'This graphic is built in code, so there are no points to edit on the canvas. Edit it in the code.' }
   }
   if (typeof node.props.tag === 'string' && node.props.tag.length > 0) {
-    return { kind: 'refused', reason: 'This icon comes from an .svg file, not from JSX in your code, so its points cannot be edited here.' }
+    return { kind: 'refused', reason: 'This icon comes from an .svg file, not from JSX in your code, so its points cannot be edited here. Paste its markup into the page as an inline <svg>.' }
   }
   if (!hasWritableSourceLocation(nodeId)) {
-    return { kind: 'refused', reason: 'This graphic is drawn once per row of a list, so there is no single place in your code to write its points.' }
+    return { kind: 'refused', reason: 'This graphic is drawn once per row of a list, so there is no single place in your code to write its points. Edit it in the code.' }
   }
   if (node.locked) {
     return { kind: 'refused', reason: node.lockReason ? `This graphic is locked: ${node.lockReason}` : 'This graphic is locked.' }

@@ -85,29 +85,29 @@ function markupSpelling(jsxName: string): string {
  */
 export function svgAttributeWriteRefusal(jsxName: string, value: string | number): SvgAttributeWriteRefusal | null {
   if (!JSX_ATTRIBUTE_NAME.test(jsxName) || REACT_RESERVED_NAMES.has(jsxName) || isSvgPartStampAttribute(jsxName) || isXmlNamespaceJsxName(jsxName)) {
-    return { reason: 'svg-attr-name', message: `"${jsxName.slice(0, 60)}" is not an SVG attribute Studio can write.` }
+    return { reason: 'svg-attr-name', message: `"${jsxName.slice(0, 60)}" is not an SVG attribute Studio can write. Pick an SVG attribute.` }
   }
   const markup = markupSpelling(jsxName)
   if (isSvgAttributeNeverWritten(markup)) {
-    return { reason: 'svg-attr-name', message: `"${jsxName}" is an event handler or a namespace, and Studio does not write those.` }
+    return { reason: 'svg-attr-name', message: `"${jsxName}" is an event handler or a namespace, which Studio does not write. Set it in the code.` }
   }
   if (typeof value === 'number') {
     return Number.isFinite(value)
       ? null
-      : { reason: 'svg-attr-value', message: `"${jsxName}" needs a finite number.` }
+      : { reason: 'svg-attr-value', message: `"${jsxName}" needs a finite number. Enter a number.` }
   }
   if (value.length > MAX_SVG_ATTRIBUTE_VALUE_LENGTH) {
-    return { reason: 'svg-attr-value', message: `The value for "${jsxName}" is too long to write into your source.` }
+    return { reason: 'svg-attr-value', message: `The value for "${jsxName}" is too long to write into your source. Use a shorter value.` }
   }
   if (markup === 'href' || markup === 'xlink:href') {
     return isSvgFragmentReference(value)
       ? null
-      : { reason: 'svg-attr-value', message: `"${jsxName}" may only point inside the SVG (#name), so Studio will not write "${value.slice(0, 60)}".` }
+      : { reason: 'svg-attr-value', message: `"${jsxName}" may only point inside the SVG (#name), so Studio will not write "${value.slice(0, 60)}". Point it at an id inside the SVG.` }
   }
   if (!isSvgTextAttribute(markup) && cssValueLoadsExternalResource(value)) {
     return {
       reason: 'svg-attr-value',
-      message: `"${jsxName}" would load something from outside the SVG, and Studio will not write a remote reference into your source.`,
+      message: `"${jsxName}" would load something from outside the SVG, and Studio will not write a remote reference. Use an id inside the SVG.`,
     }
   }
   return null

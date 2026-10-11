@@ -280,7 +280,7 @@ export function resolveSourceContainer(
       ok: false,
       refusal: {
         reason: 'insert',
-        message: 'The element this would go inside is no longer on the board, so nothing was written.',
+        message: 'The container this would go inside is no longer on the board. Drop it into a container that is on the board.',
       },
     }
   }
@@ -326,7 +326,7 @@ export function resolveContainerAnchor(
   if (index === undefined || index >= children.length) return { anchorNodeId: null, position: 'after' }
 
   const addressable = (id: string | undefined): boolean =>
-    id !== undefined && isSourceDerivedNodeId(id) && refusePlacement(tree.nodes[id] ?? { id }, 'Moved') === null
+    id !== undefined && isSourceDerivedNodeId(id) && refusePlacement(tree.nodes[id] ?? { id }) === null
 
   const previous = children[index - 1]
   if (addressable(previous)) return { anchorNodeId: previous!, position: 'after' }
@@ -359,7 +359,7 @@ function previewCanvasOnlyNodeIntoSourceRefusal(
   return {
     reason: 'insert',
     message:
-      'This element exists only on the canvas — there is no markup for it in the code, so Studio has nothing to move into the file. Add the component from the picker instead, which writes it to the source.',
+      'This element exists only on the canvas, so Studio has no markup to move into the file. Add the component from the picker instead.',
   }
 }
 
@@ -465,7 +465,7 @@ export function previewStructuralGroup(
       refusal: {
         reason: 'group',
         message:
-          "Some of these elements come from your project's code and some exist only on the canvas, so there is no single container Studio could write around them. Group the imported ones on their own.",
+          'Some of these elements come from your code and some exist only on the canvas, so no single container can wrap them. Group the imported ones on their own.',
       },
     }
   }
@@ -482,7 +482,7 @@ export function previewStructuralGroup(
       refusal: {
         reason: 'group',
         message:
-          'These elements are written in different files, so there is no single place in the code to put one container around them. Group the ones from one file.',
+          'These elements are written in different files, so one container cannot wrap them. Group only the ones from a single file.',
       },
     }
   }
@@ -500,7 +500,7 @@ export function previewStructuralGroup(
       refusal: {
         reason: 'group',
         message:
-          'This element is the outermost thing its component returns, so it has no siblings in the code to be grouped with — and a container around it would have to replace what the component returns.',
+          'This element is the outermost thing its component returns, so it has no siblings to group with. Select an element inside it instead.',
       },
     }
   }

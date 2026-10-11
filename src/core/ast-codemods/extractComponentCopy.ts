@@ -69,7 +69,7 @@ export function extractComponentCopy(params: ExtractComponentCopyParams): Extrac
   const fullTagName = opening.getTagNameNode().getText()
   const identifier = fullTagName.split('.')[0]!
   if (!/^[A-Z]/.test(fullTagName)) {
-    return refuse('not-a-component', `<${fullTagName}> is a plain HTML element, not a component instance.`)
+    return refuse('not-a-component', `<${fullTagName}> is a plain HTML element, not a component instance. Select a component instance.`)
   }
 
   const resolved = resolveComponentCallSite(project, sourceFile, workspaceRoot, identifier, file, line, col)
@@ -98,7 +98,7 @@ export function extractComponentCopy(params: ExtractComponentCopyParams): Extrac
   if (!isWorkspaceWritablePath(workspaceRoot, newPath)) {
     return refuse(
       'unwritable-target',
-      `${baseName}${ext} lives somewhere Studio does not write to (${path.relative(workspaceRoot, dir).split(path.sep).join('/') || '.'}), so it cannot be duplicated there.`,
+      `${baseName}${ext} lives where Studio does not write (${path.relative(workspaceRoot, dir).split(path.sep).join('/') || '.'}). Copy the component into your project's source folder.`,
     )
   }
 

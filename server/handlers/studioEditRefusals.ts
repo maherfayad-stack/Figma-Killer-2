@@ -57,6 +57,7 @@ import type {
   StudioEditRefusal,
   StudioEditUnwritableReason,
 } from './studioEditSchemas'
+import { ELEMENT_GONE_MESSAGE } from '@core/utils/refusalCopy'
 
 /**
  * A codemod (or the dispatcher in front of it) DECLINED this edit on purpose,
@@ -75,20 +76,17 @@ export class StudioEditRefusalError extends Error {
 /** The reason for an exception no codemod named. See this module's doc. */
 export const WRITE_FAILED_REASON = 'write-failed'
 
-const ELEMENT_MOVED_SENTENCE =
-  'The file changed since the board read it, and this element is no longer where it was, so nothing was written.'
-
 /** A `literal` edit whose literal no longer holds the text the board read (`setStringLiteral`'s compare-and-swap). */
 const LITERAL_CHANGED_REASON = 'literal-changed'
 
 const LITERAL_CHANGED_SENTENCE =
-  'This text was changed in the code since the board read it, so Studio did not write over it. The board now shows the file as it is.'
+  'This text was changed in the code since the board read it, so Studio did not write over it. Make the edit again.'
 
 const UNWRITABLE_SENTENCE: Record<StudioEditUnwritableReason, string> = {
-  'no-source-location': 'This element has no single place in your code to write to, so the change stays on the canvas only.',
+  'no-source-location': 'This element has no single place in your code to write to, so the change stays on the canvas. Edit it in the code.',
   'stylesheet-unavailable':
-    'The stylesheet this change belongs in is outside the project or no longer exists, so nothing was written.',
-  'asset-unavailable': 'That file is outside the project or no longer exists, so the image was not changed in your code.',
+    'The stylesheet this change belongs in is outside the project or no longer exists. Reload the project and try again.',
+  'asset-unavailable': 'That file is outside the project or no longer exists, so the image was not changed. Reload the project and try again.',
 }
 
 /**
@@ -120,11 +118,11 @@ export function refusalForUnwritable(edit: StudioEdit, outcome: StudioEditApplyO
 export function refusalFromCodemodError(edit: StudioEdit, err: unknown): StudioEditRefusalError | null {
   if (err instanceof StudioEditRefusalError) return err
   if (err instanceof CanvasLayerEditRefusal) return new StudioEditRefusalError(err.reason, err.message) // P5-G
-  if (err instanceof JsxElementNotFoundError) return new StudioEditRefusalError(ELEMENT_MOVED_REASON, ELEMENT_MOVED_SENTENCE)
+  if (err instanceof JsxElementNotFoundError) return new StudioEditRefusalError(ELEMENT_MOVED_REASON, ELEMENT_GONE_MESSAGE)
   if (err instanceof JsxTextTargetError) {
     return new StudioEditRefusalError(
       err.reason,
-      'This element holds other elements or code next to its text, so rewriting the text would overwrite them. Nothing was written; change this text in the code.',
+      'This element holds other elements or code next to its text, so rewriting the text would overwrite them. Change this text in the code.',
     )
   }
   if (err instanceof JsxTagNameTargetError) {
@@ -132,18 +130,18 @@ export function refusalFromCodemodError(edit: StudioEdit, err: unknown): StudioE
       err.reason,
       err.reason === 'component-tag'
         ? 'This element is a component, not an HTML element, so its tag cannot be renamed — that would need a different import. Swap the component instead.'
-        : `"${edit.kind === 'tag' ? edit.tag : ''}" is not an HTML tag name Studio can write.`,
+        : `"${edit.kind === 'tag' ? edit.tag : ''}" is not an HTML tag name Studio can write. Pick a plain HTML tag.`,
     )
   }
   if (err instanceof StringLiteralTargetError && err.reason === LITERAL_CHANGED_REASON) {
     return new StudioEditRefusalError(LITERAL_CHANGED_REASON, LITERAL_CHANGED_SENTENCE)
   }
   if (err instanceof StringLiteralTargetError || err instanceof ImportSpecifierTargetError) {
-    if (err.reason === ELEMENT_MOVED_REASON) return new StudioEditRefusalError(ELEMENT_MOVED_REASON, ELEMENT_MOVED_SENTENCE)
+    if (err.reason === ELEMENT_MOVED_REASON) return new StudioEditRefusalError(ELEMENT_MOVED_REASON, ELEMENT_GONE_MESSAGE)
     return new StudioEditRefusalError(
       err.reason,
       err instanceof ImportSpecifierTargetError
-        ? 'The import this image comes from is no longer a plain file import in the code, so Studio did not rewrite it.'
+        ? 'The import this image comes from is no longer a plain file import in the code, so Studio did not rewrite it. Change the import in the code.'
         : 'The text this copy comes from is no longer a plain string in the code, so Studio did not overwrite it. Change it in the code.',
     )
   }
@@ -167,6 +165,6 @@ export function writeFailedRefusal(edit: StudioEdit): StudioEditRefusal {
   return refusalFor(
     edit,
     WRITE_FAILED_REASON,
-    'Studio could not write this change, so nothing was written. The details are in the server log.',
+    'Studio could not write this change. Check the server log for details.',
   )
 }

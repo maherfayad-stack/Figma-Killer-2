@@ -52,7 +52,7 @@ export function ProjectComponentsSection({ query, collapsed, onToggle }: Project
         pushToast({
           kind: 'warning',
           title: `${component.name} added in flow`,
-          body: `${component.name} takes no style prop, so Studio cannot place it at the pointer. Add a style prop to it, or wrap it in a frame and position that.`,
+          body: `${component.name} takes no style prop, so Studio cannot place it at the pointer. Add a style prop to it.`,
           location: 'site-editor',
         })
         return insertProjectComponent(component, location.parentId, location.index)

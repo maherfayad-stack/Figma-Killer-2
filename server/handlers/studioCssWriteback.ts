@@ -460,8 +460,7 @@ function ensureStylesheetImport(pageAbsPath: string, cssAbsPath: string, convent
         ok: false,
         reason: 'stylesheet-import-shape-mismatch',
         message:
-          `${specifier} is already imported without a binding, but this project's convention needs a CSS-Module ` +
-          'default import to reach a class in it. Studio will not silently write an unreachable class.',
+          `${specifier} is imported without a binding, but this project's convention is a CSS Module import. Change the import in the code.`,
       }
     }
     if (convention === 'css' && hasBinding) {
@@ -469,8 +468,7 @@ function ensureStylesheetImport(pageAbsPath: string, cssAbsPath: string, convent
         ok: false,
         reason: 'stylesheet-import-shape-mismatch',
         message:
-          `${specifier} is already imported as a CSS Module, but this project's convention needs a plain ` +
-          'side-effect import here. Studio will not silently write an unreachable class.',
+          `${specifier} is imported as a CSS Module, but this project's convention is a plain import here. Change the import in the code.`,
       }
     }
     return { ok: true }
@@ -538,9 +536,7 @@ function applyCssCreateEdit(dir: string, edit: CssCreateEdit): CssEditOutcome {
           refusal: {
             reason: 'no-app-entry',
             message:
-              'This project has no stylesheet yet and no app entry module (index.html’s module script, or ' +
-              'src/main.tsx) to import a new one from, so the class was not written. Open the page it belongs to, ' +
-              'then change it again.',
+              'No stylesheet exists yet and the project has no app entry to import one from. Open the page this class belongs to, then change it again.',
           },
         }
       : { applied: false }

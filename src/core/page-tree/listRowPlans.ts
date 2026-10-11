@@ -59,23 +59,23 @@ function refused(nodeId: string, message: string): { ok: false; refusal: Structu
 /**
  * The array every node in `nodes` is a row of, and their indices — or `null`
  * when none is a row, or the refusal when the selection cannot be one array
- * write. `gesture` is the past-tense verb the sentence uses.
+ * write.
  */
-function resolveRows(nodes: readonly RowNode[], gesture: string): ResolvedRows | null {
+function resolveRows(nodes: readonly RowNode[]): ResolvedRows | null {
   const rows = nodes.filter((node) => isListRowNodeId(node.id))
   if (rows.length === 0) return null
   if (rows.length !== nodes.length) {
     const other = nodes.find((node) => !isListRowNodeId(node.id))!
     return refused(
       other.id,
-      'List rows are written to their array and other elements to the markup — two different changes. Select only rows, or only elements, and try again.',
+      'List rows are written to their array and other elements to the markup, which are two different changes. Select only rows or only elements, then try again.',
     )
   }
   let array: ListRowArraySource | null = null
   const indices: number[] = []
   for (const node of rows) {
     const own = listRowArrayOf(node)
-    if (!own) return refused(node.id, listRowRefusalMessage(node, gesture, true))
+    if (!own) return refused(node.id, listRowRefusalMessage(node, true))
     if (array && own.array !== array.array) {
       return refused(node.id, 'These rows belong to two different lists, so there is no single array to write them in. Change one list at a time.')
     }
@@ -99,7 +99,7 @@ function plural(count: number, one: string, many: string): string {
 
 /** ⌫ on rows: remove their elements from the array. */
 export function planListRowRemove(nodes: readonly RowNode[]): ListRowPlan | null {
-  const rows = resolveRows(nodes, 'Deleted')
+  const rows = resolveRows(nodes)
   if (!rows) return null
   if (!rows.ok) return rows
   const { array, indices } = rows
@@ -121,7 +121,7 @@ function copyPlan(array: ListRowArraySource, from: number[], at: number, label: 
     return refused(
       nodeId,
       array.key.kind === 'item'
-        ? `Each row's React key is its own item, so a copy of it would share its key with the original. Studio will not write two rows with one key — add a distinct item to ${array.source} in code instead.`
+        ? `Each row's React key is its own item, so a copy would share the original's key. Add a distinct item to ${array.source} in the code.`
         : `Each row's React key is computed from its item, so Studio cannot give a copy a key of its own. Add the item to ${array.source} in code instead.`,
     )
   }
@@ -140,7 +140,7 @@ function copyPlan(array: ListRowArraySource, from: number[], at: number, label: 
 
 /** ⌘D on rows: a copy of each, together after the last of them. */
 export function planListRowCopy(nodes: readonly RowNode[]): ListRowPlan | null {
-  const rows = resolveRows(nodes, 'Duplicated')
+  const rows = resolveRows(nodes)
   if (!rows) return null
   if (!rows.ok) return rows
   const { array, indices } = rows
@@ -158,14 +158,14 @@ function reorderPlan(
   finalChildren: readonly string[],
 ): ListRowPlan | null {
   const nodes = moved.map((id) => tree.nodes[id] ?? { id })
-  const rows = resolveRows(nodes, 'Moved')
+  const rows = resolveRows(nodes)
   if (!rows) return null
   if (!rows.ok) return rows
   const { array } = rows
   const firstId = moved[0]!
   const leaves = refused(
     firstId,
-    `A row moves within its own list: Studio writes the new order into ${array.source}, and a place outside the list is not a position in it.`,
+    `A row moves within its own list, and a place outside the list is not a position in ${array.source}. Drop it inside its list.`,
   )
   const parent = tree.nodes[parentId]
   if (!parent || !moved.every((id) => parent.children.includes(id) || finalChildren.includes(id))) return leaves
@@ -239,7 +239,7 @@ export function planListRowCopyTo(
   newParentId: string,
   newIndex: number,
 ): ListRowPlan | null {
-  const rows = resolveRows(copied, 'Pasted')
+  const rows = resolveRows(copied)
   if (!rows) return null
   if (!rows.ok) return rows
   const { array, indices } = rows
@@ -250,7 +250,7 @@ export function planListRowCopyTo(
   if (first < 0 || offset < 0 || offset > listed.length || listed.length !== array.length) {
     return refused(
       copied[0]!.id,
-      `A copied row can only be placed inside its own list: Studio writes it as a new item of ${array.source}, and anywhere else is not a position in that array.`,
+      `A copied row can only be placed inside its own list, because anywhere else is not a position in ${array.source}. Drop the copy inside its list.`,
     )
   }
   return copyPlan(array, indices, offset, plural(indices.length, 'Paste row', 'Paste N rows'), copied[0]!.id)

@@ -113,7 +113,7 @@ export const NUDGE_SETTLE_MS = 400
 const REFUSAL_TITLE = "This layer can't be nudged"
 const LOCKED_TITLE = 'Locked layers do not move'
 const ACROSS_AXIS_BODY =
-  'Its parent lays its children out (flex or grid), so an arrow along that layout reorders it and an arrow across it has nothing to move. Use the arrow along the layout, or set the layer to position: absolute to place it freely.'
+  'Its parent lays its children out (flex or grid), so an arrow across that layout has nothing to move. Use the arrow along the layout.'
 const UNMEASURED_BODY = 'It is not rendered in a frame that can report where it sits. Open its screen and select it there.'
 
 /** What the flow nudge says when a layer has no pixel to move (canvas-48) — the reason, and the way out. */
@@ -121,7 +121,7 @@ const FLOW_NUDGE_REFUSAL: Record<FlowNudgeRefusal, string> = {
   sticky: "It is position: sticky, so its offsets say where it sticks, not where it sits. Change its position in the inspector to move it.",
   unboxed: 'It is display: contents, so it has no box of its own and an offset would move nothing. Select the element inside it.',
   reanchors:
-    'Moving it makes it position: relative, which would shift the absolutely positioned layers inside it. Nudge those, or set its position in the inspector.',
+    'Moving it makes it position: relative, which would shift the absolutely positioned layers inside it. Nudge those layers instead.',
 }
 
 /**
@@ -130,7 +130,7 @@ const FLOW_NUDGE_REFUSAL: Record<FlowNudgeRefusal, string> = {
  * the call site to offset — "no box" would contradict the ring.
  */
 const INSTANCE_NUDGE_REFUSAL =
-  "It is a component call site: the component decides where its elements sit, so an offset here would move nothing. Double-click to enter it and nudge the element inside, or edit the component."
+  'It is a component call site, and the component decides where its elements sit. Enter the component and nudge the element inside.'
 
 /** The body of a flow-nudge refusal for the layer it named. */
 export function flowNudgeRefusalBody(reason: FlowNudgeRefusal, moduleId: string | undefined): string {
@@ -195,7 +195,7 @@ function nudgeRefusal(nodeId: string, plan: NudgePlan): string | null {
   const node = selectActiveCanvasPage(useEditorStore.getState())?.nodes[nodeId]
   if (!node) return null
   if (!canWriteInlineStyleForModule(node.moduleId)) {
-    return "Its position is decided inside the component it renders, so it can't be written at this call site."
+    return "Its position is decided inside the component it renders, so it can't be written at this call site. Edit the component."
   }
   const fixedKeys = plan.fixed ? Object.keys(plan.fixed) : []
   const keys = [...plan.horizontal, ...plan.vertical].map((term) => term.property as string).concat(fixedKeys)

@@ -49,6 +49,7 @@ import { decodeSourceNodeId } from '@core/page-tree'
 import { pushToast, type ToastInput } from '@ui/components/Toast'
 import { jumpToSource } from '@site/panels/PropertiesPanel/jumpToSource'
 import { useEditorStore } from '@site/store/store'
+import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import type { ClassTokenRefusal } from './classNameWriteback'
 import type { StyleRuleEditPlan, UnmappedStyleRule } from './styleRuleWriteback'
 
@@ -96,12 +97,27 @@ const REASON_TITLES: Record<string, string> = {
 }
 
 /**
- * The one-click remedy for a refusal: open the code it names. `null` when the
- * refusal names no source position (a `css` edit's synthetic id) — then the
- * sentence is the whole answer.
+ * Refusals whose cause is a stale read: the file moved on after the board read
+ * it. The sentence already says "Reload the project", so the button does it.
  */
-function openInCodeRemedy(nodeId: string): ToastInput['action'] {
-  const target = decodeSourceNodeId(nodeId)
+const STALE_READ_REASONS: ReadonlySet<string> = new Set([
+  'stale-source',
+  'not-found',
+  'element-moved',
+  'template-not-found',
+  'component-not-found',
+  'list-changed',
+])
+
+/**
+ * The one-click remedy for a refusal: reload when the board's read is stale,
+ * otherwise open the code the refusal names. `undefined` when the refusal
+ * names no source position (a `css` edit's synthetic id) — then the sentence is
+ * the whole answer.
+ */
+function refusalRemedy(refusal: StudioEditRefusalReport): ToastInput['action'] {
+  if (STALE_READ_REASONS.has(refusal.reason)) return { label: 'Reload project', onSelect: () => void requestCmsSiteReload() }
+  const target = decodeSourceNodeId(refusal.nodeId)
   if (!target) return undefined
   return { label: 'Open in code', onSelect: () => jumpToSource(target) }
 }
@@ -132,7 +148,7 @@ export function reportEditRefusals(refusals: readonly StudioEditRefusalReport[])
   for (const refusal of refusals) {
     const target = decodeSourceNodeId(refusal.nodeId)
     const targetKey = target ? `${target.rel}:${target.line}:${target.col}` : refusal.nodeId
-    const action = openInCodeRemedy(refusal.nodeId)
+    const action = refusalRemedy(refusal)
     toastOnce(`${refusal.kind}::${targetKey}::${refusal.reason}`, {
       kind: 'warning',
       title: REASON_TITLES[refusal.reason] ?? REFUSAL_TITLES[refusal.kind] ?? 'Edit refused',
@@ -154,8 +170,20 @@ export function reportClassTokenRefusals(refusals: readonly ClassTokenRefusal[])
   for (const refusal of refusals) {
     toastOnce(`class-token::${refusal.nodeLabel}::${refusal.className}::${refusal.reason}`, {
       kind: 'warning',
+<<<<
+    toastOnce(`class-token::${refusal.nodeLabel}::${refusal.className}::${refusal.reason}`, {
+      kind: 'warning',
       title: 'Class not attached in source',
       body: `${refusal.className} on ${refusal.nodeLabel}: ${refusal.message}`,
+    })
+====
+    const target = decodeSourceNodeId(refusal.nodeId)
+    toastOnce(`class-token::${refusal.nodeLabel}::${refusal.className}::${refusal.reason}`, {
+      kind: 'warning',
+      title: 'Class not attached in source',
+      body: `${refusal.className} on ${refusal.nodeLabel}: ${refusal.message}`,
+      ...(target ? { action: { label: 'Open in code', onSelect: () => jumpToSource(target) } } : {}),
+    })
     })
   }
 }
@@ -180,9 +208,7 @@ function reportUnmappedStyleRules(unmapped: readonly UnmappedStyleRule[]): void 
       title: 'Style not saved to source',
       body: entry.reason
         ? `${entry.label}: ${entry.reason}`
-        : `${entry.label} has no hand-editable CSS file in this project (a generated utility class, a compiled ` +
-          'build artefact, or a stylesheet syntax Studio does not write), so this change stays on the canvas ' +
-          'only and will be lost on reload. Style the element instead to write it to source.',
+        : `${entry.label} has no hand-editable CSS file in this project, so this change would be lost on reload. Style the element instead.`,
       // WB-30 (P3-C, partial) — the remedy the sentence names, one click away:
       // the same inline-style target `ClassCssLockedNotice`'s button and the
       // Element chip switch to. It does not MOVE the declarations already typed
@@ -238,9 +264,7 @@ function reportUnwritableContexts(labels: readonly string[]): void {
     toastOnce(`css-context::${label}`, {
       kind: 'warning',
       title: 'Override not saved to source',
-      body:
-        `${label} changed under a breakpoint or condition this project no longer defines, so there is no block ` +
-        'to write it into and it stays on the canvas only.',
+      body: `${label} changed under a breakpoint or condition this project no longer defines, so it stays on the canvas. Add that breakpoint back, then edit again.`,
     })
   }
 }

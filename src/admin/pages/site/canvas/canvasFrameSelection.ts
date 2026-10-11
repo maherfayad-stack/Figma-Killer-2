@@ -95,7 +95,7 @@ export async function frameSelection(nodeIds?: readonly string[]): Promise<void>
 
   const byId = await measureInRenderingFrame([...ordered, parent.id], [...new Set([...MEMBER_PROPERTIES, ...PARENT_PROPERTIES])], store.activeBreakpointId, ordered)
   if (!byId) {
-    refuseGesture('Studio cannot measure these layers right now. Switch the board to the editable canvas, or wait for the frame to load.')
+    refuseGesture('Studio cannot measure these layers right now. Switch the board to the editable canvas.')
     return
   }
 
@@ -104,7 +104,7 @@ export async function frameSelection(nodeIds?: readonly string[]): Promise<void>
     const measurement = byId.get(nodeId)
     const node = tree.nodes[nodeId]
     if (!measurement?.rect || !node || measurement.computedStyle.display === 'contents') {
-      refuseGesture('One of these layers draws no box of its own (a component call or a fragment), so there is nothing to size a frame around. Frame the elements inside it instead.')
+      refuseGesture('One of these layers draws no box of its own (a component call or a fragment), so a frame has nothing to size around. Frame the elements inside it.')
       return
     }
     const values = authoredOffsetValues(node, store.site?.styleRules)

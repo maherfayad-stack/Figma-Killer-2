@@ -78,7 +78,7 @@ export type SetSvgPartAttributesResult =
   | { ok: false; reason: SvgPartAttributesRefusalReason; message: string }
 
 const MOVED_SENTENCE =
-  'The file changed since the board read it, and this part of the graphic is no longer where it was, so nothing was written.'
+  'That part of the graphic is no longer where the board read it. Reload the project and try again.'
 
 function refuse(reason: SvgPartAttributesRefusalReason, message: string): SetSvgPartAttributesResult {
   return { ok: false, reason, message }
@@ -123,7 +123,7 @@ export function setSvgPartAttributes(params: SetSvgPartAttributesParams): SetSvg
   const host = findJsxElementAtLocation(sourceFile, params.line, params.col)
   if (!host) return refuse('element-moved', MOVED_SENTENCE)
   if (tagOf(host) !== 'svg') {
-    return refuse('svg-host', 'This element is not an inline <svg> written in the code, so its graphic has no parts to write.')
+    return refuse('svg-host', 'This element is not an inline <svg> written in the code, so its graphic has no parts to write. Select an inline <svg> element.')
   }
 
   let part = host
@@ -131,14 +131,14 @@ export function setSvgPartAttributes(params: SetSvgPartAttributesParams): SetSvg
     const found = findJsxElementAtLocation(sourceFile, params.part.line, params.part.col)
     if (!found) return refuse('element-moved', MOVED_SENTENCE)
     if (!isNestedAsJsx(found, resolveJsxWholeElement(host).root)) {
-      return refuse('svg-part-outside-host', 'That part is not drawn directly inside this <svg>, so Studio will not write it from here.')
+      return refuse('svg-part-outside-host', 'That part is not drawn directly inside this <svg>, so Studio will not write it from here. Edit the part in the code.')
     }
     part = found
   }
   const partTag = tagOf(part)
   if (partTag !== params.partTag) return refuse('element-moved', MOVED_SENTENCE)
   if (!SVG_WRITABLE_PART_TAGS.has(partTag)) {
-    return refuse('svg-part-tag', `<${partTag}> is not a part of the graphic Studio edits.`)
+    return refuse('svg-part-tag', `<${partTag}> is not a part of the graphic Studio edits. Edit it in the code.`)
   }
   if (part.getAttributes().some((attribute) => Node.isJsxSpreadAttribute(attribute))) {
     return refuse('spread-attribute', 'This part takes attributes from a spread ({...props}), which could override anything written here. Change it in the code.')

@@ -165,10 +165,10 @@ export function openBatchUndoJournal(
       if (unbind) return unbind
       if (edit.kind !== 'restore') return null
       if (!journaling) {
-        return refusalFor(edit, 'restore-editor-only', 'Only the editor’s own undo can restore a change Studio journaled. Nothing was written.')
+        return refusalFor(edit, 'restore-editor-only', "Only the editor's own undo can restore a change Studio journaled. Use Undo in the editor.")
       }
       if (edits.length > 1) {
-        return refusalFor(edit, 'restore-not-alone', 'An undo that restores files must be the only edit in its request. Nothing was written.')
+        return refusalFor(edit, 'restore-not-alone', 'An undo that restores files must be the only edit in its request. Run the undo on its own.')
       }
       return null
     },
@@ -202,13 +202,13 @@ export function openBatchUndoJournal(
 function refuseUnbind(edit: StudioEdit, journaling: boolean): StudioEditRefusal | null {
   if ((edit.kind !== 'prop' && edit.kind !== 'text') || edit.unbind !== true) return null
   if (!journaling) {
-    return refusalFor(edit, 'unbind-editor-only', 'Only the editor can replace code with a typed value, because only the editor can offer Undo. Nothing was written.')
+    return refusalFor(edit, 'unbind-editor-only', 'Only the editor can replace code with a typed value, because only it can offer Undo. Make this edit in the editor.')
   }
   if (isInlinedNodeId(edit.nodeId)) {
     return refusalFor(
       edit,
       'unbind-shared',
-      'This is written once in a shared component, so replacing it with text would change every place that component is used. Nothing was written; change it in the code.',
+      'This is written once in a shared component, so replacing it with text would change every place that component is used. Change it in the code.',
     )
   }
   return null

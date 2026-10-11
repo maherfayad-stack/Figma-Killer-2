@@ -62,6 +62,7 @@ import {
 import { lineIndentAt, reindentBlock, resolveChildPlacement } from './jsxChildPlacement'
 import { createdJsxLocation, type CreatedJsxLocation } from './createdJsxLocation'
 import { freeVariablesOutOfScopeAt } from './subtreeFreeVariables'
+import { ELEMENT_GONE_MESSAGE, outOfScopeMessage, STALE_SOURCE_MESSAGE } from '@core/utils/refusalCopy'
 
 export interface DuplicateJsxElementParams {
   file: string
@@ -140,7 +141,7 @@ export function duplicateJsxElement(params: DuplicateJsxElementParams): Duplicat
   if (verbatim === null) {
     return refuseDuplicate(
       'stale-source',
-      'This file changed on disk since the canvas last read it. Reload the project and try again.',
+      STALE_SOURCE_MESSAGE,
     )
   }
 
@@ -190,7 +191,7 @@ function duplicateInto(
   if (!destination) {
     return refuseDuplicate(
       'not-found',
-      `No JSX element is written at line ${destinationLine}, column ${destinationCol} any more — the file changed since the canvas last read it. Reload and try again.`,
+      ELEMENT_GONE_MESSAGE,
     )
   }
 
@@ -203,7 +204,7 @@ function duplicateInto(
   if (destination.getStart() >= target.start && destination.getEnd() <= target.end) {
     return refuseDuplicate(
       'into-own-descendant',
-      'That container is inside the element being copied, so the copy would end up inside itself.',
+      'That container is inside the element being copied, so the copy would end up inside itself. Drop it into another container.',
     )
   }
 
@@ -234,16 +235,12 @@ function duplicateInto(
   if (placement.landing.getStart() >= target.start && placement.landing.getEnd() <= target.end) {
     return refuseDuplicate(
       'into-own-descendant',
-      'The copy would land inside the element being copied, so it would end up inside itself.',
+      'The copy would land inside the element being copied. Drop it somewhere outside that element.',
     )
   }
   const outOfScope = freeVariablesOutOfScopeAt(target.element, placement.landing, sourceFile)
   if (outOfScope.length > 0) {
-    const names = outOfScope.map((name) => `\`${name}\``).join(', ')
-    return refuseDuplicate(
-      'out-of-scope',
-      `This element reads ${names} from the code around it, and ${outOfScope.length === 1 ? 'that name is' : 'those names are'} not in scope where the copy would land — putting it there would break the file. Copy it somewhere inside the same component, or pass ${outOfScope.length === 1 ? 'the value' : 'those values'} through first.`,
-    )
+    return refuseDuplicate('out-of-scope', outOfScopeMessage(outOfScope))
   }
 
   const { start, end, text } = placement.edit

@@ -96,9 +96,9 @@ export function createInlineStyleActions(helpers: SiteSliceHelpers, overrides: I
     if (!overridden) written()
   },
 
-  setNodeInlineStylesFromGesture: (nodeId, patch, gesture) => {
+  setNodeInlineStylesFromGesture: (nodeId, patch) => {
     const node = resolveActiveTreeTarget(get())?.tree.nodes[nodeId]
-    const refusal = node ? refusePlacement(node, gesture) : null
+    const refusal = node ? refusePlacement(node) : null
     if (node && refusal?.reason === 'shared-component') {
       presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.resize, describeStructuralRefusal({ refusal, node }), {
         nodeId,

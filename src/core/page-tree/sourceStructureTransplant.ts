@@ -97,7 +97,6 @@ export function previewStructuralTransplant(
 ): StructuralTransplantPreview {
   const { originTree, nodeIds, destinationTree, newParentId, newIndex } = input
   const copy = input.copy === true
-  const gesture = copy ? 'Copied' : 'Moved'
 
   const nodeId = nodeIds[0]
   const node = nodeId === undefined ? undefined : originTree.nodes[nodeId]
@@ -107,7 +106,7 @@ export function previewStructuralTransplant(
       refusal: {
         reason: 'reparent',
         message:
-          'The element this gesture started on is no longer on the board, so nothing was written.',
+          'The element this gesture started on is no longer on the board. Select it again and try again.',
       },
     }
   }
@@ -118,7 +117,7 @@ export function previewStructuralTransplant(
       nodeId: node.id,
       refusal: {
         reason: 'multi-select',
-        message: `Studio ${copy ? 'copies' : 'moves'} one element between frames at a time: each write changes the line numbers the next one would be written against, and several elements dropped at one position have no single order in the code. Drag them one by one.`,
+        message: `Studio ${copy ? 'copies' : 'moves'} one element between frames at a time, because each write changes the lines the next one targets. Drag them one by one.`,
       },
     }
   }
@@ -133,13 +132,13 @@ export function previewStructuralTransplant(
       refusal: {
         reason: 'insert',
         message:
-          'This element exists only on the canvas — there is no markup for it in the code, so Studio has nothing to move into the other frame. Add the component from the picker instead, which writes it to the source.',
+          'This element exists only on the canvas, so Studio has no markup to move into the other frame. Add the component from the picker instead.',
       },
     }
   }
 
   const rowCopy = rowCopyOf(originTree, node)
-  const placement = rowCopy ? null : refusePlacement(node, gesture)
+  const placement = rowCopy ? null : refusePlacement(node)
   if (placement && !(copy && copyEscapesOriginRefusal(placement.reason))) {
     return { ok: false, refusal: placement, nodeId: node.id }
   }
@@ -156,22 +155,13 @@ export function previewStructuralTransplant(
       refusal: {
         reason: 'reparent',
         message:
-          'The frame this would land in is not backed by a file in your project, so there is nowhere to write the markup. Drop it into one of the imported screens instead.',
+          'The frame this would land in is not backed by a file in your project. Drop it into one of the imported screens.',
       },
     }
   }
 
-  const containerPlacement = refusePlacement(container.node, `${gesture} into`)
-  if (containerPlacement) {
-    return {
-      ok: false,
-      nodeId: container.node.id,
-      refusal: {
-        reason: containerPlacement.reason,
-        message: `The container this would land in is not an ordinary element: ${lowerFirst(containerPlacement.message)}`,
-      },
-    }
-  }
+  const containerPlacement = refusePlacement(container.node)
+  if (containerPlacement) return { ok: false, nodeId: container.node.id, refusal: containerPlacement }
 
   const fromFile = decodeSourceNodeId(node.id)?.rel
   const intoFile = decodeSourceNodeId(container.node.id)?.rel
@@ -182,7 +172,7 @@ export function previewStructuralTransplant(
       refusal: {
         reason: 'reparent',
         message:
-          'These two frames are two views of the same file, so this is an ordinary move rather than a move between screens. Drag it inside one frame.',
+          'These two frames are two views of the same file, so this is an ordinary move. Drag it inside one frame.',
       },
     }
   }
@@ -251,7 +241,7 @@ export function previewStructuralLift(
   if (!node) {
     return {
       ok: false,
-      refusal: { reason: 'reparent', message: 'The element this gesture started on is no longer on the board, so nothing was written.' },
+      refusal: { reason: 'reparent', message: 'The element this gesture started on is no longer on the board. Select it again and try again.' },
     }
   }
   if (nodeIds.length > 1) {
@@ -270,11 +260,11 @@ export function previewStructuralLift(
       nodeId: node.id,
       refusal: {
         reason: 'insert',
-        message: 'This element exists only on the canvas — there is no markup for it in the code, so there is nothing to put on the free canvas.',
+        message: 'This element exists only on the canvas, so there is no markup to put on the free canvas. Add the component from the picker instead.',
       },
     }
   }
-  const placement = refusePlacement(node, copy ? 'Copied' : 'Moved')
+  const placement = refusePlacement(node)
   if (placement && !(copy && copyEscapesOriginRefusal(placement.reason))) {
     return { ok: false, refusal: placement, nodeId: node.id }
   }
@@ -331,7 +321,3 @@ function copyEscapesOriginRefusal(reason: StructuralRefusal['reason']): boolean 
   return reason === 'shared-component' || reason === 'route-chrome'
 }
 
-/** Lowercase the first letter of a sentence being embedded inside another one. */
-function lowerFirst(text: string): string {
-  return text.length === 0 ? text : text[0]!.toLowerCase() + text.slice(1)
-}

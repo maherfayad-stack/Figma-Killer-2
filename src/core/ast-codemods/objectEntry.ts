@@ -57,7 +57,7 @@ function keyText(node: Node): string | undefined {
 }
 
 function locateEntry(sourceFile: SourceFile, source: string, at: ObjectEntryLocation): PropertyAssignment | ObjectEntryRefusal {
-  const stale: ObjectEntryRefusal = { reason: 'stale-source', message: `The file changed since it was read: the '${at.member}' entry is no longer where it was.` }
+  const stale: ObjectEntryRefusal = { reason: 'stale-source', message: `The '${at.member}' entry is no longer where the board read it. Reload the project and try again.` }
   const offset = offsetOfLineColumn(source, at.line, at.column)
   if (offset === null) return stale
   for (let node: Node | undefined = sourceFile.getDescendantAtPos(offset); node; node = node.getParent()) {
@@ -66,7 +66,7 @@ function locateEntry(sourceFile: SourceFile, source: string, at: ObjectEntryLoca
     }
     if (node.getStart() < offset) break
   }
-  return { reason: 'unsupported-entry', message: `The '${at.member}' entry is not a plain \`key: value\` entry (a shorthand or computed key), so Studio cannot copy it.` }
+  return { reason: 'unsupported-entry', message: `The '${at.member}' entry is not a plain \`key: value\` entry (a shorthand or computed key). Edit it in the code.` }
 }
 
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/
@@ -94,7 +94,7 @@ export function cloneObjectEntry(fileName: string, source: string, from: ObjectE
   const entry = locateEntry(sourceFile, source, from)
   if ('reason' in entry) return { ok: false, refusal: entry }
   const object = entry.getParent()
-  if (!Node.isObjectLiteralExpression(object)) return refuse('stale-source', 'The entry is not inside an object literal any more.')
+  if (!Node.isObjectLiteralExpression(object)) return refuse('stale-source', 'The entry is no longer inside an object literal. Reload the project and try again.')
   if (object.getProperties().some((property) => Node.isPropertyAssignment(property) && keyText(property.getNameNode()) === newMember)) {
     return { ok: true, splice: null, existed: true }
   }
@@ -138,10 +138,10 @@ export function removeObjectEntry(fileName: string, source: string, at: ObjectEn
   const entry = locateEntry(sourceFile, source, at)
   if ('reason' in entry) return { ok: false, refusal: entry }
   const object = entry.getParent()
-  if (!Node.isObjectLiteralExpression(object)) return refuse('stale-source', 'The entry is not inside an object literal any more.')
+  if (!Node.isObjectLiteralExpression(object)) return refuse('stale-source', 'The entry is no longer inside an object literal. Reload the project and try again.')
   const properties = object.getProperties()
   const index = properties.findIndex((property) => property === entry)
-  if (properties.length <= 1) return refuse('last-member', 'The last entry of this object cannot be removed.')
+  if (properties.length <= 1) return refuse('last-member', 'The last entry of this object cannot be removed. Delete the whole object in the code.')
 
   const commaEnd = commaEndAfter(source, entry.getEnd())
   const tail = commaEnd ?? entry.getEnd()
@@ -162,7 +162,7 @@ export function removeObjectEntry(fileName: string, source: string, at: ObjectEn
 function verified<T extends { ok: true }>(fileName: string, source: string, splice: TextSplice, result: T): T | { ok: false; refusal: ObjectEntryRefusal } {
   const candidate = source.slice(0, splice.offset) + splice.insert + source.slice(splice.offset + splice.deleteLength)
   if (introducesSyntaxErrors(fileName, source, candidate)) {
-    return refuse('unsupported-entry', 'Writing that change would leave this object unparseable, so nothing was written.')
+    return refuse('unsupported-entry', 'Writing that change would leave this object unparseable. Make this change in the code.')
   }
   return result
 }

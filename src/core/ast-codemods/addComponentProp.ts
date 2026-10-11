@@ -81,14 +81,14 @@ function literal(value: string, quote: string): string {
 function describe(prop: NewComponentProp, quote: string): OptionalProp | AddComponentPropRefusal {
   if (prop.kind === 'boolean') return { name: prop.name, binding: `${prop.name} = ${prop.defaultValue}`, type: 'boolean' }
   if (prop.kind === 'text') {
-    if (prop.defaultValue.length > 200) return { reason: 'invalid-default', message: 'The default text is too long to write into a signature.' }
+    if (prop.defaultValue.length > 200) return { reason: 'invalid-default', message: 'The default text is too long to write into a signature. Use a shorter default.' }
     return { name: prop.name, binding: `${prop.name} = ${literal(prop.defaultValue, quote)}`, type: 'string' }
   }
   const members = [...new Set(prop.members)]
-  if (members.length < 2) return { reason: 'invalid-variant-name', message: 'A variant property needs at least two values.' }
+  if (members.length < 2) return { reason: 'invalid-variant-name', message: 'A variant property needs at least two values. Add a second value.' }
   const bad = members.find((member) => !VARIANT_NAME_PATTERN.test(member))
   if (bad !== undefined) {
-    return { reason: 'invalid-variant-name', message: `"${bad}" is not a usable variant name: start with a letter, then letters, digits, "-" or "_".` }
+    return { reason: 'invalid-variant-name', message: `"${bad}" is not a usable variant name. Start with a letter, then use letters, digits, "-" or "_".` }
   }
   return {
     name: prop.name,
@@ -100,22 +100,22 @@ function describe(prop: NewComponentProp, quote: string): OptionalProp | AddComp
 /** `exportName` is `'default'` or a named export (`LocalComponentSpec.exportName`). */
 export function addComponentProp(fileName: string, source: string, exportName: string, prop: NewComponentProp): AddComponentPropResult {
   if (!PROP_NAME.test(prop.name) || RESERVED_PROP_NAMES.has(prop.name)) {
-    return refuse('invalid-prop-name', `"${prop.name}" cannot be used as a prop name: use a plain identifier that is not a reserved word.`)
+    return refuse('invalid-prop-name', `"${prop.name}" cannot be used as a prop name. Use a plain identifier that is not a reserved word.`)
   }
   const scratch = new Project({ useInMemoryFileSystem: true, skipAddingFilesFromTsConfig: true })
   const sourceFile = scratch.createSourceFile(fileName.replace(/^.*[\\/]/, '') || 'component.tsx', source)
 
   const declaration = exportName === 'default' ? findComponentDeclaration(sourceFile) : findNamedComponentDeclaration(sourceFile, exportName, true)
   const fn = declaration ? getFunctionLikeNode(declaration) : undefined
-  if (!fn) return refuse('not-found', `The component "${exportName}" is no longer in this file: it changed since it was last read.`)
+  if (!fn) return refuse('not-found', `The component "${exportName}" is no longer in this file. Reload the project and try again.`)
 
   const { childrenParam, params, hasUndestructuredParam } = buildParamBindings(fn)
   if (hasUndestructuredParam) {
-    return refuse('unsupported-params', `"${exportName}" takes an undestructured props parameter, so a named prop cannot be added without rewriting every \`props.x\` read.`)
+    return refuse('unsupported-params', `"${exportName}" takes an undestructured props parameter, so a named prop cannot be added. Destructure its props in the code first.`)
   }
   const taken = new Set([...params.values()].map((binding) => binding.attrName).concat([...params.keys()]))
   if (childrenParam) taken.add('children')
-  if (taken.has(prop.name)) return refuse('prop-exists', `"${exportName}" already has a "${prop.name}" prop.`)
+  if (taken.has(prop.name)) return refuse('prop-exists', `"${exportName}" already has a "${prop.name}" prop. Pick another name.`)
 
   const optional = describe(prop, quoteOf(sourceFile))
   if ('reason' in optional) return { ok: false, refusal: optional }
@@ -124,7 +124,7 @@ export function addComponentProp(fileName: string, source: string, exportName: s
 
   const next = sourceFile.getFullText()
   if (introducesSyntaxErrors(fileName, source, next)) {
-    return refuse('unsupported-props-type', 'Writing that prop would leave the component unparseable, so nothing was written.')
+    return refuse('unsupported-props-type', 'Writing that prop would leave the component unparseable. Make this change in the code.')
   }
   return { ok: true, source: next }
 }

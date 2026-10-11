@@ -330,14 +330,14 @@ export function convertSanitizedSvg(root: Element): SvgToJsxResult {
     return {
       ok: false,
       reason: 'too-large',
-      message: `That SVG nests deeper than ${MAX_DEPTH} levels — too deep to inline into your source as an icon.`,
+      message: `That SVG nests deeper than ${MAX_DEPTH} levels, which is too deep to inline as an icon. Simplify the SVG and try again.`,
     }
   }
   if (context.nodes >= MAX_NODES) {
     return {
       ok: false,
       reason: 'too-large',
-      message: `That SVG has more than ${MAX_NODES} elements — too large to inline into your source as an icon.`,
+      message: `That SVG has more than ${MAX_NODES} elements, which is too many to inline as an icon. Simplify the SVG and try again.`,
     }
   }
   return { ok: true, node }
@@ -350,17 +350,17 @@ export function convertSanitizedSvg(root: Element): SvgToJsxResult {
 export function svgToJsxNode(markup: string): SvgToJsxResult {
   const safe = sanitizeSvg(markup)
   if (!safe.trim()) {
-    return { ok: false, reason: 'refused', message: 'That file has no SVG content Studio can safely use.' }
+    return { ok: false, reason: 'refused', message: 'That file has no SVG content Studio can safely use. Use a different SVG file.' }
   }
 
   const doc = new DOMParser().parseFromString(safe, 'image/svg+xml')
   if (doc.getElementsByTagName('parsererror').length > 0) {
-    return { ok: false, reason: 'refused', message: 'That SVG could not be parsed — it is not well-formed XML.' }
+    return { ok: false, reason: 'refused', message: 'That SVG is not well-formed XML. Fix the SVG and try again.' }
   }
 
   const root = doc.documentElement
   if (!root || root.tagName.toLowerCase() !== 'svg') {
-    return { ok: false, reason: 'refused', message: 'That file does not start with an <svg> element.' }
+    return { ok: false, reason: 'refused', message: 'That file does not start with an <svg> element. Use a plain SVG file.' }
   }
   return convertSanitizedSvg(root)
 }

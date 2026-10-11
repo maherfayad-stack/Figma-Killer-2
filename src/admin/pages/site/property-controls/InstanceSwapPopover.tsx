@@ -85,7 +85,7 @@ export function InstanceSwapPopover({ id, anchorRef, nodeId, componentName, sour
         newComponentFile: candidate.sourceFile,
       })
       if (!result.ok) {
-        pushToast({ kind: 'error', title: 'Swap refused', body: result.message })
+        pushToast({ kind: 'warning', title: 'Swap refused', body: result.message })
       } else {
         pushToast(swappedToast(candidate.componentName, result.swapDetail))
         onClose()

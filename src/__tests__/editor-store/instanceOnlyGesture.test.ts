@@ -317,7 +317,7 @@ describe('OD-7 — a gesture inside a shared component applies to this instance 
 // shared component's file it used to restyle every instance silently.
 describe('a canvas style gesture inside a shared component applies to this instance only', () => {
   it('detaches the call site and writes the style on the detached markup, not on the shared element', async () => {
-    store().setNodeInlineStylesFromGesture(TITLE, { height: 'fit-content' }, 'Resized')
+    store().setNodeInlineStylesFromGesture(TITLE, { height: 'fit-content' })
     await settle()
 
     expect(store().structuralRefusalDialog).toBeNull()
@@ -328,7 +328,7 @@ describe('a canvas style gesture inside a shared component applies to this insta
   })
 
   it('writes straight away on markup that is not inside a shared component', async () => {
-    store().setNodeInlineStylesFromGesture(X, { height: '40px' }, 'Resized')
+    store().setNodeInlineStylesFromGesture(X, { height: '40px' })
     await settle()
 
     expect(posted).toHaveLength(0)

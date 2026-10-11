@@ -270,7 +270,7 @@ export interface SiteSlice {
    * (`instanceOnlyGesture.ts`), with the refusal dialog only when that cannot
    * happen. Anywhere else it is exactly `setNodeInlineStyles`.
    */
-  setNodeInlineStylesFromGesture: (nodeId: string, patch: Record<string, string | number | null | undefined>, gesture: string) => void
+  setNodeInlineStylesFromGesture: (nodeId: string, patch: Record<string, string | number | null | undefined>) => void
   /**
    * Bulk sibling of `setNodeInlineStyles` — applies ONE patch to every id in
    * `nodeIds` within a single history transaction, so an inspector edit made

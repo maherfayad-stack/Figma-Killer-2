@@ -30,6 +30,7 @@ import { elementChildren } from './jsxChildPlacement'
 import { verbatimSourceText, writeVerbatimSource } from './jsxChildRange'
 import { wrapJsxElements, type WrapJsxElementsParams, type WrapJsxElementsResult } from './wrapJsxElements'
 import { Node } from 'ts-morph'
+import { STALE_SOURCE_MESSAGE } from '@core/utils/refusalCopy'
 
 /** One member's inline-style patch: a string / number sets the key, `null` removes it. */
 export type MemberStylePatch = Readonly<Record<string, string | number | null>>
@@ -45,7 +46,7 @@ export function frameJsxElements(params: FrameJsxElementsParams): WrapJsxElement
   if (memberStyles.length !== targets.length) {
     return {
       ok: false,
-      refusal: { reason: 'frame-unwritable', message: 'A frame needs one style per layer in it, and the counts did not match.' },
+      refusal: { reason: 'frame-unwritable', message: 'A frame needs one style per layer in it, and the counts did not match. Reload the project and try again.' },
     }
   }
 
@@ -54,7 +55,7 @@ export function frameJsxElements(params: FrameJsxElementsParams): WrapJsxElement
   if (before === null) {
     return {
       ok: false,
-      refusal: { reason: 'stale-source', message: 'This file changed on disk since the canvas last read it. Reload the project and try again.' },
+      refusal: { reason: 'stale-source', message: STALE_SOURCE_MESSAGE },
     }
   }
 
@@ -72,14 +73,14 @@ export function frameJsxElements(params: FrameJsxElementsParams): WrapJsxElement
 
   const wrapped = wrapJsxElements({ ...params, requireRun: true, project })
   if (!wrapped.ok) return wrapped
-  if (wrapped.created === null) return refused('Studio could not find the frame it just wrote, so nothing was changed.')
+  if (wrapped.created === null) return refused('Studio could not find the frame it just wrote, so nothing was changed. Reload the project and try again.')
 
   const fresh = loadSourceFile(project, file)
   const wrapper = findJsxElementAtLocation(fresh, wrapped.created.line, wrapped.created.col)
   const element = wrapper?.getParent()
   const members = element && Node.isJsxElement(element) ? elementChildren(element) : []
   if (members.length !== targets.length) {
-    return refused('Studio could not tell which elements ended up inside the frame, so nothing was changed.')
+    return refused('Studio could not tell which elements ended up inside the frame, so nothing was changed. Reload the project and try again.')
   }
   // Every member's location, read before the first style write moves anything.
   const locations = members.map((member) => {
@@ -102,7 +103,7 @@ export function frameJsxElements(params: FrameJsxElementsParams): WrapJsxElement
       setJsxStyle({ file, ...locations[rank]!, style: set, remove, project })
     } catch (err) {
       if (err instanceof JsxStyleTargetError) {
-        return refused(`A layer in the frame is positioned by code Studio cannot rewrite (${err.detail}), so the frame was not written.`)
+        return refused(`A layer in the frame is positioned by code Studio cannot rewrite (${err.detail}), so the frame was not written. Change that layer's position in the code.`)
       }
       throw err
     }

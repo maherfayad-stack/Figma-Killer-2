@@ -74,10 +74,7 @@ export function notifyInlineStyleUnsaved(refusals: readonly InlineStyleModuleRef
   pushToast({
     kind: 'warning',
     title: "Style change won't be saved",
-    body:
-      `${list}. This element takes no style of its own here — ${describeModule(refusals[0].moduleId)}. ` +
-      `Assign a CSS class to it, or change the design-system token, instead — otherwise ` +
-      `${refusals.length === 1 ? 'it' : 'these'} will revert the next time this page loads.`,
+    body: `${list}: takes no style of its own (${describeModule(refusals[0].moduleId)}), so it reverts on reload. Assign a CSS class to it.`,
     location: 'site-editor',
   })
 }

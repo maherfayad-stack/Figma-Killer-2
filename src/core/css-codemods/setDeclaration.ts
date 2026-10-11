@@ -211,7 +211,7 @@ export function readDeclarationScope(
     return {
       refusal: {
         reason: 'invalid-at-rule',
-        message: `"${options.atRule}" is not a @media, @container or @supports condition Studio can write into.`,
+        message: `"${options.atRule}" is not a @media, @container or @supports condition Studio can write into. Use one of those conditions.`,
       },
     }
   }

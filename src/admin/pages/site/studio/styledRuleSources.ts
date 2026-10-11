@@ -106,8 +106,6 @@ export function styledClassRefusal(componentName: string): { reason: string; mes
   return {
     reason: 'styled-component-class',
     message:
-      `This class is ${componentName}'s own styling — styled-components generates its class name at runtime, so ` +
-      'there is no class token in the source to add or remove. Edit the declarations inside the component instead, ' +
-      'or change which component the element renders.',
+      `This class is ${componentName}'s own styling, generated at runtime, so there is no class token to add or remove. Edit the declarations inside the component.`,
   }
 }

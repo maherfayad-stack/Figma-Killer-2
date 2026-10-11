@@ -16,8 +16,8 @@ export function newLayerRefusalToast(what: string, reason: Refused['reason']) {
     title: `${what} not added`,
     body:
       reason === 'static-parent'
-        ? `${key} places a layer at the pointer, which needs a positioned container, and this one is position: static. Make it position: relative, or add the layer without ${key}.`
-        : 'Studio cannot measure where that layer would sit in this frame. Switch the board to the editable canvas, or add it without a modifier.',
+        ? `${key} places a layer at the pointer, and this one is position: static. Make it position: relative.`
+        : 'Studio cannot measure where that layer would sit in this frame. Switch the board to the editable canvas.',
     location: 'site-editor' as const,
   }
 }

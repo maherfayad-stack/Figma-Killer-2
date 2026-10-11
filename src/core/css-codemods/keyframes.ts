@@ -131,9 +131,7 @@ export function analyzeKeyframesTarget(cssText: string, name: string): Keyframes
     refusal: {
       reason: 'duplicate-keyframes',
       message:
-        `This file declares @keyframes ${name} ${matches.length} times. The last one wins entirely, ` +
-        'so editing any single block would change the file without changing the animation. ' +
-        'Remove the duplicates and Studio can edit it.',
+        `This file declares @keyframes ${name} ${matches.length} times, and the last one wins entirely. Remove the duplicates and try again.`,
     },
   }
 }

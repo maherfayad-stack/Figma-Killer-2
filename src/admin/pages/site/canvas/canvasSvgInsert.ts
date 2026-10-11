@@ -65,7 +65,7 @@ export async function insertSvgAtTarget(
     pushToast({
       kind: 'warning',
       title: words.refusalTitle,
-      body: 'Studio could not read that SVG. Try again, or drop the file onto a frame.',
+      body: 'Studio could not read that SVG. Try again.',
       location: 'site-editor',
     })
     return

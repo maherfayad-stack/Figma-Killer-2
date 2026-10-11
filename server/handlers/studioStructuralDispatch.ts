@@ -56,7 +56,7 @@ export function dispatchStructuralEdit(
       if (edit.row && (!arrayLocation || arrayLocation.rel !== target.rel)) {
         throw new StudioEditRefusalError(
           'stale-source',
-          'The list this row came from is not where the canvas last read it. Reload the project and try again.',
+          'The list this row came from has changed since the board read it. Reload the project and try again.',
         )
       }
       const result = applyTransplantEdit(

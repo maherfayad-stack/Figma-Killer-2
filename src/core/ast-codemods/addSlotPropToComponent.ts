@@ -157,7 +157,7 @@ export function addSlotPropToComponent(params: AddSlotPropToComponentParams): Ad
   if (!fn) {
     return refuse(
       'not-found',
-      `Could not find an exported component named "${exportName}" in ${path.basename(file)} any more — the file changed since this was last read. Reload and try again.`,
+      `The component "${exportName}" is no longer in ${path.basename(file)}. Reload the project and try again.`,
     )
   }
 
@@ -171,7 +171,7 @@ export function addSlotPropToComponent(params: AddSlotPropToComponentParams): Ad
   if (!parent || !(Node.isJsxElement(parent) || Node.isJsxFragment(parent))) {
     return refuse(
       'no-jsx-parent',
-      "This element is the component's entire returned markup — there is nothing to insert a slot reference alongside. Pick a child element instead.",
+      "This element is the component's entire returned markup, so there is nothing to put a slot beside. Pick a child element instead.",
     )
   }
 
@@ -179,7 +179,7 @@ export function addSlotPropToComponent(params: AddSlotPropToComponentParams): Ad
   if (hasUndestructuredParam) {
     return refuse(
       'unsupported-params',
-      `"${exportName}" takes an undestructured props parameter — Studio can't add a named slot without rewriting every existing "props.x" reference.`,
+      `"${exportName}" takes an undestructured props parameter, so a named slot cannot be added. Destructure its props in the code first.`,
     )
   }
 

@@ -258,7 +258,7 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
       // (`page~Card~Badge`); each is decoded on its own, so each file is
       // contained on its own, and the codemod threads the value through them.
       if (inlineDepth(edit.nodeId) < 1) {
-        throw new StudioEditRefusalError('not-in-component', 'Only an element of a component can become a prop of that component.')
+        throw new StudioEditRefusalError('not-in-component', 'That element is not part of a component. Select an element inside a component to make it a prop.')
       }
       const sites = inlineSegments(edit.nodeId).slice(0, -1).map((segment) => studioEditLocation(dir, segment, scope))
       const [callSite, ...inner] = sites
@@ -282,7 +282,7 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
       // both through `studioEditLocation`); the codemod checks the file the
       // call site's import resolves to is the tail's.
       if (inlineDepth(edit.nodeId) !== 1) {
-        throw new StudioEditRefusalError('not-in-component', 'Only an instance placed directly on this page can have a value applied to every place its component is used.')
+        throw new StudioEditRefusalError('not-in-component', 'Only an instance placed on this page can apply a value everywhere. Select that instance and try again.')
       }
       const callSite = studioEditLocation(dir, callSitePosition(edit.nodeId), scope)
       if (!callSite) return { applied: false, unwritable: 'no-source-location' }

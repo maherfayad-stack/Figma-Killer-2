@@ -617,7 +617,7 @@ export function presentStructuralRefusal(
         pushToast({
           kind: 'warning',
           title,
-          body: `This instance could not be detached or copied, so nothing was changed. ${constraint.explanation}`,
+          body: constraint.explanation,
           location: 'site-editor',
           dedupeKey: `structural-refusal:${title}:instance-only`,
         }),

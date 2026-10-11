@@ -64,7 +64,7 @@ interface LocatedUnion {
 function locateUnion(sourceFile: SourceFile, source: string, at: UnionMemberLocation): LocatedUnion | UnionMemberRefusal {
   const stale: UnionMemberRefusal = {
     reason: 'stale-source',
-    message: `The file changed since it was read: '${at.name}' is no longer where it was.`,
+    message: `'${at.name}' is no longer where the board read it. Reload the project and try again.`,
   }
   const offset = offsetOfLineColumn(source, at.line, at.column)
   if (offset === null) return stale
@@ -75,7 +75,7 @@ function locateUnion(sourceFile: SourceFile, source: string, at: UnionMemberLoca
   if (!Node.isStringLiteral(value) || value.getLiteralText() !== at.name) return stale
   const union = literal.getParent()
   if (!union || !Node.isUnionTypeNode(union)) {
-    return { reason: 'not-a-union', message: `'${at.name}' is not one member of a union type, so a member cannot be added or removed.` }
+    return { reason: 'not-a-union', message: `'${at.name}' is not one member of a union type, so a member cannot be added or removed. Edit the type in the code.` }
   }
   return { union, literal, members: union.getTypeNodes() }
 }
@@ -106,7 +106,7 @@ const TRAILING_COMMENT = /^[ \t]*(\/\/.*)?$/
  */
 export function addUnionMember(fileName: string, source: string, existing: UnionMemberLocation, name: string): UnionMemberEdit {
   if (!VARIANT_NAME_PATTERN.test(name)) {
-    return refuse('invalid-variant-name', `"${name}" is not a usable variant name: start with a letter, then letters, digits, "-" or "_".`)
+    return refuse('invalid-variant-name', `"${name}" is not a usable variant name. Start with a letter, then use letters, digits, "-" or "_".`)
   }
   const sourceFile = parseScratch(fileName, source)
   const located = locateUnion(sourceFile, source, existing)
@@ -114,11 +114,11 @@ export function addUnionMember(fileName: string, source: string, existing: Union
 
   const literals = located.members.filter(isStringLiteralMember)
   if (literals.some((member) => stringMemberValue(member) === name)) {
-    return refuse('variant-exists', `"${name}" is already a member of this type.`)
+    return refuse('variant-exists', `"${name}" is already a member of this type. Pick a different name.`)
   }
   const last = literals.at(-1)
   const beforeLast = literals.at(-2)
-  if (!last || !beforeLast) return refuse('not-a-union', 'A union with a single literal member cannot be extended without guessing its layout.')
+  if (!last || !beforeLast) return refuse('not-a-union', 'A union with a single literal member cannot be extended without guessing its layout. Edit the type in the code.')
 
   const quote = source.charAt(last.getStart())
   const separator = source.slice(beforeLast.getEnd(), last.getStart())
@@ -139,7 +139,7 @@ export function removeUnionMember(fileName: string, source: string, existing: Un
   const { literal, members } = located
   const index = members.findIndex((member) => member === literal)
   if (members.filter(isStringLiteralMember).length <= 1) {
-    return refuse('last-member', 'A variant property needs at least one value: the last one cannot be removed.')
+    return refuse('last-member', 'A variant property needs at least one value, so the last one cannot be removed. Add another value first.')
   }
 
   let splice: TextSplice
@@ -161,7 +161,7 @@ export function removeUnionMember(fileName: string, source: string, existing: Un
 function verified(fileName: string, source: string, splice: TextSplice): UnionMemberEdit {
   const candidate = source.slice(0, splice.offset) + splice.insert + source.slice(splice.offset + splice.deleteLength)
   if (introducesSyntaxErrors(fileName, source, candidate)) {
-    return refuse('not-a-union', 'Writing that change would leave this type unparseable, so nothing was written.')
+    return refuse('not-a-union', 'Writing that change would leave this type unparseable. Make this change in the code.')
   }
   return { ok: true, splice }
 }

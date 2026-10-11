@@ -128,8 +128,7 @@ export function setStyledDeclaration(params: SetStyledDeclarationParams): SetSty
       ok: false,
       reason: 'unwritable-value',
       message:
-        `“${value}” cannot be written into a styled-component template — it contains a character that would end the ` +
-        'declaration or the template itself (a backtick, a semicolon, a brace, a backslash, a newline, or `${`).',
+        `"${value}" cannot be written into a styled-component template, because it contains a character that would end it. Remove the backtick, semicolon, brace or backslash.`,
     }
   }
 
@@ -142,14 +141,13 @@ export function setStyledDeclaration(params: SetStyledDeclarationParams): SetSty
       ok: false,
       reason: 'template-not-found',
       message:
-        `Studio expected a styled-component template at ${file}:${line}:${col} and no longer finds one. Reload the ` +
-        'project so it can re-read the file, then try again.',
+        `Studio expected a styled-component template at ${file}:${line}:${col} and no longer finds one. Reload the project and try again.`,
     }
   }
 
   const assembled = assembleRawBody(template)
   if (!assembled) {
-    return { ok: false, reason: 'template-not-found', message: 'This styled template has a shape Studio cannot read back.' }
+    return { ok: false, reason: 'template-not-found', message: 'This styled template has a shape Studio cannot read back. Edit the template in the code.' }
   }
 
   const spans = flattenTemplateDeclarations(className, assembled.body, assembled.sentinels)
@@ -164,8 +162,7 @@ export function setStyledDeclaration(params: SetStyledDeclarationParams): SetSty
       ok: false,
       reason: 'declaration-not-in-template',
       message:
-        `“${selector}” is not written in ${templateLabel(template)}'s own template. It comes from an interpolated ` +
-        'selector or block, so there is no place in this template to put the declaration — edit it where it is written.',
+        `"${selector}" is not written in ${templateLabel(template)}'s own template, since it comes from an interpolation. Edit it where it is written.`,
     }
   }
 
@@ -213,8 +210,7 @@ function append(
       ok: false,
       reason: 'declaration-not-in-template',
       message:
-        `The end of ${anchor.selector}'s block sits inside an interpolation, so there is no place in this template to ` +
-        'put the declaration — edit it where it is written.',
+        `The end of ${anchor.selector}'s block sits inside an interpolation, so there is no place to put the declaration. Edit it where it is written.`,
     }
   }
   return { ok: true, changed: true, landing }

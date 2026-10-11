@@ -267,8 +267,8 @@ async function commitStructuralBody(
       kind: 'warning',
       title: refusalTitle,
       body: isUnreachableFailure(err)
-        ? 'Studio could not reach your project, so the change was taken back. Nothing was written.'
-        : 'The change could not be written to your project, so it was taken back. Nothing was written.',
+        ? 'Studio could not reach your project, so the change was taken back. Check that it is running, then try again.'
+        : 'The change could not be written to your project, so it was taken back. Try it again.',
       location: 'site-editor',
     })
   }

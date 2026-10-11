@@ -300,7 +300,7 @@ export const createClipboardSlice: EditorStoreSliceCreator<ClipboardSlice> = (
         pushToast({
           kind: 'warning',
           title: 'Only one content outlet',
-          body: 'The copied nodes include a content outlet and this document already has one.',
+          body: 'The copied nodes include a content outlet and this document already has one. Remove the extra outlet.',
           location: 'site-editor',
         })
         return null

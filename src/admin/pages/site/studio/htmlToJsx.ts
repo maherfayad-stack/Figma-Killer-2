@@ -114,7 +114,7 @@ interface ConversionContext {
 type SvgSlot = { ok: true; node: SlotJsxNode } | { ok: false; message: string }
 
 export function htmlToJsx(html: string): HtmlToJsxResult {
-  if (!html.trim()) return { ok: false, message: 'There is no HTML to paste.' }
+  if (!html.trim()) return { ok: false, message: 'There is no HTML to paste. Copy some HTML first.' }
   if (html.length > MAX_PASTED_HTML_CHARS) {
     return {
       ok: false,
@@ -137,7 +137,7 @@ export function htmlToJsx(html: string): HtmlToJsxResult {
   const svgs = cutOutSvgs(parsed, nonce)
   const css = takeStyleText(parsed)
   if (css.length > MAX_PASTED_CSS_CHARS) {
-    return { ok: false, message: 'The stylesheet in that HTML is too large to write into your project in one paste.' }
+    return { ok: false, message: 'The stylesheet in that HTML is too large to write in one paste. Remove some of the styles and paste again.' }
   }
 
   const sanitized = sanitizePastedHtml(parsed.body.innerHTML)
@@ -145,10 +145,10 @@ export function htmlToJsx(html: string): HtmlToJsxResult {
     return {
       ok: false,
       message: parsed.body.innerHTML.trim()
-        ? 'Studio could not make that HTML safe to write into your source, so nothing was pasted.'
+        ? 'Studio could not make that HTML safe to write into your source, so nothing was pasted. Remove scripts and event handlers, then paste again.'
         : css.trim()
-          ? 'That HTML is only a stylesheet - there are no elements to place.'
-          : 'There is no HTML to paste.',
+          ? 'That HTML is only a stylesheet, with no elements to place. Paste HTML that has elements.'
+          : 'There is no HTML to paste. Copy some HTML first.',
     }
   }
 
@@ -167,7 +167,7 @@ export function htmlToJsx(html: string): HtmlToJsxResult {
   if (nodes.length === 0) {
     return {
       ok: false,
-      message: report.svgRefusals[0] ?? 'That HTML has no elements Studio can write into your source.',
+      message: report.svgRefusals[0] ?? 'That HTML has no elements Studio can write into your source. Paste HTML that has elements.',
     }
   }
   return { ok: true, nodes, css, report }

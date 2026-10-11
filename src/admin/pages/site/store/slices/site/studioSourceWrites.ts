@@ -258,7 +258,7 @@ export function createStudioSourceWrites(
         describeStructuralRefusal({
           refusal: {
             reason: 'insert',
-            message: `"${registry.get(moduleId)?.name ?? moduleId}" is an editor building block, not a component in your project's code, so there is nothing Studio could write to the file. Add a design-system component instead.`,
+            message: `"${registry.get(moduleId)?.name ?? moduleId}" is an editor building block, not a component in your code, so Studio has nothing to write. Add a design-system component instead.`,
           },
         }),
         { getState: get, set },
@@ -445,7 +445,7 @@ export function createStudioSourceWrites(
       describeStructuralRefusal({
         refusal: {
           reason: 'wrap',
-          message: `"${registry.get(containerModuleId)?.name ?? containerModuleId}" is an editor building block, not a component in your project's code, so there is nothing Studio could write around this element. Wrap it in a container instead.`,
+          message: `"${registry.get(containerModuleId)?.name ?? containerModuleId}" is an editor building block, not a component in your code, so Studio has nothing to write around this element. Wrap it in a container instead.`,
         },
       }),
       { getState: get, set },
@@ -505,7 +505,7 @@ export function createStudioSourceWrites(
         describeStructuralRefusal({
           refusal: {
             reason: 'group',
-            message: `"${registry.get(containerModuleId)?.name ?? containerModuleId}" is an editor building block, not a component in your project's code, so there is nothing Studio could write around these elements. Group them in a container instead.`,
+            message: `"${registry.get(containerModuleId)?.name ?? containerModuleId}" is an editor building block, not a component in your code, so Studio has nothing to write around these elements. Group them in a container instead.`,
           },
         }),
         { getState: get, set },

@@ -82,6 +82,7 @@ import {
 import { indentUnit, insertBeside, lineIndentAt, reindentBlock, resolveChildPlacement } from './jsxChildPlacement'
 import { createdJsxLocation, offsetAfterEdits, type CreatedJsxLocation } from './createdJsxLocation'
 import { freeVariablesOutOfScopeAt } from './subtreeFreeVariables'
+import { ELEMENT_GONE_MESSAGE, outOfScopeMessage, STALE_SOURCE_MESSAGE } from '@core/utils/refusalCopy'
 
 export interface MoveJsxElementParams {
   file: string
@@ -112,7 +113,7 @@ export type MoveJsxRefusalReason =
   // Only a cross-file transplant asks a placement to refuse an anchor outside
   // its container; this codemod writes beside the anchor instead (G-7).
   | 'not-siblings'
-  | 'mixed-indentation'
+
   | 'not-a-container'
   | 'into-own-descendant'
   | 'out-of-scope'
@@ -146,12 +147,6 @@ function refuseMove(reason: MoveJsxRefusalReason, message: string): MoveJsxEleme
   return { ok: false, refusal: { reason, message } }
 }
 
-/** The one sentence for a name the new place cannot see - it names them, because "some binding" is not something a person can act on. */
-function outOfScopeMessage(names: readonly string[]): string {
-  const list = names.map((name) => `\`${name}\``).join(', ')
-  return `This element reads ${list} from the code around it, and ${names.length === 1 ? 'that name is' : 'those names are'} not in scope where it would land — moving it there would break the file. Move it somewhere inside the same component, or pass ${names.length === 1 ? 'the value' : 'those values'} through first.`
-}
-
 export function moveJsxElement(params: MoveJsxElementParams): MoveJsxElementResult {
   const { file, line, col } = params
   const project = params.project ?? createProject()
@@ -166,7 +161,7 @@ export function moveJsxElement(params: MoveJsxElementParams): MoveJsxElementResu
   if (verbatim === null) {
     return refuseMove(
       'stale-source',
-      'This file changed on disk since the canvas last read it. Reload the project and try again.',
+      STALE_SOURCE_MESSAGE,
     )
   }
 
@@ -242,7 +237,7 @@ function reorder(
   if (lies(anchor.range.element, target.element)) {
     return refuseMove(
       'into-own-descendant',
-      'The element this would be written next to is part of the element being moved, so moving it there would leave neither with a place in the file.',
+      'The element this would go next to is part of the element being moved. Drop it next to a different element.',
     )
   }
   return placeBesideAnchor(sourceFile, file, verbatim, target, anchor.range, position ?? 'after')
@@ -361,14 +356,14 @@ function reparent(
   if (!destination) {
     return refuseMove(
       'not-found',
-      `No JSX element is written at line ${destinationLine}, column ${destinationCol} any more — the file changed since the canvas last read it. Reload and try again.`,
+      ELEMENT_GONE_MESSAGE,
     )
   }
 
   if (destination.getStart() >= target.start && destination.getEnd() <= target.end) {
     return refuseMove(
       'into-own-descendant',
-      'That container is inside the element being moved, so moving one into the other would leave neither with a place in the file.',
+      'That container is inside the element being moved, so one would end up inside the other. Drop it into a different container.',
     )
   }
 
@@ -379,7 +374,7 @@ function reparent(
     if (anchor.ok && lies(anchor.range.element, target.element)) {
       return refuseMove(
         'into-own-descendant',
-        'The element this would be written next to is part of the element being moved, so moving it there would leave neither with a place in the file.',
+        'The element this would go next to is part of the element being moved. Drop it next to a different element.',
       )
     }
   }

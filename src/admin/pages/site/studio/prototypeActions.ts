@@ -117,7 +117,7 @@ export async function saveLink(draft: LinkDraft, tree: NodeTree): Promise<boolea
     pushToast({
       kind: 'warning',
       title: 'Could not link this element',
-      body: 'It is no longer in the page tree — reselect it and try again.',
+      body: 'That element is no longer on the page. Select it again.',
     })
     return false
   }
@@ -171,7 +171,7 @@ export async function commitLinkDraft(
     pushToast({
       kind: 'warning',
       title: 'Could not create the link',
-      body: 'The element it would start from is no longer on the page.',
+      body: 'The element it would start from is no longer on the page. Pick a link source that is on the page.',
     })
     return null
   }
