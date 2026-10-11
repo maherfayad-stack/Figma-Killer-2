@@ -426,8 +426,17 @@ The rules that keep it narrow:
 - **Untrusted on read.** A token is 32 lowercase hex digits before it meets a
   path; the folder and entry are refused if reached through a link; an entry is
   size-capped (8 MiB) and TypeBox-validated; every `rel` is re-derived through
-  `canonicalSourceRel`, so an entry naming anything outside app source is
+  `canonicalSourceRel` in the editor's scope (`journalStylesheets: 'allow'`,
+  which admits a hand-authored `.css`), so an entry naming
+  anything outside app source and hand-authored stylesheets is
   `restore-unavailable`, never a write.
+- **A style edit is journaled only when a value-set cannot undo it (G-5).** A
+  `css`/`styled` edit that lands as an `override` (a new line after the one it
+  shadows) or `expanded` a shorthand leaves bytes "set the old value back" does
+  not remove, so its batch records a pre-image of the stylesheets it may write
+  (`cssEditStylesheet`) and the chip's Undo (`styleLandings.ts`) posts the
+  `restore`. A batch of plain rewrites records nothing. ⌘Z for these stays the
+  value-level patch undo; the byte-exact one is the chip's.
 - **All or none, even on failure.** A write that throws part-way puts back
   the files already restored and refuses `restore-failed`; the entry survives
   for a retry.

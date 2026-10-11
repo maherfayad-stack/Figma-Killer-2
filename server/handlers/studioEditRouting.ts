@@ -184,7 +184,7 @@ export function isStudioOwnedTargetUnlinked(dir: string, rel: string): boolean {
 const WRITABLE_SOURCE_EXTENSION = /\.(tsx?|jsx?|mjs|cjs)$/i
 
 /** The one extra extension the undo journal may name: a token write's stylesheets. */
-const JOURNAL_STYLESHEET_EXTENSION = /\.css$/i
+const JOURNAL_STYLESHEET_EXTENSION = /(?<!\.min)\.css$/i
 
 /**
  * Whether a decoded `rel` is safe to write, checked on the PATH SHAPE alone so

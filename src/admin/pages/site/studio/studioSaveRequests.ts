@@ -26,7 +26,7 @@
  * "re-sync with disk, but only when a write actually landed" — which none of
  * the one-shot commits here have. They still post through `postEdits` below.
  */
-import type { StyleRule } from '@core/page-tree'
+import { StyleLandingSchema, type StyleRule } from '@core/page-tree'
 import type { JsonDataValue } from '@core/utils/jsonData'
 import { apiRequest } from '@core/http'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
@@ -188,6 +188,13 @@ export const StudioSaveResponseSchema = Type.Object({
    * one thing its ⌘Z (`restore`) names. Absent when the server recorded none.
    */
   undoToken: Type.Optional(UndoTokenSchema),
+  /**
+   * G-5 — where every style edit that wrote LANDED (the declaration, an
+   * expanded shorthand, an override, the element's own `style=""`), for the
+   * inspector's chip (`styleLandings.ts`). `Type.Optional`, same tolerant-
+   * rollout reasoning as the fields above.
+   */
+  styleLandings: Type.Optional(Type.Array(StyleLandingSchema)),
   /**
    * P1-A — each landed value write's target identity AFTER the write, keyed by
    * the edit's own node id. `postEdits` hands it to `sourceIdentity.ts`, so the

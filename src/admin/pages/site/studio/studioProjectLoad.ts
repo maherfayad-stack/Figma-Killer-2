@@ -52,6 +52,7 @@ import {
 import { mergeLoadedValuesBaseline, resetLoadedValues } from './loadedValuesBaseline'
 import { watchOpenPageForCssDestination } from './openPageWatch'
 import { resetRefusalToasts } from './refusalToasts'
+import { resetStyleLandings } from './styleLandings'
 import { resetCssDestinationMemory, setStudioStyleRuleSources } from './styleRuleWriteback'
 import { resetLocalizedTextBaseline, watchLocalizedPagesForBaseline } from './localizedPageWriteback'
 import { setStudioAuthoredCss, setStudioVendorCss } from './studioRawCssStores'
@@ -169,6 +170,8 @@ function applyLoadMeta(meta: MetaLine, pages: readonly Page[]): void {
   resetLoadedValues(pages, { sameProject })
   // `style-02` — a fresh document is a fresh set of refusals to report.
   resetRefusalToasts()
+  // G-5 — and no "last write" for the inspector's chip to talk about.
+  resetStyleLandings()
   // `panel-02` (WS-6.3) — the CSS write-back map + its diff baseline.
   // `pages` feeds `buildClassPageIndex`, which is how a new class gets
   // co-located with the page it is used on (`style-02`). A streamed load's

@@ -24,6 +24,18 @@
  * however many elements a multi-select delete removed and across however
  * many files.
  *
+ * ## A style edit is journaled when it lands somewhere a value-set cannot undo
+ *
+ * A `css` or `styled` edit is an ordinary autosave write, undone by writing the
+ * previous VALUE back. That is byte-exact when the edit rewrote the winning
+ * declaration. It is not when the edit landed as an `override` (a new line
+ * after the declaration it shadows) or `expanded` a shorthand (G-5,
+ * `styleLanding.ts`): setting the old value back would leave the line, or
+ * leave the shorthand spelled out. So those batches carry a pre-image of the
+ * stylesheets they may write (`cssEditStylesheet` — the same containment check
+ * the writer applies) and RECORD it only when a landing needs it; a batch of
+ * plain rewrites records nothing and costs the 50-entry cap nothing.
+ *
  * Only a batch run with `journal: true` records — the editor's `/save` route.
  * An agent's `studio_apply_edits` batch has its own undo (the turn
  * checkpoints), so it neither pays for a pre-image nor may post a `restore`.
@@ -36,6 +48,8 @@
  * than one edit is refused by name, before anything runs.
  */
 import { join } from 'node:path'
+import { styleLandingNeedsJournal, type StyleLanding } from '@core/page-tree'
+import { cssEditStylesheet } from './studioCssWriteback'
 import { refusalFor, StudioEditRefusalError } from './studioEditRefusals'
 import type { StudioEdit, StudioEditApplyOutcome, StudioEditBatchOptions, StudioEditRefusal } from './studioEditSchemas'
 import { captureUndoPreImage, recordUndoJournal, restoreUndoJournal, undoJournalFiles } from './studio/undoJournal'
@@ -75,8 +89,12 @@ export function isJournaled(edit: StudioEdit): boolean {
 export interface BatchUndoJournal {
   /** A `restore` that may not run in this batch, as its refusal — `null` for every other edit. */
   refuse: (edit: StudioEdit) => StudioEditRefusal | null
-  /** After the batch: record what it changed, and return the token — `undefined` when nothing was recorded. */
-  commit: (written: number, createdFiles: readonly string[]) => string | undefined
+  /**
+   * After the batch: record what it changed, and return the token — `undefined`
+   * when nothing was recorded. `landings` is where each style edit landed: a
+   * batch with no one-shot write records only if one of them needs the journal.
+   */
+  commit: (written: number, createdFiles: readonly string[], landings: readonly StyleLanding[]) => string | undefined
 }
 
 /**
@@ -95,7 +113,12 @@ export function openBatchUndoJournal(
   for (const edit of edits) {
     if (edit.kind === 'restore' && journaling) for (const file of undoJournalFiles(dir, edit.token)) touchedFiles.add(file)
   }
-  const preImage = journaling && edits.some(isJournaled) ? captureUndoPreImage(touchedFiles) : null
+  const oneShot = edits.some(isJournaled)
+  // A `css` edit's stylesheet is not in `touchedFiles` (its id decodes to no
+  // source location), so the pre-image names it separately.
+  const styleEdits = journaling && edits.some((edit) => edit.kind === 'css' || edit.kind === 'styled')
+  const stylesheets = styleEdits ? edits.flatMap((edit) => (edit.kind === 'css' ? (cssEditStylesheet(dir, edit) ?? []) : [])) : []
+  const preImage = oneShot || styleEdits ? (journaling ? captureUndoPreImage([...touchedFiles, ...stylesheets]) : null) : null
 
   return {
     refuse: (edit) => {
@@ -108,8 +131,9 @@ export function openBatchUndoJournal(
       }
       return null
     },
-    commit: (written, createdFiles) => {
+    commit: (written, createdFiles, landings) => {
       if (!preImage || written === 0) return undefined
+      if (!oneShot && !landings.some((landing) => styleLandingNeedsJournal(landing.rung))) return undefined
       return recordUndoJournal(dir, preImage, createdFiles.map((rel) => join(dir, ...rel.split('/')))) ?? undefined
     },
   }

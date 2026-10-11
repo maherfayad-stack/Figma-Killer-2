@@ -78,6 +78,7 @@ import {
   type InspectorSectionDefinition,
 } from '@site/inspector/sections'
 import { partialStyleWriteLock, StyleWriteLockContext } from './StyleWriteLockContext'
+import { StyleLandingChip } from './StyleLandingChip'
 import styles from './StyleSurface.module.css'
 
 // ---------------------------------------------------------------------------
@@ -150,6 +151,13 @@ export function StyleSurface({ moduleContent, onFocusClassPicker }: StyleSurface
             stack, which is the panel's own copy of the ambiguity WS-6.2
             exists to fix. */}
         {model.isMultiSelect && <MultiSelectTargetBar model={model} />}
+
+        {/* G-5 — where the last style edit went. Nothing until a write has
+            landed; a multi-selection's inline edits are N writes, so the chip
+            speaks for a single selection only. */}
+        {!model.isMultiSelect && nodeId != null && (
+          <StyleLandingChip nodeId={nodeId} classIds={model.selectedNode?.classIds ?? []} />
+        )}
 
         {/* Module section — P2 rule 2 ("everything is at rest"): a fixed
             block, not an accordion. `moduleContent` is the whole block
