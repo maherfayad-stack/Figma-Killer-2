@@ -561,3 +561,28 @@ describe("OD-21 - a component from the project's design-system/ folder detaches 
     expect(message).toContain('does not export')
   })
 })
+
+describe('G-3 - a component that renders several roots detaches into plain siblings', () => {
+  const PAIR = ['export function Pair({ a, b }: { a: string; b: string }) {', '  return <><dt>{a}</dt><dd>{b}</dd></>', '}', ''].join('\n')
+
+  it("writes the roots between the parent's own children, not inside a fragment", () => {
+    write('components/Pair.tsx', PAIR)
+    const text = expectDetached(
+      'pages/Home.tsx',
+      ["import { Pair } from '../components/Pair'", 'export default function Home() {', '  return <dl><dt>first</dt><Pair a="K" b="V" /><dd>last</dd></dl>', '}', ''].join('\n'),
+      'Pair',
+    )
+    expect(text).toContain('<dl><dt>first</dt><dt>K</dt><dd>V</dd><dd>last</dd></dl>')
+    expect(text).not.toContain('<>')
+  })
+
+  it("keeps the fragment where it is the page component's whole return value", () => {
+    write('components/Pair.tsx', PAIR)
+    const text = expectDetached(
+      'pages/Home.tsx',
+      ["import { Pair } from '../components/Pair'", 'export default function Home() {', '  return <Pair a="K" b="V" />', '}', ''].join('\n'),
+      'Pair',
+    )
+    expect(text).toContain('return <><dt>K</dt><dd>V</dd></>')
+  })
+})

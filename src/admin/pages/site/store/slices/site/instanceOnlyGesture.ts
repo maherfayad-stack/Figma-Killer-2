@@ -108,16 +108,22 @@ export function applyToThisInstanceOnly(input: {
   componentCopy?: false
 }): boolean {
   const { get, set, refusedNodeId, retry, onRefused } = input
-  const tree = resolveActiveTreeTarget(get())?.tree
-  if (!tree) return false
   // The node is usually INSIDE the instance (a composite id); a drop onto a
   // component that renders no children is refused about the instance itself.
   const inside = isInlinedNodeId(refusedNodeId)
   const callSite = inside ? callSitePosition(refusedNodeId) : refusedNodeId
+  const readTree = treeHolding(get, callSite)
+  const tree = readTree?.()
+  if (!readTree || !tree) return false
   const instance = tree.nodes[callSite]
   if (!inside && !isInstanceNode(instance)) return false
-  const [rootId, ...more] = instance?.children ?? []
-  if (!instance || rootId === undefined || more.length > 0) return false
+  const rootIds = instance?.children ?? []
+  const [rootId] = rootIds
+  if (!instance || rootId === undefined) return false
+  // Several roots have no single container: a gesture aimed at the INSTANCE
+  // (a drop onto it) has nowhere to go; one aimed at an element inside it is
+  // followed through the root that holds it.
+  if (rootIds.length > 1 && !inside) return false
 
   const label = detachComponentLabel(instance)
   // Ids the gesture names outside the instance are followed through the write
@@ -141,8 +147,9 @@ export function applyToThisInstanceOnly(input: {
       callSiteNodeId: callSite,
       label: `Change this ${instance.label ?? label} only`,
     })
-    const inlined = outcome?.createdNodeIds[0]
-    const detached = resolveActiveTreeTarget(get())?.tree
+    const detached = readTree()
+    const mapOutside: NodeIdMap = (nodeId) => relocateOutside(outside, nodeId)
+    const inlined = outcome?.createdNodeIds[0] ?? (rootIds.length > 1 && detached ? rootsAfterFragmentDetach(tree, detached, instance, callSite, mapOutside)?.[0] : undefined)
     if (!outcome) {
       const copied = input.componentCopy === false ? false : await replayInComponentCopy({ get, set, tree, callSite, rootId, retry, outside, notice })
       if (!copied) onRefused()
@@ -157,8 +164,11 @@ export function applyToThisInstanceOnly(input: {
       })
       return
     }
-    const mapInside = followIntoDetached(tree, callSite, rootId, detached, inlined)
-    const mapId: NodeIdMap = (nodeId) => (isInsideInstance(nodeId, callSite) ? mapInside(nodeId) : relocateOutside(outside, nodeId))
+    const mapInside =
+      rootIds.length > 1
+        ? followIntoFragment(tree, callSite, rootIds, detached, rootsAfterFragmentDetach(tree, detached, instance, callSite, mapOutside) ?? [])
+        : followIntoDetached(tree, callSite, rootId, detached, inlined)
+    const mapId: NodeIdMap = (nodeId) => (isInsideInstance(nodeId, callSite) ? mapInside(nodeId) : mapOutside(nodeId))
     const detachAt = get()._historyPast.length - 1
     if (isDetachEntry(get()._historyPast[detachAt])) linkReplay(get, set, detachAt, true)
     notice('detached')
@@ -187,6 +197,59 @@ async function replayGesture(retry: (mapId: NodeIdMap) => void, mapId: NodeIdMap
       body: 'The instance is detached and the change was not applied. Undo restores the instance.',
       location: 'site-editor',
     })
+  }
+}
+
+/**
+ * The tree that holds `callSite` and a way to read it again after the write:
+ * the active one, or - a drag that started in another frame - the page that
+ * holds it. `null` when no page does.
+ */
+function treeHolding(get: () => EditorStore, callSite: string): (() => NodeTree<PageNode> | undefined) | null {
+  if (resolveActiveTreeTarget(get())?.tree.nodes[callSite]) return () => resolveActiveTreeTarget(get())?.tree
+  const page = get().site?.pages.find((candidate) => candidate.nodes[callSite])
+  if (!page) return null
+  return () => get().site?.pages.find((candidate) => candidate.id === page.id)
+}
+
+/**
+ * Where the roots of an instance that renders SEVERAL went: a detach writes
+ * them as one fragment, which the page tree dissolves into the call site's own
+ * parent, so they are the run of children that replaced the instance there.
+ * `undefined` when that run cannot be read off honestly.
+ */
+function rootsAfterFragmentDetach(
+  before: NodeTree<PageNode>,
+  after: NodeTree<PageNode>,
+  instance: PageNode,
+  callSite: string,
+  mapOutside: NodeIdMap,
+): string[] | undefined {
+  const parentId = instance.parentId
+  if (!parentId) return undefined
+  const was = before.nodes[parentId]?.children ?? []
+  const now = after.nodes[mapOutside(parentId)]?.children
+  const at = was.indexOf(callSite)
+  const count = instance.children.length
+  if (!now || at < 0 || now.length !== was.length - 1 + count) return undefined
+  return now.slice(at, at + count)
+}
+
+/** `followIntoDetached` for an instance that rendered several roots: each id follows the root that held it. */
+function followIntoFragment(
+  before: NodeTree<PageNode>,
+  callSite: string,
+  rootIds: readonly string[],
+  after: NodeTree<PageNode>,
+  newRoots: readonly string[],
+): NodeIdMap {
+  return (nodeId) => {
+    // The instance as a whole has no single place in a fragment: leave it unmapped.
+    if (nodeId === callSite || newRoots.length !== rootIds.length) return nodeId
+    let current: string | undefined = nodeId
+    while (current !== undefined && !rootIds.includes(current)) current = before.nodes[current]?.parentId
+    if (current === undefined) return nodeId
+    return followIntoDetached(before, callSite, current, after, newRoots[rootIds.indexOf(current)]!)(nodeId)
   }
 }
 

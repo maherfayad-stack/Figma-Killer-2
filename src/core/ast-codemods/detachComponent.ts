@@ -79,7 +79,7 @@
  * refused: `getReturnedJsxRoots` picks the same one the canvas shows, and
  * `DetachSuccess.branchNote` says so.
  */
-import { Node, Project, QuoteKind, type SourceFile } from 'ts-morph'
+import { Node, Project, QuoteKind, SyntaxKind, type SourceFile } from 'ts-morph'
 import { findJsxElementAtLocationOrThrow, loadSourceFile } from './locateJsxElement'
 import { createWorkspaceProject, getReturnedJsxRoots, type FunctionLike } from '@core/page-parser'
 import { resolveComponentCallSite } from './resolveComponentCallSite'
@@ -310,6 +310,8 @@ export function detachComponentInstance(params: DetachComponentParams): DetachRe
   const perRow = rendersPerRow(opening, enclosingFunctionComponent(opening))
   let inserted: Node
   let plan: DetachPlan
+  /** Where the first element the detach wrote starts, once a fragment root has been dissolved into its parent's children. */
+  let dissolvedAt: number | undefined
   try {
     const hooks = readComponentHooks(fn, identifier)
     plan = new DetachPlanner(project, sourceFile, target.sourceFile, fn, chosen.expr, opening, identifier, hooks).plan()
@@ -330,6 +332,7 @@ export function detachComponentInstance(params: DetachComponentParams): DetachRe
     // from the tree — is "does anything else in the file still reference
     // Card" decidable.
     if (params.retireImport !== false) removeImportIfLastUsage(sourceFile, identifier)
+    dissolvedAt = dissolveFragmentIntoParent(sourceFile, inserted)
     if (introducesSyntaxErrors(file, original, sourceFile.getFullText())) {
       throw new Error(`[detachComponent] the detached source for <${identifier}> does not parse — nothing was written.`)
     }
@@ -355,14 +358,45 @@ export function detachComponentInstance(params: DetachComponentParams): DetachRe
 
   sourceFile.saveSync()
 
-  const tagName = Node.isJsxElement(inserted)
-    ? inserted.getOpeningElement().getTagNameNode()
-    : Node.isJsxSelfClosingElement(inserted)
-      ? inserted.getTagNameNode()
-      : null
+  const tagName =
+    dissolvedAt !== undefined
+      ? firstTagNameAt(sourceFile, dissolvedAt)
+      : Node.isJsxElement(inserted)
+        ? inserted.getOpeningElement().getTagNameNode()
+        : Node.isJsxSelfClosingElement(inserted)
+          ? inserted.getTagNameNode()
+          : null
   const at = tagName ? sourceFile.getLineAndColumnAtPos(tagName.getStart()) : null
 
   return { ok: true, written: true, created: at ? { line: at.line, col: at.column } : null, ...findings }
+}
+
+/**
+ * G-3 - a component that renders several roots is written as one fragment, and
+ * a fragment between an element's own children is noise: React renders its
+ * children exactly as if they were the element's. Dissolving it leaves the
+ * roots as plain siblings, which is what the page tree already shows - and is
+ * what makes a move of one of them an ordinary reorder instead of a gesture
+ * across a wrapper the canvas never drew. Only a fragment that is itself a JSX
+ * child (so a `key` fragment, an expression position, an attribute value all
+ * keep theirs). Returns where the first root now starts, or `undefined`.
+ */
+function dissolveFragmentIntoParent(sourceFile: SourceFile, inserted: Node): number | undefined {
+  if (!Node.isJsxFragment(inserted)) return undefined
+  const parent = inserted.getParent()
+  if (!Node.isJsxElement(parent) && !Node.isJsxFragment(parent)) return undefined
+  const start = inserted.getStart()
+  const inner = inserted.getText().slice(2, -3).trim()
+  sourceFile.replaceText([start, inserted.getEnd()], inner)
+  return inner === '' ? undefined : start
+}
+
+/** The tag name of the element that starts at `start`. */
+function firstTagNameAt(sourceFile: SourceFile, start: number): Node | null {
+  const opening = [...sourceFile.getDescendantsOfKind(SyntaxKind.JsxSelfClosingElement), ...sourceFile.getDescendantsOfKind(SyntaxKind.JsxOpeningElement)].find(
+    (element) => element.getStart() === start,
+  )
+  return opening ? opening.getTagNameNode() : null
 }
 
 /** `text` with every edit applied — right to left, so each `pos` still means the original offset; two at one offset keep their order. */

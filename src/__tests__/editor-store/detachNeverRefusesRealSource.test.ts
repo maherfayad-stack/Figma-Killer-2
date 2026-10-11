@@ -275,3 +275,98 @@ describe('OD-22 - a drop into a component that renders no children detaches it, 
     await project.waitFor(() => project.read('pages/Menu.tsx') === MENU, 15000)
   })
 })
+
+const PAIR = `export function Pair({ left, right }: { left: string; right: string }) {
+  return (
+    <>
+      <span className="left">{left}</span>
+      <span className="right">{right}</span>
+    </>
+  )
+}
+`
+
+const PAIRED = `import { Pair } from '../components/Pair'
+
+export default function Paired() {
+  return (
+    <main className="paired">
+      <Pair left="a" right="b" />
+      <p className="after">after</p>
+    </main>
+  )
+}
+`
+
+const ELSEWHERE = `export default function Elsewhere() {
+  return (
+    <main className="elsewhere">
+      <h1>Elsewhere</h1>
+    </main>
+  )
+}
+`
+
+describe('G-3 - an instance that renders several roots, and a drag to another frame', () => {
+  let project: RealSourceProject
+  beforeEach(async () => {
+    project = await openRealSourceProject({
+      'pages/Paired.tsx': PAIRED,
+      'pages/Elsewhere.tsx': ELSEWHERE,
+      'components/Pair.tsx': PAIR,
+    })
+    store().setActivePage(store().site!.pages.find((page) => page.id.includes('aired'))!.id)
+  })
+  afterEach(() => project.close())
+
+  it('drags one of its roots out: detached into the fragment, the root moved, one Cmd+Z', async () => {
+    const page = store().site!.pages.find((candidate) => candidate.id.includes('aired'))!
+    const right = nodeEndingAt(page, 'components/Pair.tsx:5:8')
+    const after = nodeEndingAt(page, 'pages/Paired.tsx:7:8')
+    const main = nodeEndingAt(page, 'pages/Paired.tsx:5:6')
+
+    store().moveNodes([right.id], main.id, main.children.length)
+    void after
+    await project.waitFor(() => project.saves.length >= 2, 15000)
+    await project.waitFor(() => store().canUndo)
+
+    const result = project.read('pages/Paired.tsx')
+    expect(result).not.toContain('<Pair')
+    expect(result.indexOf('className="right"')).toBeGreaterThan(result.indexOf('className="after"'))
+    expect(result.indexOf('className="left"')).toBeLessThan(result.indexOf('className="after"'))
+    expect(project.read('components/Pair.tsx')).toBe(PAIR)
+
+    store().undo()
+    await project.waitFor(() => project.read('pages/Paired.tsx') === PAIRED, 15000)
+  })
+
+  it('a drop onto the instance itself has no single container, and says so instead of guessing', async () => {
+    const page = store().site!.pages.find((candidate) => candidate.id.includes('aired'))!
+    const after = nodeEndingAt(page, 'pages/Paired.tsx:7:8')
+    const instance = Object.values(page.nodes).find((node) => node.moduleId === 'studio.instance')!
+
+    store().moveNodes([after.id], instance.id, 0)
+    await project.waitFor(() => store().structuralRefusalDialog !== null || toasts().length > 0, 5000)
+    expect(project.read('pages/Paired.tsx')).toBe(PAIRED)
+    expect(project.saves).toHaveLength(0)
+  })
+
+  it('moves an element out of an instance into ANOTHER frame: the instance is detached in its own file, the other file takes the element', async () => {
+    const paired = store().site!.pages.find((candidate) => candidate.id.includes('aired'))!
+    const elsewhere = store().site!.pages.find((candidate) => candidate.id.includes('lsewhere'))!
+    const right = nodeEndingAt(paired, 'components/Pair.tsx:5:8')
+    const elsewhereMain = nodeEndingAt(elsewhere, 'pages/Elsewhere.tsx:3:6')
+
+    store().transplantNodes([right.id], { originPageId: paired.id, pageId: elsewhere.id, parentId: elsewhereMain.id, index: elsewhereMain.children.length })
+    await project.waitFor(() => project.saves.length >= 2, 15000)
+    await project.waitFor(() => store().canUndo)
+
+    expect(project.read('pages/Paired.tsx')).not.toContain('<Pair')
+    expect(project.read('pages/Paired.tsx')).not.toContain('className="right"')
+    expect(project.read('pages/Elsewhere.tsx')).toContain('className="right"')
+    expect(project.read('components/Pair.tsx')).toBe(PAIR)
+
+    store().undo()
+    await project.waitFor(() => project.read('pages/Paired.tsx') === PAIRED && project.read('pages/Elsewhere.tsx') === ELSEWHERE, 15000)
+  })
+})
