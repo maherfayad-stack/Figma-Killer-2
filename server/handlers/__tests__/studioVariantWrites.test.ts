@@ -337,6 +337,133 @@ describe('remove-variant', () => {
     const result = batch({ kind: 'remove-variant', nodeId: idOf('components/Chip.tsx', 'Chip('), exportName: 'Chip', prop: 'tone', name: 'info' })
     expect(result.refusals.map((refusal) => refusal.reason)).toEqual(['default-variant'])
   })
+
+  describe('a story that passes the value in its args is a call site (CV-3 leftover)', () => {
+    const removeWarn = (): StudioEdit => ({ kind: 'remove-variant', nodeId: idOf('components/Chip.tsx', 'Chip('), exportName: 'Chip', prop: 'tone', name: 'warn' })
+
+    beforeEach(() => {
+      // No page passes "warn" any more: only a story does.
+      write('pages/Home.tsx', HOME.replace('tone="warn"', 'tone="info"'))
+    })
+
+    it('refuses, naming the story, and writes nothing', () => {
+      write(
+        'components/Chip.stories.tsx',
+        [
+          "import { Chip } from './Chip'",
+          '',
+          'export default { title: "Chip", component: Chip, args: { label: "Hi" } }',
+          '',
+          'export const Calm = { args: { tone: "info" } }',
+          'export const Careful = { args: { tone: "warn" } }',
+          '',
+        ].join('\n'),
+      )
+      const before = snapshot()
+      const result = batch(removeWarn())
+      expect(result.written).toBe(0)
+      expect(result.refusals.map((refusal) => refusal.reason)).toEqual(['variant-in-use'])
+      expect(result.refusals[0]!.message).toContain('components/Chip.stories.tsx:6')
+      expect(result.refusals[0]!.message).not.toContain('components/Chip.stories.tsx:5')
+      expect(snapshot()).toEqual(before)
+    })
+
+    it('a value set on the meta args reaches every story, so it is a use too', () => {
+      write(
+        'components/Chip.stories.tsx',
+        ["import { Chip } from './Chip'", '', 'export default { component: Chip, args: { tone: "warn", label: "Hi" } }', '', 'export const Only = {}', ''].join('\n'),
+      )
+      expect(batch(removeWarn()).refusals.map((refusal) => refusal.reason)).toEqual(['variant-in-use'])
+    })
+
+    it('a story of a different component, or one that passes another value, is not', () => {
+      write('components/Other.tsx', "export function Other({ tone }: { tone?: string }) { return <i>{tone}</i> }\n")
+      write(
+        'components/Other.stories.tsx',
+        ["import { Other } from './Other'", '', 'export default { component: Other }', '', 'export const W = { args: { tone: "warn" } }', ''].join('\n'),
+      )
+      write(
+        'components/Chip.stories.tsx',
+        ["import { Chip } from './Chip'", '', 'export default { component: Chip, args: { label: "Hi" } }', '', 'export const Calm = { args: { tone: "info" } }', ''].join('\n'),
+      )
+      const result = batch(removeWarn())
+      expect(result.refusals).toEqual([])
+      expect(result.written).toBe(1)
+    })
+  })
+})
+
+describe('state rules travel with the variant (CV-3 leftover)', () => {
+  const STATEFUL_CSS = [
+    '.info {',
+    '  color: blue;',
+    '}',
+    '',
+    '.info:hover {',
+    '  color: navy;',
+    '}',
+    '',
+    '.warn {',
+    '  color: orange;',
+    '}',
+    '',
+    '.warn:hover,',
+    '.warn:focus-visible {',
+    '  color: darkorange;',
+    '}',
+    '',
+  ].join('\n')
+
+  beforeEach(() => {
+    write('components/Chip.module.css', STATEFUL_CSS)
+  })
+
+  it('Add variant copies the default value\'s :hover rule too, and one restore puts every byte back', () => {
+    const result = batch(addDanger())
+    expect(result.refusals).toEqual([])
+    expect(read('components/Chip.module.css')).toBe(
+      [
+        '.info {',
+        '  color: blue;',
+        '}',
+        '',
+        '.danger {',
+        '  color: blue;',
+        '}',
+        '',
+        '.danger:hover {',
+        '  color: navy;',
+        '}',
+        '',
+        '.info:hover {',
+        '  color: navy;',
+        '}',
+        '',
+        '.warn {',
+        '  color: orange;',
+        '}',
+        '',
+        '.warn:hover,',
+        '.warn:focus-visible {',
+        '  color: darkorange;',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    const undone = applyStudioEditBatch(dir, [restore(result.undoToken!)], {}, EDITOR)
+    expect(undone.refusals).toEqual([])
+    expect(read('components/Chip.module.css')).toBe(STATEFUL_CSS)
+  })
+
+  it('Remove variant takes the value\'s rule and every state of it, and one restore brings them back', () => {
+    write('pages/Home.tsx', HOME.replace('tone="warn"', 'tone="info"'))
+    const result = batch({ kind: 'remove-variant', nodeId: idOf('components/Chip.tsx', 'Chip('), exportName: 'Chip', prop: 'tone', name: 'warn' })
+    expect(result.refusals).toEqual([])
+    expect(read('components/Chip.module.css')).toBe(['.info {', '  color: blue;', '}', '', '.info:hover {', '  color: navy;', '}', ''].join('\n'))
+    const undone = applyStudioEditBatch(dir, [restore(result.undoToken!)], {}, EDITOR)
+    expect(undone.refusals).toEqual([])
+    expect(read('components/Chip.module.css')).toBe(STATEFUL_CSS)
+  })
 })
 
 describe('add-component-prop', () => {
