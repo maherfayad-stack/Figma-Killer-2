@@ -288,7 +288,8 @@ function expandCallSite(
     const targetRelFromRoot = path.relative(state.workspaceRoot, target.sourceFile.getFilePath()).split(path.sep).join('/')
     let subPage = parseJsxTree(roots, target.sourceFile, targetRelFromRoot, fn, state.evalOptions)
     const env = buildSubstitutionEnv(fn, callSiteNode, depth === 0)
-    subPage = applySubstitutions(roots, subPage, env, callSiteNode.children, target.sourceFile, targetRelFromRoot, fn, state.evalOptions)
+    const childrenHosts: string[] = []
+    subPage = applySubstitutions(roots, subPage, env, callSiteNode.children, target.sourceFile, targetRelFromRoot, fn, state.evalOptions, childrenHosts)
 
     // §2.5 — tag every node this call site's subtree produces with the
     // component whose file it came from. These nodes are EDITABLE: their
@@ -368,6 +369,10 @@ function expandCallSite(
     // site's OWN structural status — e.g. it sits inside a `.map`/ternary at
     // ITS level) is preserved as-is via the spread; inlining does not change
     // it, same principle `fromComponent` already followed for the subtree.
+    // A plain element only: when `{children}` sits inside ANOTHER component's
+    // call site, the place the children are written is that component's own.
+    const hostId = childrenHosts.length === 1 ? `${callSiteId}${INLINE_ID_SEPARATOR}${childrenHosts[0]}` : undefined
+    const childrenHostId = hostId !== undefined && prefixed.nodes[hostId] && prefixed.nodes[hostId]!.kind !== 'component' ? hostId : undefined
     page.nodes[callSiteId] = {
       ...callSiteNode,
       children: [...prefixed.rootIds],
@@ -376,6 +381,9 @@ function expandCallSite(
         source: 'local',
         sourceFile: targetRelFile,
         callSiteProps: callSiteNode.props,
+        // OD-22 - exactly one element renders `{children}`: the place a drop
+        // into this instance is written at the call site, no detach needed.
+        ...(childrenHostId ? { childrenHost: childrenHostId } : {}),
       },
     }
     return true
@@ -480,6 +488,24 @@ export function resolveCallTarget(
       isDefaultExport,
       via: reexportChainFiles(moduleFile, exported),
     }
+  }
+  return undefined
+}
+
+/**
+ * The file that DECLARES the component `tagName` names at a call site in
+ * `callerSourceFile`, followed through every barrel - or `undefined` when the
+ * tag is not an import this can follow. What detach needs for a design-system
+ * component (OD-21): `componentSources.ts` classifies it by the folder it
+ * lands in and does not keep the file, because the parse never reads it.
+ */
+export function resolveImportedDeclaringFile(callerSourceFile: SourceFile, tagName: string): SourceFile | undefined {
+  const [identifier, member, ...deeper] = tagName.split('.')
+  if (!identifier || deeper.length > 0) return undefined
+  for (const decl of callerSourceFile.getImportDeclarations()) {
+    const exported = importedExportName(decl, identifier, member)
+    if (exported === undefined) continue
+    return resolveExportedDeclaration(decl.getModuleSpecifierSourceFile(), exported)?.sourceFile
   }
   return undefined
 }

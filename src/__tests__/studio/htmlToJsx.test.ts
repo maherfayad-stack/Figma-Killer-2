@@ -19,7 +19,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { insertJsxElement } from '@core/ast-codemods'
 import { MAX_PASTED_ELEMENTS } from '@core/utils/pastedHtmlLimits'
-import { htmlToJsx } from '@site/studio/htmlToJsx'
+import { htmlToJsx, pinPastedRoots } from '@site/studio/htmlToJsx'
 import type { SlotJsxNode } from '@site/studio/studioSaveRequests'
 
 function convert(html: string) {
@@ -349,5 +349,43 @@ describe('htmlToJsx - what the codemod writes', () => {
   )
 }
 `)
+  })
+})
+
+describe('htmlToJsx - relative URLs copied from the editor page stay relative (r3)', () => {
+  const editor = { origin: 'http://127.0.0.1:6131', pathname: '/admin/site' }
+  const props = (html: string) => {
+    const result = htmlToJsx(html, editor)
+    if (!result.ok) throw new Error(result.message)
+    return result.nodes[0]!.props
+  }
+
+  it('strips the editor origin and the editor page directory back off an absolutized src', () => {
+    expect(props('<img src="http://127.0.0.1:6131/admin/loaf.png" alt="">')).toMatchObject({ src: 'loaf.png' })
+    expect(props('<img src="http://127.0.0.1:6131/admin/img/loaf.png?v=2" alt="">')).toMatchObject({ src: 'img/loaf.png?v=2' })
+  })
+
+  it('keeps a root-relative path root-relative, and never writes the editor origin', () => {
+    expect(props('<img src="http://127.0.0.1:6131/assets/loaf.png" alt="">')).toMatchObject({ src: '/assets/loaf.png' })
+    expect(props('<a href="http://127.0.0.1:6131/menu">Menu</a>')).toMatchObject({ href: '/menu' })
+  })
+
+  it('restores each srcset candidate and leaves other origins alone', () => {
+    expect(props('<img srcset="http://127.0.0.1:6131/admin/a.png 1x, http://127.0.0.1:6131/admin/b.png 2x" alt="">')).toMatchObject({
+      srcSet: 'a.png 1x, b.png 2x',
+    })
+    expect(props('<img src="https://cdn.example.com/a.png" alt="">')).toMatchObject({ src: 'https://cdn.example.com/a.png' })
+    expect(props('<img src="http://127.0.0.1:61310/admin/a.png" alt="">')).toMatchObject({ src: 'http://127.0.0.1:61310/admin/a.png' })
+  })
+})
+
+describe('pinPastedRoots - a paste into a free frame is pinned, not left at 0,0 (r3)', () => {
+  const placement = { property: 'left' as const, inline: 40, top: 120 }
+
+  it('writes position and insets on each root, cascading one step per root, and keeps the root\'s own style', () => {
+    const { nodes } = convert('<section style="color: red">One</section><section>Two</section>')
+    const pinned = pinPastedRoots(nodes, placement)
+    expect(pinned[0]!.props!.style).toEqual({ color: 'red', position: 'absolute', left: '40px', top: '120px' })
+    expect(pinned[1]!.props!.style).toEqual({ position: 'absolute', left: '64px', top: '144px' })
   })
 })

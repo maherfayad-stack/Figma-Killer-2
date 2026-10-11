@@ -89,6 +89,7 @@ export { paramReadCount } from './paramReads'
 export {
   inlineLocalComponents,
   resolveCallTarget,
+  resolveImportedDeclaringFile,
   INLINE_ID_SEPARATOR,
 } from './inlineLocalComponents'
 export type { CallTarget, InlineOptions } from './inlineLocalComponents'

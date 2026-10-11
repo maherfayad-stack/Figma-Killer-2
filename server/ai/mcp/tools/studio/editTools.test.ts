@@ -164,12 +164,12 @@ describe('studio_codemod', () => {
     expect(fs.readFileSync(path.join(tmpDir, 'pages', 'Home.tsx'), 'utf8')).toContain('<div className="card">Hi</div>')
   })
 
-  it('detach refuses a component that uses a hook, with a specific reason', async () => {
+  it('detach refuses a component that runs an effect, with a specific reason', async () => {
     write(tmpDir, 'components/Counter.tsx', [
-      "import { useState } from 'react'",
+      "import { useEffect } from 'react'",
       'export function Counter() {',
-      '  const [n] = useState(0)',
-      '  return <span>{n}</span>',
+      '  useEffect(() => {}, [])',
+      '  return <span>0</span>',
       '}',
       '',
     ].join('\n'))
