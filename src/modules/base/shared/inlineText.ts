@@ -14,7 +14,9 @@
  *   - `rawTextToBreakHtml` — for the canvas (`dangerouslySetInnerHTML`), which
  *     receives the RAW stored value, so we escape first, then insert `<br>`s.
  */
+import type { ClipboardEvent, DragEvent, KeyboardEvent } from 'react'
 import type { InlineEditBinding } from '@core/module-engine'
+import { isRichTextShortcut, pastePlainText } from '@core/utils/plainTextEditing'
 import { escapeHtml } from '@modules/base/utils/escape'
 
 /** `\n` → `<br>` on an already-escaped string (publisher render path). */
@@ -49,8 +51,8 @@ export function enterCommitsInlineEdit(event: Pick<KeyboardEvent, 'shiftKey' | '
 
 /**
  * Props a text module spreads onto its element to BECOME the inline editor.
- * The element is `contentEditable` (plaintext-only — no rich formatting or
- * pasted markup) and carries the live-edit handlers + ref.
+ * The element is `contentEditable` (plain text only — formatting shortcuts and
+ * pasted markup are blocked) and carries the live-edit handlers + ref.
  *
  * Critically it provides NEITHER `dangerouslySetInnerHTML` NOR children: React
  * must not own the element's content while it is being edited. React 19
@@ -66,13 +68,23 @@ export function enterCommitsInlineEdit(event: Pick<KeyboardEvent, 'shiftKey' | '
 export function inlineEditableElementProps(binding: InlineEditBinding) {
   return {
     ref: binding.ref,
-    // `plaintext-only` keeps the surface a pure text field — Cmd+B, pasted
-    // HTML, etc. can't introduce formatting. React's DOM types accept it.
-    contentEditable: 'plaintext-only' as const,
+    // `true`, not `plaintext-only`: the engine forces `white-space: pre-wrap`
+    // on plaintext-only, which moves the glyphs the instant editing starts. The
+    // surface stays a pure text field by blocking the two ways markup gets in
+    // (formatting shortcuts, pasted HTML) — see `@core/utils/plainTextEditing`.
+    contentEditable: true as const,
     suppressContentEditableWarning: true,
     spellCheck: false,
     onInput: binding.onInput,
-    onKeyDown: binding.onKeyDown,
+    onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
+      if (isRichTextShortcut(event)) {
+        event.preventDefault()
+        return
+      }
+      binding.onKeyDown?.(event)
+    },
+    onPaste: (event: ClipboardEvent<HTMLElement>) => pastePlainText(event.nativeEvent),
+    onDrop: (event: DragEvent<HTMLElement>) => event.preventDefault(),
     onBlur: binding.onBlur,
   }
 }

@@ -47,6 +47,13 @@ export default function Home() {
             <input className={styles.codeInput} type="text" maxLength={1} aria-label="digit 3" />
           </div>
           <p className={styles.note}>resend</p>
+          <p className={styles.long}>
+            One page, so the board has one frame. The point of this project is not what it renders — it is
+            that Studio classifies it as a Vite project.
+          </p>
+          <button className={styles.action} type="button">
+            Nothing happens
+          </button>
           <Button label="One" size="default" variant="primary" style={{ width: "223px" }} />
           <Button label="Two" size="default" variant="primary" style={{ width: "223px" }} />
         </div>
@@ -67,6 +74,8 @@ const CSS = `.page { position: relative; box-sizing: border-box; width: 100%; mi
 .codeInputs { display: flex; gap: 8px; }
 .codeInput { width: 44px; height: 48px; box-sizing: border-box; }
 .note { margin: 0; }
+.action { width: 160px; padding: 10px 14px; font: inherit; text-align: center; border: 1px solid #888; }
+.long { margin: 0; max-width: 300px; line-height: 1.5; text-align: center; padding: 6px 10px; }
 `
 const DS_INDEX = `export function Button() { return null }\nexport function TabBar() { return null }\n`
 
@@ -225,4 +234,57 @@ test.describe('N2: Space + drag pans, it never moves the selection', () => {
     expect(Math.abs(frameAfter.y - frameBefore.y - 50)).toBeLessThanOrEqual(3)
     expect(readFile(REL), 'Space-drag moved the layer in source').toBe(HOME)
   })
+})
+
+/** Every glyph run under `node`, as editor-relative frame px rects: one per text node line box. */
+async function glyphRects(node: Locator): Promise<Box[]> {
+  return node.evaluate((el) => {
+    const out: { left: number; top: number; right: number; bottom: number }[] = []
+    const walker = el.ownerDocument.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+    for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+      if (!t.textContent || !t.textContent.trim()) continue
+      const range = el.ownerDocument.createRange()
+      range.selectNodeContents(t)
+      for (const r of Array.from(range.getClientRects())) out.push({ left: r.left, top: r.top, right: r.right, bottom: r.bottom })
+    }
+    return out
+  })
+}
+
+const unionOf = (rects: Box[]): Box => ({
+  left: Math.min(...rects.map((r) => r.left)),
+  top: Math.min(...rects.map((r) => r.top)),
+  right: Math.max(...rects.map((r) => r.right)),
+  bottom: Math.max(...rects.map((r) => r.bottom)),
+})
+
+test.describe('O3: entering inline edit never moves a glyph', () => {
+  test.setTimeout(240_000)
+
+  for (const [label, id] of [
+    ['a plain <h1>', sourceNodeId(HOME, REL, 'h1')],
+    ['a plain <p>', sourceNodeId(HOME, REL, 'p', 2)],
+    ['a wrapped, centred, padded multi-line <p>', sourceNodeId(HOME, REL, 'p', 3)],
+    ['a native <button> label', sourceNodeId(HOME, REL, 'button')],
+  ] as const) {
+    test(`${label}: glyph rects are identical before, during and while typing`, async ({ page }) => {
+      const { node, home } = await openHome(page)
+      const before = unionOf(await glyphRects(node(id)))
+      const at = centre(await visualBox(node(id)))
+      const editable = home.locator('[contenteditable]:not([contenteditable="false"])')
+      await page.mouse.dblclick(at.x, at.y)
+      await expect(editable.first(), 'inline edit never started').toBeAttached({ timeout: 15_000 })
+      await page.waitForTimeout(400)
+      const during = unionOf(await glyphRects(editable.first()))
+      for (const key of ['left', 'top', 'right', 'bottom'] as const) {
+        expect(Math.abs(during[key] - before[key]), `${label}: the ${key} edge of the text moved when editing began`).toBeLessThanOrEqual(0.5)
+      }
+      await page.keyboard.press('End')
+      await page.keyboard.type('x')
+      await page.waitForTimeout(300)
+      const typed = unionOf(await glyphRects(editable.first()))
+      // A typed letter widens the line (a centred line grows both ways), so only the vertical position is invariant.
+      expect(Math.abs(typed.top - before.top), `${label}: text moved vertically while typing`).toBeLessThanOrEqual(0.5)
+    })
+  }
 })

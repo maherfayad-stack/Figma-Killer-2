@@ -71,6 +71,9 @@ function getAuthoredFormControlEventTarget(target: EventTarget | null): Element 
   const control = target.closest(CANVAS_FORM_CONTROL_SELECTOR)
   if (!control) return null
   if (target.closest(CANVAS_EDITOR_CONTROL_SELECTOR)) return null
+  // A control that is the open inline text editor (a button's label) is a text
+  // field now: cancelling its focus ended the session the moment it began.
+  if (control.closest('[contenteditable]:not([contenteditable="false"])')) return null
   return target.closest(CANVAS_NODE_SELECTOR) ? control : null
 }
 

@@ -30,6 +30,7 @@
 
 import { memo, use, useLayoutEffect, useRef, useSyncExternalStore } from 'react'
 import type { InlineEditBinding } from '@core/module-engine'
+import { pinTextMetrics } from '@core/utils/plainTextEditing'
 import { enterCommitsInlineEdit, readInlineEditableText, seedInlineEditableContent } from '@modules/base/shared/inlineText'
 import { useEditorStore, selectCanvasPageFor } from '@site/store/store'
 import { isInlineEditSessionFor } from '@site/store/slices/inlineEditSlice'
@@ -270,11 +271,12 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
     if (!isInlineEditing) return
     const el = editableRef.current
     if (!el) return
+    const releaseTextMetrics = pinTextMetricsWhileEditing(el)
     seedInlineEditableContent(el, useEditorStore.getState().activeInlineEdit?.initialValue ?? '')
     el.focus()
     const doc = el.ownerDocument
     const sel = doc.defaultView?.getSelection()
-    if (!sel) return
+    if (!sel) return releaseTextMetrics
     const range = doc.createRange()
     range.selectNodeContents(el)
     // A freshly drawn text opens with its placeholder selected, so the first
@@ -282,6 +284,7 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
     if (useEditorStore.getState().activeInlineEdit?.selectAll !== true) range.collapse(false)
     sel.removeAllRanges()
     sel.addRange(range)
+    return releaseTextMetrics
   }, [isInlineEditing])
 
   // A portal frame lives on the admin origin, so a site-root `url('/bg.png')`
@@ -701,3 +704,23 @@ function LoopIterationsPreview({ node, baseTemplateContext }: LoopIterationsPrev
 
 // The per-gesture latches that collapse pointerdown / mousedown / click into
 // ONE activation live in `./canvasNodeGestureLatch`.
+
+/**
+ * Entering an inline edit must move no glyph, so the text-layout properties the
+ * browser's editing rules rewrite are pinned to what the element had before it
+ * became editable (`@core/utils/plainTextEditing`). They are read off a
+ * non-editable, content-less clone dropped in beside the element for one
+ * synchronous style read: lifting `contenteditable` off the element itself
+ * would blur it, and a blur ends the session. Returns the undo.
+ */
+function pinTextMetricsWhileEditing(el: HTMLElement): () => void {
+  const parent = el.parentNode
+  if (!parent || !el.hasAttribute('contenteditable')) return () => {}
+  const probe = el.cloneNode(false) as HTMLElement
+  probe.removeAttribute('contenteditable')
+  probe.removeAttribute('data-node-id')
+  parent.insertBefore(probe, el)
+  const release = pinTextMetrics(el, probe)
+  parent.removeChild(probe)
+  return release
+}

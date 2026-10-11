@@ -34,6 +34,7 @@
  * `textContent`, never restructures it, and never removes it from the DOM.
  */
 import { TEXT_EDIT_MAX_LENGTH, type OutboundRuntimeMessage, type RuntimeMode, type TextEditReplyMessage } from './messages'
+import { isRichTextShortcut, pastePlainText, pinTextMetrics } from '../utils/plainTextEditing'
 import { stampedAncestors } from './nodeDom'
 import { NODE_ID_ATTR, findNthNodeById, type NodeIdOccurrence } from './nodeIdIndexing'
 import { SELECTION_OVERLAY_ROOT_ID } from './selectionChromeCss'
@@ -63,19 +64,15 @@ function isRuntimeChrome(target: Element | null): boolean {
 }
 
 /**
- * Sets `contenteditable="plaintext-only"`, falling back to `"true"` when the
- * browser doesn't recognise the value — some browsers throw a `SyntaxError`
- * on the IDL setter for an unrecognised keyword rather than ignoring it, so
- * the fallback path is wrapped in a `try`, not just a readback check.
+ * Makes `el` the editor: `contenteditable="true"` (never `plaintext-only`,
+ * which the engine forces to `white-space: pre-wrap` and so shifts glyphs the
+ * moment editing starts) with the element's own text-layout properties pinned
+ * to what they were. Returns the undo for the pin.
  */
-function beginContentEditable(el: HTMLElement): void {
-  try {
-    el.contentEditable = 'plaintext-only'
-  } catch {
-    el.contentEditable = 'true'
-    return
-  }
-  if (el.contentEditable !== 'plaintext-only') el.contentEditable = 'true'
+function beginContentEditable(el: HTMLElement): () => void {
+  const release = pinTextMetrics(el, el)
+  el.contentEditable = 'true'
+  return release
 }
 
 function selectAllContent(view: Window, el: HTMLElement): void {
@@ -95,6 +92,8 @@ interface EditSession {
   nodeId: string
   occurrenceIndex: number
   originalText: string
+  /** Puts back the inline text-layout properties the edit pinned. */
+  releaseTextMetrics: () => void
 }
 
 export function installInlineTextEdit(options: InlineTextEditOptions): InlineTextEditController {
@@ -120,6 +119,7 @@ export function installInlineTextEdit(options: InlineTextEditOptions): InlineTex
     if (!session) return
     session.element.removeEventListener('blur', onBlur)
     session.element.removeAttribute('contenteditable')
+    session.releaseTextMetrics()
     session = null
   }
 
@@ -130,7 +130,8 @@ export function installInlineTextEdit(options: InlineTextEditOptions): InlineTex
   function commit(): void {
     if (!session) return
     const { element, nodeId, occurrenceIndex } = session
-    const raw = element.textContent ?? ''
+    // `innerText`, not `textContent`: Shift+Enter writes a `<br>`, which only innerText reads as a newline.
+    const raw = element.innerText ?? element.textContent ?? ''
     const text = raw.length > TEXT_EDIT_MAX_LENGTH ? raw.slice(0, TEXT_EDIT_MAX_LENGTH) : raw
     endSession()
     post({ type: 'text:commit', nodeId, occurrenceIndex, text })
@@ -167,13 +168,13 @@ export function installInlineTextEdit(options: InlineTextEditOptions): InlineTex
     if (!(element instanceof HTMLElement)) return false
     const seedText = message.text ?? element.textContent ?? ''
     element.textContent = seedText
-    beginContentEditable(element)
+    const releaseTextMetrics = beginContentEditable(element)
     // A parent-started edit begins while the PARENT has focus.
     view.focus()
     element.focus()
     selectAllContent(view, element)
     element.addEventListener('blur', onBlur)
-    session = { element, nodeId: message.nodeId, occurrenceIndex: message.occurrenceIndex, originalText: seedText }
+    session = { element, nodeId: message.nodeId, occurrenceIndex: message.occurrenceIndex, originalText: seedText, releaseTextMetrics }
     return true
   }
 
@@ -224,7 +225,9 @@ export function installInlineTextEdit(options: InlineTextEditOptions): InlineTex
   function onKeyDownCapture(ev: KeyboardEvent): void {
     if (!isInsideSession(ev.target)) return
     ev.stopPropagation()
-    if (ev.key === 'Escape') {
+    if (isRichTextShortcut(ev)) {
+      ev.preventDefault()
+    } else if (ev.key === 'Escape') {
       ev.preventDefault()
       cancel()
     } else if (ev.key === 'Enter' && !ev.shiftKey) {
@@ -238,6 +241,12 @@ export function installInlineTextEdit(options: InlineTextEditOptions): InlineTex
   function onInputCapture(ev: Event): void {
     if (isInsideSession(ev.target)) ev.stopPropagation()
   }
+  function onPasteCapture(ev: ClipboardEvent): void {
+    if (isInsideSession(ev.target)) pastePlainText(ev)
+  }
+  function onDropCapture(ev: DragEvent): void {
+    if (isInsideSession(ev.target)) ev.preventDefault()
+  }
   function onClickCapture(ev: MouseEvent): void {
     if (isInsideSession(ev.target)) ev.stopPropagation()
   }
@@ -247,6 +256,8 @@ export function installInlineTextEdit(options: InlineTextEditOptions): InlineTex
   doc.addEventListener('keyup', onKeyUpCapture, true)
   doc.addEventListener('input', onInputCapture, true)
   doc.addEventListener('click', onClickCapture, true)
+  doc.addEventListener('paste', onPasteCapture, true)
+  doc.addEventListener('drop', onDropCapture, true)
 
   return {
     handleReply,
@@ -263,6 +274,8 @@ export function installInlineTextEdit(options: InlineTextEditOptions): InlineTex
       doc.removeEventListener('keyup', onKeyUpCapture, true)
       doc.removeEventListener('input', onInputCapture, true)
       doc.removeEventListener('click', onClickCapture, true)
+      doc.removeEventListener('paste', onPasteCapture, true)
+      doc.removeEventListener('drop', onDropCapture, true)
     },
   }
 }
