@@ -452,6 +452,10 @@ function applySelection(
     state.selectedNodeIds = nextIds
     state.selectedNodeId = nextAnchor
     state.selectedNodeFrameId = nextAnchor ? nextFrameId : null
+    // Frames and layers are one selection: `setSelectedFrameIds` clears the
+    // layers, so selecting layers clears the frames. A sweep inside a selected
+    // frame used to leave the frame selected and the inspector on the frame (R4 #7).
+    if (nextAnchor && state.selectedFrameIds.length > 0) state.selectedFrameIds = []
     if (nextAnchor) state.selectedSelectorClassId = null
     state.activeClassId = nextActiveClassId
     if (shouldPreservePropertiesCollapse) {

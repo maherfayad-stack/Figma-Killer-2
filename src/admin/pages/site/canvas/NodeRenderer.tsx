@@ -558,9 +558,12 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
         onKeyDown: (e) => {
           const state = useEditorStore.getState()
           if (e.key === 'Escape') {
+            // Escape leaves the edit KEEPING the text, like Enter and a click
+            // away (Figma). It used to drop the draft, which threw away what a
+            // Text-tool drag had just been typed and left the placeholder behind.
             e.preventDefault()
             e.stopPropagation()
-            state.cancelInlineEdit()
+            state.endInlineEdit()
             return
           }
           if (e.key === 'Enter') {

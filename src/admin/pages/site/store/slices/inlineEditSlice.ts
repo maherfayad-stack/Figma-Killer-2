@@ -7,12 +7,12 @@
  * history). **One session is one write.** Keystrokes only update the
  * session's `draft` (the contentEditable element already shows the text);
  * nothing reaches the page tree, the undo stack or the autosave until the
- * session COMMITS (`endInlineEdit` — Enter, blur, or another gesture taking
+ * session COMMITS (`endInlineEdit` — Enter, Escape, blur, or another gesture taking
  * over), which writes the draft through `updateNodeProps` exactly once: one
- * history entry, one source write. `cancelInlineEdit` (Escape) simply drops
+ * history entry, one source write. `cancelInlineEdit` (an HMR swap or a frame reload under the edit) simply drops
  * the draft — there is nothing to undo, so no partial write can survive it
  * and no timing window (a save landing between the last keystroke and
- * Escape) can leave "all but the last character" on disk.
+ * the cancel) can leave "all but the last character" on disk.
  *
  * Burst isolation: `startInlineEdit` and `endInlineEdit` both reset
  * `_historyCoalesceKey`, so the commit can never fold into a

@@ -438,3 +438,70 @@ test.describe(`#4 at ${zoomPercent}%: an insert in an all-absolute frame lands a
   })
 })
 }
+
+test.describe('#7: an in-frame marquee selects what it sweeps, even with the frame selected', () => {
+  test.setTimeout(240_000)
+
+  test('release leaves the swept layers selected and the frame no longer selected', async ({ page }) => {
+    const { node, homeFrame, home } = await openHome(page)
+    // Select the FRAME itself, by its header - the state the audit started the sweep from.
+    const root = (await page.getByTestId('canvas-root').boundingBox())!
+    await page.mouse.move(root.x + root.width / 2, root.y + root.height / 2)
+    await page.mouse.wheel(0, -120)
+    await page.waitForTimeout(400)
+    const header = (await homeFrame.getByTestId('board-frame-header').first().boundingBox())!
+    await page.mouse.click(header.x + header.width / 2, header.y + header.height / 2)
+    await expect(page.getByTestId('frame-bulk-inspector')).toBeVisible({ timeout: 10_000 })
+    await page.waitForTimeout(400)
+    const from = await mainPoint(node, 700, 700)
+    const banner = await visualBox(node(ID.banner))
+    await page.mouse.move(from.x, from.y)
+    await page.mouse.down()
+    await page.mouse.move(from.x - 40, from.y - 60, { steps: 6 })
+    await expect(home.locator('[data-canvas-in-frame-marquee="true"]')).toBeAttached({ timeout: 5_000 })
+    await page.mouse.move((banner.left + banner.right) / 2, banner.bottom - 20, { steps: 8 })
+    await page.mouse.up()
+    await expect.poll(() => selectedInFrames(page), { timeout: 10_000, message: 'the sweep selected nothing' }).toBeGreaterThan(0)
+    await expect(homeFrame.getByTestId('board-frame-header').first()).not.toHaveAttribute('data-selected', 'true')
+    await expect(page.getByTestId('frame-bulk-inspector'), 'the frame inspector is still showing').toBeHidden({ timeout: 10_000 })
+  })
+})
+
+test('#7 control: the same sweep with nothing selected', async ({ page }) => {
+  test.setTimeout(240_000)
+  const { node, home } = await openHome(page)
+  const from = await mainPoint(node, 700, 700)
+  const banner = await visualBox(node(ID.banner))
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(from.x - 40, from.y - 60, { steps: 6 })
+  await expect(home.locator('[data-canvas-in-frame-marquee="true"]')).toBeAttached({ timeout: 5_000 })
+  await page.mouse.move((banner.left + banner.right) / 2, banner.bottom - 20, { steps: 8 })
+  await page.mouse.up()
+  await expect.poll(() => selectedInFrames(page), { timeout: 10_000 }).toBeGreaterThan(0)
+})
+
+test.describe('#5: Escape in a text edit keeps what was typed', () => {
+  test.setTimeout(240_000)
+
+  test('a Text-tool drag, typed text, then Escape writes the text and selects the layer', async ({ page }) => {
+    const { node, canvasRoot, home } = await openHome(page)
+    const at = await mainPoint(node, 120, 700)
+    await canvasRoot.focus()
+    await page.keyboard.press('t')
+    await expect(page.locator('[data-canvas-draw-layer="text"]')).toBeVisible()
+    await page.mouse.move(at.x, at.y)
+    await page.mouse.down()
+    await page.mouse.move(at.x + 120, at.y + 40, { steps: 6 })
+    await page.mouse.up()
+    const editable = home.locator('[contenteditable]:not([contenteditable="false"])')
+    await expect(editable.first()).toBeVisible({ timeout: 30_000 })
+    await expect.poll(() => editable.first().evaluate((el) => el.ownerDocument.activeElement === el), { timeout: 5_000 }).toBe(true)
+    await page.keyboard.type('Hello Escape')
+    await page.keyboard.press('Escape')
+    await expect.poll(() => readFile(REL), { timeout: 30_000 }).toContain('Hello Escape')
+    expect(readFile(REL), 'the placeholder text was left behind').not.toContain('Add your text here')
+    await expect(home.locator('[contenteditable]:not([contenteditable="false"])')).toHaveCount(0, { timeout: 10_000 })
+    await expect.poll(() => selectedInFrames(page), { timeout: 10_000, message: 'the text layer is not selected' }).toBeGreaterThan(0)
+  })
+})

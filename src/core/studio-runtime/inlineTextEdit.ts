@@ -228,8 +228,9 @@ export function installInlineTextEdit(options: InlineTextEditOptions): InlineTex
     if (isRichTextShortcut(ev)) {
       ev.preventDefault()
     } else if (ev.key === 'Escape') {
+      // Escape keeps the typed text, like Enter and a click away (Figma).
       ev.preventDefault()
-      cancel()
+      commit()
     } else if (ev.key === 'Enter' && !ev.shiftKey) {
       ev.preventDefault()
       commit()
