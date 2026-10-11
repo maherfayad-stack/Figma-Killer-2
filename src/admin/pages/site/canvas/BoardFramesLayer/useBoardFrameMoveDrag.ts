@@ -65,6 +65,9 @@ interface BoardFrameMoveDragOptions {
   height: number
 }
 
+/** Marks a pressable control inside a frame header, so the header's move-drag leaves a press on it alone. */
+const FRAME_HEADER_CONTROL_ATTR = 'data-frame-header-control'
+
 export interface BoardFrameMoveDragHandlers {
   onPointerDown: (e: ReactPointerEvent<HTMLDivElement>) => void
   onPointerMove: (e: ReactPointerEvent<HTMLDivElement>) => void
@@ -114,10 +117,16 @@ export function useBoardFrameMoveDrag({
   }, [frameId])
 
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    // A control living in the header (the mode chips) is pressed, not dragged:
+    // it is not a move, and selecting the frame under it is not its job either.
+    if (e.target instanceof Element && e.target.closest(`[${FRAME_HEADER_CONTROL_ATTR}]`)) return
     // Only the primary (left) button starts a move-drag — a right-click's
     // pointerdown must fall through to `onContextMenu` untouched, never
     // arming drag state (see `BoardFrameView`'s "Drag-to-reposition" note).
     if (e.button !== 0) return
+    // A control in the header (the gallery's Add variant button) owns its own press: guard by target, never by
+    // stopping propagation, which would leave the canvas pan gesture's tap state stale (canvas-overlay-pointerdown gate).
+    if (e.target instanceof Element && e.target.closest('button')) return
     // WS-7.1 — select on pointerDOWN (not click/mouseup), matching Figma:
     // pressing a frame's header selects it immediately, and a drag that
     // follows moves the now-selected frame. Plain click replaces the

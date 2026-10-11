@@ -63,7 +63,6 @@ function GalleryAddVariant({ page }: { page: Page }) {
         aria-expanded={open}
         tooltip="Add variant"
         onPointerDown={(event) => {
-          event.stopPropagation()
           if (event.button === 0) toggle()
         }}
         onDoubleClick={(event) => event.stopPropagation()}

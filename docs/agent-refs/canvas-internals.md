@@ -284,6 +284,40 @@ ALREADY-MOUNTED `iframeDoc.documentElement`:
   app. A class comes off for light; an ATTRIBUTE is set to `light`, for the
   reason above.
 
+**Modes on the board (CT-4).** `PreviewAxes` also carries `modes:
+Record<axisId, modeId>` for every OTHER axis the project's CSS declares
+(`theme`, `density`, ...), keyed by the token catalog's axis ids
+(`@core/studio-tokens`). `getAxisMode`/`withAxisMode`/`mergePreviewAxes`/
+`axisSelection` (`previewAxes.ts`) are the one door: `color-scheme`,
+`direction` and `locale` live in their named fields, every other axis in
+`modes`, and the merge of board default and a frame's `BoardFrame.axes`
+override is per axis, `modes` included. What a mode WRITES on the frame's
+`<html>` is decided by the catalog's gates, nowhere else:
+`planModeRoot`/`applyModeRootPlan` (`core/studio-tokens/modeRoot.ts`) turn
+`[data-x="v"]` / `.cls` / `:not([attr=v])` gates into attribute and class
+writes, switching the unchosen modes of an axis off before the chosen one on.
+`direction`/`locale` keep their own path; a `prefers-color-scheme` media gate
+is answered by the existing `data-studio-scheme` rewrite; any other `@media`
+gate cannot be emulated, so it is never offered as a chip. The plan is applied
+FIRST, then the generic `dir`/`lang`/`data-theme`/`data-studio-scheme` writes
+land last. The older probe-derived class toggle only runs when the catalog has
+no colour-scheme axis it can drive (`drivesColorScheme`). Portal frames apply
+the plan in `applyPreviewAxesToFrameDocument`; live frames get it on the
+`setAxes` bridge message as `modeRoot` (resolved parent-side by
+`canvas/modeRootPlan.ts` - the runtime has no catalog) and apply it with the
+same `applyModeRootPlan`. `useApplyPreviewAxes` re-applies when the catalog
+arrives or changes (`studioTokenCatalogStore.ts`).
+`BoardFramesLayer/FrameModeChips.tsx` is the UI: a chip per catalog axis in
+the frame header (choosing pins the mode on THAT frame in `boards.json`'s
+`frame.axes`) and "+ Mode", which duplicates the frame into another mode
+beside the source (`duplicateFrameAsVariant`). The board keeps the catalog
+fresh itself (`useStudioTokenCatalogSync`), not only the inspector. A control
+inside a frame header carries `data-frame-header-control` so the header's
+move-drag leaves a press on it alone - do NOT `stopPropagation` its
+pointerdown: that starves the canvas pan gesture's `pointerdown`, and its
+stale click-suppression then eats the control's click. `posterKey`'s axes key
+includes `modes`, so a dark frame never reuses a light poster.
+
 **The frame's PAPER follows the preview, not the admin theme.** An iframe
 document that paints no background of its own is transparent, so the embedding
 element is what shows through — and a grow-to-content frame leaves a lot of it
