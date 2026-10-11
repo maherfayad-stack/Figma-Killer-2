@@ -16,12 +16,27 @@
  * undo that instead.
  */
 import { pushToast } from '@ui/components/Toast'
-import { useEditorStore } from '@site/store/store'
 import type { StudioSaveResponse } from './studioSaveRequests'
 
 type Carried = NonNullable<StudioSaveResponse['carried']>
 
 const MAX_NAMES = 3
+
+/**
+ * The store's undo, registered by the store itself (`store.ts`) - the studio layer
+ * must not import the store (it would close a cycle through every action that
+ * posts a structural commit). Same shape as `editorSaveRef.ts`.
+ */
+export interface CarryNoticeUndo {
+  /** How many entries the undo stack holds now. */
+  depth: () => number
+  undo: () => void
+}
+let storeUndo: CarryNoticeUndo | null = null
+
+export function registerCarryNoticeUndo(handle: CarryNoticeUndo): void {
+  storeUndo = handle
+}
 
 function spell(entries: Carried): string {
   const names = entries.map((entry) => (entry.as === entry.name ? entry.name : `${entry.as}`))
@@ -45,7 +60,7 @@ export function carryNoticeTitle(carried: Carried): string | null {
 export function announceCarried(carried: Carried | undefined): void {
   const title = carried ? carryNoticeTitle(carried) : null
   if (!title) return
-  const depth = useEditorStore.getState()._historyPast.length
+  const depth = storeUndo?.depth() ?? 0
   pushToast({
     kind: 'info',
     title,
@@ -54,7 +69,7 @@ export function announceCarried(carried: Carried | undefined): void {
     action: {
       label: 'Undo',
       onSelect: () => {
-        if (useEditorStore.getState()._historyPast.length === depth) useEditorStore.getState().undo()
+        if (storeUndo && storeUndo.depth() === depth) storeUndo.undo()
       },
     },
   })

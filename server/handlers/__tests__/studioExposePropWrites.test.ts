@@ -45,7 +45,7 @@ describe('expose-prop — one gesture, two files, one ⌘Z', () => {
   it('writes the component and this call site, reports both files, and one restore puts both back', () => {
     const result = applyStudioEditBatch(
       dir,
-      [{ kind: 'expose-prop', nodeId: HEADING, target: { kind: 'text' }, propName: 'heading', value: 'New text' }],
+      [{ kind: 'expose-prop', nodeId: HEADING, overrides: [{ target: { kind: 'text' }, propName: 'heading', value: 'New text' }] }],
       {},
       EDITOR,
     )
@@ -64,11 +64,17 @@ describe('expose-prop — one gesture, two files, one ⌘Z', () => {
     expect(read('pages/Home.tsx')).toBe(HOME)
   })
 
-  it('refuses, writing nothing, an id that is not exactly one call site deep', () => {
-    for (const nodeId of ['components/Card.tsx:4:8', `${HEADING}~components/Icon.tsx:1:1`]) {
-      const result = applyStudioEditBatch(dir, [{ kind: 'expose-prop', nodeId, target: { kind: 'text' }, propName: 'heading', value: 'x' }], {}, EDITOR)
+  it('refuses, writing nothing, an id that names no call site (a plain element), or a chain whose middle is not a component call', () => {
+    const expectations: [string, string][] = [
+      // A page's own element is not inside any component.
+      ['components/Card.tsx:4:8', 'not-in-component'],
+      // G-2b threads through every call site the id names; a segment that is not one fails to resolve.
+      [`${HEADING}~components/Icon.tsx:1:1`, 'unresolvable'],
+    ]
+    for (const [nodeId, reason] of expectations) {
+      const result = applyStudioEditBatch(dir, [{ kind: 'expose-prop', nodeId, overrides: [{ target: { kind: 'text' }, propName: 'heading', value: 'x' }] }], {}, EDITOR)
       expect(result.written).toBe(0)
-      expect(result.refusals.map((refusal) => refusal.reason)).toEqual(['not-in-component'])
+      expect(result.refusals.map((refusal) => refusal.reason)).toEqual([reason])
     }
     expect(read('components/Card.tsx')).toBe(CARD)
     expect(read('pages/Home.tsx')).toBe(HOME)
@@ -77,7 +83,7 @@ describe('expose-prop — one gesture, two files, one ⌘Z', () => {
   it('refuses a binding, writing nothing — a resolved value is never baked', () => {
     const result = applyStudioEditBatch(
       dir,
-      [{ kind: 'expose-prop', nodeId: `${CALL_SITE}~components/Card.tsx:5:8`, target: { kind: 'text' }, propName: 'body', value: 'x' }],
+      [{ kind: 'expose-prop', nodeId: `${CALL_SITE}~components/Card.tsx:5:8`, overrides: [{ target: { kind: 'text' }, propName: 'body', value: 'x' }] }],
       {},
       EDITOR,
     )
