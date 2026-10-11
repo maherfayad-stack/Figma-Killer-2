@@ -6,15 +6,42 @@ import { evaluateDependencyLockStatus } from '@site/panels/DependenciesPanel/loc
 import { useEditorStore } from '@site/store/store'
 import { makeSite } from '../fixtures'
 import { normalizeSiteRuntimeConfig } from '@core/site-runtime'
+import { useAdminUi } from '@admin/state/adminUi'
+import { __resetProjectManifestForTests } from '@site/studio/projectManifestStore'
+
+// The panel lists the OPEN PROJECT's package.json, read from the server's
+// install/status probe (47e30d55), not the CMS site's in-memory mirror.
+const PROJECT_DIR = 'studio-workspace/confetti'
 
 afterEach(cleanup)
 const originalFetch = globalThis.fetch
 
 afterEach(() => {
   globalThis.fetch = originalFetch
+  useAdminUi.setState({ studioProject: null })
+  __resetProjectManifestForTests()
 })
 
+function serveManifest(dependencies: Record<string, string>): void {
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        hasPackageJson: true,
+        hasNodeModules: true,
+        dependencyCount: Object.keys(dependencies).length,
+        packageManager: 'bun',
+        dependencies,
+        devDependencies: {},
+        installedPackages: Object.keys(dependencies),
+        job: null,
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    )) as unknown as typeof fetch
+}
+
 function resetStore() {
+  useAdminUi.setState({ studioProject: { dir: PROJECT_DIR, name: 'confetti' } })
+  serveManifest({ 'canvas-confetti': '^1.9.3' })
   const packageJson = {
     dependencies: { 'canvas-confetti': '^1.9.3' },
     devDependencies: {},
@@ -52,10 +79,10 @@ function resetStore() {
 beforeEach(resetStore)
 
 describe('DepsSection runtime script dependency usage', () => {
-  it('marks packages imported by site scripts as in use', () => {
+  it('marks packages imported by site scripts as in use', async () => {
     render(<DepsSection />)
 
-    const row = screen.getByTestId('dep-row-canvas-confetti')
+    const row = await screen.findByTestId('dep-row-canvas-confetti')
     expect(within(row).getByText('in use')).toBeDefined()
     expect(within(row).getByTitle(/scripts: celebrate\.ts/)).toBeDefined()
   })
@@ -73,7 +100,7 @@ describe('DepsSection runtime script dependency usage', () => {
     expect(useEditorStore.getState().site?.packageJson?.dependencies.motion).toBe('*')
   })
 
-  it('shows the locked version next to the requested range when the lock has been resolved', () => {
+  it('shows the locked version next to the requested range when the lock has been resolved', async () => {
     const lockedRuntime = normalizeSiteRuntimeConfig({
       dependencyLock: {
         version: 1,
@@ -95,7 +122,7 @@ describe('DepsSection runtime script dependency usage', () => {
 
     render(<DepsSection />)
 
-    const row = screen.getByTestId('dep-row-canvas-confetti')
+    const row = await screen.findByTestId('dep-row-canvas-confetti')
     expect(within(row).getByTitle('Locked at 1.9.4')).toBeDefined()
     // The lock matches the requested range — no manual re-resolve UI should
     // appear (auto-resolve has nothing to do, and the panel stays tidy).
