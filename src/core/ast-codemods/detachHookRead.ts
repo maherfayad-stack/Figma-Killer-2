@@ -22,6 +22,7 @@ import {
 } from 'ts-morph'
 import { getFunctionLikeNode, isContextReaderHook, reactExportNameOf, type FunctionLike } from '@core/page-parser'
 import { fail, isWithin } from './detachSource'
+import { STATE_HOOKS } from './transplantStateCarry'
 import { isReferenceIdentifier } from './subtreeFreeVariables'
 
 const HOOK_CALL_RE = /^use[A-Z0-9]/
@@ -144,12 +145,12 @@ function isLiteralArgument(arg: Node): boolean {
   )
 }
 
-const STATE_HOOKS: ReadonlySet<string> = new Set(['useState', 'useReducer', 'useRef', 'useId'])
+const DETACH_STATE_HOOKS: ReadonlySet<string> = new Set([...STATE_HOOKS, 'useId'])
 
 /** `useState` / `useReducer` / `useRef` when `call` is React's own (through `React.useState` or a renamed import), else `undefined`. */
 function stateHookName(call: CallExpression): string | undefined {
   const name = reactExportNameOf(call.getExpression())
-  return name !== undefined && STATE_HOOKS.has(name) ? name : undefined
+  return name !== undefined && DETACH_STATE_HOOKS.has(name) ? name : undefined
 }
 
 /** Keyword and literal types: a type argument that means the same in any file. */

@@ -52,6 +52,7 @@ import { EmptyState } from '@ui/components/EmptyState'
 import { SearchBar } from '@ui/components/SearchBar'
 import { PackageSolidIcon } from 'pixel-art-icons/icons/package-solid'
 import { useCanvasInsertionDrag } from '@site/canvas/useCanvasInsertionDrag'
+import type { AbsoluteNewLayerPlacement } from '@site/canvas/canvasNewLayerPlacement'
 import { CanvasInsertionDragOverlay } from '@site/canvas/CanvasInsertionDragOverlay'
 import {
   buildAssetItems,
@@ -189,7 +190,7 @@ export function AssetsPanel() {
   // there as a loose layer. Saved layouts and Visual Components have no
   // loose-layer spelling, so their drag never offers the board.
   const canvasDrag = useCanvasInsertionDrag<AssetItem>({
-    onDrop: (item, location) => handleInsert(item, location),
+    onDrop: (item, location, placement) => handleInsert(item, location, placement),
     freeCanvas: {
       accepts: (item) => item.kind === 'module' && !item.disabledReason && canPlaceModuleOnCanvas(item.id),
       onDrop: (item, at) => {
@@ -201,8 +202,8 @@ export function AssetsPanel() {
     },
   })
 
-  function handleInsert(item: AssetItem, target?: InsertLocation) {
-    if (!insertItem(item, target)) return false
+  function handleInsert(item: AssetItem, target?: InsertLocation, placement: AbsoluteNewLayerPlacement | null = null) {
+    if (!insertItem(item, target, placement)) return false
     trackAssetInsert(refForAssetItem(item))
     setRecentRefs(readAssetPrefs().recent)
     return true

@@ -77,6 +77,8 @@
  * `setNodesInlineStyles` (one history entry for the whole selection) instead
  * of `setNodeInlineStyles`.
  */
+import type { VariantStyleContext } from '@core/component-variants'
+import { isStyledWritableValue } from '@core/css-codemods/browser'
 import { useEditorStore, selectActiveCanvasPage, selectSelectedNode } from '@site/store/store'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import { useMutableBox } from '@site/hooks/useMutableBox'
@@ -110,6 +112,8 @@ import {
   type PageNode,
   type StyleRule,
 } from '@core/page-tree'
+import { getStudioStyleRuleSources } from '@site/studio/styleRuleWriteback'
+import { findStyleRuleIdForSource, useVariantEditContext, variantRuleBlocker, variantWriteTarget } from './variantEditContext'
 import {
   resolveExistingWriteTarget,
   resolveWriteTarget,
@@ -247,6 +251,18 @@ export interface SelectionModel {
   /** Active breakpoint tab or condition, whichever wins — condition beats breakpoint. */
   activeContextId: string | null
 
+  /**
+   * CV-4 — the variant edit context: while the selected element is a component's
+   * own element being edited as the MAIN component and a variant prop styles it,
+   * every style write is aimed at the rule of the variant shown (`writeTargetFor`
+   * returns it, or no target and the reason). `null` everywhere else.
+   */
+  variantContext: VariantStyleContext | null
+  /** Why the chosen variant rule cannot take a write even though it was found (not loaded on the board, or a class Studio does not write); `null` when it can, and for a refusal (which carries its own message). */
+  variantBlocker: string | null
+  /** The `StyleRule` the chosen variant rule maps to (the rule id a landing is filed under), or `null`. */
+  variantRuleId: string | null
+
   /** Every class assigned to the node, mapped through `s.site?.styleRules` — NOT `s.site`. */
   assignedClassRules: StyleRule[]
   writableClasses: ReadonlyArray<SelectionModelWritableClass>
@@ -258,8 +274,13 @@ export interface SelectionModel {
   /** True while a Tier 2 bridge-mode measurement for `computedValues` is in flight — always `false` on a Tier 0/1 (portal) board. P5, STATE.md `panel-26`. Additive-only: existing readers that don't destructure this field are unaffected. */
   computedValuesLoading: boolean
 
-  /** The P1 rule, exposed per-property so a section never calls `resolveWriteTarget` itself. */
-  writeTargetFor(property: string, opts?: { existing?: boolean }): WriteTarget
+  /**
+   * The P1 rule, exposed per-property so a section never calls
+   * `resolveWriteTarget` itself. `values` are the values this commit writes: a
+   * class that cannot hold one (G-5, `WriteTargetClassCandidate.holds`) steps
+   * aside so the value lands on the element instead of being refused.
+   */
+  writeTargetFor(property: string, opts?: { existing?: boolean; values?: ReadonlyArray<string | number | null> }): WriteTarget
 }
 
 // ---------------------------------------------------------------------------
@@ -439,17 +460,53 @@ export function useSelectionModel(): SelectionModel {
     .map((name) => name.slice(STYLE_KEY_PREFIX.length))
   const lockedPropertySet = new Set(lockedProperties)
 
+  // CV-4 — the variant edit context, and the loaded rule its chosen rule maps to.
+  const variantContext = useVariantEditContext(selectedNodeId, selectedNode?.fromComponent, isMultiSelect)
+  const variantChosen = variantContext?.chosen.kind === 'rule' ? variantContext.chosen : null
+  const variantRuleId = variantChosen === null ? null : findStyleRuleIdForSource(getStudioStyleRuleSources(), variantChosen)
+  const variantRule = variantRuleId === null ? null : (styleRules?.[variantRuleId] ?? null)
+  const variantLockReason =
+    variantRule === null
+      ? null
+      : isGeneratedClassLocked(variantRule)
+        ? 'Generated utility class — not meant to be edited.'
+        : classCssWriteLockReason(resolveClassCssEditability(variantRule), { studioSession })
+  const variantBlocker = variantChosen === null ? null : variantRuleBlocker(variantChosen, variantRule, variantLockReason)
+
   const writableClassCandidates: WriteTargetClassCandidate[] = writableClasses
     .filter((entry) => entry.lockReason === null)
-    .map((entry) => ({ classId: entry.classId, selector: entry.selector }))
+    .map((entry) => {
+      const rule = assignedClassRules.find((cls) => cls.id === entry.classId)
+      const templateClass = rule !== undefined && resolveClassCssEditability(rule).kind === 'styled-template'
+      return {
+        classId: entry.classId,
+        selector: entry.selector,
+        // G-5 — a styled template cannot spell every value a CSS file can.
+        ...(templateClass ? { holds: (value: string | number | null) => typeof value !== 'string' || isStyledWritableValue(value) } : {}),
+      }
+    })
 
-  function writeTargetFor(property: string, opts?: { existing?: boolean }): WriteTarget {
+  function writeTargetFor(
+    property: string,
+    opts?: { existing?: boolean; values?: ReadonlyArray<string | number | null> },
+  ): WriteTarget {
+    if (variantContext) {
+      return variantWriteTarget({
+        context: variantContext,
+        rule: variantRule,
+        blocker: variantBlocker,
+        property,
+        existing: opts?.existing ?? false,
+        activeContextId,
+      })
+    }
     const provenance = provenanceByProperty.get(property)
     const inlineWritableForProperty = inlineWritable && !lockedPropertySet.has(property)
     const params = {
       provenance,
       inlineWritable: inlineWritableForProperty,
       writableClasses: writableClassCandidates,
+      ...(opts?.values ? { values: opts.values } : {}),
     }
     return opts?.existing ? resolveExistingWriteTarget(params) : resolveWriteTarget(params)
   }
@@ -466,6 +523,9 @@ export function useSelectionModel(): SelectionModel {
     sharedClassRules,
 
     activeContextId,
+    variantContext,
+    variantBlocker,
+    variantRuleId,
 
     assignedClassRules,
     writableClasses,

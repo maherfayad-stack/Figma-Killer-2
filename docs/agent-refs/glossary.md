@@ -207,12 +207,21 @@ utility class: a `styled.div` / `css` tagged template inside a `.tsx`
 ts-morph re-finds the template at the recorded `line:col` and hands postcss each
 quasi's RAW text with its source offset, so the selector a write matches is the
 selector the canvas showed. **Every `${…}` is a hole on the write side**,
-including interpolations the parser resolves for rendering — editing
-`padding: ${SPACING.md}` would change every other reader, so it refuses.
-Refusals are named: `interpolated-value`, `declaration-not-in-template`,
-`unwritable-value`, `template-not-found`, plus the ordinary duplicate/shorthand/
-`!important` verdicts forwarded verbatim. Reported to the panel as
-`classCssWritability`'s `styled-template` kind.
+including interpolations the parser resolves for rendering — rewriting
+`padding: ${SPACING.md}` would change every other reader, so the user's value
+is APPENDED after it as an override (G-5) and the interpolation is left byte for
+byte. Only `unwritable-value`, `declaration-not-in-template` (the selector is
+not written in the template) and `template-not-found` still refuse. Reported to
+the panel as `classCssWritability`'s `styled-template` kind.
+
+**Style write ladder / landing (G-5)** — a style edit never refuses; it takes
+the first honest rung and the server reports it (`StyleLanding`,
+`@core/page-tree/styleLanding.ts`): `rule` (the class's own declaration),
+`expanded` (a covering `!important` shorthand rewritten with that one side
+changed), `override` (a new line after the declaration it shadows), `inline`
+(the element's `style=""`, the client's rung when a class cannot hold the
+value). `expanded` and `override` are journaled (byte-exact Undo on the chip);
+the chip is `StyleLandingChip`, fed by `styleLandings.ts`.
 
 **Tiers (A/B/C/D)** — the static evaluator's explicit capability boundary.
 A = literals/consts/members/operators. B = hook → context provider.

@@ -458,39 +458,6 @@ export default function About() {
       expect(written.match(/useLanguage\(\)/g)).toHaveLength(1)
       expect(written).toContain('<p>{t.hi}</p>')
     })
-
-    it('still refuses a captured binding that is NOT a context-reader hook (useState)', () => {
-      const home = writeFixture('Home.tsx', `import { useState } from 'react'
-
-export default function Home() {
-  const [count] = useState(0)
-  return (
-    <main>
-      <p>{count}</p>
-    </main>
-  )
-}
-`)
-      const homeText = fs.readFileSync(home, 'utf8')
-      const about = writeFixture('About.tsx', ABOUT)
-      const paragraph = locateTag(homeText, 'p')
-      const container = locateTag(ABOUT, 'main')
-
-      const result = transplantJsxElement({
-        file: home,
-        line: paragraph.line,
-        col: paragraph.col,
-        destinationFile: about,
-        destinationLine: container.line,
-        destinationCol: container.col,
-      })
-
-      expect(result.ok).toBe(false)
-      if (result.ok) throw new Error('unreachable')
-      expect(result.refusal.reason).toBe('captured-scope')
-      expect(fs.readFileSync(home, 'utf8')).toBe(homeText)
-      expect(fs.readFileSync(about, 'utf8')).toBe(ABOUT)
-    })
   })
 })
 

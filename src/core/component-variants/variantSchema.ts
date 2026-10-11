@@ -57,10 +57,29 @@ const VariantRuleSchema = Type.Object({
 })
 export type VariantRule = Static<typeof VariantRuleSchema>
 
-/** The object entry / cva key that carries one member's classes. */
+/**
+ * Where the JSX element that consumes a prop is written: the position of its
+ * tag NAME, which is exactly the `file:line:col` of the node id the parser mints
+ * for it. A selected node whose own tail equals this is the element the
+ * binding styles; any other node of the component is not (CV-4).
+ */
+const ElementPositionSchema = Type.Object({
+  line: Type.Integer({ minimum: 1 }),
+  column: Type.Integer({ minimum: 1 }),
+})
+export type ElementPosition = Static<typeof ElementPositionSchema>
+
+/**
+ * The object entry / cva key that carries one member's classes. `rule` is the
+ * stylesheet rule behind the entry, when its value is a class string with
+ * exactly one class that has a rule in a stylesheet the component imports (a
+ * utility-class list such as Tailwind's has none, so a style edit has nowhere
+ * to land and refuses by name).
+ */
 const VariantEntrySchema = Type.Object({
   member: Type.String(),
   range: SourceRangeSchema,
+  rule: Type.Optional(Type.Object({ selector: Type.String(), range: SourceRangeSchema })),
 })
 export type VariantEntry = Static<typeof VariantEntrySchema>
 
@@ -78,14 +97,19 @@ const VariantBindingSchema = Type.Union([
    */
   Type.Object({
     kind: Type.Literal('css-module-class'),
+    element: Type.Optional(ElementPositionSchema),
     scope: Type.Union([Type.Literal('module'), Type.Literal('global')]),
     expr: Type.String(),
+    /** The text around the prop in the class name: ``styles[`btn-${variant}`]`` is `btn-` / `''`; bare `styles[variant]` is `''` / `''`. A member's class is `<classPrefix><member><classSuffix>`. */
+    classPrefix: Type.String(),
+    classSuffix: Type.String(),
     range: SourceRangeSchema,
     rules: Type.Array(VariantRuleSchema),
   }),
   /** `data-variant={variant}` with `[data-variant="ghost"]` rules in an imported stylesheet. */
   Type.Object({
     kind: Type.Literal('data-attr'),
+    element: Type.Optional(ElementPositionSchema),
     attr: Type.String(),
     range: SourceRangeSchema,
     rules: Type.Array(VariantRuleSchema),
@@ -93,6 +117,7 @@ const VariantBindingSchema = Type.Union([
   /** `const variantClass: Record<Variant, string> = { primary: '…' }` indexed by the prop. */
   Type.Object({
     kind: Type.Literal('lookup-object'),
+    element: Type.Optional(ElementPositionSchema),
     objectName: Type.String(),
     range: SourceRangeSchema,
     entries: Type.Array(VariantEntrySchema),
@@ -100,6 +125,7 @@ const VariantBindingSchema = Type.Union([
   /** `cva(base, { variants: { variant: { primary: '…' } } })` called with the prop. `callee` is the imported name (`cva`, `tv`). */
   Type.Object({
     kind: Type.Literal('cva'),
+    element: Type.Optional(ElementPositionSchema),
     callee: Type.String(),
     group: Type.String(),
     range: SourceRangeSchema,
@@ -108,11 +134,14 @@ const VariantBindingSchema = Type.Union([
   /** `cn(base, disabled && 'is-disabled')` — the class literal a boolean switches on. */
   Type.Object({
     kind: Type.Literal('boolean-class'),
+    element: Type.Optional(ElementPositionSchema),
     range: SourceRangeSchema,
     className: Type.String(),
   }),
   Type.Object({
     kind: Type.Literal('opaque'),
+    /** The element holding the computed use that defeated the analyzer, when it sits in JSX. */
+    element: Type.Optional(ElementPositionSchema),
     file: Type.String(),
     /** The line that defeated the analyzer (or the declaration, when the prop is never read). */
     line: Type.Integer({ minimum: 1 }),

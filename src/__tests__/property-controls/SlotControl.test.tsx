@@ -129,7 +129,7 @@ describe('SlotControl', () => {
         return new Response(
           JSON.stringify({
             components: [
-              { name: 'Icon', file: 'src/components/Icon.tsx', exportName: 'default', isDefaultExport: true, role: 'component', props: [] },
+              { name: 'Icon', file: 'src/components/Icon.tsx', exportName: 'default', isDefaultExport: true, line: 1, column: 1, role: 'component', props: [] },
             ],
           }),
           { status: 200 },
@@ -216,8 +216,8 @@ describe('SlotControl', () => {
           return new Response(
             JSON.stringify({
               components: [
-                { name: 'Heart', file: 'src/components/Heart.tsx', exportName: 'default', isDefaultExport: true, role: 'component', props: [] },
-                { name: 'Star', file: 'src/components/Star.tsx', exportName: 'default', isDefaultExport: true, role: 'component', props: [] },
+                { name: 'Heart', file: 'src/components/Heart.tsx', exportName: 'default', isDefaultExport: true, line: 1, column: 1, role: 'component', props: [] },
+                { name: 'Star', file: 'src/components/Star.tsx', exportName: 'default', isDefaultExport: true, line: 1, column: 1, role: 'component', props: [] },
               ],
             }),
             { status: 200 },

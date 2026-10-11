@@ -226,6 +226,33 @@ const BUDGETS: ChunkBudget[] = [
     // `editorPermissionsContext`, split into shared chunks because the lazy
     // chunk and the body both import them. No component code entered this
     // chunk ("VectorPaint" occurs 0 times in it).
+    //
+    // Raised 43,200 -> 43,900 B for the Framework / Dependencies / Variables /
+    // Version control panel split (`LazyPanelSlot` in `LeftSidebar`). Audited
+    // against the build of `7aeeab2c` (43,216 B, already 16 B over the old cap):
+    // the +636 B is entirely `__vite__mapDeps`. Four panels left
+    // `AdminCanvasEditorBody` (963,151 B -> 744,312 B, -218.8 KB), and the
+    // modules they share with the body (`ColorInput`, `ControlRow`, `Section`,
+    // `TokenizedColorField`, `FilterBar`, `FrameworkChangeConfirmDialog`,
+    // `lockStatus`, `studioTokenCatalog`, ...) became their own shared chunks,
+    // each of which the body's preload list now names (206 entries, was 191).
+    // No component code entered this chunk. Measured 43,852 B. A 219 KB
+    // post-paint saving for 636 B of table is the same trade as the boundaries
+    // above; this is not first-paint code and nothing else here grew.
+    //
+    // LOWERED 43,900 -> 43,200 B with a real ~1 KB of headroom. The route shell's
+    // size was dominated by `__vite__mapDeps` (the body's preload table), and
+    // ~50 of its entries were sub-1.5 KB `src/ui/components/*` chunks (a .js and
+    // a .css each: Checkbox, Switch, Tabs, FilterBar, ...), split out only
+    // because the body and a lazy chunk both import them. `vite.config.ts` now
+    // folds every `src/ui/components` module into one `ui-components` chunk
+    // (same idea as the single `pixel-art-icons` chunk), so the table names one
+    // js + one css instead. Measured on the merged shell head (cb9b7636):
+    // 43,905 B before, 42,180 B after (-1,725 B), preload entries 209 -> 161;
+    // `AdminCanvasEditorBody` also fell 747,261 -> 726,921 B. Trade-off: the
+    // `ui-components` chunk is 190 KB raw and the admin entry preloads it, but
+    // the entry already preloads the editor store and runtime, and these
+    // primitives are shared by every route.
     maxBytes: 43_200,
     rationale:
       'site route shell (current ~34 KB raw / ~12 KB gzipped). Must not ' +
@@ -279,11 +306,20 @@ const BUDGETS: ChunkBudget[] = [
     // the `restore-thread` undo toast, the postcss-free keyframes/`@layer`
     // scanners (which REPLACED postcss in the editor's static graph), and the
     // note/doc placement. Measured 935,503 B; ~2 KB headroom.
-    maxBytes: 937_500,
+    //
+    // LOWERED 937,500 -> 780,000 B when the Framework (131 KB with Colors,
+    // Typography and Spacing), Version control, Dependencies and Variables
+    // panels moved behind first-open lazy boundaries (`LazyPanelSlot`).
+    // Measured 963,151 B before (over the old cap) and 744,312 B after; the cap
+    // keeps ~5% headroom over the new size so the next eager panel import fails
+    // here instead of regrowing the body. The presence overlay, poster
+    // rasterizer and variants gallery were checked and are NOT in this chunk
+    // (they already live in `BoardFramesLayer` / `liveBoardPoint` chunks).
+    maxBytes: 780_000,
     rationale:
       'post-paint Site editor body (canvas + panels + modules + publisher). ' +
-      'Current ~815 KB raw / ~271 KB gzipped after the 2026-09-14 P3/Track-L/R2 ' +
-      'consolidation (see maxBytes comment). This is still the main Site runtime ' +
+      'Current ~727 KB raw after the Framework/Git/Dependencies/Variables panels ' +
+      'went lazy (see maxBytes comment). This is still the main Site runtime ' +
       'cost, but it must remain behind the shell lazy boundary.',
   },
   {

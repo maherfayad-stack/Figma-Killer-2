@@ -50,7 +50,8 @@ import {
 } from './canvasDrawTool'
 import { armCreatedNodeFollowUp } from './createdNodeFollowUp'
 import { boardDrawPlacement } from './boardDrawTool'
-import { absolutePlacementForDraw } from './canvasDrawAbsolutePlacement'
+import { newLayerPlacementAt, newLayerPlacementStyles } from './canvasNewLayerPlacement'
+import { newLayerRefusalToast } from './newLayerRefusal'
 import { placeDrawOnBoard } from './placeDrawOnBoard'
 import { pushToast } from '@ui/components/Toast'
 import { startCanvasTextEdit } from './canvasTextEditStart'
@@ -76,7 +77,7 @@ interface DrawSession {
   drop: CanvasPointerInsertionDrop | null
   /** The pressed frame's on-screen scale, to turn the drawn screen px into CSS px. */
   scale: number
-  /** The pressed frame's iframe (`null` outside a frame) — what an absolute layout is read from. */
+  /** The pressed frame's iframe (`null` outside a frame) — what the parent's placement is read from. */
   iframe: HTMLIFrameElement | null
   /** The board frame pressed in (`null` outside a board) — where T's new text opens. */
   frameId: string | null
@@ -194,24 +195,34 @@ export function CanvasDrawToolLayer({ tool, transformLayerRef }: CanvasDrawToolL
     const dragged = isDrawDrag(session.start, end)
     const rect = dragged ? drawnRect(session.start, end, { square: event.shiftKey, fromCenter: event.altKey }) : null
     if (session.drop) {
-      commitFrameDraw(session, session.drop, rect)
+      commitFrameDraw(session, session.drop, rect, event.metaKey || event.ctrlKey)
       return
     }
     commitBoardDraw(session.start, rect)
   }
 
-  const commitFrameDraw = (session: DrawSession, drop: CanvasPointerInsertionDrop, rect: DrawRect | null) => {
+  const commitFrameDraw = (session: DrawSession, drop: CanvasPointerInsertionDrop, rect: DrawRect | null, modifierHeld: boolean) => {
     const { scale, frameId } = session
     const definition = registry.get(spec.moduleId)
     if (!definition) return
+    // A free frame places its children by their own insets, so the draw lands
+    // where it was drawn; ⌘/Ctrl asks for the same anywhere (PA-3).
+    const placement = newLayerPlacementAt(
+      session.iframe,
+      drop.location.parentId,
+      rect ? { ...rect } : { x: session.start.x, y: session.start.y, width: (spec.clickSize?.width ?? 0) * scale, height: (spec.clickSize?.height ?? 0) * scale },
+      modifierHeld,
+    )
+    if (placement.kind === 'refused') {
+      pushToast(newLayerRefusalToast(spec.label, placement.reason))
+      return
+    }
     const store = useEditorStore.getState()
     // Every insert writes through the ACTIVE tree, so the frame's page must be
     // active before it runs (`useCanvasInsertionDrag` does the same).
     if (drop.pageId !== selectActiveCanvasPage(store)?.id) store.openPageInCanvas(drop.pageId)
     if (tool === 'text') armCreatedNodeFollowUp((nodeId) => { startCanvasTextEdit(nodeId, frameId, { selectAll: true }) })
-    // In an absolutely-laid-out container the draw lands where it was drawn.
-    const placement = absolutePlacementForDraw(session.iframe, drop.location.parentId, rect ?? session.start)
-    const nodeId = insertModule(definition, drop.location, { inlineStyles: { ...drawInsertStyles(spec, rect, scale), ...placement } })
+    const nodeId = insertModule(definition, drop.location, { inlineStyles: { ...drawInsertStyles(spec, rect, scale), ...newLayerPlacementStyles(placement) } })
     if (nodeId !== null) useEditorStore.getState().setActiveBreakpoint(drop.breakpointId)
     useEditorStore.getState().setCanvasTool('move')
   }

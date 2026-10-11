@@ -361,10 +361,13 @@ describe('a structural source write is one undo step', () => {
     expect(lastEdits()).toEqual([{ kind: 'delete', nodeId: MADE_ID }])
   })
 
-  it('⌘G is undone by dissolving the container it wrote, not by deleting the children', async () => {
+  // G-7 - a group may GATHER members from elsewhere and an ungroup may KEEP the
+  // wrapper, so neither is the other's inverse any more: both undo through the
+  // journal's pre-image, which is exact whatever the container carried.
+  it('⌘G is undone by restoring its journal entry - the file exactly as it was', async () => {
     stubFetch([
-      { createdNodeIds: [MADE_ID], pages: [pageGrouped()] },
-      { relocatedNodeIds: [ROW_ID, SECOND_ID], pages: [pageBefore()] },
+      { createdNodeIds: [MADE_ID], undoToken: TOKEN_A, pages: [pageGrouped()] },
+      { pages: [pageBefore()] },
     ])
 
     useEditorStore.getState().selectMany([ROW_ID, SECOND_ID])
@@ -374,13 +377,45 @@ describe('a structural source write is one undo step', () => {
 
     useEditorStore.getState().undo()
     await waitFor(() => saveCalls.length === 2)
-    expect(lastEdits()).toEqual([{ kind: 'ungroup', nodeId: MADE_ID }])
+    expect(lastEdits()).toEqual([{ kind: 'restore', nodeId: `undo-journal:${TOKEN_A}`, token: TOKEN_A }])
   })
 
-  it('⌘⇧G is undone by writing the same container back around the children it released', async () => {
+  it('Frame selection posts ONE group with the frame, and ⌘Z restores the journal entry (PA-6)', async () => {
     stubFetch([
+      { createdNodeIds: [MADE_ID], undoToken: TOKEN_A, pages: [pageGrouped()] },
       { relocatedNodeIds: [ROW_ID, SECOND_ID], pages: [pageBefore()] },
-      { createdNodeIds: [MADE_ID], pages: [pageGrouped()] },
+    ])
+    const frame = {
+      wrapperStyle: { position: 'absolute', left: '40px', top: '30px', width: '220px', height: '140px' },
+      memberStyles: { [ROW_ID]: { left: '0px', top: '0px' }, [SECOND_ID]: { left: '160px', top: '90px' } },
+    }
+
+    useEditorStore.getState().selectMany([ROW_ID, SECOND_ID])
+    useEditorStore.getState().groupNodes([ROW_ID, SECOND_ID], undefined, undefined, frame)
+    await waitFor(() => useEditorStore.getState().canUndo)
+    expect(saveCalls).toHaveLength(1)
+    expect(lastEdits()).toEqual([
+      {
+        kind: 'group',
+        nodeId: ROW_ID,
+        siblingNodeIds: [SECOND_ID],
+        name: 'div',
+        frame: {
+          wrapperStyle: frame.wrapperStyle,
+          memberStyles: [{ left: '0px', top: '0px' }, { left: '160px', top: '90px' }],
+        },
+      },
+    ])
+
+    useEditorStore.getState().undo()
+    await waitFor(() => saveCalls.length === 2)
+    expect(lastEdits()).toEqual([{ kind: 'restore', nodeId: `undo-journal:${TOKEN_A}`, token: TOKEN_A }])
+  })
+
+  it('⌘⇧G is undone by restoring its journal entry, so a container that carried a class or a handler comes back whole', async () => {
+    stubFetch([
+      { relocatedNodeIds: [ROW_ID, SECOND_ID], undoToken: TOKEN_A, pages: [pageBefore()] },
+      { pages: [pageGrouped()] },
     ])
 
     useEditorStore.getState().loadSite(makeSite({ pages: [pageGrouped()] }))
@@ -390,13 +425,7 @@ describe('a structural source write is one undo step', () => {
 
     useEditorStore.getState().undo()
     await waitFor(() => saveCalls.length === 2)
-    const [edit] = lastEdits()
-    expect(edit!.kind).toBe('group')
-    expect(edit!.nodeId).toBe(ROW_ID)
-    expect(edit!.siblingNodeIds).toEqual([SECOND_ID])
-    // The container is written back as the tag it was, from the module
-    // registry — not as a hardcoded `div`.
-    expect(edit!.name).toBe('div')
+    expect(lastEdits()).toEqual([{ kind: 'restore', nodeId: `undo-journal:${TOKEN_A}`, token: TOKEN_A }])
   })
 
   it('five queued ⌘D presses are five undo steps, not one', async () => {
@@ -452,8 +481,11 @@ describe('a structural source write is one undo step', () => {
     expect(lastEdits()).toEqual([{ kind: 'delete', nodeId: moved(MADE_ID) }])
   })
 
-  it('skips what it cannot take back — one notice, no dialog, no write the server would refuse (ERR-28)', async () => {
-    stubFetch([{ createdNodeIds: [MADE_ID], pages: [pageGrouped()] }])
+  it('a group into a COMPONENT container is undone like any other - by the journal (it used to be un-undoable, ERR-28)', async () => {
+    stubFetch([
+      { createdNodeIds: [MADE_ID], undoToken: TOKEN_A, pages: [pageGrouped()] },
+      { pages: [pageBefore()] },
+    ])
 
     // A design-system container, registered here rather than pulled in from
     // `src/modules/alm/` (which has no importable barrel): what matters is the
@@ -469,19 +501,15 @@ describe('a structural source write is one undo step', () => {
     } as never)
 
     useEditorStore.getState().selectMany([ROW_ID, SECOND_ID])
-    // `unwrapJsxElement` refuses a COMPONENT wrapper by name, so there is no
-    // ungroup to write back.
     useEditorStore.getState().groupNodes([ROW_ID, SECOND_ID], 'test.card', {})
     await waitFor(() => useEditorStore.getState().canUndo)
 
     useEditorStore.getState().undo()
+    await waitFor(() => saveCalls.length === 2)
+    expect(lastEdits()).toEqual([{ kind: 'restore', nodeId: `undo-journal:${TOKEN_A}`, token: TOKEN_A }])
+    // No "skipped" notice, no dialog: the step was taken back.
     expect(useEditorStore.getState().structuralRefusalDialog).toBeNull()
-    const notice = currentToasts().find((toast) => toast.title.startsWith('Skipped “Group”'))
-    expect(notice?.kind).toBe('warning')
-    expect(notice?.body).toContain('component')
-    expect(saveCalls).toHaveLength(1)
-    // The step is gone, not parked on top of the stack.
-    expect(useEditorStore.getState()._historyPast).toHaveLength(0)
+    expect(currentToasts().find((toast) => toast.title.startsWith('Skipped'))).toBeUndefined()
     registry.unregister('test.card')
   })
 

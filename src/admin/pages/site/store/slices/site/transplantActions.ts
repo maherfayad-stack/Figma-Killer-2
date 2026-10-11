@@ -126,7 +126,7 @@ export function createTransplantActions(helpers: SiteSliceHelpers): TransplantAc
         anchorNodeId: commit.anchorNodeId,
         position: commit.position,
         copy: commit.copy,
-        parentIsEmpty: commit.copy && commit.parentIsEmpty,
+        ...(commit.row ? { row: commit.row } : {}),
         openSource: (origin) => openSourceFile(get(), origin),
       })
     },

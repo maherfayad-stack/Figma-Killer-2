@@ -30,6 +30,10 @@ async function call(set: unknown[]): Promise<Result> {
   return (await tool.handler!({ dir, set } as never, { userId: 'u1' } as never)) as Result
 }
 
+async function callRaw(input: Record<string, unknown>): Promise<Result> {
+  return (await tool.handler!({ dir, ...input } as never, { userId: 'u1' } as never)) as Result
+}
+
 const INDEX_CSS = [
   '/* The palette. Keep in sync with Figma. */',
   ':root {',
@@ -129,6 +133,53 @@ describe('studio_set_tokens', () => {
     viteProject()
     const result = await call([{ name: '--space-md', value: '1px; color: red' }])
     expect(result.ok).toBe(false)
+    expect(result.code).toBe('invalid-input')
+    expect(read('src/index.css')).toBe(INDEX_CSS)
+  })
+})
+
+describe('studio_set_tokens - rename and remove (CT-3)', () => {
+  it('renames the declaration in every mode and every var() across files, in one call', async () => {
+    viteProject()
+    write('src/App.tsx', 'export function App() { return <main style={{ color: "var(--color-brand)" }} /> }\n')
+    const result = await callRaw({ rename: { name: '--color-brand', to: '--color-primary' } })
+    expect(result.ok).toBe(true)
+    expect(read('src/index.css')).toBe(INDEX_CSS.replaceAll('--color-brand', '--color-primary'))
+    expect(read('src/App.tsx')).toContain('var(--color-primary)')
+    expect(result.renamed).toEqual([{ name: '--color-brand', to: '--color-primary', mentions: 3, files: 2, unfollowed: [] }])
+  })
+
+  it('renames a Tailwind @theme variable together with the utility classes that spell it, and refuses one whose classes it cannot follow (CT-6)', async () => {
+    const theme = ['@import "tailwindcss";', '@theme {', '  --color-crust: #c58940;', '  --spacing-gutter: 2rem;', '}', ''].join('\n')
+    viteProject(theme)
+    write('src/App.tsx', 'export function App() { return <main className="bg-crust hover:text-crust/50 p-gutter" /> }' + '\n')
+    const moved = await callRaw({ rename: { name: '--color-crust', to: '--color-toast' } })
+    expect(moved.ok).toBe(true)
+    expect(read('src/App.tsx')).toBe('export function App() { return <main className="bg-toast hover:text-toast/50 p-gutter" /> }' + '\n')
+    expect(moved.renamed).toEqual([{ name: '--color-crust', to: '--color-toast', mentions: 3, files: 2, unfollowed: [] }])
+
+    const refused = await callRaw({ rename: { name: '--spacing-gutter', to: '--spacing-edge' } })
+    expect(refused.ok).toBe(false)
+    expect(refused.code).toBe('invalid-input')
+    expect(String(refused.message)).toContain('every spacing and sizing utility')
+  })
+
+  it('refuses removing a token that is still read, and removes one that is not', async () => {
+    viteProject()
+    write('src/App.tsx', 'export function App() { return <main style={{ margin: "var(--space-md)" }} /> }\n')
+    const used = await callRaw({ remove: { name: '--space-md' } })
+    expect(used.ok).toBe(false)
+    expect(String(used.message)).toContain('src/App.tsx:1')
+    expect(read('src/index.css')).toBe(INDEX_CSS)
+
+    const unused = await callRaw({ remove: { name: '--radius-card' } })
+    expect(unused.ok).toBe(true)
+    expect(read('src/index.css')).toBe(INDEX_CSS.replace('  --radius-card: 12px;\n', ''))
+  })
+
+  it('wants exactly one of set, rename or remove', async () => {
+    viteProject()
+    const result = await callRaw({ rename: { name: '--space-md', to: '--space-base' }, remove: { name: '--radius-card' } })
     expect(result.code).toBe('invalid-input')
     expect(read('src/index.css')).toBe(INDEX_CSS)
   })

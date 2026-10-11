@@ -39,8 +39,9 @@
  * whose line numbers the previous write already moved. Refused as
  * `multi-select`, with the remedy that is actually true.
  */
-import { decodeSourceNodeId, isSourceDerivedNodeId, isStudioPageRootId } from './sourceNodeId'
+import { decodeSourceNodeId, isInlinedNodeId, isSourceDerivedNodeId, isStudioPageRootId, loopTemplateNodeId } from './sourceNodeId'
 import { refusePlacement, type StructuralRefusal } from './sourceStructure'
+import { getAncestors } from './selectors'
 import { resolveWriteAnchor, resolveWriteContainer } from './sourceStructurePreview'
 import type { PageNode } from './pageNode'
 import type { NodeTree } from './treeSchema'
@@ -63,12 +64,12 @@ export interface StructuralTransplantCommit {
   /** K2 across frames — leave the origin's markup where it is and write only the copy. */
   copy: boolean
   /**
-   * The container holds nothing the file wrote (`<X />` or `<X></X>`), so a
-   * copy may expand it and its undo is the journal's `restore`. For a drop into
-   * a layout component's children slot (OD-22) that is a question about the
-   * CALL SITE's children, which the store cannot read off the container node.
+   * G-1c - set when the dragged node is part of a `.map` row: `nodeId` is then
+   * the row's TEMPLATE (one piece of JSX renders every row, so a row has no
+   * writable id of its own), `copy` is always true, and this names the array
+   * element the row is, so the destination gets the row's data as a constant.
    */
-  parentIsEmpty: boolean
+  row?: { array: string; index: number; length: number }
 }
 
 export type StructuralTransplantPreview =
@@ -137,7 +138,8 @@ export function previewStructuralTransplant(
     }
   }
 
-  const placement = refusePlacement(node, gesture)
+  const rowCopy = rowCopyOf(originTree, node)
+  const placement = rowCopy ? null : refusePlacement(node, gesture)
   if (placement && !(copy && copyEscapesOriginRefusal(placement.reason))) {
     return { ok: false, refusal: placement, nodeId: node.id }
   }
@@ -188,7 +190,7 @@ export function previewStructuralTransplant(
   return {
     ok: true,
     commit: {
-      nodeId: node.id,
+      nodeId: rowCopy ? rowCopy.templateId : node.id,
       destinationParentNodeId: container.node.id,
       // `newIndex` counts the DROP PARENT's children. When the container had
       // to be re-resolved (the page root became the page's root element), that
@@ -196,10 +198,30 @@ export function previewStructuralTransplant(
       // than applied to the wrong one — identical reasoning to
       // `previewStructuralMove`'s reparent branch.
       ...resolveWriteAnchor(destinationTree, container, newParentId, newIndex),
-      copy,
-      parentIsEmpty: container.emptyAtCallSite,
+      copy: copy || rowCopy !== null,
+      ...(rowCopy ? { row: rowCopy.row } : {}),
     },
   }
+}
+
+/**
+ * G-1c - a node of a `.map` row whose array is written in the same file can be
+ * COPIED out of its list: the row's template element goes to the destination
+ * with the row's data beside it. `null` for anything else - a node outside every
+ * row, a row of an imported/computed/nested array (those keep refusing, with the
+ * sentence that names why), or a row inlined from a shared component.
+ */
+function rowCopyOf(
+  tree: NodeTree<PageNode>,
+  node: PageNode,
+): { templateId: string; row: NonNullable<StructuralTransplantCommit['row']> } | null {
+  const templateId = loopTemplateNodeId(node.id)
+  if (templateId === null || isInlinedNodeId(node.id)) return null
+  // The row ROOT carries the stamp: the node itself, else its nearest ancestor that does.
+  const root = [node, ...getAncestors(tree, node.id).reverse()].find((candidate) => candidate.listRow !== undefined)
+  if (root?.listRow?.kind !== 'array') return null
+  const { array, index, length } = root.listRow
+  return { templateId, row: { array, index, length } }
 }
 
 /**
@@ -286,8 +308,10 @@ export function isTransplantDestinationTree(destinationTree: NodeTree<PageNode>)
  * The other two stay refused for both, because they are statements about THIS
  * element:
  *
- *  - `list-row` — a `.map` row has no source range of its own at all, so a
- *    copy has nothing to read, never mind anywhere to put it;
+ *  - `list-row` — a `.map` row has no source range of its own at all. Where its
+ *    array is written in the same file a cross-frame drag does not come through
+ *    here at all: `rowCopyOf` turns it into a COPY of the row (G-1c). What
+ *    reaches this refusal is a row the array cannot place;
  *  - `code-placed` — the code itself decides this element (a spread, a slot
  *    fill, an SVG built in code). Those are exactly the shapes whose meaning
  *    does not survive being lifted into another module, and a copy changes

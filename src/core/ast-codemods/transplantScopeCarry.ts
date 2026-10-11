@@ -27,7 +27,16 @@
  * resolves name by name until every leaf is an import, a global, a context
  * hook it can re-establish, or another declaration that qualifies.
  */
-import { Node, SyntaxKind, VariableDeclarationKind, type FunctionDeclaration, type SourceFile, type VariableStatement } from 'ts-morph'
+import {
+  Node,
+  SyntaxKind,
+  VariableDeclarationKind,
+  type FunctionDeclaration,
+  type InterfaceDeclaration,
+  type SourceFile,
+  type TypeAliasDeclaration,
+  type VariableStatement,
+} from 'ts-morph'
 import type { FunctionLike } from '@core/page-parser'
 import { applyTextEdits, type TextEdit } from './jsxChildRange'
 import { reindentBlock, lineIndentAt } from './jsxChildPlacement'
@@ -35,8 +44,12 @@ import { bindingNames, freeVariableReferenceRanges, isReferenceIdentifier } from
 
 const HOOK_CALL_RE = /^use[A-Z0-9]/
 
-/** A statement the carry can copy: `const name = <expr>` (one declarator) or `function name() {}`. */
-export type CarriableDeclaration = VariableStatement | FunctionDeclaration
+/**
+ * A statement the carry can copy: `const name = <expr>` (one declarator),
+ * `function name() {}`, or - a type has no runtime and nothing to share -
+ * `type Name = ...` / `interface Name {}`.
+ */
+export type CarriableDeclaration = VariableStatement | FunctionDeclaration | TypeAliasDeclaration | InterfaceDeclaration
 
 export type LocalBinding = { kind: 'declaration'; statement: CarriableDeclaration } | { kind: 'owned' }
 
@@ -88,6 +101,8 @@ export function findLocalBinding(component: FunctionLike, name: string): LocalBi
 
 /** The module-level statement declaring `name` in `source`, when it has the shape this carry knows how to copy. */
 export function findModuleDeclaration(source: SourceFile, name: string): CarriableDeclaration | undefined {
+  const type = source.getTypeAlias(name) ?? source.getInterface(name)
+  if (type) return type
   const fn = source.getFunction(name)
   if (fn) return fn.getOverloads().length === 0 && !fn.isDefaultExport() ? fn : undefined
   const statement = source.getVariableDeclaration(name)?.getVariableStatement()
@@ -104,7 +119,15 @@ export function findModuleDeclaration(source: SourceFile, name: string): Carriab
 
 /** The identifier a carriable declaration introduces. */
 function declarationNameNode(statement: CarriableDeclaration): Node | undefined {
-  return Node.isFunctionDeclaration(statement) ? statement.getNameNode() : statement.getDeclarations()[0]?.getNameNode()
+  if (Node.isFunctionDeclaration(statement) || Node.isTypeAliasDeclaration(statement) || Node.isInterfaceDeclaration(statement)) {
+    return statement.getNameNode()
+  }
+  return statement.getDeclarations()[0]?.getNameNode()
+}
+
+/** Whether `name` is a type alias or interface the module declares - the types a copied declaration may carry. */
+export function isModuleTypeName(source: SourceFile, name: string): boolean {
+  return source.getTypeAlias(name) !== undefined || source.getInterface(name) !== undefined
 }
 
 const normalizeWhitespace = (text: string): string => text.replace(/\s+/g, ' ').trim()
@@ -141,7 +164,13 @@ export function declarationText(
 export function declaresIdentically(scope: SourceFile | { getStatements(): Node[] }, name: string, text: string): boolean {
   const wanted = normalizeWhitespace(text)
   return scope.getStatements().some((statement) => {
-    const nameNode = Node.isFunctionDeclaration(statement) || Node.isVariableStatement(statement) ? declarationNameNode(statement) : undefined
+    const nameNode =
+      Node.isFunctionDeclaration(statement) ||
+      Node.isVariableStatement(statement) ||
+      Node.isTypeAliasDeclaration(statement) ||
+      Node.isInterfaceDeclaration(statement)
+        ? declarationNameNode(statement)
+        : undefined
     return nameNode?.getText() === name && normalizeWhitespace(statement.getText()) === wanted
   })
 }
@@ -158,7 +187,13 @@ export function namesInUse(source: SourceFile): Set<string> {
   for (const id of source.getDescendantsOfKind(SyntaxKind.Identifier)) {
     const parent = id.getParent()
     const declares =
-      (Node.isVariableDeclaration(parent) || Node.isParameterDeclaration(parent) || Node.isFunctionDeclaration(parent) || Node.isClassDeclaration(parent) || Node.isBindingElement(parent)) &&
+      (Node.isVariableDeclaration(parent) ||
+        Node.isParameterDeclaration(parent) ||
+        Node.isFunctionDeclaration(parent) ||
+        Node.isClassDeclaration(parent) ||
+        Node.isTypeAliasDeclaration(parent) ||
+        Node.isInterfaceDeclaration(parent) ||
+        Node.isBindingElement(parent)) &&
       parent.getNameNode() === id
     const imports = Node.isImportSpecifier(parent) || Node.isImportClause(parent) || Node.isNamespaceImport(parent)
     if (declares || imports || isReferenceIdentifier(id)) used.add(id.getText())

@@ -14,6 +14,7 @@ export type LeftSidebarPanelId =
   | 'selectors'
   | 'framework'
   | 'dependencies'
+  | 'variables'
   | 'content'
   | 'git'
   | 'agent'
@@ -133,6 +134,8 @@ interface UiSlice {
   /** Whether the Manage Core Framework dialog is open. */
   frameworkManagerOpen: boolean
   dependenciesPanelOpen: boolean
+  /** Variables - the project's design tokens, their modes and usage, editable (CT-3). */
+  variablesPanelOpen: boolean
   /** Bilingual content panel — the project's own locale dictionary as an editable en/ar table. */
   contentPanelOpen: boolean
   /**
@@ -323,6 +326,7 @@ function getActiveLeftSidebarPanel(state: EditorStore): LeftSidebarPanelId | nul
   if (state.selectorsPanelOpen) return 'selectors'
   if (state.frameworkPanelOpen) return 'framework'
   if (state.dependenciesPanelOpen) return 'dependencies'
+  if (state.variablesPanelOpen) return 'variables'
   if (state.contentPanelOpen) return 'content'
   if (state.gitPanelOpen) return 'git'
   if (state.isAgentOpen) return 'agent'
@@ -352,6 +356,7 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
   frameworkPanelTab: 'home',
   frameworkManagerOpen: false,
   dependenciesPanelOpen: false,
+  variablesPanelOpen: false,
   contentPanelOpen: false,
   gitPanelOpen: false,
   activePluginPanelId: null,
@@ -488,6 +493,7 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
       state.selectorsPanelOpen = panel === 'selectors'
       state.frameworkPanelOpen = panel === 'framework'
       state.dependenciesPanelOpen = panel === 'dependencies'
+      state.variablesPanelOpen = panel === 'variables'
       state.contentPanelOpen = panel === 'content'
       state.gitPanelOpen = panel === 'git'
       state.isAgentOpen = panel === 'agent'
@@ -514,6 +520,7 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
       state.selectorsPanelOpen = false
       state.frameworkPanelOpen = false
       state.dependenciesPanelOpen = false
+      state.variablesPanelOpen = false
       state.contentPanelOpen = false
       state.gitPanelOpen = false
       state.isAgentOpen = false

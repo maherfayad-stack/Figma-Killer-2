@@ -11,7 +11,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
 import { cleanup, render, waitFor } from '@testing-library/react'
 import { resolveLiveFrameSrc } from '@site/canvas/resolveLiveFrameSrc'
-import { setFramePoster } from '@site/canvas/BoardFramesLayer/frameSnapshotCache'
 import { setStudioProjectKey } from '@site/studio/studioProjectTrust'
 import { useEditorStore } from '@site/store/store'
 import { makeNode, makePage, makeSite } from '../fixtures'
@@ -60,7 +59,6 @@ afterAll(() => {
 const { LiveBoardFrame } = await import('@site/canvas/BoardFramesLayer/LiveBoardFrame')
 
 const BREAKPOINT = { id: 'studio', label: 'Studio', mediaQuery: '(max-width: 1024px)', width: 800 }
-const WIDTH = 800
 
 // `projectKey` starts null (Tier 0/1 default) — every test in this file
 // exercises the Tier-2 `LiveBoardFrame`, so it needs a real key before each
@@ -91,7 +89,7 @@ describe('LiveBoardFrame — not-ready render fork', () => {
         isActive={false}
         onActivate={() => {}}
         frameId="frame-1"
-        width={WIDTH}
+        posterUrl={undefined}
       />,
     )
 
@@ -117,7 +115,6 @@ describe('LiveBoardFrame — not-ready render fork', () => {
     // dev server reported ready, and on a board whose server could not start,
     // never.
     const page = makePage({ id: 'sms' })
-    setFramePoster(page, WIDTH, 'data:image/png;base64,AAAA')
 
     const { container } = render(
       <LiveBoardFrame
@@ -126,7 +123,7 @@ describe('LiveBoardFrame — not-ready render fork', () => {
         isActive={false}
         onActivate={() => {}}
         frameId="frame-2"
-        width={WIDTH}
+        posterUrl="blob:cached-poster"
       />,
     )
 
@@ -154,7 +151,7 @@ describe('LiveBoardFrame — not-ready render fork', () => {
         isActive={false}
         onActivate={() => {}}
         frameId="frame-3"
-        width={WIDTH}
+        posterUrl={undefined}
       />,
     )
 
@@ -203,7 +200,7 @@ describe('LiveBoardFrame — selection chrome while not ready (speed-04)', () =>
         isActive={false}
         onActivate={() => {}}
         frameId="frame-1"
-        width={WIDTH}
+        posterUrl={undefined}
       />,
     )
 

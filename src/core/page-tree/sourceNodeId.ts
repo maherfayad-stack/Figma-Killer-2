@@ -150,7 +150,10 @@ export function hasWritableSourceLocation(nodeId: string): boolean {
  * row is what a designer means by restyling a list item, and the editor says
  * so before and after the write. Nothing else may use this to reach a row's
  * source: a row's TEXT and props are per-row values with their own origins,
- * and a structural edit on a row is the array literal's business.
+ * and a structural edit on a row is the array literal's business — except
+ * G-9's "Unroll list", which rewrites the `.map` that renders every row: its
+ * `unroll-list` edit names this template, and the codemod re-derives the array
+ * and the callback from the AST before it writes a byte.
  */
 export function loopTemplateNodeId(nodeId: string): string | null {
   const segments = nodeId.split(INLINE_ID_SEPARATOR)
@@ -176,6 +179,26 @@ export function isInlinedNodeId(nodeId: string): boolean {
  */
 export function inlineDepth(nodeId: string): number {
   return nodeId.split(INLINE_ID_SEPARATOR).length - 1
+}
+
+/**
+ * The most call sites deep a value edit is still made on ONE instance: the
+ * page's component passes the value down through every component between it and
+ * the element (`exposeThroughLevels`). Past this a chain is a layout, not an
+ * instance, and the edit is the ordinary one with its sentence.
+ */
+export const MAX_INSTANCE_OVERRIDE_DEPTH = 5
+
+/**
+ * Every position an inlined id names, outermost first: the page's call site,
+ * the call site inside each component that renders the next one, and last the
+ * element itself — `[page, Card's <Badge/>, Badge's element]` for
+ * `page~Card~Badge`. Each is a plain `rel:line:col` id, so each goes through
+ * the one path decoder on its own (containment is per file). A plain id is
+ * its own single segment.
+ */
+export function inlineSegments(nodeId: string): string[] {
+  return nodeId.split(INLINE_ID_SEPARATOR)
 }
 
 /**

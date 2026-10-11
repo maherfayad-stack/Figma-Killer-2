@@ -284,6 +284,40 @@ ALREADY-MOUNTED `iframeDoc.documentElement`:
   app. A class comes off for light; an ATTRIBUTE is set to `light`, for the
   reason above.
 
+**Modes on the board (CT-4).** `PreviewAxes` also carries `modes:
+Record<axisId, modeId>` for every OTHER axis the project's CSS declares
+(`theme`, `density`, ...), keyed by the token catalog's axis ids
+(`@core/studio-tokens`). `getAxisMode`/`withAxisMode`/`mergePreviewAxes`/
+`axisSelection` (`previewAxes.ts`) are the one door: `color-scheme`,
+`direction` and `locale` live in their named fields, every other axis in
+`modes`, and the merge of board default and a frame's `BoardFrame.axes`
+override is per axis, `modes` included. What a mode WRITES on the frame's
+`<html>` is decided by the catalog's gates, nowhere else:
+`planModeRoot`/`applyModeRootPlan` (`core/studio-tokens/modeRoot.ts`) turn
+`[data-x="v"]` / `.cls` / `:not([attr=v])` gates into attribute and class
+writes, switching the unchosen modes of an axis off before the chosen one on.
+`direction`/`locale` keep their own path; a `prefers-color-scheme` media gate
+is answered by the existing `data-studio-scheme` rewrite; any other `@media`
+gate cannot be emulated, so it is never offered as a chip. The plan is applied
+FIRST, then the generic `dir`/`lang`/`data-theme`/`data-studio-scheme` writes
+land last. The older probe-derived class toggle only runs when the catalog has
+no colour-scheme axis it can drive (`drivesColorScheme`). Portal frames apply
+the plan in `applyPreviewAxesToFrameDocument`; live frames get it on the
+`setAxes` bridge message as `modeRoot` (resolved parent-side by
+`canvas/modeRootPlan.ts` - the runtime has no catalog) and apply it with the
+same `applyModeRootPlan`. `useApplyPreviewAxes` re-applies when the catalog
+arrives or changes (`studioTokenCatalogStore.ts`).
+`BoardFramesLayer/FrameModeChips.tsx` is the UI: a chip per catalog axis in
+the frame header (choosing pins the mode on THAT frame in `boards.json`'s
+`frame.axes`) and "+ Mode", which duplicates the frame into another mode
+beside the source (`duplicateFrameAsVariant`). The board keeps the catalog
+fresh itself (`useStudioTokenCatalogSync`), not only the inspector. A control
+inside a frame header carries `data-frame-header-control` so the header's
+move-drag leaves a press on it alone - do NOT `stopPropagation` its
+pointerdown: that starves the canvas pan gesture's `pointerdown`, and its
+stale click-suppression then eats the control's click. `posterKey`'s axes key
+includes `modes`, so a dark frame never reuses a light poster.
+
 **The frame's PAPER follows the preview, not the admin theme.** An iframe
 document that paints no background of its own is transparent, so the embedding
 element is what shows through — and a grow-to-content frame leaves a lot of it
@@ -627,9 +661,28 @@ Two traps worth keeping:
   default location. `shouldSuppressClick()` covers exactly one tick.
 
 `CanvasInsertionDragOverlay` draws the shared preview (a rect, or a 2px line for
-a before/after drop) and a cursor-following ghost, portaled to `document.body`
-so it can paint over an iframe. Its ghost takes children: the notch shows a
-label, the media explorer keeps its own thumbnail card.
+a before/after drop; upright beside side-by-side siblings, on the visually-near
+edge in a reversed flow) and a cursor-following ghost, portaled to
+`document.body` so it can paint over an iframe. Its ghost takes children (the
+label chip) and an optional `body`: a caller that knows the element passes
+`ghostSize` to the hook (the notch Div 100x100, an image's natural size, an
+icon's own size) and the ghost is that element at its size times
+`currentCanvasZoom()`, top-left on the pointer, at 50% opacity
+(`[data-insertion-ghost-body]`; the chip sits under it). The ghost MOVES without
+React: the hook's `insertionGhostTracker` writes `--ghost-x/y` on the ghost
+element on the same rAF as the drop resolve, and `setDrag` runs only when the
+drop PREVIEW changes (`sameDropPreview`), so a pointermove over one target is
+zero renders. A caller that cannot say what it inserts (a saved layout, a
+project component) keeps the chip alone.
+
+**Landing math (Label 2/3).** A press on the MIDDLE of an element that cannot
+hold the new one (outside `getCanvasDropZone`'s edge bands, so zone `inside`)
+lands on the side the pointer is nearer to (`nearerSiblingSide`: before the
+midpoint, after from it; flipped for a reversed flow). It used to resolve every
+such press as `after`, so the upper half of Label 3 landed one slot late. A
+press in a container's own space (the gap, a margin) goes through
+`nearestFlowIndex` as before. The Layers panel's row drops keep the append
+default: a row has no pointer geometry.
 
 **Released on the empty board (P5-G G1).** Outside every frame the gesture used
 to resolve to nothing — no preview and a release that silently did nothing,
@@ -1083,8 +1136,28 @@ The rules the ladder replaced prose with:
   else it selects EVERY child of the selection (`selectChildNodes`). ⇧Enter
   selects the parent of every selected layer. With a draw tool armed, the
   `node` rung gives Enter up and the `board` rung inserts at the selection.
+- **Add / remove auto layout (PA-7, PA-8):** ⇧A on a container runs
+  `layoutConversion.ts` — it reads the container and its children from the
+  portal frame's DOM (rects divided by the container's `scale()`, margin and
+  border from computed style), plans in the pure `layoutConversionPatches.ts`
+  (`planAddAutoLayout` via `inferAutoLayout`, `planFreezePositions`) and calls
+  the store's ONE `convertLayout` (`layoutConversionActions.ts`; refusal gate
+  `layoutConversionPlan.ts`). Landmines: a flex container lays out MARGIN
+  boxes, so the gap is read from margin boxes or block-flow margins are
+  counted twice; a padding write on a content-box container changes its outer
+  size unless it has no padding or border (then it is made `border-box`); a
+  reorder is a structural commit, so the restyle parks behind it
+  (`deferWhileStructuralCommitInFlight`) and runs on relocated ids; removed
+  style keys come back at the END of the object on undo.
+- **Live-frame anchored resize (PA-8):** `setResizeTarget` carries
+  `anchors` (which of left/right/top/bottom/inset-inline the SOURCE authors,
+  `resizeAnchorsKey` in `resizeTargetContext.ts`); `resizeHandles.ts` reads their
+  used values from the frame's computed style at pointerdown
+  (`elementResizeAnchors.ts`, shared with the portal drag) so a W drag on a
+  right-anchored layer writes the width alone. `ResizeCommitPatch` accepts
+  `right` / `insetInlineEnd` / `bottom` for it.
 - **Layer commands (P5-E):** ⌥A ⌥D ⌥W ⌥S ⌥H ⌥V align, ⌘⇧] / ⌘⇧[ front /
-  back, ⇧A flex, ⌘⌥C / ⌘⌥V copy / paste style — `useCanvasLayerCommandKeys`
+  back, ⇧A auto layout (above), ⌘⌥C / ⌘⌥V copy / paste style — `useCanvasLayerCommandKeys`
   on the `node` rung, component-owned. Letters with ⌥ are matched on
   `event.code` (⌥A is `'å'` on a Mac). ⌘C / ⌘V reject ⌥ since then: before,
   Ctrl+Alt+V pasted a layer AND a style. The right-click menu and the palette
@@ -1438,7 +1511,9 @@ comment (`server/handlers/studio/prototypeShell/shellFiles.ts`).
 ## Placement: one classifier, one offset function (PA-1 / PA-2)
 
 - `core/studio-runtime/placementKind.ts` is the ONLY place that decides whether a parent places its children: `isAutoLayoutDisplay` / `autoLayoutFamily` (flex, grid, inline or not), `parentPlacementKind` (`auto-layout` | `free-frame` | `flow`, from computed style, never a source marker) and `resolvePlacement` (`free` | `reorder` | `free-from-flow`). Free-move, arrow nudge, align, spacing handles and (PA-3) draw/drop call it. Gate: `placement-kind-single-source.test.ts` (a canvas or site-store file that tests `display.includes('flex'|'grid')` fails). `dropAxisRules.ts` is exempt: it resolves a flow AXIS and ships inside the runtime bundle.
-- `core/studio-runtime/containingBlockOffsets.ts` turns a rect into `left/top/right/bottom` against the block that REALLY contains an absolute box (`readContainingBlock`: nearest ancestor that is positioned, or has transform / perspective / filter / contain / will-change), minus its border, plus its scroll, divided by its scale. Never use `offsetLeft` against `offsetParent`: `offsetParent` ignores transformed ancestors, so the inset is measured from the wrong box (the `left:-421px` class). Used by `canvasFreeMove.ts` and `canvasImageDropPlacement.ts`; draw (PA-3) must use it too.
+- `core/studio-runtime/containingBlockOffsets.ts` turns a rect into `left/top/right/bottom` against the block that REALLY contains an absolute box (`readContainingBlock`: nearest ancestor that is positioned, or has transform / perspective / filter / contain / will-change), minus its border, plus its scroll, divided by its scale. Never use `offsetLeft` against `offsetParent`: `offsetParent` ignores transformed ancestors, so the inset is measured from the wrong box (the `left:-421px` class). Used by `canvasFreeMove.ts` and `canvasNewLayerPlacement.ts`.
+- `canvas/canvasNewLayerPlacement.ts` (PA-3) is the ONE decision for where a NEW layer goes when a pointer gesture creates it (draw tool, Assets/notch drop, OS file drop): `planNewLayerPlacement(parent, rect, modifierHeld)` -> `flow` | `absolute` | `refused`. A free-frame parent places absolute at the pointer with no modifier; a flow or auto-layout parent inserts in flow unless Cmd/Ctrl is held; a parent that is not a containing block refuses with K6's remedy. `resolveCanvasPointerInsertionDrop` hands `useCanvasInsertionDrag` a lazy `placeLayer(modifierHeld)`, measured once at release; `onDrop(ghost, location, placement)` gets a non-null placement only for an absolute landing. Modules and images honour it; saved layouts, Visual Components and SVG icons stay flow, and a project component is placed only if it declares a `style` prop (else a warning toast says it landed in flow). The frame document is reached through `resolvePortalDocument`, never `contentDocument` (gate `frame-document-adapter-isolation`).
+- Frame selection (PA-6, opt+cmd+G / Ctrl+Alt+G, `layers.frameSelection`): `canvasFrameSelection.ts` measures through the frame adapters, `canvasFrameSelectionPlan.ts` (pure) plans, `groupNodes(ids, undefined, undefined, frame)` writes ONE `group` edit with a `frame` (wrapper style + one patch per member) -> `frameJsxElements` (wrap + `setJsxStyle` per member, all-or-nothing). The batch is journaled, so undo is `restore-journal`. All-absolute selections get an absolute wrapper at the union rect and every authored inset rebased (a right-anchored layer stays right-anchored); all-flow selections get a bare wrapper (a flex parent's layout is copied); mixed, fixed, percent/calc/var-positioned, grid, space-* justified and flex-grow members refuse by name.
 - A free-move onto a static parent that is not the containing block still refuses (`planFreeMoveProperties(own, parentContains)`); a transformed parent now counts as containing.
 
 ## Vector editing (P5-D)
@@ -2088,17 +2163,37 @@ must stay that way: a caller outside `BoardFramesLayer` means "mounted exactly
 while visible", and making it required silently renders nothing at all for
 every such caller with no `tsc` error (`meta-14` landmine 1;
 `boardFrameViewTierFork.test.tsx` is the gate). `isOnScreen` stays a separate
-prop because it drives poster CAPTURE — since P2-I (PERF-5) the picture is
-taken only while the frame is OFF screen and still pooled (`framePosterNeeded`
-in `useFramePosterCapture.ts`), never while the user is looking at it. A capture
-was measured at 880–1,160 ms of main thread per 310-element frame; the old rule
-("on screen, no poster for this `Page` object") rasterized every visible frame
-the first time the board went quiet and the edited frame after every edit. A
-frame evicted before the board went quiet shows the plain title placeholder.
-`framePosterQueue`'s busy listeners run in every mounted frame document too
-(portal: DOM listeners; bridge: the adapter's `pointer`/`wheel`/`key` events),
-so a press inside a frame holds the queue. Each capture records a
-`studio:poster-capture` User Timing measure.
+prop for the pool's own reasons.
+
+**Posters (SB-2).** A frame's picture is `framePosters` (`posterStore.ts`: in-memory
+LRU by bytes + IndexedDB, one picture per frame), keyed by `posterKey.ts` — frame
+id + a hash of the page tree and the site style inputs + the frame's effective
+preview axes + width — so an edit makes a new key and a stale picture is
+unreachable; `framePosters.invalidate()` is the explicit hammer (the file-watcher
+`diskChanged` path calls it). `useFramePosterCapture` takes the picture while the
+frame is LIVE and its content has committed (`framePosterNeeded`), not as it
+leaves the screen: the rasterizer (`posterRasterizer.ts`) serializes the frame's
+real document (style sheets as text + `XMLSerializer` of the body, resources
+inlined once per URL) into an SVG `<foreignObject>` and draws it once at poster
+size, which replaced `html-to-image` (85–1,160 ms of main thread) on the board
+path. `html-to-image` remains only in `agent/renderEvidence.ts` (agent exports).
+What the rasterizer cannot draw by name: `<video>`/`<canvas>` pixels, iframe
+children, `@import`ed and cross-origin `<link>` sheets. The frame document's `<html>` carries
+`overflow: hidden` (grow-to-content reset) and its body is pinned to the nominal frame height; in
+the live document that overflow propagates to the viewport, inside a `foreignObject` it clips, so
+the rasterizer appends `html{overflow:visible !important}` or a 1301 px screen comes out blank
+below 800 px (gated by the `poster fidelity` assertion in `board-scale-budgets.e2e.ts`).
+**Containment (SB-1):** `.frame` is `contain: layout style` (never `paint`: handles, title and
+ring hang outside), the title placeholder is `content-visibility: auto`, and a Layers row
+selects/hovers with `selectLayersFrameId` (the frame the user last worked in, else the first frame
+of the active page) so the rings mount in one frame, not every variant. `framePosterQueue`'s busy
+listeners run in every mounted frame document too (portal: DOM listeners; bridge:
+the adapter's `pointer`/`wheel`/`key` events), so a press inside a frame holds the
+queue. Each capture records a `studio:poster-capture` User Timing measure.
+`liveFrameCap.ts` is the pure, adaptive live-frame cap policy (default 20, scaled
+by `navigator.deviceMemory` and the measured cost of a live frame, floor 12;
+posters below zoom 0.35; selected/editing/play frames always live) — SB-5's
+poster-first mounting will replace `framePool.ts` with it.
 
 Measured, 18-frame stand-in board, dev build, same Playwright runner
 `tests/e2e/studio-board-perf.e2e.ts` uses:
@@ -2480,6 +2575,7 @@ cloned wheel. Everything the board learns about a bridge frame arrives as a
 | `ready`, `hmr:before`/`hmr:after`, `frame:resize`, `error`, `measure:result` | unchanged | `useAdapterReady`, `overlayMeasureScheduler`, `useIframeFrameAutoHeight`, `useBridgeFrameDiagnostics`, `useBridgeComputedValues`, and (`hmr:after`/`frame:resize`) `useBridgeSelectionChrome`'s anchor refresh |
 | `key` (P2-B; `down`/`up`, `key`/`code` ≤ 32 chars, `location`, `repeat`, modifiers) / `blur` | `keyForwarding.ts` — capture-phase `keydown`/`keyup` on the document and `blur` on its window, DESIGN mode only, never for a key typed into a contentEditable or a text field; a design-mode keydown is cancelled and stopped in the frame | `useBridgeFrameInteraction` → `canvasFrameKeyRelay.ts`, the portal frame's own relay: `down` becomes a keydown clone on the parent `document` (the one dispatcher), `up` goes into the release broadcast, `blur` releases every held key if focus left the editor (ERR-11) |
 | `dropCandidates:result` (`speed-06`; every stamped node's `{nodeId, occurrenceIndex, rect, axis, reversed, childRects}`, bounded ≤2000 candidates/≤200 `childRects` each) | `dropCandidates.ts`'s `collectDropCandidates`, answering the matching `dropCandidates` request | `BridgeFrameAdapter.measureDropCandidates()`'s pending-request map → `canvasInsertionDragSnapshot.ts`'s per-drag snapshot (never a per-move consumer) |
+| `measureAll:result` / `geometry:dirty` (SB-3; every boxed node's `{nodeId, occurrenceIndex, rect, parent, clips, inert, transformed, paint}`, bounded ≤4000 with a `truncated` flag; the ping is a latch, once per read, and only after the first `measureAll`) | `nodeGeometry.ts`'s `collectNodeGeometry` answering the matching `measureAll`; `geometryDirtySignal.ts` fed by the body `layoutObserver` the runtime already runs | `BridgeFrameAdapter.measureAll()`'s pending map → `frameGeometry/frameGeometryRegistry.ts` (the rect index; see "The rect index" below) |
 
 And the other direction — what the parent sends a bridge frame that a portal
 frame never needs (each is a no-op on a portal adapter). The chrome calls come
@@ -2493,11 +2589,14 @@ frame's adapter); the rest name their caller:
 | `setResizeTarget(ref, { proportional, sizing, snap })` | draws the eight handles (`resizeHandles.ts`) on the node's presented element when its computed display takes a size; the parent already applied the module half of `resizeOffer.ts` (`canOfferResizeForModule`). `sizing` is the node's STORED `flex`/`alignSelf`/`justifySelf` (canvas-23) and `snap` its tree siblings, tree parent and the committed zoom (canvas-26) — `resizeTargetContext.ts` reads them as primitives, so an unrelated store write re-sends nothing. A drag reads both once, at pointerdown |
 | `optimistic.revert(nodeIds)` (store-17) | puts back the optimistic hide and move of exactly those nodes (`revertOptimisticNodes`) — called from `structuralCommitRollback.ts` when a structural write is refused or never answered, because no HMR follows a write that did not land. Other nodes keep their optimistic state: a second gesture still in flight keeps its preview |
 | `measure(selection)` | answers with body-relative rects; the parent projects them through `createCanvasOverlayMeasureSession` to anchor the selection toolbar and in-place inspector, which stay in the parent document as they do for a portal frame — once per selection change, pan/zoom commit, `frame:resize` or `hmr:after`, never per frame |
-| `optimistic.style(nodeId, patch, className?)` (`speed-01`) | applies the patch as a stylesheet rule ALWAYS scoped to `nodeId`'s own element (never `nodeId`'s own inline `style`, which React's later HMR write must not be cleared), stamping `[data-studio-optimistic-style]` and keying the rule on that stamp — for BOTH an inline write and a class write (`className` present). `className` crosses the wire but is informational only: a bridge frame cannot build a `.<className>` selector from it, because that name is Studio's own PARSE of the class, not the independently-hashed name Vite's CSS-modules plugin gave it in the live DOM — proven live (`speed-01`'s STATE.md entry, "Live-measurement fix"), a `.<className>` rule matched nothing. Only the edited node previews instantly; other elements sharing the class catch up on the next HMR update. Called from `commitApi.ts`'s `writeToTarget`/`previewToTarget` for a BASE-context OR a BREAKPOINT-context style commit or scrub — the broadcast layer (`optimisticStructuralBroadcast.ts`'s `broadcastOptimisticStyle`) filters a breakpoint-context write to only the bridge frame(s) whose OWN `breakpointId` (`canvasFrameAdapterRegistry.ts`'s per-registration field, set by `IframeFrameSurface.tsx`) matches; a base write reaches every bridge frame, same as before. Only a STATE/condition context (hover, focus, active, …) is skipped entirely — a live board frame IS a breakpoint frame, so treating every non-base context as "skip" (the pre-fix behaviour) silently removed the preview from its main use case. `PortalFrameAdapter`'s implementation is a documented no-op — the portal tree already repaints from the same store write. |
+| `optimistic.style(nodeId, patch, className?)` (`speed-01`) | applies the patch as a stylesheet rule ALWAYS scoped to `nodeId`'s own element (never `nodeId`'s own inline `style`, which React's later HMR write must not be cleared), stamping `[data-studio-optimistic-style]` and keying the rule on that stamp — for BOTH an inline write and a class write (`className` present). `className` crosses the wire but is informational only: a bridge frame cannot build a `.<className>` selector from it, because that name is Studio's own PARSE of the class, not the independently-hashed name Vite's CSS-modules plugin gave it in the live DOM — proven live (`speed-01`'s STATE.md entry, "Live-measurement fix"), a `.<className>` rule matched nothing. Only the edited node previews instantly; other elements sharing the class catch up on the next HMR update. Called from `commitApi.ts`'s `writeToTarget`/`previewToTarget` for a BASE-context OR a BREAKPOINT-context style commit or scrub — the broadcast layer (`optimisticStructuralBroadcast.ts`'s `broadcastOptimisticStyle`) filters a breakpoint-context write to only the bridge frame(s) whose OWN `breakpointId` (`canvasFrameAdapterRegistry.ts`'s per-registration field, set by `IframeFrameSurface.tsx`) matches; a base write reaches every bridge frame, same as before. Only a STATE/condition context (hover, focus, active, …) is skipped entirely — a live board frame IS a breakpoint frame, so treating every non-base context as "skip" (the pre-fix behaviour) silently removed the preview from its main use case. A CLEARED inline property (`null` in the patch) is sent as the empty value `OPTIMISTIC_STYLE_CLEARED`: the runtime removes that property from the element's inline `style` (remembering its value) and puts it back when the preview is taken back (`optimistic.style:clear`, `vite:beforeUpdate`); a class-target clear is not previewed. `PortalFrameAdapter`'s implementation is a documented no-op — the portal tree already repaints from the same store write. |
 | `optimistic.clearStyle(nodeId)` (`speed-01`) | drops whatever optimistic style rule is currently active for `nodeId` — a no-op when nothing is active. Called from `commitApi.ts`'s `clearStylePreview`. |
 | `optimistic.insert(nodeId, parentNodeId, index, tagName, text?)` / `optimistic.delete(nodeId)` / `optimistic.move(nodeId, parentNodeId, index)` (`live-07`) | the same-tick paint of a structural gesture, ahead of the file write and Fast Refresh: `optimisticDomOps.ts` inserts a ghost element built from structured `tagName`/`text` (never HTML; the id is a throwaway `optimistic:<uuid>`), removes the node's element, or moves it. `optimisticStructuralBroadcast.ts` sends each call to EVERY registered bridge adapter; a frame that does not hold the node no-ops. Callers: `studioSourceWrites.ts` (insert), `nodeActions.ts` and `deleteNodesAction.ts` (delete), `nodeActions.ts` and `moveSequenceActions.ts` (move). |
 | `startTextEdit(nodeId, allowed, text?)` (`live-18`) | the reply to the frame's own `text:editStart` request (called from `useBridgeFrameInteraction`, not `useBridgeSelectionChrome` — the frame asks per-node, not once per selection). `allowed` makes the target `contentEditable`, seeds it with `text` (the node's current canonical value), focuses it and selects all; refused is a silent no-op, mirroring the portal editor's own silence for a non-editable double-click. `PortalFrameAdapter`'s implementation is a documented no-op — nothing in portal mode ever emits `text:editStart` in the first place, since `NodeRenderer` owns its whole session directly with no adapter round trip. `beginTextEdit(nodeId, text)` is the parent-initiated start (`text:edit` with `begin: true`; see "Inline text editing"); `isFrameReady()` says whether the frame has posted `ready`. |
 | `measureDropCandidates()` (`speed-06`) | a bounded `dropCandidates`/`dropCandidates:result` round trip; the wire candidate's stamp+`occurrenceIndex` is translated to a canonical node id exactly like every other inbound method here. Called by `canvasInsertionDragSnapshot.ts`, once per drag per frame it visits (never per pointer move) and again on that frame's own `hmr:after`/`frame:resize`. `PortalFrameAdapter`'s implementation reuses the SAME `collectDropCandidates` the runtime answers with — a portal document's `data-node-id` values are already canonical, so there is no stamp translation to do. |
+| `measureAll()` (SB-3) | one `measureAll`/`measureAll:result` round trip, translated to canonical ids; arms the frame's `geometry:dirty` signal. A stamp the page tree does not know is folded into its nearest known ancestor. Called only by `frameGeometryRegistry.ts`. `PortalFrameAdapter` runs the SAME `collectNodeGeometry` synchronously. |
+
+**Inline-style edit -> paint, static frames (W3-c, measured 2026-10-11, preview build).** A portal frame paints an inline-style commit from the store write itself, never from the save: the field's `input` event to the frame's computed style reads the new value in ~27 ms (median; the next frame), a commit-only control (text colour: no live preview while typing) in ~17 ms after Enter, and over the 2.2 s the autosave, re-parse and reload take the value never changes again (no reconcile flash). The 0.86-0.95 s of the 2026-10-10 audit is the write (210-295 ms) plus the reload, i.e. what a frame that waits for the file shows; it is not reproducible on a static frame. `tests/e2e/canvas-edit-budgets.e2e.ts` ("inline-style edit -> paint", budget 35 ms) pins both the paint and the no-flash. Live (bridge) frames are unmeasured here: they need an installed project, which the e2e workspace cannot boot.
 
 **`speed-03` — `move` is coalesced, not forwarded raw.** A native
 `pointermove` fires far faster than the parent can usefully act on it
@@ -2781,3 +2880,80 @@ whose resolved page differs from the active one calls
 `openPageInCanvas(resolved.pageId)` BEFORE the insert commits — every insert
 action writes through `mutateActiveTree`, so the active document has to
 already BE the target page or the write lands nowhere.
+
+### The rect index (SB-3) — where every node of a frame is, without asking the frame
+
+`canvas/frameGeometry/` answers "what is under this board point" and "where is
+node X, in board units" from a per-frame snapshot, with no read of the frame's
+document and no `elementRect x zoom + iframeOffset + panOffset` chain to go
+stale. It is the foundation SB-4 draws the selection chrome from (parent-side,
+no in-frame rings) and the only way to hit-test a frame that has no live
+document (a poster). Nothing on the click or hover path consumes it yet: the
+one consumer today is the right-click "Select layer" list
+(`canvasNodesUnderPoint.ts`, which used to call `elementsFromPoint`, and now
+also works for a bridge frame, where the list used to be empty).
+
+| File | Job |
+|---|---|
+| `frameGeometryTypes.ts` | `NodeGeometry` / `FrameGeometrySnapshot`: the batched read, as plain data (already serializable, which is what lets SB-5/6 persist it beside a poster). A dependency-free leaf. |
+| `packedRTree.ts` | Static, bulk-loaded R-tree over typed arrays (Sort-Tile-Recursive packing, 16 per node). Point and rectangle search only. |
+| `frameGeometryIndex.ts` | `FrameGeometryIndex.fromSnapshot(snapshot, origin)`: `nodesAt(point)` (topmost first), `hitTest`, `rectOf`, `bounds`, `nodesIn(rect)`, `ancestorsOf`, `setOrigin`. Board-space API over a frame-viewport-space tree: moving a frame is `setOrigin`, O(1), never a rebuild. |
+| `frameGeometryRegistry.ts` | `getFrameGeometry(iframe)` (lazy, re-reads when dirty, concurrent askers share one read), `peekFrameGeometry` (never reads), `onFrameGeometryDirty`, `hitTestBoard(clientPoint)`. Discovers frames through `canvasFrameAdapterRegistry`. |
+
+**The read.** `adapter.measureAll()` returns every boxed node in document order:
+`nodeVisualRect` (a `display: contents` host takes the union of its children;
+the function moved into `@core/studio-runtime/nodeVisualRect.ts` and
+`canvasDomGeometry.ts` re-exports it), body-relative, plus `parent` (nearest
+listed ancestor), and the four facts a hit test needs: `clips` (overflow not
+visible), `inert` (`pointer-events: none` / `visibility: hidden`), `transformed`
+and `paint` (a paint rank: `z-index x 2`, +1 if positioned). One
+`querySelectorAll`, one body rect, one `getComputedStyle` per boxed node:
+`collectNodeGeometry` (`@core/studio-runtime`), shared verbatim by the bridge
+runtime (`measureAll` -> `measureAll:result`, one array) and the portal adapter.
+Measured: 1.1-1.4 ms median for a 140-node frame in a live portal frame; the
+index build is 0.2-0.3 ms and a point query 1.3-1.6 us (the browser's
+`elementsFromPoint` on the same frame: 17-18 us).
+
+**Dirty.** Both frames already run a subtree `childList` + `attributes`
+observer on the body for ring repositioning (`runtime.ts` `layoutObserver`,
+`PortalFrameAdapter` `armLayoutTracking`); it now also calls
+`geometrySignal.notify()`, for every record that is not the editor's own chrome.
+`geometryDirtySignal.ts` adds only what that observer cannot see, and only once
+the parent has asked for geometry: the `<head>` (a rewritten `<style>` moves
+boxes with no body mutation), `load`, `document.fonts` `loadingdone`,
+`transitionend`/`animationend`, and window `resize`. It is a latch: `geometry:dirty`
+fires once and stays quiet until the next `measureAll`, so a live app mutating
+every frame costs one message per read. A bridge frame's reloaded document (a
+second `ready`) is reported dirty by the adapter. A frame nobody indexes pays
+nothing: no observer, no listener, no message.
+
+**What a hit reproduces, and what it flags.** Reproduced: deepest box over its
+ancestors, siblings by paint rank then document order, `pointer-events: none`
+and `visibility: hidden` skipped (their hittable descendants still hit), a point
+outside a clipping ancestor cannot hit its descendants, half-open edges like the
+browser. `FrameHit.approximate` is true for a `transformed` node or ancestor (the
+rect is the bounds of a quad) and for any hit in a `truncated` read. NOT modelled
+and NOT flagged: `border-radius` corners (a box is hit as its rectangle), a
+negative `z-index` behind a non-stacking parent, `opacity`/`filter`/`isolation`
+stacking contexts, floats, `clip-path`/`mask`. A caller that must be exact (a
+drag that commits to a drop target) confirms with the native hit test while the
+frame is live. Bridge frames additionally lose the `clips`/`inert` facts of a
+stamp the page tree does not know (it is folded into its known ancestor).
+
+**Press resolution needs no change.** `resolveCanvasPressTarget` was already
+pure over the page tree (hit id in, layer id out), so a poster frame's press is
+`index.hitTest(boardPoint).nodeId` fed to the same function
+(`indexPressTarget.test.ts` composes them with no document).
+
+**Verified against the browser, in real layout** (`tests/e2e/frame-geometry-index.e2e.ts`;
+happy-dom has no layout): a probe bundle runs the real `collectNodeGeometry` +
+`FrameGeometryIndex` over a point grid and compares with `elementsFromPoint`
+mapped through `closest('[data-node-id]')`. An adversarial page (absolute overlap
+with z-index, `overflow: hidden`, `pointer-events: none`, `visibility: hidden`,
+`display: contents`, a rotated node): 22 004 of 22 211 points equal, the other 207
+all inside the rotated node and all flagged `approximate`, 0 unflagged
+mismatches. The 100-frame corpus's live frame: 20 862 of 20 864 equal; the two
+that differ are `border-radius` corners.
+
+**Freshness is the caller's rule:** ask `getFrameGeometry` when correctness
+matters, `peekFrameGeometry` when waiting is worse than a one-frame-stale answer.

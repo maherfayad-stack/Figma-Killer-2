@@ -60,8 +60,7 @@
  *     the editability check, the containment guard, and the single
  *     `writeSourceFile` below are shared with every op above, which is the whole
  *     reason that module is pure. Their honest-target gate is
- *     `analyzeKeyframesTarget`, not `analyzeDeclarationTarget` — see
- *     `applyCssEdit`.
+ *     `analyzeKeyframesTarget` — see `applyCssEdit`.
  *
  * All of them share the discriminator `kind: 'css'` (so the `StudioEdit`
  * union's top-level dispatch and `StudioEditRefusal.kind` stay unchanged),
@@ -85,11 +84,13 @@
  *   2. **`set` and `unset` only.** The declaration the CASCADE reads is the
  *      one written (P3-C, WB-16): a later duplicate block, a second
  *      declaration in one block, a covering shorthand after the longhand —
- *      the three shapes `analyzeDeclarationTarget` used to refuse — are
- *      written where they take effect, and a removal clears every
- *      declaration of the property. `setDeclaration` still refuses a covering
- *      `!important` (`important-override`), unparseable CSS (`css-syntax`)
- *      and a malformed scope (`invalid-at-rule`). Not a question for
+ *      shapes an analyzer used to refuse — are written where they take
+ *      effect, and a removal clears every declaration of the property. G-5
+ *      finished the ladder: a covering `!important` shorthand is rewritten in
+ *      place or beaten by an `!important` longhand, and every `set` reports the
+ *      rung it landed on (`styleLanding`). `setDeclaration` still refuses
+ *      unparseable CSS (`css-syntax`) and a malformed scope
+ *      (`invalid-at-rule`). Not a question for
  *      `insert`/`create` — a brand-new rule has no prior declaration to be
  *      shadowed by, and `insertRule` itself refuses to create a second block
  *      for an exact-selector match (see its doc).
@@ -112,6 +113,7 @@
  * (or its own destination resolution) named — so there is no honest sentence
  * to show a user, only an attack to decline.
  */
+import postcss from 'postcss'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { QuoteKind } from 'ts-morph'
@@ -125,6 +127,7 @@ import {
   setDeclaration,
 } from '@core/css-codemods'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
+import type { StyleLandingRung } from '@core/page-tree'
 
 /**
  * A conditional block, as `name params` (`media (max-width: 768px)`,
@@ -275,7 +278,12 @@ export type CssCreateEdit = Extract<CssEdit, { op: 'create' }>
  * `styleRuleWriteback.ts`).
  */
 export type CssEditOutcome =
-  | { applied: boolean; createdStylesheet?: { file: string } }
+  | {
+      applied: boolean
+      createdStylesheet?: { file: string }
+      /** G-5 — which rung of the ladder took a value-bearing edit (`set`/`insert`/`create`); absent for `unset` and the keyframe ops. */
+      styleLanding?: { rung: StyleLandingRung; file: string }
+    }
   | { applied: false; refusal: { reason: string; message: string } }
 
 /**
@@ -567,7 +575,7 @@ function applyCssCreateEdit(dir: string, edit: CssCreateEdit): CssEditOutcome {
   const result = insertRule(existingCss, edit.selector, edit.declarations, { atRule: edit.atRule })
   if (result.changed) writeSourceFile(cssAbsPath, result.css)
 
-  return { applied: true, createdStylesheet: { file: cssRelPath } }
+  return { applied: true, createdStylesheet: { file: cssRelPath }, styleLanding: { rung: 'rule', file: cssRelPath } }
 }
 
 /**
@@ -603,13 +611,13 @@ export function applyCssEdit(dir: string, edit: CssEdit): CssEditOutcome {
   }
 
   if (edit.op === 'insert') {
-    // No `analyzeDeclarationTarget` gate here — a brand-new rule has no
+    // No target gate here — a brand-new rule has no
     // prior declaration for a later block/shorthand to shadow, and
     // `insertRule` itself refuses to create a duplicate block for an
     // exact-selector match (merges into it instead — see its doc).
     const result = insertRule(cssText, edit.selector, edit.declarations, { atRule: edit.atRule })
     if (result.changed) writeSourceFile(filePath, result.css)
-    return { applied: true }
+    return { applied: true, styleLanding: { rung: 'rule', file: edit.file } }
   }
 
   // `set` and `unset` write the declaration the cascade reads (P3-C, WB-16),
@@ -617,11 +625,61 @@ export function applyCssEdit(dir: string, edit: CssEdit): CssEditOutcome {
   // there is one. `applied: true` even for a no-op: the requested state IS the
   // state on disk, and reporting a skip would warn the user about nothing.
   const scope = edit.atRule ? { atRule: edit.atRule } : {}
-  const result =
-    edit.op === 'unset'
-      ? removeDeclaration(cssText, edit.selector, edit.property, scope)
-      : setDeclaration(cssText, edit.selector, edit.property, edit.value, scope)
+  if (edit.op === 'unset') {
+    const removed = removeDeclaration(cssText, edit.selector, edit.property, scope)
+    if (!removed.ok) return { applied: false, refusal: { reason: removed.refusal.reason, message: removed.refusal.message } }
+    if (removed.changed) writeSourceFile(filePath, removed.css)
+    return { applied: true }
+  }
+  const result = setDeclaration(cssText, edit.selector, edit.property, edit.value, scope)
   if (!result.ok) return { applied: false, refusal: { reason: result.refusal.reason, message: result.refusal.message } }
   if (result.changed) writeSourceFile(filePath, result.css)
+  return { applied: true, styleLanding: { rung: result.landing, file: edit.file } }
+}
+
+/**
+ * The absolute, containment-checked stylesheet a `set`/`unset`/`insert` edit
+ * writes — `null` for any other op or a path that fails the guard. The batch's
+ * undo journal reads it BEFORE the edit runs (a `set` that lands as an override
+ * or an expanded shorthand is undone from that pre-image), so it takes the SAME
+ * `resolveContainedCssPath` check the write does: a journal must never read a
+ * file the writer would refuse to touch.
+ */
+export function cssEditStylesheet(dir: string, edit: CssEdit): string | null {
+  if (edit.op !== 'set' && edit.op !== 'unset' && edit.op !== 'insert') return null
+  if (classifyStylesheetEditability(edit.file).kind === 'compiled') return null
+  return resolveContainedCssPath(dir, edit.file)
+}
+
+/**
+ * G-10 - the class rules of a pasted HTML fragment, into the stylesheet the page
+ * imports: one read, every rule through `insertRule`, one write. The file is
+ * resolved through the same containment guard as every other write here, and
+ * `studioInsertHtml.ts` has already made each selector unique to the paste, so
+ * `insertRule`'s merge-into-an-existing-selector never fires.
+ */
+export function insertPastedRules(
+  dir: string,
+  fileRel: string,
+  rules: readonly { selector: string; declarations: Record<string, string>; atRule?: string }[],
+): CssEditOutcome {
+  const editability = classifyStylesheetEditability(fileRel)
+  if (editability.kind === 'compiled') return { applied: false, refusal: { reason: 'compiled-stylesheet', message: editability.reason } }
+  const filePath = resolveContainedCssPath(dir, fileRel)
+  if (filePath === null) return { applied: false }
+  let css = readFileSync(filePath, 'utf8')
+  // Never merge: `insertRule` sets declarations on an existing exact selector,
+  // which would overwrite the user's own rule. The planner renames a pasted class
+  // the file already uses; reaching this with a taken selector is a bug, and the
+  // caller puts the page back.
+  const scopeOf = (parent: postcss.Container | undefined): string =>
+    parent && parent.type === 'atrule' ? `${(parent as postcss.AtRule).name} ${(parent as postcss.AtRule).params}`.trim() : ''
+  const ruled = new Set<string>()
+  postcss.parse(css).walkRules((existing) => { ruled.add(`${scopeOf(existing.parent)}|${existing.selector.trim()}`) })
+  for (const rule of rules) {
+    if (ruled.has(`${rule.atRule ?? ''}|${rule.selector.trim()}`)) throw new Error(`${rule.selector} is already ruled in ${fileRel}; a paste never merges into it`)
+  }
+  for (const rule of rules) css = insertRule(css, rule.selector, rule.declarations, { atRule: rule.atRule }).css
+  writeSourceFile(filePath, css)
   return { applied: true }
 }

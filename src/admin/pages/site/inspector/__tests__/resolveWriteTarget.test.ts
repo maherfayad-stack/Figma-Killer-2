@@ -105,3 +105,45 @@ describe('resolveExistingWriteTarget', () => {
     expect(target.kind).toBe('none')
   })
 })
+
+describe('resolveWriteTarget — a class that cannot hold the value steps aside (G-5)', () => {
+  const template = {
+    classId: 'toggle',
+    selector: '.Toggle_sc',
+    // What a styled template says: no semicolon, brace, backtick or `${`.
+    holds: (value: string | number | null) => typeof value !== 'string' || !/[;{}`]/.test(value),
+  }
+  const winner = provenance([{ kind: 'class', classId: 'toggle', label: '.Toggle_sc', value: 'red', winner: true }])
+
+  it('lands the value on the class when the class can spell it', () => {
+    expect(
+      resolveWriteTarget({ provenance: winner, inlineWritable: true, writableClasses: [template], values: ['navy'] }),
+    ).toEqual({ kind: 'class', classId: 'toggle', selector: '.Toggle_sc' })
+  })
+
+  it('lands it on the element when the class cannot, instead of sending it to a refusal', () => {
+    expect(
+      resolveWriteTarget({ provenance: winner, inlineWritable: true, writableClasses: [template], values: ['red; margin: 0'] }),
+    ).toEqual({ kind: 'inline' })
+  })
+
+  it('judges every value of a multi-property commit', () => {
+    expect(
+      resolveWriteTarget({ provenance: winner, inlineWritable: true, writableClasses: [template], values: ['navy', 'a}b'] }),
+    ).toEqual({ kind: 'inline' })
+  })
+
+  it('keeps the class when the element is locked too, so the server says why rather than the edit vanishing', () => {
+    expect(
+      resolveWriteTarget({ provenance: winner, inlineWritable: false, writableClasses: [template], values: ['a;b'] }),
+    ).toEqual({ kind: 'class', classId: 'toggle', selector: '.Toggle_sc' })
+  })
+
+  it('a clear (null) and a number always fit', () => {
+    expect(resolveWriteTarget({ provenance: winner, inlineWritable: true, writableClasses: [template], values: [null, 4] })).toEqual({
+      kind: 'class',
+      classId: 'toggle',
+      selector: '.Toggle_sc',
+    })
+  })
+})

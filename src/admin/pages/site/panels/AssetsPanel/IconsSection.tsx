@@ -42,6 +42,16 @@ import styles from './AssetsPanel.module.css'
 /** How many icons render at once. The set runs to several hundred; search reaches the rest. */
 const VISIBLE_LIMIT = 120
 
+/** An icon's own size: its `width`/`height`, else its viewBox, else the 24 px icon grid. */
+function iconNaturalSize(markup: string): { width: number; height: number } {
+  const tag = /<svg[^>]*>/i.exec(markup)?.[0] ?? ''
+  const attr = (name: string) => Number(new RegExp(String.raw`\s${name}="([0-9.]+)(?:px)?"`, 'i').exec(tag)?.[1])
+  const viewBox = /viewBox="[-0-9.]+[ ,]+[-0-9.]+[ ,]+([0-9.]+)[ ,]+([0-9.]+)"/i.exec(tag)
+  const width = attr('width') || Number(viewBox?.[1]) || 24
+  const height = attr('height') || Number(viewBox?.[2]) || width
+  return { width, height }
+}
+
 interface IconsSectionProps {
   query: string
   collapsed: boolean
@@ -95,6 +105,7 @@ export function IconsSection({ query, collapsed, onToggle }: IconsSectionProps) 
   // Drag: where the drop line shows. The hook has already made the dropped-on
   // frame's page the active one when this runs.
   const canvasDrag = useCanvasInsertionDrag<StudioIcon>({
+    ghostSize: (icon) => iconNaturalSize(icon.markup),
     onDrop: (icon, location) => {
       const state = useEditorStore.getState()
       const pageId = state.activePageId
@@ -187,7 +198,12 @@ export function IconsSection({ query, collapsed, onToggle }: IconsSectionProps) 
           </ContextMenuItem>
         </ContextMenu>
       )}
-      <CanvasInsertionDragOverlay drag={canvasDrag.drag}>
+      <CanvasInsertionDragOverlay
+        drag={canvasDrag.drag}
+        body={
+          canvasDrag.drag ? <span aria-hidden="true" dangerouslySetInnerHTML={{ __html: sanitizeSvg(canvasDrag.drag.ghost.markup) }} /> : undefined
+        }
+      >
         {canvasDrag.drag && (
           <>
             <span

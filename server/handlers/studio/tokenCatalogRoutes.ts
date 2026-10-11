@@ -6,14 +6,18 @@
  * capability and the Origin by the time this runs.
  *
  *   GET  ?dir=<abs>[&usage=1]  -> `TokenCatalog` (`@core/studio-tokens`)
- *        `usage=1` adds where each token is read; the picker does not ask,
+ *        `usage=1` adds where each token is read, and the values a JavaScript
+ *        theme defines (`jsTheme`, read-only, CT-6); the picker does not ask,
  *        the Variables panel does.
- *   POST { dir, edits: TokenEdit[] } -> { ok, files, changed, unchanged, inserted }
+ *   POST { dir, edits: TokenEdit[] } -> { ok, files, changed, unchanged, inserted, renamed, removed, undoToken }
  *        `set` changes the ONE declaration that is a token for a mode;
  *        `insert` declares a new token (or a new mode of one, or the
  *        project's override of a package token). All-or-nothing; the plan is
  *        `tokenWrite.ts`'s `planTokenEdits`, the SAME planner `studio_set_tokens`
- *        uses. A refusal is a 422 `{ error, code, remedy?, entryIndex }`
+ *        uses. A `rename` or `remove` (CT-3) is the only edit of its request:
+ *        it rewrites every mention of the token across the project's source
+ *        (`tokenRefactor.ts`). Every write is journaled (`undoJournal.ts`):
+ *        `undoToken` is what one undo posts back. A refusal is a 422 `{ error, code, remedy?, entryIndex }`
  *        (409 `stale-source` when a file moved since it was read).
  *
  * The write holds `withProjectWriteLock`, re-reads each file inside it and
@@ -31,8 +35,12 @@ import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { contentHash, hasOtherHardLinks, readTextFile, resolveAgentFilePath, statIfPresent } from './agentFileAccess'
 import { ProjectWriteLockBusyError, withProjectWriteLock } from './projectWriteLock'
 import { collectProjectTokenSources } from './projectTokenSources'
-import { buildTokenCatalog, scanTokenUsage } from './tokenCatalog'
-import { planTokenEdits, type TokenWriteCode } from './tokenWrite'
+import { buildTokenCatalog, scanTokenUsage, themeTokenNames, withTokenUsage } from './tokenCatalog'
+import { extractJsThemeEntries } from './tokenExtractJsTheme'
+import { planTokenEdits } from './tokenWrite'
+import type { TokenWriteCode } from './tokenWriteTypes'
+import { readTokenWorkspaceFiles } from './tokenWorkspaceFiles'
+import { captureUndoPreImage, recordUndoJournal } from './undoJournal'
 
 const ROUTE_PATH = '/admin/api/studio/token-catalog'
 /** Edits per request - a palette, bounded. */
@@ -59,8 +67,11 @@ export async function tryServeStudioTokenCatalog(req: Request, url: URL, pathnam
     try {
       const dir = resolveProjectDir(url.searchParams.get('dir'))
       const sources = await collectProjectTokenSources(dir)
-      const usage = url.searchParams.get('usage') === '1' ? scanTokenUsage(dir) : undefined
-      return jsonResponse(buildTokenCatalog(sources, usage))
+      const catalog = buildTokenCatalog(sources)
+      // `usage=1` is the Variables panel's full read: where each token is read, and the
+      // values a JavaScript theme (a Tailwind v3 config, a theme.ts) defines.
+      if (url.searchParams.get('usage') !== '1') return jsonResponse(catalog)
+      return jsonResponse({ ...withTokenUsage(catalog, scanTokenUsage(dir, themeTokenNames(catalog))), jsTheme: extractJsThemeEntries(dir) })
     } catch (err) {
       rethrowProjectDirRefusal(err)
       return internalServerError('[studio:tokenCatalog]', err)
@@ -76,7 +87,10 @@ export async function tryServeStudioTokenCatalog(req: Request, url: URL, pathnam
       // The scan may compile the project's styles, so it runs outside the lock;
       // the lock re-reads every file and refuses if one moved since.
       const sources = await collectProjectTokenSources(dir)
-      const plan = planTokenEdits(sources, body.edits)
+      // Only a rename or remove reads the project's other files (all of them: a
+      // Tailwind theme name is also spelled as classes, which hold no `--`).
+      const needsWorkspace = body.edits.some((edit) => edit.op === 'rename' || edit.op === 'remove')
+      const plan = planTokenEdits(sources, body.edits, needsWorkspace ? readTokenWorkspaceFiles(dir, { allText: true }) : [])
       if (!plan.ok) return refusalResponse(plan.code, plan.message, plan.entryIndex, plan.remedy, plan.details?.declarations)
 
       return await withProjectWriteLock(dir, () => {
@@ -96,6 +110,7 @@ export async function tryServeStudioTokenCatalog(req: Request, url: URL, pathnam
           writes.push({ abs: target.abs, rel: target.rel, original: read.content, next: file.next })
         }
 
+        const preImage = captureUndoPreImage(writes.map((write) => write.abs))
         const written: typeof writes = []
         try {
           for (const write of writes) {
@@ -115,10 +130,15 @@ export async function tryServeStudioTokenCatalog(req: Request, url: URL, pathnam
 
         return jsonResponse({
           ok: true,
+          // What puts the stylesheets (and, for a rename, the source files) back
+          // byte for byte; `null` when the write could not be journaled.
+          undoToken: recordUndoJournal(dir, preImage),
           files: writes.map((write) => ({ path: write.rel, hash: contentHash(write.next) })),
           changed: plan.changed,
           unchanged: plan.unchanged,
           inserted: plan.inserted,
+          renamed: plan.renamed,
+          removed: plan.removed,
         })
       })
     } catch (err) {

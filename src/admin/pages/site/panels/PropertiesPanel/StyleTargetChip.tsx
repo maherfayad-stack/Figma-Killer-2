@@ -147,7 +147,7 @@ function classTooltip(classSelector: string | undefined, editability: ClassCssEd
     return `${editability.reason} Style the element instead for changes that save to disk.`
   }
   if (editability.kind === 'styled-template') {
-    return `Saved to ${basename(editability.file)} — changing a value here rewrites ${editability.componentName}'s styled template. Adding or clearing a declaration does not.`
+    return `Saved to ${basename(editability.file)} — a value here is rewritten in ${editability.componentName}'s styled template, or written after the line it overrides when the template computes it. Clearing a declaration does not save.`
   }
   if (editability.kind === 'plain-css') {
     return `Saved to ${basename(editability.file)} — edits to this class write back to source.`

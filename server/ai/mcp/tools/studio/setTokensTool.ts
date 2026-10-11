@@ -48,7 +48,9 @@ import { commitPlannedWrites, currentText, isRefusal, type PlannedFileWrite } fr
 import { contentHash, resolveAgentFilePath } from '../../../../handlers/studio/agentFileAccess'
 import { withProjectWriteLock } from '../../../../handlers/studio/projectWriteLock'
 import { collectProjectTokenSources } from '../../../../handlers/studio/projectTokenSources'
-import { planTokenEdits, type TokenWriteRefusal } from '../../../../handlers/studio/tokenWrite'
+import { planTokenEdits } from '../../../../handlers/studio/tokenWrite'
+import type { TokenWriteRefusal } from '../../../../handlers/studio/tokenWriteTypes'
+import { readTokenWorkspaceFiles } from '../../../../handlers/studio/tokenWorkspaceFiles'
 
 /** Tokens per call - a whole palette, bounded. */
 const MAX_TOKENS_PER_CALL = 40
@@ -60,7 +62,7 @@ const SetTokensInputSchema = Type.Object(
     dir: Type.Optional(
       Type.String({ description: 'Absolute project directory. Defaults to the project currently open in Studio - omit it unless you deliberately mean a DIFFERENT project than the one this conversation is about.' }),
     ),
-    set: Type.Array(
+    set: Type.Optional(Type.Array(
       Type.Object(
         {
           name: Type.String({ pattern: '^--[A-Za-z0-9_-]+$', maxLength: 120, description: 'The custom property, with its dashes: "--brand-primary". Must already be declared - studio_list_tokens lists them.' }),
@@ -70,7 +72,21 @@ const SetTokensInputSchema = Type.Object(
         { additionalProperties: false },
       ),
       { minItems: 1, maxItems: MAX_TOKENS_PER_CALL, description: `The tokens to change, up to ${MAX_TOKENS_PER_CALL}. All land or none do.` },
-    ),
+    )),
+    rename: Type.Optional(Type.Object(
+      {
+        name: Type.String({ pattern: '^--[A-Za-z0-9_-]+$', maxLength: 120, description: 'The declared token to rename, with its dashes.' }),
+        to: Type.String({ pattern: '^--[A-Za-z0-9_-]+$', maxLength: 120, description: 'Its new name. Must not be declared or named anywhere in the project.' }),
+      },
+      { additionalProperties: false, description: 'Rename one token: its declarations in every mode AND every var(), string and Tailwind arbitrary value that names it, in one write. Send it alone (not with set or remove).' },
+    )),
+    remove: Type.Optional(Type.Object(
+      {
+        name: Type.String({ pattern: '^--[A-Za-z0-9_-]+$', maxLength: 120, description: 'The declared token to remove, with its dashes.' }),
+        replaceWith: Type.Optional(Type.String({ pattern: '^--[A-Za-z0-9_-]+$', maxLength: 120, description: 'Another declared token its readers move to. Required when the token is still used anywhere.' })),
+      },
+      { additionalProperties: false, description: 'Remove one token: every declaration in every mode. Refused while it is used unless replaceWith says where its readers go. Send it alone (not with set or rename).' },
+    )),
   },
   { additionalProperties: false },
 )
@@ -81,16 +97,16 @@ interface TokenRequest {
   readonly scheme?: Scheme
 }
 
-/** A refusal from inside the batch, naming which entry of `set` it came from. */
+/** A refusal from inside the request, naming which entry of `set` it came from. */
 function forEntry(refusal: ToolRefusal, index: number): ToolRefusal & { entryIndex: number } {
-  const prefix = `set[${index}] refused, so no token was changed: `
+  const prefix = `Entry ${index} refused, so no token was changed: `
   return { ...refusal, entryIndex: index, message: `${prefix}${refusal.message}`, error: `${prefix}${refusal.error}` }
 }
 
 function planRefusal(refusal: TokenWriteRefusal): ToolRefusal & { entryIndex: number } {
-  // `already-declared` / `no-project-stylesheet` are insert refusals; this
-  // tool only sets, so they cannot reach it - but the type must still close.
-  const code = refusal.code === 'already-declared' || refusal.code === 'no-project-stylesheet' ? 'invalid-input' : refusal.code
+  // The tool registry has no code of its own for these planner refusals; the
+  // message and remedy carry the specifics.
+  const code = refusal.code === 'already-declared' || refusal.code === 'no-project-stylesheet' || refusal.code === 'in-use' || refusal.code === 'rename-blocked' || refusal.code === 'remove-blocked' ? 'invalid-input' : refusal.code
   return forEntry(
     toolRefusal(code, refusal.message, {
       ...(refusal.remedy ? { remedy: refusal.remedy } : {}),
@@ -108,17 +124,31 @@ const setTokensTool: AiTool = {
   requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
-    "Change the values of existing design tokens (CSS custom properties) in one call, all-or-nothing, as a minimal edit to the ONE declaration that is each token - comments, formatting and the other colour scheme's value untouched. Uses the same scan as studio_list_tokens, so it edits the declaration the canvas actually paints. scheme \"dark\" edits the dark-scheme declaration. Refuses no-such-token, read-only-source (a package, Studio's design system or compiled output wins: override it in the project's own stylesheet instead), ambiguous-declaration (declared in two places: every file:line is listed), stale-source, and the usual path refusals. Returns { changed: [{ name, scheme, file, line, from, to }], unchanged, files: [{ path, hash }] }. Requires studio.write.",
+    "Change the values of existing design tokens (CSS custom properties) in one call, all-or-nothing, as a minimal edit to the ONE declaration that is each token - comments, formatting and the other scheme untouched. Edits the declaration the canvas paints (same scan as studio_list_tokens); scheme \"dark\" edits the dark one. Refuses no-such-token, read-only-source (a package or compiled output wins: override it in the project's own stylesheet), ambiguous-declaration (every file:line listed), stale-source, and path refusals. Also renames a token everywhere it is declared or named (rename: { name, to }) and removes one (remove: { name, replaceWith? } - refused while it is used unless replaceWith names where its readers go), each as its own call. Returns { changed: [{ name, scheme, file, line, from, to }], unchanged, renamed, removed, files: [{ path, hash }] }. Requires studio.write.",
   inputSchema: SetTokensInputSchema,
   handler: async (input, ctx: ToolContext) => {
-    const { dir: dirInput, set } = input as { dir?: string; set: TokenRequest[] }
+    const { dir: dirInput, set, rename, remove } = input as {
+      dir?: string
+      set?: TokenRequest[]
+      rename?: { name: string; to: string }
+      remove?: { name: string; replaceWith?: string }
+    }
+    if ([set, rename, remove].filter((request) => request !== undefined).length !== 1) {
+      return toolRefusal('invalid-input', 'Send exactly one of set, rename or remove.', {
+        remedy: 'A rename or remove rewrites many files, so it is its own call; value changes go in set.',
+      })
+    }
     const dir = resolveToolProjectDir(dirInput, ctx)
 
     // The scan runs outside the lock (it may compile the project's styles);
     // the lock below re-reads each file and refuses if it moved since.
     const sources = await collectProjectTokenSources(dir)
-    const edits: TokenEdit[] = set.map((request) => ({ op: 'set', name: request.name, value: request.value, target: request.scheme ?? 'light' }))
-    const plan = planTokenEdits(sources, edits)
+    const edits: TokenEdit[] = rename
+      ? [{ op: 'rename', name: rename.name, to: rename.to }]
+      : remove
+        ? [{ op: 'remove', name: remove.name, ...(remove.replaceWith ? { replaceWith: remove.replaceWith } : {}) }]
+        : (set ?? []).map((request) => ({ op: 'set', name: request.name, value: request.value, target: request.scheme ?? 'light' }))
+    const plan = planTokenEdits(sources, edits, rename || remove ? readTokenWorkspaceFiles(dir, { allText: true }) : [])
     if (!plan.ok) return planRefusal(plan)
 
     return withProjectWriteLock(dir, () => {
@@ -143,6 +173,8 @@ const setTokensTool: AiTool = {
         dir,
         changed: plan.changed.map(({ name, target, file, line, from, to }) => ({ name, scheme: target, file, line, from, to })),
         unchanged: plan.unchanged.map(({ name, target }) => ({ name, scheme: target })),
+        renamed: plan.renamed,
+        removed: plan.removed,
         files: plans.map((entry) => ({ path: entry.target.rel, hash: contentHash(entry.next) })),
       }
     })

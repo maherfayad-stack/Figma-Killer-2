@@ -12,24 +12,23 @@
  * user left, a comment, the text between two inline tags) travels verbatim,
  * because it is inside the span rather than something this codemod re-renders.
  *
- * WHAT "CONTIGUOUS" HAS TO MEAN IN THE SOURCE
- * -------------------------------------------
+ * WHAT "CONTIGUOUS" HAS TO MEAN IN THE SOURCE, AND WHAT HAPPENS WHEN IT ISN'T
+ * -----------------------------------------------------------------------------
  * The canvas child list and the JSX child list are not the same list, so
- * "these three rows looked adjacent on the board" is not enough. Two checks,
- * both on the AST:
+ * "these three rows looked adjacent on the board" is not enough. The span form
+ * above is honest for exactly one shape of selection: siblings of ONE JSX
+ * parent with nothing the person did not select between the first and the last
+ * (no other element, no `{cond && <X/>}`, no `.map`) - otherwise the wrapper
+ * would swallow something never selected.
  *
- *   1. Every element is a child of the SAME JSX parent (`not-siblings`).
- *   2. The parent's element children between the first and the last are
- *      EXACTLY the ones named (`not-contiguous`). Otherwise the wrapper would
- *      swallow an element the user never selected — N targets for a gesture
- *      that named one span.
- *
- * An EXPRESSION child inside the span (`{cond && <X/>}`, a `.map`) refuses
- * (`expression-child`). The bytes sit between the endpoints, so a wrapper
- * around the span necessarily contains them — but what they render is decided
- * when the app runs, so Studio cannot say what it would be nesting. Ordinary
- * TEXT between the endpoints is carried, because it is inert, visible, and
- * leaving it outside would REORDER it out of the group rather than group.
+ * Any other selection used to refuse (`not-siblings`, `not-contiguous`,
+ * `expression-child`) and ask the person to rearrange their elements first. It
+ * is written by `gatherGroupRun.ts` instead (G-7): the first member keeps its
+ * place and gets the container, the others are cut from where they are and
+ * written inside it, in source order, and everything unselected stays exactly
+ * where it was. Ordinary TEXT and comments between the members of an unbroken
+ * run are carried, because they are inert, visible, and leaving them outside
+ * would REORDER them out of the group rather than group.
  *
  * THE CONTAINER'S TAG FOLLOWS THE HTML CONTENT MODEL (`struct-11`). The caller
  * names `div`; this writes `div` or `span`, whichever is legal between the
@@ -49,7 +48,7 @@
  * of its own after the container. Inside the container every byte of the run
  * travels as it was.
  */
-import { Node, type Project, type SourceFile } from 'ts-morph'
+import { type Project, type SourceFile } from 'ts-morph'
 import { createProject, loadSourceFile } from './locateJsxElement'
 import {
   applyTextEdits,
@@ -58,12 +57,14 @@ import {
   writeVerbatimSource,
   type JsxChildRange,
 } from './jsxChildRange'
-import { elementChildren, indentUnit, lineIndentAt, reindentBlock, trimTrailingBlankBack } from './jsxChildPlacement'
+import { indentUnit, lineIndentAt, reindentBlock, trimTrailingBlankBack } from './jsxChildPlacement'
+import { applyGather, gatherRun, isUnbrokenRun, namesLostByGathering, topLevelMembers } from './gatherGroupRun'
 import { planImportBindings, resolveImportEdits } from './jsxImportEdits'
 import { validateSubtree } from './jsxSubtree'
 import type { WrapJsxRefusalReason } from './wrapJsxElement'
 import { createdJsxLocation, offsetAfterEdits, type CreatedJsxLocation } from './createdJsxLocation'
 import { ancestorTagNames, intrinsicTagName, resolveWrapperTag } from './wrapperContentModel'
+import { jsStringSpelling, preferredQuote } from './stringSpelling'
 
 export interface WrapJsxElementsParams {
   file: string
@@ -80,23 +81,44 @@ export interface WrapJsxElementsParams {
   name: string
   /** Module the wrapper is imported from. Omit for an intrinsic tag, which needs no import. */
   importSpecifier?: string
+  /**
+   * Inline style the wrapper is written with (`style={{ position: 'absolute',
+   * left: '10px' }}`), camelCase CSS keys in the order given. Frame selection
+   * (PA-6) is the caller: a frame is a container that is sized and placed.
+   * Omit for the bare container ⌘G writes.
+   */
+  wrapperStyle?: Readonly<Record<string, string>>
+  /** Refuse a selection that is not one unbroken run instead of gathering it (a frame, PA-6). */
+  requireRun?: true
   /** Optional pre-existing project to reuse. */
   project?: Project
 }
 
+/** ` style={{ a: 'x', b: 'y' }}` — the attribute text, or `''` for no style. */
+function styleAttributeText(style: Readonly<Record<string, string>> | undefined, sourceFile: SourceFile): string {
+  const entries = Object.entries(style ?? {})
+  if (entries.length === 0) return ''
+  const quote = preferredQuote(sourceFile)
+  return ` style={{ ${entries.map(([key, value]) => `${key}: ${jsStringSpelling(value, quote)}`).join(', ')} }}`
+}
+
 /**
- * Why a group could not be written. `not-contiguous` is this codemod's own:
- * the named elements do not form an unbroken run of the parent's element
- * children, so one wrapper around them would also wrap something else.
+ * Why a group could not be written. `out-of-scope` is this codemod's own: a
+ * member that has to be gathered next to the first reads a name that is not
+ * visible where the container would sit (G-7).
  */
 export type WrapJsxElementsRefusalReason =
   // Everything an insert can refuse (`not-found`, `no-jsx-parent`,
-  // `expression-child`, `stale-source`, `not-siblings`,
+  // `expression-child`, `stale-source`,
   // `unsafe-tag`, …) plus `content-model` — the wrapper is written through the
   // same gates as `wrapJsxElement`, and refuses for the same extra reason.
   | WrapJsxRefusalReason
+  | 'out-of-scope'
+  // `requireRun` only: a frame measured its members where they sit, so gathering them would change what it measured.
   | 'not-contiguous'
   | 'no-targets'
+  // PA-6 — `frameJsxElements` could not write a member's offsets, so the frame was taken back.
+  | 'frame-unwritable'
 
 export interface WrapJsxElementsRefusal {
   reason: WrapJsxElementsRefusalReason
@@ -131,6 +153,23 @@ export function wrapJsxElements(params: WrapJsxElementsParams): WrapJsxElementsR
 
   const run = resolveRun(sourceFile, targets)
   if (!run.ok) return run
+  const gathered = !isUnbrokenRun(run.ranges)
+  if (gathered && params.requireRun === true) {
+    return refuseWrap(
+      'not-contiguous',
+      'There are other elements in the code between the ones selected, and a frame is measured around where they sit, so it cannot gather them. Select siblings next to each other.',
+    )
+  }
+  if (gathered) {
+    const lost = namesLostByGathering(sourceFile, run.ranges)
+    if (lost.length > 0) {
+      const names = lost.map((variable) => `\`${variable}\``).join(', ')
+      return refuseWrap(
+        'out-of-scope',
+        `Grouping these would move an element that reads ${names} from the code around it, and ${lost.length === 1 ? 'that name is' : 'those names are'} not in scope where the container would sit — that would break the file. Group elements that sit in the same component, or pass ${lost.length === 1 ? 'the value' : 'those values'} through first.`,
+      )
+    }
+  }
 
   // `struct-11` — WHAT the container is, decided from where it lands and what
   // it holds rather than hard-coded by the caller. A generic `div`/`span` is
@@ -170,11 +209,21 @@ export function wrapJsxElements(params: WrapJsxElementsParams): WrapJsxElementsR
   const baseIndent = lineIndentAt(verbatim, spanStart)
   const unit = indentUnit(verbatim)
 
-  const edit = !span.includes('\n') && !first.wholeLine
-    ? { start: spanStart, end: spanEnd, text: `<${tag}>${span}</${tag}>` }
-    : ownLinesWrap(verbatim, spanStart, spanEnd, span, tag, baseIndent, unit)
-
+  const opening = `${tag}${styleAttributeText(params.wrapperStyle, sourceFile)}`
   const importEdits = resolveImportEdits(sourceFile, verbatim, bindings.required)
+
+  if (gathered) {
+    // The first member's own span is where the container goes; the rest of the
+    // members are cut out of wherever they were and travel inside it.
+    const { span: gatheredSpan, removals } = gatherRun(verbatim, run.ranges)
+    const wrap = ownLinesWrap(verbatim, spanStart, first.element.getEnd(), gatheredSpan, tag, opening, baseIndent, unit)
+    writeVerbatimSource(sourceFile, file, applyGather(verbatim, [wrap, ...removals, ...importEdits]))
+    return { ok: true, created: createdJsxLocation(sourceFile, offsetAfterEdits(importEdits, wrap.start), wrap.text) }
+  }
+
+  const edit = !span.includes('\n') && !first.wholeLine
+    ? { start: spanStart, end: spanEnd, text: `<${opening}>${span}</${tag}>` }
+    : ownLinesWrap(verbatim, spanStart, spanEnd, span, tag, opening, baseIndent, unit)
 
   writeVerbatimSource(sourceFile, file, applyTextEdits(verbatim, [edit, ...importEdits]))
   return { ok: true, created: createdJsxLocation(sourceFile, offsetAfterEdits(importEdits, edit.start), edit.text) }
@@ -192,6 +241,7 @@ function ownLinesWrap(
   spanEnd: number,
   span: string,
   tag: string,
+  opening: string,
   baseIndent: string,
   unit: string,
 ): { start: number; end: number; text: string } {
@@ -203,7 +253,7 @@ function ownLinesWrap(
   let trailing = spanEnd
   while (trailing < lineEnd && (verbatim[trailing] === ' ' || verbatim[trailing] === '\t')) trailing += 1
   const block = [
-    `${baseIndent}<${tag}>`,
+    `${baseIndent}<${opening}>`,
     `${baseIndent}${unit}${reindentBlock(span, baseIndent, baseIndent + unit)}`,
     `${baseIndent}</${tag}>`,
   ].join('\n')
@@ -214,7 +264,12 @@ function ownLinesWrap(
   }
 }
 
-/** The named elements as one unbroken run of a single parent's element children, or why they are not one. */
+/**
+ * The named elements, in source order, with any element that sits inside another
+ * named one dropped (it travels with the one that holds it) - or why one of them
+ * cannot be addressed at all. Whether they form an unbroken run is a separate
+ * question, answered by `isUnbrokenRun`; either way they are written.
+ */
 function resolveRun(
   sourceFile: SourceFile,
   targets: readonly { line: number; col: number }[],
@@ -226,55 +281,5 @@ function resolveRun(
     // The same element named twice is one member of the run, not two.
     if (!ranges.some((range) => range.element === resolved.range.element)) ranges.push(resolved.range)
   }
-
-  const parent = ranges[0]!.parent
-  if (ranges.some((range) => range.parent !== parent)) {
-    return refuseWrap(
-      'not-siblings',
-      'These elements are not siblings in the code — the canvas shows them side by side, but the source nests them differently, so one container cannot be written around them. Select siblings next to each other.',
-    )
-  }
-
-  ranges.sort((a, b) => a.element.getStart() - b.element.getStart())
-
-  const contiguity = refuseGaps(parent, ranges)
-  if (contiguity) return contiguity
-
-  return { ok: true, ranges }
-}
-
-/** Refuses when anything the user did not name sits between the first and last element of the run. */
-function refuseGaps(
-  parent: Node,
-  ranges: readonly JsxChildRange[],
-): WrapJsxElementsRefused | null {
-  if (!Node.isJsxElement(parent) && !Node.isJsxFragment(parent)) return null
-
-  const siblings: Node[] = elementChildren(parent)
-  const first = siblings.indexOf(ranges[0]!.element)
-  const last = siblings.indexOf(ranges[ranges.length - 1]!.element)
-  if (first === -1 || last === -1) return null
-  if (last - first + 1 !== ranges.length) {
-    return refuseWrap(
-      'not-contiguous',
-      'There are other elements in the code between the ones selected, so a single container around them would wrap those too. Select siblings next to each other.',
-    )
-  }
-
-  // An expression child inside the span is NOT skippable: its bytes are
-  // between the endpoints, so the wrapper necessarily contains it — and what
-  // it renders is decided when the app runs, so Studio cannot say what it
-  // would be nesting.
-  const spanStart = ranges[0]!.element.getStart()
-  const spanEnd = ranges[ranges.length - 1]!.element.getEnd()
-  for (const child of parent.getJsxChildren()) {
-    if (!Node.isJsxExpression(child)) continue
-    if (child.getStart() > spanStart && child.getEnd() < spanEnd) {
-      return refuseWrap(
-        'expression-child',
-        'Something the code decides — a condition, a list, or a helper — sits between these elements, so a container around them would also contain whatever it renders. Group the elements around it instead.',
-      )
-    }
-  }
-  return null
+  return { ok: true, ranges: topLevelMembers(ranges) }
 }

@@ -88,10 +88,43 @@ export const ModeAxisSchema = Type.Object({
 })
 export type ModeAxis = Static<typeof ModeAxisSchema>
 
+/**
+ * One value a JavaScript theme defines (CT-6): a Tailwind v3 `tailwind.config.js`
+ * `theme` / `theme.extend` entry, or an entry of a design-token object file
+ * (`theme.ts`) that config reads. Not a CSS custom property: it has no `--name`
+ * and Studio never runs the file to learn its value, so it is listed and
+ * applied by utility class, never edited. `readOnlyReason` is the sentence the
+ * panel shows: exactly why, and what to do instead.
+ */
+export const JsThemeEntrySchema = Type.Object({
+  /** Stable: `<file>#<dotted path>`. */
+  id: Type.String(),
+  file: Type.String(),
+  /** 1-based line of the value in `file`. */
+  line: Type.Integer({ minimum: 1 }),
+  /** Where the value was found: the Tailwind config itself, or a token file it reads (or that stands alone). */
+  source: Type.Union([Type.Literal('tailwind-config'), Type.Literal('theme-file')]),
+  /** The theme group: `colors`, `spacing`, `fontSize`... */
+  group: Type.String(),
+  /** The dotted path inside the group: `primary.500` (`DEFAULT` kept as written). */
+  path: Type.String(),
+  family: TokenFamilySchema,
+  /** The value as written in the file. */
+  raw: Type.String(),
+  /** The value when it is a literal; `null` when it is computed (a spread, a call, a `require`, a reference), which Studio does not run. */
+  value: Type.Union([Type.String(), Type.Null()]),
+  /** The classes that apply it (`bg-primary-500`); empty when no Tailwind config reads this file or the group has none. */
+  utilities: Type.Array(Type.String()),
+  readOnlyReason: Type.String(),
+})
+export type JsThemeEntry = Static<typeof JsThemeEntrySchema>
+
 export const TokenCatalogSchema = Type.Object({
   tokens: Type.Array(CatalogTokenSchema),
   collections: Type.Array(TokenCollectionSchema),
   axes: Type.Array(ModeAxisSchema),
+  /** Only when the request asked for the Variables panel's full read. */
+  jsTheme: Type.Optional(Type.Array(JsThemeEntrySchema)),
 })
 export type TokenCatalog = Static<typeof TokenCatalogSchema>
 
@@ -113,6 +146,25 @@ export const TokenEditSchema = Type.Union([
     target: Type.Optional(TokenTargetSchema),
     /** Project-relative stylesheet to declare it in; default is chosen by the server. */
     file: Type.Optional(Type.String({ maxLength: 300 })),
+  }),
+  /**
+   * Rename a token: every declaration (all modes) and every mention in project
+   * source moves to `to`, in one write. Always the only edit in its request.
+   */
+  Type.Object({
+    op: Type.Literal('rename'),
+    name: Type.String({ pattern: '^--[A-Za-z0-9_-]+$', maxLength: 120 }),
+    to: Type.String({ pattern: '^--[A-Za-z0-9_-]+$', maxLength: 120 }),
+  }),
+  /**
+   * Remove a token: all of its declarations. A token that is still read needs
+   * `replaceWith` (another declared token the readers move to); an unused one
+   * does not. Always the only edit in its request.
+   */
+  Type.Object({
+    op: Type.Literal('remove'),
+    name: Type.String({ pattern: '^--[A-Za-z0-9_-]+$', maxLength: 120 }),
+    replaceWith: Type.Optional(Type.String({ pattern: '^--[A-Za-z0-9_-]+$', maxLength: 120 })),
   }),
 ])
 export type TokenEdit = Static<typeof TokenEditSchema>

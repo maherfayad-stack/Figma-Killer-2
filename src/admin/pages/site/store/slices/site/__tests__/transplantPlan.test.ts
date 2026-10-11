@@ -61,7 +61,6 @@ describe('planSourceTransplant — what it commits', () => {
       anchorNodeId: at(ABOUT, 4),
       position: 'before',
       copy: false,
-      parentIsEmpty: false,
     })
   })
 

@@ -38,7 +38,7 @@ import { createPortal } from 'react-dom'
 import { useAdminUi } from '@admin/state/adminUi'
 import { useEditorStore } from '@site/store/store'
 import type { Breakpoint, Page } from '@core/page-tree'
-import { MIN_FRAME_SIZE, type BoardFrame, type PreviewAxes } from '@core/studio-board'
+import { MIN_FRAME_SIZE, mergePreviewAxes, type BoardFrame, type PreviewAxes } from '@core/studio-board'
 import { Input } from '@ui/components/Input'
 import { ContextMenu, ContextMenuItem } from '@ui/components/ContextMenu'
 import { useInlineRename } from '@site/hooks/useInlineRename'
@@ -53,17 +53,18 @@ import { RESIZE_HANDLES, type ResizeHandle } from '@core/studio-runtime'
 import { resizeRect, type ResizeRect } from '../rectResize'
 import { useBoardFrameMoveDrag } from './useBoardFrameMoveDrag'
 import { useFramePosterCapture } from './useFramePosterCapture'
+import { selectPosterStyleSignature, useFramePoster } from './framePosters'
+import { posterKey } from './posterKey'
 import { afterPressPaint } from '../pressRing'
-import { getFramePoster } from './frameSnapshotCache'
 import { FramePosterPlaceholder } from './FramePosterPlaceholder'
 import { LiveBoardFrame } from './LiveBoardFrame'
 import { resolveFrameMount } from './framePool'
+import { FrameModeChips } from './FrameModeChips'
 import { FrameDiagnosticsBadge } from './FrameDiagnosticsBadge'
+import { GalleryAddVariantButton } from './GalleryAddVariantButton'
 import { describePinnedAxes } from './pinnedAxesLabel'
 import {
-  getColorSchemeCapability,
   getLocalesCapability,
-  subscribeColorSchemeCapability,
   subscribeLocalesCapability,
 } from '@site/studio/previewAxesCapability'
 import { getStudioTrustTier, subscribeStudioTrustTier } from '@site/studio/studioProjectTrust'
@@ -228,18 +229,12 @@ function BoardFrameViewImpl({
   // otherwise duplicating an already-overridden RTL frame "as RTL" would be
   // a no-op flip instead of producing the LTR sibling the label promises.
   const boardAxes = useEditorStore((s) => s.previewAxes)
-  const effectiveAxes: PreviewAxes = { ...boardAxes, ...frame.axes }
+  const effectiveAxes = mergePreviewAxes(boardAxes, frame.axes)
   // Header badge — the ONLY thing that makes a pinned frame visibly
   // different from an unpinned one (see `pinnedAxesLabel.ts`'s doc). `null`
   // whenever `frame.axes` is absent or empty, so an ordinary frame renders
   // no badge at all rather than an empty one.
   const pinnedAxesLabel = describePinnedAxes(frame.axes)
-  const colorSchemeCapability = useSyncExternalStore(
-    subscribeColorSchemeCapability,
-    getColorSchemeCapability,
-    getColorSchemeCapability,
-  )
-  const schemeVariantApplies = colorSchemeCapability !== null && colorSchemeCapability.mechanism !== 'none'
   // WS-10 §4.4 (Phase 4) — locale duplicate variant, same probe-honesty gate
   // (§7.4) the scheme variant above uses: omitted (not disabled) when the
   // probe found no locale dictionary at all, or found only one locale (a
@@ -268,7 +263,6 @@ function BoardFrameViewImpl({
   // not while the frame is on screen and already has one) and for why it
   // doesn't mount a second offscreen frame to do this.
   const frameBodyRef = useRef<HTMLDivElement>(null)
-  useFramePosterCapture(frameBodyRef, page, width, isOnScreen, mounted)
   // S1 — the frame's mount is staged (iframe -> injectors -> node tree; see
   // `IframeFrameSurface`'s header), so between entering the viewport and the
   // tree's commit the iframe is a real but EMPTY document. The poster stays
@@ -278,6 +272,13 @@ function BoardFrameViewImpl({
   // stable by React's own contract, so it cannot defeat `BreakpointFrame`'s
   // `memo()` bailout the way a fresh closure would.
   const [contentReady, setContentReady] = useState(false)
+  // SB-2 — the picture is keyed by what the frame renders (content hash + axes + width), so an edit
+  // makes a new key and the old picture is unreachable. A Tier-2 frame reports no readiness (see
+  // below), so it is captured on the same terms as before: once mounted and quiet.
+  const styleSignature = useEditorStore(selectPosterStyleSignature)
+  const posterId = posterKey({ frameId: frame.id, page, styleSignature, axes: effectiveAxes, width })
+  const posterUrl = useFramePoster(posterId)
+  useFramePosterCapture(frameBodyRef, page.id, posterId, width, posterUrl !== undefined, mounted, contentReady || trust === 'run-project')
 
   // Capture phase — fires before the frame's own node-click handling, so
   // `activePageId` is already switched to this page by the time selection
@@ -448,7 +449,9 @@ function BoardFrameViewImpl({
             `CanvasDiagnosticsInjector`, a Tier-2 live one through
             `useBridgeFrameDiagnostics`), so the badge does not branch on
             trust. */}
+        <FrameModeChips frame={frame} />
         <FrameDiagnosticsBadge scopeKey={frame.id} />
+        <GalleryAddVariantButton page={page} />
       </div>
 
       {contextMenu && createPortal(
@@ -474,10 +477,9 @@ function BoardFrameViewImpl({
           {/* WS-10 Phase 2 (§4.3-§4.4) — "duplicate as variant": a second
               frame of the SAME page, beside this one, with one preview axis
               flipped. Direction always applies (no probe gate — `dir`
-              always works, same as the toolbar toggle); the color-scheme
-              variant is omitted (not disabled) when the probe found no
-              dark-mode mechanism, so the menu never offers a duplicate that
-              would look identical to its source. */}
+              always works, same as the toolbar toggle). Duplicating into a
+              colour scheme or any other project mode is the header's
+              "+ Mode" (`FrameModeChips`), driven by the token catalog. */}
           <ContextMenuItem
             onClick={() => {
               setContextMenu(null)
@@ -487,17 +489,6 @@ function BoardFrameViewImpl({
             <span aria-hidden="true"><CopyPlusSolidIcon size={13} /></span>
             Duplicate as {effectiveAxes.direction === 'rtl' ? 'LTR' : 'RTL'}
           </ContextMenuItem>
-          {schemeVariantApplies && (
-            <ContextMenuItem
-              onClick={() => {
-                setContextMenu(null)
-                handleDuplicateAsVariant({ colorScheme: effectiveAxes.colorScheme === 'dark' ? 'light' : 'dark' })
-              }}
-            >
-              <span aria-hidden="true"><CopyPlusSolidIcon size={13} /></span>
-              Duplicate as {effectiveAxes.colorScheme === 'dark' ? 'Light' : 'Dark'}
-            </ContextMenuItem>
-          )}
           {localeVariantApplies && (
             <ContextMenuItem
               onClick={() => {
@@ -581,7 +572,7 @@ function BoardFrameViewImpl({
                     onActivate={activatePage}
                     frameId={frame.id}
                     axesOverride={frame.axes}
-                    width={width}
+                    posterUrl={posterUrl}
                   />
                 ) : (
                   // Byte-for-byte the SAME call this branch has always made —
@@ -606,14 +597,14 @@ function BoardFrameViewImpl({
             </CanvasPageContext.Provider>
           </CanvasDiagnosticsScopeContext.Provider>
         ) : (
-          <FramePosterPlaceholder title={page.title} posterUrl={getFramePoster(page, width)} />
+          <FramePosterPlaceholder title={page.title} posterUrl={posterUrl} />
         )}
         {/* The poster stays painted over a portal frame until its tree has
             committed. A Tier-2 frame reports no such readiness — it draws its
             own boot and crash chrome (`LiveBoardFrame`) — so an overlay there
             would be a poster that never lifts. */}
         {mounted && trust !== 'run-project' && !contentReady && (
-          <FramePosterPlaceholder title={page.title} posterUrl={getFramePoster(page, width)} overlay />
+          <FramePosterPlaceholder title={page.title} posterUrl={posterUrl} overlay />
         )}
         {/* A page with nothing on it renders as a blank rectangle, which reads
             as "it did not load". Only for a frame that is actually drawing its

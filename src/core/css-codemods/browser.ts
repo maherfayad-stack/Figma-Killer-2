@@ -9,7 +9,8 @@
  * and reading a `@keyframes` block — is pure text work and lives behind this
  * entry; `index.ts` re-exports it so the server sees one barrel.
  */
-export { camelToKebabCssProperty } from './cssPropertyCase'
+export { camelToKebabCssProperty, cssPropertyToStyleKey } from './cssPropertyCase'
+export { isStyledWritableValue } from './templateValue'
 export { classifyStylesheetEditability, type StylesheetEditability } from './classifyStylesheetEditability'
 export {
   keyframesBlockText,

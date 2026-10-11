@@ -99,12 +99,12 @@ describe('G-1a - a move copies the plain constants and handlers the element read
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error('unreachable')
     expect(result.carriedDeclarations).toEqual([
-      { name: 'money', as: 'money', scope: 'module', reused: false },
-      { name: 'TAX_RATE', as: 'TAX_RATE', scope: 'module', reused: false },
-      { name: 'price', as: 'price', scope: 'body', reused: false },
-      { name: 'qty', as: 'qty', scope: 'body', reused: false },
-      { name: 'total', as: 'total', scope: 'body', reused: false },
-      { name: 'pay', as: 'pay', scope: 'body', reused: false },
+      { name: 'money', as: 'money', scope: 'module', reused: false, how: 'copy' },
+      { name: 'TAX_RATE', as: 'TAX_RATE', scope: 'module', reused: false, how: 'copy' },
+      { name: 'price', as: 'price', scope: 'body', reused: false, how: 'copy' },
+      { name: 'qty', as: 'qty', scope: 'body', reused: false, how: 'copy' },
+      { name: 'total', as: 'total', scope: 'body', reused: false, how: 'copy' },
+      { name: 'pay', as: 'pay', scope: 'body', reused: false, how: 'copy' },
     ])
     // The origin loses the element and nothing else: its constants stay (the
     // heading still renders, and unused-local cleanup is the user's call).
@@ -183,7 +183,7 @@ export default function Receipt() {
 
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error('unreachable')
-    expect(result.carriedDeclarations).toContainEqual({ name: 'total', as: 'total2', scope: 'body', reused: false })
+    expect(result.carriedDeclarations).toContainEqual({ name: 'total', as: 'total2', scope: 'body', reused: false, how: 'copy' })
     const written = read(destination)
     // The destination's own `total` keeps meaning what it meant.
     expect(written).toContain("const total = 'not the same thing'")
@@ -220,7 +220,7 @@ export default function Receipt() {
 
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error('unreachable')
-    expect(result.carriedDeclarations).toEqual([{ name: 'greeting', as: 'greeting', scope: 'body', reused: true }])
+    expect(result.carriedDeclarations).toEqual([{ name: 'greeting', as: 'greeting', scope: 'body', reused: true, how: 'copy' }])
     const written = read(destination)
     expect(written.match(/const greeting/g)).toHaveLength(1)
     expect(written).toContain('<p>{greeting}</p>')
@@ -354,6 +354,7 @@ export default function Receipt() {
 })
 
 describe('G-1a - what cannot be carried still refuses by name and writes neither file', () => {
+  // State and refs are no longer on this list: G-1b copies them (transplantStateCarry.test.ts).
   function expectRefusal(
     originText: string,
     tag: string,
@@ -374,26 +375,6 @@ describe('G-1a - what cannot be carried still refuses by name and writes neither
     expect(read(destination)).toBe(destinationText)
   }
 
-  it('a handler that sets state refuses, naming the setter (moving state is a separate decision)', () => {
-    expectRefusal(
-      `import { useState } from 'react'
-
-export default function Order() {
-  const [open, setOpen] = useState(false)
-  const toggle = () => setOpen(!open)
-  return (
-    <main>
-      <button onClick={toggle}>Toggle</button>
-    </main>
-  )
-}
-`,
-      'button',
-      'captured-scope',
-      '"setOpen"',
-    )
-  })
-
   it('a constant computed from a prop refuses, naming the prop', () => {
     expectRefusal(
       `export default function Order({ qty }: { qty: number }) {
@@ -408,25 +389,6 @@ export default function Order() {
       'p',
       'captured-scope',
       '"qty"',
-    )
-  })
-
-  it('a constant built from a ref or other hook result refuses', () => {
-    expectRefusal(
-      `import { useRef } from 'react'
-
-export default function Order() {
-  const box = useRef(null)
-  return (
-    <main>
-      <p ref={box}>x</p>
-    </main>
-  )
-}
-`,
-      'p',
-      'captured-scope',
-      '"box"',
     )
   })
 

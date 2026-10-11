@@ -57,7 +57,11 @@ export function getLayerArrangeCommands(): Command[] {
       const { moveSelectionToEnd } = await import('@site/canvas/layerCommands')
       moveSelectionToEnd('back')
     }),
-    layerCommand('layers.toggleFlexLayout', 'Add auto layout', 'Lay the container out with flexbox (again removes it)', ['flex', 'auto layout', 'layout', 'row', 'column'], async () => {
+    layerCommand('layers.frameSelection', 'Frame selection', 'Put the selected layers in a frame sized to their bounds, each keeping its place', ['frame', 'wrap', 'container', 'group', 'selection'], async () => {
+      const { frameSelection } = await import('@site/canvas/canvasFrameSelection')
+      await frameSelection()
+    }),
+    layerCommand('layers.toggleFlexLayout', 'Add auto layout', 'Lay the container out as flex, inferred from where its layers are (again removes it, keeping every layer in place)', ['flex', 'auto layout', 'layout', 'row', 'column'], async () => {
       const { toggleFlexLayout } = await import('@site/canvas/layerCommands')
       await toggleFlexLayout()
     }),
@@ -74,6 +78,14 @@ export function getLayerArrangeCommands(): Command[] {
       const { useEditorStore } = await import('@site/store/store')
       const state = useEditorStore.getState()
       await state.detachInstances(state.selectedNodeIds)
+    }),
+    // G-9 (OD-24) — the same store action the Layers menu item and the refusal dialog call. A selection that is
+    // not in a list written out in this file does nothing (`planUnrollList` is the one place that decides).
+    layerCommand('layers.unrollList', 'Unroll list', 'Write the selected row’s list out as separate elements; it stops being drawn from its array', ['unroll', 'list', 'map', 'rows', 'repeat', 'expand'], async () => {
+      const { useEditorStore } = await import('@site/store/store')
+      const state = useEditorStore.getState()
+      const [nodeId] = state.selectedNodeIds
+      if (nodeId !== undefined) await state.unrollList(nodeId)
     }),
   ]
 }

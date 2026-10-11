@@ -26,7 +26,7 @@
  * "re-sync with disk, but only when a write actually landed" — which none of
  * the one-shot commits here have. They still post through `postEdits` below.
  */
-import type { StyleRule } from '@core/page-tree'
+import { StyleLandingSchema, type StyleRule } from '@core/page-tree'
 import type { JsonDataValue } from '@core/utils/jsonData'
 import { apiRequest } from '@core/http'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
@@ -159,6 +159,42 @@ export const StudioSaveResponseSchema = Type.Object({
    */
   listArrays: Type.Optional(Type.Array(Type.Object({ nodeId: Type.String(), to: Type.String() }))),
   /**
+   * G-1 — what a cross-file move copied to its destination besides the markup:
+   * plain constants (`copy`), the element's own copy of the state it used
+   * (`state`, OD-17), a row's data or a prop default as a literal constant
+   * (`value`). The board tells the user about the last two
+   * (`transplantCarryNotice.ts`). `Type.Optional`, same tolerant-rollout reasoning.
+   */
+  carried: Type.Optional(
+    Type.Array(
+      Type.Object({
+        name: Type.String(),
+        as: Type.String(),
+        how: Type.Union([Type.Literal('copy'), Type.Literal('state'), Type.Literal('value')]),
+      }),
+    ),
+  ),
+  /**
+   * G-10 - where each pasted HTML fragment's styles went: the stylesheet the
+   * rules were written into (or none), how many rules, how many resolved onto
+   * the elements as inline style, the classes renamed to avoid a clash, and what
+   * was left out. The board reports it (`pastedHtmlNotice.ts`). `Type.Optional`,
+   * same tolerant-rollout reasoning.
+   */
+  pastedHtml: Type.Optional(
+    Type.Array(
+      Type.Object({
+        stylesheet: Type.Union([Type.String(), Type.Null()]),
+        mode: Type.Union([Type.Literal('module'), Type.Literal('global'), Type.Literal('inline'), Type.Literal('none')]),
+        rules: Type.Number(),
+        inlined: Type.Number(),
+        renamed: Type.Array(Type.Object({ from: Type.String(), to: Type.String() })),
+        skipped: Type.Array(Type.String()),
+        droppedDeclarations: Type.Number(),
+      }),
+    ),
+  ),
+  /**
    * P5-G — every `canvas-layer-delete` in the batch that SUCCEEDED, with the
    * module bytes it removed, keyed by the edit's own `nodeId` — its ⌘Z
    * (`canvas-layer-restore`) is built from these once the resync lands.
@@ -172,6 +208,13 @@ export const StudioSaveResponseSchema = Type.Object({
    * one thing its ⌘Z (`restore`) names. Absent when the server recorded none.
    */
   undoToken: Type.Optional(UndoTokenSchema),
+  /**
+   * G-5 — where every style edit that wrote LANDED (the declaration, an
+   * expanded shorthand, an override, the element's own `style=""`), for the
+   * inspector's chip (`styleLandings.ts`). `Type.Optional`, same tolerant-
+   * rollout reasoning as the fields above.
+   */
+  styleLandings: Type.Optional(Type.Array(StyleLandingSchema)),
   /**
    * P1-A — each landed value write's target identity AFTER the write, keyed by
    * the edit's own node id. `postEdits` hands it to `sourceIdentity.ts`, so the

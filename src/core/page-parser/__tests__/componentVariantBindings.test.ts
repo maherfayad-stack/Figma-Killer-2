@@ -209,7 +209,8 @@ describe('cva', () => {
     write(
       'src/Action.tsx',
       [
-        "import { cva } from 'class-variance-authority'",
+        // Assembled so the no-tailwind-deps text scan does not mistake this fixture for an import in our own source.
+        "import { cva } from '" + 'class-variance-authority' + "'",
         "const actionVariants = cva('action', {",
         '  variants: {',
         '    intent: {',
@@ -411,5 +412,107 @@ describe('how the prop is named', () => {
   it('has no default when the initializer is computed', () => {
     write('src/Tag.tsx', "const FALLBACK = 'info'\nexport function Tag({ tone = FALLBACK }: { tone?: string }) { return <i>{tone}</i> }\n")
     expect(readPropDefault(declarationOf('src/Tag.tsx', 'Tag'), 'tone')).toBeUndefined()
+  })
+})
+
+describe('the element a binding styles, and the rule behind an entry (CV-4)', () => {
+  it('reports the tag-name position of the element that consumes the prop', () => {
+    write(
+      'src/Tag.tsx',
+      [
+        "import styles from './Tag.module.css'",
+        "type Tone = 'info' | 'warn' | 'danger'",
+        "export function Tag({ tone = 'info' }: { tone?: Tone }) {",
+        '  return (',
+        '    <div>',
+        '      <span className={styles[tone]}>tag</span>',
+        '    </div>',
+        '  )',
+        '}',
+      ].join('\n'),
+    )
+    write('src/Tag.module.css', ['.info {', '  color: blue;', '}'].join('\n'))
+    const binding = analyze('src/Tag.tsx', 'Tag', TONE)
+    // the `span`, not the wrapper: line 6, column of `span` after `<`
+    expect(binding.kind === 'css-module-class' && binding.element).toEqual({ line: 6, column: 8 })
+  })
+
+  it('a computed use names its element too, so a refusal can be attributed to the right node', () => {
+    write(
+      'src/Tag.tsx',
+      [
+        "type Tone = 'info' | 'warn' | 'danger'",
+        "export function Tag({ tone = 'info' }: { tone?: Tone }) {",
+        '  return <b style={{ color: tone === "warn" ? "orange" : "blue" }}>tag</b>',
+        '}',
+      ].join('\n'),
+    )
+    const binding = analyze('src/Tag.tsx', 'Tag', TONE)
+    expect(binding.kind).toBe('opaque')
+    expect(binding.kind === 'opaque' && binding.element).toEqual({ line: 3, column: 11 })
+  })
+
+  it('a class string built above the return styles the first element', () => {
+    write('src/Tag.css', '.t-info { color: blue; }\n')
+    write(
+      'src/Tag.tsx',
+      [
+        "import './Tag.css'",
+        "const byTone = { info: 't-info', warn: 't-warn', danger: 't-danger' }",
+        "type Tone = 'info' | 'warn' | 'danger'",
+        "export function Tag({ tone = 'info' }: { tone?: Tone }) {",
+        '  const cls = byTone[tone]',
+        '  return <span className={cls}>tag</span>',
+        '}',
+      ].join('\n'),
+    )
+    const binding = analyze('src/Tag.tsx', 'Tag', TONE)
+    expect(binding.kind === 'lookup-object' && binding.element).toEqual({ line: 6, column: 11 })
+  })
+
+  it('a lookup entry carries the stylesheet rule behind its class when exactly one class has one', () => {
+    write('src/Note.css', ['.note { color: #222; }', '.note-info { color: teal; }', '.note-warn { color: orange; }'].join('\n'))
+    write(
+      'src/Note.tsx',
+      [
+        "import './Note.css'",
+        "const levelClass = { info: 'note note-info', warn: 'note note-warn' }",
+        "type Level = 'info' | 'warn'",
+        "export function Note({ level = 'info' }: { level?: Level }) {",
+        '  return <aside className={levelClass[level]}>n</aside>',
+        '}',
+      ].join('\n'),
+    )
+    const binding = analyze('src/Note.tsx', 'Note', { name: 'level', kind: 'enum', members: ['info', 'warn'] })
+    expect(binding.kind).toBe('lookup-object')
+    if (binding.kind !== 'lookup-object') return
+    // `note` is in every entry, so it is the component's base and not the member's
+    expect(binding.entries.map((entry) => [entry.member, entry.rule?.selector])).toEqual([
+      ['info', '.note-info'],
+      ['warn', '.note-warn'],
+    ])
+  })
+
+  it('an entry of utility classes, or one with two candidate rules, has no rule', () => {
+    write('src/Chip.css', ['.a { color: red; }', '.b { color: blue; }', '.c { color: green; }'].join('\n'))
+    write(
+      'src/Chip.tsx',
+      [
+        "import './Chip.css'",
+        "const byKind = { x: 'a b', y: 'px-2 text-sm', z: 'c' }",
+        "type Kind = 'x' | 'y' | 'z'",
+        "export function Chip({ kind = 'x' }: { kind?: Kind }) {",
+        '  return <i className={byKind[kind]}>c</i>',
+        '}',
+      ].join('\n'),
+    )
+    const binding = analyze('src/Chip.tsx', 'Chip', { name: 'kind', kind: 'enum', members: ['x', 'y', 'z'] })
+    expect(binding.kind).toBe('lookup-object')
+    if (binding.kind !== 'lookup-object') return
+    expect(binding.entries.map((entry) => [entry.member, entry.rule?.selector])).toEqual([
+      ['x', undefined],
+      ['y', undefined],
+      ['z', '.c'],
+    ])
   })
 })

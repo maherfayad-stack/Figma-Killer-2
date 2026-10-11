@@ -84,6 +84,32 @@ describe('each one-shot write is undone byte for byte', () => {
     roundTrip([{ kind: 'delete', nodeId: nodeIdOf(PAGE, 'Badge') }])
   })
 
+  it('Frame selection — the wrapper AND every member’s rebased offsets, in one token (PA-6)', () => {
+    const forward = applyStudioEditBatch(
+      dir,
+      [
+        {
+          kind: 'group',
+          nodeId: nodeIdOf(PAGE, 'h1'),
+          siblingNodeIds: [nodeIdOf(PAGE, 'Badge')],
+          name: 'div',
+          frame: { wrapperStyle: { position: 'absolute', left: '10px', top: '20px' }, memberStyles: [{ left: '0px' }, { top: '0px' }] },
+        },
+      ],
+      {},
+      EDITOR,
+    )
+    expect(forward.refusals).toEqual([])
+    const framed = read('pages/Home.tsx')
+    expect(framed).toContain("<div style={{ position: 'absolute', left: '10px', top: '20px' }}>")
+    expect(framed).toContain("<h1 style={{ left: '0px' }}>")
+    expect(forward.undoToken).toMatch(/^[0-9a-f]{32}$/)
+
+    const back = applyStudioEditBatch(dir, [restore(forward.undoToken!)], {}, EDITOR)
+    expect(back.refusals).toEqual([])
+    expect(read('pages/Home.tsx')).toBe(PAGE)
+  })
+
   it('a multi-element delete is ONE token for the whole batch', () => {
     roundTrip([
       { kind: 'delete', nodeId: nodeIdOf(PAGE, 'h1') },
@@ -186,5 +212,43 @@ describe('refuses honestly', () => {
     expect(result.written).toBe(1)
     expect(result.undoToken).toBeUndefined()
     expect(journal()).toEqual([])
+  })
+})
+
+describe('apply a theme class from the Variables panel (CT-6)', () => {
+  const classEdit = (nodeId: string, token: string, restyle?: true): StudioEdit => ({ kind: 'class', nodeId, add: [{ kind: 'literal', token }], remove: [], ...(restyle ? { restyle } : {}) })
+
+  it('adds the class to a bare element and the journal token takes the whole attribute back', () => {
+    const h1 = nodeIdOf(PAGE, 'h1')
+    const forward = applyStudioEditBatch(dir, [classEdit(h1, 'bg-primary', true)], {}, EDITOR)
+    expect(forward.refusals).toEqual([])
+    expect(read('pages/Home.tsx')).toBe(PAGE.replace('<h1>', '<h1 className="bg-primary">'))
+    expect(forward.undoToken).toMatch(/^[0-9a-f]{32}$/)
+    expect(applyStudioEditBatch(dir, [restore(forward.undoToken!)], {}, EDITOR).refusals).toEqual([])
+    expect(read('pages/Home.tsx')).toBe(PAGE)
+  })
+
+  it('does not take away a class the author had already put there when the write is undone', () => {
+    const withClass = PAGE.replace('<h1>', '<h1 className="bg-primary p-4">')
+    write('pages/Home.tsx', withClass)
+    const forward = applyStudioEditBatch(dir, [classEdit(nodeIdOf(withClass, 'h1'), 'bg-primary', true)], {}, EDITOR)
+    expect(forward.refusals).toEqual([])
+    expect(read('pages/Home.tsx')).toBe(withClass)
+    if (forward.undoToken) applyStudioEditBatch(dir, [restore(forward.undoToken)], {}, EDITOR)
+    expect(read('pages/Home.tsx')).toBe(withClass)
+  })
+
+  it('a plain class edit (not a restyle) records no journal entry (autosave edits stay cheap)', () => {
+    const forward = applyStudioEditBatch(dir, [classEdit(nodeIdOf(PAGE, 'h1'), 'bg-primary')], {}, EDITOR)
+    expect(forward.undoToken).toBeUndefined()
+    expect(journal()).toEqual([])
+  })
+
+  it('a className the codemod cannot read is refused with its reason and nothing is written', () => {
+    const spread = PAGE.replace('<h1>', '<h1 className={42}>')
+    write('pages/Home.tsx', spread)
+    const forward = applyStudioEditBatch(dir, [classEdit(nodeIdOf(spread, 'h1'), 'bg-primary', true)], {}, EDITOR)
+    expect(forward.refusals).toHaveLength(1)
+    expect(read('pages/Home.tsx')).toBe(spread)
   })
 })

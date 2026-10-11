@@ -68,6 +68,7 @@ import {
 import { reactExportNameOf, type FunctionLike } from '@core/page-parser'
 import { fail, type Value } from './detachSource'
 import type { DetachNameResolver } from './detachNames'
+import { hasUseClientDirective } from './transplantStateCarry'
 import { contextReaderIdentity, resolvedDeclaration, type ComponentHook, type MovableHook } from './detachHookRead'
 
 // The component side lives in `detachHookRead.ts`; these are its public names, kept here because the
@@ -456,16 +457,12 @@ export class DetachHookPlan {
 
 /** The `'use client'` directive of `from`, as written there, when `to` lacks one - what a state holder moved from one into the other needs. */
 function missingClientDirective(from: SourceFile, to: SourceFile): string | undefined {
-  const directive = (file: SourceFile): string | undefined => {
-    for (const statement of file.getStatements()) {
-      const expression = Node.isExpressionStatement(statement) ? statement.getExpression() : undefined
-      if (!expression || !Node.isStringLiteral(expression)) return undefined
-      if (expression.getLiteralValue() === 'use client') return expression.getText()
-    }
-    return undefined
+  if (!hasUseClientDirective(from) || hasUseClientDirective(to)) return undefined
+  for (const statement of from.getStatements()) {
+    const expression = Node.isExpressionStatement(statement) ? statement.getExpression() : undefined
+    if (expression && Node.isStringLiteral(expression) && expression.getLiteralValue() === 'use client') return expression.getText()
   }
-  const wanted = directive(from)
-  return wanted !== undefined && directive(to) === undefined ? wanted : undefined
+  return undefined
 }
 
 function keyText(key: string): string {

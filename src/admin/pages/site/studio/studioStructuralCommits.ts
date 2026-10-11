@@ -27,15 +27,37 @@
 import { decodeSourceNodeId } from '@core/page-tree'
 import type { OptimisticPreviewHandle } from '@site/store/slices/site/structuralOptimism'
 import type { StructuralCommitRollback } from '@site/store/slices/site/structuralCommitRollback'
-import type { SourceDuplicateToCommit } from '@site/store/slices/site/structuralSourceEdits'
 import { commitStructural, type StructuralCommitOptions } from './studioStructuralCommitEngine'
+import { announceCarried } from './transplantCarryNotice'
 import {
-  dissolveWrapperTemplate,
   type StructuralEditPayload,
   type StructuralInverseTemplate,
   type StructuralWriteOutcome,
 } from './structuralUndoPlan'
 import type { InsertPropValue, SlotJsxNode, StudioSaveResponse } from './studioSaveRequests'
+
+/** Where one Alt-dragged or pasted COPY is written: inside which container, beside which existing child. */
+export interface SourceDuplicateToCommit {
+  /** The element being copied. */
+  nodeId: string
+  /** The container the copy lands in — a real source node, never the synthetic page root. */
+  parentNodeId: string
+  /** The existing child the copy is written next to, or `null` to append as the last child. */
+  anchorNodeId: string | null
+  position: 'before' | 'after'
+  /**
+   * ERR-16 — the container is written in ANOTHER file than the element, so the
+   * copy is a `transplant` with `copy: true`: it carries the imports the markup
+   * needs there, and refuses by name when a local it reads cannot travel.
+   */
+  crossFile?: true
+  /**
+   * The container has no children yet, so the copy may expand a self-closing
+   * `<X />` — and deleting the copy does not put that back. The copy's undo is
+   * then the undo journal's `restore` (as `SourceInsertCommit.parentIsEmpty`).
+   */
+  parentIsEmpty?: true
+}
 
 /**
  * P3-D — ONE gesture written as several edits applied IN ORDER, each against
@@ -52,7 +74,7 @@ import type { InsertPropValue, SlotJsxNode, StudioSaveResponse } from './studioS
 export async function commitStudioSequence(
   edits: readonly StructuralEditPayload[],
   refusalTitle: string,
-  options: Pick<StructuralCommitOptions, 'undo' | 'fill' | 'rollback' | 'optimistic' | 'select'> = {},
+  options: Pick<StructuralCommitOptions, 'undo' | 'fill' | 'rollback' | 'optimistic' | 'select' | 'onAnswer' | 'onLanded'> = {},
 ): Promise<void> {
   if (edits.length === 0) return
   await commitStructural(edits, refusalTitle, { ...options, sequence: true })
@@ -114,11 +136,11 @@ export async function commitStudioMove(edit: StructuralEditPayload, rollback?: S
  * covers both files (the batch reports both as touched), so the two frames
  * update together.
  *
- * The undo: a MOVE is taken back by the undo journal's `restore` (both files
+ * The undo is the undo journal's `restore` for a move AND a copy (both files
  * back, byte for byte — an id recorded before the write cannot name the
- * container the element left, because the write pruned the import above it),
- * and a COPY by deleting what it made (into a childless container, by the same
- * `restore`: the copy may have expanded a self-closing `<X />`).
+ * container the element left, because the write pruned the import above it, and
+ * a copy may have written state or constants that deleting its markup would
+ * leave behind).
  */
 export async function commitStudioTransplant(transplant: {
   nodeId: string
@@ -126,11 +148,12 @@ export async function commitStudioTransplant(transplant: {
   anchorNodeId: string | null
   position: 'before' | 'after'
   copy: boolean
-  /** A COPY into a container with no children: its undo is the journal's `restore` (see {@link commitStudioDuplicateTo}). */
-  parentIsEmpty?: boolean
+  /** G-1c - the `.map` row the node is a copy of (`nodeId` is then its template). */
+  row?: { array: string; index: number; length: number }
   /** Opens a source file in the code panel - the remedy for a binding that cannot travel. */
   openSource: (origin: { rel: string; line: number; col: number }) => void
 }): Promise<void> {
+  let carried: StudioSaveResponse['carried']
   await commitStructural(
     [
       {
@@ -141,24 +164,33 @@ export async function commitStudioTransplant(transplant: {
           ? { anchorNodeId: transplant.anchorNodeId, position: transplant.position }
           : {}),
         ...(transplant.copy ? { copy: true } : {}),
-        ...(transplant.parentIsEmpty ? { exactUndo: true as const } : {}),
+        ...(transplant.row ? { row: transplant.row } : {}),
+        // Always the journal's `restore` (G-1): a copy may carry state and constants.
+        exactUndo: true as const,
       },
     ],
     'Cannot move this between frames',
     {
-      // `captured-scope` - the element reads state that lives in its own
-      // screen's code (an input bound to `useState`). Nothing in the carry can
-      // move that binding, so the way forward is to show where it is declared.
+      // G-1 - what the write copied beside the markup; told once it has landed.
+      onAnswer: (answer) => {
+        carried = answer.carried
+      },
+      onLanded: () => announceCarried(carried),
+      // `captured-scope` - the element reads a value that lives in its own
+      // screen's code and nothing in the carry can write down (a prop nobody
+      // gives a value to, a custom hook's result). The way forward is to show
+      // where it is declared.
       refusalRemedy: (refusal) => {
         if (refusal.reason !== 'captured-scope') return null
         const origin = decodeSourceNodeId(refusal.nodeId)
         return origin ? { label: 'Open code', onSelect: () => transplant.openSource(origin) } : null
       },
+      // Both are the undo journal's `restore` (G-1): a copy can write state,
+      // constants and imports beside the markup, which deleting what it made
+      // would leave behind.
       undo: {
-        label: transplant.copy ? 'Copy into another frame' : 'Move into another frame',
-        template: transplant.copy
-          ? transplant.parentIsEmpty ? { kind: 'restore-journal' } : { kind: 'delete-created' }
-          : { kind: 'restore-journal' },
+        label: transplant.copy || transplant.row ? 'Copy into another frame' : 'Move into another frame',
+        template: { kind: 'restore-journal' },
       },
     },
   )
@@ -199,7 +231,8 @@ export async function commitStudioDuplicate(
  * Several copies (ERR-7) are one SEQUENCE: they land as a run at one place, so
  * each is written against the file the one before it left, in the order
  * `planSourceDuplicateTo` returned them. One write, one entry, and its undo
- * deletes every copy.
+ * deletes every copy (the journal's `restore` when any of them crossed into
+ * another file).
  */
 export async function commitStudioDuplicateTo(
   copies: readonly SourceDuplicateToCommit[],
@@ -210,12 +243,21 @@ export async function commitStudioDuplicateTo(
     parentNodeId: copy.parentNodeId,
     ...(copy.anchorNodeId ? { anchorNodeId: copy.anchorNodeId, position: copy.position } : {}),
     ...(copy.crossFile ? { copy: true } : {}),
-    ...(copy.parentIsEmpty ? { exactUndo: true } : {}),
+    ...(copy.parentIsEmpty || copy.crossFile ? { exactUndo: true } : {}),
   }))
-  // A copy into a childless container may expand `<X />`; deleting it would
-  // leave `<X>` + newline + `</X>`. The journal's `restore` is the exact undo.
-  const exact = copies.some((copy) => copy.parentIsEmpty)
-  const options = { undo: { label: 'Duplicate', template: exact ? { kind: 'restore-journal' as const } : { kind: 'delete-created' as const } } }
+  // A copy into another file (G-1) may write state, constants and imports beside
+  // its markup, and one into a childless container may expand `<X />`: deleting
+  // what it made would leave those behind, so its undo is the journal's `restore`.
+  const crossFile = copies.some((copy) => copy.crossFile)
+  const exact = crossFile || copies.some((copy) => copy.parentIsEmpty)
+  let carried: StudioSaveResponse['carried']
+  const options = {
+    undo: { label: 'Duplicate', template: exact ? { kind: 'restore-journal' as const } : { kind: 'delete-created' as const } },
+    onAnswer: (answer: StudioSaveResponse) => {
+      carried = answer.carried
+    },
+    onLanded: () => announceCarried(carried),
+  }
   if (edits.length > 1) await commitStudioSequence(edits, 'Duplicate refused', options)
   else if (edits.length === 1) await commitStructural(edits, 'Duplicate refused', options)
 }
@@ -249,7 +291,7 @@ export async function commitStudioWrap(wrap: {
     ],
     'Wrap refused',
     {
-      undo: { label: `Wrap in <${wrap.name}>`, template: dissolveWrapperTemplate(wrap) },
+      undo: { label: `Wrap in <${wrap.name}>`, template: { kind: 'restore-journal' } },
       ...(wrap.optimistic ? { optimistic: wrap.optimistic } : {}),
     },
   )
@@ -278,9 +320,15 @@ export async function commitStudioGroup(group: {
   importSpecifier?: string
   designSystemImport?: true
   optimistic?: OptimisticPreviewHandle
+  /**
+   * PA-6 — Frame selection: the container is sized and placed, and each member
+   * (in `nodeIds` order) gets the patch that keeps it where it was. A frame
+   * around ONE element is a run of one; a plain group of one is `wrap`.
+   */
+  frame?: { wrapperStyle: Record<string, string>; memberStyles: Record<string, string | number | null>[] }
 }): Promise<void> {
   const [nodeId, ...siblingNodeIds] = group.nodeIds
-  if (nodeId === undefined || siblingNodeIds.length === 0) return
+  if (nodeId === undefined || (siblingNodeIds.length === 0 && !group.frame)) return
   await commitStructural(
     [
       {
@@ -290,11 +338,13 @@ export async function commitStudioGroup(group: {
         name: group.name,
         ...(group.importSpecifier === undefined ? {} : { importSpecifier: group.importSpecifier }),
         ...(group.designSystemImport === undefined ? {} : { designSystemImport: group.designSystemImport }),
+        ...(group.frame ? { frame: group.frame } : {}),
       },
     ],
-    'Group refused',
+    group.frame ? 'Frame refused' : 'Group refused',
     {
-      undo: { label: 'Group', template: dissolveWrapperTemplate(group) },
+      // A frame rewrote the members too, and a gathering group or a component container has no plain inverse: the journal's pre-image.
+      undo: { label: group.frame ? 'Frame selection' : 'Group', template: { kind: 'restore-journal' } },
       ...(group.optimistic ? { optimistic: group.optimistic } : {}),
     },
   )
@@ -309,28 +359,15 @@ export async function commitStudioGroup(group: {
  * children get afterwards are the `line:col`s the write produces. The commit's
  * own resync is what brings them in.
  *
- * `container` is how the dissolved wrapper was spelled, which is what its undo
- * writes back around the released children. `null` means the wrapper carried
- * something a re-group would not restore (a `className`, a `style`, an `id`) —
- * the undo then refuses by name rather than writing back a container that has
- * lost half of itself. Closing that needs `props` on the `wrap`/`group` edit,
- * which is the wrap codemod's own surface.
+ * Its undo is the undo journal's `restore` (G-7), like a group's and a wrap's:
+ * a container that carried a class, an inline style, an id or behaviour (which
+ * an ungroup keeps, emptied) cannot be written back around its children by a
+ * plain re-group, and the journal's pre-image brings every byte back whatever
+ * the container was.
  */
-export async function commitStudioUngroup(
-  nodeId: string,
-  container: { name: string; importSpecifier?: string; designSystemImport?: true } | null,
-): Promise<void> {
+export async function commitStudioUngroup(nodeId: string): Promise<void> {
   await commitStructural([{ kind: 'ungroup', nodeId }], 'Ungroup refused', {
-    undo: {
-      label: 'Ungroup',
-      template: container
-        ? { kind: 'group-relocated', container }
-        : {
-            kind: 'unsupported',
-            message:
-              'That container carried styling of its own (a class, an inline style or an id), and Studio can only write a plain container back around its children — undoing it here would silently drop what it carried. Use your editor’s undo or `git` to bring it back.',
-          },
-    },
+    undo: { label: 'Ungroup', template: { kind: 'restore-journal' } },
   })
 }
 
@@ -362,24 +399,6 @@ export async function commitStudioDetach(
 }
 
 /**
- * P5-C (DET-7) — "Expose as prop": the literal of an element inside a
- * component becomes an optional prop whose default is that literal, so every
- * other instance renders as before. Two files (the component and this call
- * site), one undo-journal entry: ⌘Z restores both. `onLanded` runs once the
- * board has re-read them.
- */
-export async function commitStudioExposeProp(
-  edit: { kind: 'expose-prop'; nodeId: string; target: { kind: 'text' }; propName: string },
-  label: string,
-  onLanded?: () => void,
-): Promise<void> {
-  await commitStructural([edit], 'Could not make that a prop', {
-    undo: { label, template: { kind: 'restore-journal' } },
-    ...(onLanded ? { onLanded } : {}),
-  })
-}
-
-/**
  * P3-D (OD-7) — detach ONE call site so that a structural gesture on the
  * markup inside a shared component applies to this instance only. Resolves
  * with what the write reported once the board has re-read it, or `null` when
@@ -403,6 +422,28 @@ export async function commitStudioDetachForInstance(detach: {
       landed = outcome
     },
     quiet: true,
+  })
+  return landed
+}
+
+/**
+ * G-9 (OD-24) — "Unroll list": a `.map` over an array literal written out as
+ * the elements it rendered. Resolves with what the write made once the board
+ * has re-read it (`createdNodeIds` are the written rows, in array order), or
+ * `null` when it did not land — the refusal has already been shown, as the
+ * warning toast every refused structural write gets.
+ *
+ * Its undo is the undo journal's `restore` (P3-F): the rows replace the
+ * `.map` and drop its `key`, which no edit kind can write back.
+ */
+export async function commitStudioUnrollList(unroll: { edit: StructuralEditPayload; label: string }): Promise<StructuralWriteOutcome | null> {
+  let landed: StructuralWriteOutcome | null = null
+  await commitStructural([unroll.edit], 'Unroll list refused', {
+    undo: { label: unroll.label, template: { kind: 'restore-journal' } },
+    select: 'created',
+    onLanded: (outcome) => {
+      landed = outcome
+    },
   })
   return landed
 }
@@ -479,7 +520,17 @@ export async function commitStudioInsert(insert: {
    * images are one insert, one resync and one undo step, whose inverse deletes
    * all three (`delete-created` reads every created id).
    */
-  siblings?: readonly { name: string; props: Record<string, InsertPropValue> }[]
+  siblings?: readonly { name: string; props?: Record<string, InsertPropValue>; children?: string | readonly SlotJsxNode[] }[]
+  /**
+   * G-10 - this insert is a pasted HTML fragment: `css` is the text of the
+   * `<style>` blocks that came with it. The server writes the elements AND the
+   * styles (into the page's own stylesheet, else inline) as one journaled step,
+   * so its ⌘Z is always the journal's `restore`.
+   */
+  pastedHtml?: { css?: string }
+  /** Told the server's answer (the paste reads where its styles went), and again once the board has re-read the write. */
+  onAnswer?: (answer: StudioSaveResponse) => void
+  onLanded?: StructuralCommitOptions['onLanded']
   /** What ⌘Z names this step. Defaults to `Add <name>`. */
   undoLabel?: string
   optimistic?: OptimisticPreviewHandle
@@ -492,6 +543,7 @@ export async function commitStudioInsert(insert: {
         ...(insert.anchorNodeId ? { anchorNodeId: insert.anchorNodeId, position: insert.position } : {}),
         name: insert.name,
         ...(insert.parentIsEmpty ? { exactUndo: true } : {}),
+        ...(insert.pastedHtml ? { pastedHtml: insert.pastedHtml } : {}),
         // Spread conditionally, never passed as `undefined`: the codemod
         // branches on `importSpecifier === undefined` to choose intrinsic vs
         // component, and the wire schema has it optional for the same reason.
@@ -505,8 +557,13 @@ export async function commitStudioInsert(insert: {
     ],
     'Add refused',
     {
-      undo: { label: insert.undoLabel ?? `Add ${insert.name}`, template: insert.parentIsEmpty ? { kind: 'restore-journal' } : { kind: 'delete-created' } },
+      undo: {
+        label: insert.undoLabel ?? `Add ${insert.name}`,
+        template: insert.parentIsEmpty || insert.pastedHtml ? { kind: 'restore-journal' } : { kind: 'delete-created' },
+      },
       ...(insert.optimistic ? { optimistic: insert.optimistic } : {}),
+      ...(insert.onAnswer ? { onAnswer: insert.onAnswer } : {}),
+      ...(insert.onLanded ? { onLanded: insert.onLanded } : {}),
     },
   )
 }

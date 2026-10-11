@@ -40,7 +40,8 @@ import {
 import { UndoRedoButtons } from "./UndoRedoButtons";
 import { CanvasDrawToolButtons } from "./CanvasDrawToolButtons";
 import { useCanvasInsertionDrag } from "./useCanvasInsertionDrag";
-import { canPlaceModuleOnCanvas, placeModuleOnCanvas } from "@site/hooks/placeModuleOnCanvas";
+import { newLayerPlacementStyles } from "./canvasNewLayerPlacement";
+import { canPlaceModuleOnCanvas, EMPTY_BOX_EDGE_PX, placeModuleOnCanvas } from "@site/hooks/placeModuleOnCanvas";
 import { CanvasInsertionDragOverlay } from "./CanvasInsertionDragOverlay";
 import { cn } from "@ui/cn";
 import styles from "./CanvasNotch.module.css";
@@ -199,10 +200,13 @@ function PrimitiveNotchActions() {
   // is over — `useCanvasInsertionDrag` resolves both through the same
   // `resolveInsertLocation`, so the two entry points cannot disagree.
   const canvasDrag = useCanvasInsertionDrag<PrimitiveSpec>({
-    onDrop: (spec, location) => {
+    // A Div or Span is an empty box: the ghost is the box it becomes on the
+    // board. Text has no fixed size - its ghost is the text itself.
+    ghostSize: (spec) => (spec.moduleId === "base.container" ? { width: EMPTY_BOX_EDGE_PX, height: EMPTY_BOX_EDGE_PX } : null),
+    onDrop: (spec, location, placement) => {
       const mod = registry.get(spec.moduleId);
       if (!mod) return false;
-      return insertModule(mod, location, { defaults: resolveDefaults(mod, spec) }) !== null;
+      return insertModule(mod, location, { defaults: resolveDefaults(mod, spec), inlineStyles: newLayerPlacementStyles(placement) }) !== null;
     },
     // P5-G G1 — released on the empty board, the primitive becomes a loose
     // layer there instead of doing nothing.
@@ -254,7 +258,10 @@ function PrimitiveNotchActions() {
           },
         );
       })}
-      <CanvasInsertionDragOverlay drag={canvasDrag.drag}>
+      <CanvasInsertionDragOverlay
+        drag={canvasDrag.drag}
+        body={canvasDrag.drag?.ghost.moduleId === "base.text" ? primitiveGhostText(canvasDrag.drag.ghost) : undefined}
+      >
         {canvasDrag.drag && (
           <>
             <canvasDrag.drag.ghost.icon size={13} aria-hidden="true" />
@@ -264,6 +271,13 @@ function PrimitiveNotchActions() {
       </CanvasInsertionDragOverlay>
     </>
   );
+}
+
+/** The words a dragged Text primitive will carry, so its ghost reads as the element. */
+function primitiveGhostText(spec: PrimitiveSpec): string {
+  const mod = registry.get(spec.moduleId);
+  const text = mod ? resolveDefaults(mod, spec).text : undefined;
+  return typeof text === "string" && text !== "" ? text : spec.label;
 }
 
 /** A primitive's own prop overrides layered onto the module's defaults. */

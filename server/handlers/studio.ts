@@ -283,7 +283,7 @@
 import { relative, sep } from 'node:path'
 import { parseBoardsFile, type BoardsFile } from '@core/studio-board'
 import { readBoardsFile, writeBoardsFile } from './studio/boardGeometry'
-import { badRequest, jsonResponse, ndjsonResponse, readValidatedBody, internalServerError } from '../http'
+import { RequestBodyTooLargeError, badRequest, jsonResponse, ndjsonResponse, readValidatedBody, internalServerError } from '../http'
 import {
   mergeProjectFrameDefaults,
   projectDisplayName,
@@ -319,8 +319,12 @@ import {
  * except a project-dir refusal, which is not this file's to answer: it belongs
  * to the router's single 404 (`rethrowProjectDirRefusal`).
  */
+/** A save batch is edits, not files; bounded before the recursive schema walk (a pasted tree is the largest). */
+const SAVE_BODY_MAX_BYTES = 8 * 1024 * 1024
+
 function studioRouteFailure(err: unknown): Response {
   rethrowProjectDirRefusal(err)
+  if (err instanceof RequestBodyTooLargeError) return new Response('Request too large', { status: 413 })
   return internalServerError('[studio]', err)
 }
 
@@ -463,7 +467,7 @@ export async function tryServeStudio(
   if (pathname === '/admin/api/studio/save' && req.method === 'POST') {
     return withIdempotentReplay(req, sessionRuntime.user.id, async () => {
     try {
-      const body = await readValidatedBody(req, SaveBodySchema)
+      const body = await readValidatedBody(req, SaveBodySchema, { maxBytes: SAVE_BODY_MAX_BYTES })
       if (!body) return badRequest('invalid save body')
       const dir = resolveProjectDir(body.dir)
       const edits = body.edits ?? []
@@ -481,6 +485,7 @@ export async function tryServeStudio(
         swapDetails,
         detachDetails,
         createdStylesheets,
+        styleLandings,
         touchedFiles,
         createdNodeIds,
         relocatedNodeIds,
@@ -488,6 +493,8 @@ export async function tryServeStudio(
         fingerprints,
         retargeted,
         listArrays,
+        carried,
+        pastedHtml,
         undoToken,
       } = await (body.sequence ? applyStudioEditSequenceLocked : applyStudioEditBatchLocked)(dir, edits, body.expect ?? {}, {
         canvasLayers: 'allow',
@@ -521,6 +528,8 @@ export async function tryServeStudio(
         // pre-commit confirm reads it. `studioSaveRoute.test.ts` holds it.
         detachDetails,
         createdStylesheets,
+        // G-5 — the rung each style edit landed on, for the inspector's chip.
+        styleLandings,
         touchedFiles: touchedFiles.map((file) => relative(dir, file).split(sep).join('/')),
         // `store-13`/`store-14` — the node ids this batch made and moved.
         // `applyStudioEditBatch` has computed these since `store-13`, but the
@@ -534,6 +543,11 @@ export async function tryServeStudio(
         // P5-G — what a `canvas-layer-delete` took out, for its own undo.
         // Keyed by the edit's own node id — nothing to strip.
         removed,
+        // G-1 — what a cross-file move copied to its destination besides the
+        // markup (state, row data, constants), for the board's one-line notice.
+        ...(carried ? { carried } : {}),
+        // G-10 - where a pasted HTML fragment's styles went, for the board's one-line notice.
+        ...(pastedHtml ? { pastedHtml } : {}),
         // P3-F — the undo-journal token for a delete/detach/swap/extract, the
         // ONLY thing its ⌘Z has to name. The lesson `store-15` learned here:
         // this route lists its fields by hand, and a field the batch computed

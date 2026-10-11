@@ -122,3 +122,12 @@ describe('parseBaseNodeFields — page/VC parse equivalence', () => {
     expect(Object.keys(vc!.tree.nodes)).toEqual([NODE_ID])
   })
 })
+
+describe('propFeeds (OD-19) survives the tolerant parse, and only as string-to-string', () => {
+  it('keeps a well-formed record and drops junk entries and non-records', () => {
+    const kept = parsePage({ id: 'p', slug: 'p', title: 'P', rootNodeId: NODE_ID, nodes: { [NODE_ID]: { ...rawStoredNode(), propFeeds: { text: 'heading', 'style:width': 'widthValue', bad: 4, empty: '' } } } }).nodes[NODE_ID]!
+    expect(kept.propFeeds).toEqual({ text: 'heading', 'style:width': 'widthValue' })
+    const dropped = parsePage({ id: 'p', slug: 'p', title: 'P', rootNodeId: NODE_ID, nodes: { [NODE_ID]: { ...rawStoredNode(), propFeeds: ['text'] } } }).nodes[NODE_ID]!
+    expect(dropped.propFeeds).toBeUndefined()
+  })
+})

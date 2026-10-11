@@ -345,6 +345,7 @@ second page to read a dictionary never records the module behind it.
 | Rule | Why |
 |---|---|
 | **Never write a resolved value back as a literal** | `title={c.sheetTitle}` → writing `"Where to?"` deletes the binding. The client's `codeProps` guard declines to send it, AND `setJsxProp` refuses `binding-overwrite` on any initializer that is not a string/number/boolean literal (WB-11) — the server is the boundary every writer, agent included, crosses |
+| **Typing over code replaces it, only on an explicit `unbind: true`** (G-6, OD-20, `setJsxProp`/`setJsxText`, `unbindableExpression.ts`) | The one place "never destroy a binding" yields to explicit intent. The editor's field for a code-bound text or attribute (`EditConstraint.unbindable` = `canUnbindProp`: one plain source location, not a `.map` row, not an inlined id, not `style:`/`callSiteProps:`, no `origin` literal to edit instead) commits through `unbindNodeValue` -> `commitStudioUnbind`: a ONE-SHOT journaled write (never the `saveSite` diff, which would send a plain `prop` edit and be refused). The server replaces only a plain VALUE expression (`{count}`, `{t('x')}`, a template, a ternary); markup, a function and a whole list/object still refuse `binding-overwrite`, `Hello {name}!` is still `mixed-children`. Editor-only (`unbind-editor-only` for an agent batch: no journal, no Undo) and never on an inlined id (`unbind-shared`). An `info` notice names the replaced code (`resolvedProps[prop].source`) and carries Undo (= `store.undo()` = the journal's `restore`). Unresolved sole-expression text (hook state, an opaque call) maps to `base.container` with no text prop, so the board has no field to type into there yet |
 | **Resolved TEXT and origin-backed PROPS are the exception** — they write to `textOrigin` / `resolvedProps[k].origin` | The dictionary entry is an ordinary string literal at a known `rel:line:col`. Emitted as `kind:'literal'` by `nodeDiffWriteback.ts`, before its location guard, for flat props and an instance's `callSiteProps:<name>` alike. P3-C (WB-6): text or a prop a component is HANDED carries the call site's own literal as its origin (`ParsedNode.literalPropOrigins` → `Substitution.origin`), so `<Header title="Where to?"/>`'s `<h2>{title}</h2>` writes the call site, never the component's `{title}`. No origin for a component default, a literal on a call site inside a `.map` row, a computed value, or a numeric literal |
 | **A new class's stylesheet is chosen, never asked** (P3-C, ERR-14/15, `cssInsertDestination.ts`) | Co-located with its page, else the only one, else ranked (global over module, last written, nearest, largest, alphabetical — remembered per rule), else created beside the page, else `studio.css` beside the app entry (server, `cssCreateImportTarget`) |
 | **A CSS declaration lands where the cascade reads it** (P3-C, WB-16/WB-31, `setDeclaration`) | The winner in scope — last `!important`, else last, a covering shorthand counting — is set in place, or the longhand goes right after a covering shorthand. `unset` removes every copy in scope. `atRule` scopes a write to `@media`/`@container`/`@supports`. Only a covering `!important` shorthand still refuses |
@@ -362,6 +363,7 @@ second page to read a dictionary never records the module behind it.
 | **Path containment in the decoder** | `rel` arrives from the client inside `nodeId`; the save route builds `join(dir, rel)` |
 | **`loadSite` keeps the currently-open page** when the incoming site still has its id | Resetting to home mid-edit reads as the canvas moving on its own |
 | **A re-read rebases unsaved edits; it never discards them** (ERR-9, `store/slices/site/unsavedEditRebase.ts`) | Both reload paths, whoever wrote the file (the user's own save or structural commit, an agent, an outside editor). The re-read files the save-diff baseline it replaced under its own `pages` array (`loadedValuesBaseline.ts`'s `baselineBeforeRead`); the store diffs its pages against it, aligns the pre-edit tree with the fresh one, and writes each unsaved value onto the element's new node — local wins, per node all-or-nothing, never over a value that is now code or a literal that moved/changed. The page stays marked, autosave writes the carried edits. It used to vanish with a toast blaming "an agent" |
+| **A value edit inside a component instance changes ONLY that instance** (OD-19, `instanceOverrideActions.ts`) | A text / attribute / inline-style value the component's markup states as a literal is written as an optional prop with the old value as its DEFAULT plus the new value at this call site — `expose-prop`, two files, one journaled batch, ONE undo (`restore`). The autosave diff is held off those values meanwhile (`instanceOverrideHold.ts`). "Apply to all (N)" is `promote-override` (the value becomes the default, the call site stops passing it); "Edit main component" is the explicit all-instances mode. G-2b: an element inside a component that another component renders is the same edit — the value is passed DOWN through every component between the page and the element (`exposeThroughLevels.ts`, up to `MAX_INSTANCE_OVERRIDE_DEPTH` = 5 call sites; the `expose-prop` id names each call site, each decoded on its own). A value that is already the bare forward of a prop (`<h2>{heading}</h2>`, what every other instance is left with after the first override) carries `PageNode.propFeeds` (parser: `componentSubstitution.ts`) and is written at the page's call site alone — added, or replaced in place (`exposeFedProp.ts`) — through any number of components that pass it on, each reading it once. Anything the codemod cannot prove (a spread call site, a `.map` over props, a style the markup lacks, a list row, a prop read in two places, a value a middle component sets itself) keeps the ordinary write and says why in one sentence — see `studio-import.md` § "Expose as prop" |
 | **Two instances' `style`/`class` edits MERGE** (WB-7, `studioEditMerge.ts`) | Every instance of a shared component writes to one `line:col`; keeping the last dropped the other instance's declarations/tokens while `written` reported both. A genuine conflict (one prop, two values) is still last-wins, and a merged edit's refusal is reported for every instance behind it |
 | **A file that does not parse is never written** (WB-24, `studioSyntaxGuard.ts`) | TypeScript recovers a tree from a broken file; a codemod would locate and splice into a guess. Refused as `syntax-error`, naming the line; the load flags the page in `warnings` |
 | **A `literal` edit is shared** | A dictionary key is shared by design; the resync narrows to the routes that recorded the origin file (WB-2) |
@@ -409,7 +411,7 @@ container around a contiguous run of siblings, ⌘G) and **`ungroup`**
 (`unwrapJsxElement` — the container goes, its children take its place, ⌘⇧G),
 and D2 G3's **`transplant`** (`transplantJsxElement` — a move whose two ends
 are in two different FILES, the write behind dragging an element from one board
-frame into another) — and everything else refuses out loud.
+frame into another) — and everything else refuses out loud. G-9 adds a tenth write that is not a placement: **`unroll-list`** (`unrollMapExpression` — a `.map` over an array literal written out as the rows it rendered; its own module `studioUnrollWriteback.ts`, journaled, replays the refused gesture on the new elements).
 
 **`transplant` is the one kind whose destination is deliberately in another
 file**, which is why it has its own server entry (`applyTransplantEdit`) rather
@@ -452,9 +454,31 @@ component's body, a private module-level constant or function into its module
 scope — deduped when the destination already declares the identical thing,
 renamed on a clash (`transplantBindings.ts` decides, `transplantScopeCarry.ts`
 renders; `carriedDeclarations` reports what was written). Nothing is exported
-from the origin. Anything the component OWNS - a prop, state/ref/custom-hook
-result, a `.map` row, a `let` - refuses as **`captured-scope`**, by name (moving
-state and baking props are separate decisions: G-1b/G-1c). Both files' next
+from the origin. **State travels as its own copy (G-1b, OD-17).** A
+`useState`/`useReducer`/`useRef(init)` statement the element - or a copied handler
+- reads is written again at the top of the destination component, only the slots
+read (`const [, setOpen] = useState(false)`), under fresh names, with the hook
+import (`transplantStateCarry.ts`); an identical `useState` the destination
+already has is never reused, because it would be someone else's state. The copy
+goes above any early return of the destination (rules of hooks) and refuses,
+naming why, for an async component or a `'use client'` element going into a
+server component; a custom hook's result and a `useCallback`/`useMemo` refuse by
+name; an effect that sets the state in the origin stays there. **A row or a prop
+default travels as a literal (G-1c).** An element inside a `.map` row of an array
+literal written in the same file is COPIED (never cut - the template and the
+array stay byte-exact) with `const item = <that array element's source text>`
+and `const i = <index>` at the destination (`transplantPropBake.ts`; the wire
+`row` names the array's `[`, the server re-derives the array from the AST and
+refuses `stale-source` on a mismatch); a destructured prop's default is written
+down only for an element in the page's own file, never for one inlined out of a
+component; a prop nothing gives a value to, a function default and everything
+else the component owns still refuses as **`captured-scope`**, by name and kind
+(`"qty" (a prop)`). Types the markup names are copied like constants; globals
+(`HTMLInputElement`, `setTimeout`) are left alone. A cross-file transplant - a
+copy too, and a pasted sequence of copies (`studioEditSequence.ts`) - is journaled, so Cmd+Z is the undo journal's `restore` (both files,
+byte for byte), and the response's `carried` list (`name`, `as`, `how`:
+`copy`/`state`/`value`) drives one info notice with Undo for state and values
+(`transplantCarryNotice.ts`). A free-canvas lift (move or copy) and a place MOVE carry state the same way and show the same notice; a place COPY refuses by name (its undo deletes the element, which would leave the state behind). Both files' next
 contents are computed in full before either is written, so a refusal leaves two
 untouched files and a success writes two complete ones.
 
@@ -491,9 +515,9 @@ from the node id and `lockReason` alone:
 
 | Refusal | Because |
 |---|---|
-| `list-row` | a `.map` row — one piece of JSX renders every row. A row ROOT's reorder/delete/duplicate/paste write its array instead (OD-8); what still refuses is a gesture the array cannot express, a node inside a row, or an array not written in this file |
+| `list-row` | a `.map` row — one piece of JSX renders every row. A row ROOT's reorder/delete/duplicate/paste write its array instead (OD-8); what still refuses is a gesture the array cannot express, a node inside a row, or an array not written in this file. A drag into another FRAME is the exception (G-1c): a row element, root or inside, is copied there with the row's data as constants. **G-9: for a list whose array is a literal in this file the remedy is "Unroll list"** (`kind: 'unroll-list'`, `unrollMapExpression`): the `.map` is written out as its N rows, then the refused gesture is replayed on them, one ⌘Z for both. OD-24 is still "proposed"; this is the program doc's recommendation |
 | `shared-component` | an inlined id — the markup is in the component's own file, so a move there moves every instance |
-| `route-chrome` | a Next `layout`/`template` — one file, many frames |
+| `route-chrome` | a Next `layout`/`template` — one file, many frames. **G-8: not while the user is in "Edit layout" for that file** (`layoutEdit.ts`, the same mode as "Edit main component": `mainEditTarget`, `mainEditMode.ts`); the refusal's remedy is `edit-layout`, which starts the mode and re-runs the gesture |
 | `code-placed` | the parser recorded a structural `lockReason` |
 | `insert` | asked about the CONTAINER, not a node — it refuses only when the container itself is a `.map` row / inlined / route chrome / code-placed |
 | `reparent` | no container to write into, or one that is not an ordinary element. An in-place `duplicate`/`wrap` carries no refusal of its own beyond the four above; a `duplicate` WITH a destination (K2's Alt+drag) asks the reparent question about that destination too |
@@ -501,17 +525,30 @@ from the node id and `lockReason` alone:
 | `group` / `ungroup` | K3's members of the "this caller cannot write" family (`refuseMintedNodeCopy`), plus a group whose members mix imported markup with canvas-only nodes |
 | `has-behaviour` | K3, AST-decided: the container being ungrouped carries something other than `className`/`style`/`id`/`data-*` (a handler, a `ref`, a `key`, a spread), or it is a COMPONENT rather than an intrinsic element. Removing it would drop behaviour, so the remedy is to open it in code |
 | `content-model` | `struct-11`: the container a group would write cannot legally sit where it would land (`<div>` in a `<p>`, anything in a `<ul>`/`<tr>`/`<select>`) or cannot legally hold what it would hold (a wrapper around an `<li>`, a `<td>`, a `<figcaption>`). Decided from `@core/utils/htmlContentModel` — early by `previewStructuralGroup` when the tags are nameable, and always by the codemod against the AST. The remedy is the jump: `origin` is the CONTAINER whose content model forbids it |
+| ~~`has-behaviour`~~ | G-7: a wrapper with a handler, ref, `key`, spread or a component tag is no longer refused. `unwrapJsxElement` hands the children to the parent and KEEPS the wrapper, emptied and self-closed with every attribute untouched (`keptWrapper`) |
 | `cross-file` / `no-sibling-anchor` | a reorder is written as "put this before that one", so it needs a plain sibling in the same file; a reparent needs its new parent in that file. **A drag ACROSS frames is not this** — it is a `transplant`, which is allowed, and whose own tree-level rule is `previewStructuralTransplant` (`sourceStructureTransplant.ts`): the four placement reasons on BOTH ends, one element at a time, an honest destination container, and a backstop refusal when the two frames turn out to be two views of one file |
 
-The AST adds the refusals only it can answer: `not-siblings`,
-`expression-child` (a `.map` row or a helper call — and, for a group,
-something the code decides sits between the members; since P3-D a MOVE or
+**G-7 turned six of the AST's refusals into outcomes** (`jsxChildPlacement.ts`, `moveJsxElement.ts`, `wrapJsxElements.ts` + `gatherGroupRun.ts`, `unwrapJsxElement.ts`, `deleteJsxElement.ts`, `jsxSubtree.ts`):
+
+| Was | Now |
+|---|---|
+| `same-element` (move next to itself) | silent no-op: succeeds, file untouched (`unchanged`) |
+| `no-anchor` (a reorder naming no sibling; not reachable from the wire, `anchorNodeId` is required) | an edge of its own parent: `before` first, else last; already there is the same no-op |
+| `not-siblings` (reorder, insert, duplicate, reparent; the canvas flattens a `<Fragment>`) | written beside the anchor, in the anchor's own parent, where it renders; `out-of-scope` / `into-own-descendant` still refuse. Cross-file `transplant` keeps `not-siblings` (`besideAnchorInItsParent` is opt-in) |
+| `not-contiguous`, group `not-siblings`, group `expression-child` | a group GATHERS: the first member keeps its place and gets the container, the others are cut and written inside it in source order, what was not selected stays put; a member that would lose a name refuses `out-of-scope`; `content-model` still refuses (no legal tag exists) |
+| `has-behaviour` (ungroup) | keep-wrapper ungroup, above |
+| `no-jsx-parent` (delete of what a component returns) | `return null` (also a concise arrow body, a returned ternary branch, `cond && <X/>`); an element that is the value of anything else still refuses |
+| `void-element-children` (insert of `<img>` with child elements) | the void element is written bare, its children as the siblings after it; TEXT in a void element still refuses |
+| `multi-select` (group of non-runs) | resolved by the gather; the transplant's multi-element refusal is the `move-carries-state` bundle's |
+| `reparent` with no destination | cannot be asked: `refuseStructuralEdit`'s input type requires the destination |
+
+`wrap`, `group` and `ungroup` are journaled kinds now: their undo is the pre-image's `restore` (the inverse of a gathering group or a husk-keeping ungroup is not the other gesture).
+
+The AST adds the refusals only it can answer:
+`expression-child` (a `.map` row or a helper call; since P3-D a MOVE or
 DELETE of `{cond && <X/>}` acts on the whole container, a ternary branch
 deletes to `null`, and an ANCHOR the code produces is written against its
-`{…}` container — `resolveJsxChildRange`'s `unit`), `no-jsx-parent` (it is what the
-component returns), `stale-source`, `into-own-descendant`, K3's
-**`not-contiguous`** (an element the user did not select sits inside the span a
-group would wrap) and **`has-behaviour`**, and W4-1's
+`{…}` container — `resolveJsxChildRange`'s `unit`), `no-jsx-parent` (a move, wrap or copy of what the component returns), `stale-source`, `into-own-descendant`, and W4-1's
 **`out-of-scope`** — a reparent whose markup reads a binding that does not exist
 where it would land (`subtreeFreeVariables.ts`; the refusal names the
 variables). It is a static scope walk over the declarations enclosing the
@@ -635,6 +672,55 @@ order. They always reload afterwards: a successful write shifted every
 Measured on the 15-page eSIM corpus (787 source-derived nodes): **28.8%
 reorder**, **17.0% delete**; the rest refuse, `shared-component` (48.5%) being
 by far the largest bucket.
+
+---
+
+## Component-definition kinds (CV-3)
+
+`add-variant`, `remove-variant` and `add-component-prop` write a component's
+DEFINITION (its union, the stylesheet rule or lookup entry that styles each
+value, its signature), not a call site. All three are journaled: the batch
+records every file the plan will write before the first write, and ⌘Z is
+`restore`. Rules you will trip over:
+
+- `nodeId` is the component's declaration (`file:line:col`, the catalog's
+  `line`/`column`) + `exportName`; **no range, selector or path from the client
+  is a write target** — `variantEditPlan.ts` re-reads all of it from disk.
+- `variantEditTouchedFiles` plans ONCE before the batch (for the journal's
+  file set); the apply reuses that plan only while every file still holds the
+  text it was made against. `studioVariantWriteback.ts` must not import
+  `studioEditRouting.ts` (the routing imports it); the canonical-path rule is
+  injected.
+- A `.css` file is a legitimate write target here and in the journal
+  (`isJournalableRel`), under the CSS writeback's containment.
+- `reload-scope` rule 5: a touched component file whose gallery count differs
+  from the cache's widens (a gallery page appears or vanishes). Gallery cache
+  keys are `component-gallery:<pageId>@<file>`.
+- Send a variant edit alone: its writes land above and below other edits'
+  `line:col`s, and the batch's bottom-to-top order cannot know where.
+
+Full contract and refusals: `docs/features/studio-import.md`, "Add variant,
+Remove variant, Add property (CV-3)".
+
+### Style edits per variant (CV-4) — no new edit kind
+
+A style edit on a component's element lands in the shown variant's rule
+through the ORDINARY class write: `selectionModel.writeTargetFor` returns the
+member's `StyleRule` (found by its write-back source) while a variant edit
+context is active, the store diff turns it into a `css` edit, and the server
+runs `setDeclaration`. Things you will trip over:
+
+- The rule is decided in `@core/component-variants/variantStyleContext.ts`
+  from the CV-1 binding. A binding's `element` (tag-name `line:col`) is what
+  says WHICH element it styles; without it an axis never applies. Adding a
+  binding kind means adding its case to `variantStyleTargetFor`, with its refusal.
+- It never falls back to the base class or to inline: that fallback is the leak.
+  A refusal is `{ kind: 'none', reason }`, and `commitApi` turns it into a
+  `warning` toast (not a red one).
+- `variantRuleBlocker`: a rule the board did not load (no `styleRuleSources`
+  entry) is a refusal too, not a silent write elsewhere.
+- `mainEditTarget` (OD-19; `{kind:'component'}`, shared with G-8's layout mode) is the "main component" switch outside the
+  gallery; the instance row `VariantStyleEntry` sets it.
 
 ---
 

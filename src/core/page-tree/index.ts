@@ -20,11 +20,13 @@ export { PageNodeSchema, parsePageNode } from './pageNode'
 export {
   INLINE_ID_SEPARATOR,
   LOOP_ID_SEPARATOR,
+  MAX_INSTANCE_OVERRIDE_DEPTH,
   buildSourceNodeId,
   callSitePosition,
   decodeSourceNodeId,
   hasWritableSourceLocation,
   inlineDepth,
+  inlineSegments,
   isInlinedNodeId,
   isRouteChromeNodeId,
   isSourceDerivedNodeId,
@@ -47,6 +49,7 @@ export { classifyJsxTagKind } from './jsxTagKind'
 export type { JsxTagKind } from './jsxTagKind'
 export {
   isPropWritableToSource,
+  canUnbindProp,
   isPropPatchWritableToSource,
   isStyleWritableToSource,
   isStylePatchWritableToSource,
@@ -91,10 +94,14 @@ export {
   planListRowRemove,
 } from './listRowPlans'
 export type { ListRowEditPlan, ListRowPlan } from './listRowPlans'
+export { planUnrollList } from './listRowUnroll'
+export { isEditedLayoutNodeId, layoutFileOf, layoutRouteCount, setEditedLayoutFile } from './layoutEdit'
+export type { UnrollListEdit, UnrollListPlan } from './listRowUnroll'
 // The same rule asked of a live tree: which sibling a move lands beside, which
 // element "inside the page" means, and whether a selection is one run (K3).
 export {
   previewStructuralGroup,
+  isSiblingRun,
   previewStructuralMove,
   resolveContainerAnchor,
   resolveSourceContainer,
@@ -340,6 +347,14 @@ export {
   IMPORTED_RULE_TIMESTAMP,
   isImportedStyleRuleId,
 } from './styleRuleOrigin'
+
+export {
+  StyleLandingRungSchema,
+  StyleLandingSchema,
+  styleLandingNeedsJournal,
+  styleLandingText,
+} from './styleLanding'
+export type { StyleLanding, StyleLandingRung } from './styleLanding'
 
 export { getNodeDisplayName, getNodeHtmlTag, getNodeClassNames } from './nodeDisplayName'
 

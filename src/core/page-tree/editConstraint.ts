@@ -38,7 +38,7 @@
  * re-reads it), so that sentence had become false — and a refusal that is no
  * longer true is worse than no refusal at all.
  */
-import { isPropWritableToSource, isStyleWritableToSource, styleValueKey, type SourceWritableNode } from './sourceWritability'
+import { canUnbindProp, isPropWritableToSource, isStyleWritableToSource, styleValueKey, type SourceWritableNode } from './sourceWritability'
 import {
   refusePlacement,
   type StructuralRefusalReason,
@@ -174,6 +174,21 @@ export interface EditConstraintAction {
      * a node id.
      */
     | 'duplicate-into-frame'
+    /**
+     * G-9 (OD-24) — write the `.map` the refused row belongs to out as explicit
+     * elements, then run the refused gesture again on them. Only offered for a
+     * list whose array is a literal in the same file (`planUnrollList`). A
+     * write, so its handler is supplied by the surface that renders the button
+     * (or, from the refusal dialog, by the store action that refused — it holds
+     * the gesture to replay), like `position-parent-relative`.
+     */
+    | 'unroll-list'
+    /**
+     * G-8 — start the "Edit layout" mode for the layout file the refused node is
+     * written in, then run the refused gesture again. The mode is
+     * `mainEditMode.ts`'s, the same one "Edit main component" uses.
+     */
+    | 'edit-layout'
   /**
    * Where this action points, when it points at a file — `origin`'s own
    * shape, so a caller can wire `jump-to-source` without re-deriving it.
@@ -193,6 +208,13 @@ export interface EditConstraint {
   origin?: { rel: string; line: number; col: number }
   /** Zero or more legitimate ways forward. An empty array is an honest terminal refusal, not a bug. */
   actions: EditConstraintAction[]
+  /**
+   * G-6 (OD-20) - the refused prop is code the user may TYPE OVER: committing a
+   * value replaces the code with the literal (the editor names what it replaced
+   * and offers Undo). Set only where `canUnbindProp` holds, so a field that
+   * offers to be typed into always has exactly one place to write.
+   */
+  unbindable?: true
 }
 
 // ---------------------------------------------------------------------------
@@ -259,6 +281,7 @@ export function explainPropConstraint(
 
   const resolved = node.resolvedProps?.[propKey]
   if (resolved) {
+    const unbindable = canUnbindProp(node, propKey)
     return {
       reason: 'resolved-expression',
       scope: 'prop',
@@ -266,6 +289,7 @@ export function explainPropConstraint(
         ? `Reads \`${resolved.source}\` — ${resolved.note}.`
         : `Reads \`${resolved.source}\` from code. Writing here would replace the binding with a fixed value.`,
       actions: [],
+      ...(unbindable ? { unbindable: true as const } : {}),
     }
   }
 
@@ -277,6 +301,7 @@ export function explainPropConstraint(
     scope: 'prop',
     explanation: node.lockReason ? `The code decides this value (${node.lockReason}).` : 'Set in code.',
     actions: [],
+    ...(canUnbindProp(node, propKey) ? { unbindable: true as const } : {}),
   }
 }
 

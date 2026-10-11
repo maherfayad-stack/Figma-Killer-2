@@ -21,7 +21,7 @@
 import type { NodeTree, PageNode } from '@core/page-tree'
 import { resolveSourceContainer } from '@core/page-tree'
 import { useEditorStore } from '@site/store/store'
-import type { ImageDropSource } from '@site/store/slices/site/imageDropShapes'
+import type { AbsoluteImagePlacement, ImageDropSource } from '@site/store/slices/site/imageDropShapes'
 import { findRenderedCanvasElements } from './canvasNodeLookup'
 import { measureDropContainer } from './canvasImageDropPlacement'
 import { paintCanvasUploadProgress } from './canvasUploadProgress'
@@ -70,6 +70,7 @@ export function readSelectionInsertTarget(): SelectionInsertTarget {
 export function insertImagesAtTarget(
   target: { pageId: string; parentId: string; index: number | undefined },
   sources: readonly ImageDropSource[],
+  absolute: AbsoluteImagePlacement | null = null,
 ): void {
   if (sources.length === 0) return
   const tree = useEditorStore.getState().site?.pages.find((page) => page.id === target.pageId) ?? null
@@ -83,7 +84,7 @@ export function insertImagesAtTarget(
     index: target.index,
     sources,
     maxWidth: box ? box.contentWidth : null,
-    absolute: null,
+    absolute,
     paintProgress: paintCanvasUploadProgress,
   })
 }

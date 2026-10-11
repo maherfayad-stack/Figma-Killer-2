@@ -24,11 +24,18 @@
  * and a binding shared by two elements being deleted together is orphaned by
  * neither one alone, so asked per edit the answer is wrong anyway.
  *
- * ## One refusal remains, and it is not about imports
+ * ## Deleting what a component returns leaves `return null` (G-7)
  *
- *  - **`no-jsx-parent`** (from `resolveJsxChildRange`) — the element is the
- *    outermost thing the component returns. Deleting it leaves `return ;`, a
- *    file that no longer parses.
+ * The outermost element of a component has no siblings, and removing its bytes
+ * leaves `return ;`, a file that no longer parses - which is why this used to
+ * refuse `no-jsx-parent`. "Nothing" is a thing a component can render, though,
+ * and it is what the person asked for: the element is replaced by `null`, in
+ * place (`return (\n<div/>\n)` becomes `return null`, a concise arrow body
+ * `() => <div/>` becomes `() => null`). A returned conditional keeps its other
+ * state exactly like a ternary branch inside markup does (`cond ? <A/> : <B/>`
+ * loses `<A/>` to `null`), and `cond && <X/>` goes whole, its condition with it.
+ * Whatever else an element can be the value of - a variable, an argument, a
+ * list item - still refuses: nothing says `null` is what that code wants.
  *
  * ## A conditional element goes with its condition (WB-20)
  *
@@ -54,8 +61,8 @@
  * before the batch runs and puts it back byte for byte. So nothing here hands
  * back the bytes it cut.
  */
-import { type Project } from 'ts-morph'
-import { createProject, loadSourceFile } from './locateJsxElement'
+import { Node, SyntaxKind, type Project } from 'ts-morph'
+import { createProject, findJsxElementAtLocation, loadSourceFile } from './locateJsxElement'
 import {
   resolveJsxChildRange,
   verbatimSourceText,
@@ -82,13 +89,68 @@ export interface DeleteJsxRefusal {
 
 export type DeleteJsxElementResult = { ok: true } | { ok: false; refusal: DeleteJsxRefusal }
 
+/** True when `node` is the whole value of a `return` or of a concise arrow body - what a component hands back. */
+function isReturnedValue(node: Node): boolean {
+  const parent = node.getParent()
+  return Node.isReturnStatement(parent) || (Node.isArrowFunction(parent) && parent.getBody() === node)
+}
+
+/** `node` and the parentheses written around it: `(` ... `)` belong to the value, not to the element. */
+function withParentheses(node: Node): Node {
+  let outer = node
+  while (Node.isParenthesizedExpression(outer.getParent())) outer = outer.getParent()!
+  return outer
+}
+
+/**
+ * The bytes to overwrite with `null` when the element at `line:col` is what its
+ * component returns - see the module doc - or `null` when it is the value of
+ * something else (a variable, an argument, a list), where `null` is a guess.
+ */
+function returnedRootReplacement(
+  sourceFile: ReturnType<typeof loadSourceFile>,
+  line: number,
+  col: number,
+): { start: number; end: number } | null {
+  const opening = findJsxElementAtLocation(sourceFile, line, col)
+  if (!opening) return null
+  let value: Node = withParentheses(Node.isJsxSelfClosingElement(opening) ? opening : opening.getParentOrThrow())
+  // Up through the conditionals the value is written inside. What is replaced is
+  // decided by the INNERMOST one: a ternary branch alone (the other state stays),
+  // the whole `a && <X/>` (the element's condition goes with it), the fallback of
+  // `a || <X/>` alone. Outer layers only have to lead to the return.
+  let replaced: Node | null = null
+  for (;;) {
+    const parent = value.getParent()
+    if (Node.isConditionalExpression(parent) && (parent.getWhenTrue() === value || parent.getWhenFalse() === value)) {
+      replaced ??= value
+      value = withParentheses(parent)
+      continue
+    }
+    if (Node.isBinaryExpression(parent) && parent.getRight() === value) {
+      const operator = parent.getOperatorToken().getKind()
+      if (operator === SyntaxKind.AmpersandAmpersandToken) replaced ??= withParentheses(parent)
+      else if (operator === SyntaxKind.BarBarToken || operator === SyntaxKind.QuestionQuestionToken) replaced ??= value
+      else return null
+      value = withParentheses(parent)
+      continue
+    }
+    break
+  }
+  if (!isReturnedValue(value)) return null
+  const target = replaced ?? value
+  return { start: target.getStart(), end: target.getEnd() }
+}
+
 export function deleteJsxElement(params: DeleteJsxElementParams): DeleteJsxElementResult {
   const { file, line, col } = params
   const project = params.project ?? createProject()
   const sourceFile = loadSourceFile(project, file)
 
   const target = resolveJsxChildRange(sourceFile, line, col, 'conditional')
-  if (!target.ok) return { ok: false, refusal: { reason: target.reason, message: target.message } }
+  if (!target.ok && target.reason !== 'no-jsx-parent') {
+    return { ok: false, refusal: { reason: target.reason, message: target.message } }
+  }
 
   const verbatim = verbatimSourceText(sourceFile, file)
   if (verbatim === null) {
@@ -99,6 +161,14 @@ export function deleteJsxElement(params: DeleteJsxElementParams): DeleteJsxEleme
         message: 'This file changed on disk since the canvas last read it. Reload the project and try again.',
       },
     }
+  }
+
+  if (!target.ok) {
+    // What the component returns: `null` in its place, or the refusal it always was.
+    const replaced = returnedRootReplacement(sourceFile, line, col)
+    if (!replaced) return { ok: false, refusal: { reason: target.reason, message: target.message } }
+    writeVerbatimSource(sourceFile, file, verbatim.slice(0, replaced.start) + 'null' + verbatim.slice(replaced.end))
+    return { ok: true }
   }
 
   const branch = target.range.ternaryBranch

@@ -36,6 +36,7 @@ import { registry } from '@core/module-engine'
 import {
   decodeSourceNodeId,
   describeStructuralRefusal,
+  isSiblingRun,
   planListRowCopy,
   planListRowCopyTo,
   type NodeTree,
@@ -73,6 +74,7 @@ import {
   previewOptimisticWrap,
 } from './structuralOptimism'
 import { writeListRowPlan } from './listRowSourceWrites'
+import type { FrameRequest } from './frameRequest'
 import type { SiteSliceHelpers } from './types'
 
 /**
@@ -107,6 +109,7 @@ export interface StudioSourceWrites extends StudioSourceRefusals {
     nodeIds: readonly string[],
     containerModuleId: string,
     defaults: Record<string, unknown>,
+    frame?: FrameRequest,
   ) => boolean
   /**
    * Insert a component declared in the user's own project (the Assets panel's
@@ -114,7 +117,12 @@ export interface StudioSourceWrites extends StudioSourceRefusals {
    * caller must stop (written, parked, or refused out loud), false on an ordinary
    * CMS tree.
    */
-  writeInsertProjectComponentToSource: (component: LocalComponentSpec, parentId: string, index?: number) => boolean
+  writeInsertProjectComponentToSource: (
+    component: LocalComponentSpec,
+    parentId: string,
+    index?: number,
+    style?: Record<string, string>,
+  ) => boolean
   /** K3 - Cmd+Shift+G: a container dissolved, its children taking its place. */
   writeUngroupToSource: (nodeId: string) => boolean
 }
@@ -200,9 +208,10 @@ export function createStudioSourceWrites(
     component: LocalComponentSpec,
     parentId: string,
     index?: number,
+    style?: Record<string, string>,
   ): boolean => {
     const planned = planInsertToSource(parentId, index, (relocated) => {
-      writeInsertProjectComponentToSource(component, relocated, index)
+      writeInsertProjectComponentToSource(component, relocated, index, style)
     })
     if (planned.kind === 'stop') return true
     if (planned.kind === 'cms') return false
@@ -221,7 +230,7 @@ export function createStudioSourceWrites(
       name: localComponentJsxName(component),
       importSpecifier: relativeImportSpecifier(targetFile, component.file),
       ...(component.isDefaultExport ? { importStyle: 'default' as const } : {}),
-      props: {},
+      props: style && Object.keys(style).length > 0 ? { style: { ...style } } : {},
     })
     return true
   }
@@ -342,7 +351,7 @@ export function createStudioSourceWrites(
       ? planListRowCopyTo(tree, rowNodes, destination.parentId, destination.index)
       : planListRowCopy(rowNodes)
     if (rows) {
-      writeListRowPlan(rows, STRUCTURAL_REFUSAL_TITLE.duplicate, { get, set })
+      writeListRowPlan(rows, STRUCTURAL_REFUSAL_TITLE.duplicate, { get, set, retry: retryWithMap })
       return true
     }
 
@@ -460,6 +469,7 @@ export function createStudioSourceWrites(
     nodeIds: readonly string[],
     containerModuleId: string,
     defaults: Record<string, unknown>,
+    frame?: FrameRequest,
   ): boolean => {
     if (nodeIds.length === 0) return false
     // `store-14` — same queue as `writeDuplicateToSource`: a held Cmd+G must
@@ -467,7 +477,7 @@ export function createStudioSourceWrites(
     // must not be thrown away either.
     if (
       deferWhileStructuralCommitInFlight((relocate) => {
-        writeGroupToSource(nodeIds.map(relocate), containerModuleId, defaults)
+        writeGroupToSource(nodeIds.map(relocate), containerModuleId, defaults, frame)
       }, nodeIds)
     ) {
       return true
@@ -479,7 +489,7 @@ export function createStudioSourceWrites(
       const refusedNodeId = plan.nodeId
       presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.group, plan.constraint, {
         nodeId: refusedNodeId,
-        retry: (mapId) => { void writeGroupToSource(nodeIds.map(mapId), containerModuleId, defaults) },
+        retry: (mapId) => { void writeGroupToSource(nodeIds.map(mapId), containerModuleId, defaults, frame) },
         getState: get,
         set,
       })
@@ -507,11 +517,28 @@ export function createStudioSourceWrites(
     const mod = registry.get(containerModuleId)
     const resolvedDefaults = { ...(mod?.defaults ?? {}), ...defaults }
     const only = plan.commit.length === 1 ? plan.commit[0] : undefined
-    if (only !== undefined) {
+    if (frame) {
+      // PA-6 — a frame is ALWAYS a `group` (even around one element), has no
+      // optimistic preview (a bare wrapper would flash before its style
+      // lands), and its patches follow the run in source order.
+      void commitStudioGroup({
+        nodeIds: plan.commit,
+        ...container,
+        frame: {
+          wrapperStyle: frame.wrapperStyle,
+          memberStyles: plan.commit.map((id) => frame.memberStyles[id] ?? {}),
+        },
+      })
+    } else if (only !== undefined) {
       const optimistic = previewOptimisticWrap(helpers, only, containerModuleId, resolvedDefaults) ?? undefined
       void commitStudioWrap({ nodeId: only, ...container, ...(optimistic ? { optimistic } : {}) })
     } else {
-      const optimistic = previewOptimisticGroup(helpers, plan.commit, containerModuleId, resolvedDefaults) ?? undefined
+      // G-7 - members that are not one run of siblings are gathered by the
+      // write (`gatherGroupRun.ts`); a local wrap would draw a container around
+      // a span the file does not have, so the board waits for the re-read.
+      const optimistic = isSiblingRun(tree, plan.commit)
+        ? (previewOptimisticGroup(helpers, plan.commit, containerModuleId, resolvedDefaults) ?? undefined)
+        : undefined
       void commitStudioGroup({ nodeIds: plan.commit, ...container, ...(optimistic ? { optimistic } : {}) })
     }
     return true
@@ -539,7 +566,7 @@ export function createStudioSourceWrites(
       return true
     }
     if (!plan.commit) return false // an ordinary CMS tree — nothing to write
-    void commitStudioUngroup(plan.commit, restorableContainerSpelling(tree.nodes[plan.commit]))
+    void commitStudioUngroup(plan.commit)
     return true
   }
 
@@ -552,34 +579,6 @@ export function createStudioSourceWrites(
     writeGroupToSource,
     writeUngroupToSource,
   }
-}
-
-/**
- * `store-14` — how to write this container back around its children, or `null`
- * when a re-wrap would not restore it.
- *
- * ⌘⇧G's undo is a ⌘G, and `wrapJsxElement`/`wrapJsxElements` write a BARE tag:
- * no `className`, no `style`, no `id`. So a wrapper carrying any of those
- * three is honestly un-undoable from the canvas — re-grouping would produce a
- * container that has quietly lost what the user put on it, which is the
- * half-applied write this store refuses everywhere else. The undo says so by
- * name instead (see `commitStudioUngroup`). Closing it needs `props` on the
- * `wrap`/`group` edit, which is the wrap codemod's own surface.
- *
- * `unwrapJsxElement` already refuses a COMPONENT wrapper (`has-behaviour`), so
- * everything that reaches here is an intrinsic tag the module registry can
- * spell from the node's own props — `base.container`'s `tag`/`customTag`.
- */
-function restorableContainerSpelling(
-  node: PageNode | undefined,
-): { name: string; importSpecifier?: string; designSystemImport?: true } | null {
-  if (!node) return null
-  const carriesStyling =
-    node.classIds.length > 0 ||
-    Object.keys(node.inlineStyles ?? {}).length > 0 ||
-    (typeof node.props.id === 'string' && node.props.id !== '')
-  if (carriesStyling) return null
-  return resolveContainerTag(node.moduleId, node.props)
 }
 
 /**

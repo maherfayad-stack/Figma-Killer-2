@@ -392,6 +392,20 @@ export interface ParsedNode {
    */
   fromComponent?: string
   /**
+   * OD-19 — on an INLINED node: the value keys (`text`, an attribute name, or
+   * `style:<property>`) that are the BARE forward of one of the component's
+   * own destructured props (`<h2>{heading}</h2>`, `alt={altText}`,
+   * `style={{ width: widthValue }}`), each mapped to that prop's name. Only
+   * where the prop is read exactly once in the component, so setting it at the
+   * call site changes this one place; and only where no call-site literal is
+   * already behind the value (`textOrigin` / `resolvedProps[k].origin` cover
+   * that). Provenance for a write, not a value: the key stays in `codeProps`
+   * (the markup holds `{heading}`, never a literal), and the editor reads this
+   * to write the CALL SITE instead (`instanceOverridePlan.ts`). Never set
+   * where the value is computed (`{heading.toUpperCase()}`, a template).
+   */
+  propFeeds?: Record<string, string>
+  /**
    * OD-8 — on a `.map` row's ROOT node only: the array literal element this
    * row renders (the array's own `[` position, the index, the length, how the
    * row's `key` reads its item), or why the array is not one Studio can edit

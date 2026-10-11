@@ -121,7 +121,7 @@ describe('planSourceDuplicateTo — several elements, and another file', () => {
 
     const plan = planSourceDuplicateTo(tree, [at(5)], foreign, 0)
     expect(plan.ok).toBe(true)
-    if (plan.ok) expect(plan.commit).toEqual([{ nodeId: at(5), parentNodeId: foreign, anchorNodeId: null, position: 'after', crossFile: true }])
+    if (plan.ok) expect(plan.commit).toEqual([{ nodeId: at(5), parentNodeId: foreign, anchorNodeId: null, position: 'after', crossFile: true, parentIsEmpty: true }])
   })
 
   // ERR-8 — a paste of something copied in ANOTHER frame: the copied node is
@@ -131,7 +131,7 @@ describe('planSourceDuplicateTo — several elements, and another file', () => {
     const elsewhere = makeNode({ id: 'pages/About.tsx:4:5', moduleId: 'base.text', parentId: 'pages/About.tsx:3:3' })
     const plan = planSourceDuplicateTo(tree, [elsewhere.id], at(7), 0, (id) => (id === elsewhere.id ? elsewhere : undefined))
     expect(plan.ok).toBe(true)
-    if (plan.ok) expect(plan.commit).toEqual([{ nodeId: elsewhere.id, parentNodeId: at(7), anchorNodeId: null, position: 'after', crossFile: true }])
+    if (plan.ok) expect(plan.commit).toEqual([{ nodeId: elsewhere.id, parentNodeId: at(7), anchorNodeId: null, position: 'after', crossFile: true, parentIsEmpty: true }])
   })
 })
 

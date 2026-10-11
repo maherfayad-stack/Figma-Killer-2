@@ -28,14 +28,15 @@
  * not the user's token layer (CT-OD-1). The editor lists them as a separate,
  * read-only collection.
  */
-import { readFileSync } from 'node:fs'
-import { extname, join } from 'node:path'
 import {
   gateKey,
+  findTokenMentions,
   lineOfOffset,
   modeOfGate,
   resolveVarValue,
   scanGatedDeclarations,
+  themeClassNames,
+  themeVariableOf,
   type CatalogToken,
   type ModeAxis,
   type ModeGate,
@@ -45,7 +46,8 @@ import {
   type TokenFamily,
   type TokenUsage,
 } from '@core/studio-tokens'
-import { isPrototypeShellPath, listWorkspaceFiles } from '@core/page-parser'
+import { readTokenWorkspaceFiles } from './tokenWorkspaceFiles'
+import { themeClassUsage } from './tokenThemeClasses'
 import { classifyDesignTokenFamily } from './tokenExtractCssScan'
 import { familyOf, type TokenCssSource } from './projectTokenIndex'
 
@@ -76,17 +78,34 @@ function collectionLabel(id: string): string {
 }
 
 /**
+ * Tailwind v4 compiles every `@theme` variable the page uses back out as
+ * `@layer theme { :root, :host { --color-brand: ... } }`. That is the SAME
+ * token, derived from the project's own `@theme` block - listing it would make
+ * a variable the user declared in their own file read as "compiled output,
+ * read-only", and every edit and rename of it refuse. A compiled declaration in
+ * the theme layer of a name the project declares in `@theme` is an echo of it,
+ * not a second source.
+ */
+function withoutTailwindThemeEchoes(declared: readonly Located[]): Located[] {
+  const projectTheme = new Set(declared.filter((entry) => entry.inTheme && entry.source.origin === 'project').map((entry) => entry.name))
+  if (projectTheme.size === 0) return [...declared]
+  return declared.filter((entry) => !(entry.source.origin === 'compiled' && !entry.inTheme && projectTheme.has(entry.name) && entry.atRules.some((rule) => THEME_LAYER_RE.test(rule))))
+}
+
+const THEME_LAYER_RE = /^@layer\s+theme\b/
+
+/**
  * Build the catalog from the stylesheets the canvas loads, in cascade order
  * (a later source overrides an earlier one). Pure over its input - the caller
  * does the I/O (`collectProjectTokenSources`) and, when it wants usage, the
  * scan ({@link scanTokenUsage}).
  */
-export function buildTokenCatalog(sources: readonly TokenCssSource[], usage?: ReadonlyMap<string, TokenUsage>): TokenCatalog {
-  const located: Located[] = []
+export function buildTokenCatalog(sources: readonly TokenCssSource[]): TokenCatalog {
+  const declared: Located[] = []
   for (const source of sources) {
     if (!source.css) continue
     for (const declaration of scanGatedDeclarations(source.css)) {
-      located.push({
+      declared.push({
         name: declaration.name,
         gate: declaration.gate,
         selector: declaration.selector,
@@ -98,6 +117,8 @@ export function buildTokenCatalog(sources: readonly TokenCssSource[], usage?: Re
       })
     }
   }
+
+  const located = withoutTailwindThemeEchoes(declared)
 
   // Cascade: the last declaration of a name under a gate is the one that paints.
   const valuesByGate = new Map<string, Map<string, string>>()
@@ -163,11 +184,20 @@ export function buildTokenCatalog(sources: readonly TokenCssSource[], usage?: Re
       family: token.family,
       collection,
       decls: token.decls,
-      ...(usage ? { usage: usage.get(name) ?? { count: 0, sites: [] } } : {}),
     })
   }
 
   return { tokens, collections: [...collections.values()], axes: inferModeAxes(tokens) }
+}
+
+/** The Tailwind v4 `@theme` variables of a catalog: the ones whose name is also a utility class. */
+export function themeTokenNames(catalog: TokenCatalog): string[] {
+  return catalog.tokens.filter((token) => token.decls.some((decl) => decl.inTheme)).map((token) => token.name)
+}
+
+/** The catalog with each token's usage attached (`{ count: 0 }` for a token nothing reads). */
+export function withTokenUsage(catalog: TokenCatalog, usage: ReadonlyMap<string, TokenUsage>): TokenCatalog {
+  return { ...catalog, tokens: catalog.tokens.map((token) => ({ ...token, usage: usage.get(token.name) ?? { count: 0, sites: [] } })) }
 }
 
 /** The extra modes found among the declared gates, grouped into axes (the default mode of each is the base gate). */
@@ -191,48 +221,47 @@ export function inferModeAxes(tokens: readonly CatalogToken[]): ModeAxis[] {
 // Usage - where each token is read (P6)
 // ---------------------------------------------------------------------------
 
-const USAGE_FILE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.css', '.scss', '.sass', '.less', '.html', '.vue', '.svelte', '.mdx'])
-/** `var(--x)`, Tailwind v3 arbitrary `[--x]`, Tailwind v4 shorthand `(--x)`. */
-const USAGE_RE = /(?:var\(\s*|\[|\()(--[A-Za-z0-9_-]+)/g
-const MAX_USAGE_FILES = 4000
-const MAX_USAGE_FILE_BYTES = 512 * 1024
 const MAX_SITES_PER_TOKEN = 25
 
-/**
- * Every place the project reads a custom property: `var(--x)` in any stylesheet
- * or source file, plus Tailwind's arbitrary-value forms. One server-side pass
- * over the workspace file list (not in a selector path), cheap enough to run
- * per request; the catalog asks for it only when a panel shows counts.
- */
-export function scanTokenUsage(dir: string): Map<string, TokenUsage> {
-  const found = new Map<string, { count: number; sites: Array<{ file: string; line: number }> }>()
-  let scanned = 0
-  for (const rel of listWorkspaceFiles(dir)) {
-    if (scanned >= MAX_USAGE_FILES) break
-    if (!USAGE_FILE_EXTENSIONS.has(extname(rel).toLowerCase()) || isPrototypeShellPath(rel)) continue
-    let text: string
-    try {
-      const buffer = readFileSync(join(dir, rel))
-      if (buffer.byteLength > MAX_USAGE_FILE_BYTES) continue
-      text = buffer.toString('utf8')
-    } catch (err) {
-      console.error('[studio:tokenCatalog] could not read a file for the usage scan:', rel, err)
-      continue
+/** `bg-brand` -> [`--color-brand`]: the classes that read each Tailwind theme variable, so a class use counts as a use. */
+function themeClassMap(themeTokens: readonly string[]): ReadonlyMap<string, readonly string[]> {
+  const byClass = new Map<string, string[]>()
+  for (const name of themeTokens) {
+    const variable = themeVariableOf(name)
+    if (!variable || variable.key.includes('--')) continue
+    for (const className of themeClassNames(variable.namespace, variable.key)) {
+      const tokens = byClass.get(className)
+      if (tokens) tokens.push(name)
+      else byClass.set(className, [name])
     }
-    scanned++
-    if (!text.includes('--')) continue
-    const lines = text.split('\n')
+  }
+  return byClass
+}
+
+/**
+ * Every place the project reads a custom property: any mention of its name
+ * that is not a declaration (`@core/studio-tokens` `findTokenMentions` - the
+ * ONE definition rename and remove use too, so a count of 0 means removing it
+ * breaks nothing). One server-side pass over the workspace file list (not in a
+ * selector path), cheap enough to run per request; the catalog asks for it
+ * only when a panel shows counts.
+ */
+export function scanTokenUsage(dir: string, themeTokens: readonly string[] = []): Map<string, TokenUsage> {
+  const found = new Map<string, { count: number; sites: Array<{ file: string; line: number }> }>()
+  const record = (name: string, file: string, line: number): void => {
+    let entry = found.get(name)
+    if (!entry) found.set(name, (entry = { count: 0, sites: [] }))
+    entry.count++
+    if (entry.sites.length < MAX_SITES_PER_TOKEN) entry.sites.push({ file, line })
+  }
+  const byClass = themeClassMap(themeTokens)
+  for (const { file, text } of readTokenWorkspaceFiles(dir, { allText: byClass.size > 0 })) {
+    if (byClass.size > 0) for (const use of themeClassUsage(file, text, byClass)) record(use.token, file, use.line)
+    const lines = text.split(/\r?\n/)
     for (let index = 0; index < lines.length; index++) {
-      const line = lines[index]!
-      if (!line.includes('--')) continue
-      USAGE_RE.lastIndex = 0
-      let match: RegExpExecArray | null
-      while ((match = USAGE_RE.exec(line))) {
-        const name = match[1]!
-        let entry = found.get(name)
-        if (!entry) found.set(name, (entry = { count: 0, sites: [] }))
-        entry.count++
-        if (entry.sites.length < MAX_SITES_PER_TOKEN) entry.sites.push({ file: rel, line: index + 1 })
+      for (const mention of findTokenMentions(lines[index]!)) {
+        if (mention.declaration) continue
+        record(mention.name, file, index + 1)
       }
     }
   }

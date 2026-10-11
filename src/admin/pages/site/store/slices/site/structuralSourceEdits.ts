@@ -46,6 +46,8 @@ import {
   decodeSourceNodeId,
   describeStructuralRefusal,
   isSourceDerivedNodeId,
+  layoutFileOf,
+  planUnrollList,
   previewStructuralGroup,
   previewStructuralMove,
   refuseStructuralEdit,
@@ -63,7 +65,10 @@ import { constraintPrimaryAction, constraintToastBody } from '../../constraintAc
 import { openSourceFile } from '../../openSourceFile'
 import type { EditorStore } from '@site/store/types'
 import { applyToThisInstanceOnly } from './instanceOnlyGesture'
+import { resolveActiveTreeTarget } from './helpers'
+import type { SourceDuplicateToCommit } from '@site/studio/studioStructuralCommits'
 import { nodeHtmlTag } from './nodeHtmlTag'
+import type { StructuralRefusalDialogState } from '../structuralRefusalDialogState'
 import type { EditorStoreSetter } from './types'
 
 /**
@@ -259,29 +264,6 @@ export function planSourceDuplicate(
   return { ok: true, commit: commit.length > 0 ? commit : null }
 }
 
-/** Where one Alt-dragged or pasted COPY is written: inside which container, beside which existing child. */
-export interface SourceDuplicateToCommit {
-  /** The element being copied. */
-  nodeId: string
-  /** The container the copy lands in — a real source node, never the synthetic page root. */
-  parentNodeId: string
-  /** The existing child the copy is written next to, or `null` to append as the last child. */
-  anchorNodeId: string | null
-  position: 'before' | 'after'
-  /**
-   * ERR-16 — the container is written in ANOTHER file than the element, so the
-   * copy is a `transplant` with `copy: true`: it carries the imports the markup
-   * needs there, and refuses by name when a local it reads cannot travel.
-   */
-  crossFile?: true
-  /**
-   * The container has no children yet, so the copy may expand a self-closing
-   * `<X />` — and deleting the copy does not put that back. The copy's undo is
-   * then the undo journal's `restore` (as `SourceInsertCommit.parentIsEmpty`).
-   */
-  parentIsEmpty?: true
-}
-
 /**
  * K2 — whether `nodeIds` may be copied into `newParentId` at `newIndex`
  * (Alt+drag, ⌘V), and if so where each copy is written.
@@ -457,7 +439,8 @@ export function planSourceGroup(
  * children, in the same file and the same scope, so an ordinary element at a
  * known location is the whole requirement here. The question only the AST can
  * answer — is this container ONLY a container, or does it carry a handler, a
- * ref, a `key`, a spread — arrives at save time as `has-behaviour`.
+ * ref, a `key`, a spread — decides, at save time, whether it is removed or
+ * kept (emptied) with its children handed to the parent (G-7).
  */
 export function planSourceUngroup(
   tree: NodeTree<PageNode>,
@@ -497,6 +480,8 @@ export const STRUCTURAL_REFUSAL_TITLE = {
   freeMove: 'Cannot place this by hand',
   /** PA-4 — "Ignore auto layout" whose container cannot take the `position: relative` it needs, or whose own position cannot be written. */
   ignoreAutoLayout: 'Cannot ignore auto layout here',
+  /** PA-7 / PA-8 — Add / Remove auto layout rewrites a container and all its children; one element that cannot take the write refuses the lot. */
+  layoutConversion: 'Cannot change auto layout here',
   /** P5-C — the Detach verb (`instanceActions.ts`): a refusal names why this instance's markup can't be written in place. */
   detach: 'Detach refused',
   /** A canvas resize / Hug on markup that lives in a shared component (`inlineStyleActions.ts`). */
@@ -556,9 +541,48 @@ export const STRUCTURAL_REFUSAL_TITLE = {
  * below is untouched — `pushToast` does not go through this store's `set` at
  * all, so it was never inside this cost.
  */
+/**
+ * G-8 / G-9 — the two remedies that end with the refused gesture RUNNING: a
+ * `route-chrome` refusal can be answered by starting "Edit layout" for that
+ * layout file, a `list-row` refusal (on a list whose array is a literal in the
+ * same file) by writing the list out as elements. Each is offered only when the
+ * caller handed over what it takes to run the gesture again (`retry`) and the
+ * store; the constraint gains the matching action, the dialog gets the closure.
+ */
+function withReplayRemedies(
+  constraint: EditConstraint,
+  context: { nodeId?: string; retry?: (mapId: (nodeId: string) => string) => void; getState?: () => EditorStore },
+): { constraint: EditConstraint; replayRemedies?: NonNullable<StructuralRefusalDialogState['replayRemedies']> } {
+  const { nodeId, retry, getState } = context
+  if (!nodeId || !getState) return { constraint }
+  if (constraint.reason === 'route-chrome') {
+    const rel = layoutFileOf(nodeId)
+    if (!rel) return { constraint }
+    return {
+      constraint,
+      replayRemedies: {
+        editLayout: () => {
+          getState().setMainEditTarget({ kind: 'layout', rel })
+          // Nothing was written, so every id the gesture named is still right.
+          retry?.((id) => id)
+        },
+      },
+    }
+  }
+  if (constraint.reason === 'list-row') {
+    const tree = resolveActiveTreeTarget(getState())?.tree
+    if (!tree || !planUnrollList(tree, nodeId)) return { constraint }
+    return {
+      constraint: { ...constraint, actions: [{ label: 'Unroll list', kind: 'unroll-list' }, ...constraint.actions] },
+      replayRemedies: { unrollList: () => void getState().unrollList(nodeId, retry ? { retry } : undefined) },
+    }
+  }
+  return { constraint }
+}
+
 export function presentStructuralRefusal(
   title: (typeof STRUCTURAL_REFUSAL_TITLE)[keyof typeof STRUCTURAL_REFUSAL_TITLE],
-  constraint: EditConstraint,
+  refused: EditConstraint,
   context: {
     /** The node the refusal is about, when the plan had one — see `StructuralPlan.nodeId`. */
     nodeId?: string
@@ -586,6 +610,7 @@ export function presentStructuralRefusal(
     set: EditorStoreSetter
   },
 ): void {
+  const { constraint, replayRemedies } = withReplayRemedies(refused, context)
   const openSourceContext = context.getState
     ? {
         openSource: (origin: Parameters<typeof openSourceFile>[1]) => openSourceFile(context.getState!(), origin),
@@ -603,6 +628,7 @@ export function presentStructuralRefusal(
           constraint,
           ...(context.nodeId !== undefined ? { nodeId: context.nodeId } : {}),
           ...(context.duplicateIntoFrame ? { duplicateIntoFrame: context.duplicateIntoFrame } : {}),
+          ...(replayRemedies ? { replayRemedies } : {}),
         }
       })
     })

@@ -42,17 +42,22 @@
  * split (wire shape here, dispatch behaviour there).
  */
 import { AtRuleScopeSchema, CssEditSchema } from './studioCssWriteback'
+import { ClassEditSchema } from './studioClassEditSchema'
 import {
   SlotEditSchemas,
   type StudioAddSlotPropDetail,
   type StudioPromoteComponentDetail,
 } from './studioSlotWriteback'
 import { StructuralEditSchemas } from './studioStructuralWriteback'
+import { VariantEditSchemas } from './studioVariantWriteback'
 import { CanvasLayerEditSchemas, type CanvasLayerRemovedText } from './studioCanvasLayerWriteback'
 import { SvgEditSchemas } from './studioSvgWriteback'
 import { ListItemEditSchema } from './studioListItemWriteback'
+import { UnrollListEditSchema } from './studioUnrollWriteback'
 import { UndoJournalTokenSchema } from './studio/undoJournalToken'
 import type { CreatedJsxLocation } from '@core/ast-codemods'
+import type { PastedHtmlSummary } from './studioPastedHtmlStyles'
+import type { StyleLanding, StyleLandingRung } from '@core/page-tree'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
 /**
@@ -70,13 +75,20 @@ const PropEditSchema = Type.Object({
   nodeId: Type.String(),
   prop: Type.String(),
   value: Type.Union([Type.String(), Type.Number(), Type.Boolean()]),
+  /**
+   * G-6 (OD-20) - the user typed over a code-bound value: replace the code
+   * with the literal. Editor-only (it needs the undo journal) and never on an
+   * inlined id; see `studioBatchUndoJournal.ts` and `studioWriteback.ts`.
+   */
+  unbind: Type.Optional(Type.Literal(true)),
 })
 
-/** One element-text-children writeback — `setJsxText`. */
+/** One element-text-children writeback — `setJsxText`. `unbind` as on {@link PropEditSchema}. */
 const TextEditSchema = Type.Object({
   kind: Type.Literal('text'),
   nodeId: Type.String(),
   text: Type.String(),
+  unbind: Type.Optional(Type.Literal(true)),
 })
 
 /**
@@ -92,50 +104,6 @@ const StyleEditSchema = Type.Object({
   nodeId: Type.String(),
   style: Type.Record(Type.String(), Type.Union([Type.String(), Type.Number()])),
   remove: Type.Optional(Type.Array(Type.String())),
-})
-
-/**
- * One `className` token add/remove writeback (Track B2) — `setJsxClassName`.
- * Replaces Phase 0 item 0.6's honesty-only stopgap: a `node.classIds` change
- * now reaches disk here instead of only ever warning that it couldn't.
- *
- * `add`/`remove` carry TOKENS, never `StyleRule` ids — the ids are Studio's own
- * `sc-<hash>` bookkeeping. Two token shapes, because two kinds of class exist
- * in a real repo (`style-02`):
- *
- *   - `{ kind: 'literal', token }` — a class whose NAME is what the DOM
- *     carries: a plain `.css` rule, a Tailwind utility, a generated framework
- *     class. Written as a plain token in the `className` attribute.
- *   - `{ kind: 'module', file, local }` — a class declared in a CSS Module.
- *     Its DOM name is a bundler-computed hash, so writing any literal name for
- *     it produces markup that styles nothing outside the tool that computed
- *     that hash. `file` is the workspace-relative `*.module.css` path (guarded
- *     by `studioWriteback.ts`'s `resolveClassNameTokens` before it is ever
- *     turned into a specifier) and `local` is the class as WRITTEN in that file, so the
- *     codemod can emit the only reachable spelling: `styles.<local>`.
- *
- * Can REFUSE with a specific reason (`css-module-binding` /
- * `template-dynamic` / `spread-attribute` / `unsupported-call` /
- * `unsupported-expression` — `ClassNameRefusalReason` in `@core/ast-codemods`)
- * exactly like `detach`/`swap`/`css` do — see `applyStudioEdit`'s `'class'`
- * case. Since P3-C (WB-18) an ADD to an expression `className` wraps it rather
- * than refusing, and a module token whose stylesheet the file does not import
- * yet is imported after the batch (`cssModuleImportPlan.ts`), so through this
- * schema `css-module-import-missing` no longer occurs.
- */
-const ClassNameTokenSchema = Type.Union([
-  Type.Object({ kind: Type.Literal('literal'), token: Type.String() }),
-  Type.Object({ kind: Type.Literal('module'), file: Type.String(), local: Type.String() }),
-])
-
-/** One class token on the wire — `literal` or `module`. See `ClassEditSchema`. */
-export type StudioClassNameToken = Static<typeof ClassNameTokenSchema>
-
-const ClassEditSchema = Type.Object({
-  kind: Type.Literal('class'),
-  nodeId: Type.String(),
-  add: Type.Array(ClassNameTokenSchema),
-  remove: Type.Array(ClassNameTokenSchema),
 })
 
 /**
@@ -267,25 +235,47 @@ const DetachEditSchema = Type.Object({
 })
 
 /**
- * P5-C (DET-7) — "Expose as prop": the literal `target` of an element inside
- * a component's markup becomes an optional prop of that component whose
- * default IS the literal (`exposeLiteralAsProp`), so every other instance
- * renders byte-identical; `value`, when given, is written at this one call
- * site. `nodeId` is the element's inlined id, exactly one call site deep
- * (`page~component:line:col`) — the call site is its head, and the codemod
- * checks the element really is that component's. Two files, one gesture,
- * journaled (⌘Z is `restore`).
+ * P5-C (DET-7), OD-19 — "Expose as prop", the write behind every edit made to
+ * an element inside a component instance: each of `overrides` names a literal
+ * of that ONE element (its text, an attribute, or one inline-style property)
+ * that becomes an optional prop of the component whose default IS the literal
+ * (`exposeLiteralAsProp`), so every other instance renders byte-identical;
+ * `value`, when given, is written at this one call site. `nodeId` is the
+ * element's inlined id, exactly one call site deep (`page~component:line:col`)
+ * — the call site is its head, and the codemod checks the element really is
+ * that component's. Two files, one gesture however many overrides, journaled
+ * (⌘Z is `restore`).
  */
-const ExposePropEditSchema = Type.Object({
-  kind: Type.Literal('expose-prop'),
-  nodeId: Type.String(),
+const ExposeOverrideSchema = Type.Object({
   target: Type.Union([
     Type.Object({ kind: Type.Literal('text') }),
     Type.Object({ kind: Type.Literal('attribute'), name: Type.String({ pattern: '^[A-Za-z_$][A-Za-z0-9_$:-]*$', maxLength: 64 }) }),
     Type.Object({ kind: Type.Literal('style'), property: Type.String({ pattern: '^[A-Za-z_$][A-Za-z0-9_$-]*$', maxLength: 64 }) }),
   ]),
   propName: Type.String({ pattern: '^[A-Za-z_$][A-Za-z0-9_$]*$', maxLength: 64 }),
-  value: Type.Optional(Type.Union([Type.String(), Type.Number(), Type.Boolean()])),
+  value: Type.Optional(Type.Union([Type.String({ maxLength: 10_000 }), Type.Number(), Type.Boolean()])),
+})
+
+const ExposePropEditSchema = Type.Object({
+  kind: Type.Literal('expose-prop'),
+  nodeId: Type.String(),
+  overrides: Type.Array(ExposeOverrideSchema, { minItems: 1, maxItems: 16 }),
+})
+
+/**
+ * OD-19 — "Apply to all": the values the instance overrides through `propNames`
+ * become the component's defaults and the call site stops passing it
+ * (`promoteOverrideToDefault`). `nodeId` is the inlined id of ANY element of
+ * that instance, exactly one call site deep (`page~component:line:col`): its
+ * head is the call site, its tail names the component's file, and both go
+ * through the one path decoder. Which element is irrelevant — the override's
+ * own write may have moved the one that was edited. Journaled (⌘Z is
+ * `restore`).
+ */
+const PromoteOverrideEditSchema = Type.Object({
+  kind: Type.Literal('promote-override'),
+  nodeId: Type.String(),
+  propNames: Type.Array(Type.String({ pattern: '^[A-Za-z_$][A-Za-z0-9_$]*$', maxLength: 64 }), { minItems: 1, maxItems: 16 }),
 })
 
 /**
@@ -332,12 +322,17 @@ export const StudioEditSchema = Type.Union([
   AssetEditSchema,
   DetachEditSchema,
   ExposePropEditSchema,
+  PromoteOverrideEditSchema,
   SwapEditSchema,
   RestoreEditSchema,
   ...StructuralEditSchemas,
   // OD-8 — a `.map` row's structure, written to its array (`studioListItemWriteback.ts`).
   ListItemEditSchema,
+  // G-9 / OD-24 — "Unroll list": a `.map` over an array literal becomes its rows (`studioUnrollWriteback.ts`).
+  UnrollListEditSchema,
   ...SlotEditSchemas,
+  // CV-3 — add / remove a variant, add a component property (`studioVariantWriteback.ts`).
+  ...VariantEditSchemas,
   // P5-G — the free canvas's five kinds (`studioCanvasLayerWriteback.ts`).
   ...CanvasLayerEditSchemas,
   // P5-D SVG-4 — one element inside an inline `<svg>` (`studioSvgWriteback.ts`).
@@ -418,6 +413,8 @@ export interface StudioEditApplyOutcome {
   /** P5-C — every `detach` that did not refuse; `written: false` is a held dry run, counted as neither written nor skipped. */
   detachDetail?: StudioDetachDetail
   createdStylesheet?: { file: string }
+  /** G-5 — the rung a style edit took (`css` set/insert/create, `styled`, `style`); see `@core/page-tree`'s `styleLanding.ts`. */
+  styleLanding?: { rung: StyleLandingRung; file: string }
   promoteDetail?: StudioPromoteComponentDetail
   addSlotPropDetail?: StudioAddSlotPropDetail
   /**
@@ -460,6 +457,25 @@ export interface StudioEditApplyOutcome {
    * own bytes, which its undo writes back (`canvas-layer-restore`).
    */
   removed?: readonly CanvasLayerRemovedText[]
+  /**
+   * G-1 - what a `transplant` wrote into the destination besides the markup:
+   * plain constants and handlers (`copy`), the element's own copy of the state it
+   * used (`state`, OD-17), a row's data or a prop's default as a literal
+   * constant (`value`). Absent when it carried none. Never includes a copy the
+   * destination already had.
+   */
+  carried?: readonly StudioCarriedDeclaration[]
+  /** G-10 - where a pasted HTML fragment's styles went (an `insert` with `pastedHtml`). */
+  pastedHtml?: PastedHtmlSummary
+}
+
+/** One thing a move copied to the destination - see {@link StudioEditApplyOutcome.carried}. */
+export interface StudioCarriedDeclaration {
+  /** The name it had in the origin. */
+  name: string
+  /** The name it has at the destination - different only after a clash. */
+  as: string
+  how: 'copy' | 'state' | 'value'
 }
 
 /**
@@ -532,6 +548,14 @@ export interface StudioEditBatchResult {
    * path on its very next edit, with no reload.
    */
   createdStylesheets: { nodeId: string; file: string }[]
+  /**
+   * G-5 — where every style edit that wrote LANDED: the declaration, an
+   * expanded shorthand, an override, or the element's own `style=""`
+   * (`StyleLanding`). `nodeId` is the edit's own id — a `css` edit's synthetic
+   * one, a styled edit's template tag, an inline edit's element — the join key
+   * the client already holds for it. Empty array when none did.
+   */
+  styleLandings: StyleLanding[]
   /**
    * E2.4 — every `promote-component` edit that SUCCEEDED, with the new
    * file/component name it minted and the free-variable partition it
@@ -637,4 +661,12 @@ export interface StudioEditBatchResult {
    * when the batch held no `list-item` edit that wrote.
    */
   listArrays: { nodeId: string; to: string }[]
+  /**
+   * G-1 - everything a `transplant` in this batch copied to its destination
+   * besides the markup (see {@link StudioEditApplyOutcome.carried}); the board
+   * tells the user when state or data was copied. Absent when nothing was.
+   */
+  carried?: StudioCarriedDeclaration[]
+  /** G-10 - where each pasted HTML fragment's styles went; the board tells the user. */
+  pastedHtml?: PastedHtmlSummary[]
 }

@@ -79,7 +79,7 @@ describe('useBridgeSelectionChrome', () => {
     expect(calls.find(([name]) => name === 'setResizeTarget')?.slice(1)).toEqual([
       { nodeId: textId },
       // canvas-23/26 — what the frame cannot read itself rides along.
-      { proportional: false, sizing: {}, snap: { siblings: [], parent: { nodeId: rootId }, zoom: 1 } },
+      { proportional: false, sizing: {}, snap: { siblings: [], parent: { nodeId: rootId }, zoom: 1 }, anchors: { horizontal: [], vertical: [] } },
     ])
   })
 

@@ -32,6 +32,7 @@ import { createPageActions } from './site/pageActions'
 import { createExplorerActions } from './site/explorerActions'
 import { createNodeActions } from './site/nodeActions'
 import { createInstanceActions } from './site/instanceActions'
+import { createInstanceOverrideActions } from './site/instanceOverrideActions'
 import { createBreakpointActions } from './site/breakpointActions'
 import { createSettingsActions } from './site/settingsActions'
 import { createFontActions } from './site/fontActions'
@@ -45,6 +46,9 @@ import { createFrameworkTokenImportActions } from './site/framework/tokenImport'
 import { emptyNodeIndexes, nodeIndexState } from './site/nodeIndex'
 import type { SiteSlice } from './site/types'
 import type { InstanceDetachSlice } from './site/instanceDetachTypes'
+import type { InstanceOverrideSlice } from './site/instanceOverrideTypes'
+import { createMainEditActions, type MainEditSlice } from './site/mainEditMode'
+import { createUnrollListActions, type UnrollListSlice } from './site/unrollListActions'
 
 // Re-export the public slice type for store wiring.
 
@@ -54,14 +58,15 @@ import type { InstanceDetachSlice } from './site/instanceDetachTypes'
 // P5-C — the Detach action's surface rides the same augmentation, beside
 // `SiteSlice` rather than inside `./site/types` (at its size ceiling).
 declare module '@site/store/types' {
-  interface EditorStore extends SiteSlice, InstanceDetachSlice {}
+  interface EditorStore extends SiteSlice, InstanceDetachSlice, MainEditSlice, InstanceOverrideSlice, UnrollListSlice {}
 }
 
-export const createSiteSlice: EditorStoreSliceCreator<SiteSlice & InstanceDetachSlice> = (set, get) => {
+export const createSiteSlice: EditorStoreSliceCreator<SiteSlice & InstanceDetachSlice & MainEditSlice & InstanceOverrideSlice & UnrollListSlice> = (set, get) => {
   // Build the closure-shared mutation helpers once. Every action factory
   // receives this same object — so there is exactly one
   // `mutateActiveTree` / `mutateSite` per slice instance.
   const helpers = buildSiteHelpers(set, get)
+  const instanceOverrides = createInstanceOverrideActions(helpers)
 
   return {
     // ─── Owned state ─────────────────────────────────────────────────────────
@@ -82,6 +87,12 @@ export const createSiteSlice: EditorStoreSliceCreator<SiteSlice & InstanceDetach
     // P5-C — the Detach verb's pre-commit confirm (`instanceActions.ts`).
     instanceDetachConfirm: null,
 
+    // OD-19 / G-8 — the explicit "edit the shared thing itself" mode (`mainEditMode.ts`).
+    mainEditTarget: null,
+    ...createMainEditActions(helpers.set),
+    variantEditAxis: null,
+    ...instanceOverrides.slice,
+
     // mutateAllPagesAndSite is the public entry point for the Super Import
     // wizard — one Cmd+Z reverts the entire import.
     mutateAllPagesAndSite: helpers.mutateAllPagesAndSite,
@@ -92,8 +103,9 @@ export const createSiteSlice: EditorStoreSliceCreator<SiteSlice & InstanceDetach
     ...createLifecycleActions(helpers),
     ...createPageActions(helpers),
     ...createExplorerActions(helpers),
-    ...createNodeActions(helpers),
+    ...createNodeActions(helpers, instanceOverrides.router),
     ...createInstanceActions(helpers),
+    ...createUnrollListActions(helpers),
     ...createBreakpointActions(helpers),
     ...createSettingsActions(helpers),
     ...createFontActions(helpers),

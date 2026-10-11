@@ -82,6 +82,14 @@ const purifiersWithHooks = new WeakSet<object>()
 let sanitizingSvg = false
 
 /**
+ * True only while `sanitizePastedHtml` is running — scopes the one thing the
+ * shared anchor hook must NOT do to a pasted design: force every link to open
+ * in a new tab. (Same reasoning as `sanitizingSvg`: hooks are per-instance, the
+ * profile is per-call.)
+ */
+let sanitizingPastedHtml = false
+
+/**
  * The SVG elements whose `href` is a same-document reference an icon needs:
  * `<use href="#glyph">` sprites, gradient/pattern/filter inheritance
  * (`<linearGradient href="#base">`), text on a path, a motion path, and a
@@ -146,7 +154,7 @@ function emptySvgRemoteStyle(node: DOMPurifyHookNode, event: { tagName: string }
 function installHooks(purifier: DOMPurifyRuntime): DOMPurifyRuntime {
   if (!purifiersWithHooks.has(purifier) && typeof purifier.addHook === 'function') {
     purifier.addHook('afterSanitizeAttributes', (node) => {
-      if (node.tagName === 'A') {
+      if (node.tagName === 'A' && !sanitizingPastedHtml) {
         node.setAttribute?.('target', '_blank')
         node.setAttribute?.('rel', 'noopener noreferrer')
       }
@@ -484,5 +492,62 @@ export function sanitizeSvg(value: unknown, options: { keepPartStamps?: boolean 
     return sanitizeToFixpoint(purifier, str, options.keepPartStamps ? SVG_CANVAS_CONFIG : SVG_CONFIG)
   } finally {
     sanitizingSvg = false
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Pasted HTML (G-10)
+// ---------------------------------------------------------------------------
+
+/**
+ * Pasted-HTML profile — a whole design's markup (another site's DOM, an HTML
+ * file, an agent's snippet) on its way to being written into a user's `.tsx`.
+ *
+ * DOMPurify's own HTML profile does the work that matters: no `<script>`, no
+ * `on*` handler, no `javascript:` / `vbscript:` URL, no `<foreignObject>`.
+ * The list below removes what the profile still lets through but a pasted
+ * design has no business carrying into a repository: elements that load other
+ * documents or plugins (`iframe`, `object`, `embed`, `link`, `base`, `meta`),
+ * `srcdoc`, and `<template>` / `<noscript>` (inert on the page they came from,
+ * live markup in a React tree).
+ *
+ * `<style>` is forbidden too, on purpose: the caller reads its text BEFORE
+ * sanitizing and hands the CSS to the stylesheet writer, which judges every
+ * declaration. `<svg>` never reaches this profile either — each graphic is cut
+ * out first and converted by the SVG importer, whose own sanitizer
+ * (`sanitizeSvg`) keeps `<use href="#…">` references that this profile would
+ * drop.
+ */
+const PASTED_HTML_CONFIG: Config = {
+  USE_PROFILES: { html: true },
+  FORBID_TAGS: [
+    'script', 'style', 'iframe', 'frame', 'frameset', 'object', 'embed', 'applet',
+    'base', 'link', 'meta', 'template', 'noscript', 'svg', 'math',
+  ],
+  FORBID_ATTR: ['srcdoc'],
+  RETURN_DOM: false,
+  RETURN_DOM_FRAGMENT: false,
+}
+
+/**
+ * Sanitise a pasted HTML fragment for conversion to JSX (`htmlToJsx.ts`).
+ * Returns `''` when no DOMPurify runtime is available — a sanitiser that cannot
+ * run returns nothing, never the input.
+ *
+ * The caller still reads the result as DATA: it builds JSX out of the parsed
+ * elements and attributes and writes no markup string anywhere.
+ */
+export function sanitizePastedHtml(value: unknown): string {
+  const str = String(value ?? '')
+  if (!str.trim()) return ''
+
+  const purifier = getDOMPurify()
+  if (!purifier || typeof purifier.sanitize !== 'function') return ''
+
+  sanitizingPastedHtml = true
+  try {
+    return sanitizeToFixpoint(purifier, str, PASTED_HTML_CONFIG)
+  } finally {
+    sanitizingPastedHtml = false
   }
 }

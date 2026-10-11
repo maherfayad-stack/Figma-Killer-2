@@ -25,6 +25,7 @@ import { resetSelectionStyleCommands } from '@site/canvas/selectionStyleCommands
 import { resetStyleClipboard } from '@site/canvas/layerCommands'
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
 import { registerFrameAdapter, unregisterFrameAdapter } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
+import { PortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
 import type { FrameDocumentAdapter, NodeMeasurement, NodeRect } from '@site/canvas/frameAdapter/FrameDocumentAdapter'
 import { makeNode, makePage, makeSite } from '../fixtures'
 // The module registry: ⇧A reads `canHaveChildren` to tell a container from a leaf.
@@ -218,12 +219,98 @@ describe('bring to front / send to back (IX-9)', () => {
 })
 
 describe('⇧A flex layout (IX-10)', () => {
+  /**
+   * PA-7: ⇧A reads the container and its children off the RENDERED frame (a
+   * portal frame's elements), not off the adapter's `measure` table. happy-dom
+   * has no layout, so each element answers its box from the TABLE.
+   */
+  function mountRenderedStack(): () => void {
+    const portalFrame = document.createElement('iframe')
+    document.body.appendChild(portalFrame)
+    const frameDoc = portalFrame.contentDocument!
+    frameDoc.body.setAttribute('data-breakpoint-id', 'desktop')
+    const mount = (id: string, parent: HTMLElement) => {
+      const element = frameDoc.createElement('div')
+      element.setAttribute('data-node-id', id)
+      const { x, y, width, height } = TABLE[id]!.rect
+      element.getBoundingClientRect = () =>
+        ({ x, y, left: x, top: y, width, height, right: x + width, bottom: y + height, toJSON: () => ({}) }) as DOMRect
+      element.style.display = 'block'
+      parent.appendChild(element)
+      return element
+    }
+    const stack = mount('stack', frameDoc.body)
+    mount('s1', stack)
+    mount('s2', stack)
+    const adapter = new PortalFrameAdapter(frameDoc)
+    registerFrameAdapter(portalFrame, adapter, 'desktop')
+    return () => {
+      unregisterFrameAdapter(portalFrame)
+      adapter.dispose()
+    }
+  }
+
   it('a block container of STACKED children becomes a flex COLUMN', async () => {
+    const unmountStack = mountRenderedStack()
     render(<Harness />)
     select('stack')
     expect(press({ key: 'A', code: 'KeyA', shiftKey: true })).toBe(true)
     await settle()
     expect(node('stack').inlineStyles).toMatchObject({ display: 'flex', flexDirection: 'column' })
+    unmountStack()
+  })
+})
+
+describe('Frame selection (PA-6)', () => {
+  const chord = { key: '©', code: 'KeyG', altKey: true, shiftKey: false }
+
+  it('⌥⌘G on macOS and Ctrl+Alt+G on Windows are Frame selection, and never Group or Ungroup', () => {
+    const frameBinding = getKeybindingForCommand('layers.frameSelection')!
+    expect(frameBinding.match({ ...chord, metaKey: true, ctrlKey: false })).toBe(true)
+    expect(frameBinding.match({ ...chord, metaKey: false, ctrlKey: true })).toBe(true)
+    expect(frameBinding.match({ ...chord, altKey: false, metaKey: true, ctrlKey: false })).toBe(false)
+    expect(getKeybindingForCommand('layers.group')!.match({ ...chord, metaKey: true, ctrlKey: false })).toBe(false)
+    expect(getKeybindingForCommand('layers.ungroup')!.match({ ...chord, metaKey: true, ctrlKey: false, shiftKey: true })).toBe(false)
+  })
+
+  it('frames two absolute layers: the frame is the union, the members keep their place, ONE undo entry', async () => {
+    render(<Harness />)
+    select('abs', 'abs2')
+    expect(press({ ...chord, metaKey: true })).toBe(true)
+    await settle()
+    const stage = node('stage')
+    const frameId = stage.children.find((id) => id !== 'abs' && id !== 'abs2')!
+    expect([...node(frameId).children]).toEqual(['abs', 'abs2'])
+    // stage origin (0, 50); union x 100..270, y 90..160.
+    expect(node(frameId).inlineStyles).toEqual({ position: 'absolute', left: '100px', top: '40px', width: '170px', height: '70px' })
+    expect(node('abs').inlineStyles).toEqual({ position: 'absolute', left: '0px', top: '0px' })
+    // abs2 is right-anchored 30px from the stage; the frame's right inset is 30 too.
+    expect(node('abs2').inlineStyles).toEqual({ position: 'absolute', right: '0px', top: '50px' })
+    expect(historyLength()).toBe(1)
+
+    useEditorStore.getState().undo()
+    expect([...node('stage').children]).toEqual(['abs', 'abs2'])
+    expect(node('abs').inlineStyles).toEqual({ position: 'absolute', left: '100px', top: '40px' })
+    expect(node('abs2').inlineStyles).toEqual({ position: 'absolute', right: '30px', top: '90px' })
+  })
+
+  it('frames flowing layers as a bare container: no size, no pixels written', async () => {
+    render(<Harness />)
+    select('s1', 's2')
+    press({ ...chord, ctrlKey: true })
+    await settle()
+    const frameId = node('stack').children.find((id) => id !== 's1' && id !== 's2')!
+    expect([...node(frameId).children]).toEqual(['s1', 's2'])
+    expect(node(frameId).inlineStyles ?? {}).toEqual({})
+    expect(node('s1').inlineStyles).toBeUndefined()
+  })
+
+  it('refuses a mix of placed and flowing layers and writes nothing', async () => {
+    render(<Harness />)
+    select('abs', 'a')
+    press({ ...chord, metaKey: true })
+    await settle()
+    expect(historyLength()).toBe(0)
   })
 })
 

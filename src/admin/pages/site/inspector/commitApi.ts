@@ -70,16 +70,29 @@
  * element carrying the class, which is exactly why it is gated behind an
  * explicit blast-radius confirmation before the model will hand it over.
  *
+ * ## `commitProp` and code-bound values (G-6)
+ *
+ * A value the source holds as code (`{count}`, `{t('x')}`) is shown read-only
+ * unless it can be typed over (`EditConstraint.unbindable`). When the user does,
+ * `commitProp` hands the text to `unbindNodeValue` instead of `updateNodeProps`:
+ * the code is replaced by the literal in one journaled source write, the notice
+ * names what went, and Undo restores the bytes (`studio/unbindCommit.ts`).
+ *
  * `commitProp` stays single-selection. A module prop belongs to one call
  * site's schema; fanning one key across N nodes of possibly different modules
  * is not a Mixed collapse, it is a guess.
  */
 import { useEditorStore } from '@site/store/store'
 import { registry } from '@core/module-engine'
+import type { VariantStyleContext } from '@core/component-variants'
 import type { CSSPropertyBag, PageNode } from '@core/page-tree'
 import { styleValueKey } from '@core/page-tree'
+import { OPTIMISTIC_STYLE_CLEARED } from '@core/studio-runtime'
+import { pushToast } from '@ui/components/Toast'
+import { jumpToSource } from '../panels/PropertiesPanel/jumpToSource'
 import { getActiveStyleTab } from '../panels/PropertiesPanel/classStyleSections'
 import { broadcastOptimisticStyle, broadcastOptimisticStyleClear } from '../canvas/frameAdapter/optimisticStructuralBroadcast'
+import { commitUnbindIfCodeBound } from './commitUnbind'
 import type { SelectionModel } from './selectionModel'
 import type { WriteTarget } from './resolveWriteTarget'
 
@@ -152,17 +165,25 @@ export function lockedStyleProperties(node: PageNode | null): ReadonlySet<string
 // ---------------------------------------------------------------------------
 
 /**
- * Narrows a style patch to what {@link broadcastOptimisticStyle} can carry:
- * drops `null`/`undefined` entries (a clear — the wire's `patch` is a set of
- * positive `!important` overrides, not a way to express "remove", and the
- * removal will show once the file write reaches Vite same as it always has)
- * and stringifies a raw number the way the store itself stores it verbatim.
- * Returns `null` when nothing is left to broadcast.
+ * Narrows a style patch to what {@link broadcastOptimisticStyle} can carry.
+ * A `null`/`undefined` entry is a CLEAR. For an INLINE write it travels as
+ * `OPTIMISTIC_STYLE_CLEARED`: the frame removes the element's inline value,
+ * which is what the file will say. For a CLASS write it is dropped: the
+ * class's own rule is not something the frame can un-set per element, and the
+ * removal shows once the file write reaches Vite. A raw number is stringified
+ * the way the store itself stores it verbatim. Returns `null` when nothing is
+ * left to broadcast.
  */
-function optimisticStylePatch(patch: Record<string, string | number | null>): Record<string, string> | null {
+function optimisticStylePatch(
+  patch: Record<string, string | number | null>,
+  clears: 'send' | 'drop',
+): Record<string, string> | null {
   const out: Record<string, string> = {}
   for (const [key, value] of Object.entries(patch)) {
-    if (value === null || value === undefined) continue
+    if (value === null || value === undefined) {
+      if (clears === 'send') out[key] = OPTIMISTIC_STYLE_CLEARED
+      continue
+    }
     out[key] = String(value)
   }
   return Object.keys(out).length > 0 ? out : null
@@ -171,6 +192,18 @@ function optimisticStylePatch(patch: Record<string, string | number | null>): Re
 /** `styleRuleSelector` always produces a leading-`.` class selector for an assigned class rule (never an ambient ``h1 > span`` shape — those never reach `assignedClassRules`); `optimisticStyle.ts`'s wire `className` field is that name with the dot stripped. */
 function bareClassName(selector: string): string {
   return selector.startsWith('.') ? selector.slice(1) : selector
+}
+
+/** A style edit the variant edit context could not send to the variant's rule: a warning with the remedy, and a way to the line when there is one. */
+function refuseVariantStyle(context: VariantStyleContext, reason: string): void {
+  const chosen = context.chosen
+  const openAt = chosen.kind === 'refused' ? chosen.openAt : undefined
+  pushToast({
+    kind: 'warning',
+    title: 'Style not saved to this variant',
+    body: reason,
+    ...(openAt ? { action: { label: 'Open in code', onSelect: () => jumpToSource({ rel: openAt.file, line: openAt.line, col: 1 }) } } : {}),
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -241,7 +274,7 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
       // frames already repainted from the store mutation above; see
       // `optimisticStructuralBroadcast.ts`'s own doc for why this never
       // double-paints one.
-      const optimisticPatch = optimisticStylePatch(patch)
+      const optimisticPatch = optimisticStylePatch(patch, 'send')
       if (optimisticPatch) for (const id of inlineTargetIds) broadcastOptimisticStyle(id, optimisticPatch)
     } else if (target.kind === 'class') {
       if (activeContextId) {
@@ -258,7 +291,7 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
       // board frame IS a breakpoint frame, so this is the common case a
       // panel edit hits, not an edge one.
       if (!onCondition) {
-        const optimisticPatch = optimisticStylePatch(patch)
+        const optimisticPatch = optimisticStylePatch(patch, 'drop')
         if (optimisticPatch) {
           broadcastOptimisticStyle(selectedNodeId, optimisticPatch, {
             className: bareClassName(target.selector),
@@ -266,10 +299,13 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
           })
         }
       }
+    } else if (model.variantContext !== null) {
+      // 'none' — no honest target. Elsewhere the row is already disabled by the
+      // caller, so this is a silent no-op rather than a half-applied write; in a
+      // variant edit context (CV-4) the refusal IS the answer, and it names the
+      // variant and the remedy.
+      refuseVariantStyle(model.variantContext, target.reason)
     }
-    // 'none' — no honest target; the row should already be disabled by the
-    // caller when this is reachable, so this is a silent no-op rather than a
-    // half-applied write.
   }
 
   const previewToTarget = (target: WriteTarget, patch: Partial<CSSPropertyBag>) => {
@@ -287,7 +323,7 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
         styles: patch,
       })
       if (selectedNodeId) {
-        const optimisticPatch = optimisticStylePatch(patch)
+        const optimisticPatch = optimisticStylePatch(patch, 'drop')
         if (optimisticPatch) {
           broadcastOptimisticStyle(selectedNodeId, optimisticPatch, {
             className: bareClassName(target.selector),
@@ -298,7 +334,7 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
     } else if (target.kind === 'inline') {
       if (inlineTargetIds.length === 0) return
       setPreviewNodeStyles({ nodeIds: [...inlineTargetIds], styles: patch })
-      const optimisticPatch = optimisticStylePatch(patch)
+      const optimisticPatch = optimisticStylePatch(patch, 'send')
       if (optimisticPatch) for (const id of inlineTargetIds) broadcastOptimisticStyle(id, optimisticPatch)
     }
   }
@@ -316,7 +352,7 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
     if (keys.length === 0) return
     const mode = opts?.mode ?? 'set'
     const existing = opts?.existing ?? mode === 'clear'
-    const target = writeTargetFor(keys[0], { existing })
+    const target = writeTargetFor(keys[0], { existing, values: keys.map((key) => (patch as Record<string, string | number | null>)[key]) })
     const filteredPatch: Record<string, string | number | null> = {}
     for (const key of keys) filteredPatch[key] = (patch as Record<string, string | number | null>)[key]
 
@@ -334,7 +370,7 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
   const commitStyle: InspectorCommitApi['commitStyle'] = (prop, value, opts) => {
     const key = String(prop)
     if (lockedPropertySet.has(key)) return
-    const target = opts?.target ?? writeTargetFor(key, { existing: opts?.existing })
+    const target = opts?.target ?? writeTargetFor(key, { existing: opts?.existing, values: [value] })
     if (opts?.preview) {
       previewToTarget(target, { [key]: value } as Partial<CSSPropertyBag>)
       return
@@ -363,7 +399,10 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
     const isOverridable = def?.schema[key]?.breakpointOverridable === true
     if (activeTab !== 'base' && isOverridable) {
       setBreakpointOverride(selectedNodeId, activeTab, { [key]: value })
-    } else {
+    } else if (!commitUnbindIfCodeBound(selectedNode, key, value)) {
+      // G-6 (OD-20) - typing over code-bound text or an attribute replaces the
+      // code with the literal (the branch above). `updateNodeProps` would refuse
+      // it silently, which is the whole reason that branch exists.
       updateNodeProps(selectedNodeId, { [key]: value })
     }
   }
