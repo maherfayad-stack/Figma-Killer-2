@@ -18,6 +18,7 @@
  * pages-derivation detectors).
  */
 import type { Page } from '@core/page-tree'
+import { isGalleryPage } from '@core/component-variants'
 import { isTemplatePage } from '@core/templates'
 import type { EditorStore } from '@site/store/types'
 
@@ -78,4 +79,20 @@ export function selectTemplatePages(state: Pick<EditorStore, 'site'>): readonly 
     templatePages = next.length === 0 ? EMPTY_PAGES : next
   }
   return templatePages
+}
+
+let boardPageSource: readonly Page[] | null = null
+let boardPageCount = 0
+
+/**
+ * How many pages are real board pages - every page but the derived variants
+ * galleries, which live on the server-placed Components board. One count per
+ * `pages` change; the scalar is its own stable identity.
+ */
+export function selectBoardPageCount(state: Pick<EditorStore, 'site'>): number {
+  const pages = state.site?.pages ?? null
+  if (pages === boardPageSource) return boardPageCount
+  boardPageSource = pages
+  boardPageCount = pages ? pages.filter((page) => !isGalleryPage(page)).length : 0
+  return boardPageCount
 }
