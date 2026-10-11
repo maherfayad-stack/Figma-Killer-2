@@ -20,7 +20,9 @@ import type { LocalComponentSpec } from '@site/property-controls/componentPropKi
 import { moduleSourceElement } from '@site/store/slices/site/moduleSourceElement'
 import { useEditorStore } from '@site/store/store'
 
-const EMPTY_BOX_SIZE: Record<string, string> = { width: '100px', height: '100px' }
+/** The edge, in CSS px, a Div or Span dropped on the empty board is written at. The insertion ghost draws the same box. */
+export const EMPTY_BOX_EDGE_PX = 100
+const EMPTY_BOX_SIZE: Record<string, string> = { width: `${EMPTY_BOX_EDGE_PX}px`, height: `${EMPTY_BOX_EDGE_PX}px` }
 
 /** Whether `moduleId` has a spelling a loose layer can hold — the drag asks this once, to decide whether to offer the board. */
 export function canPlaceModuleOnCanvas(moduleId: string, defaults?: Record<string, unknown>): boolean {
