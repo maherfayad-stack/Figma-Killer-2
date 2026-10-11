@@ -380,6 +380,7 @@ Where the protocol can say it, the inverse is an ordinary edit:
 | transplant (copy) | `delete` the copy it created (into a childless parent: `restore`, as above) |
 | free-canvas lift / place (move) | `restore` the undo-journal entry — the page and the layer module, byte for byte. A lift prunes the import only the element used, so a parent id recorded at drag time (the old `canvas-layer-lift-back`) was a line off by ⌘Z; a place removes the module, which the pre-image recreates. A COPY is taken back by deleting the layer or element it made |
 | delete / detach / expose-prop / swap / extract, a `.map` row's delete (OD-8) | `restore` the undo-journal entry the write recorded (P3-F) |
+| apply / create / detach a text or effect style (CT-5) | `restore` the undo-journal entry — a `class` edit marked `restyle: true` journals the whole batch: the page, and the stylesheet a create wrote into (or made). The batch is also all-or-nothing, so a refused edit leaves no entry because it left no write. ⌘⇧Z re-posts the same edits (a `css` edit's id is a join key, so the redo pre-flight skips it) |
 | vector drag / nudge (P5-D) | `svg-attr` on the same part carrying the previous literals, `remove` for the attributes that were absent — a `known` template, fixed at gesture time (`svgPartCommits.ts`) |
 | pen path (P5-D) | `delete` the `<svg>` it created (an `insert`); on the empty board, the free canvas's own layer delete |
 
