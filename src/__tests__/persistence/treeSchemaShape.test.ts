@@ -1,7 +1,7 @@
 /**
  * treeSchemaShape.test.ts — gate the shape of `NodeTreeSchema`.
  *
- * Part of the Tree Unification Refactor (docs/superpowers/plans/2026-05-06-tree-unification.md).
+ * Contract: docs/reference/page-tree.md.
  *
  * `NodeTree` is the single primitive that every tree of nodes in this codebase
  * uses going forward — Pages, Visual Components, and (via materialization)

@@ -137,10 +137,11 @@ export function createReferenceRenderTool(overrides: ReferenceRenderOverrides = 
     name: 'studio_render_reference',
     scope: 'shared',
     execution: 'server',
-    mutates: true,
+    sideEffects: 'cache',
+    requiresWrite: true,
     requiredCapabilities: ['studio.run.project'],
     description:
-      'Tier 2: boots the OPEN PROJECT\'s own dev server (its "dev" or "start" script, via the detected package manager) and screenshots `route` through a real headless browser at the given viewport — the ground truth to compare a studio_export_frames capture against. Gated TWICE because this EXECUTES the project\'s own code, unlike every other Studio tool: the caller needs studio.run.project, AND the project itself must be promoted to "run-project" trust. A project at "static" or "render-packages" trust refuses with code "trust-tier-required" — ask the user to promote it in Studio and call again; you may never promote it yourself, and calling again without that promotion returns the same refusal. `route` must be a path this project\'s OWN dev server actually serves (its router or URL-state, not necessarily the Studio page slug) — not every parsed Studio page has one; screens reached only via in-app interaction (a tap, a picked option) are not reachable this way. The dev server is reused across calls for the same project and torn down after `idleTimeoutMs` of inactivity. If the dev server fails to boot, returns ok:false with the captured stdout/stderr tail — never a synthetic result.',
+      'Tier 2: boots the open project\'s own dev server and screenshots route in a real headless browser at the given viewport — the ground truth to compare Studio\'s studio_screenshot of the same screen against. It EXECUTES the project\'s code, so it is gated twice: the caller needs studio.run.project AND the project must be at \'run-project\' trust. Otherwise it refuses with trust-tier-required: ask the user to promote the project, never promote it yourself; calling again unchanged returns the same refusal. route must be a path the project\'s own dev server serves (its router), not necessarily the Studio page slug; screens reached only by interaction are out of reach. The dev server is reused per project and stopped after idleTimeoutMs idle. A boot failure returns ok:false with the stdout/stderr tail, never a synthetic result.',
     inputSchema: InputSchema,
     handler: async (input, ctx: ToolContext) => {
       const {

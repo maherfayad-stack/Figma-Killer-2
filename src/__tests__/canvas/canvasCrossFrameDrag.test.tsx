@@ -18,13 +18,16 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
 import { act, cleanup, renderHook } from '@testing-library/react'
+import { subscribeToasts } from '@ui/components/Toast/toastBus'
 import { useEditorStore } from '@site/store/store'
 import { useCanvasReorderDrag } from '@site/canvas/useCanvasReorderDrag'
 import {
   registerCanvasDropSurface,
   unregisterCanvasDropSurface,
 } from '@site/canvas/canvasDropSurfaceRegistry'
-import type { TransplantDestination } from '@site/store/slices/site/types'
+import { registerFrameAdapter, unregisterFrameAdapter } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
+import { PortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
+import type { TransplantDestination } from '@site/store/slices/site/transplantDestination'
 import { makeNode, makePage, makeSite } from '../fixtures'
 import '@modules/base/index'
 
@@ -480,5 +483,143 @@ describe('cross-frame drag - the reflow preview follows the chrome', () => {
     expect(
       originLayer.querySelectorAll('[data-canvas-reflow-ghost][data-shifting="true"]'),
     ).toHaveLength(0)
+  })
+})
+
+/**
+ * An ABSOLUTELY POSITIONED element is moved by `left`/`top`, so the free-move
+ * branch (K6) used to claim every drag of one — including a drag that ended
+ * over a different screen, where the pointer travel was written into the
+ * SOURCE screen as an offset (`left: -421px; bottom: 341px`) and the element
+ * never left. Over another frame the gesture is a transplant, whatever the
+ * element's `position` is.
+ */
+describe('cross-frame drag - an absolutely positioned element', () => {
+  let fakeIframe: HTMLIFrameElement
+  let inlineStyleCalls: { nodeId: string; patch: Record<string, string> }[]
+
+  beforeEach(() => {
+    // The portal-mode adapter is what lets `resolveFreeMove` read the frame's
+    // computed style; the frame's "document" is the test document itself.
+    fakeIframe = document.createElement('iframe')
+    fakeIframe.getBoundingClientRect = () =>
+      ({ ...HOME_BOX, width: 500, height: 800, x: 0, y: 0 }) as DOMRect
+    Object.defineProperty(fakeIframe, 'offsetWidth', { value: 500, configurable: true })
+    registerFrameAdapter(fakeIframe, new PortalFrameAdapter(document))
+
+    const element = homeViewport.querySelector<HTMLElement>(`[data-node-id="${HOME_A}"]`)!
+    element.style.position = 'absolute'
+    element.style.left = '10px'
+    element.style.top = '10px'
+
+    inlineStyleCalls = []
+    useEditorStore.setState({
+      setNodeInlineStyles: (nodeId: string, patch: Record<string, string>) => {
+        inlineStyleCalls.push({ nodeId, patch })
+      },
+    } as unknown as Parameters<typeof useEditorStore.setState>[0])
+  })
+
+  afterEach(() => {
+    unregisterFrameAdapter(fakeIframe)
+  })
+
+  function renderAbsoluteDrag() {
+    const viewportRef = { current: homeViewport }
+    return renderHook(() =>
+      useCanvasReorderDrag({
+        viewportRef,
+        canvasRootRef: { current: homeViewport },
+        iframeElement: fakeIframe,
+        overlayRoot: null,
+        selectedNodeIds: [HOME_A],
+        frameId: 'frame-home',
+        pageId: 'home',
+        enabled: true,
+        bodyDragEnabled: false,
+      }),
+    )
+  }
+
+  it('released over another screen it is TRANSPLANTED, and nothing is written into the source screen', async () => {
+    registerAboutSurface()
+    const { result } = renderAbsoluteDrag()
+    mountOriginLayer(result.current.dropLayerRef)
+
+    await beginDragOverHome(result)
+    await act(async () => {
+      dispatchPointer('pointermove', 700, 100)
+    })
+    await nextFrame()
+    await act(async () => {
+      dispatchPointer('pointerup', 700, 100)
+    })
+
+    expect(inlineStyleCalls).toHaveLength(0)
+    expect(transplantCalls).toHaveLength(1)
+    expect(transplantCalls[0]!.nodeIds).toEqual([HOME_A])
+    expect(transplantCalls[0]!.destination.pageId).toBe('about')
+    // The free-move preview must not be left behind on the element either.
+    const element = homeViewport.querySelector<HTMLElement>(`[data-node-id="${HOME_A}"]`)!
+    expect(element.style.left).toBe('10px')
+    expect(element.style.top).toBe('10px')
+  })
+
+  it('released inside its own screen it is still a free move', async () => {
+    const { result } = renderAbsoluteDrag()
+    mountOriginLayer(result.current.dropLayerRef)
+
+    await beginDragOverHome(result)
+    await act(async () => {
+      dispatchPointer('pointerup', 140, 140)
+    })
+
+    expect(transplantCalls).toHaveLength(0)
+    expect(inlineStyleCalls).toHaveLength(1)
+    expect(inlineStyleCalls[0]!.nodeId).toBe(HOME_A)
+  })
+})
+
+describe('cross-frame drag - releasing on a refused position', () => {
+  it('says why instead of ending in silence', async () => {
+    registerAboutSurface()
+    useEditorStore.setState({
+      selectedNodeIds: [HOME_A, HOME_B],
+      structuralRefusalDialog: null,
+    } as unknown as Parameters<typeof useEditorStore.setState>[0])
+    const toasts: { title: string; kind: string }[] = []
+    const unsubscribe = subscribeToasts((all) => {
+      toasts.splice(0, toasts.length, ...all)
+    })
+
+    const viewportRef = { current: homeViewport }
+    const { result } = renderHook(() =>
+      useCanvasReorderDrag({
+        viewportRef,
+        canvasRootRef: { current: homeViewport },
+        iframeElement: null,
+        overlayRoot: null,
+        selectedNodeIds: [HOME_A, HOME_B],
+        frameId: 'frame-home',
+        pageId: 'home',
+        enabled: true,
+        bodyDragEnabled: false,
+      }),
+    )
+    mountOriginLayer(result.current.dropLayerRef)
+
+    await beginDragOverHome(result)
+    await act(async () => {
+      dispatchPointer('pointermove', 700, 100)
+    })
+    await nextFrame()
+    await act(async () => {
+      dispatchPointer('pointerup', 700, 100)
+    })
+    unsubscribe()
+
+    expect(transplantCalls).toHaveLength(0)
+    const dialog = (useEditorStore.getState() as unknown as { structuralRefusalDialog: unknown }).structuralRefusalDialog
+    expect(dialog !== null || toasts.some((toast) => toast.kind === 'warning')).toBe(true)
   })
 })

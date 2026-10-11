@@ -215,7 +215,7 @@ describe('applyStudioEditBatch — the transplant kind (D2 G3)', () => {
     expect(result.refusals).toHaveLength(1)
     expect(result.refusals[0]!.kind).toBe('transplant')
     expect(result.refusals[0]!.reason).toBe('captured-scope')
-    expect(result.refusals[0]!.message).toContain('`user`')
+    expect(result.refusals[0]!.message).toContain('"user"')
     expect(read(HOME_REL)).toBe(homeText)
     expect(read(ABOUT_REL)).toBe(ABOUT)
   })
@@ -367,7 +367,7 @@ describe('applyStudioEditBatch — the transplant kind (D2 G3)', () => {
 
     expect(result.written).toBe(0)
     expect(result.refusals[0]!.reason).toBe('captured-scope')
-    expect(result.refusals[0]!.message).toContain('`items`')
+    expect(result.refusals[0]!.message).toContain('"items"')
     expect(read(HOME_REL)).toBe(MAPPED)
     expect(read(ABOUT_REL)).toBe(ABOUT)
   })

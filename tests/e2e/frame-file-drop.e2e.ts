@@ -2,12 +2,12 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
-  CANVAS_FRAME_IFRAME_SELECTOR,
   createAuthoredFixtureProject,
   openFixtureBoard,
   removeFixtureProject,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * `sec-17` landmine 6, closed: **the frame drag relay's FILE path had no test
@@ -48,9 +48,11 @@ import {
  *      `assetDrop.ts` will write to) **of the throwaway workspace copy**, and
  *      an `<img src="/…">` appears in the page's real `.tsx`;
  *   2. a `text/uri-list` drop does NOT navigate the frame. That is the
- *      security half: it must be cancelled and NOT relayed, so nothing at all
- *      happens — no navigation, no upload, no source write. A build that
- *      narrowed the cancel back to "files only" passes (1) and fails (2).
+ *      security half: it must be cancelled in the frame. Since P5-B3 (IMG-5)
+ *      a link IS relayed to the board, whose intake (`canvasDropIntake.ts`)
+ *      refuses a link to a PAGE without a request — so still no navigation,
+ *      no upload, no source write. A build that narrowed the cancel back to
+ *      "files only" passes (1) and fails (2).
  */
 
 /** A 1x1 opaque PNG. Small enough to inline, real enough for the server's sniffer. */
@@ -119,6 +121,13 @@ test.beforeEach(() => {
           platform: 'web',
           pagesDir: 'pages',
           frameDefaults: { width: 900, height: 640 },
+          // The relay under test is the DESIGN frame's. Since the Tier-2
+          // default (#198) a project starts its own dev server and a live frame
+          // mounts beside the design one — two canvas iframes for one page, and
+          // a server whose cwd is this directory, which Windows then refuses
+          // to delete between cases. Static keeps the spec on the one frame
+          // it is about.
+          trust: 'static',
         },
         null,
         2,
@@ -177,10 +186,10 @@ async function dropOnFrame(
 
 /** The mounted design frame, and a frame locator into its document. */
 async function firstMountedFrame(page: Page, canvasRoot: Locator) {
-  const frameElement = page.locator(`[data-page-id] ${CANVAS_FRAME_IFRAME_SELECTOR}`).first()
-  await expect(frameElement, 'no design frame mounted on the fixture board').toBeVisible({ timeout: 60_000 })
+  const boardFrame = page.locator('[data-page-id]').first()
+  await expect(visibleCanvasIframe(boardFrame), 'no design frame mounted on the fixture board').toHaveCount(1, { timeout: 60_000 })
   await expect(canvasRoot).toBeVisible()
-  return page.locator('[data-page-id]').first().frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+  return canvasContentFrame(boardFrame)
 }
 
 test.describe('dragging an image file onto a design frame', () => {
@@ -228,9 +237,9 @@ test.describe('dragging an image file onto a design frame', () => {
       .toContain('<img')
 
     const after = readPage()
-    // The `src` is a SITE-ROOT literal, not a `public/` path: `droppedAssetSrc`
-    // strips everything up to and including `public/` precisely because that is
-    // the segment no framework serves.
+    // The `src` is a SITE-ROOT literal, not a `public/` path: `assetSiteUrl.ts`
+    // strips the app root's `public/` precisely because that is the segment no
+    // framework serves.
     expect(after, 'the <img src> was written as a project path instead of a site-root literal').toMatch(
       /<img[^>]*src="\/[^"]+\.png"/,
     )
@@ -270,9 +279,219 @@ test.describe('dragging an image file onto a design frame', () => {
     ).toBeVisible()
     await expect(canvasRoot, 'the board itself navigated').toBeVisible()
 
-    // Cancelled AND not relayed: a link is not a file, so nothing should have
-    // been uploaded and nothing should have been written.
+    // Cancelled in the frame; relayed to the board, which refuses a link to a
+    // page (no image path, no dragged <img>) before any request — so nothing
+    // should have been fetched, uploaded or written.
     expect(fs.readdirSync(publicDir()).filter((name) => name.endsWith('.png'))).toEqual([])
     expect(readPage(), 'a dropped link changed the user\'s source').toBe(before)
+  })
+})
+
+/**
+ * P5-B (IMG-2, IMG-8, IMG-9) — several images dropped at once.
+ *
+ * The PNGs are REAL ones, painted on an `OffscreenCanvas` inside the frame's
+ * realm at known intrinsic sizes, so the server's header read, the browser's
+ * decode and the layout all see a genuine image. Their bytes come back out so
+ * the files that land in `public/` can be compared byte for byte.
+ */
+interface GeneratedImage {
+  name: string
+  width: number
+  height: number
+  colour: string
+}
+
+async function dropGeneratedImages(
+  frame: ReturnType<Page['frameLocator']>,
+  selector: string,
+  images: readonly GeneratedImage[],
+): Promise<string[]> {
+  return frame.locator(selector).first().evaluate(async (element, specs) => {
+    const transfer = new DataTransfer()
+    const encoded: string[] = []
+    for (const spec of specs) {
+      const canvas = new OffscreenCanvas(spec.width, spec.height)
+      const context = canvas.getContext('2d')!
+      context.fillStyle = spec.colour
+      context.fillRect(0, 0, spec.width, spec.height)
+      const blob = await canvas.convertToBlob({ type: 'image/png' })
+      const bytes = new Uint8Array(await blob.arrayBuffer())
+      let binary = ''
+      for (const byte of bytes) binary += String.fromCharCode(byte)
+      encoded.push(btoa(binary))
+      transfer.items.add(new File([bytes], spec.name, { type: 'image/png' }))
+    }
+    const rect = element.getBoundingClientRect()
+    const at = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+    for (const type of ['dragover', 'drop']) {
+      element.dispatchEvent(
+        new DragEvent(type, { bubbles: true, cancelable: true, composed: true, clientX: at.x, clientY: at.y, dataTransfer: transfer }),
+      )
+    }
+    return encoded
+  }, images)
+}
+
+/**
+ * P5-B2 — the image must LOAD, not just take up space.
+ *
+ * A design frame is an `about:srcdoc` document on the ADMIN origin, so the
+ * `src="/x.png"` a drop writes (a site-root URL into the project's `public/`)
+ * used to load from Studio's own server, which has nothing there. The box was
+ * right — the `<img>` carries `width`/`height` — so every size assertion above
+ * passed while the picture itself was broken. `naturalWidth` is what tells a
+ * decoded image from a broken one; it is 0 for the latter.
+ */
+async function loadedNaturalWidth(image: Locator): Promise<number> {
+  return image.evaluate((element) => {
+    const img = element as HTMLImageElement
+    return img.complete ? img.naturalWidth : -1
+  })
+}
+
+test.describe('an image in public/ loads in a design frame (P5-B2)', () => {
+  test.setTimeout(240_000)
+
+  test('a dropped PNG decodes in the design frame, and the source still says the site-root URL', async ({ page }) => {
+    const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
+    const contentFrame = await firstMountedFrame(page, canvasRoot)
+
+    await dropGeneratedImages(contentFrame, '.home__body', [{ name: 'loaded.png', width: 48, height: 32, colour: '#c60' }])
+    await expect
+      .poll(() => readPage(), { timeout: 60_000, message: 'the dropped image never reached the source' })
+      .toContain('<img src="/loaded.png"')
+
+    const image = contentFrame.locator('img[src*="loaded.png"]')
+    await expect(image).toHaveCount(1, { timeout: 60_000 })
+    await expect
+      .poll(() => loadedNaturalWidth(image), {
+        timeout: 30_000,
+        message:
+          'the dropped image is in the frame but did not decode: its site-root src resolved against the admin ' +
+          'origin instead of the project (naturalWidth 0 = broken image)',
+      })
+      .toBe(48)
+    // The store and the source keep the site-root URL; only the frame's
+    // DOM asks the asset route for it.
+    expect(readPage()).toContain('<img src="/loaded.png"')
+  })
+
+  test('an <img src="/…"> already in the source loads too, and so does a url() in the page CSS', async ({ page }) => {
+    fs.writeFileSync(path.join(publicDir(), 'existing.png'), Buffer.from(PNG_BASE64, 'base64'))
+    fs.writeFileSync(
+      pagePath(),
+      FIXTURE_PAGE.replace(
+        '<h1 className="home__title">Drop target</h1>',
+        '<h1 className="home__title">Drop target</h1>\n      <img src="/existing.png" alt="existing" />\n      <div className="home__banner" />',
+      ),
+    )
+    fs.writeFileSync(
+      path.join(fixture.dir, 'pages', 'home.css'),
+      `${FIXTURE_CSS}\n.home__banner {\n  width: 10px;\n  height: 10px;\n  background-image: url('/existing.png');\n}\n`,
+    )
+
+    const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
+    const contentFrame = await firstMountedFrame(page, canvasRoot)
+
+    const image = contentFrame.locator('img[src*="existing.png"]')
+    await expect(image).toHaveCount(1, { timeout: 60_000 })
+    await expect
+      .poll(() => loadedNaturalWidth(image), { timeout: 30_000, message: 'a literal public/ image is broken in the design frame' })
+      .toBe(1)
+
+    // The stylesheet's url() goes to the same route; load what the COMPUTED
+    // style points at and check it decodes.
+    const banner = contentFrame.locator('.home__banner')
+    await expect(banner).toHaveCount(1, { timeout: 60_000 })
+    const bannerWidth = await banner.evaluate(async (element) => {
+      const match = /url\("?([^")]+)"?\)/.exec(getComputedStyle(element).backgroundImage)
+      if (!match) return -1
+      const probe = new Image()
+      probe.src = match[1]!
+      try {
+        await probe.decode()
+      } catch {
+        return 0
+      }
+      return probe.naturalWidth
+    })
+    expect(bannerWidth, "the page CSS's url('/existing.png') did not load in the design frame").toBe(1)
+  })
+})
+
+test.describe('dragging several image files onto a design frame (P5-B)', () => {
+  test.setTimeout(300_000)
+
+  test('three images are ONE write: exact bytes in public/, sizes clamped to the frame, and one undo removes all three', async ({
+    page,
+  }) => {
+    const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
+    const contentFrame = await firstMountedFrame(page, canvasRoot)
+    expect(readPage(), 'the fixture was modified before the test ran').toBe(FIXTURE_PAGE)
+
+    // The frame is 900 px wide and `.home` has 40 px padding, so the content
+    // box is 820 px: the first and third images must be clamped to it, the
+    // second fits as it is.
+    const images: GeneratedImage[] = [
+      { name: 'wide.png', width: 2000, height: 1000, colour: '#d33' },
+      { name: 'small.png', width: 400, height: 300, colour: '#3a3' },
+      { name: 'tall.png', width: 1640, height: 2460, colour: '#33d' },
+    ]
+    const sent = await dropGeneratedImages(contentFrame, '.home__body', images)
+
+    await expect
+      .poll(() => fs.readdirSync(publicDir()).filter((name) => name.endsWith('.png')).sort(), {
+        timeout: 60_000,
+        message: 'the three dropped images did not all land in public/',
+      })
+      .toEqual(['small.png', 'tall.png', 'wide.png'])
+    images.forEach((image, i) => {
+      expect(
+        fs.readFileSync(path.join(publicDir(), image.name)).equals(Buffer.from(sent[i]!, 'base64')),
+        `public/${image.name} is not byte-for-byte the file that was dropped`,
+      ).toBe(true)
+    })
+
+    await expect
+      .poll(() => (readPage().match(/<img /g) ?? []).length, {
+        timeout: 60_000,
+        message: 'the three images did not reach the source',
+      })
+      .toBe(3)
+    const written = readPage()
+    // ONE splice: three consecutive siblings, in drop order, each with its
+    // intrinsic size clamped to the 820 px content box.
+    expect(written).toMatch(
+      /<img src="\/wide\.png" alt="wide" width=\{820\} height=\{410\} \/>\n\s*<img src="\/small\.png" alt="small" width=\{400\} height=\{300\} \/>\n\s*<img src="\/tall\.png" alt="tall" width=\{820\} height=\{1230\} \/>/,
+    )
+
+    // The computed layout agrees: the rendered boxes are the clamped sizes.
+    const rendered = contentFrame.locator('img[src$=".png"]')
+    await expect(rendered).toHaveCount(3, { timeout: 60_000 })
+    const boxes = await rendered.evaluateAll((elements) =>
+      elements.map((element) => {
+        const rect = element.getBoundingClientRect()
+        return { width: Math.round(rect.width), height: Math.round(rect.height), uploading: element.hasAttribute('data-studio-uploading') }
+      }),
+    )
+    expect(boxes).toEqual([
+      { width: 820, height: 410, uploading: false },
+      { width: 400, height: 300, uploading: false },
+      { width: 820, height: 1230, uploading: false },
+    ])
+
+    // One ⌘Z takes all three out of the source, byte for byte.
+    await canvasRoot.focus()
+    await page.keyboard.press('Control+z')
+    await expect
+      .poll(() => readPage(), { timeout: 60_000, message: 'one undo did not remove all three images' })
+      .toBe(FIXTURE_PAGE)
+    // Undo never deletes the user's files: redo needs them.
+    expect(fs.readdirSync(publicDir()).filter((name) => name.endsWith('.png')).sort()).toEqual([
+      'small.png',
+      'tall.png',
+      'wide.png',
+    ])
   })
 })

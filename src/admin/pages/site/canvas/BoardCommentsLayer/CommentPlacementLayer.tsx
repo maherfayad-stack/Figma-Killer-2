@@ -74,7 +74,7 @@ export function CommentPlacementLayer({ transformLayerRef }: CommentPlacementLay
         // its `filterTaps` state stale so that the NEXT click — the "Comment"
         // button in the draft popover this very press is about to open — gets
         // suppressed. Letting it through costs nothing: every canvas handler
-        // beneath is target-guarded (`handleCanvasClick`,
+        // beneath is target-guarded (`useEmptyBoardDeselect`,
         // `useMarqueeSelection`) and the pan only runs for middle-button or
         // space+primary.
         event.preventDefault()

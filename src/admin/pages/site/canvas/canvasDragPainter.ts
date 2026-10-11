@@ -37,8 +37,8 @@
  * Each write is also skipped when the value is unchanged, so a pointer that
  * moves inside one drop zone costs nothing after the first frame.
  */
-import type { SnapGuide } from './boardSnapping'
-import type { CanvasDragPaintTarget, CanvasInvalidDropTarget } from './canvasDnd'
+import { formatSpacing, type SnapGuide, type SnapSpacing } from '@core/studio-runtime'
+import type { CanvasDragPaintTarget, CanvasInvalidDropTarget, CanvasRect } from './canvasDnd'
 import type { ClientPoint } from './canvasDragSession'
 import type { CanvasReflowShift } from './canvasReflowPreview'
 import { REFLOW_SHIFT_LIMIT } from './canvasReflowPreview'
@@ -50,6 +50,7 @@ import {
   type CanvasDropVars,
 } from './canvasSelectionOverlayPositioning'
 import styles from './BreakpointSelectionOverlay.module.css'
+import ownStyles from './canvasDragPainter.module.css'
 
 /** Where the ghost sits and what it says. */
 export interface CanvasDragGhost {
@@ -87,11 +88,22 @@ export interface CanvasDragPaint {
    */
   guides?: readonly SnapGuide[]
   /**
+   * P5-F / IX-5d — the equal gaps a free move now has, as a segment and a
+   * pill each, in the same frame space. Empty for everything but a free move.
+   */
+  spacings?: readonly SnapSpacing[]
+  /**
    * K6's reflow preview: the siblings that would make room for this drop, and
    * how far each travels (`canvasReflowPreview.ts`). Empty for a free move, a
    * refused position, and any layout the packing model stands down for.
    */
   reflow?: readonly CanvasReflowShift[]
+  /**
+   * P2-E / IX-24 — the container a before/after drop lands in, outlined
+   * faintly so a line in nested rows says WHICH row. `null` for an "inside"
+   * drop, whose drop box already is that container (`canvasDropParentOutline.ts`).
+   */
+  parent?: CanvasRect | null
 }
 
 /**
@@ -107,6 +119,8 @@ interface DragLayerParts {
   chipLabel: HTMLSpanElement
   ghost: HTMLDivElement
   ghostLabel: HTMLSpanElement
+  /** IX-24 — the drop target's parent outline. */
+  parent: HTMLDivElement
   /**
    * K6's alignment guides, POOLED rather than created per frame: at most two
    * exist at once (one per axis), and a snap that appears and disappears as
@@ -115,6 +129,8 @@ interface DragLayerParts {
    * pool is.
    */
   guides: HTMLDivElement[]
+  /** IX-5d's spacing segments and their pills — pooled exactly like the guides. */
+  spacings: SpacingPart[]
   /**
    * K6's reflow preview — one box per sibling that would make room.
    *
@@ -125,6 +141,13 @@ interface DragLayerParts {
    * reason, as the guides above and as `syncSelectorHighlightRings`.
    */
   reflow: ReflowPart[]
+}
+
+/** One pooled equal-spacing marker: the measured segment, and the pill saying how long it is. */
+interface SpacingPart {
+  segment: HTMLDivElement
+  pill: HTMLDivElement
+  label: HTMLSpanElement
 }
 
 /** One pooled reflow box, the travel it is on, and both ends of that travel. */
@@ -184,7 +207,15 @@ export function paintCanvasDrag(layer: HTMLElement | null, paint: CanvasDragPain
     hide(parts.chip)
   }
 
+  if (paint.parent) {
+    applyIndicatorVars(parts.parent, rectStyle(paint.parent))
+    show(parts.parent)
+  } else {
+    hide(parts.parent)
+  }
+
   paintGuides(parts, layer, paint.guides ?? [])
+  paintSpacings(parts, layer, paint.spacings ?? [])
   paintReflow(parts, paint.reflow ?? [])
 
   const ghost = paint.ghost
@@ -228,6 +259,11 @@ function createParts(layer: HTMLElement): DragLayerParts {
   ghostLabel.className = styles.dragGhostLabel
   ghost.appendChild(ghostLabel)
 
+  const parent = doc.createElement('div')
+  parent.className = ownStyles.dropParentOutline
+  parent.setAttribute('data-canvas-drop-parent', 'true')
+  parent.setAttribute('aria-hidden', 'true')
+
   const reflow: ReflowPart[] = []
   for (let i = 0; i < REFLOW_SHIFT_LIMIT; i++) {
     const element = doc.createElement('div')
@@ -240,9 +276,10 @@ function createParts(layer: HTMLElement): DragLayerParts {
     reflow.push({ element, dx: 0, dy: 0, fromDx: 0, fromDy: 0, animation: null })
   }
 
-  const parts: DragLayerParts = { line, invalid, chip, chipLabel, ghost, ghostLabel, guides: [], reflow }
+  const parts: DragLayerParts = { line, invalid, chip, chipLabel, ghost, ghostLabel, parent, guides: [], spacings: [], reflow }
   hideAll(parts)
-  layer.append(line, invalid, chip, ghost, ...reflow.map((part) => part.element))
+  // The parent outline goes first so every other indicator paints over it.
+  layer.append(parent, line, invalid, chip, ghost, ...reflow.map((part) => part.element))
   layerParts.set(layer, parts)
   return parts
 }
@@ -372,6 +409,56 @@ function paintGuides(parts: DragLayerParts, layer: HTMLElement, guides: readonly
 }
 
 /**
+ * IX-5d — one segment and one pill per equal gap, pooled like the guides. The
+ * segment rides the rect channel with its thickness pinned by the stylesheet;
+ * the pill hangs off the segment's midpoint and counter-scales, like the
+ * ghost, so the number is one physical size at every zoom.
+ */
+function paintSpacings(parts: DragLayerParts, layer: HTMLElement, spacings: readonly SnapSpacing[]): void {
+  for (let i = 0; i < spacings.length; i++) {
+    const spacing = spacings[i]!
+    let part = parts.spacings[i]
+    if (!part) {
+      const doc = layer.ownerDocument
+      const segment = doc.createElement('div')
+      segment.className = ownStyles.spacingSegment
+      segment.setAttribute('data-canvas-snap-spacing', 'true')
+      segment.setAttribute('aria-hidden', 'true')
+      const pill = doc.createElement('div')
+      pill.className = ownStyles.spacingPill
+      pill.setAttribute('aria-hidden', 'true')
+      const label = doc.createElement('span')
+      label.className = ownStyles.spacingPillLabel
+      label.setAttribute('data-canvas-snap-spacing-label', 'true')
+      pill.appendChild(label)
+      part = { segment, pill, label }
+      parts.spacings.push(part)
+      layer.append(segment, pill)
+    }
+    const horizontal = spacing.axis === 'x'
+    const length = spacing.to - spacing.from
+    applyIndicatorVars(
+      part.segment,
+      rectStyle(
+        horizontal
+          ? { left: spacing.from, top: spacing.at, right: spacing.to, bottom: spacing.at, width: length, height: 0 }
+          : { left: spacing.at, top: spacing.from, right: spacing.at, bottom: spacing.to, width: 0, height: length },
+      ),
+    )
+    setAttribute(part.segment, 'data-axis', spacing.axis)
+    const middle = (spacing.from + spacing.to) / 2
+    applyIndicatorVars(part.pill, horizontal ? pointStyle(middle, spacing.at) : pointStyle(spacing.at, middle))
+    setText(part.label, formatSpacing(spacing.value))
+    show(part.segment)
+    show(part.pill)
+  }
+  for (let i = spacings.length; i < parts.spacings.length; i++) {
+    hide(parts.spacings[i]!.segment)
+    hide(parts.spacings[i]!.pill)
+  }
+}
+
+/**
  * Write the `--canvas-drop-*` custom properties the stylesheet reads back.
  * `setProperty` is what a custom property needs — `element.style['--x'] = …`
  * is not a thing — and the read-back guard keeps a pointer that stays inside
@@ -413,7 +500,12 @@ function hideAll(parts: DragLayerParts): void {
   hide(parts.invalid)
   hide(parts.chip)
   hide(parts.ghost)
+  hide(parts.parent)
   for (const guide of parts.guides) hide(guide)
+  for (const spacing of parts.spacings) {
+    hide(spacing.segment)
+    hide(spacing.pill)
+  }
   // The reflow boxes stay in the DOM between gestures — see `DragLayerParts`
   // for why they are never created on demand — so the end of a drag RESETS
   // them (no travel, no attribute) rather than removing them. A cancelled

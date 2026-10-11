@@ -32,8 +32,6 @@
  * in practice — but it is a window, and if comments ever move off the local
  * filesystem this is the line that needs a lock.)
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import {
@@ -47,25 +45,28 @@ import {
   findThread,
   moveThread,
   parseCommentsFile,
+  restoreThread,
   serializeCommentsFile,
   setThreadResolved,
   type CommentAuthor,
+  type CommentThread,
   type CommentsFile,
 } from '@core/studio-comments'
+import { readStudioStoreDocument, studioStorePath, writeStudioStoreFile } from './studioStore'
 
+const COMMENTS_FILE = 'comments.json'
+
+/** Absolute path of `.studio/comments.json` — for a caller that must NAME it; reading and writing go through `studioStore.ts`. */
 export function commentsFilePath(dir: string): string {
-  return join(dir, '.studio', 'comments.json')
+  return studioStorePath(dir, COMMENTS_FILE)
 }
 
 export function readCommentsFile(dir: string): CommentsFile {
-  const file = commentsFilePath(dir)
-  return existsSync(file) ? parseCommentsFile(readFileSync(file, 'utf8')) : createCommentsFile()
+  return readStudioStoreDocument(dir, COMMENTS_FILE, parseCommentsFile, createCommentsFile)
 }
 
 export function writeCommentsFile(dir: string, file: CommentsFile): void {
-  const path = commentsFilePath(dir)
-  mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, serializeCommentsFile(file))
+  writeStudioStoreFile(dir, COMMENTS_FILE, serializeCommentsFile(file))
 }
 
 // ---------------------------------------------------------------------------
@@ -102,6 +103,9 @@ export const CommentOpSchema = Type.Union([
   }),
   Type.Object({ kind: Type.Literal('move'), threadId: Type.String(), anchor: CommentAnchorSchema }),
   Type.Object({ kind: Type.Literal('delete-thread'), threadId: Type.String() }),
+  // Undo of `delete-thread`: brings back the thread THIS server just removed,
+  // by id. The body names no thread content on purpose — see `recentlyDeleted`.
+  Type.Object({ kind: Type.Literal('restore-thread'), threadId: Type.String() }),
 ])
 export type CommentOp = Static<typeof CommentOpSchema>
 
@@ -122,6 +126,16 @@ export function authorFromSession(
 ): CommentAuthor {
   return { userId: user.id, displayName: user.displayName || 'Unknown', kind }
 }
+
+/**
+ * How long a deleted thread can be brought back. The server remembers the
+ * thread it removed (never trusting a client to send one back — a restored
+ * thread carries other people's replies and bylines, which a browser-supplied
+ * copy could forge). In memory only: a restart forgets it, and undo is then an
+ * honest 404.
+ */
+const RESTORE_WINDOW_MS = 5 * 60 * 1000
+const recentlyDeleted = new Map<string, { thread: CommentThread; deletedAt: number }>()
 
 /**
  * Apply one operation. Pure with respect to the filesystem — the caller reads,
@@ -213,6 +227,22 @@ export function applyCommentOp(
         return { ok: false, status: 403, error: 'You can only delete threads you started' }
       }
       const next = deleteThread(file, op.threadId)
+      if (next) recentlyDeleted.set(thread.id, { thread, deletedAt: Date.now() })
+      return next ? { ok: true, file: next, changed: true } : unchanged
+    }
+
+    case 'restore-thread': {
+      const entry = recentlyDeleted.get(op.threadId)
+      if (!entry || Date.now() - entry.deletedAt > RESTORE_WINDOW_MS) {
+        recentlyDeleted.delete(op.threadId)
+        return { ok: false, status: 404, error: 'That thread can no longer be restored' }
+      }
+      // Same ownership rule as the delete it undoes.
+      if (entry.thread.comments[0]?.author.userId !== author.userId) {
+        return { ok: false, status: 403, error: 'You can only restore threads you started' }
+      }
+      const next = restoreThread(file, entry.thread)
+      recentlyDeleted.delete(op.threadId)
       return next ? { ok: true, file: next, changed: true } : unchanged
     }
   }

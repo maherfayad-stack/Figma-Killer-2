@@ -1,4 +1,5 @@
 # Audit: How effective is the agent at producing a 1:1 copy of a Figma design?
+> **Trust:** historical, dated 2026-08-06. Paths may be wrong. Never act on it.
 
 Scope: `server/ai/mcp/tools/studio/*`, `server/handlers/studio/{referenceMeasure,colorMath,projectTokenIndex,turnDesignReferences,designReferenceStore,remoteAssetFetch}.ts`, `server/ai/tools/studio/{agentToolNames,systemPrompt}.ts`, `server/ai/drivers/{claudeCli,claudeCliToolSurface,claudeCliPermissionMode}.ts`, `server/handlers/studio/{projectGuide,designSystemGuide,designSystemDigest}.ts`, plus every module these import that bears on the fidelity loop (canvas capture path, editor bridge, capability gate).
 

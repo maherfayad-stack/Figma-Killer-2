@@ -19,7 +19,6 @@ function freshStore() {
     activePageId: null,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     activeDocument: null,
     clipboardEntry: null,
     activeClassId: null,

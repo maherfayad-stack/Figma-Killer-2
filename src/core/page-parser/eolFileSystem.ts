@@ -53,6 +53,7 @@
  */
 import { Project, type FileSystemHost, type RuntimeDirEntry } from 'ts-morph'
 import { applyLineEnding, detectLineEnding, toLf, LF, type LineEnding } from '@core/utils/lineEndings'
+import { writeSourceFile } from './sourceWriteHook'
 
 /**
  * ts-morph does not export `RealFileSystemHost`, so the only supported way to
@@ -76,9 +77,12 @@ function getRealFileSystem(): FileSystemHost {
 export class EolPreservingFileSystem implements FileSystemHost {
   readonly #inner: FileSystemHost
   readonly #endings = new Map<string, LineEnding>()
+  /** True for the real disk (no `inner` given): writes then go through `writeSourceFile`. */
+  readonly #writesToDisk: boolean
 
-  constructor(inner: FileSystemHost = getRealFileSystem()) {
-    this.#inner = inner
+  constructor(inner?: FileSystemHost) {
+    this.#inner = inner ?? getRealFileSystem()
+    this.#writesToDisk = inner === undefined
   }
 
   #key(filePath: string): string {
@@ -119,11 +123,23 @@ export class EolPreservingFileSystem implements FileSystemHost {
     return this.#record(filePath, await this.#inner.readFile(filePath, encoding))
   }
 
+  /**
+   * On the real disk, the file is replaced in one step (`writeSourceFile`: atomic, and shown first to an agent batch's write hook):
+   * every codemod's `saveSync` lands here, and a crash, an OOM kill or the
+   * P1-D watcher reading mid-write must never see half a page. ts-morph has
+   * already made the parent directory by the time this runs.
+   */
   writeFileSync(filePath: string, fileText: string): void {
-    this.#inner.writeFileSync(filePath, applyLineEnding(fileText, this.lineEndingFor(filePath)))
+    const text = applyLineEnding(fileText, this.lineEndingFor(filePath))
+    if (this.#writesToDisk) writeSourceFile(filePath, text)
+    else this.#inner.writeFileSync(filePath, text)
   }
 
   async writeFile(filePath: string, fileText: string): Promise<void> {
+    if (this.#writesToDisk) {
+      this.writeFileSync(filePath, fileText)
+      return
+    }
     await this.#inner.writeFile(filePath, applyLineEnding(fileText, this.lineEndingFor(filePath)))
   }
 

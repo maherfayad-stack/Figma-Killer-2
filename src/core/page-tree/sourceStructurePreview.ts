@@ -18,13 +18,17 @@
  * being lifted in one surface and forgotten in another.
  */
 import { chooseGroupWrapperTag } from '@core/utils/htmlContentModel'
-import { isSourceDerivedNodeId, isStudioPageRootId } from './sourceNodeId'
+import { decodeSourceNodeId, isSourceDerivedNodeId, isStudioPageRootId, loopTemplateNodeId } from './sourceNodeId'
 import { getParent } from './selectors'
+import { createScratchTree, moveOnScratch, planMoveSequence, type SequencedMove } from './moveSequence'
+import { instanceChildrenSlot, instanceWithoutChildrenSlot, isCallSiteChild } from './instanceChildrenSlot'
 import {
   refusePlacement,
   refuseStructuralEdit,
   type StructuralRefusal,
 } from './sourceStructure'
+import { planListRowMove, type ListRowEditPlan } from './listRowPlans'
+import { isListRowNodeId } from './listRowSource'
 import type { PageNode } from './pageNode'
 import type { NodeTree } from './treeSchema'
 
@@ -45,6 +49,14 @@ export interface StructuralMoveCommit {
   /** The existing child to land beside, or `null` to append as the last child (reparent only). */
   anchorNodeId: string | null
   position: 'before' | 'after'
+  /**
+   * ERR-16 — the new container is written in ANOTHER file than the element.
+   * A same-file reparent cannot say that honestly (the markup would land where
+   * the names it reads do not exist), so the write is a `transplant`, which
+   * carries the imports the markup needs and refuses by name when a local it
+   * reads cannot travel.
+   */
+  crossFile?: true
 }
 
 /**
@@ -53,7 +65,17 @@ export interface StructuralMoveCommit {
  * CMS tree, or a move that turned out to change no order).
  */
 export type StructuralMovePreview =
-  | { ok: true; commit: StructuralMoveCommit | null }
+  | {
+      ok: true
+      commit: StructuralMoveCommit | null
+      /**
+       * OD-8 — the move is a reorder of `.map` rows, written to their ARRAY
+       * (`listRowPlans.ts`), never to the JSX: `commit` is `null` and this is
+       * the write. A caller that mutates the tree on `commit === null` must
+       * check this first.
+       */
+      listRow?: ListRowEditPlan
+    }
   | { ok: false; refusal: StructuralRefusal }
 
 /**
@@ -111,7 +133,21 @@ export function previewStructuralMove(
   // this; inventing a refusal for it would explain the wrong thing.
   if (!node || !newParent) return { ok: true, commit: null }
 
-  const multi = nodeIds.length > 1
+  // OD-8 — rows move by rewriting their array's order, one write for the
+  // whole gesture (several rows included), or refuse naming why.
+  // A row gesture never falls through to the JSX rules below: an order that
+  // did not change (`null`) writes nothing.
+  if (nodeIds.some(isListRowNodeId)) {
+    const listRow = planListRowMove(tree, nodeIds, newParentId, newIndex)
+    if (!listRow) return { ok: true, commit: null }
+    return listRow.ok ? { ok: true, commit: null, listRow } : { ok: false, refusal: listRow.refusal }
+  }
+
+  // P3-D — several elements are several single-element moves, each asked
+  // against the tree the previous one leaves (`moveSequence.ts`). The answer
+  // is the first refusal, or "writes" with no single commit to name: the
+  // store plans and posts the whole sequence itself.
+  if (nodeIds.length > 1) return previewMoveSequence(tree, planMoveSequence(tree, nodeIds, newParentId, newIndex))
 
   // "Same parent?" read off the child list rather than the denormalised
   // `parentId` pointer: the list is the thing the move is actually about, and
@@ -129,22 +165,25 @@ export function previewStructuralMove(
 
     // The synthetic page root is a container the same way it is for an insert:
     // resolved to the page's own returned root element before it is judged.
-    const container = resolveSourceContainer(tree, newParentId)
+    const container = resolveWriteContainer(tree, newParentId)
     if (!container.ok) return { ok: false, refusal: container.refusal }
 
-    const refusal = refuseStructuralEdit({ kind: 'reparent', node, destination: container.node, multi })
-    if (refusal) return { ok: false, refusal }
+    const refusal = refuseStructuralEdit({ kind: 'reparent', node, destination: container.node })
+    // ERR-16 — across files the move is a transplant (see `crossFile`), which
+    // is its own honest write; every other refusal stands.
+    if (refusal && refusal.reason !== 'cross-file') return { ok: false, refusal }
     return {
       ok: true,
       commit: {
         nodeId,
+        ...(refusal ? { crossFile: true as const } : {}),
         destinationParentNodeId: container.node.id,
         // `newIndex` counts the DROP PARENT's children. When the container had
         // to be re-resolved (the page root became the page's root element), that
         // index names a position in a different list, so it is dropped rather
         // than applied to the wrong one — appending is an honest position, and
         // the user can drag within the new parent, which already writes.
-        ...resolveContainerAnchor(tree, container.node, container.node.id === newParentId ? newIndex : undefined),
+        ...resolveWriteAnchor(tree, container, newParentId, newIndex),
       },
     }
   }
@@ -161,20 +200,67 @@ export function previewStructuralMove(
   const next = reordered[index + 1]
   if (next !== undefined) candidates.push({ anchorNodeId: next, position: 'before' })
 
+  // WB-22 — when a neighbour is a `.map` row, the list as a whole is a place
+  // the file can name: landing right after its LAST row is "after the list",
+  // right before its FIRST row is "before the list". (Between two rows of one
+  // list there is no such place — every row is one piece of source.) The
+  // codemod resolves the row's template to its `{items.map(…)}` container.
+  const previousList = previous === undefined ? null : loopTemplateNodeId(previous)
+  const nextList = next === undefined ? null : loopTemplateNodeId(next)
+  if (previousList && previousList !== nextList) candidates.push({ anchorNodeId: previousList, position: 'after' })
+  if (nextList && nextList !== previousList) candidates.push({ anchorNodeId: nextList, position: 'before' })
+
   let firstRefusal: StructuralRefusal | null = null
   for (const candidate of candidates) {
     const refusal = refuseStructuralEdit({
       kind: 'reorder',
       node,
       anchor: tree.nodes[candidate.anchorNodeId] ?? { id: candidate.anchorNodeId },
-      multi,
     })
     if (!refusal) return { ok: true, commit: isSourceDerivedNodeId(nodeId) ? { nodeId, ...candidate } : null }
     firstRefusal ??= refusal
   }
 
-  const refusal = firstRefusal ?? refuseStructuralEdit({ kind: 'reorder', node, anchor: null, multi })
+  // OD-22 - inside an instance's children slot the neighbours on either side
+  // may be the component's own elements, which the call site cannot name; the
+  // nearest of the CALL SITE's own children in that direction is the honest
+  // anchor (the element still lands in the slot, in the order the call site can express).
+  if (firstRefusal && instanceChildrenSlot(tree, newParentId)) {
+    const nearest = nearestCallSiteAnchor(tree, reordered, index, newParentId)
+    if (nearest) return { ok: true, commit: { nodeId, ...nearest } }
+  }
+
+  // WB-22 — no neighbour to name, but the element lands LAST: "append to my
+  // own parent" is a position the reparent form already writes (with no
+  // anchor it appends after the last written child).
+  if (next === undefined && firstRefusal?.reason === 'no-sibling-anchor' && isSourceDerivedNodeId(nodeId)) {
+    const container = resolveWriteContainer(tree, newParentId)
+    if (container.ok && !refuseStructuralEdit({ kind: 'reparent', node, destination: container.node })) {
+      return {
+        ok: true,
+        commit: { nodeId, destinationParentNodeId: container.node.id, anchorNodeId: null, position: 'after' },
+      }
+    }
+  }
+
+  const refusal = firstRefusal ?? refuseStructuralEdit({ kind: 'reorder', node, anchor: null })
   return refusal ? { ok: false, refusal } : { ok: true, commit: null }
+}
+
+/**
+ * P3-D — whether every step of a move sequence would write: each asked with
+ * {@link previewStructuralMove} against the scratch tree the steps before it
+ * leave. The first refusal, or `ok` with no single commit (a sequence has
+ * one per step; the store builds them itself when it commits).
+ */
+export function previewMoveSequence(tree: NodeTree<PageNode>, moves: readonly SequencedMove[]): StructuralMovePreview {
+  const scratch = createScratchTree(tree)
+  for (const move of moves) {
+    const step = previewStructuralMove(scratch, [move.nodeId], move.parentId, move.index)
+    if (!step.ok) return step
+    moveOnScratch(scratch, move)
+  }
+  return { ok: true, commit: null }
 }
 
 /**
@@ -204,7 +290,7 @@ export function resolveSourceContainer(
       ok: false,
       refusal: {
         reason: 'insert',
-        message: 'The element this would go inside is no longer on the board. Reload the project and try again.',
+        message: 'The container this would go inside is no longer on the board. Drop it into a container that is on the board.',
       },
     }
   }
@@ -229,6 +315,80 @@ export function resolveSourceContainer(
   return { ok: true, node: only }
 }
 
+/** A container a write lands in, and the node whose children its anchor is chosen from. */
+export type WriteContainer =
+  | { ok: true; node: PageNode; anchorOwner: PageNode; slot: boolean; emptyAtCallSite: boolean }
+  | { ok: false; refusal: StructuralRefusal }
+
+/**
+ * OD-22 - the container a write into `parentId` really targets, which is not
+ * always the element the pointer is over: dropped into a layout component's
+ * `{children}`, an element is written between the `<Layout>` tags at the CALL
+ * SITE (`node` is the instance, the element's own `anchorOwner` is the inlined
+ * host whose children the drop index counts). Dropped into a component that
+ * renders no children, there is no call-site place to put it, so the gesture
+ * is refused as the instance's own markup (`shared-component`, about the
+ * instance) and the store detaches it (`instanceOnlyGesture.ts`).
+ *
+ * Everything else is {@link resolveSourceContainer}, unchanged.
+ */
+export function resolveWriteContainer(tree: NodeTree<PageNode>, parentId: string): WriteContainer {
+  const container = resolveSourceContainer(tree, parentId)
+  if (!container.ok) return container
+  const slot = instanceChildrenSlot(tree, container.node.id)
+  if (slot) {
+    return {
+      ok: true,
+      node: slot.instance,
+      anchorOwner: slot.host,
+      slot: true,
+      emptyAtCallSite: !slot.host.children.some((childId) => isCallSiteChild(slot, childId)),
+    }
+  }
+  const bare = instanceWithoutChildrenSlot(tree, container.node.id)
+  if (bare) {
+    return {
+      ok: false,
+      refusal: {
+        reason: 'shared-component',
+        message: `${instanceLabel(bare)} does not render children, so a drop into it can only go inside the component's own markup, which every use of it shares. Detach this instance first.`,
+        aboutNodeId: bare.id,
+      },
+    }
+  }
+  return { ok: true, node: container.node, anchorOwner: container.node, slot: false, emptyAtCallSite: container.node.children.length === 0 }
+}
+
+function instanceLabel(instance: PageNode): string {
+  const name = (instance.props as { componentName?: unknown } | undefined)?.componentName
+  return typeof name === 'string' && name !== '' ? name : 'This component'
+}
+
+/** The anchor for a drop at `newIndex` (counted in the DROP PARENT's children) inside `container`. */
+export function resolveWriteAnchor(
+  tree: NodeTree<PageNode>,
+  container: Extract<WriteContainer, { ok: true }>,
+  newParentId: string,
+  newIndex: number | undefined,
+): { anchorNodeId: string | null; position: 'before' | 'after' } {
+  return resolveContainerAnchor(tree, container.anchorOwner, container.anchorOwner.id === newParentId ? newIndex : undefined)
+}
+
+/** The call site's own child nearest to `at` in `order`, on whichever side has one - `null` when the slot holds none. */
+function nearestCallSiteAnchor(
+  tree: NodeTree<PageNode>,
+  order: readonly string[],
+  at: number,
+  parentId: string,
+): { anchorNodeId: string; position: 'before' | 'after' } | null {
+  const slot = instanceChildrenSlot(tree, parentId)
+  if (!slot) return null
+  const addressable = (id: string): boolean => isCallSiteChild(slot, id) && isSourceDerivedNodeId(id) && refusePlacement(tree.nodes[id] ?? { id }) === null
+  for (let i = at - 1; i >= 0; i -= 1) if (addressable(order[i]!)) return { anchorNodeId: order[i]!, position: 'after' }
+  for (let i = at + 1; i < order.length; i += 1) if (addressable(order[i]!)) return { anchorNodeId: order[i]!, position: 'before' }
+  return null
+}
+
 /**
  * The existing child a written element is placed beside, resolved from a canvas
  * child index — shared by an insert and by a reparent, because "which neighbour
@@ -250,12 +410,18 @@ export function resolveContainerAnchor(
   if (index === undefined || index >= children.length) return { anchorNodeId: null, position: 'after' }
 
   const addressable = (id: string | undefined): boolean =>
-    id !== undefined && isSourceDerivedNodeId(id) && refusePlacement(tree.nodes[id] ?? { id }, 'Moved') === null
+    id !== undefined && isSourceDerivedNodeId(id) && refusePlacement(tree.nodes[id] ?? { id }) === null
 
   const previous = children[index - 1]
   if (addressable(previous)) return { anchorNodeId: previous!, position: 'after' }
   const next = children[index]
   if (addressable(next)) return { anchorNodeId: next!, position: 'before' }
+  // WB-22 — beside a `.map` list's edge, the list itself is the anchor (see
+  // `previewStructuralMove`).
+  const previousList = previous === undefined ? null : loopTemplateNodeId(previous)
+  const nextList = next === undefined ? null : loopTemplateNodeId(next)
+  if (previousList && previousList !== nextList && addressable(previousList)) return { anchorNodeId: previousList, position: 'after' }
+  if (nextList && nextList !== previousList && addressable(nextList)) return { anchorNodeId: nextList, position: 'before' }
   return { anchorNodeId: null, position: 'after' }
 }
 
@@ -277,7 +443,7 @@ function previewCanvasOnlyNodeIntoSourceRefusal(
   return {
     reason: 'insert',
     message:
-      'This element exists only on the canvas — there is no markup for it in the code, so Studio has nothing to move into the file. Add the component from the picker instead, which writes it to the source.',
+      'This element exists only on the canvas, so Studio has no markup to move into the file. Add the component from the picker instead.',
   }
 }
 
@@ -339,11 +505,16 @@ export type StructuralGroupPreview =
  *     sits inside the span, so the wrapper would land around it too — N
  *     targets for a gesture that named one.
  *
- * Both refuse as `multi-select` with the same remedy sentence, because to the
- * person holding ⌘G they are one fact: these are not a run. The refusals only
- * a PARSE can answer (an expression child between them, a run whose members
- * disagree about owning their line) stay with the codemod and arrive at save
- * time — see `src/core/ast-codemods/wrapJsxElements.ts`.
+ * Neither refuses any more (G-7). Elements that are not a run - a gap between
+ * them, or different parents - are GATHERED by the codemod: the first keeps its
+ * place and gets the container, the others are written inside it, and whatever
+ * was not selected stays where it was (`gatherGroupRun.ts`). The commit is the
+ * members in DOCUMENT order, with any member that sits inside another selected
+ * one dropped (it travels with the one that holds it). What still refuses: a
+ * selection that mixes imported markup with canvas-only nodes, one spanning
+ * several files, and the refusals only a PARSE can answer (a name the container
+ * cannot see, a content model) at save time - see
+ * `src/core/ast-codemods/wrapJsxElements.ts`.
  *
  * A selection of ONE is a legitimate group and returns a one-element commit:
  * the store writes it through the existing single-element `wrap`, so ⌘G on one
@@ -378,45 +549,46 @@ export function previewStructuralGroup(
       refusal: {
         reason: 'group',
         message:
-          "Some of these elements come from your project's code and some exist only on the canvas, so there is no single container Studio could write around them. Group the imported ones on their own.",
+          'Some of these elements come from your code and some exist only on the canvas, so no single container can wrap them. Group the imported ones on their own.',
       },
     }
   }
 
-  const multi = nodes.length > 1
   for (const node of nodes) {
-    const refusal = refuseStructuralEdit({ kind: 'group', node, multi })
+    const refusal = refuseStructuralEdit({ kind: 'group', node })
     if (refusal) return { ok: false, refusal, nodeId: node.id }
   }
 
-  const parent = getParent(tree, nodes[0]!.id)
-  if (!parent) {
+  const files = new Set(nodes.map((node) => decodeSourceNodeId(node.id)?.rel))
+  if (files.size > 1) {
+    return {
+      ok: false,
+      refusal: {
+        reason: 'group',
+        message:
+          'These elements are written in different files, so one container cannot wrap them. Group only the ones from a single file.',
+      },
+    }
+  }
+
+  // Document order, not click order: the container is written where the first
+  // member is, and the others follow it in the order they appear. A member
+  // inside another selected one is not a second member.
+  const ordered = topLevelInDocumentOrder(tree, nodes.map((node) => node.id))
+  const first = tree.nodes[ordered[0]!]
+  const parent = first ? getParent(tree, first.id) : null
+  if (!first || !parent) {
     return {
       ok: false,
       nodeId: nodes[0]!.id,
       refusal: {
         reason: 'group',
         message:
-          'This element is the outermost thing its component returns, so it has no siblings in the code to be grouped with — and a container around it would have to replace what the component returns.',
+          'This element is the outermost thing its component returns, so it has no siblings to group with. Select an element inside it instead.',
       },
     }
   }
-  if (nodes.some((node) => getParent(tree, node.id) !== parent)) {
-    return { ok: false, refusal: NOT_A_RUN }
-  }
-
-  const selected = new Set(nodes.map((node) => node.id))
-  const positions = parent.children
-    .map((childId, index) => (selected.has(childId) ? index : -1))
-    .filter((index) => index >= 0)
-  if (positions.length !== selected.size) return { ok: false, refusal: NOT_A_RUN }
-  if (positions[positions.length - 1]! - positions[0]! + 1 !== positions.length) {
-    return { ok: false, refusal: NOT_A_RUN }
-  }
-
-  // Ordered by the CHILD LIST, not by the order the user clicked: the wrapper
-  // is written around a span, and a span runs in source order.
-  const commit = parent.children.filter((childId) => selected.has(childId))
+  const commit = ordered
 
   if (htmlTagOf) {
     const choice = chooseGroupWrapperTag({
@@ -456,12 +628,35 @@ function ancestorHtmlTags(
 }
 
 /**
- * The one sentence both "not siblings" and "not adjacent" get. One fact to the
- * user, one remedy: put them next to each other first — which is a drag that
- * already writes.
+ * `nodeIds` in the order they appear in the tree (a pre-order walk from the
+ * root), without any that sits inside another of them. The order the page reads
+ * in is the order a group is written in.
  */
-const NOT_A_RUN: StructuralRefusal = {
-  reason: 'multi-select',
-  message:
-    'Studio writes a group as one container around a run of elements that sit next to each other in the code, and these do not. Select siblings next to each other, or move them together first.',
+function topLevelInDocumentOrder(tree: NodeTree<PageNode>, nodeIds: readonly string[]): string[] {
+  const wanted = new Set(nodeIds)
+  const ordered: string[] = []
+  const walk = (id: string, insideWanted: boolean): void => {
+    const node = tree.nodes[id]
+    if (!node) return
+    const isWanted = wanted.has(id)
+    if (isWanted && !insideWanted) ordered.push(id)
+    for (const childId of node.children) walk(childId, insideWanted || isWanted)
+  }
+  walk(tree.rootNodeId, false)
+  return ordered
+}
+
+/**
+ * True when these nodes are one unbroken run of siblings in the tree - the shape
+ * a group is written around as a single span, which the local preview (a plain
+ * wrap) can show. Anything else is gathered by the codemod, and the board waits
+ * for the re-read rather than draw a container the file does not have.
+ */
+export function isSiblingRun(tree: NodeTree<PageNode>, nodeIds: readonly string[]): boolean {
+  const first = tree.nodes[nodeIds[0] ?? '']
+  const parent = first ? getParent(tree, first.id) : null
+  if (!parent) return false
+  const positions = nodeIds.map((id) => parent.children.indexOf(id))
+  if (positions.some((position) => position === -1)) return false
+  return Math.max(...positions) - Math.min(...positions) + 1 === positions.length
 }

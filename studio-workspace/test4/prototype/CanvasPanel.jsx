@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './CanvasPanel.css'
+import { useLanguage } from '../i18n/LanguageContext'
 
 /* Row spacing, taken from the reference canvas this is modelled on. A board is
    a ROW, and rows stack down the page — the "contact sheet" reading that makes
@@ -82,6 +83,7 @@ function layoutBounds(placed) {
 }
 
 export default function CanvasPanel({ rows, renderFrame, onOpenFrame, onClose }) {
+  const { t } = useLanguage()
   const containerRef = useRef(null)
   const [zoom, setZoom] = useState(0.3)
   const [offset, setOffset] = useState({ x: 40, y: 40 })
@@ -313,15 +315,15 @@ export default function CanvasPanel({ rows, renderFrame, onOpenFrame, onClose })
       ))}
       {layout.frames.map(captionFor)}
       <div className="canvas__hud" dir="ltr">
-        <button type="button" onClick={() => zoomBy(1 / 1.2)} aria-label="Zoom out" title="Zoom out (Ctrl -)">&minus;</button>
+        <button type="button" onClick={() => zoomBy(1 / 1.2)} aria-label={t.canvasPanel.zoomOut} title={t.canvasPanel.zoomOutCtrl}>{t.canvasPanel.minus}</button>
         <span>{Math.round(zoom * 100)}%</span>
-        <button type="button" onClick={() => zoomBy(1.2)} aria-label="Zoom in" title="Zoom in (Ctrl +)">+</button>
+        <button type="button" onClick={() => zoomBy(1.2)} aria-label={t.canvasPanel.zoomIn} title={t.canvasPanel.zoomInCtrl}>+</button>
         <i />
-        <button type="button" data-text onClick={fitAll} title="Fit all (Ctrl 0)">Fit</button>
+        <button type="button" data-text onClick={fitAll} title={t.canvasPanel.fitAllCtrl0}>{t.canvasPanel.fit}</button>
         {onClose && (
           <>
             <i />
-            <button type="button" data-text onClick={onClose} title="Close (Esc)">Close</button>
+            <button type="button" data-text onClick={onClose} title={t.canvasPanel.closeEsc}>{t.canvasPanel.close}</button>
           </>
         )}
       </div>

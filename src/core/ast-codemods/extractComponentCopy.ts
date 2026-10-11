@@ -13,12 +13,13 @@
  * diff — only the export/file identity changes.
  */
 import * as path from 'node:path'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { NewLineKind, Node, Project, QuoteKind, type SourceFile } from 'ts-morph'
-import { EolPreservingFileSystem, createWorkspaceProject } from '@core/page-parser'
+import { existsSync, readFileSync } from 'node:fs'
+import { NewLineKind, Node, Project, QuoteKind, SyntaxKind, type SourceFile } from 'ts-morph'
+import { EolPreservingFileSystem, createSourceFileExclusive, createWorkspaceProject, isWorkspaceWritablePath } from '@core/page-parser'
 import { findJsxElementAtLocationOrThrow, loadSourceFile } from './locateJsxElement'
 import { resolveComponentCallSite } from './resolveComponentCallSite'
 import { relativeSpecifier, removeImportIfLastUsage } from './importReconcile'
+import { freshName } from './freshName'
 
 export interface ExtractComponentCopyParams {
   /** Absolute path to the page file holding the call site to repoint. */
@@ -29,7 +30,7 @@ export interface ExtractComponentCopyParams {
   project?: Project
 }
 
-export type ExtractComponentCopyRefusalReason = 'not-a-component' | 'unresolvable' | 'copy-exists'
+export type ExtractComponentCopyRefusalReason = 'not-a-component' | 'unresolvable' | 'unwritable-target'
 
 export interface ExtractComponentCopyRefusal {
   reason: ExtractComponentCopyRefusalReason
@@ -55,13 +56,6 @@ function refuse(reason: ExtractComponentCopyRefusalReason, message: string): Ext
   return { ok: false, refusal: { reason, message } }
 }
 
-/** `Card` -> `Card2`, `Card9` -> `Card10`, … — the first name with no existing sibling file or in-scope binding. */
-function nextAvailableName(baseName: string, isTaken: (candidate: string) => boolean): string {
-  let n = 2
-  while (isTaken(`${baseName}${n}`)) n += 1
-  return `${baseName}${n}`
-}
-
 export function extractComponentCopy(params: ExtractComponentCopyParams): ExtractComponentCopyResult {
   const { file, line, col, workspaceRoot } = params
   const project = params.project ?? createWorkspaceProject(workspaceRoot)
@@ -75,7 +69,7 @@ export function extractComponentCopy(params: ExtractComponentCopyParams): Extrac
   const fullTagName = opening.getTagNameNode().getText()
   const identifier = fullTagName.split('.')[0]!
   if (!/^[A-Z]/.test(fullTagName)) {
-    return refuse('not-a-component', `<${fullTagName}> is a plain HTML element, not a component instance.`)
+    return refuse('not-a-component', `<${fullTagName}> is a plain HTML element, not a component instance. Select a component instance.`)
   }
 
   const resolved = resolveComponentCallSite(project, sourceFile, workspaceRoot, identifier, file, line, col)
@@ -87,15 +81,32 @@ export function extractComponentCopy(params: ExtractComponentCopyParams): Extrac
   const ext = path.extname(targetPath)
   const baseName = path.basename(targetPath, ext)
 
-  const newName = nextAvailableName(baseName, (candidate) => existsSync(path.join(dir, `${candidate}${ext}`)))
+  // `Card` -> `Card2`, `Card9` -> `Card10`: the first name that is neither a file
+  // beside the component nor an identifier the call-site file already uses
+  // (retagging to a `Card2` that file binds to something else would silently
+  // point the JSX at the wrong thing). A taken name is never a refusal.
+  const usedInCallSite = new Set(sourceFile.getDescendantsOfKind(SyntaxKind.Identifier).map((id) => id.getText()))
+  const newName = freshName(
+    baseName,
+    (candidate) => candidate === baseName || usedInCallSite.has(candidate) || existsSync(path.join(dir, `${candidate}${ext}`)),
+  )
   const newPath = path.join(dir, `${newName}${ext}`)
-  if (existsSync(newPath)) return refuse('copy-exists', `${newName}${ext} already exists next to ${baseName}${ext}.`)
+  // P1-G — the copy lands beside the component's OWN file, which the call
+  // site's import chose, not the writeback guard: `import { Card } from
+  // '../.studio/Card'` would otherwise create `.studio/Card2.tsx`. The shared
+  // write scope refuses that, a link into one, and a dangling link at the name.
+  if (!isWorkspaceWritablePath(workspaceRoot, newPath)) {
+    return refuse(
+      'unwritable-target',
+      `${baseName}${ext} lives where Studio does not write (${path.relative(workspaceRoot, dir).split(path.sep).join('/') || '.'}). Copy the component into your project's source folder.`,
+    )
+  }
 
   // Copy the file text, then rename the export (function/const declaration
   // name, and its `export default`/named export form) inside the COPY only —
   // the original file and every other call site are untouched.
   const originalText = readFileSync(targetPath, 'utf8')
-  writeFileSync(newPath, originalText, 'utf8')
+  createSourceFileExclusive(newPath, originalText)
 
   const copyProject = new Project({
     useInMemoryFileSystem: false,
@@ -115,7 +126,7 @@ export function extractComponentCopy(params: ExtractComponentCopyParams): Extrac
   // add a fresh one) at the new file instead of the original.
   const relSpecifier = relativeSpecifier(file, newPath)
   retagCallSite(opening, newName)
-  repointImport(sourceFile, identifier, newName, relSpecifier)
+  repointImport(sourceFile, identifier, newName, relSpecifier, target.isDefaultExport)
   sourceFile.saveSync()
 
   const newFileRel = path.relative(workspaceRoot, newPath).split(path.sep).join('/')
@@ -144,8 +155,18 @@ function retagCallSite(opening: ReturnType<typeof findJsxElementAtLocationOrThro
   }
 }
 
-/** Adds an import for `newName` from `specifier`, and drops `oldName`'s import if nothing else in the page file still references it — `removeImportIfLastUsage` (`./importReconcile`), the same reconciliation `detachComponent.ts`/`extractSubtreeToComponent.ts` use for the identical question. */
-function repointImport(sourceFile: SourceFile, oldName: string, newName: string, specifier: string): void {
-  sourceFile.addImportDeclaration({ moduleSpecifier: specifier, namedImports: [newName] })
+/**
+ * Adds an import for `newName` from `specifier`, and drops `oldName`'s import if nothing else in the page file still references it — `removeImportIfLastUsage` (`./importReconcile`), the same reconciliation `detachComponent.ts`/`extractSubtreeToComponent.ts` use for the identical question.
+ *
+ * Spelled the way the copy exports it: the copy is the original's bytes with
+ * one name changed, so a DEFAULT-exported component is still its file's
+ * default export. A named import of it would bind nothing (P3-B found this
+ * while widening what reaches here — a component reached through
+ * `export { default as Card } from './Card'`).
+ */
+function repointImport(sourceFile: SourceFile, oldName: string, newName: string, specifier: string, isDefaultExport: boolean): void {
+  sourceFile.addImportDeclaration(
+    isDefaultExport ? { moduleSpecifier: specifier, defaultImport: newName } : { moduleSpecifier: specifier, namedImports: [newName] },
+  )
   removeImportIfLastUsage(sourceFile, oldName)
 }

@@ -72,6 +72,7 @@ const renderSnapshotTool: AiTool = {
   description: 'snapshot',
   scope: 'site',
   execution: 'bridge',
+  sideEffects: 'none',
   inputSchema: Type.Object({
     breakpointId: Type.Optional(Type.String()),
     captureScreenshot: Type.Optional(Type.Boolean()),

@@ -1,1 +1,1 @@
-export { ExplorerPanel } from './ExplorerPanel'
+export { ExplorerPanel, ExplorerPanelSkeleton } from './ExplorerPanel'

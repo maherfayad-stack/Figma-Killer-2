@@ -12,7 +12,7 @@
  * PLACEMENT FLOWS (Phase 4):
  * 1. useInsertInserterItem.ts — the ONE handler every picker surface (the
  *    Assets panel, and any other caller) routes a picked item through.
- * 2. LayerNodeContextMenu.tsx — 'Insert module here' submenu click (which
+ * 2. LayerNodeContextMenu.tsx — 'Insert element here' submenu click (which
  *    embeds the compact ModulePicker; picking a Visual Component flows
  *    through this file via the onSelectVC callback).
  *
@@ -105,13 +105,13 @@ describe('G1 — useInsertInserterItem calls insertComponentRef for VC insertion
 // Gate 3 — LayerNodeContextMenu must use insertComponentRef
 // ---------------------------------------------------------------------------
 
-describe("G3 — LayerNodeContextMenu calls insertComponentRef for 'Insert module here' (Phase 4)", () => {
+describe("G3 — LayerNodeContextMenu calls insertComponentRef for 'Insert element here' (Phase 4)", () => {
   test('LayerNodeContextMenu.tsx must reference insertComponentRef', () => {
     const src = readSource(CONTEXT_MENU_PATH)
     if (!src.includes('insertComponentRef')) {
       throw new Error(
         '[Phase 4 / G4] LayerNodeContextMenu.tsx does not reference insertComponentRef.\n' +
-        "The 'Insert module here' submenu's VC-pick callback must route through\n" +
+        "The 'Insert element here' submenu's VC-pick callback must route through\n" +
         "insertComponentRef so cycle detection and VC/page mode dispatch are\n" +
         'applied uniformly.\n' +
         'File: src/admin/pages/site/components/DomPanel/LayerNodeContextMenu.tsx',

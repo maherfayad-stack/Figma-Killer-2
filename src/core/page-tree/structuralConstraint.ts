@@ -20,7 +20,7 @@ import {
   refuseMintedNodeInsert,
   refuseStructuralEdit,
   type SourceStructureNode,
-  type StructuralEditKind,
+  type StructuralEditQuestion,
   type StructuralRefusal,
   type StructuralRefusalReason,
 } from './sourceStructure'
@@ -83,7 +83,9 @@ const STRUCTURAL_ACTIONS: Record<StructuralRefusalReason, (node?: SourceStructur
   // `select-container` action (R8's fix — see `bestEffortRowLocation`'s
   // sibling doc above for why the identical action wasn't wired for these
   // two before).
-  'route-chrome': jumpToSourceAction,
+  // G-8 — "Edit layout" is the way forward for a gesture on a layout's markup; the jump stays
+  // for the user who would rather read the file.
+  'route-chrome': (node) => (node ? [{ label: 'Edit layout', kind: 'edit-layout' }, ...jumpToSourceAction(node)] : []),
   'code-placed': jumpToSourceAction,
   // W4-1 — a reparent refused for crossing files, or a reorder whose anchor
   // is in another file. The one useful next step is to look at where the
@@ -110,22 +112,11 @@ const STRUCTURAL_ACTIONS: Record<StructuralRefusalReason, (node?: SourceStructur
   // run. Nothing on disk to jump to, so the sentence is the whole answer.
   'group': () => [],
   'ungroup': () => [],
-  // K3 — the container carries behaviour (a handler, a ref, a `key`, a
-  // spread, or it is a component). Dissolving it would drop that, and the one
-  // honest way forward is to look at what it is doing: `origin` is the
-  // wrapper's own `rel:line:col`, so this is the R1 jump every other
-  // "the code decides this" refusal already offers.
-  'has-behaviour': jumpToSourceAction,
   // `struct-11` — the wrapper would be invalid HTML where it lands. `node` is
   // the CONTAINER whose content model forbids it (the `<p>`, the `<ul>`), so
   // "go and look at it" is both true and the fastest way to the fix: the user
   // either moves the elements out of it or adds the container by hand.
   'content-model': jumpToSourceAction,
-  // `store-14` — the file moved on under a stored undo. The one useful next
-  // step is to look at what changed in it, which is exactly what this action
-  // opens; without a node to point at, the sentence names the file and is the
-  // whole answer.
-  'stale-undo': jumpToSourceAction,
 }
 
 function structuralActions(
@@ -171,12 +162,7 @@ export function describeStructuralRefusal(input: {
  * `refuseStructuralEdit` — same input shape, same refusal, now carrying an
  * explanation + actions instead of a bare `{reason, message}`.
  */
-export function explainStructuralConstraint(input: {
-  kind: StructuralEditKind
-  node: SourceStructureNode
-  anchor?: SourceStructureNode | null
-  multi?: boolean
-}): EditConstraint | null {
+export function explainStructuralConstraint(input: StructuralEditQuestion): EditConstraint | null {
   const refusal = refuseStructuralEdit(input)
   if (!refusal) return null
   return describeStructuralRefusal({ refusal, node: input.node })
@@ -242,7 +228,36 @@ export function explainStaticParentConstraint(parentLabel: string): EditConstrai
   return {
     reason: 'static-parent',
     scope: 'gesture',
-    explanation: `\`<${parentLabel}>\` is \`position: static\`, so placing this element by coordinates inside it would hand it to a different ancestor instead — it would not land where you dropped it.`,
+    explanation: `\`<${parentLabel}>\` is \`position: static\`, so placing this element by coordinates inside it would hand it to another ancestor. Make it position: relative.`,
     actions: [{ label: `Make <${parentLabel}> position: relative`, kind: 'position-parent-relative' }],
+  }
+}
+
+/**
+ * PA-4 (OD-P2) — "Ignore auto layout" needs `position: relative` on the
+ * container, and normally writes it in the same undo step. It refuses when
+ * that one declaration would not stay on one element: a container inlined
+ * from a component shared by `sharedBy` places, or one that renders once per
+ * `.map` row. The remedy is the same single write, offered as an explicit
+ * choice that names its blast radius instead of being made silently.
+ */
+export function explainSharedParentConstraint(
+  parentLabel: string,
+  sharing: { kind: 'component'; count: number } | { kind: 'list-row' },
+): EditConstraint {
+  const where =
+    sharing.kind === 'component'
+      ? `is shared by ${sharing.count} places that use the same component`
+      : 'is repeated once per row of a list'
+  return {
+    reason: 'static-parent',
+    scope: 'gesture',
+    explanation: `\`<${parentLabel}>\` needs \`position: relative\` for this element to stay put once it ignores auto layout, and it ${where}. Make it position: relative everywhere it is used.`,
+    actions: [
+      {
+        label: sharing.kind === 'component' ? `Make <${parentLabel}> position: relative in all ${sharing.count}` : `Make <${parentLabel}> position: relative in every row`,
+        kind: 'position-parent-relative',
+      },
+    ],
   }
 }

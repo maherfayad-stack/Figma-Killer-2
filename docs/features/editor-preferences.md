@@ -1,4 +1,5 @@
 # Editor Preferences
+> **Purpose:** catalog-driven editor preferences · **Read when:** adding or reading an editor preference · **Trust:** current · **Owner:** store-engineer · **Verified:** not yet
 
 Local UI preferences for the editor — auto-save behaviour, hover-preview gating, admin theme, UI text size, density, layers panel options, etc. Stored in `localStorage`, scoped to the device, never written to the site file.
 
@@ -25,7 +26,7 @@ The feature is **catalog-driven**: one declarative array drives the schema, the 
   id: 'layersShowIcon',
   type: 'boolean',
   category: 'layers',
-  label: 'Show module icon',
+  label: 'Show element type icon',
   description: 'Display the module type icon next to each layer row.',
   default: true,
 }

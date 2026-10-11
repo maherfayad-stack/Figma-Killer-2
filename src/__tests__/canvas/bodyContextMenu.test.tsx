@@ -26,8 +26,6 @@ beforeEach(() => {
     canvasView: 'design',
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
-    hoveredBreakpointId: null,
     clipboardEntry: null,
     previewClassAssignment: null,
     propertiesPanel: { collapsed: false, x: 0, y: 0, width: 360 },
@@ -60,7 +58,7 @@ describe('canvas body context menu', () => {
     await waitFor(() => {
       expect(screen.getByRole('menu', { name: 'Node options' })).toBeDefined()
     })
-    expect(screen.getByRole('menuitem', { name: /insert module here/i })).toBeDefined()
+    expect(screen.getByRole('menuitem', { name: /insert element here/i })).toBeDefined()
     const pasteItem = screen.getByRole('menuitem', { name: /^paste$/i })
     expect(screen.getByRole('menuitem', { name: /paste html here/i })).toBeDefined()
 

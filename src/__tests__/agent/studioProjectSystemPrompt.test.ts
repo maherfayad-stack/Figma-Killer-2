@@ -104,7 +104,7 @@ describe('buildStudioProjectSystemPrompt', () => {
       activeBoardId: 'board-1',
       frames: [{ pageId, x: 0, y: 0, width: 390, height: 844 }],
       activePageId: pageId,
-      selectedNodeId: null,
+      selection: [],
       axes: { direction: 'ltr', colorScheme: 'light' },
     }
     const prompt = await buildStudioProjectSystemPrompt(dir, snapshot, 'conv-2', studioAgentTools, { staleness: createStalenessTracker() })
@@ -128,7 +128,7 @@ describe('buildStudioProjectSystemPrompt', () => {
       activeBoardId: 'board-1',
       frames: [{ pageId, x: 0, y: 0 }],
       activePageId: pageId,
-      selectedNodeId: buttonNodeId,
+      selection: [{ nodeId: buttonNodeId }],
       axes: { direction: 'ltr', colorScheme: 'light' },
     }
     const prompt = await buildStudioProjectSystemPrompt(dir, snapshot, 'conv-3', studioAgentTools, { staleness: createStalenessTracker() })
@@ -142,7 +142,7 @@ describe('buildStudioProjectSystemPrompt', () => {
       activeBoardId: 'board-1',
       frames: [{ pageId, x: 0, y: 0 }],
       activePageId: pageId,
-      selectedNodeId: null,
+      selection: [],
       axes: { direction: 'ltr', colorScheme: 'light' },
     }
     // A fresh tracker per test — never the shared production singleton, so
@@ -169,7 +169,7 @@ describe('buildStudioProjectSystemPrompt', () => {
       activeBoardId: 'board-1',
       frames: [{ pageId, x: 0, y: 0 }],
       activePageId: pageId,
-      selectedNodeId: null,
+      selection: [],
       axes: { direction: 'ltr', colorScheme: 'light' },
     }
     const staleness = { staleness: createStalenessTracker() }

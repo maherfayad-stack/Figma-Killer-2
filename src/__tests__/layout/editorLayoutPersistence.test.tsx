@@ -92,7 +92,6 @@ function resetStore() {
     activePageId: null,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     activeBreakpointId: 'desktop',
     propertiesPanel: { collapsed: false, x: 0, y: 0, width: 360 },
     propertiesPanelMode: 'docked',
@@ -249,9 +248,9 @@ describe('AdminCanvasLayout — Studio site hydration gate', () => {
           authoredCss: '',
           trust: 'static',
           paletteHiddenModuleIds: [],
-          pageCount: 1,
+          pageList: [{ id: page.id, slug: page.slug, title: page.title }],
         })
-        const pageLine = JSON.stringify({ kind: 'page', page })
+        const pageLine = JSON.stringify({ kind: 'page', page, index: 0 })
         return new Response(`${metaLine}\n${pageLine}\n`, {
           status: 200,
           headers: { 'content-type': 'application/x-ndjson' },
@@ -463,7 +462,9 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
       'panel-rail-assets',
       'panel-rail-framework',
       'panel-rail-selectors',
+      'panel-rail-variables',
       'panel-rail-content',
+      'panel-rail-dependencies',
       'panel-rail-git',
     ])
     expect(primaryButtons.map((button) => button.getAttribute('data-icon'))).toEqual([
@@ -471,7 +472,9 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
       'box-stack-solid',
       'colors-swatch',
       'paint-bucket',
+      'settings-2-solid',
       'globe-solid',
+      'package-solid',
       'cloud-upload',
     ])
     // Rail colour is semantic, not a hash: each button's accent names the JOB
@@ -484,7 +487,9 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
       'gold', // assets    — navigate (find the thing, same job as the explorer)
       'mint', // framework — style
       'mint', // selectors — style
+      'mint', // variables — style
       'lilac', // content  — content
+      'gold', // dependencies — navigate (project-level)
       'gold', // git       — navigate (project-level, like the explorer)
     ])
     // Comments joins the AI assistant in the global group rather than the
@@ -541,7 +546,8 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
     expect(sidebar.getAttribute('data-active-panel')).toBe('framework')
     expect(useEditorStore.getState().frameworkPanelOpen).toBe(true)
     expect(useEditorStore.getState().explorerPanelOpen).toBe(false)
-    expect(within(sidebar).getByTestId('framework-panel')).toBeDefined()
+    // Framework is a first-open lazy chunk, so its mount is awaited.
+    expect(await within(sidebar).findByTestId('framework-panel')).toBeDefined()
 
     fireEvent.click(within(rail).getByRole('button', { name: /open explorer panel/i }))
 

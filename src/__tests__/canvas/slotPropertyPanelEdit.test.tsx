@@ -33,7 +33,6 @@ function freshStore() {
     activeDocument: null,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     // Anchor activeBreakpointId at 'desktop' so PropertiesPanel.handleChange
     // routes through `updateNodeProps` (writes to props.text). If a prior
     // test left this at 'mobile' / 'tablet', the same handler would write
@@ -142,10 +141,14 @@ describe('slot-content edit via PropertyPanel', () => {
       fireEvent.change(textarea!, { target: { value: 'Edited text' } })
     })
 
-    // The store must hold the new value.
-    expect(
-      useEditorStore.getState().site!.pages[0].nodes[textId].props.text,
-    ).toBe('Edited text')
+    // Typing is a draft: the canvas previews it live, the source is written once on commit.
+    expect(await screen.findAllByText('Edited text')).not.toHaveLength(0)
+    expect(screen.queryByText('Initial text')).toBeNull()
+    expect(useEditorStore.getState().site!.pages[0].nodes[textId].props.text).toBe('Initial text')
+    act(() => {
+      fireEvent.blur(textarea!)
+    })
+    expect(useEditorStore.getState().site!.pages[0].nodes[textId].props.text).toBe('Edited text')
 
     // The canvas DOM must reflect the new value.
     expect(await screen.findAllByText('Edited text')).not.toHaveLength(0)
@@ -253,9 +256,12 @@ describe('slot-content edit via PropertyPanel', () => {
       fireEvent.change(textarea!, { target: { value: 'Nested edited' } })
     })
 
-    expect(
-      useEditorStore.getState().site!.pages[0].nodes[textId].props.text,
-    ).toBe('Nested edited')
+    expect(await screen.findAllByText('Nested edited')).not.toHaveLength(0)
+    expect(useEditorStore.getState().site!.pages[0].nodes[textId].props.text).toBe('Nested initial')
+    act(() => {
+      fireEvent.blur(textarea!)
+    })
+    expect(useEditorStore.getState().site!.pages[0].nodes[textId].props.text).toBe('Nested edited')
 
     expect(await screen.findAllByText('Nested edited')).not.toHaveLength(0)
     expect(screen.queryByText('Nested initial')).toBeNull()

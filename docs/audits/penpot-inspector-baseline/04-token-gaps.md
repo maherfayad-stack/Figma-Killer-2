@@ -1,4 +1,5 @@
 # 04 — Token gaps
+> **Trust:** historical, dated 2026-09-09. Paths may be wrong. Never act on it.
 
 `src/styles/globals.css:236-270`'s `--inspector-*` tokens are commented as
 modeling **Figma's** inspector row, explicitly never measured against

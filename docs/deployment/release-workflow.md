@@ -1,4 +1,5 @@
 # Release Workflow
+> **Purpose:** publishing Studio Docker images (maintainers) · **Read when:** cutting a release · **Trust:** current-cms · **Owner:** server-engineer · **Verified:** not yet
 
 This maintainer guide covers publishing Studio Docker images.
 
@@ -68,6 +69,8 @@ It also uploads:
 studio-0.0.1-release-bundle.tar.gz
 ```
 
+The first release that ships the `workspace` and `private` volumes (P1-H) must say, at the top of its notes, that installs created before it keep every user's projects, MCP secrets and CLI logins in the container's writable layer, and must copy them out of the running container **before** upgrading, following [backup-restore.md](backup-restore.md) → "Moving the workspace onto a volume". An operator who runs the update command below first loses them.
+
 Release notes should link to:
 
 - [railway.md](railway.md)
@@ -78,7 +81,7 @@ Release notes should link to:
 
 ## Operator Update Command
 
-Image-based VPS Compose installs update the app container without touching DB/uploads volumes:
+Image-based VPS Compose installs update the app container without touching the workspace, private, DB and uploads volumes:
 
 ```sh
 docker compose -f compose.prod.yml pull app

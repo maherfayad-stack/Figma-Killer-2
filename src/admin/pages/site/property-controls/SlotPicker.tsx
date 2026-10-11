@@ -95,7 +95,7 @@ export function SlotPicker({ propKey, label, ownerRelPath, submittingName, mode,
     }
     const converted = svgToJsxNode(candidate.markup)
     if (!converted.ok) {
-      pushToast({ kind: 'error', title: `Cannot use ${candidate.name}`, body: converted.message })
+      pushToast({ kind: 'warning', title: `Cannot use ${candidate.name}`, body: converted.message })
       return
     }
     onPick(converted.node, candidate.name)
@@ -105,16 +105,16 @@ export function SlotPicker({ propKey, label, ownerRelPath, submittingName, mode,
     if (!file) return
     if (file.size > MAX_UPLOAD_BYTES) {
       pushToast({
-        kind: 'error',
+        kind: 'warning',
         title: 'SVG too large',
-        body: `${file.name} is ${Math.round(file.size / 1024)} KB. Studio inlines an icon into your source, so it accepts up to ${MAX_UPLOAD_BYTES / 1024} KB.`,
+        body: `${file.name} is ${Math.round(file.size / 1024)} KB, and an icon can be at most ${MAX_UPLOAD_BYTES / 1024} KB. Use a smaller SVG.`,
       })
       return
     }
     try {
       const converted = svgToJsxNode(await file.text())
       if (!converted.ok) {
-        pushToast({ kind: 'error', title: `Cannot use ${file.name}`, body: converted.message })
+        pushToast({ kind: 'warning', title: `Cannot use ${file.name}`, body: converted.message })
         return
       }
       onPick(converted.node, file.name)

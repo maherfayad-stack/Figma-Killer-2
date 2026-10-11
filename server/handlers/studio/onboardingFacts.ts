@@ -36,8 +36,6 @@
  * actually lives — `lastOpenedAt` is a fact about a project (see its field doc
  * in `studioMeta.ts`), not about who opened it.
  */
-import { existsSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import type { DbClient } from '../../db/client'
 import { listCredentialsForUser } from '../../ai/credentials/store'
@@ -46,6 +44,8 @@ import { listStudioProjectDirs, projectsRootDir } from '../studioProjects'
 import { readStudioMeta } from './studioMeta'
 import { readPrototypeFile } from './prototypeStore'
 import { PAGE_VERIFICATION_FILE_NAME } from './pageVerificationStore'
+import { agentCacheStoreDir, listAgentCacheUserKeys } from './agentUserScope'
+import { statStudioStoreFile } from './studioStore'
 import { hasGitRepo } from './gitRunner'
 import { isGitFailure, readGitStatus } from './gitOperations'
 
@@ -120,7 +120,7 @@ function settledFact(result: PromiseSettledResult<boolean>, label: string): bool
  * there is nothing on disk that says "an element's style was changed" as
  * opposed to "a file was written". The two candidates, cheapest first:
  *
- *   1. **A page-verification cache exists** — one `existsSync`, no subprocess.
+ *   1. **A page-verification cache exists** — one `lstat` per cache, no subprocess.
  *      Written by `studio_compare` (`pageVerificationStore.ts`), so it proves a
  *      page was written AND visually checked. Narrow: it only ever appears when
  *      the agent has run a visual compare, so it can confirm an edit but never
@@ -158,12 +158,9 @@ async function anyProjectEdited(dirs: string[]): Promise<boolean> {
 
 /** True when a page-verification cache exists at either the project-wide or a per-user path. */
 function hasVerifiedPageWrite(dir: string): boolean {
-  const cacheDir = join(dir, '.studio', 'cache')
-  if (existsSync(join(cacheDir, PAGE_VERIFICATION_FILE_NAME))) return true
-  const agentDir = join(cacheDir, 'agent')
-  if (!existsSync(agentDir)) return false
-  return readdirSync(agentDir, { withFileTypes: true }).some(
-    (entry) => entry.isDirectory() && existsSync(join(agentDir, entry.name, PAGE_VERIFICATION_FILE_NAME)),
+  if (statStudioStoreFile(dir, `cache/${PAGE_VERIFICATION_FILE_NAME}`)) return true
+  return listAgentCacheUserKeys(dir).some(
+    (userKey) => statStudioStoreFile(dir, `${agentCacheStoreDir(userKey)}/${PAGE_VERIFICATION_FILE_NAME}`) !== null,
   )
 }
 

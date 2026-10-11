@@ -24,6 +24,16 @@ export interface KeyEventLike {
   readonly shiftKey: boolean
   readonly altKey: boolean
   readonly key: string
+  /**
+   * The PHYSICAL key (`KeyboardEvent.code`, e.g. `'Digit1'`, `'Space'`).
+   *
+   * Optional because most bindings never need it — but a Shift+digit binding
+   * does: on a US layout ⇧1 arrives as `key: '!'`, so a `match` that tests
+   * `e.key === '1'` alone never fires from a real keyboard (the zoom-to-fit key
+   * was dead that way until P2-B). Test `code` for "which key", `key` for
+   * "which character".
+   */
+  readonly code?: string
 }
 
 // ─── Binding definition ───────────────────────────────────────────────────────

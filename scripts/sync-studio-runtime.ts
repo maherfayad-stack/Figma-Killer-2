@@ -31,10 +31,13 @@
  * studio-runtime:sync`" if either committed artifact drifts from its source.
  *
  * Bundler determinism: same caveat as `sync-plugin-bootstrap.ts` — `Bun.build`
- * output is stable within a Bun minor but not guaranteed bit-identical across
- * minors (pinned by `engines.bun` in package.json). Regenerate on a deliberate
- * Bun-minor bump in the same change so the gate fails only on real source
- * drift.
+ * output is NOT stable across Bun PATCH releases (1.3.6 emits different
+ * `__export` helpers than 1.3.11/1.3.13), so the Bun that generates this
+ * artifact is pinned EXACTLY by `engines.bun` in package.json. The canonical
+ * artifact is the one CI's `generated-fresh` job builds on Linux; when it
+ * fails it uploads the regenerated file, so nobody has to regenerate on a
+ * Windows checkout. Regenerate on a deliberate Bun bump in the same change so
+ * the gate fails only on real source drift.
  *
  * `define: { 'process.env.NODE_ENV': ... }` is load-bearing, not cosmetic:
  * without pinning it, `Bun.build` inlines the CALLING process's own

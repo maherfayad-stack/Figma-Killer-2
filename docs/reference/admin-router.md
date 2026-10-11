@@ -1,4 +1,5 @@
 # Admin Router
+> **Purpose:** the in-house admin router · **Read when:** adding admin navigation · **Trust:** current · **Owner:** panel-designer · **Verified:** not yet
 
 Cookbook for the in-house router at `src/admin/lib/routing/`. Replaces `react-router-dom` for the admin app — a six-component, four-hook surface that covers the current admin route table.
 

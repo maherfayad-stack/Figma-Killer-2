@@ -102,7 +102,10 @@ export function createUiStateActions({ set, get }: SiteSliceHelpers): UiStateAct
         current &&
         current.nodeIds.length === preview.nodeIds.length &&
         current.nodeIds.every((id, i) => id === preview.nodeIds[i]) &&
-        shallowEqualStyles(current.styles, preview.styles)
+        shallowEqualStyles(current.styles, preview.styles) &&
+        preview.nodeIds.every((id) =>
+          shallowEqualStyles(current.stylesByNode?.[id] ?? {}, preview.stylesByNode?.[id] ?? {}),
+        )
       ) {
         return
       }

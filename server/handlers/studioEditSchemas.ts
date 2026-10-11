@@ -13,6 +13,8 @@
  *   - `css` (`kind: 'css'`, `studioCssWriteback.ts`) — a `set` or `insert`
  *     declaration write.
  *   - `move` / `delete` / `insert` (`studioStructuralWriteback.ts`).
+ *   - `svg-attr` (`studioSvgWriteback.ts`, P5-D SVG-4) — attributes of one
+ *     element inside an inline `<svg>`, addressed by its host node and part.
  *   - `insert-slot` / `promote-component` / `add-slot-prop`
  *     (`studioSlotWriteback.ts`, E2.4/E2.2) — the "page-as-component with
  *     slots" flagship's writeback: filling a component's slot PROP, pulling
@@ -39,15 +41,24 @@
  * wire-shape definitions" move, consistent with this module's own stated
  * split (wire shape here, dispatch behaviour there).
  */
-import { CssEditSchema } from './studioCssWriteback'
+import { AtRuleScopeSchema, CssEditSchema } from './studioCssWriteback'
+import { ClassEditSchema } from './studioClassEditSchema'
+import { ExposeClassEditSchema, PromoteClassOverrideEditSchema } from './studioClassOverrideSchemas'
 import {
-  isSlotEditKind,
   SlotEditSchemas,
   type StudioAddSlotPropDetail,
   type StudioPromoteComponentDetail,
 } from './studioSlotWriteback'
-import { isStructuralEditKind, StructuralEditSchemas } from './studioStructuralWriteback'
-import type { CreatedJsxLocation, DeletedJsxText } from '@core/ast-codemods'
+import { StructuralEditSchemas } from './studioStructuralWriteback'
+import { VariantEditSchemas } from './studioVariantWriteback'
+import { CanvasLayerEditSchemas, type CanvasLayerRemovedText } from './studioCanvasLayerWriteback'
+import { SvgEditSchemas } from './studioSvgWriteback'
+import { ListItemEditSchema } from './studioListItemWriteback'
+import { UnrollListEditSchema } from './studioUnrollWriteback'
+import { UndoJournalTokenSchema } from './studio/undoJournalToken'
+import type { CreatedJsxLocation } from '@core/ast-codemods'
+import type { PastedHtmlSummary } from './studioPastedHtmlStyles'
+import type { StyleLanding, StyleLandingRung } from '@core/page-tree'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
 /**
@@ -65,13 +76,20 @@ const PropEditSchema = Type.Object({
   nodeId: Type.String(),
   prop: Type.String(),
   value: Type.Union([Type.String(), Type.Number(), Type.Boolean()]),
+  /**
+   * G-6 (OD-20) - the user typed over a code-bound value: replace the code
+   * with the literal. Editor-only (it needs the undo journal) and never on an
+   * inlined id; see `studioBatchUndoJournal.ts` and `studioWriteback.ts`.
+   */
+  unbind: Type.Optional(Type.Literal(true)),
 })
 
-/** One element-text-children writeback — `setJsxText`. */
+/** One element-text-children writeback — `setJsxText`. `unbind` as on {@link PropEditSchema}. */
 const TextEditSchema = Type.Object({
   kind: Type.Literal('text'),
   nodeId: Type.String(),
   text: Type.String(),
+  unbind: Type.Optional(Type.Literal(true)),
 })
 
 /**
@@ -87,47 +105,6 @@ const StyleEditSchema = Type.Object({
   nodeId: Type.String(),
   style: Type.Record(Type.String(), Type.Union([Type.String(), Type.Number()])),
   remove: Type.Optional(Type.Array(Type.String())),
-})
-
-/**
- * One `className` token add/remove writeback (Track B2) — `setJsxClassName`.
- * Replaces Phase 0 item 0.6's honesty-only stopgap: a `node.classIds` change
- * now reaches disk here instead of only ever warning that it couldn't.
- *
- * `add`/`remove` carry TOKENS, never `StyleRule` ids — the ids are Studio's own
- * `sc-<hash>` bookkeeping. Two token shapes, because two kinds of class exist
- * in a real repo (`style-02`):
- *
- *   - `{ kind: 'literal', token }` — a class whose NAME is what the DOM
- *     carries: a plain `.css` rule, a Tailwind utility, a generated framework
- *     class. Written as a plain token in the `className` attribute.
- *   - `{ kind: 'module', file, local }` — a class declared in a CSS Module.
- *     Its DOM name is a bundler-computed hash, so writing any literal name for
- *     it produces markup that styles nothing outside the tool that computed
- *     that hash. `file` is the workspace-relative `*.module.css` path (guarded
- *     by `studioWriteback.ts`'s `resolveClassNameTokens` before it is ever
- *     turned into a specifier) and `local` is the class as WRITTEN in that file, so the
- *     codemod can emit the only reachable spelling: `styles.<local>`.
- *
- * Can REFUSE with a specific reason (`css-module-binding` /
- * `css-module-import-missing` / `template-dynamic` / `spread-attribute` /
- * `unsupported-call` / `unsupported-expression` — `ClassNameRefusalReason` in
- * `@core/ast-codemods`) exactly like `detach`/`swap`/`css` do — see
- * `applyStudioEdit`'s `'class'` case.
- */
-const ClassNameTokenSchema = Type.Union([
-  Type.Object({ kind: Type.Literal('literal'), token: Type.String() }),
-  Type.Object({ kind: Type.Literal('module'), file: Type.String(), local: Type.String() }),
-])
-
-/** One class token on the wire — `literal` or `module`. See `ClassEditSchema`. */
-export type StudioClassNameToken = Static<typeof ClassNameTokenSchema>
-
-const ClassEditSchema = Type.Object({
-  kind: Type.Literal('class'),
-  nodeId: Type.String(),
-  add: Type.Array(ClassNameTokenSchema),
-  remove: Type.Array(ClassNameTokenSchema),
 })
 
 /**
@@ -149,8 +126,9 @@ const ClassEditSchema = Type.Object({
  *
  * `className` is the synthetic class Phase A flattened this template's CSS
  * under; `selector` is the flattened selector the declaration lives beneath
- * (`.Card_sc__a1b2c3`, `.Card_sc__a1b2c3:hover`); `atMedia`, when present, is
- * a nested `@media`'s query. Together they name exactly one declaration in one
+ * (`.Card_sc__a1b2c3`, `.Card_sc__a1b2c3:hover`); `atRule`, when present, is
+ * the nested `@media`/`@container`/`@supports` block it sits in, as
+ * `name params` (P3-C, WB-31). Together they name exactly one declaration in one
  * template — the codemod refuses, by name, if they name zero or two.
  *
  * There is no `op` here, and that is the scope statement: a styled edit only
@@ -163,7 +141,7 @@ const StyledEditSchema = Type.Object({
   nodeId: Type.String(),
   className: Type.String(),
   selector: Type.String(),
-  atMedia: Type.Optional(Type.String()),
+  atRule: Type.Optional(AtRuleScopeSchema),
   property: Type.String(),
   value: Type.String(),
 })
@@ -182,11 +160,20 @@ const StyledEditSchema = Type.Object({
  * ordering / dedupe / touched-file collection all keep working through the one
  * `studioEditLocation` decoder — and two board nodes fed by the same dictionary
  * key dedupe onto one write, which is what shared copy means.
+ *
+ * `expected` is the text the client read at that literal — its save-diff
+ * baseline. The codemod writes only while the literal still holds it and
+ * refuses `literal-changed` otherwise, so a board holding an old read of a
+ * dictionary can never put that read back over a newer file (the lost update
+ * behind "dictionary edits revert", 2026-09-30). Required: a client with no
+ * baseline for a literal has nothing honest to compare against, so it does
+ * not write it.
  */
 const LiteralEditSchema = Type.Object({
   kind: Type.Literal('literal'),
   nodeId: Type.String(),
   text: Type.String(),
+  expected: Type.String(),
 })
 
 /**
@@ -238,6 +225,58 @@ const AssetEditSchema = Type.Object({
 const DetachEditSchema = Type.Object({
   kind: Type.Literal('detach'),
   nodeId: Type.String(),
+  /**
+   * P5-C (DET-5) — run the whole detach, gate included, and write nothing:
+   * `'always'` (what would it do?) or `'if-lossy'` (write it only when
+   * nothing is lost — see {@link StudioDetachDetail}). The editor's one
+   * `detachInstances` action asks first this way; an agent that omits it
+   * detaches outright, as before.
+   */
+  dryRun: Type.Optional(Type.Union([Type.Literal('always'), Type.Literal('if-lossy')])),
+})
+
+/**
+ * P5-C (DET-7), OD-19 — "Expose as prop", the write behind every edit made to
+ * an element inside a component instance: each of `overrides` names a literal
+ * of that ONE element (its text, an attribute, or one inline-style property)
+ * that becomes an optional prop of the component whose default IS the literal
+ * (`exposeLiteralAsProp`), so every other instance renders byte-identical;
+ * `value`, when given, is written at this one call site. `nodeId` is the
+ * element's inlined id, exactly one call site deep (`page~component:line:col`)
+ * — the call site is its head, and the codemod checks the element really is
+ * that component's. Two files, one gesture however many overrides, journaled
+ * (⌘Z is `restore`).
+ */
+const ExposeOverrideSchema = Type.Object({
+  target: Type.Union([
+    Type.Object({ kind: Type.Literal('text') }),
+    Type.Object({ kind: Type.Literal('attribute'), name: Type.String({ pattern: '^[A-Za-z_$][A-Za-z0-9_$:-]*$', maxLength: 64 }) }),
+    Type.Object({ kind: Type.Literal('style'), property: Type.String({ pattern: '^[A-Za-z_$][A-Za-z0-9_$-]*$', maxLength: 64 }) }),
+  ]),
+  propName: Type.String({ pattern: '^[A-Za-z_$][A-Za-z0-9_$]*$', maxLength: 64 }),
+  value: Type.Optional(Type.Union([Type.String({ maxLength: 10_000 }), Type.Number(), Type.Boolean()])),
+})
+
+const ExposePropEditSchema = Type.Object({
+  kind: Type.Literal('expose-prop'),
+  nodeId: Type.String(),
+  overrides: Type.Array(ExposeOverrideSchema, { minItems: 1, maxItems: 16 }),
+})
+
+/**
+ * OD-19 — "Apply to all": the values the instance overrides through `propNames`
+ * become the component's defaults and the call site stops passing it
+ * (`promoteOverrideToDefault`). `nodeId` is the inlined id of ANY element of
+ * that instance, exactly one call site deep (`page~component:line:col`): its
+ * head is the call site, its tail names the component's file, and both go
+ * through the one path decoder. Which element is irrelevant — the override's
+ * own write may have moved the one that was edited. Journaled (⌘Z is
+ * `restore`).
+ */
+const PromoteOverrideEditSchema = Type.Object({
+  kind: Type.Literal('promote-override'),
+  nodeId: Type.String(),
+  propNames: Type.Array(Type.String({ pattern: '^[A-Za-z_$][A-Za-z0-9_$]*$', maxLength: 64 }), { minItems: 1, maxItems: 16 }),
 })
 
 /**
@@ -254,6 +293,24 @@ const SwapEditSchema = Type.Object({
   newComponentFile: Type.String(),
 })
 
+/**
+ * P3-F — put back what a journaled one-shot write (`delete`/`detach`/`swap`/
+ * `promote-component`) changed, by the token its batch reported
+ * (`StudioEditBatchResult.undoToken`). The files are the server's own record
+ * (`studio/undoJournal.ts`); the client never sends file text. Applies only
+ * when every file is still exactly what that write left, else refuses
+ * `restore-stale`. Editor-only and alone in its batch
+ * (`studioBatchUndoJournal.ts`).
+ *
+ * `nodeId` addresses nothing: it is the key a refusal is reported under, by
+ * convention `undo-journal:<token>`, and never decodes to a location.
+ */
+const RestoreEditSchema = Type.Object({
+  kind: Type.Literal('restore'),
+  nodeId: Type.String(),
+  token: UndoJournalTokenSchema,
+})
+
 /** Discriminated union of every studio edit kind — `kind` is the discriminator. */
 export const StudioEditSchema = Type.Union([
   PropEditSchema,
@@ -265,9 +322,24 @@ export const StudioEditSchema = Type.Union([
   TagEditSchema,
   AssetEditSchema,
   DetachEditSchema,
+  ExposePropEditSchema,
+  PromoteOverrideEditSchema,
+  ExposeClassEditSchema,
+  PromoteClassOverrideEditSchema,
   SwapEditSchema,
+  RestoreEditSchema,
   ...StructuralEditSchemas,
+  // OD-8 — a `.map` row's structure, written to its array (`studioListItemWriteback.ts`).
+  ListItemEditSchema,
+  // G-9 / OD-24 — "Unroll list": a `.map` over an array literal becomes its rows (`studioUnrollWriteback.ts`).
+  UnrollListEditSchema,
   ...SlotEditSchemas,
+  // CV-3 — add / remove a variant, add a component property (`studioVariantWriteback.ts`).
+  ...VariantEditSchemas,
+  // P5-G — the free canvas's five kinds (`studioCanvasLayerWriteback.ts`).
+  ...CanvasLayerEditSchemas,
+  // P5-D SVG-4 — one element inside an inline `<svg>` (`studioSvgWriteback.ts`).
+  ...SvgEditSchemas,
   CssEditSchema,
 ])
 export type StudioEdit = Static<typeof StudioEditSchema>
@@ -293,6 +365,22 @@ export interface StudioEditSwapDetail {
 }
 
 /**
+ * P5-C (DET-5) — what one `detach` did, or would do: `written` (a `dryRun`
+ * held it back when `false`), and whether it LOSES something the editor asks
+ * about before writing — other rendered states (`branchNote`), a context hook
+ * written into the enclosing component (`movedHooks`, DET-3), or a call site
+ * every `.map` row shares (`perRow`). Reported for every `detach` that did
+ * not refuse.
+ */
+export interface StudioDetachDetail {
+  written: boolean
+  lossy: boolean
+  branchNote?: string
+  movedHooks: string[]
+  perRow: boolean
+}
+
+/**
  * `applyStudioEdit`'s result. `applied: false` means "nothing reached disk"
  * — for most kinds that's "no writable source location, nothing to do" (a
  * synthetic node, an unresolvable asset target), the existing `skipped`
@@ -312,22 +400,38 @@ export interface StudioEditSwapDetail {
  * `addSlotPropDetail` (E2.2) is populated for EVERY `add-slot-prop` outcome,
  * preview or commit — see `StudioAddSlotPropDetail`.
  */
+/** Why an `applied: false` outcome had nowhere to write — see {@link StudioEditApplyOutcome.unwritable}. */
+export type StudioEditUnwritableReason = 'no-source-location' | 'stylesheet-unavailable' | 'asset-unavailable'
+
 export interface StudioEditApplyOutcome {
   applied: boolean
+  /**
+   * WB-12 — for an `applied: false` outcome that is not an `add-slot-prop`
+   * preview: WHY there was nowhere to write. The batch reports it as the
+   * refusal of that name (`studioEditRefusals.ts`); absent reads as
+   * `no-source-location`.
+   */
+  unwritable?: StudioEditUnwritableReason
   swapDetail?: StudioEditSwapDetail
+  /** P5-C — every `detach` that did not refuse; `written: false` is a held dry run, counted as neither written nor skipped. */
+  detachDetail?: StudioDetachDetail
   createdStylesheet?: { file: string }
+  /** G-5 — the rung a style edit took (`css` set/insert/create, `styled`, `style`); see `@core/page-tree`'s `styleLanding.ts`. */
+  styleLanding?: { rung: StyleLandingRung; file: string }
   promoteDetail?: StudioPromoteComponentDetail
   addSlotPropDetail?: StudioAddSlotPropDetail
   /**
-   * `store-13` — the tag-name `line:col` of the element this edit brought into
-   * existence (`insert`/`duplicate`/`wrap`/`group`), measured against the file
-   * as it stands the moment that edit finished. Absent for every kind that
-   * creates nothing, and `null` when the codemod wrote but could not confirm
-   * the position. A LOCATION, not a node id: minting the id needs the
-   * workspace-relative path and the batch's final line count, and both are
-   * `applyStudioEditBatch`'s to know — see `StudioEditBatchResult.createdNodeIds`.
+   * `store-13` — the tag-name `line:col` of every element this edit brought
+   * into existence (`insert`/`duplicate`/`wrap`/`group`), in source order,
+   * measured against the file as it stands the moment that edit finished. A
+   * LIST because one `insert` can write a run of siblings (P5-B IMG-2: three
+   * dropped images are one edit). Absent for every kind that creates nothing,
+   * and EMPTY when the codemod wrote but could not confirm the positions. A
+   * LOCATION, not a node id: minting the id needs the workspace-relative path
+   * and the batch's final line count, and both are `applyStudioEditBatch`'s
+   * to know — see `StudioEditBatchResult.createdNodeIds`.
    */
-  created?: CreatedJsxLocation | null
+  created?: readonly CreatedJsxLocation[]
   /**
    * Which node id's FILE `created` is measured against, when that is not this
    * edit's own. Only `transplant` (D2 G3) sets it: the element it creates
@@ -351,92 +455,70 @@ export interface StudioEditApplyOutcome {
    */
   relocatedIn?: string
   /**
-   * `store-15` — populated only for a successful `delete`: the exact bytes it
-   * discarded, so `applyStudioEditBatch` can report them keyed by the edit's
-   * own `nodeId` for an undo to reinsert later.
+   * P5-G — populated only for a successful `canvas-layer-delete` (and a
+   * `canvas-layer-place` that moved rather than copied): the layer module's
+   * own bytes, which its undo writes back (`canvas-layer-restore`).
    */
-  removed?: DeletedJsxText
+  removed?: readonly CanvasLayerRemovedText[]
+  /**
+   * G-1 - what a `transplant` wrote into the destination besides the markup:
+   * plain constants and handlers (`copy`), the element's own copy of the state it
+   * used (`state`, OD-17), a row's data or a prop's default as a literal
+   * constant (`value`). Absent when it carried none. Never includes a copy the
+   * destination already had.
+   */
+  carried?: readonly StudioCarriedDeclaration[]
+  /** G-10 - where a pasted HTML fragment's styles went (an `insert` with `pastedHtml`). */
+  pastedHtml?: PastedHtmlSummary
+}
+
+/** One thing a move copied to the destination - see {@link StudioEditApplyOutcome.carried}. */
+export interface StudioCarriedDeclaration {
+  /** The name it had in the origin. */
+  name: string
+  /** The name it has at the destination - different only after a clash. */
+  as: string
+  how: 'copy' | 'state' | 'value'
 }
 
 /**
- * One `detach`/`swap`/`move`/`delete`/`css`/slot edit that refused rather
- * than writing — surfaced to the client so it can show the SPECIFIC reason
- * (a toast with an offer, per WS-4.4's plan; `StyleTargetChip`'s per-tier
- * message for `css`; the AST-only structural reasons for `move`/`delete`)
- * instead of a generic "skipped" count.
+ * One edit that did not write — surfaced to the client with its SPECIFIC
+ * reason and a sentence for the person who made it.
+ *
+ * WB-12 — every kind refuses by name (`studioEditRefusals.ts`): a codemod's
+ * typed decline, P1-A's `element-moved`, an `applied: false` outcome with its
+ * `unwritable` reason, and `write-failed` for an exception nobody named. So the
+ * batch's `refusals` list is COMPLETE: an edit the caller sent wrote exactly
+ * when no refusal matches its `(nodeId, kind, prop)`. That is the per-edit
+ * outcome the client commits its diff baselines against (WB-35).
+ *
+ * `nodeId` is the id the caller SENT, even for an edit that was re-found
+ * elsewhere (P1-D) or merged with another instance's (WB-7, reported once per
+ * contributing node). `prop` is present for a `prop` edit only: one element
+ * can carry several prop edits in a batch, and only the refused one may be
+ * held back.
  */
 export interface StudioEditRefusal {
   nodeId: string
-  kind:
-    | 'detach'
-    | 'swap'
-    | 'move'
-    | 'delete'
-    // `store-15` — ⌘Z's own write. Refuses for reasons only the AST can see,
-    // same channel as every other structural kind.
-    | 'reinsert-source'
-    | 'insert'
-    | 'duplicate'
-    | 'wrap'
-    | 'reparent'
-    // D2 G3 — the cross-file move. Refuses for two reasons only the AST can
-    // see (`captured-scope`, `binding-conflict`) on top of everything a
-    // same-file reparent can.
-    | 'transplant'
-    // K3 — ⌘G on a run of siblings, and ⌘⇧G. Both refuse for reasons only the
-    // AST can see (`not-contiguous`, `mixed-indentation`, `has-behaviour`).
-    | 'group'
-    | 'ungroup'
-    | 'css'
-    | 'class'
-    | 'style'
-    | 'styled'
-    | 'insert-slot'
-    | 'promote-component'
-    | 'add-slot-prop'
+  kind: StudioEdit['kind']
+  prop?: string
   reason: string
   message: string
 }
 
-/** The edit kinds whose refusal is a NAMED, expected outcome rather than a codemod exception. */
-export function isRefusingEditKind(kind: StudioEdit['kind']): kind is StudioEditRefusal['kind'] {
-  // `style` joined the list in `style-03`: `JsxStyleTargetError` is a named
-  // decision (a spread, a non-object initializer, a shorthand key), not an
-  // unexpected failure. It used to fall into the generic catch and reach the
-  // user as an unexplained skip with the PROP-binding sentence attached.
-  return (
-    kind === 'detach' ||
-    kind === 'swap' ||
-    kind === 'css' ||
-    kind === 'class' ||
-    kind === 'style' ||
-    // W4-4 Phase B — every decline `setStyledDeclaration` makes is a named,
-    // expected outcome with a sentence for the user (an interpolated value, a
-    // covering shorthand, a declaration written in a spliced mixin), never a
-    // codemod exception.
-    kind === 'styled' ||
-    isStructuralEditKind(kind) ||
-    isSlotEditKind(kind)
-  )
-}
-
 /**
- * `STUDIO-FIGMA-PARITY-PLAN.md` item 0.7 — one edit that skipped WITHOUT a
- * named `StudioEditRefusal` (no writable source location for a `prop`/`text`/
- * `style`/etc, or an unexpected codemod exception on a non-refusing kind).
- * Distinct from `StudioEditRefusal`: this case has no specific reason to
- * report — `applyStudioEdit` returned `applied: false` because there was
- * simply nowhere to write, not because a codemod evaluated the edit and
- * declined it. The client previously only received an aggregate `skipped`
- * count for this bucket (`fsCodemodAdapter.ts`'s `unexplainedSkips` toast),
- * which could never say WHICH node(s) were affected. This carries just
- * enough for the client to resolve and select the affected node(s) — it
- * already has the full `PageNode` tree, so a bare id is enough; no reason
- * string to keep here since (per the point of this type) there isn't one.
+ * P5-G — how a batch is run. `canvasLayers: 'allow'` is passed by the editor's
+ * `/save` route alone; absent (every agent tool), canvas-layer kinds and
+ * layer-module targets are refused by name (`studioCanvasLayerWriteback.ts`).
  */
-export interface StudioEditUnexplainedSkip {
-  nodeId: string
-  kind: StudioEdit['kind']
+export interface StudioEditBatchOptions {
+  canvasLayers?: 'allow'
+  /**
+   * P3-F — record a journaled one-shot write's pre-image and report its
+   * `undoToken`, and accept a `restore`. The editor's `/save` route alone sets
+   * it (`studioBatchUndoJournal.ts`).
+   */
+  journal?: true
 }
 
 /** The result of applying a batch of studio edits — `POST /admin/api/studio/save`'s own response shape. */
@@ -447,18 +529,16 @@ export interface StudioEditBatchResult {
   shifted: boolean
   /** True when any edit targets an inlined/shared source location — every OTHER frame reading the same file is now stale too. */
   sharedComponents: boolean
-  /** WS-4.4/4.5 — every `detach`/`swap` edit that refused, with why. Empty array when none did (always present, never omitted, so a client doesn't need an `?.length` guard). */
-  refusals: StudioEditRefusal[]
   /**
-   * Item 0.7 — every edit that skipped with NO matching `refusals` entry,
-   * i.e. exactly the set `fsCodemodAdapter.ts`'s `unexplainedSkips` count
-   * describes today, but named. `unexplainedSkips.length` always equals
-   * `skipped - refusals.length`, so a client can drop the old subtraction
-   * once it reads this instead.
+   * Every edit that did not write, with why — the complete per-edit outcome
+   * (see {@link StudioEditRefusal}). `skipped === refusals.length`. Empty array
+   * when every edit wrote (always present, never omitted).
    */
-  unexplainedSkips: StudioEditUnexplainedSkip[]
+  refusals: StudioEditRefusal[]
   /** WS-4.5 — every `swap` edit that SUCCEEDED, with what changed on the call site. Empty array when none did. */
   swapDetails: (StudioEditSwapDetail & { nodeId: string })[]
+  /** P5-C (DET-5) — every `detach` edit that did not refuse, written or held by its `dryRun` (`StudioDetachDetail`). Empty when none. */
+  detachDetails: (StudioDetachDetail & { nodeId: string })[]
   /**
    * Track B1 — every `css`/`create` edit that SUCCEEDED, with the
    * workspace-relative stylesheet path the server actually invented.
@@ -471,6 +551,14 @@ export interface StudioEditBatchResult {
    * path on its very next edit, with no reload.
    */
   createdStylesheets: { nodeId: string; file: string }[]
+  /**
+   * G-5 — where every style edit that wrote LANDED: the declaration, an
+   * expanded shorthand, an override, or the element's own `style=""`
+   * (`StyleLanding`). `nodeId` is the edit's own id — a `css` edit's synthetic
+   * one, a styled edit's template tag, an inline edit's element — the join key
+   * the client already holds for it. Empty array when none did.
+   */
+  styleLandings: StyleLanding[]
   /**
    * E2.4 — every `promote-component` edit that SUCCEEDED, with the new
    * file/component name it minted and the free-variable partition it
@@ -536,17 +624,52 @@ export interface StudioEditBatchResult {
    */
   relocatedNodeIds: string[]
   /**
-   * `store-15` — every `delete` edit in the batch that SUCCEEDED, with the
-   * exact bytes it discarded, keyed by the edit's own `nodeId` (the deleted
-   * element's own id) so a caller can pair a `removed` entry with the edit
-   * that produced it. Empty when the batch deleted nothing.
+   * P5-G — every `canvas-layer-delete` in the batch that SUCCEEDED, with the
+   * module bytes it removed, keyed by the edit's own `nodeId`. Empty when the
+   * batch removed no layer.
    */
-  removed: (DeletedJsxText & { nodeId: string })[]
+  removed: (CanvasLayerRemovedText & { nodeId: string })[]
   /**
-   * `store-15` — every import binding the batch's prune pass removed as a
-   * side effect of a `delete`, grouped per FILE (workspace-relative), with
-   * a re-insertable declaration text per binding
-   * (`PrunedImportsResult.declarations`). Empty when nothing was pruned.
+   * P1-A — every VALUE edit that landed (`prop`/`text`/`style`/`class`/`tag`/
+   * `literal`/`asset`), with its target's identity as it stands after the
+   * write, keyed by the edit's own `nodeId`. A value write changes the very
+   * bytes the fingerprint covers without moving the target, and the board does
+   * not re-read a file for a write that shifted nothing, so this is how the
+   * client's recorded identity stays current — without it, Studio's own
+   * previous write would make the next edit to the same element refuse
+   * `element-moved`. See `studioEditIdentity.ts`.
    */
-  prunedImports: { file: string; declarations: string[] }[]
+  fingerprints: { nodeId: string; fingerprint: string }[]
+  /**
+   * P1-D — every node id an edit named that was RE-FOUND elsewhere in its
+   * file, because the file changed on disk since the caller read it: the id
+   * it sent, and the id it was written at. Every other field reports under
+   * the id the caller sent; this is the one place the new address appears.
+   * Non-empty implies `shifted`. See `studioEditRelocate.ts`.
+   */
+  retargeted: { nodeId: string; to: string }[]
+  /**
+   * P3-F — the undo-journal token for this batch's journaled one-shot write
+   * (`delete`/`detach`/`swap`/`promote-component`): what a `restore` edit
+   * names to put every file it changed back. Present only for a
+   * `journal: true` batch that wrote one and could record it
+   * (`studio/undoJournal.ts` says when it cannot).
+   */
+  undoToken?: string
+  /**
+   * OD-8 — where each `list-item` edit's array literal is after the WHOLE
+   * batch: `nodeId` as sent, `to` its `rel:line:col` now. The array's own
+   * edits never move its `[`, but a remove's import prune (or any write above
+   * it in the batch) does, and the board re-addresses its rows there. Empty
+   * when the batch held no `list-item` edit that wrote.
+   */
+  listArrays: { nodeId: string; to: string }[]
+  /**
+   * G-1 - everything a `transplant` in this batch copied to its destination
+   * besides the markup (see {@link StudioEditApplyOutcome.carried}); the board
+   * tells the user when state or data was copied. Absent when nothing was.
+   */
+  carried?: StudioCarriedDeclaration[]
+  /** G-10 - where each pasted HTML fragment's styles went; the board tells the user. */
+  pastedHtml?: PastedHtmlSummary[]
 }

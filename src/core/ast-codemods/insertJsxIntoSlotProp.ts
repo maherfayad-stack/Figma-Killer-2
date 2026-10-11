@@ -47,7 +47,7 @@
  * The subtree shape (`InsertJsxNode`), its renderer (`renderJsxNode`), its
  * validation (`validateSubtree` — unsafe tag names, a void element asked to
  * hold children), its import bookkeeping (`collectSubtreeImports`), and its
- * binding-conflict check (`conflictingBinding`) are ALL `insertJsxElement`'s
+ * alias planning (`planImportBindings`, P3-C WB-19) are ALL `insertJsxElement`'s
  * own exports, imported here rather than re-implemented. Only the PLACEMENT
  * differs between the two codemods — a child position vs. an attribute value
  * — so only placement gets its own code.
@@ -78,15 +78,17 @@ import { Node, QuoteKind, SyntaxKind, type JsxAttribute, type JsxFragment, type 
 import { createProject, findJsxElementAtLocation, loadSourceFile } from './locateJsxElement'
 import { insertJsxElement } from './insertJsxElement'
 import { indentUnit } from './jsxChildPlacement'
-import { conflictingBinding, type ImportRequirement } from './jsxImportEdits'
+import { planImportBindings, type ImportRequirement } from './jsxImportEdits'
 import {
   collectSubtreeImports,
+  renameSubtreeComponents,
   renderJsxNode,
   validateSubtree,
   type InsertJsxChildren,
   type InsertJsxRefusalReason,
   type InsertableJsxPropValue,
 } from './jsxSubtree'
+import { ELEMENT_GONE_MESSAGE } from '@core/utils/refusalCopy'
 
 /** The subtree written into the slot — identical shape to `insertJsxElement`'s own `InsertJsxNode`. */
 export interface InsertJsxIntoSlotPropNode {
@@ -173,7 +175,7 @@ export function insertJsxIntoSlotProp(params: InsertJsxIntoSlotPropParams): Inse
       // owns. Silently appending instead would be the wrong write; say so.
       return refuse(
         'replace-not-supported',
-        'The default slot holds ordinary child elements — select the one you want to change on the canvas and edit or delete it there, rather than replacing the whole slot.',
+        'The default slot holds ordinary child elements, so it cannot be replaced as a whole. Select the child you want to change and edit it.',
       )
     }
     // The default slot is the element's ordinary child list, not an
@@ -198,23 +200,17 @@ export function insertJsxIntoSlotProp(params: InsertJsxIntoSlotPropParams): Inse
   if (!element) {
     return refuse(
       'not-found',
-      `No JSX element is written at line ${line}, column ${col} any more — the file changed since the canvas last read it. Reload and try again.`,
+      ELEMENT_GONE_MESSAGE,
     )
   }
 
-  const imports = collectSubtreeImports(node)
-  for (const [componentName, requirement] of imports) {
-    const binding = conflictingBinding(sourceFile, componentName, requirement.specifier)
-    if (binding) {
-      return refuse(
-        'binding-conflict',
-        `This file already uses the name "${componentName}" for something else (${binding}), so filling this slot would shadow it. Rename one of them in the file first.`,
-      )
-    }
-  }
+  // WB-19 — a component whose name the file already uses for something else
+  // is imported under an alias and written by it, never refused.
+  const bindings = planImportBindings(sourceFile, collectSubtreeImports(node))
+  const imports = bindings.required
 
   const unit = indentUnit(sourceFile.getFullText())
-  const newNodeText = renderJsxNode(node, unit)
+  const newNodeText = renderJsxNode(renameSubtreeComponents(node, bindings.localName), unit)
 
   const existingAttribute = element.getAttribute(propName)
 
@@ -227,7 +223,7 @@ export function insertJsxIntoSlotProp(params: InsertJsxIntoSlotPropParams): Inse
     // defensive posture `setJsxStyle`/`setJsxClassName` already take.
     return refuse(
       'spread-attribute',
-      `The "${propName}" prop is a spread attribute — Studio can't tell what it currently holds, so it won't guess whether inserting here is safe.`,
+      `The "${propName}" prop is a spread attribute, so Studio cannot tell what it holds. Set the prop explicitly in the code.`,
     )
   } else {
     const outcome = fillExistingSlotAttribute(existingAttribute, propName, newNodeText, unit, mode)
@@ -270,7 +266,7 @@ function fillExistingSlotAttribute(
   if (!expr) {
     return refuse(
       'slot-ambiguous',
-      `The "${propName}" prop has no JSX value to ${mode === 'replace' ? 'replace' : 'insert alongside'} (a valueless shorthand, a plain string, or an empty expression container) — Studio won't guess what that currently means.`,
+      `The "${propName}" prop has no JSX value to ${mode === 'replace' ? 'replace' : 'insert alongside'} (it is a shorthand, a plain string or empty), and Studio will not guess. Set the prop to JSX in the code.`,
     )
   }
 
@@ -299,7 +295,7 @@ function fillExistingSlotAttribute(
   }
   return refuse(
     'slot-ambiguous',
-    `The "${propName}" prop is set to an expression ("${expr.getText()}") rather than JSX markup — Studio can't tell whether that currently means "empty" or is a real binding, so it refuses rather than guess.`,
+    `The "${propName}" prop is set to an expression ("${expr.getText()}"), and Studio cannot tell whether that means empty. Set the prop to JSX in the code.`,
   )
 }
 
@@ -406,13 +402,15 @@ function lineIndent(text: string, pos: number): string {
  * is a NAMED import for the same reason (`collectSubtreeImports`).
  */
 function addRequiredImports(sourceFile: SourceFile, required: ReadonlyMap<string, ImportRequirement>): void {
-  for (const [name, { specifier }] of required) {
-    const existing = sourceFile.getImportDeclarations().find((d) => d.getModuleSpecifierValue() === specifier)
+  for (const [name, { specifier, imported }] of required) {
+    // `{ Button as Button2 }` when `planImportBindings` chose an alias (WB-19).
+    const named = imported !== undefined && imported !== name ? { name: imported, alias: name } : { name }
+    const existing = sourceFile.getImportDeclarations().find((d) => !d.isTypeOnly() && d.getModuleSpecifierValue() === specifier)
     if (existing) {
-      const already = existing.getNamedImports().some((n) => (n.getAliasNode() ?? n.getNameNode()).getText() === name)
-      if (!already) existing.addNamedImport(name)
+      const already = existing.getNamedImports().some((n) => !n.isTypeOnly() && (n.getAliasNode() ?? n.getNameNode()).getText() === name)
+      if (!already) existing.addNamedImport(named)
       continue
     }
-    sourceFile.addImportDeclaration({ moduleSpecifier: specifier, namedImports: [name] })
+    sourceFile.addImportDeclaration({ moduleSpecifier: specifier, namedImports: [named] })
   }
 }

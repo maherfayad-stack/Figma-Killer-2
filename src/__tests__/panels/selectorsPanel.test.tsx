@@ -13,6 +13,7 @@ import {
   resolveSelectorUsage,
 } from '@site/panels/selectorUsage'
 import { selectRightSidebarExpanded, useEditorStore } from '@site/store/store'
+import { replaceStyleRuleSources } from '@site/studio/cssInsertDestination'
 import { classKindSelector, type StyleRule } from '@core/page-tree'
 import { makeNode, makePage, makeSite } from '../fixtures'
 import '@modules/base/index'
@@ -29,7 +30,6 @@ function resetStore() {
     activeDocument: null,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     activeClassId: null,
     selectedSelectorClassId: null,
     selectedSelectorClassIds: [],
@@ -563,6 +563,23 @@ describe('SelectorsPanel', () => {
 
     expect(screen.queryByRole('button', { name: /edit class \.hero-title/i })).toBeNull()
     expect(screen.getByRole('button', { name: /edit class \.cta-button/i })).toBeDefined()
+  })
+
+  it('names the stylesheet each class is written in, so two same-named classes read differently', () => {
+    loadSiteWithSelectors()
+    replaceStyleRuleSources({
+      'hero-title': { file: 'pages/SMS.module.css', selector: '.hero-title' },
+      'cta-button': { file: 'components/Button.module.css', selector: '.cta-button' },
+    })
+    try {
+      render(<SelectorsPanel variant="docked" />)
+      const heroRow = screen.getByRole('button', { name: /edit class \.hero-title/i })
+      const ctaRow = screen.getByRole('button', { name: /edit class \.cta-button/i })
+      expect(within(heroRow).getByText('SMS.module.css')).toBeDefined()
+      expect(within(ctaRow).getByText('Button.module.css')).toBeDefined()
+    } finally {
+      replaceStyleRuleSources({})
+    }
   })
 
   it('places the single create action beside search instead of in the panel header', () => {

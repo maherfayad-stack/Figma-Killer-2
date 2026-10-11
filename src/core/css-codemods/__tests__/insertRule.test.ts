@@ -60,10 +60,10 @@ describe('insertRule', () => {
   })
 })
 
-describe('insertRule — atMedia', () => {
+describe('insertRule — atRule', () => {
   it('creates a brand-new @media block at the end of the file when neither it nor the rule exists', () => {
     const css = '.card {\n  color: red;\n}\n'
-    const { css: next, changed } = insertRule(css, '.card', { color: 'blue' }, { atMedia: '(max-width: 860px)' })
+    const { css: next, changed } = insertRule(css, '.card', { color: 'blue' }, { atRule: 'media (max-width: 860px)' })
     expect(changed).toBe(true)
     expect(next).toContain('.card {\n  color: red;\n}')
     expect(next).toContain('@media (max-width: 860px) {\n  .card {\n    color: blue;\n  }\n}')
@@ -71,7 +71,7 @@ describe('insertRule — atMedia', () => {
 
   it('creates the rule inside an existing matching @media block when the rule is absent there', () => {
     const css = '@media (max-width: 860px) {\n  .other {\n    color: green;\n  }\n}\n'
-    const { css: next, changed } = insertRule(css, '.card', { color: 'blue' }, { atMedia: '(max-width: 860px)' })
+    const { css: next, changed } = insertRule(css, '.card', { color: 'blue' }, { atRule: 'media (max-width: 860px)' })
     expect(changed).toBe(true)
     expect(next).toContain('@media (max-width: 860px) {')
     expect(next).toContain('.other {\n    color: green;\n  }')
@@ -80,14 +80,14 @@ describe('insertRule — atMedia', () => {
 
   it('merges into an existing rule already inside the matching @media block', () => {
     const css = '@media (max-width: 860px) {\n  .card {\n    color: red;\n  }\n}\n'
-    const { css: next, changed } = insertRule(css, '.card', { padding: '8px' }, { atMedia: '(max-width: 860px)' })
+    const { css: next, changed } = insertRule(css, '.card', { padding: '8px' }, { atRule: 'media (max-width: 860px)' })
     expect(changed).toBe(true)
     expect(next).toBe('@media (max-width: 860px) {\n  .card {\n    color: red;\n    padding: 8px;\n  }\n}\n')
   })
 
   it('does not confuse two different media queries', () => {
     const css = '@media (max-width: 400px) {\n  .card {\n    color: red;\n  }\n}\n'
-    const { css: next } = insertRule(css, '.card', { color: 'blue' }, { atMedia: '(max-width: 860px)' })
+    const { css: next } = insertRule(css, '.card', { color: 'blue' }, { atRule: 'media (max-width: 860px)' })
     expect(next).toContain('@media (max-width: 400px) {\n  .card {\n    color: red;\n  }\n}')
     expect(next).toContain('@media (max-width: 860px) {')
   })

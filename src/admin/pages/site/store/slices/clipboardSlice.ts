@@ -42,7 +42,9 @@ import {
 import { resolveInsertLocation, resolveSiblingAfterLocation } from '@site/store/insertLocation'
 import type { EditorStoreSliceCreator } from '@site/store/types'
 import { buildSiteHelpers, resolveActiveTreeTarget } from './site/helpers'
-import { createStudioSourceWrites } from './site/studioSourceWrites'
+import { createStudioPasteWrite } from './site/studioPasteWrites'
+import { canvasLayerPageId } from '@core/studio-board'
+import { canvasLayerRootNodeId } from './canvasLayerGestures'
 
 /** Where a paste lands relative to its target. See `pasteNode`. */
 export type PastePlacement = 'auto' | 'after'
@@ -70,6 +72,13 @@ interface ClipboardSlice {
   copyNode: (nodeId: string) => boolean
   /** Capture a multi-selection of subtrees as one ordered clipboard payload. */
   copyNodes: (nodeIds: string[]) => boolean
+  /**
+   * Capture selected loose layers (P5-G) — each layer's root element, from its
+   * own `canvas:<id>` page — as one ordered clipboard payload. A paste into a
+   * frame then copies the layer's source into that page (`writePasteToSource`
+   * finds the root on the board through `canvasLayerPages`).
+   */
+  copyCanvasLayers: (layerIds: readonly string[]) => boolean
   /**
    * Copy a node's subtree, then delete it from the active page.
    * Returns true if a copy + delete actually happened.
@@ -156,7 +165,7 @@ export const createClipboardSlice: EditorStoreSliceCreator<ClipboardSlice> = (
   // one structural gesture that never consulted it. A second instance is free:
   // `createStudioSourceWrites` holds no state of its own, it only closes over
   // the helpers and a read-only view of the active tree.
-  const { writePasteToSource } = createStudioSourceWrites(helpers, () => resolveActiveTreeTarget(get())?.tree ?? null)
+  const writePasteToSource = createStudioPasteWrite(helpers, () => resolveActiveTreeTarget(get())?.tree ?? null)
 
   // Hydrate the in-memory entry from localStorage at slice creation. The
   // store is built once per session, so this runs at editor mount only.
@@ -197,16 +206,42 @@ export const createClipboardSlice: EditorStoreSliceCreator<ClipboardSlice> = (
     const subtrees = collectSubtreeNodes(page, tops)
     if (!subtrees) return false
 
-    const siteClasses = state.site?.styleRules ?? {}
-    const classes = collectReferencedClasses(subtrees.nodes, siteClasses)
+    storeEntry(subtrees)
+    return true
+  }
+
+  /** Make `subtrees` the clipboard (in memory + localStorage), with the classes they reference. */
+  function storeEntry(subtrees: { rootNodeIds: string[]; nodes: Record<string, PageNode> }): void {
+    const siteClasses = get().site?.styleRules ?? {}
     const entry: ClipboardEntry = {
       rootNodeIds: subtrees.rootNodeIds,
       nodes: subtrees.nodes,
-      classes,
+      classes: collectReferencedClasses(subtrees.nodes, siteClasses),
       copiedAt: Date.now(),
     }
     set({ clipboardEntry: entry })
     persistEntry(entry)
+  }
+
+  /**
+   * P5-G — a loose layer's element lives in its own `canvas:<id>` page, never
+   * in `site.pages`, so the active-page copy above cannot see it. Each layer
+   * contributes its one root element, in selection order.
+   */
+  function copyCanvasLayersImpl(layerIds: readonly string[]): boolean {
+    const layerPages = get().canvasLayerPages
+    const rootNodeIds: string[] = []
+    const nodes: Record<string, PageNode> = {}
+    for (const layerId of layerIds) {
+      const layerPage = layerPages[canvasLayerPageId(layerId)]
+      const rootId = layerPage ? canvasLayerRootNodeId(layerPage) : null
+      const subtree = layerPage && rootId ? collectSubtreeNodes(layerPage, [rootId]) : null
+      if (!subtree) continue
+      rootNodeIds.push(...subtree.rootNodeIds)
+      Object.assign(nodes, subtree.nodes)
+    }
+    if (rootNodeIds.length === 0) return false
+    storeEntry({ rootNodeIds, nodes })
     return true
   }
 
@@ -216,6 +251,8 @@ export const createClipboardSlice: EditorStoreSliceCreator<ClipboardSlice> = (
     copyNode: (nodeId) => copyImpl([nodeId]),
 
     copyNodes: (nodeIds) => copyImpl(nodeIds),
+
+    copyCanvasLayers: (layerIds) => copyCanvasLayersImpl(layerIds),
 
     cutNode: (nodeId) => {
       const state = get()
@@ -263,7 +300,7 @@ export const createClipboardSlice: EditorStoreSliceCreator<ClipboardSlice> = (
         pushToast({
           kind: 'warning',
           title: 'Only one content outlet',
-          body: 'The copied nodes include a content outlet and this document already has one.',
+          body: 'The copied nodes include a content outlet and this document already has one. Remove the extra outlet.',
           location: 'site-editor',
         })
         return null
@@ -279,7 +316,7 @@ export const createClipboardSlice: EditorStoreSliceCreator<ClipboardSlice> = (
       // selected by the commit's own resync
       // (`pendingCreatedSelection.ts`) rather than at the bottom of this
       // function.
-      if (writePasteToSource(entry.rootNodeIds, location.parentId, location.index)) return null
+      if (writePasteToSource(entry, location.parentId, location.index)) return null
 
       // Commit history once; the entire paste — restored classes + every
       // pasted subtree — is a single undo step. The class plan (scoped clone,

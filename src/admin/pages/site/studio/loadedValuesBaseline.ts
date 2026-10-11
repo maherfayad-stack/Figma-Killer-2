@@ -23,6 +23,22 @@
  * `getActiveBoard` out of `boardSlice.ts` into `boardsModel.ts`: a pure
  * function two sides need belongs in a leaf, not in whichever side happened
  * to write it first.
+ *
+ * ## The baseline a re-read REPLACED (ERR-9)
+ *
+ * A re-read advances this baseline to what the disk says the moment its pages
+ * arrive — before the store adopts them. The store's unsaved edits were made
+ * against the PREVIOUS baseline, and that is the only record of what each
+ * edited value was before the user touched it. So both re-read entry points
+ * ({@link resetLoadedValues} for a whole-project load of the same project,
+ * {@link mergeLoadedValuesBaseline} for a narrow one) keep what they replaced
+ * and file it under the very `pages` array they were handed
+ * ({@link baselineBeforeRead}). The store's `loadSite`/`patchPages` look it
+ * up by the pages they are adopting, and rebase every unsaved edit onto them
+ * (`store/slices/site/unsavedEditRebase.ts`) instead of throwing it away.
+ * Keyed weakly by the array, so a read the store never adopts leaves nothing
+ * behind, and a page list nobody read from disk (a test's, a CMS site's) has
+ * no entry and rebases nothing.
  */
 import type { Page, PageNode } from '@core/page-tree'
 import { isStyleWritableToSource, STYLE_VALUE_PREFIX, styleValueKey } from '@core/page-tree'
@@ -124,8 +140,31 @@ export function getLoadedClassIds(nodeId: string): readonly string[] | undefined
   return loadedClassIds.get(nodeId)
 }
 
-/** Replaces the WHOLE baseline — correct after a full `loadSite()`, where the incoming pages ARE the new document. */
-export function resetLoadedValues(pages: readonly Page[]): void {
+/** What the baseline said about the store's document before a re-read replaced it — see this module's doc. */
+export interface BaselineBeforeRead {
+  values(nodeId: string): LoadedNodeValues | undefined
+  classIds(nodeId: string): readonly string[] | undefined
+}
+
+const beforeReads = new WeakMap<readonly Page[], BaselineBeforeRead>()
+
+/** The baseline the re-read that produced `pages` replaced, or `undefined` when `pages` did not come from one. */
+export function baselineBeforeRead(pages: readonly Page[]): BaselineBeforeRead | undefined {
+  return beforeReads.get(pages)
+}
+
+/**
+ * Replaces the WHOLE baseline — correct after a full `loadSite()`, where the
+ * incoming pages ARE the new document. A re-read of the SAME project keeps the
+ * baseline it replaced for the store to rebase against (this module's doc); a
+ * different project's baseline describes nothing the new pages hold.
+ */
+export function resetLoadedValues(pages: readonly Page[], options: { sameProject?: boolean } = {}): void {
+  const values = loadedValues
+  const classIds = loadedClassIds
+  if (options.sameProject) {
+    beforeReads.set(pages, { values: (nodeId) => values.get(nodeId), classIds: (nodeId) => classIds.get(nodeId) })
+  }
   loadedValues = snapshotNodeValues(pages)
   loadedClassIds = snapshotClassIds(pages)
 }
@@ -138,10 +177,26 @@ export function resetLoadedValues(pages: readonly Page[]): void {
  * THEIR props as user-changed.
  */
 export function mergeLoadedValuesBaseline(pages: readonly Page[]): void {
-  for (const [nodeId, values] of snapshotNodeValues(pages)) loadedValues.set(nodeId, values)
-  for (const page of pages) {
-    for (const node of Object.values(page.nodes)) loadedClassIds.set(node.id, [...node.classIds])
+  // What this merge overwrites, as it was — the rest of the map is untouched,
+  // so a lookup for any other id still reads the entry it always had.
+  const values = loadedValues
+  const classIds = loadedClassIds
+  const replacedValues = new Map<string, LoadedNodeValues | undefined>()
+  const replacedClassIds = new Map<string, readonly string[] | undefined>()
+  for (const [nodeId, fresh] of snapshotNodeValues(pages)) {
+    if (!replacedValues.has(nodeId)) replacedValues.set(nodeId, values.get(nodeId))
+    values.set(nodeId, fresh)
   }
+  for (const page of pages) {
+    for (const node of Object.values(page.nodes)) {
+      if (!replacedClassIds.has(node.id)) replacedClassIds.set(node.id, classIds.get(node.id))
+      classIds.set(node.id, [...node.classIds])
+    }
+  }
+  beforeReads.set(pages, {
+    values: (nodeId) => (replacedValues.has(nodeId) ? replacedValues.get(nodeId) : values.get(nodeId)),
+    classIds: (nodeId) => (replacedClassIds.has(nodeId) ? replacedClassIds.get(nodeId) : classIds.get(nodeId)),
+  })
 }
 
 /** One node whose `classIds` differ from the load-time baseline — Phase 0 item 0.6. `node` is carried through (not just `nodeId`) so the caller can resolve a display label/class names without a second page scan. */
@@ -221,6 +276,8 @@ export interface NodeValueBump {
   nodeId: string
   key: string
   value: string | number | boolean
+  /** The outcome key of the edit that carries this value (`editOutcomes.ts`) — committed only when that edit wrote. */
+  editKey: string
 }
 
 /**
@@ -239,13 +296,11 @@ export interface NodeValueBump {
  *
  * Deliberately per-key rather than a wholesale re-snapshot (unlike
  * `resetLoadedValues`/`mergeLoadedValuesBaseline`, which replace an entire
- * node's bag): a save's response only confirms the batch as a WHOLE landed
- * (`written`/`skipped` are aggregate counts across the whole POST, not
- * per-edit), so the caller only invokes this when every edit in the batch is
- * known to have written — see `fsCodemodAdapter.ts`'s `unexplainedSkips === 0`
- * gate before calling this. Never call this for a key whose edit was refused
- * or skipped: doing so would erase the very diff the user still needs to see
- * refused on a later save.
+ * node's bag): the caller passes exactly the bumps whose edit WROTE — the
+ * save response names every edit it refused (WB-35, `editOutcomes.ts`), so
+ * one refused edit no longer holds back the whole batch. Never call this for
+ * a key whose edit was refused: doing so would erase the very diff the user
+ * still needs a later save to write.
  */
 export function commitNodeValuesBaseline(bumps: readonly NodeValueBump[]): void {
   for (const { nodeId, key, value } of bumps) {
@@ -262,6 +317,8 @@ export function commitNodeValuesBaseline(bumps: readonly NodeValueBump[]): void 
 export interface NodeValueDrop {
   nodeId: string
   key: string
+  /** As {@link NodeValueBump.editKey}. */
+  editKey: string
 }
 
 /**
@@ -274,7 +331,7 @@ export interface NodeValueDrop {
  * would keep reporting the same removal on every later autosave tick, and
  * `Object.keys(baseline)` (which is how a removed inline style is even
  * DETECTED — the current bag no longer mentions it) would keep listing it.
- * Called under the same `unexplainedSkips === 0` gate, for the same reason.
+ * Called with the same per-edit filter, for the same reason.
  */
 export function dropNodeValuesBaseline(drops: readonly NodeValueDrop[]): void {
   for (const { nodeId, key } of drops) {

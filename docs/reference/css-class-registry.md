@@ -1,4 +1,5 @@
 # Style Rule Registry (formerly CSS Class Registry)
+> **Purpose:** the site style-rule registry (site.styleRules) · **Read when:** touching style rules or class CSS · **Trust:** current-cms · **Owner:** store-engineer · **Verified:** not yet
 
 The site's style rule registry — `Record<string, StyleRule>` stored on the site shell (`site.styleRules`). Every user-defined CSS rule lives here. The publisher compiles entries to CSS at publish time; the editor's canvas injects the same CSS for live preview.
 

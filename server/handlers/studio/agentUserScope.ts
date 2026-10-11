@@ -45,8 +45,7 @@
  * per-(user, turn) by construction.
  */
 import { createHash } from 'node:crypto'
-import { readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { listStudioStoreDir } from './studioStore'
 
 /**
  * The key used when no user is known: a hook spawned before this env var
@@ -77,9 +76,11 @@ export function studioAgentUserKeyFromEnv(env: NodeJS.ProcessEnv = process.env):
   return raw && /^[a-f0-9]{16}$/.test(raw) ? raw : SHARED_AGENT_USER_KEY
 }
 
-/** `<dir>/.studio/cache/agent/<userKey>` — the per-account root for this project's disposable agent caches. */
-export function agentCacheDir(dir: string, userKey: string): string {
-  return join(dir, '.studio', 'cache', 'agent', userKey)
+const AGENT_CACHE_ROOT = 'cache/agent'
+
+/** `cache/agent/<userKey>` — the per-account `.studio` store folder for this project's disposable agent caches (`studioStore.ts`). */
+export function agentCacheStoreDir(userKey: string): string {
+  return `${AGENT_CACHE_ROOT}/${userKey}`
 }
 
 /**
@@ -87,14 +88,18 @@ export function agentCacheDir(dir: string, userKey: string): string {
  * question that is genuinely project-wide rather than per-session: the git
  * panel's "was this file written by an agent" marker, which is about the file
  * on disk and must not depend on which of the project's users is looking.
+ * `[]` before any user has run a turn against it.
  */
 export function listAgentCacheUserKeys(dir: string): string[] {
   try {
-    return readdirSync(join(dir, '.studio', 'cache', 'agent'), { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
+    return listStudioStoreDir(dir, AGENT_CACHE_ROOT)
+      .filter((entry) => entry.isDirectory() && AGENT_USER_KEY_SHAPE.test(entry.name))
       .map((entry) => entry.name)
-  } catch {
-    // No agent cache in this project yet — no user has run a turn against it.
+  } catch (err) {
+    console.error('[studio:agentUserScope] could not list agent caches:', err)
     return []
   }
 }
+
+/** A key {@link studioAgentUserKey} can mint: sixteen hex digits, or the shared key. */
+const AGENT_USER_KEY_SHAPE = new RegExp(`^(?:[a-f0-9]{16}|${SHARED_AGENT_USER_KEY})$`)

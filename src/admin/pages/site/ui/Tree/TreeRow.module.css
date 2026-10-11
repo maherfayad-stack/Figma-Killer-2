@@ -1,8 +1,6 @@
 /* Shared tree row visuals for structural editor trees. */
 
 .row {
-    --tree-row-accent: transparent;
-    --tree-row-focus: transparent;
     /* Default — overridden by `data-editor-density` on the editor root.
        Compact (default): 28px. Comfortable: 36px. The `--tree-row-h` var
        lives on the editor root so EVERY tree (Layers, Selectors, …) follows
@@ -39,22 +37,36 @@
     font-size: var(--text-s);
 }
 
+/*
+ * Three states, three tones — achromatic, so state reads by TONE (the colour
+ * rules keep hue for identity). Hover is one step, selection two, and a
+ * selected row stays at its own tone under the pointer: the row you picked
+ * must never look like the row you are merely passing over (P2-H, UX-21 —
+ * both used to be `--overlay-10`, and `.row:hover`'s higher specificity even
+ * pulled a hovered selected row back down to it).
+ */
 .row:hover,
 .rowHovered {
     background: var(--overlay-10);
     color: var(--text-muted);
 }
 
-.row:focus-visible,
-.rowFocused {
-    --tree-row-focus: var(--overlay-20);
+.rowSelected,
+.rowSelected:hover {
+    background: var(--overlay-20);
+    color: var(--text);
 }
 
-.rowSelected {
-    --tree-row-accent: var(--overlay-60);
-
-    background: var(--overlay-10);
-    color: var(--text);
+/*
+ * Keyboard focus (UX-20). The row sets `outline: none` above, and the two
+ * custom properties that were meant to replace it were never read by any
+ * rule, so a keyboard user walking the tree saw nothing move. An inset ring,
+ * so it is never clipped by the scroller and never shifts the row. Only
+ * `:focus-visible`: a mouse click focuses the row too, and that must not
+ * draw a ring on top of the selection it just made.
+ */
+.row:focus-visible {
+    box-shadow: inset 0 0 0 1px var(--overlay-50);
 }
 
 .rowMuted {
@@ -132,7 +144,9 @@
 
 .meta {
     flex-shrink: 0;
-    color: var(--text-disabled);
+    /* Informative (a count, a tag), so AA contrast: `--text-disabled` is for
+       disabled controls only (UX-15). */
+    color: var(--text-subtle);
     font-size: var(--text-3xs);
     line-height: 1;
 }

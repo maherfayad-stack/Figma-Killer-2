@@ -42,7 +42,7 @@
  */
 import type { Patches } from 'mutative'
 import type { NodeTree, PageNode, SiteDocument } from '@core/page-tree'
-import { remapInverseTemplate, remapStructuralEditIds } from '@site/studio/structuralUndoPlan'
+import { remapStructuralEditIds } from '@site/studio/structuralUndoPlan'
 import type { HistoryEntry, StructuralHistory } from './types'
 
 /**
@@ -95,6 +95,11 @@ export function buildReparseNodeIdRemap(
   for (const beforePage of before.pages) {
     const afterPage = afterById.get(beforePage.id)
     if (!afterPage) return new Map()
+    // An untouched page (`patchPages` keeps its object) renamed nothing, and
+    // walking it would contribute nothing — skipping it keeps a narrow resync
+    // O(touched pages) now that ERR-5 asks for this remap on every reload that
+    // has a held id, not only when there is history.
+    if (afterPage === beforePage) continue
     const pageRemap = new Map<string, string>()
     if (!walkTreePair(beforePage, afterPage, beforePage.rootNodeId, afterPage.rootNodeId, pageRemap)) {
       continue
@@ -125,29 +130,22 @@ function remapStructural(
   structural: StructuralHistory,
   remap: ReadonlyMap<string, string>,
 ): StructuralHistory {
-  // `store-14` — a SOURCE gesture's entry holds no patches at all; what it
+  // `store-14` — a structural entry holds no patches that matter; what it
   // names are the edits it would post on ⌘Z / ⌘⇧Z. Those address exactly the
   // `rel:line:col` ids a later write in the same file renumbers, so they need
-  // the same re-addressing the move steps get. Without it, undoing a duplicate
-  // after some other structural write landed above it would delete whichever
-  // element inherited that line.
-  if (structural.gesture === 'source') {
-    const { source } = structural
-    const forward = remapStructuralEditIds(source.forward, remap)
-    const inverse = source.inverse === null ? null : remapStructuralEditIds(source.inverse, remap)
-    const inverseTemplate = remapInverseTemplate(source.inverseTemplate, remap)
-    if (forward === source.forward && inverse === source.inverse && inverseTemplate === source.inverseTemplate) {
-      return structural
-    }
-    return { gesture: 'source', source: { ...source, forward, inverse, inverseTemplate } }
-  }
-  if (structural.gesture !== 'move') return structural
-  const step = (s: { nodeId: string; parentId: string; index: number }) => ({
-    ...s,
-    nodeId: remap.get(s.nodeId) ?? s.nodeId,
-    parentId: remap.get(s.parentId) ?? s.parentId,
-  })
-  return { ...structural, undo: step(structural.undo), redo: step(structural.redo) }
+  // re-addressing. Without it, undoing a duplicate after some other structural
+  // write landed above it would delete whichever element inherited that line.
+  const { source } = structural
+  // An entry whose write has not landed yet (`inverse` still `null`, awaiting
+  // its `fill`) is being remapped by THAT write's own reload. Its `forward`
+  // addresses the file as it was BEFORE the write, which is exactly the file
+  // an undo restores and a redo then runs against; shifting it by the write's
+  // own renumbering re-aims the redo at whichever element inherited the line.
+  const writePending = source.inverse === null && source.inverseTemplate.kind !== 'unsupported'
+  const forward = writePending ? source.forward : remapStructuralEditIds(source.forward, remap)
+  const inverse = source.inverse === null ? null : remapStructuralEditIds(source.inverse, remap)
+  if (forward === source.forward && inverse === source.inverse) return structural
+  return { gesture: 'source', source: { ...source, forward, inverse } }
 }
 
 /**

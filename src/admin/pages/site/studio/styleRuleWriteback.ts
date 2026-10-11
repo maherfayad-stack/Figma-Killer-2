@@ -51,12 +51,13 @@
  * canvas is actually showing. That folded value is what gets diffed and what
  * gets written.
  *
- * A REAL user breakpoint (`mobile`/`tablet`, or a `@media` condition) is a
- * different matter — writing it needs `setDeclarationAtMedia` and a query to
- * write, which this pass does not carry. Those changes are reported through
- * `unwritableContexts` rather than dropped, for the same reason unmapped rules
- * are: silence is the one outcome that loses a user's work without telling
- * them.
+ * A REAL user breakpoint (`mobile`/`tablet`) or condition (`@media`,
+ * `@container`, `@supports`) is a different matter — it is written inside its
+ * own block (`atRuleForContext`, `style-03` / P3-C WB-31). A context this
+ * document no longer defines has no block to name; those changes are reported
+ * through `unwritableContexts` rather than dropped, for the same reason
+ * unmapped rules are: silence is the one outcome that loses a user's work
+ * without telling them.
  *
  * ## Baseline discipline
  *
@@ -95,8 +96,10 @@
  *
  * When zero editable stylesheets exist yet, `resolveCssInsertDestination`
  * does not refuse outright — it names the PAGE this rule belongs to and
- * returns `{ ok: true, kind: 'create', pageFile }`, and `collectStyleRuleEdits`
- * emits an `op: 'create'` edit instead of `insert`.
+ * returns `{ kind: 'create', pageFile }` — `pageFile: null` for a class with no
+ * page at all, which the server answers with a stylesheet beside the app's
+ * entry module (ERR-15) — and `collectStyleRuleEdits` emits an `op: 'create'`
+ * edit instead of `insert`.
  *
  * The SERVER does the actual work (`studioCssWriteback.ts`'s
  * `applyCssCreateEdit`) — detects whether this project leans on CSS Modules
@@ -120,7 +123,7 @@
  * `classNameWriteback.ts`'s `resolveClassToken`.
  */
 import { isGeneratedClass, type Breakpoint, type ConditionDef, type Page, type StyleRule } from '@core/page-tree'
-import { camelToKebabCssProperty } from '@core/css-codemods'
+import { camelToKebabCssProperty } from '@core/css-codemods/browser'
 import {
   buildClassPageIndex,
   getStudioStyleRuleSources,
@@ -128,7 +131,6 @@ import {
   resolveCssInsertDestination,
   resolveOpenPageFile,
   setOpenPageFile,
-  type CssDestinationRefusal,
   type UnmappedStyleRule,
 } from './cssInsertDestination'
 import { collectKeyframesEdits, type CssKeyframeEditPayload } from './keyframesWriteback'
@@ -138,6 +140,7 @@ import {
   type StyledEditPayload,
   type StyledRuleSource,
 } from './styledRuleSources'
+import { coalesceCssSideChanges } from './sideShorthandWrites'
 import { baselineFor, contextBaselineFor, effectiveStudioStyles, realContextIds } from './styleRuleBaseline'
 
 /**
@@ -165,13 +168,13 @@ export {
   buildClassPageIndex,
   getOpenPageFile,
   getStudioStyleRuleSources,
-  pinCssInsertDestination,
+  noteStylesheetWritten,
+  resetCssDestinationMemory,
   recordCreatedStylesheet,
   resolveCssInsertDestination,
   resolveOpenPageFile,
   setOpenPageFile,
   StyleRuleSourceSchema,
-  type CssDestinationRefusal,
   type CssInsertDestination,
   type StyleRuleSource,
   type UnmappedStyleRule,
@@ -187,8 +190,8 @@ export interface CssSetEditPayload {
   selector: string
   property: string
   value: string
-  /** A breakpoint/condition override's media query — see `mediaQueryForContext`. */
-  atMedia?: string
+  /** A breakpoint/condition override's block (`media …`/`container …`/`supports …`) — see `atRuleForContext`. */
+  atRule?: string
 }
 
 /**
@@ -204,7 +207,7 @@ export interface CssUnsetEditPayload {
   file: string
   selector: string
   property: string
-  atMedia?: string
+  atRule?: string
 }
 
 /**
@@ -220,24 +223,25 @@ export interface CssInsertEditPayload {
   file: string
   selector: string
   declarations: Record<string, string>
-  atMedia?: string
+  atRule?: string
 }
 
 /**
  * A brand-new rule's first write into a stylesheet that DOES NOT EXIST YET
  * (Track B1's deferred branch, now landed), matching `studioCssWriteback.ts`'s
  * `CssCreateEditSchema`. `pageFile` is the page this rule is co-located
- * with — see `resolveCssInsertDestination`'s doc for how it is derived and
- * why a rule with no page association never reaches this shape.
+ * with — see `resolveCssInsertDestination`'s doc for how it is derived.
+ * Absent for a rule with no page association at all (ERR-15): the server then
+ * creates the stylesheet beside the app's entry module and imports it there.
  */
 export interface CssCreateEditPayload {
   kind: 'css'
   op: 'create'
   nodeId: string
-  pageFile: string
+  pageFile?: string
   selector: string
   declarations: Record<string, string>
-  atMedia?: string
+  atRule?: string
 }
 
 /**
@@ -287,16 +291,9 @@ export interface StyleRuleEditPlan {
    */
   unmapped: UnmappedStyleRule[]
   /**
-   * Brand-new classes whose DESTINATION was refused — see
-   * `CssDestinationRefusal`. The caller presents these as a choice, and must
-   * hold their baselines back so the choice still has something to write.
-   */
-  destinationRefusals: CssDestinationRefusal[]
-  /**
-   * Selectors the user changed under a REAL breakpoint/condition. Writing one
-   * needs `setDeclarationAtMedia` plus the condition's query, which the
-   * `kind: 'css'` edit does not carry yet — so these are reported, never
-   * silently dropped.
+   * Selectors the user changed under a breakpoint/condition this document no
+   * longer defines — no block to write into, so they are reported, never
+   * silently dropped. (Every defined context IS written — `atRuleForContext`.)
    */
   unwritableContexts: string[]
   /**
@@ -327,25 +324,33 @@ export interface StyleRuleContexts {
 }
 
 /**
- * The `@media` query a `contextStyles` key writes under, or a NAMED refusal.
- *
- * `style-03`. Three answers, and the third is the point:
+ * The conditional block a `contextStyles` key writes under, as the
+ * `name params` scope `@core/css-codemods` reads (`cssAtRuleScope.ts`), or
+ * `null` for a context this document no longer defines.
  *
  *   - a viewport context (`site.breakpoints`) contributes its own
  *     `mediaQuery` — that field exists precisely because the frame WIDTH is an
- *     editor concern and the query is the published condition.
- *   - a `kind: 'media'` condition contributes its query verbatim.
- *   - a `container`/`supports` condition contributes NOTHING: those are
- *     `@container` / `@supports` blocks, not `@media`, and
- *     `setDeclarationAtMedia` would silently write the wrong at-rule. They
- *     keep the refusal this whole path used to give every context.
+ *     editor concern and the query is the published condition (`style-03`);
+ *   - a `kind: 'media'` condition contributes its query verbatim;
+ *   - a `container` condition is `@container [name] <query>` and a `supports`
+ *     one `@supports <query>` (P3-C, WB-31). They used to be refused — "cannot
+ *     yet write @container or @supports … will be lost on reload" — because
+ *     only `@media` could be written; postcss does not care which at-rule
+ *     wraps a rule, and now neither does the writer.
  */
-function mediaQueryForContext(contextId: string, contexts: StyleRuleContexts): string | null {
+export function atRuleForContext(contextId: string, contexts: StyleRuleContexts): string | null {
   const breakpoint = contexts.breakpoints?.find((entry) => entry.id === contextId)
-  if (breakpoint) return breakpoint.mediaQuery ?? `(max-width: ${breakpoint.width}px)`
-  const condition = contexts.conditions?.find((entry) => entry.id === contextId)
-  if (condition?.condition.kind === 'media') return condition.condition.query
-  return null
+  if (breakpoint) return `media ${breakpoint.mediaQuery ?? `(max-width: ${breakpoint.width}px)`}`
+  const condition = contexts.conditions?.find((entry) => entry.id === contextId)?.condition
+  if (!condition) return null
+  switch (condition.kind) {
+    case 'media':
+      return `media ${condition.query}`
+    case 'container':
+      return `container ${condition.name ? `${condition.name} ` : ''}${condition.query}`
+    case 'supports':
+      return `supports ${condition.query}`
+  }
 }
 
 /** One property's diff outcome: a new value to write, or a removal. */
@@ -358,8 +363,8 @@ type PropertyChange = { property: string; value: string } | { property: string; 
  * That second half is `style-03`'s fix. This used to iterate `after` only, so
  * clearing a declaration in the inspector produced no edit at all: the canvas
  * updated, the save reported success, and the property came back on the next
- * reload with nothing said. Both directions now produce an edit, and both go
- * through the same `analyzeDeclarationTarget` gate server-side.
+ * reload with nothing said. Both directions now produce an edit, and both are
+ * written where the cascade reads them server-side (`setDeclaration`).
  */
 function diffDeclarations(before: Record<string, unknown>, after: Record<string, unknown>): PropertyChange[] {
   const changes: PropertyChange[] = []
@@ -374,7 +379,9 @@ function diffDeclarations(before: Record<string, unknown>, after: Record<string,
     if (property in after) continue
     changes.push({ property: camelToKebabCssProperty(property), value: null })
   }
-  return changes
+  // The bag is per-side; four sides moving together is ONE `padding`/`margin`
+  // declaration in the user's stylesheet (see `sideShorthandWrites.ts`).
+  return coalesceCssSideChanges(changes)
 }
 
 /** Only the changes that SET a value — what an `insert`/`create` edit's full declaration bag is built from. */
@@ -399,9 +406,10 @@ function settableDeclarations(changes: readonly PropertyChange[]): Record<string
  *      it used to become nothing at all, silently);
  *   2. each REAL context (a breakpoint or a condition, never the synthetic
  *      `studio` viewport) is diffed the same way and written into its own
- *      `@media` block, when `mediaQueryForContext` can name one;
- *   3. a context that is not a media query at all (`@container`, `@supports`)
- *      keeps the `unwritableContexts` refusal — reported, never dropped.
+ *      `@media`/`@container`/`@supports` block, when `atRuleForContext` can name one;
+ *   3. a context this document no longer defines keeps the
+ *      `unwritableContexts` report — never dropped. (`@container`/`@supports`
+ *      conditions used to land here; P3-C's WB-31 writes them.)
  */
 export function collectStyleRuleEdits(
   styleRules: Record<string, StyleRule>,
@@ -411,7 +419,6 @@ export function collectStyleRuleEdits(
 ): StyleRuleEditPlan {
   const edits: StyleEditPayload[] = []
   const unmapped: UnmappedStyleRule[] = []
-  const destinationRefusals: CssDestinationRefusal[] = []
   const unwritableContexts: string[] = []
   const ruleIdsByNodeId: Record<string, string[]> = {}
   const pageIndex = buildClassPageIndex(pages)
@@ -484,10 +491,10 @@ export function collectStyleRuleEdits(
     const source = getStudioStyleRuleSources()[ruleId]
 
     /** One `(scope, property)` write, once a source is known to exist. */
-    const pushScopedEdits = (changes: readonly PropertyChange[], atMedia: string | undefined): void => {
+    const pushScopedEdits = (changes: readonly PropertyChange[], atRule: string | undefined): void => {
       if (!source) return
       for (const change of changes) {
-        const nodeId = `css:${source.file}#${source.selector}#${atMedia ?? ''}#${change.property}`
+        const nodeId = `css:${source.file}#${source.selector}#${atRule ?? ''}#${change.property}`
         claim(nodeId, ruleId)
         edits.push(
           change.value === null
@@ -498,7 +505,7 @@ export function collectStyleRuleEdits(
                 file: source.file,
                 selector: source.selector,
                 property: change.property,
-                ...(atMedia ? { atMedia } : {}),
+                ...(atRule ? { atRule } : {}),
               }
             : {
                 kind: 'css',
@@ -508,7 +515,7 @@ export function collectStyleRuleEdits(
                 selector: source.selector,
                 property: change.property,
                 value: change.value,
-                ...(atMedia ? { atMedia } : {}),
+                ...(atRule ? { atRule } : {}),
               },
         )
       }
@@ -521,11 +528,10 @@ export function collectStyleRuleEdits(
         rule.contextStyles?.[contextId] ?? {},
       )
       if (contextChanges.length === 0) continue
-      const atMedia = mediaQueryForContext(contextId, contexts)
-      // A `@container`/`@supports` context, or one this document no longer
-      // defines: `setDeclarationAtMedia` writes `@media` and nothing else, so
-      // writing it would produce the wrong at-rule. Reported, never guessed.
-      if (!atMedia) {
+      const atRule = atRuleForContext(contextId, contexts)
+      // A context this document no longer defines names no block to write
+      // into. Reported, never guessed.
+      if (!atRule) {
         if (!unwritableContexts.includes(label)) unwritableContexts.push(label)
         continue
       }
@@ -535,7 +541,7 @@ export function collectStyleRuleEdits(
         // through `unmapped` by that branch, so nothing is said twice here.
         continue
       }
-      pushScopedEdits(contextChanges, atMedia)
+      pushScopedEdits(contextChanges, atRule)
     }
 
     // --- unconditional declarations -----------------------------------------
@@ -550,22 +556,9 @@ export function collectStyleRuleEdits(
         unmapped.push({ label, reason: null })
         continue
       }
+      // P3-C (ERR-14, ERR-15) — always an answer: an existing stylesheet
+      // (chosen by Studio when there are several), or a new one.
       const destination = resolveCssInsertDestination(rule, pageIndex)
-      if (!destination.ok) {
-        // Z8 — NOT `unmapped`. This class is perfectly writable the moment a
-        // file is named, and `ambiguous-stylesheet` names every file it could
-        // be. Reported as its own kind so the caller can ask the question
-        // instead of toasting a dead end, and so this rule's baseline is held
-        // back until the answer lands.
-        destinationRefusals.push({
-          ruleId,
-          label,
-          reason: destination.reason,
-          message: destination.message,
-          candidates: destination.candidates,
-        })
-        continue
-      }
       // A brand-new rule has nothing on disk to REMOVE a property from, so
       // only the set half of the diff reaches an insert/create.
       const declarations = settableDeclarations(changes)
@@ -584,17 +577,17 @@ export function collectStyleRuleEdits(
         continue
       }
       // `kind: 'create'` — no editable stylesheet exists yet; the server
-      // invents one co-located with `destination.pageFile` and reports back
-      // which file it made (`recordCreatedStylesheet`/`notifyCreatedStylesheets`
-      // pick that up from the save response). `nodeId` carries the rule id
-      // itself so the response can be joined back to it — see
-      // `ruleIdFromCssCreateNodeId`.
+      // invents one co-located with `destination.pageFile` (or, with no page,
+      // beside the app entry) and reports back which file it made
+      // (`recordCreatedStylesheet`/`notifyCreatedStylesheets` pick that up
+      // from the save response). `nodeId` carries the rule id itself so the
+      // response can be joined back to it — see `ruleIdFromCssCreateNodeId`.
       claim(`${CSS_CREATE_NODE_ID_PREFIX}${ruleId}`, ruleId)
       edits.push({
         kind: 'css',
         op: 'create',
         nodeId: `${CSS_CREATE_NODE_ID_PREFIX}${ruleId}`,
-        pageFile: destination.pageFile,
+        ...(destination.pageFile !== null ? { pageFile: destination.pageFile } : {}),
         selector: rule.selector,
         declarations,
       })
@@ -603,34 +596,37 @@ export function collectStyleRuleEdits(
     pushScopedEdits(changes, undefined)
   }
 
-  return { edits, unmapped, destinationRefusals, unwritableContexts, ruleIdsByNodeId }
+  return { edits, unmapped, unwritableContexts, ruleIdsByNodeId }
 }
 
 /**
- * W4-4 Phase B — one styled rule's changes, split into the value edits that
- * can reach the user's template and the ones that cannot.
+ * W4-4 Phase B — one styled rule's changes, split into the SETs that reach
+ * the user's template and the clears that cannot.
  *
- * ## Only a SET is a value edit
+ * ## A SET always lands (G-5)
+ *
+ * A set is rewritten in place when the template writes the value, and otherwise
+ * appended to the same block as an override (`setStyledDeclaration`'s ladder) —
+ * including a property the template never declared, which used to be reported
+ * here as unsaved and is now a new line in the block.
+ *
+ * ## A CLEAR is the exception
  *
  * A cleared declaration (`value === null`) is not a value change: writing it
  * means deleting a line from a template the user wrote, next to
- * interpolations whose position decides what the surrounding CSS means. Same
- * for a property the template never declared, which would mean adding one.
- * Both are reported through `unmapped` — the caller's existing “Style not
- * saved to source” toast, which is the right title for them — rather than
- * being silently dropped, the one outcome this whole module exists to
- * prevent. The server refuses them a second time by name if one ever reaches
- * it (`setStyledDeclaration`'s `declaration-not-in-template`); saying so here
- * is what stops the user waiting two seconds to find out.
+ * interpolations whose position decides what the surrounding CSS means. It is
+ * reported through `unmapped` — the caller's existing “Style not saved to
+ * source” toast, which is the right title for it — rather than being silently
+ * dropped, the one outcome this whole module exists to prevent.
  *
  * ## A real breakpoint IS writable here
  *
  * Unlike the `.css` path, a styled template's nested `@media` is part of the
  * same template, so an override under one writes through the same codemod
- * with the query attached. Only a context this document cannot name a `@media`
- * query for (`@container`/`@supports`) is unwritable, and it takes the same
- * `unmapped` report rather than `unwritableContexts` — the sentence a user
- * needs here is about the template, not about at-rule support.
+ * with the condition attached — `@media`, `@container` or `@supports` alike
+ * (P3-C, WB-31). Only a context this document no longer defines is
+ * unwritable, and it takes the same `unmapped` report rather than
+ * `unwritableContexts` — the sentence a user needs here is about the template.
  */
 function pushStyledEdits(args: {
   ruleId: string
@@ -645,7 +641,7 @@ function pushStyledEdits(args: {
   const { ruleId, rule, styled, label, contexts, edits, unmapped, claim } = args
   const nodeId = styledEditNodeId(styled)
 
-  const push = (changes: readonly PropertyChange[], atMedia: string | undefined): void => {
+  const push = (changes: readonly PropertyChange[], atRule: string | undefined): void => {
     for (const change of changes) {
       if (change.value === null) {
         unmapped.push({
@@ -665,7 +661,7 @@ function pushStyledEdits(args: {
         selector: rule.selector,
         property: change.property,
         value: change.value,
-        ...(atMedia ? { atMedia } : {}),
+        ...(atRule ? { atRule } : {}),
       })
     }
   }
@@ -673,17 +669,17 @@ function pushStyledEdits(args: {
   for (const contextId of realContextIds(rule)) {
     const changes = diffDeclarations(contextBaselineFor(ruleId, contextId), rule.contextStyles?.[contextId] ?? {})
     if (changes.length === 0) continue
-    const atMedia = mediaQueryForContext(contextId, contexts)
-    if (!atMedia) {
+    const atRule = atRuleForContext(contextId, contexts)
+    if (!atRule) {
       unmapped.push({
         label,
         reason:
-          `${label} changed under a container or feature query. Studio writes an override into a styled template as ` +
-          'a nested @media block only, so this stays on the canvas and will be lost on reload.',
+          `${label} changed under a breakpoint or condition this project no longer defines, so there is no block ` +
+          'to write it into and it stays on the canvas only.',
       })
       continue
     }
-    push(changes, atMedia)
+    push(changes, atRule)
   }
 
   push(diffDeclarations(baselineFor(ruleId), effectiveStudioStyles(rule)), undefined)

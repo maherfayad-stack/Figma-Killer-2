@@ -28,7 +28,6 @@ function resetStore() {
     activePageId: null,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     isSettingsOpen: false,
     activeSection: 'general',
     propertiesPanel: { collapsed: false, x: 0, y: 0, width: 280 },
@@ -66,7 +65,7 @@ describe('PreferencesSection — catalog-driven rendering', () => {
     expect(screen.getByRole('switch', { name: /auto-save/i })).toBeDefined()
     expect(screen.getByRole('switch', { name: /preview suggestions on hover/i })).toBeDefined()
     expect(screen.getByRole('switch', { name: /confirm before deleting/i })).toBeDefined()
-    expect(screen.getByRole('switch', { name: /show module icon/i })).toBeDefined()
+    expect(screen.getByRole('switch', { name: /show element type icon/i })).toBeDefined()
     expect(screen.getByRole('switch', { name: /show html tag/i })).toBeDefined()
     expect(screen.getByRole('switch', { name: /show class names/i })).toBeDefined()
     expect(screen.getByRole('switch', { name: /auto-expand on selection/i })).toBeDefined()

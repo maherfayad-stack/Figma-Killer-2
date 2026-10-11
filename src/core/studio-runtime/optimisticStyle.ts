@@ -52,8 +52,9 @@
  * Writing {@link OPTIMISTIC_STYLE_ATTR} onto an element is a DOM mutation
  * `runtime.ts`'s `layoutObserver` (watching `doc.body` for real content
  * changes, to know when to re-derive the frame's fit height) would otherwise
- * see — `runtime.ts`'s `isIgnorable` check excludes this attribute by name,
- * the same way it already excludes `resizeHandles.ts`'s own preview stamp.
+ * see — except that it is an ATTRIBUTE record, and `frameFitMutationScheduler`
+ * never resets a fit for an attribute-only batch (PERF-9), the same reason
+ * `resizeHandles.ts`'s own preview stamp is never mistaken for content.
  *
  * ## Reverted before React reconciles, cleared again after
  *
@@ -66,6 +67,7 @@
  * preview's job is done the moment the update lands.
  */
 import { findNthNodeById } from './nodeIdIndexing'
+import { OPTIMISTIC_STYLE_CLEARED } from './messages'
 
 /** Stamped on the target element for an optimistic style (inline OR class target — see the module doc) — `runtime.ts`'s layout observer ignores writes to this attribute. */
 export const OPTIMISTIC_STYLE_ATTR = 'data-studio-optimistic-style'
@@ -73,10 +75,15 @@ const OPTIMISTIC_STYLE_TAG_ID = 'studio-runtime-optimistic-style'
 
 interface StyleRuleEntry {
   /** The element {@link OPTIMISTIC_STYLE_ATTR} was stamped on, so `clearOptimisticStyle` can remove it again. */
-  element: Element
+  element: HTMLElement
   css: string
+  /**
+   * Inline properties this entry REMOVED from `element.style` (a cleared field), kebab-case name ->
+   * the value and priority it held, so a preview that is taken back (`clearOptimisticStyle`,
+   * `revertAllOptimisticStyle`) puts them back.
+   */
+  removed: Map<string, { value: string; priority: string }>
 }
-
 /** One rule map per document — a bridge frame's runtime only ever manages its own document, but tests construct more than one `Document` in a single process. */
 const documentRules = new WeakMap<Document, Map<string, StyleRuleEntry>>()
 const elementStamps = new WeakMap<Element, string>()
@@ -110,6 +117,7 @@ function toKebabCssProperty(name: string): string {
 
 function declarationsFor(patch: Readonly<Record<string, string>>): string {
   return Object.entries(patch)
+    .filter(([, value]) => value !== OPTIMISTIC_STYLE_CLEARED)
     .map(([prop, value]) => `${toKebabCssProperty(prop)}: ${value} !important;`)
     .join(' ')
 }
@@ -131,7 +139,7 @@ function writeStylesheet(doc: Document): void {
     doc.getElementById(OPTIMISTIC_STYLE_TAG_ID)?.remove()
     return
   }
-  ensureStylesheet(doc).textContent = [...map.values()].map((entry) => entry.css).join('\n')
+  ensureStylesheet(doc).textContent = [...map.values()].map((entry) => entry.css).filter(Boolean).join('\n')
 }
 
 /**
@@ -147,11 +155,11 @@ export function applyOptimisticStyle(
   ref: { nodeId: string; occurrenceIndex: number },
   patch: Readonly<Record<string, string>>,
 ): void {
-  const declarations = declarationsFor(patch)
-  if (!declarations) return
+  if (Object.keys(patch).length === 0) return
 
-  const element = findNthNodeById(doc, ref.nodeId, ref.occurrenceIndex)
-  if (!element) return
+  const found = findNthNodeById(doc, ref.nodeId, ref.occurrenceIndex)
+  if (!found || !('style' in found)) return
+  const element = found as HTMLElement
   let stamp = elementStamps.get(element)
   if (!stamp) {
     stamp = `s${stampCounter++}`
@@ -160,8 +168,34 @@ export function applyOptimisticStyle(
   element.setAttribute(OPTIMISTIC_STYLE_ATTR, stamp)
   const selector = `[${OPTIMISTIC_STYLE_ATTR}="${stamp}"]`
 
-  ruleMap(doc).set(refKey(ref), { element, css: `${selector} { ${declarations} }` })
+  // A re-apply replaces the rule but inherits what earlier applies removed from the inline style.
+  const key = refKey(ref)
+  const removed = ruleMap(doc).get(key)?.removed ?? new Map<string, { value: string; priority: string }>()
+  for (const [prop, value] of Object.entries(patch)) {
+    const name = toKebabCssProperty(prop)
+    if (value === OPTIMISTIC_STYLE_CLEARED) {
+      if (!removed.has(name)) {
+        const held = element.style.getPropertyValue(name)
+        if (held !== '') removed.set(name, { value: held, priority: element.style.getPropertyPriority(name) })
+      }
+      element.style.removeProperty(name)
+    } else if (removed.has(name)) {
+      // Set again after a clear: the rule below owns the value now, so the inline one stays as it was.
+      const held = removed.get(name)!
+      element.style.setProperty(name, held.value, held.priority)
+      removed.delete(name)
+    }
+  }
+
+  const declarations = declarationsFor(patch)
+  ruleMap(doc).set(key, { element, css: declarations ? `${selector} { ${declarations} }` : '', removed })
   writeStylesheet(doc)
+}
+
+/** Puts back the inline properties a preview removed. */
+function restoreRemoved(entry: StyleRuleEntry): void {
+  for (const [name, held] of entry.removed) entry.element.style.setProperty(name, held.value, held.priority)
+  entry.removed.clear()
 }
 
 /** Drops the one rule currently keyed on `ref`. A no-op when `ref` has no active rule. */
@@ -170,6 +204,7 @@ export function clearOptimisticStyle(doc: Document, ref: { nodeId: string; occur
   const key = refKey(ref)
   const entry = map.get(key)
   if (!entry) return
+  restoreRemoved(entry)
   entry.element.removeAttribute(OPTIMISTIC_STYLE_ATTR)
   map.delete(key)
   writeStylesheet(doc)
@@ -179,7 +214,10 @@ export function clearOptimisticStyle(doc: Document, ref: { nodeId: string; occur
 export function revertAllOptimisticStyle(doc: Document): void {
   const map = ruleMap(doc)
   if (map.size === 0) return
-  for (const entry of map.values()) entry.element.removeAttribute(OPTIMISTIC_STYLE_ATTR)
+  for (const entry of map.values()) {
+    restoreRemoved(entry)
+    entry.element.removeAttribute(OPTIMISTIC_STYLE_ATTR)
+  }
   map.clear()
   doc.getElementById(OPTIMISTIC_STYLE_TAG_ID)?.remove()
 }

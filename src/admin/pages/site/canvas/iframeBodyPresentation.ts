@@ -40,7 +40,6 @@ const EDITOR_OWNED_BODY_ATTRIBUTES = new Set([
   'data-node-id',
   'data-module-id',
   'data-canvas-selected',
-  'data-hovered',
 ])
 
 export function applyIframeBodyPresentation(

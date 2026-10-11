@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { useRef } from 'react'
 import { act, cleanup as cleanupRender, fireEvent, render, screen } from '@testing-library/react'
+import { setCanvasHover } from '@site/canvas/canvasHover'
 import { useEditorStore } from '@site/store/store'
 import { RESET_ZOOM } from '@site/canvas/math'
 import {
@@ -60,8 +61,6 @@ beforeEach(() => {
     zoom: RESET_ZOOM,
     panX: 0,
     panY: 0,
-    hoveredNodeId: null,
-    hoveredBreakpointId: null,
   } as Parameters<typeof useEditorStore.setState>[0])
 })
 
@@ -113,7 +112,7 @@ describe('useCanvas wheel pan sync', () => {
     expect(layer.style.transform).toBe('translate(-120px, 0px) scale(1)')
 
     act(() => {
-      useEditorStore.getState().hoverNode('node-under-pointer', 'mobile')
+      setCanvasHover('node-under-pointer', 'mobile')
     })
 
     expect(layer.style.transform).toBe('translate(-120px, 0px) scale(1)')

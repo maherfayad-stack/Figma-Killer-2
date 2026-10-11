@@ -19,9 +19,19 @@
  *     the rest, because there is no JSX Studio could write for them.
  *   - **Layouts** — saved layouts, then one group per plugin pack.
  *   - **Saved components** — the project's Visual Components.
+ *   - **Project components** — components the open project declares itself
+ *     (`ProjectComponentsSection`): click or drag to write `<Card />` and its
+ *     import into the source file.
+ *   - **Images** — the project's own image files (`ImagesSection`, IMG-6):
+ *     drag one onto a frame, or click to add it beside the selection. Nothing
+ *     is uploaded; the insert references the file where it already is.
  *   - **Icons** — the design system's own icon set (`IconsSection`).
  *   - **Colors** — the built-in design system's palette (`ColorsSection`).
  *     Copy a variable, or apply one to the selected layer's fill or text.
+ *
+ * Dragging a card drops it into whichever frame the pointer is over, at the
+ * drop line (`useCanvasInsertionDrag`); released on the empty board, a
+ * component or element becomes a loose layer on the free canvas (P5-G G1).
  *
  * Clicking a card inserts through `useInsertInserterItem` — the same handler
  * every other insert surface uses, so the target resolution (selected
@@ -36,11 +46,13 @@ import type { VisualComponent } from '@core/visualComponents'
 import { useEditorStore } from '@site/store/store'
 import type { InsertLocation } from '@site/store/insertLocation'
 import { useInsertInserterItem } from '@site/hooks/useInsertInserterItem'
+import { canPlaceModuleOnCanvas, placeModuleOnCanvas } from '@site/hooks/placeModuleOnCanvas'
 import { Panel } from '@admin/shared/Panel'
 import { EmptyState } from '@ui/components/EmptyState'
 import { SearchBar } from '@ui/components/SearchBar'
 import { PackageSolidIcon } from 'pixel-art-icons/icons/package-solid'
 import { useCanvasInsertionDrag } from '@site/canvas/useCanvasInsertionDrag'
+import type { AbsoluteNewLayerPlacement } from '@site/canvas/canvasNewLayerPlacement'
 import { CanvasInsertionDragOverlay } from '@site/canvas/CanvasInsertionDragOverlay'
 import {
   buildAssetItems,
@@ -58,7 +70,9 @@ import { AssetGrid, AssetGroupLabel, AssetSection } from './AssetSection'
 import { buildColorAssetItems } from './colorTokens'
 import { ColorsSection } from './ColorsSection'
 import { IconsSection } from './IconsSection'
+import { ImagesSection } from './ImagesSection'
 import { PackageBundleNotice } from './PackageBundleNotice'
+import { ProjectComponentsSection } from './ProjectComponentsSection'
 import { SavedLayoutManageMenu, type SavedLayoutMenuState } from './SavedLayoutManageMenu'
 import { subscribeAssetsSearchFocus } from './assetsPanelFocus'
 import styles from './AssetsPanel.module.css'
@@ -98,6 +112,8 @@ type SectionId =
   | 'elements'
   | 'layouts'
   | 'components'
+  | 'projectComponents'
+  | 'images'
   | 'icons'
   | 'colors'
 
@@ -170,12 +186,24 @@ export function AssetsPanel() {
   // `speed-06` — one drag session shared by every card: the ghost + drop
   // preview overlay is drawn once for the whole panel (`CanvasInsertionDragOverlay`
   // below), exactly the shape the notch's own primitives already use.
+  // P5-G G1 — a component or element card released on the EMPTY board lands
+  // there as a loose layer. Saved layouts and Visual Components have no
+  // loose-layer spelling, so their drag never offers the board.
   const canvasDrag = useCanvasInsertionDrag<AssetItem>({
-    onDrop: (item, location) => handleInsert(item, location, 'drop'),
+    onDrop: (item, location, placement) => handleInsert(item, location, placement),
+    freeCanvas: {
+      accepts: (item) => item.kind === 'module' && !item.disabledReason && canPlaceModuleOnCanvas(item.id),
+      onDrop: (item, at) => {
+        if (item.kind !== 'module' || !placeModuleOnCanvas(item.id, undefined, at)) return false
+        trackAssetInsert(refForAssetItem(item))
+        setRecentRefs(readAssetPrefs().recent)
+        return true
+      },
+    },
   })
 
-  function handleInsert(item: AssetItem, target?: InsertLocation, mode: 'click' | 'drop' = 'click') {
-    if (!insertItem(item, target, mode)) return false
+  function handleInsert(item: AssetItem, target?: InsertLocation, placement: AbsoluteNewLayerPlacement | null = null) {
+    if (!insertItem(item, target, placement)) return false
     trackAssetInsert(refForAssetItem(item))
     setRecentRefs(readAssetPrefs().recent)
     return true
@@ -231,7 +259,7 @@ export function AssetsPanel() {
           ref={searchRef}
           value={query}
           onValueChange={setQuery}
-          placeholder="Search components, icons & colors…"
+          placeholder="Search components, images, icons & colors…"
           aria-label="Search assets"
         />
       </div>
@@ -282,8 +310,8 @@ export function AssetsPanel() {
             <EmptyState
               plain
               compact
-              title="No layouts yet"
-              description="Save a selection as a layout to reuse it here."
+              title={searching ? 'No layouts match' : 'No layouts yet'}
+              description={searching ? undefined : 'Save a selection as a layout to reuse it here.'}
             />
           ) : (
             <AssetGrid>
@@ -311,13 +339,25 @@ export function AssetsPanel() {
             <EmptyState
               plain
               compact
-              title="No components yet"
-              description="Turn a selection into a Visual Component to insert it from here."
+              title={searching ? 'No saved components match' : 'No components yet'}
+              description={searching ? undefined : 'Turn a selection into a Visual Component to insert it from here.'}
             />
           ) : (
             <AssetGrid>{renderCards(rankedComponents)}</AssetGrid>
           )}
         </AssetSection>
+
+        <ProjectComponentsSection
+          query={query}
+          collapsed={collapsed.has('projectComponents')}
+          onToggle={() => toggleSection('projectComponents')}
+        />
+
+        <ImagesSection
+          query={query}
+          collapsed={collapsed.has('images')}
+          onToggle={() => toggleSection('images')}
+        />
 
         <IconsSection
           query={query}

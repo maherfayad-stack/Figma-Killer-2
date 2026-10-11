@@ -53,13 +53,44 @@ export function loadSourceFile(project: Project, file: string): SourceFile {
  * for the same reason: ts-morph's own structure printer must agree with the
  * hand-built text, and the file system is the single place the ending is
  * decided. See `@core/page-parser`'s `eolFileSystem.ts`.
+ *
+ * `allowJs` (with `maxNodeModuleJsDepth: 0`, exactly `createWorkspaceProject`'s
+ * pair): without it TypeScript neither binds a `.js`/`.jsx` file nor resolves
+ * an import to one, so every checker question a codemod asks about a JS
+ * project — which declaration `useLanguage` is, whether it reads a context —
+ * came back empty, and a hook the same codemod carries in a `.tsx` repo was
+ * refused in a `.jsx` one.
  */
 export function createProject(): Project {
   return new Project({
     useInMemoryFileSystem: false,
+    compilerOptions: { allowJs: true, maxNodeModuleJsDepth: 0 },
     fileSystem: new EolPreservingFileSystem(),
     manipulationSettings: { newLineKind: NewLineKind.LineFeed },
   })
+}
+
+/**
+ * WB-25 — make a project that is shared across several codemods (one batch of
+ * edits) agree with the disk again before the next one runs.
+ *
+ * Every codemod reaches its file through {@link loadSourceFile}, which already
+ * refreshes a file it has seen; this covers what that does not. A codemod that
+ * declined AFTER it had started changing its tree (a refusal found halfway
+ * through) leaves that tree dirty and unsaved — refreshing puts back what the
+ * disk says. A file another writer changed (a postcss or plain-text codemod,
+ * an import plan) is re-read, and one that disappeared is dropped. And every
+ * node the previous codemod wrapped is forgotten: ts-morph re-maps each
+ * wrapped node on every manipulation, so wrappers left over from edit N would
+ * make edit N+1's writes slower for no reason.
+ *
+ * Cheap when nothing changed: one read and a string compare per file.
+ */
+export function syncProjectWithDisk(project: Project): void {
+  for (const sourceFile of project.getSourceFiles()) {
+    sourceFile.refreshFromFileSystemSync()
+    if (!sourceFile.wasForgotten()) sourceFile.forgetDescendants()
+  }
 }
 
 /**
@@ -76,9 +107,9 @@ export function findJsxElementAtLocation(
   // outcome, not a bug: node ids carry a `line:col` the board read earlier, and
   // an edit made after the file shrank names a position that no longer exists.
   // `ts.getPositionOfLineAndCharacter` asserts rather than returning, and a
-  // codemod that throws there reaches the user as an unexplained skip instead
-  // of the "no element is written there any more — reload" refusal every caller
-  // already has. Bounds-checked here so all of them get the honest answer.
+  // codemod that throws there would reach the user as an unnamed failure instead
+  // of the `element-moved` refusal the board recovers from by itself.
+  // Bounds-checked here so all of them get the honest answer.
   const lineStarts = sourceFile.compilerNode.getLineStarts()
   if (line < 1 || line > lineStarts.length || col < 1) return undefined
   const lineStart = lineStarts[line - 1]!
@@ -86,19 +117,38 @@ export function findJsxElementAtLocation(
   const pos = lineStart + col - 1
   if (pos > lineEnd) return undefined
 
-  let found: JsxOpeningLikeElement | undefined
-  for (const descendant of sourceFile.getDescendants()) {
-    if (
-      Node.isJsxOpeningElement(descendant) ||
-      Node.isJsxSelfClosingElement(descendant)
-    ) {
-      if (descendant.getTagNameNode().getStart() === pos) {
-        found = descendant
-        break
-      }
+  // WB-25 — position-indexed: the token AT `pos` is the tag name's first
+  // token (`Foo`, `motion` of `motion.div`, `this`), and the element that
+  // owns it is its nearest opening-like ancestor. This used to walk every
+  // descendant of the file, which wraps every node ts-morph has — ~95 ms per
+  // lookup on a 1,500-element page, paid again by every edit in a batch.
+  if (pos >= sourceFile.getEnd()) return undefined
+  for (let node: Node | undefined = sourceFile.getDescendantAtPos(pos); node; node = node.getParent()) {
+    if (Node.isJsxOpeningElement(node) || Node.isJsxSelfClosingElement(node)) {
+      return node.getTagNameNode().getStart() === pos ? node : undefined
     }
+    // Past the tag name: an ancestor that starts before `<` cannot be the
+    // element whose name starts at `pos`, and no JSX element sits between.
+    if (node.getStart() < pos - 1) return undefined
   }
-  return found
+  return undefined
+}
+
+/**
+ * Thrown when no JSX element starts at the requested `line:col` — the file
+ * changed since whoever named that position read it. A TYPED miss, so the
+ * writeback batch can report it as the `element-moved` refusal it is (and the
+ * board can re-read and retry) instead of an unexplained codemod failure.
+ */
+export class JsxElementNotFoundError extends Error {
+  readonly reason = 'element-moved'
+  readonly path: string
+
+  constructor(message: string, path: string) {
+    super(message)
+    this.name = 'JsxElementNotFoundError'
+    this.path = path
+  }
 }
 
 /** Finds the target element or throws a clear, location-specific error. */
@@ -110,9 +160,10 @@ export function findJsxElementAtLocationOrThrow(
 ): JsxOpeningLikeElement {
   const element = findJsxElementAtLocation(sourceFile, line, col)
   if (!element) {
-    throw new Error(
+    throw new JsxElementNotFoundError(
       `No JSX element found at ${file}:${line}:${col} (expected the column to point at the ` +
         'character immediately after "<" in a JSX opening/self-closing tag).',
+      `${file}:${line}:${col}`,
     )
   }
   return element

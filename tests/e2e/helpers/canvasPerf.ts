@@ -55,11 +55,11 @@ import type { Page } from '@playwright/test'
  * whose three frames all fit inside the viewport margin at the opening zoom:
  * its scripted zoom-out mounts nothing at all (3 live iframes before, 3
  * after, on the pre- and post-S1 trees alike). Its zoom assertion is
- * therefore a SMOOTHNESS gate, not a mount gate. S1's mount pool sharpens
- * that further: it holds at least `MIN_FRAME_POOL` (8) live frames, so on a
- * board of 8 frames or fewer every frame stays mounted and there is no mount
- * left to measure. **A gate on the mount path needs a board of at least 9
- * frames.**
+ * therefore a SMOOTHNESS gate, not a mount gate. The live-frame cap sharpens
+ * that further: frames in view at a readable zoom are all live up to the cap
+ * (`LIVE_CAP_FLOOR`, 12), so on a board of 12 frames or fewer every frame in
+ * view stays mounted and a zoom-out unmounts nothing. **A gate on the mount
+ * path needs a board of at least 13 frames, or a zoom below 0.35.**
  *
  * That gate is `studio-board-perf.e2e.ts`, and since `verify-2` it has one:
  * the committed twelve-frame `studio-workspace/__board-perf-fixture`, which
@@ -117,6 +117,8 @@ export interface GestureProfile {
   frames: number
   worstFrameMs: number
   meanFrameMs: number
+  /** 95th-percentile frame interval — P5-D's SVG-9 budget reads this (≤ 16.7 ms). */
+  p95FrameMs: number
   framesOver20ms: number
   /** Mutations observed INSIDE the frames layer — the React re-render signal. */
   layerMutations: number
@@ -201,6 +203,7 @@ export async function profileGesture(
       frames: intervals.length,
       worstFrameMs: intervals.length > 0 ? Math.max(...intervals) : 0,
       meanFrameMs: intervals.length > 0 ? total / intervals.length : 0,
+      p95FrameMs: intervals.length > 0 ? [...intervals].sort((a, b) => a - b)[Math.min(intervals.length - 1, Math.floor(intervals.length * 0.95))]! : 0,
       framesOver20ms: intervals.filter((n) => n > 20).length,
       layerMutations: state.layerMutations,
       transformWrites: state.transformWrites,
@@ -209,22 +212,51 @@ export async function profileGesture(
 }
 
 export interface BoardCounts {
+  /** Every canvas iframe in the document — a hidden live-frame bridge included. Raw cost, not a frame count. */
   liveIframes: number
+  /** Board frames holding at least one canvas iframe: the frames virtualization MOUNTED. */
+  mountedFrames: number
   boardFrames: number
+  /** Board frames with no canvas iframe that show a poster. */
   posters: number
+  /** Board frames with no canvas iframe that show a plain placeholder. */
   placeholders: number
   domNodes: number
 }
 
-/** Live (mounted) canvas iframes, board frames on the board, and rendered posters. */
+/**
+ * The board's frames, each classified ONCE: mounted (holds a canvas iframe),
+ * else poster, else placeholder — the same precedence `readFrameStates` in
+ * `studio-board-perf.e2e.ts` uses.
+ *
+ * Per frame, not per element, because one mounted frame is not one iframe: a
+ * Tier-2 board frame (`LiveBoardFrame`) holds a hidden bridge iframe next to
+ * its fallback until the live frame is ready, and that fallback is either a
+ * second canvas iframe or a poster. Counting elements document-wide counted
+ * such a frame twice (two iframes, or an iframe and a poster), so "every frame
+ * is exactly one of mounted / poster / placeholder" could not hold on any
+ * Tier-2 board.
+ */
 export async function readBoardCounts(page: Page): Promise<BoardCounts> {
-  return page.evaluate(() => ({
-    liveIframes: document.querySelectorAll('iframe[title^="Canvas frame"]').length,
-    boardFrames: document.querySelectorAll('[data-testid="board-frame-body"]').length,
-    posters: document.querySelectorAll('[data-testid="board-frame-poster"]').length,
-    placeholders: document.querySelectorAll('[data-testid="board-frame-placeholder"]').length,
-    domNodes: document.getElementsByTagName('*').length,
-  }))
+  return page.evaluate(() => {
+    const bodies = [...document.querySelectorAll('[data-testid="board-frame-body"]')]
+    let mountedFrames = 0
+    let posters = 0
+    let placeholders = 0
+    for (const body of bodies) {
+      if (body.querySelector('iframe[title^="Canvas frame"]')) mountedFrames += 1
+      else if (body.querySelector('[data-testid="board-frame-poster"]')) posters += 1
+      else if (body.querySelector('[data-testid="board-frame-placeholder"]')) placeholders += 1
+    }
+    return {
+      liveIframes: document.querySelectorAll('iframe[title^="Canvas frame"]').length,
+      mountedFrames,
+      boardFrames: bodies.length,
+      posters,
+      placeholders,
+      domNodes: document.getElementsByTagName('*').length,
+    }
+  })
 }
 
 declare global {

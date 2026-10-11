@@ -53,6 +53,7 @@ import { Value } from '@sinclair/typebox/value'
 import {
   buildStampIndex,
   OutboundEnvelopeSchema,
+  RESIZE_SNAP_SIBLINGS_MAX,
   RUNTIME_MESSAGE_SOURCE,
   toInboundEnvelope,
   toStampId,
@@ -60,6 +61,8 @@ import {
   type OutboundRuntimeMessage,
 } from '@core/studio-runtime'
 import type { PreviewAxes } from '@core/studio-board'
+import { currentModeAxes, modeRootPlanFor } from '../modeRootPlan'
+import type { FrameGeometrySnapshot, NodeGeometry } from '../frameGeometry/frameGeometryTypes'
 import type {
   DropCandidateGeometry,
   FrameDocumentAdapter,
@@ -67,6 +70,7 @@ import type {
   NodeMeasurement,
   NodeRef,
   OptimisticDomOps,
+  ResizeTargetOptions,
   Unsubscribe,
 } from './FrameDocumentAdapter'
 
@@ -132,6 +136,13 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
     string,
     { resolve: (c: DropCandidateGeometry[]) => void; reject: (err: Error) => void; timeout: ReturnType<typeof setTimeout> }
   >()
+  /** SB-3 — pending `measureAll` requests; same shape as `pendingDropCandidates`. */
+  private readonly pendingGeometry = new Map<
+    string,
+    { resolve: (g: FrameGeometrySnapshot) => void; reject: (err: Error) => void; timeout: ReturnType<typeof setTimeout> }
+  >()
+  /** SB-3 — whether `measureAll` was ever called: only then does a reloaded document owe the parent a `geometry:dirty`. */
+  private geometryRequested = false
   private nextRequestId = 0
   private disposed = false
   private frameReady = false
@@ -176,10 +187,6 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
         index,
       })
     },
-    text: (nodeId, text) => {
-      const ref = this.toWireRef(nodeId)
-      this.post({ type: 'optimistic.text', nodeId: ref.nodeId, occurrenceIndex: ref.occurrenceIndex, text })
-    },
     style: (nodeId, patch, className) => {
       const ref = this.toWireRef(nodeId)
       this.post({ type: 'optimistic.style', ref, patch, ...(className === undefined ? {} : { className }) })
@@ -187,6 +194,10 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
     clearStyle: (nodeId) => {
       const ref = this.toWireRef(nodeId)
       this.post({ type: 'optimistic.style:clear', ref })
+    },
+    revert: (nodeIds) => {
+      if (nodeIds.length === 0) return
+      this.post({ type: 'optimistic.revert', refs: nodeIds.map((nodeId) => this.toWireRef(nodeId)) })
     },
   }
 
@@ -250,6 +261,7 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
     this.channel.postMessage(toInboundEnvelope(message), this.frameOrigin)
   }
 
+  // Always the whole text: the in-frame runtime owns the sheet, so `options.incremental` has no meaning here.
   applyOverlay(id: string, css: string): void {
     this.post({ type: 'applyOverlay', id, css })
   }
@@ -303,8 +315,57 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
     })
   }
 
+  /**
+   * SB-3 — one `measureAll`/`measureAll:result` round trip: every boxed node of
+   * the live page in a single reply, translated to canonical ids like every
+   * other inbound method here. The runtime stamps nodes by SOURCE position, so
+   * the reply can list elements the page tree never heard of (a design-system
+   * component's own internals). Those are folded into their nearest known
+   * ancestor rather than listed: the children keep a valid `parent`, and a
+   * click on one resolves to the known node, the same rule
+   * `nearestKnownNodeId` applies to pointer events. What folding loses is the
+   * folded node's own `clips`/`inert` facts, which is the bridge's documented
+   * approximation.
+   */
+  measureAll(): Promise<FrameGeometrySnapshot> {
+    this.geometryRequested = true
+    const requestId = `bridge-measure-all-${this.nextRequestId++}`
+    return new Promise<FrameGeometrySnapshot>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingGeometry.delete(requestId)
+        reject(new MeasureTimeoutError(requestId))
+      }, this.measureTimeoutMs)
+      this.pendingGeometry.set(requestId, { resolve, reject, timeout })
+      this.post({ type: 'measureAll', requestId })
+    })
+  }
+
+  /** Wire nodes -> canonical, known-ids-only, with `parent` re-pointed past every folded node. */
+  private toCanonicalGeometry(message: Extract<OutboundRuntimeMessage, { type: 'measureAll:result' }>): FrameGeometrySnapshot {
+    const nodes: NodeGeometry[] = []
+    // For wire node i: the index in `nodes` of itself, or of its nearest kept ancestor, or -1.
+    const resolved: number[] = []
+    message.nodes.forEach((wire, i) => {
+      const parent = wire.parent >= 0 && wire.parent < i ? resolved[wire.parent]! : -1
+      const nodeId = this.stampIndex.get(wire.nodeId)?.[wire.occurrenceIndex]
+      if (nodeId === undefined) {
+        resolved.push(parent)
+        return
+      }
+      resolved.push(nodes.length)
+      nodes.push({ nodeId, rect: wire.rect, parent, clips: wire.clips, inert: wire.inert, transformed: wire.transformed, paint: wire.paint })
+    })
+    return { origin: message.origin, nodes, truncated: message.truncated }
+  }
+
   setAxes(axes: PreviewAxes): void {
-    this.post({ type: 'setAxes', axes: { direction: axes.direction, colorScheme: axes.colorScheme, locale: axes.locale } })
+    this.post({
+      type: 'setAxes',
+      axes: { direction: axes.direction, colorScheme: axes.colorScheme, locale: axes.locale },
+      // The catalog decides which attribute/class each mode means; the frame's
+      // runtime has no catalog, so the plan is resolved here and shipped.
+      modeRoot: modeRootPlanFor(currentModeAxes(), axes),
+    })
   }
 
   setInteractionMode(mode: 'design' | 'live'): void {
@@ -312,13 +373,38 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
     this.post({ type: 'setMode', mode })
   }
 
-  setResizeTarget(ref: NodeRef | null, { proportional }: { proportional: boolean }): void {
-    this.post({ type: 'setResizeTarget', ref: ref ? this.toWireRef(ref.nodeId) : null, proportional })
+  setResizeTarget(ref: NodeRef | null, { proportional, sizing, snap, anchors }: ResizeTargetOptions): void {
+    this.post({
+      type: 'setResizeTarget',
+      ref: ref ? this.toWireRef(ref.nodeId) : null,
+      proportional,
+      ...(sizing === undefined ? {} : { sizing }),
+      ...(anchors === undefined ? {} : { anchors }),
+      ...(snap === undefined
+        ? {}
+        : {
+            snap: {
+              siblings: snap.siblings.slice(0, RESIZE_SNAP_SIBLINGS_MAX).map((sibling) => this.toWireRef(sibling.nodeId)),
+              parent: snap.parent ? this.toWireRef(snap.parent.nodeId) : null,
+              zoom: snap.zoom,
+            },
+          }),
+    })
   }
 
   startTextEdit(nodeId: string, allowed: boolean, text?: string): void {
     const ref = this.toWireRef(nodeId)
     this.post({ type: 'text:edit', nodeId: ref.nodeId, occurrenceIndex: ref.occurrenceIndex, allowed, ...(text === undefined ? {} : { text }) })
+  }
+
+  /** Whether the frame's runtime has said `ready` — until then a hidden bridge frame sits beside the portal fallback that is actually on screen. */
+  isFrameReady(): boolean {
+    return this.frameReady
+  }
+
+  beginTextEdit(nodeId: string, text: string): void {
+    const ref = this.toWireRef(nodeId)
+    this.post({ type: 'text:edit', nodeId: ref.nodeId, occurrenceIndex: ref.occurrenceIndex, allowed: true, text, begin: true })
   }
 
   on<E extends FrameRuntimeEvent['type']>(event: E, handler: (msg: Extract<FrameRuntimeEvent, { type: E }>) => void): Unsubscribe {
@@ -362,6 +448,19 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
         // A SECOND `ready` is a reloaded document — see `interactionMode`.
         if (wasReady && this.interactionMode !== null) this.post({ type: 'setMode', mode: this.interactionMode })
         this.emit({ type: 'ready' })
+        // The reloaded document has a new, untracked runtime: geometry read from the old one is gone.
+        if (wasReady && this.geometryRequested) this.emit({ type: 'geometry:dirty' })
+        return
+      }
+      case 'geometry:dirty':
+        this.emit({ type: 'geometry:dirty' })
+        return
+      case 'measureAll:result': {
+        const pending = this.pendingGeometry.get(message.requestId)
+        if (!pending) return
+        clearTimeout(pending.timeout)
+        this.pendingGeometry.delete(message.requestId)
+        pending.resolve(this.toCanonicalGeometry(message))
         return
       }
       case 'hmr:before':
@@ -411,6 +510,26 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
           patch: message.patch,
         })
         return
+      // canvas-26 — guides name no node, so they pass through like `error`.
+      case 'resize:guides':
+        this.emit({ type: 'resize:guides', guides: message.guides })
+        return
+      // P2-B — keyboard carries no node id, so, like `error`, it passes
+      // through with no wire -> canonical translation.
+      case 'key':
+        this.emit({
+          type: 'key',
+          phase: message.phase,
+          key: message.key,
+          code: message.code,
+          location: message.location,
+          repeat: message.repeat,
+          modifiers: message.modifiers,
+        })
+        return
+      case 'blur':
+        this.emit({ type: 'blur' })
+        return
       case 'wheel':
         this.emit({
           type: 'wheel',
@@ -422,11 +541,10 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
           modifiers: message.modifiers,
         })
         return
+      // canvas-24 — the same ancestor walk a click gets: the innermost stamp
+      // of a double-click inside a package component is one the tree never saw.
       case 'text:editStart':
-        this.emit({
-          type: 'text:editStart',
-          nodeId: this.toCanonicalNodeId(message.nodeId, message.occurrenceIndex),
-        })
+        this.emit({ type: 'text:editStart', nodeId: this.nearestKnownNodeId(message) ?? message.nodeId })
         return
       case 'text:commit':
         this.emit({
@@ -486,6 +604,11 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
       reject(new Error('BridgeFrameAdapter disposed while a dropCandidates request was in flight.'))
     }
     this.pendingDropCandidates.clear()
+    for (const { reject, timeout } of this.pendingGeometry.values()) {
+      clearTimeout(timeout)
+      reject(new Error('BridgeFrameAdapter disposed while a measureAll request was in flight.'))
+    }
+    this.pendingGeometry.clear()
     this.eventHandlers.clear()
   }
 }

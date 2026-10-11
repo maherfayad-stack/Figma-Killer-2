@@ -9,9 +9,12 @@ import {
 } from './canvasDomGeometry'
 import {
   resolveCanvasInsertionTarget,
+  type CanvasDropAxis,
   type CanvasDropCandidate,
   type CanvasInsertionTarget,
 } from './canvasDnd'
+import { newLayerPlacementAt, type NewLayerPlacement } from './canvasNewLayerPlacement'
+import { clientToBoardPoint, findBoardOrigin, isEmptyBoardTarget } from './BoardCanvasLayer/canvasLayerGeometry'
 
 const CANVAS_VIEWPORT_SELECTOR = '[data-breakpoint-id]'
 
@@ -20,7 +23,12 @@ export interface CanvasDropPreview {
   top: number
   width: number
   height: number
-  position: CanvasInsertionTarget['position'] | 'inside'
+  /** `canvas` — the empty board: the element becomes a loose layer at the pointer (P5-G). */
+  position: CanvasInsertionTarget['position'] | 'inside' | 'canvas' | 'gap'
+  /** `gap` only: the siblings' layout axis — `vertical` (stacked) draws a horizontal line, `horizontal` a vertical one. */
+  axis?: CanvasDropAxis
+  /** `before` / `after` only: the neighbour's flow runs against child order, so `before` is its visually-far edge. */
+  reversed?: boolean
   label: string
 }
 
@@ -37,6 +45,13 @@ export interface CanvasPointerInsertionDrop {
    * to the page a resolved node id happens to belong to).
    */
   pageId: string
+  /**
+   * PA-3 — where the dropped layer sits in its parent, asked once at release
+   * (never per pointermove: it reads computed style). A free frame answers
+   * `absolute` at the pointer; ⌘/Ctrl (`modifierHeld`) asks for the same in any
+   * parent. Portal frames only — a live frame answers `flow`.
+   */
+  placeLayer: (modifierHeld: boolean) => NewLayerPlacement
 }
 
 interface ResolveCanvasPointerInsertionDropInput {
@@ -152,6 +167,8 @@ export function resolveCanvasPointerInsertionDrop({
   // no light-DOM children to find its own tag inside of.
   const iframe = viewport.tagName === 'IFRAME' ? (viewport as unknown as HTMLIFrameElement) : viewport.querySelector<HTMLIFrameElement>('iframe')
   const point = getViewportLocalPoint(viewport, clientX, clientY)
+  const placeLayerAt = (parentId: string) => (modifierHeld: boolean) =>
+    newLayerPlacementAt(iframe, parentId, { x: clientX, y: clientY, width: 0, height: 0 }, modifierHeld)
   const candidates = candidatesForViewport
     ? candidatesForViewport(viewport, iframe, tree)
     : measureCanvasDropCandidates(viewport, tree, iframe)
@@ -173,6 +190,7 @@ export function resolveCanvasPointerInsertionDrop({
       preview: fixedPreviewForViewport(viewport, 'inside', `${label} at page root`),
       breakpointId,
       pageId: tree.id,
+      placeLayer: placeLayerAt(tree.rootNodeId),
     }
   }
 
@@ -181,6 +199,35 @@ export function resolveCanvasPointerInsertionDrop({
     preview: fixedPreviewForTarget(viewport, target, `${label} ${target.position}`),
     breakpointId,
     pageId: tree.id,
+    placeLayer: placeLayerAt(target.parentId),
+  }
+}
+
+/**
+ * P5-G G1 — a release over the EMPTY board (no frame, no note, no chrome):
+ * where on the free canvas the dropped element's top-left goes, in board
+ * units, plus the preview that says so.
+ *
+ * "Empty" is asked of what is actually under the pointer
+ * (`isEmptyBoardTarget`), never of frame geometry: a frame's drop viewport can
+ * extend past its clipped box, and a note or the notch sits on the board
+ * without being a frame. The drag overlay is `pointer-events: none`, so it is
+ * never what `elementFromPoint` finds. The board point comes from the
+ * board-origin element (`findBoardOrigin`) — its one client rect carries both
+ * the pan and the zoom actually painted, the same reading the file drop and
+ * the pen tool convert through.
+ */
+export function resolveFreeCanvasDrop(
+  clientX: number,
+  clientY: number,
+  label: string,
+): { at: { x: number; y: number }; preview: CanvasDropPreview } | null {
+  if (!isEmptyBoardTarget(document.elementFromPoint(clientX, clientY))) return null
+  const origin = findBoardOrigin()
+  if (!origin) return null
+  return {
+    at: clientToBoardPoint({ x: clientX, y: clientY }, origin, origin.zoom),
+    preview: { left: clientX, top: clientY, width: 0, height: 0, position: 'canvas', label: `${label} on the canvas` },
   }
 }
 
@@ -191,12 +238,28 @@ export function fixedPreviewForTarget(
 ): CanvasDropPreview {
   const viewportRect = viewport.getBoundingClientRect()
   const scale = viewport.offsetWidth > 0 ? viewportRect.width / viewport.offsetWidth : 1
+  // A drop among a flow container's children is a LINE at the exact index —
+  // outlining the whole container says "into this box", not "here".
+  if (target.gap) {
+    const { rect, axis } = target.gap
+    return {
+      left: viewportRect.left + rect.left * scale,
+      top: viewportRect.top + rect.top * scale,
+      width: rect.width * scale,
+      height: rect.height * scale,
+      position: 'gap',
+      axis,
+      label,
+    }
+  }
   return {
     left: viewportRect.left + target.rect.left * scale,
     top: viewportRect.top + target.rect.top * scale,
     width: target.rect.width * scale,
     height: target.rect.height * scale,
     position: target.position,
+    // The line beside a sibling stands along the axis the siblings flow on.
+    ...(target.position === 'inside' ? {} : { axis: target.axis, ...(target.reversed ? { reversed: true } : {}) }),
     label,
   }
 }

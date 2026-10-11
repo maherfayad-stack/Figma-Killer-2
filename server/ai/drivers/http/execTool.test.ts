@@ -32,9 +32,10 @@ function serverTool(options: { gated: boolean; onRun: () => void }): AiTool {
     name: options.gated ? 'studio_apply_edits' : 'studio_list_pages',
     scope: 'shared',
     execution: 'server',
+    sideEffects: options.gated ? 'write' : 'none',
     description: 'test',
     inputSchema: Type.Object({}),
-    ...(options.gated ? { mutates: true, requiredCapabilities: ['studio.write' as const] } : {}),
+    ...(options.gated ? { requiresWrite: true, requiredCapabilities: ['studio.write' as const] } : {}),
     handler: async () => {
       options.onRun()
       return { pages: [] }
@@ -88,7 +89,8 @@ describe('executeAiTool with an unresolved capability set', () => {
       name: 'studio_upload_asset',
       scope: 'site',
       execution: 'bridge',
-      mutates: true,
+      sideEffects: 'write',
+      requiresWrite: true,
       requiredCapabilities: ['studio.write'],
       description: 'test',
       inputSchema: Type.Object({}),

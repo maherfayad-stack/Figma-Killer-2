@@ -48,7 +48,7 @@
  * `variantStore.ts` owns the disk half.
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { COMPOSITION_RULES, LAYOUT_ARCHETYPES, MIN_TYPE_HIERARCHY_RATIO, type LayoutArchetype } from './compositionAudit'
+import { APP_CHROME_RULE, archetypesFor, COMPOSITION_RULES, MIN_TYPE_HIERARCHY_RATIO, type ArchetypeSurface, type LayoutArchetype } from './compositionAudit'
 import { DEFAULT_DESIGN_POLICY, DESIGN_POLICIES, type DesignPolicy } from './designPolicy'
 import type { ProjectTokenIndex, SizeTokenEntry } from './projectTokenIndex'
 
@@ -62,6 +62,22 @@ export type VariantDensity = (typeof VARIANT_DENSITIES)[number]
 
 /** The multiplier each density applies to the project's spacing base. WHOLE multiples only: `off-scale-spacing` grades every padding/margin/gap against the project's base, so a 1.5x step would hand every variant a rhythm its own quality check then flags. */
 const DENSITY_MULTIPLIER: Readonly<Record<VariantDensity, number>> = { compact: 1, regular: 2, airy: 3 }
+
+/**
+ * AI-12 — how the screen spends colour, the axis that keeps three variants
+ * from being three tints of one palette. Assigned without replacement, like
+ * density. Every strategy is expressible in any project's own tokens: it is a
+ * decision about WHERE the accent and the surface tones go, not new colours.
+ */
+export const VARIANT_COLOR_STRATEGIES = ['tonal', 'high-contrast', 'accent-led'] as const
+export type VariantColorStrategy = (typeof VARIANT_COLOR_STRATEGIES)[number]
+
+/** The directive sentence for each colour strategy. */
+const COLOR_STRATEGY_TEXT: Readonly<Record<VariantColorStrategy, string>> = {
+  tonal: 'tonal — surfaces step through three or four tones of one neutral family, hierarchy comes from tone rather than lines, and the accent appears exactly once',
+  'high-contrast': 'high-contrast — near-black on near-white (or the reverse), hierarchy carried by type weight and size, the accent kept for the single primary action',
+  'accent-led': 'accent-led — the accent carries one whole band (the header or the hero) with on-accent text that passes AA, and every other surface stays neutral',
+}
 
 /** Corner language, bucketed by px so it can be matched against whatever radius tokens the project actually declares. */
 export const VARIANT_RADIUS_FAMILIES = ['sharp', 'soft', 'round', 'pill'] as const
@@ -158,6 +174,10 @@ export const VariantStyleSeedSchema = Type.Object({
   accentHex: Type.Optional(Type.String()),
   /** A13 — the archetype ids this variant's screen is composed from, top to bottom. The axis that makes A/B/C differ in STRUCTURE rather than only in tokens. */
   archetypes: Type.Array(Type.String()),
+  /** AI-12 — which archetype pool the sequence came from: a web page or a mobile app screen. Optional because sets recorded before it existed have none (they are all `web`). */
+  surface: Type.Optional(Type.Union([Type.Literal('web'), Type.Literal('app')])),
+  /** AI-12 — how the screen spends colour. Optional for the same reason. */
+  colorStrategy: Type.Optional(Type.Union(VARIANT_COLOR_STRATEGIES.map((c) => Type.Literal(c)))),
   /** The design policy this seed was generated under. Recorded because a `free` seed may carry values the project declares no token for — a reader that did not know the policy would read those as a generator bug. */
   designPolicy: Type.Union(DESIGN_POLICIES_LITERALS),
 })
@@ -279,6 +299,13 @@ export interface GenerateVariantSeedsOptions {
   readonly brief: string
   /** The page name to suffix, e.g. `Home`. */
   readonly baseName: string
+  /**
+   * AI-12 — a web page or a mobile app screen: which archetype pool the
+   * sequences are drawn from, and whether the directive carries the app
+   * chrome rule. Resolved by the caller from the project's recorded platform
+   * or its frame widths (`studio_plan_variants`). Defaults to `web`.
+   */
+  readonly surface?: ArchetypeSurface
   readonly count: number
   readonly rngSeed: number
 }
@@ -294,6 +321,7 @@ export interface GenerateVariantSeedsOptions {
  */
 export function generateVariantSeeds(options: GenerateVariantSeedsOptions): VariantSeed[] {
   const { tokens, brief, baseName, rngSeed } = options
+  const surface: ArchetypeSurface = options.surface ?? 'web'
   const designPolicy = options.designPolicy ?? DEFAULT_DESIGN_POLICY
   const free = designPolicy === 'free'
   const count = Math.max(1, Math.min(options.count, MAX_VARIANTS_PER_SET))
@@ -349,7 +377,12 @@ export function generateVariantSeeds(options: GenerateVariantSeedsOptions): Vari
   // a different order: A might be hero → feature grid → pricing where B is
   // split → testimonial band → footer. This is the axis that makes the three
   // screens structurally different rather than three tints of one screen.
-  const archetypeOrder = shuffled(LAYOUT_ARCHETYPES, rng)
+  const archetypeOrder = shuffled(archetypesFor(surface), rng)
+
+  // Axis 6 (AI-12) — colour strategy, without replacement. Drawn AFTER every
+  // pre-existing axis so a recorded rngSeed still reproduces the same
+  // densities, radii, accents and sequences it always did.
+  const colorStrategies = takeCycling(shuffled(VARIANT_COLOR_STRATEGIES, rng), count)
 
   const seeds: VariantSeed[] = []
   for (let i = 0; i < count; i += 1) {
@@ -417,6 +450,8 @@ export function generateVariantSeeds(options: GenerateVariantSeedsOptions): Vari
       ...(radiusToken ? { radiusPx: radiusToken.px, radiusToken: radiusToken.name } : {}),
       ...(accent ? { accentToken: accent.name, accentHex: accent.hex } : {}),
       archetypes: archetypes.map((a) => a.id),
+      surface,
+      colorStrategy: colorStrategies[i] ?? 'tonal',
       designPolicy,
     }
 
@@ -479,6 +514,7 @@ export function renderVariantDirective(
       ``,
       `Compose the screen out of these bands, in this order. The order is part of the variant — it is what makes this screen structurally different from the others, so do not reorder it, merge two bands, or add a fourth.`,
       ...archetypes.map((archetype, index) => `${index + 1}. ${archetype.label} — ${archetype.brief}`),
+      ...(style.surface === 'app' ? [``, `This is a mobile app screen. ${APP_CHROME_RULE}`] : []),
       ``,
       `The rules that make a screen read as designed rather than as rendered:`,
       ...COMPOSITION_RULES.map((rule) => `- ${rule}`),
@@ -496,6 +532,7 @@ export function renderVariantDirective(
     `- Spacing step: ${spacingNote}. That is the SMALLEST gap allowed on this screen; every margin, padding and gap is a whole multiple of it. This is the axis that makes ${style.density} read as ${style.density} — do not tighten it back up because a section looks empty.`,
     `- Corners: ${radius}.`,
     `- Accent: ${accent}. One accent, used for what matters most on the screen — not spread across every element.`,
+    ...(style.colorStrategy ? [`- Colour strategy: ${COLOR_STRATEGY_TEXT[style.colorStrategy]}.`] : []),
     ...composition,
     ``,
     `Two rules that make this a variant rather than a copy: do not look at what the other variants are doing, and do not change the brief to suit the seed. Differences between variants come from the seed above; everything the brief asks for must appear in all of them.`,

@@ -17,7 +17,7 @@ import { handlePublicFormRequest } from './forms/handler'
 import { isRuntimePackagePath, tryServeRuntimePackage } from './publish/runtime/packageServer'
 import { jsonResponse } from './http'
 import { binaryResponse } from './binary'
-import { hardenUploadResponse, serveAdminApp, serveStaticFile } from './static'
+import { hardenUploadResponse, inertFileResponse, serveAdminApp, serveStaticFile } from './static'
 import { readStaticAsset } from './publish/staticArtefact'
 import { serveSiteCss } from './siteCss'
 import { mediaStorageRegistry } from '@core/plugins/mediaStorageRegistry'
@@ -276,12 +276,12 @@ async function tryServeRuntimeAsset(req: Request, runtime: ServerRuntime, _url: 
   if (runtime.uploadsDir) {
     const bytes = await readStaticAsset(runtime.uploadsDir, pathname)
     if (bytes) {
-      return binaryResponse(bytes, {
+      return inertIfDocument(binaryResponse(bytes, {
         headers: {
           'content-type': contentTypeForAssetPath(pathname),
           'cache-control': 'public, max-age=31536000, immutable',
         },
-      })
+      }))
     }
   }
 
@@ -289,12 +289,23 @@ async function tryServeRuntimeAsset(req: Request, runtime: ServerRuntime, _url: 
   // failed). The live renderer keeps working off these.
   const runtimeAsset = await getPublishedRuntimeAsset(runtime.db, pathname)
   if (!runtimeAsset) return null
-  return binaryResponse(runtimeAsset.bytes, {
+  return inertIfDocument(binaryResponse(runtimeAsset.bytes, {
     headers: {
       'content-type': runtimeAsset.contentType,
       'cache-control': 'public, max-age=31536000, immutable',
     },
-  })
+  }))
+}
+
+/**
+ * A published code asset that is an SVG or HTML document gets `INERT_FILE_CSP`
+ * (`static.ts`): it is site content served on Studio's own origin, and opened
+ * directly it would otherwise run script there. Scripts, styles and fonts are
+ * loaded, never navigated to, so they are left as they are.
+ */
+function inertIfDocument(response: Response): Response {
+  const mime = (response.headers.get('content-type') ?? '').split(';', 1)[0]!.trim().toLowerCase()
+  return mime === 'image/svg+xml' || mime === 'text/html' || mime === 'application/xhtml+xml' ? inertFileResponse(response) : response
 }
 
 /** Derive a response content-type for a baked static asset from its extension. */

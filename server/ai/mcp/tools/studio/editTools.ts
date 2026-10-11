@@ -22,9 +22,9 @@
  * (`swapComponentInstance`). All five are real codemods now — none of this
  * tool's verbs return a stub.
  */
-import { join } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
-import { toolRefusal } from '@core/ai'
+import { SourceFingerprintSchema, type SourceFingerprintExpectations } from '@core/page-tree'
+import { toolRefusal, type ToolRefusal } from '@core/ai'
 import {
   resizeFrame,
   type Board,
@@ -40,14 +40,17 @@ import {
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import {
-  applyStudioEditBatchLocked,
+  applyStudioEditBatch,
   StudioEditSchema,
   studioEditLocation,
   type StudioEdit,
 } from '../../../../handlers/studioWriteback'
 import { pushStudioLiveReload } from './liveReloadPush'
 import { touchedFilesToPageIds } from './touchedPageIds'
-import { readBoardsFile, writeBoardsFile } from '../../../../handlers/studio/boardFrames'
+import { readBoardsFile, writeBoardsFile } from '../../../../handlers/studio/boardGeometry'
+import { withProjectWriteLock } from '../../../../handlers/studio/projectWriteLock'
+import { AgentWriteRefusedError, runAgentSourceEdits } from './agentWriteSupport'
+import { resolveAgentFilePath } from '../../../../handlers/studio/agentFileAccess'
 
 const DirField = Type.Optional(
   Type.String({ description: 'Absolute project directory. Defaults to the project currently open in Studio — omit it unless you deliberately mean a DIFFERENT project than the one this conversation is about.' }),
@@ -64,6 +67,11 @@ const ApplyEditsInputSchema = Type.Object(
       description: 'A batch of typed source edits — same shape POST /admin/api/studio/save accepts (kind: prop|text|style|class|literal|tag|asset|detach|swap|insert|delete|move|css).',
       minItems: 1,
     }),
+    expect: Type.Optional(
+      Type.Record(Type.String(), SourceFingerprintSchema, {
+        description: 'Optional identity guard: { [nodeId]: sourceFingerprint } for any node id an edit names (nodeId, anchorNodeId, parentNodeId, siblingNodeIds), using the sourceFingerprint studio_find_nodes returned. An edit whose position now holds a different element refuses with reason element-moved and writes nothing, instead of landing on whatever slid into that line after the file changed.',
+      }),
+    ),
   },
   { additionalProperties: false },
 )
@@ -88,15 +96,21 @@ const applyEditsTool: AiTool = {
   name: 'studio_apply_edits',
   scope: 'shared',
   execution: 'server',
-  mutates: true,
+  sideEffects: 'write',
+  requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
-    'Apply a batch of typed source edits to a project\'s .tsx/.jsx files in one call — the same engine POST /admin/api/studio/save runs (ordering bottom-to-top so a line-shifting codemod can\'t invalidate a pending edit\'s location, dedup, per-edit try/catch, shared-component detection). Seven VALUE kinds rewrite a single existing span in place, normally preserving line count: prop, text, style, class, literal, tag, asset. detach and swap also rewrite an existing element, but by inlining or retargeting a WHOLE component body — typically many lines, so treat them as line-count-changing too. Three STRUCTURAL kinds change WHERE markup is and always change the file\'s line count: insert (add a new element — nodeId is the CONTAINER\'s location, not the new element\'s; optional anchorNodeId/position places it beside an existing sibling, default appends as the last child. WITH importSpecifier, name is a component to import from that exact specifier, e.g. "Button" from "@acme/ui"; WITH designSystemImport:true (and no importSpecifier), name is a component of Studio\'s BUILT-IN design system — the server computes the relative path to the project\'s own design-system/ folder for the file being written, so never write that path yourself; WITHOUT either, name is a plain intrinsic HTML tag — "div", "span", "button", "img" — which needs no import, and is how you build the layout structure a screen is made of. children builds the element\'s CONTENT in the SAME call: either a literal text string (<span>Sign in</span>) or an ARRAY OF NESTED ELEMENTS, each with the same { name, importSpecifier?, designSystemImport?, props?, children? } shape, nested arbitrarily deep. BUILD A WHOLE SCREEN IN ONE insert — do NOT insert one element per call and re-read between them: every insert shifts node ids, so per-element inserts cost a re-parse each and a ~30-node screen becomes ~30 sequential round trips (measured: over twenty minutes for one screen). A nested subtree needs no intermediate node ids at all, because nothing reads one between the levels. All imports for the whole tree are written in one pass, and the whole subtree is validated before any byte is written, so a bad grandchild refuses without leaving a half-built element), delete (remove an element — the response\'s removed/prunedImports carry exactly what it took out), move (reorder — nodeId is the element being moved, anchorNodeId + position name where it goes). The batch also accepts duplicate, wrap, group, ungroup, transplant, styled, and reinsert-source (a delete\'s own undo: nodeId is the PARENT, index the child position, text the bytes a previous delete returned in removed — text must be JSX content and nothing else, a statement or an unmatched closing tag is refused by name). The class kind ({ kind: "class", nodeId, add: string[], remove: string[] }) adds/removes whole class TOKENS in an element\'s className attribute — add/remove are class NAMES (e.g. "bg-blue-600"), never the editor\'s own "sc-<hash>" style-rule ids. This is how a Tailwind (or any plain-string-class) element edit reaches disk: swapping bg-red-500 for bg-blue-600 on an element is a class edit, not a css edit — css below only ever targets a hand-authored stylesheet rule. class writes a bare className="a b" literal, an expression-wrapped string/template (className={"a b"} or className={`a b`}), and cn(...)/clsx(...)/classNames(...)/classnames(...) calls (ADD merges into a literal argument or appends one; REMOVE strips the token from every literal argument, best-effort — a token reachable only through a non-literal argument, e.g. isActive && "active", is left alone); it creates the attribute when absent. It refuses by name rather than guessing: css-module-binding (className={styles.card}, a default import from a *.module.css file — edit the class\'s own declaration in the stylesheet instead), template-dynamic (removing a token from a dynamic template literal, e.g. `a ${x}` — a token might live in the interpolated part, which can\'t be read from source text; ADD to the same shape still works, appended to the static head), unsupported-call (a function call other than cn/clsx/classNames/classnames), spread-attribute (className={...spread}), and unsupported-expression (a bare identifier, ternary, or any other shape). A request where every add token is already present and every remove token already absent is a silent no-op, not a refusal. One more kind, css, writes a declaration into a stylesheet directly (file + selector + property + value) rather than a JSX node — the rule is CREATED at the end of the file when the selector is not there yet, so this both edits existing styles and authors new ones (e.g. filling in the .module.css studio_create_page scaffolds next to each page). The file must already exist and be hand-authored CSS: a compiled/generated stylesheet is refused by name. This is the "make big changes at once" tool — for a single detach/swap, studio_codemod\'s richer per-call result is usually more convenient. Returns { written, skipped, shifted, sharedComponents, refusals, pageIds } — `shifted: true` means a write changed a touched file\'s line count, so any node id you decoded BEFORE this call is now stale (re-call studio_list_pages/studio_find_nodes) — this is GUARANTEED for insert/delete/move and LIKELY for detach/swap, never for the seven single-line value kinds; `sharedComponents: true` means an edit landed on an inlined component instance, route chrome, or a detach/swap; `refusals` lists WHY any detach/swap/delete/insert/move/css/class edit specifically didn\'t write, with a named reason rather than a generic skip; `pageIds` names the pages this batch touched — if the caller has the project open in a browser tab, its canvas is nudged to re-read exactly those pages (best-effort; nothing to do if no browser is open). Requires studio.write.',
+    'Apply a batch of typed source edits to a project\'s .tsx/.jsx files and stylesheets in one call. Value kinds rewrite one span in place: prop, text, style, class, literal, tag, asset. Structural kinds: insert (nodeId is the CONTAINER; children nests a subtree, siblings adds a run after it — ONE insert per screen, not one per element), delete, move, duplicate, wrap, group, ungroup, transplant, styled, detach, swap. css writes a declaration into a hand-authored stylesheet, creating a missing rule. Returns { written, skipped, shifted, sharedComponents, refusals, fingerprints, retargeted, pageIds }: shifted:true means node ids read before this call are stale. refusals name each reason (binding-overwrite, element-moved, css-module-binding, template-dynamic, spread-attribute, unsupported-expression, …). Rules per kind: MCP resource studio://tool-notes. Requires studio.write.',
   inputSchema: ApplyEditsInputSchema,
   handler: async (input, ctx: ToolContext) => {
-    const { dir: dirInput, edits } = input as { dir?: string; edits: StudioEdit[] }
+    const { dir: dirInput, edits, expect } = input as { dir?: string; edits: StudioEdit[]; expect?: SourceFingerprintExpectations }
     const dir = resolveToolProjectDir(dirInput, ctx)
-    const { touchedFiles, ...result } = await applyStudioEditBatchLocked(dir, edits)
+    // Every file the engine writes goes through the agent write gate, the
+    // content check and the turn checkpoint BEFORE it lands, and into the
+    // turn log after (`runAgentSourceEdits`) — the same steps as the file tools.
+    const { touchedFiles, ...result } = await withProjectWriteLock(dir, () =>
+      runAgentSourceEdits(dir, ctx, () => applyStudioEditBatch(dir, edits, expect ?? {})),
+    )
     const pageIds = touchedFilesToPageIds(dir, touchedFiles)
     // Best-effort — a failed/absent bridge never affects this tool's own result.
     pushStudioLiveReload(ctx.userId, { dir, pageIds })
@@ -124,7 +138,8 @@ const setFramesTool: AiTool = {
   name: 'studio_set_frames',
   scope: 'shared',
   execution: 'server',
-  mutates: true,
+  sideEffects: 'write',
+  requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
     'Bulk-resize board frames in .studio/boards.json: set width/height on the given pageIds, or on every frame across every board when pageIds is omitted ("set all the pages to a certain width at once"). A pageId with no existing frame on any board is skipped, not created — pair with studio_list_pages first. Returns { resized, missing, pageIds } — pageIds names every frame actually resized; if the caller has the project open in a browser tab, its board geometry is nudged to re-read from disk (best-effort). Requires studio.write.',
@@ -204,10 +219,11 @@ const codemodTool: AiTool = {
   name: 'studio_codemod',
   scope: 'shared',
   execution: 'server',
-  mutates: true,
+  sideEffects: 'write',
+  requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
-    'Dispatch one of the higher-level structural codemods by verb: "rename-tag" (setJsxTagName), "set-import-specifier" (setImportSpecifier), "detach" (inline a LOCAL component\'s own JSX at its call site — refuses with a specific reason for hooks/data-driven/undestructured-props bodies or a package component; see detachComponentInstance), "extract-component" (the detach-refusal escape hatch — duplicate the component under a fresh name and repoint just this call site; see extractComponentCopy), "swap" (retarget an instance at a DIFFERENT component, diffing props — requires newComponentName/newComponentSource/newComponentFile; see swapComponentInstance). detach/swap/extract-component return { ok:false, code:"codemod-refused", reason, message, remedy, retryable:false } on refusal — never a silent no-op — and { ok:true, shifted:true, pageIds, ... } on success (node ids downstream of this file are now stale — re-call studio_list_pages/studio_find_nodes; pageIds names the touched page and, if the caller has the project open in a browser tab, nudges its canvas to re-read it, best-effort). Requires studio.write.',
+    'Run one structural codemod by verb: rename-tag, set-import-specifier, detach (inline a local component\'s JSX at its call site), extract-component (copy the component under a new name and repoint this call site — the way out when detach refuses), swap (retarget the instance at another component; needs newComponentName, newComponentSource and newComponentFile). A refusal is { ok:false, code:\'codemod-refused\', reason, message, remedy, retryable:false }, never a silent no-op; reason names the cause (hooks, a data-driven body, undestructured props, a package component). Success is { ok:true, shifted:true, pageIds, … }: node ids in that file are now stale, so re-read them. Requires studio.write.',
   inputSchema: CodemodInputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, verb, nodeId, tag, specifier, newComponentName, newComponentSource, newComponentFile } = input as {
@@ -230,63 +246,88 @@ const codemodTool: AiTool = {
         { remedy: 'Edit the source the node is generated FROM — the component or the array literal — not the generated node.' },
       )
     }
-    const target = { file: join(dir, ...loc.rel.split('/')), line: loc.line, col: loc.col }
+    // The call site goes to the agent write gate BEFORE any verb runs: the
+    // hook below refuses each write as it comes, but `extract-component` makes
+    // its new file first, and a refusal on the call site after that would
+    // leave the copy behind.
+    const callSite = resolveAgentFilePath(dir, loc.rel, 'write')
+    if (!callSite.ok) return toolRefusal(callSite.code, callSite.message, { remedy: callSite.remedy })
+    const target = { file: callSite.abs, line: loc.line, col: loc.col }
     // Every verb's call-site target is this one file — computed once, reused
     // by whichever branch below actually succeeds. Pushed only on a WRITTEN
     // outcome (never on a `missing-param`/`refused` early return).
     const pageIds = touchedFilesToPageIds(dir, [target.file])
-    const notifyReload = (): void => pushStudioLiveReload(ctx.userId, { dir, pageIds })
 
-    if (verb === 'rename-tag') {
-      if (!tag) return toolRefusal('missing-param', 'rename-tag requires "tag".')
-      setJsxTagName({ ...target, tag })
-      notifyReload()
-      return { ok: true, verb, nodeId, pageIds }
-    }
-
-    if (verb === 'set-import-specifier') {
-      if (!specifier) return toolRefusal('missing-param', 'set-import-specifier requires "specifier".')
-      setImportSpecifier({ ...target, specifier })
-      notifyReload()
-      return { ok: true, verb, nodeId, pageIds }
-    }
-
-    if (verb === 'detach') {
-      const result = detachComponentInstance({ ...target, workspaceRoot: dir })
-      if (!result.ok) return codemodRefusal(result.refusal)
-      notifyReload()
-      return { ok: true, verb, nodeId, shifted: true, branchNote: result.branchNote, pageIds }
-    }
-
-    if (verb === 'extract-component') {
-      const result = extractComponentCopy({ ...target, workspaceRoot: dir })
-      if (!result.ok) return codemodRefusal(result.refusal)
-      notifyReload()
-      return { ok: true, verb, nodeId, shifted: true, newFile: result.newFile, newComponentName: result.newComponentName, pageIds }
-    }
-
-    if (verb === 'swap') {
-      if (!newComponentName || !newComponentSource || !newComponentFile) {
-        return toolRefusal('missing-param', 'swap requires newComponentName, newComponentSource, and newComponentFile.')
+    const outcome = await runCodemodAsAgent(dir, ctx, (): CodemodOutcome => {
+      if (verb === 'rename-tag') {
+        if (!tag) return toolRefusal('missing-param', 'rename-tag requires "tag".')
+        setJsxTagName({ ...target, tag })
+        return { ok: true, verb, nodeId, pageIds }
       }
-      const result = swapComponentInstance({ ...target, workspaceRoot: dir, newComponentName, newComponentSource, newComponentFile })
-      if (!result.ok) return codemodRefusal(result.refusal)
-      notifyReload()
-      return {
-        ok: true,
-        verb,
-        nodeId,
-        shifted: true,
-        removedProps: result.removedProps,
-        unfilledRequiredProps: result.unfilledRequiredProps,
-        pageIds,
-      }
-    }
 
-    return toolRefusal('unknown-verb', `Unknown codemod verb: ${verb}`, {
-      remedy: 'Use one of: rename-tag, set-import-specifier, detach, extract-component, swap.',
+      if (verb === 'set-import-specifier') {
+        if (!specifier) return toolRefusal('missing-param', 'set-import-specifier requires "specifier".')
+        setImportSpecifier({ ...target, specifier })
+        return { ok: true, verb, nodeId, pageIds }
+      }
+
+      if (verb === 'detach') {
+        const result = detachComponentInstance({ ...target, workspaceRoot: dir })
+        if (!result.ok) return codemodRefusal(result.refusal)
+        return { ok: true, verb, nodeId, shifted: true, branchNote: result.branchNote, pageIds }
+      }
+
+      if (verb === 'extract-component') {
+        const result = extractComponentCopy({ ...target, workspaceRoot: dir })
+        if (!result.ok) return codemodRefusal(result.refusal)
+        return { ok: true, verb, nodeId, shifted: true, newFile: result.newFile, newComponentName: result.newComponentName, pageIds }
+      }
+
+      if (verb === 'swap') {
+        if (!newComponentName || !newComponentSource || !newComponentFile) {
+          return toolRefusal('missing-param', 'swap requires newComponentName, newComponentSource, and newComponentFile.')
+        }
+        const result = swapComponentInstance({ ...target, workspaceRoot: dir, newComponentName, newComponentSource, newComponentFile })
+        if (!result.ok) return codemodRefusal(result.refusal)
+        return {
+          ok: true,
+          verb,
+          nodeId,
+          shifted: true,
+          removedProps: result.removedProps,
+          unfilledRequiredProps: result.unfilledRequiredProps,
+          pageIds,
+        }
+      }
+
+      return toolRefusal('unknown-verb', `Unknown codemod verb: ${verb}`, {
+        remedy: 'Use one of: rename-tag, set-import-specifier, detach, extract-component, swap.',
+      })
     })
+    // Best-effort, and only on a WRITTEN outcome — a failed/absent bridge never affects this tool's own result.
+    if (outcome.ok) pushStudioLiveReload(ctx.userId, { dir, pageIds })
+    return outcome
   },
+}
+
+type CodemodOutcome = ToolRefusal | ({ ok: true } & Record<string, unknown>)
+
+/**
+ * Run one codemod the way every agent source write runs: under the project
+ * write lock, with each write it makes shown first to the agent write gate,
+ * the content check and the turn checkpoint, and recorded in the turn log
+ * after (`runAgentSourceEdits`). A write those steps refuse never lands, and
+ * the refusal is the tool's answer.
+ */
+function runCodemodAsAgent(dir: string, ctx: ToolContext, run: () => CodemodOutcome): Promise<CodemodOutcome> {
+  return withProjectWriteLock(dir, () => {
+    try {
+      return runAgentSourceEdits(dir, ctx, run)
+    } catch (err) {
+      if (err instanceof AgentWriteRefusedError) return err.refusal
+      throw err
+    }
+  })
 }
 
 export const studioEditMcpTools: AiTool[] = [applyEditsTool, setFramesTool, codemodTool]

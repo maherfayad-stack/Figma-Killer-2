@@ -43,7 +43,7 @@
  * creates the stylesheet; the animation is writable from then on.
  */
 import type { Page, StyleRule } from '@core/page-tree'
-import { keyframesNameFromSelector, readKeyframeSteps, type KeyframeStep } from '@core/css-codemods'
+import { keyframesNameFromSelector, readKeyframeSteps, type KeyframeStep } from '@core/css-codemods/browser'
 import {
   buildClassPageIndex,
   getStudioStyleRuleSources,
@@ -227,10 +227,6 @@ export function collectKeyframesEdits(
         continue
       }
       const destination = resolveCssInsertDestination(rule, pageIndex)
-      if (!destination.ok) {
-        unmapped.push({ label, reason: destination.message })
-        continue
-      }
       if (destination.kind !== 'existing') {
         unmapped.push({ label, reason: NO_STYLESHEET_FOR_KEYFRAMES })
         continue

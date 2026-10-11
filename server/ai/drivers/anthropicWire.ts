@@ -68,11 +68,22 @@ export interface AnthropicToolResultBlock {
   cache_control?: AnthropicCacheControl
 }
 
+/**
+ * A thinking block the model produced, sent back verbatim within the same
+ * tool loop (extended thinking requires it). Never carries `cache_control`:
+ * the API refuses a marker on one, so {@link withMessageCacheBreakpoints}
+ * skips past them.
+ */
+export type AnthropicThinkingBlock =
+  | { type: 'thinking'; thinking: string; signature: string }
+  | { type: 'redacted_thinking'; data: string }
+
 export type AnthropicContentBlock =
   | AnthropicTextBlock
   | AnthropicImageBlock
   | AnthropicToolUseBlock
   | AnthropicToolResultBlock
+  | AnthropicThinkingBlock
 
 export interface AnthropicMessage {
   role: 'user' | 'assistant'
@@ -113,14 +124,16 @@ export function withMessageCacheBreakpoints(
   const out = messages.slice()
   for (const index of indices) {
     const message = out[index]
-    const last = message?.content[message.content.length - 1]
-    // An empty-content message carries nothing to mark; skip rather than
+    if (!message) continue
+    // The last block that can carry a marker. An empty-content message (or
+    // one holding only thinking) carries nothing to mark; skip rather than
     // synthesise a block, which would change what the model reads.
-    if (!message || !last) continue
-    out[index] = {
-      role: message.role,
-      content: [...message.content.slice(0, -1), { ...last, cache_control: { type: 'ephemeral' } }],
-    }
+    const at = message.content.findLastIndex((block) => block.type !== 'thinking' && block.type !== 'redacted_thinking')
+    const last = message.content[at]
+    if (at < 0 || !last || last.type === 'thinking' || last.type === 'redacted_thinking') continue
+    const content = message.content.slice()
+    content[at] = { ...last, cache_control: { type: 'ephemeral' } }
+    out[index] = { role: message.role, content }
   }
   return out
 }

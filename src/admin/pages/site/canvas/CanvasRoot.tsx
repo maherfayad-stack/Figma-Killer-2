@@ -3,7 +3,7 @@
  *
  * Responsibilities:
  * - Captures all wheel, drag, and pinch gestures via useCanvas
- * - Manages the CanvasSelectionContext (click → selectNode, hover → hoverNode)
+ * - Manages the CanvasSelectionContext (click → selectNode, hover → `canvasHover.ts`)
  * - Registers the canvas keyboard SCOPES on the editor key ladder
  *   (`editorKeyDispatcher.ts`); the one listener lives in `SitePage`
  * - Delegates the rename modal to useCanvasRenameDialog + CanvasRenameDialog
@@ -18,7 +18,8 @@
  * - NodeRenderer components memo'd per node — only affected nodes re-render on edit
  *
  * Accessibility:
- * - tabIndex={0} so the canvas receives keyboard events
+ * - tabIndex={0} so the canvas can hold focus — Tab / ⇧Tab cycle siblings only
+ *   while focus is on the canvas (`isCanvasKeyboardSurface`)
  * - aria-label for screen reader orientation
  * - prefers-reduced-motion: CSS transitions are disabled for users who opt out
  */
@@ -29,10 +30,11 @@ import type { Breakpoint } from '@core/page-tree'
 import { registry } from '@core/module-engine'
 import { getNodeDisplayName } from '@core/page-tree'
 import { ErrorBoundary } from '@ui/components/ErrorBoundary'
+import { ChromeBoundary } from '@site/ui/ChromeBoundary'
 import { useCanvas } from '@site/hooks/useCanvas'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import { CanvasTransformLayer } from './CanvasTransformLayer'
-import { resolveCanvasFocusTarget } from './canvasFocusTarget'
+import { resolveCanvasFocusTarget, startCanvasFraming } from './canvasFocusTarget'
 import { CanvasLiveSurface } from './CanvasLiveSurface'
 import { AgentSnapshotFrame } from './AgentSnapshotFrame'
 import { useRuntimeScriptBuild } from './useRuntimeScriptBuild'
@@ -40,6 +42,7 @@ import { CanvasNotch } from './CanvasNotch'
 import { CanvasModeToggle } from './CanvasModeToggle'
 import { CanvasContextSelector } from './CanvasContextSelector'
 import { CanvasRulers } from './CanvasRulers/CanvasRulers'
+import { BoardDrawPagePicker } from './BoardFramesLayer/BoardDrawPagePicker'
 import { CanvasSelectionContext, CanvasViewportActionsContext } from './CanvasContexts'
 // Class / user-stylesheet injectors are now mounted per breakpoint frame
 // (inside each iframe's document) by `IframeFrameSurface`. CanvasRoot no
@@ -52,7 +55,9 @@ import { CanvasRenameDialog } from './CanvasRenameDialog'
 import { useCanvasRenameDialog } from './useCanvasRenameDialog'
 import { CanvasLayerContextMenu } from './CanvasLayerContextMenu'
 import { useCanvasLayerContextMenu } from './useCanvasLayerContextMenu'
+import { useCanvasClipboardBridge } from './useCanvasClipboardBridge'
 import { useCanvasNodeShortcuts } from './useCanvasNodeShortcuts'
+import { useCanvasNodeArrowKeys } from './useCanvasNodeArrowKeys'
 import { useEditorHistoryShortcuts } from './useEditorHistoryShortcuts'
 import { useCanvasSelectionKeyboard } from './useCanvasSelectionKeyboard'
 import { useBoardAnnotationKeyboard } from './useBoardAnnotationKeyboard'
@@ -62,6 +67,12 @@ import { usePrototypePlayback } from './usePrototypePlayback'
 import { useCanvasNodeInteraction } from './useCanvasNodeInteraction'
 import { useBoardFrameNudge } from './useBoardFrameNudge'
 import { useCanvasToolShortcuts } from './useCanvasToolShortcuts'
+import { useCanvasLayerCommandKeys } from './useCanvasLayerCommandKeys'
+import { useCreatedNodeFollowUp } from './createdNodeFollowUp'
+import { useBoardOpenCamera } from './useBoardOpenCamera'
+import { isArmedTool } from './canvasDrawTool'
+import { loadArmedToolChunk, warmArmedToolChunk } from './canvasArmedToolChunk'
+import { SelectionStyleCommandHost } from './SelectionStyleCommandHost'
 import { useCanvasHandTool } from './useCanvasHandTool'
 import { useCanvasFileDrop } from './useCanvasFileDrop'
 import { CanvasFileDropHint } from './CanvasFileDropHint'
@@ -70,22 +81,22 @@ import { useCopyAsPngShortcut } from './useCopyAsPngShortcut'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
 import { useEditorPreference, readEditorSelectPreference } from '@site/preferences/editorPreferences'
 import { useTemplatePreviewContext } from '@site/hooks/useTemplatePreviewContext'
+import { useEmptyBoardDeselect } from './useEmptyBoardDeselect'
 import styles from './CanvasRoot.module.css'
 
 const VisualComponentModeControl = lazy(() =>
   import('./VisualComponentModeControl').then((module) => ({ default: module.default })),
 )
 
+// P5-E / P5-D — mounted only while a draw tool or the pen is armed. Fetched when the editor is idle (`warmArmedToolChunk`), so the first press after arming draws.
+const CanvasArmedToolLayer = lazy(() => loadArmedToolChunk().then((m) => ({ default: m.CanvasArmedToolLayer })))
 const TemplateModeControl = lazy(() =>
   import('./TemplateModeControl').then((module) => ({ default: module.default })),
 )
 
 /**
- * Stable empty-breakpoints sentinel — used as the `?? fallback` in the
- * breakpoints selector so that `Object.is(prev, next)` returns `true` when
- * the site is null, preventing useSyncExternalStore from entering an
- * infinite re-render loop.  Never use `?? []` inline in a useEditorStore
- * selector — a new array literal has a new identity on every call.
+ * Stable `?? fallback` for the breakpoints selector: an inline `?? []` is a new
+ * array per call, and useSyncExternalStore would re-render forever on it.
  */
 const EMPTY_BREAKPOINTS: Breakpoint[] = []
 
@@ -119,8 +130,8 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   const isLive = canvasView === 'live'
   const runScripts = useEditorStore((s) => s.runScripts)
   // selectedNodeId is needed here for canvas-level keyboard shortcuts (Delete, Ctrl+D).
-  // hoveredNodeId is NOT subscribed here — NodeRenderer handles its own hover state
-  // via per-node selectors to avoid O(N) re-renders on every hover event (#495).
+  // Hover is not store state at all (`canvasHover.ts`, P2-I) — nothing here
+  // re-renders on a pointer crossing.
   const selectedNodeId = useEditorStore((s) => s.selectedNodeId)
   const clearSelection = useEditorStore((s) => s.clearSelection)
   const deleteNode = useEditorStore((s) => s.deleteNode)
@@ -188,13 +199,13 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // returning from preview.
   const {
     bind,
-    handleKeyDown: canvasKeyDown,
     panBy,
     centerOnBreakpointFrame,
     transformRef,
     zoomToFit,
     zoomToFill,
     zoomToSelection,
+    applyCamera,
   } = useCanvas({
     canvasRootRef: canvasRef,
     transformLayerRef,
@@ -208,11 +219,14 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // mode: `ZoomControls` reads `null` as "nothing to fit" and disables the
   // control rather than letting it no-op. See `canvasViewportCommands.ts`.
   const setCanvasViewportCommands = useEditorStore((s) => s.setCanvasViewportCommands)
+  useEffect(() => (isLive ? undefined : warmArmedToolChunk()), [isLive])
   useEffect(() => {
     if (isLive) return
     setCanvasViewportCommands({ zoomToFit, zoomToFill, zoomToSelection })
     return () => setCanvasViewportCommands(null)
   }, [isLive, zoomToFit, zoomToFill, zoomToSelection, setCanvasViewportCommands])
+
+  useBoardOpenCamera({ enabled: !isLive, zoomToFit, applyCamera })
 
   // ─── Focus the chosen viewport frame: loading skeleton → page → switches ───
   // The canvas always mounts at pan (0,0), which shows the left-most (mobile)
@@ -264,27 +278,21 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
     })
     if (!shouldCenter) return
 
-    let timerId: ReturnType<typeof setTimeout> | undefined
-    let attempts = 0
-    const MAX_ATTEMPTS = 200 // ~3s at 16ms — frames are ready well within this
-    const RETRY_MS = 16
-    const tryCenter = () => {
+    return startCanvasFraming({
       // Loaded: the resolved active breakpoint. Skeleton (no page yet): the
       // preferred default breakpoint, which is what active WILL resolve to.
-      const targetId = canvasPageId
-        ? useEditorStore.getState().activeBreakpointId
-        : readEditorSelectPreference('defaultBreakpoint')
-      if (centerOnBreakpointFrame(targetId)) {
-        // Record only on success: a failed attempt must not consume the key, or
-        // a board whose frames were not laid out yet would never get framed.
+      center: () =>
+        centerOnBreakpointFrame(
+          canvasPageId ? useEditorStore.getState().activeBreakpointId : readEditorSelectPreference('defaultBreakpoint'),
+        ),
+      readView: () => {
+        const { zoom, panX, panY } = useEditorStore.getState()
+        return `${zoom}:${panX}:${panY}`
+      },
+      settle: () => {
         lastCenteredKeyRef.current = centerKey
-        return
-      }
-      if (attempts++ >= MAX_ATTEMPTS) return
-      timerId = setTimeout(tryCenter, RETRY_MS)
-    }
-    tryCenter()
-    return () => clearTimeout(timerId)
+      },
+    })
   }, [canvasPageId, activeBoardId, isLive, centerOnBreakpointFrame])
 
   // ─── Modals & overlays ─────────────────────────────────────────────────────
@@ -308,9 +316,9 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // ─── Selection context value ───────────────────────────────────────────────
   // What a click / hover / right-click / double-click on a canvas node does
   // lives in its own module — see `useCanvasNodeInteraction`. Context carries
-  // only these stable callbacks; selectedNodeId/hoveredNodeId are intentionally
-  // excluded (Perf fix — Contribution #495), so each NodeRenderer subscribes to
-  // its own boolean and only the 2 affected nodes re-render per event.
+  // only these stable callbacks; the selection is intentionally excluded (Perf
+  // fix — Contribution #495), so each NodeRenderer reads its own keyed boolean
+  // (`canvasNodeSelection.ts`) and only the affected nodes re-render per event.
   const selectionContextValue = useCanvasNodeInteraction({
     editable,
     isLive,
@@ -334,12 +342,11 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // sequence WITHIN a rung, which matters for `node` (the selection ladder is
   // consulted before the node shortcuts) and for `board` (no overlaps).
   //
-  // The canvas div's own `onKeyDown` is now just `useCanvas`'s viewport keys
-  // (+ / − / ⇧1 / ⇧2). Delete and ⌘D used to be there too, which is why this
-  // file also carried a SECOND, `document`-level Delete listener with its own
-  // focus test — a React handler on the canvas div stops firing the moment the
-  // user clicks the Properties panel. Both are gone; `useCanvasNodeShortcuts`
-  // is the one owner, scoped by intent.
+  // The canvas div has no `onKeyDown` at all any more. Delete and ⌘D used to
+  // be there, and later the viewport keys (+ / − / ⇧1 / ⇧2) — a React handler
+  // on the canvas div stops firing the moment the user clicks the Properties
+  // panel. Every one of them is a scope on the ladder now; the viewport keys
+  // are registered by `useCanvas` itself (`useCanvasViewportKeys`, P2-B).
 
   // `prototype-link` — Delete removes the selected connector, Escape deselects
   // it. Above `node` so a Delete pressed with BOTH a connector and an element
@@ -361,6 +368,16 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
 
   // `node`, second handler — Delete / ⌘D / ⌘C / ⌘X / ⌘V / ⌥↑ / ⌥↓.
   useCanvasNodeShortcuts({ editable, isLive, requestDeleteNode })
+
+  // P5-A — ⌘V is answered by the `paste` event that keystroke raises (the
+  // node shortcuts above only arm it), heard here in the editor's own
+  // document and by `useIframeEventForwarding` in every frame's.
+  useCanvasClipboardBridge({ editable: editable && permissions.canEditStructure, isLive })
+
+  // `node`, third handler — bare arrows move the selected layer (P2-C): an
+  // absolute one nudges, a layout child reorders. Above `board`, so a node
+  // selection never nudges a frame.
+  useCanvasNodeArrowKeys(editable, isLive)
 
   // `board` — ⌘/Ctrl+A selects every frame on the active board (board-02).
   useBoardSelectAllShortcut(editable, isLive)
@@ -385,9 +402,14 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // arrow-nudge undo burst, for annotations as well as frames.
   useBoardFrameNudge(editable, isLive)
 
-  // `board` — bare-letter tool keys: T (text), F (container inside), C
-  // (comment mode), H (hand), K (scale), R / O (box beside the selection).
+  // `board` — bare-letter tool keys: V, C (comment), H (hand), K (scale), and
+  // R / O / T / F arming a draw tool (P5-E, `CanvasDrawToolLayer` below).
   useCanvasToolShortcuts(editable, isLive)
+  // `node` — P5-E's align / front-back / flex / copy-paste-style keys; and the
+  // follow-up that opens a drawn text or lays out a ⇧A group once it lands.
+  useCanvasLayerCommandKeys(editable, isLive)
+  useCreatedNodeFollowUp()
+  const armedDrawTool = useEditorStore((s) => (isArmedTool(s.canvasTool) ? s.canvasTool : null))
 
   // Not a key scope: mirrors the latched hand tool onto the shared space-pan
   // flag, which is what every pan-aware surface already reads.
@@ -405,27 +427,13 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // notch being hidden and stands down during an inline edit.
   useEditorHistoryShortcuts()
 
-  // ─── Canvas background click → deselect ───────────────────────────────────
-  //
-  // `board-02`: this handler sits on the OUTERMOST canvas div, so a click
-  // anywhere inside it — including one that started on a frame header, a
-  // node, a sticky note — still bubbles here as a native 'click' event
-  // (nothing downstream stops it). Only a click that lands on genuine empty
-  // background is a "deselect" gesture: either directly on this outer div
-  // (studio board mode — `.transformLayer` has no intrinsic size there, see
-  // `BoardFramesLayer`'s module doc, so board background clicks always
-  // target this div) or directly on the transform layer itself (CMS mode —
-  // the gap/padding around `BreakpointFrame`s inside the flex-laid-out
-  // transform layer, which DOES have real size there). Anything deeper
-  // (a frame header, a node, a sticky note) is excluded — without this,
-  // EVERY frame-header click's own trailing 'click' event reached here a
-  // tick after `BoardFrameView`'s pointerdown handler selected it,
-  // immediately clearing the selection it had just made.
-  const handleCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target !== e.currentTarget && e.target !== transformLayerRef.current) return
-    contextMenu.close()
-    useEditorStore.getState().clearAllSelections()
-  }
+  // ─── Empty-board click → deselect everything ─────────────────────────────
+  // Only a click that lands on the empty board itself (`isEmptyBoardTarget`:
+  // this outer div, or the transform layer where it has a size) — never one
+  // that ends a press on a frame header, a node or a note (`board-02`) — and
+  // only a CLICK, decided from its press: a Space-pan across the board is not
+  // one. See `useEmptyBoardDeselect`.
+  useEmptyBoardDeselect({ canvasRootRef: canvasRef, enabled: !isLive, onDeselect: () => contextMenu.close() })
 
   // Resolve the active breakpoint object for the live surface (which wants the
   // full Breakpoint, not just the id, to read .width).
@@ -451,8 +459,6 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // (+ / − / ⇧1 / ⇧2), which are legitimately focus-scoped — they act on the
   // thing under the cursor's canvas, not on a selection. Every selection-acting
   // shortcut moved to the editor key ladder (see the scopes block above).
-  const onCanvasKeyDown = isLive ? undefined : canvasKeyDown
-  const onCanvasClick = isLive ? undefined : handleCanvasClick
 
   return (
     <CanvasViewportActionsContext.Provider value={viewportActionsContextValue}>
@@ -469,20 +475,12 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
           data-vc-mode={activeDocument?.kind === 'visualComponent' ? 'true' : undefined}
           className={styles.canvas}
           // Spread gesture handlers from useGesture (wheel, drag, pinch)
-          // FIRST, before the explicit handlers below — @use-gesture's own
-          // `drag` action binds its OWN `onKeyDown`/`onKeyUp` (arrow-key
-          // accessible dragging; see `keyDown`/`keyUp` in
-          // `@use-gesture/core`'s pointer action). JSX prop spreading is
-          // last-one-wins, so spreading this AFTER `onKeyDown` (as it used
-          // to be) silently discarded EVERY canvas keyboard shortcut —
-          // Escape, +/-, Ctrl+C/X/V/D — to that library-internal handler.
-          // `board-02` found this while diagnosing why Escape didn't clear
-          // a frame selection. Only the viewport keys ride this prop now
-          // (`K1`), but the spread order still matters for them. Empty in
-          // preview mode — see gestureBindings above.
+          // FIRST, before the explicit handlers below. `board-02` once lost
+          // every canvas shortcut to the library's own arrow-key drag
+          // `onKeyDown` riding this spread; `useCanvas` now turns that off
+          // (`drag.keys: false`) and the canvas div binds no key handler of
+          // its own. Empty in preview mode — see gestureBindings above.
           {...gestureBindings}
-          onKeyDown={onCanvasKeyDown}
-          onClick={onCanvasClick}
           onFocus={() => setFocusedPanel('canvas')}
         >
           {/* CSS for prefers-reduced-motion — no transitions for accessibility */}
@@ -525,7 +523,6 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
             also hosts inline breakpoint switcher buttons, and the toggle owns
             the "Run scripts" switch + its build status / Refresh. */}
           <CanvasModeToggle
-            peek={isLive}
             scriptStatus={scriptBuild.status}
             onRefreshScripts={scriptBuild.refresh}
           />
@@ -544,7 +541,9 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
               already uses to decide whether to render `BoardFramesLayer`
               instead of ordinary breakpoint frames (`selectActiveBoard`). */}
           {!isLive && !activeBoardId && rightSidebarExpanded && (permissions.canEditStyle || permissions.canEditStructure) && (
-            <CanvasContextSelector />
+            <ChromeBoundary id="canvas-context-selector">
+              <CanvasContextSelector />
+            </ChromeBoundary>
           )}
 
           {/*
@@ -553,10 +552,14 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
           active page id means switching pages naturally clears stuck
           errors — the user navigates away from a broken module preview
           rather than getting "stuck" on the failure screen.
+          ERR-13 — and it retries ONCE on its own before showing that screen:
+          the commonest canvas crash is a render racing a resync that is about
+          to replace the page it read, and the retry renders the settled page.
         */}
           <ErrorBoundary
             location="canvas"
             resetKeys={[canvasPage?.id ?? null, activeDocument?.kind ?? null, canvasView]}
+            autoRetry={1}
           >
             {isLive ? (
               <CanvasLiveSurface
@@ -590,7 +593,9 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
               chrome tier as CanvasNotch/CanvasModeToggle. Design mode only: a
               live frame has no pan/zoom to rule against. */}
           {!isLive && editable && (
-            <CanvasRulers canvasRootRef={canvasRef} transformRef={transformRef} />
+            <ChromeBoundary id="canvas-rulers">
+              <CanvasRulers canvasRootRef={canvasRef} transformRef={transformRef} />
+            </ChromeBoundary>
           )}
 
           {/* D2 G15 — where an OS file drag's cursor chip is painted while the
@@ -602,6 +607,18 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
             <CanvasFileDropHint layerRef={fileDrop.hintLayerRef} />
           )}
 
+          {/* P5-E — an armed draw tool's surface (IX-12), and the host that
+              runs keyboard / menu / handle style writes through the
+              inspector's own write target (renders nothing while idle). */}
+          {!isLive && editable && armedDrawTool && (
+            <Suspense fallback={null}>
+              <CanvasArmedToolLayer tool={armedDrawTool} transformLayerRef={transformLayerRef} />
+            </Suspense>
+          )}
+          {!isLive && editable && <SelectionStyleCommandHost />}
+          {/* P5-F / IX-13 — the board tool's page picker, at the release point. */}
+          {!isLive && editable && <BoardDrawPagePicker />}
+
           {/*
           Plugin-registered canvas overlays. Mounted after the transform
           layer so they paint above rendered nodes. Only active in design
@@ -611,23 +628,29 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
           {!isLive && editable && <PluginCanvasOverlayLayer />}
 
           {/* Studio-mode untransformed chrome: notes/comment toolbar + the armed comment tool. */}
-          {!isLive && editable && <LazyStudioCanvasChrome transformLayerRef={transformLayerRef} />}
+          {!isLive && editable && (
+            <ChromeBoundary id="studio-canvas-chrome">
+              <LazyStudioCanvasChrome transformLayerRef={transformLayerRef} />
+            </ChromeBoundary>
+          )}
 
           {!isLive && editable && contextMenu.position && (
-            <CanvasLayerContextMenu
-              position={contextMenu.position}
-              onClose={contextMenu.close}
-              actions={{
-                requestDeleteNode,
-                duplicateNode,
-                openRenameDialog: renameDialog.open,
-                wrapNode,
-                copyNode,
-                cutNode,
-                pasteNode,
-                pasteHtml: handlePasteHtml,
-              }}
-            />
+            <ChromeBoundary id="canvas-context-menu">
+              <CanvasLayerContextMenu
+                position={contextMenu.position}
+                onClose={contextMenu.close}
+                actions={{
+                  requestDeleteNode,
+                  duplicateNode,
+                  openRenameDialog: renameDialog.open,
+                  wrapNode,
+                  copyNode,
+                  cutNode,
+                  pasteNode,
+                  pasteHtml: handlePasteHtml,
+                }}
+              />
+            </ChromeBoundary>
           )}
 
           {!isLive && editable && renameDialog.state && (

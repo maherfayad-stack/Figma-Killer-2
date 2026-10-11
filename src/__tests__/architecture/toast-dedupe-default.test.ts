@@ -86,7 +86,7 @@ describe('toasts de-duplicate by default', () => {
     if (!resolver) {
       throw new Error(
         '[toast dedupe] toastBus.ts no longer declares resolveCollapseKey(). The default ' +
-          'collapse identity must stay in one named function — see STUDIO-FIGMA-FEEL-PLAN.md Z1.',
+          'collapse identity must stay in one named function — see docs/reference/architecture-tests.md (toast-dedupe-default).',
       )
     }
     for (const part of ['input.kind', 'input.title', 'input.body']) {

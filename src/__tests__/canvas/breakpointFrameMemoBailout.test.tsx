@@ -49,7 +49,6 @@ function resetStore() {
     boardSnapGuides: [],
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     _historyPast: [],
     _historyFuture: [],
     canUndo: false,
@@ -97,8 +96,7 @@ describe('BreakpointFrame memo() bailout inside a board frame', () => {
             hasManualHeight={false}
             isActive={false}
             isSelected={false}
-            isOnScreen
-            isMounted
+            isLive
           />
         </>
       )
@@ -155,8 +153,7 @@ describe('BreakpointFrame memo() bailout inside a board frame', () => {
             hasManualHeight={false}
             isActive={false}
             isSelected={false}
-            isOnScreen
-            isMounted
+            isLive
           />
         </>
       )

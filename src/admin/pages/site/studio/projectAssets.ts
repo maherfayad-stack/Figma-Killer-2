@@ -7,8 +7,10 @@
  * Cached per workspace dir behind one in-flight promise, the same shape
  * `iconCatalog.ts` uses and for the same reason: this is a directory walk of
  * the user's repo, fetched when a picker first opens, never per keystroke.
- * Unlike the icon catalog the payload is only paths (no markup), so it stays
- * small even for an asset-heavy repo.
+ * Unlike the icon catalog the payload is only paths and URLs (no markup), so
+ * it stays small even for an asset-heavy repo. Each entry carries the URL the
+ * project's own site serves the file at, computed by the server's one rule
+ * (`assetSiteUrl.ts`); nothing here derives a URL from a path.
  *
  * Never throws: a failed fetch resolves to an empty list (logged), which the
  * picker renders as "no images in this project" — never as a broken panel.
@@ -16,18 +18,36 @@
  */
 import { useEffect, useState } from 'react'
 import { apiRequest } from '@core/http'
-import { Type } from '@core/utils/typeboxHelpers'
+import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { studioWriteDir } from './studioWorkspaceDir'
-import { assetPathForCssUrl } from '@site/panels/PropertiesPanel/imageFillValue'
+
+/**
+ * The authenticated route that serves one project image/font/media file to the
+ * admin (`studioAsset.ts`): by workspace `path` here, by site-root `url` for a
+ * design frame (`canvasProjectAssetUrl.ts`).
+ */
+export const STUDIO_ASSET_ROUTE = '/admin/api/studio/asset'
+
+const ProjectImageAssetSchema = Type.Object({
+  /** Workspace-relative POSIX path — what the admin preview endpoint reads. */
+  relPath: Type.String(),
+  /** The URL the project's own site serves the file at, e.g. `/hero.png`. `null` when nothing serves it. */
+  src: Type.Union([Type.String(), Type.Null()]),
+  /** True when a production build serves `src` too; false means "dev server only". */
+  buildSafe: Type.Boolean(),
+})
+export type ProjectImageAsset = Static<typeof ProjectImageAssetSchema>
 
 const ProjectAssetsResponseSchema = Type.Object({
-  /** Workspace-relative POSIX paths, sorted, capped server-side. */
-  assets: Type.Array(Type.String()),
+  /** Sorted by path, capped server-side. */
+  assets: Type.Array(ProjectImageAssetSchema),
 })
 
-let cache: { dir: string | undefined; promise: Promise<string[]> } | null = null
+let cache: { dir: string | undefined; promise: Promise<ProjectImageAsset[]> } | null = null
+/** Every mounted {@link useProjectImageAssets}, told when the list went stale. */
+const invalidationListeners = new Set<() => void>()
 
-export function fetchProjectImageAssets(): Promise<string[]> {
+export function fetchProjectImageAssets(): Promise<ProjectImageAsset[]> {
   const dir = studioWriteDir() ?? undefined
   if (cache && cache.dir === dir) return cache.promise
   const promise = apiRequest('/admin/api/studio/project-assets', {
@@ -43,9 +63,14 @@ export function fetchProjectImageAssets(): Promise<string[]> {
   return promise
 }
 
-/** Drops the cached list — call after an upload lands a new file. */
+/**
+ * Drops the cached list — call after an upload lands a new file (or a prune
+ * deletes some). Every mounted {@link useProjectImageAssets} refetches, so the
+ * Assets panel's Images section shows an image the moment a drop landed it.
+ */
 export function invalidateProjectImageAssets(): void {
   cache = null
+  for (const listener of invalidationListeners) listener()
 }
 
 /**
@@ -54,14 +79,30 @@ export function invalidateProjectImageAssets(): void {
  *
  * This is deliberately NOT the value written into the user's source. What
  * goes in their stylesheet has to be what THEIR build resolves
- * (`imageFillValue.ts`); this endpoint only exists because the admin app is
+ * (the server's `assetSiteUrl.ts`); this endpoint only exists because the admin app is
  * served from a different origin than the project's own dev server and has no
  * other way to see a file on disk.
  */
 export function studioAssetPreviewUrl(relPath: string): string {
   const dir = studioWriteDir()
   const dirParam = dir ? `dir=${encodeURIComponent(dir)}&` : ''
-  return `/admin/api/studio/asset?${dirParam}path=${encodeURIComponent(relPath)}`
+  return `${STUDIO_ASSET_ROUTE}?${dirParam}path=${encodeURIComponent(relPath)}`
+}
+
+/**
+ * The inverse of {@link studioAssetPreviewUrl}: the workspace-relative path a
+ * preview URL names, or `null` for any other URL. An import-bound image's
+ * `src` reaches the board as exactly this URL (the server rewrites its
+ * `studio-asset:` sentinel, `rewriteStudioAssetSentinels`), so this is how the
+ * canvas reads WHICH file an `<img src={hero}>` imports — for an image drop's
+ * replace, which lands the new file beside it and records the old path as its
+ * undo.
+ */
+export function studioAssetRelFromPreviewUrl(url: string): string | null {
+  const question = url.indexOf('?')
+  if (question === -1 || url.slice(0, question) !== STUDIO_ASSET_ROUTE) return null
+  const path = new URLSearchParams(url.slice(question + 1)).get('path')
+  return path && path.length > 0 ? path : null
 }
 
 /**
@@ -70,16 +111,23 @@ export function studioAssetPreviewUrl(relPath: string): string {
  * is in flight so a caller can tell "still loading" from "this project has no
  * images" — those render differently in the picker.
  */
-export function useProjectImageAssets(): readonly string[] | null {
-  const [assets, setAssets] = useState<readonly string[] | null>(null)
+export function useProjectImageAssets(): readonly ProjectImageAsset[] | null {
+  const [assets, setAssets] = useState<readonly ProjectImageAsset[] | null>(null)
 
   useEffect(() => {
     let live = true
-    fetchProjectImageAssets().then((next) => {
-      if (live) setAssets(next)
-    })
+    const load = () => {
+      fetchProjectImageAssets().then((next) => {
+        if (live) setAssets(next)
+      })
+    }
+    load()
+    // The previous list stays on screen while the next one loads — a refetch
+    // must not flash the section back to "Loading…".
+    invalidationListeners.add(load)
     return () => {
       live = false
+      invalidationListeners.delete(load)
     }
   }, [])
 
@@ -92,19 +140,20 @@ export function useProjectImageAssets(): readonly string[] | null {
  *
  * An absolute/`data:`/`blob:` URL is already loadable as-is. A project-
  * relative one is not — the admin is a different origin from the user's dev
- * server — so it is matched against the KNOWN asset list and served through
- * the authenticated read endpoint. A path that matches nothing returns
+ * server — so it is matched against the KNOWN asset list (by the `src` the
+ * server reported for each file, never by re-deriving a path from the URL)
+ * and served through the authenticated read endpoint. A path that matches nothing returns
  * `undefined`: the row shows a neutral placeholder instead of a broken image,
  * which is the honest rendering of "this file is not in your project".
  */
 export function imageFillPreviewSrc(
   cssUrl: string,
-  assets: readonly string[] | null,
+  assets: readonly ProjectImageAsset[] | null,
 ): string | undefined {
   const trimmed = cssUrl.trim()
   if (trimmed === '') return undefined
   if (/^(?:https?:|data:|blob:)/i.test(trimmed)) return trimmed
   if (assets === null) return undefined
-  const relPath = assetPathForCssUrl(trimmed, assets)
-  return relPath === undefined ? undefined : studioAssetPreviewUrl(relPath)
+  const asset = assets.find((candidate) => candidate.src === trimmed)
+  return asset === undefined ? undefined : studioAssetPreviewUrl(asset.relPath)
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, type RefObject } from 'react'
 import type { CanvasTransform } from '@site/hooks/useCanvas'
+import { onCanvasViewportTransform } from '../canvasViewportActivity'
 import { paintRuler, RULER_THICKNESS_PX } from './rulerPaint'
 
 interface UseRulerCanvasPaintParams {
@@ -11,29 +12,40 @@ interface UseRulerCanvasPaintParams {
 }
 
 /**
- * Repaints a ruler `<canvas>` on a persistent `requestAnimationFrame` loop —
- * the same idiom `BreakpointSelectionOverlay`'s RAF tick already uses for a
- * live-transform-driven overlay (see `canvas-internals.md`'s "Selection and
- * geometry"). Polling is required, not optional: `transformRef` is mutated
- * in place with no change event (see its doc in `useCanvas.ts`), so there is
- * no subscription to hang a repaint off. The loop itself is cheap — it does
- * nothing but compare a handful of numbers — and only repaints the canvas
- * (the actual work) when zoom/pan/length/origin actually changed since the
- * last tick.
+ * Paints a ruler `<canvas>` whenever what it shows can have changed — and at
+ * no other time (audit PERF-4).
+ *
+ * This used to be a permanent `requestAnimationFrame` loop, one per ruler, on
+ * the grounds that `transformRef` is mutated in place with no change event.
+ * That stopped being true when `canvasViewportActivity.ts` (S4) started
+ * publishing every transform write; the loop outlived its reason and kept an
+ * idle board from ever letting the main thread sleep — two 60 Hz loops, each
+ * reading `offsetWidth`/`offsetHeight` (a forced layout after any
+ * parent-document write) every frame, forever. Measured on the 40-frame
+ * corpus: ~121 rAF calls per second with nobody touching the board.
+ *
+ * What can change the picture, and what now repaints it:
+ *
+ *   - the pan/zoom transform → `onCanvasViewportTransform`, synchronously in
+ *     the same task as the write, so a ruler never lags the board by a frame;
+ *   - the ruler's on-screen length → a `ResizeObserver` on the length source,
+ *     which also caches the length so a paint never forces a layout read;
+ *   - the origin (the active board changed) → this effect re-runs;
+ *   - the device pixel ratio (browser zoom, a monitor change) → the window
+ *     `resize` that accompanies it.
+ *
+ * Each paint still compares against the last painted inputs and skips an
+ * identical one. Nothing polls.
  *
  * OWNS its `<canvas>` ref rather than accepting one as a parameter — the
  * caller (`RulerH`/`RulerV`) attaches the RETURNED ref to its `<canvas>`
  * element. An earlier version took `canvasElRef` as a hook argument and
  * wrote `canvasEl.width`/`.height` (sizing the backing store for the
- * current DPR) inside the rAF loop; `react-compiler/react-compiler` flagged
- * that as "mutating a hook argument" — the compiler treats anything reached
- * through a destructured parameter, including a ref's `.current` value, as
- * off-limits to mutate, even though a `<canvas>` backing-store resize is
- * exactly the kind of imperative DOM work refs exist for. Creating the ref
- * with `useRef` INSIDE this hook (not passing one in) means the mutated
- * value is no longer reachable from a parameter at all, which resolves the
- * compiler's diagnostic without an eslint-disable / "use no memo" escape
- * hatch — this is genuinely compilable, correctly-scoped imperative code.
+ * current DPR); `react-compiler/react-compiler` flagged that as "mutating a
+ * hook argument" — the compiler treats anything reached through a
+ * destructured parameter, including a ref's `.current` value, as off-limits
+ * to mutate. Creating the ref with `useRef` INSIDE this hook means the
+ * mutated value is no longer reachable from a parameter at all.
  */
 export function useRulerCanvasPaint({
   axis,
@@ -45,17 +57,14 @@ export function useRulerCanvasPaint({
   const lastPaintedRef = useRef({ zoom: NaN, pan: NaN, length: NaN, origin: NaN, dpr: NaN })
 
   useEffect(() => {
-    let rafId = requestAnimationFrame(tick)
+    const lengthSource = lengthSourceRef.current
+    const readLength = () => (lengthSource ? (axis === 'x' ? lengthSource.offsetWidth : lengthSource.offsetHeight) : 0)
+    // Cached: refreshed only by the ResizeObserver below, never read per paint.
+    let length = readLength()
 
-    function tick() {
-      rafId = requestAnimationFrame(tick)
-
+    function paint() {
       const canvasEl = canvasElRef.current
-      const lengthSource = lengthSourceRef.current
-      if (!canvasEl || !lengthSource) return
-
-      const length = axis === 'x' ? lengthSource.offsetWidth : lengthSource.offsetHeight
-      if (length <= 0) return
+      if (!canvasEl || length <= 0) return
 
       const transform = transformRef.current
       const pan = axis === 'x' ? transform.panX : transform.panY
@@ -102,7 +111,23 @@ export function useRulerCanvasPaint({
       })
     }
 
-    return () => cancelAnimationFrame(rafId)
+    paint()
+    const stopFollowing = onCanvasViewportTransform(paint)
+    const resizeObserver =
+      lengthSource && typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(() => {
+            length = readLength()
+            paint()
+          })
+        : null
+    if (lengthSource) resizeObserver?.observe(lengthSource)
+    window.addEventListener('resize', paint)
+
+    return () => {
+      stopFollowing()
+      resizeObserver?.disconnect()
+      window.removeEventListener('resize', paint)
+    }
   }, [axis, lengthSourceRef, transformRef, originBoard])
 
   return canvasElRef

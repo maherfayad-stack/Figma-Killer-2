@@ -21,8 +21,9 @@
  * order) completely unparsed. `UserStylesheetInjector.tsx` already proves the
  * exact pattern needed for hand-authored CMS stylesheets (raw CSS string →
  * `resolveViewportUnitsForCanvas` → `rewritePrefersColorScheme` → `@layer
- * user-authored`) — this applies that same, already-working mechanism to a
- * new CSS source, not a new mechanism.
+ * user-authored`, now one call: `canvasFrameCss`, which also resolves the
+ * project's site-root `url()`s, P5-B2) — this applies that same,
+ * already-working mechanism to a new CSS source, not a new mechanism.
  *
  * `ProjectCssInjector`'s vendor CSS is exempt from this bug entirely — it is
  * injected raw as `mc-vendor` and never round-trips through the CSSOM at
@@ -64,9 +65,9 @@
 import { useContext, useEffect, useSyncExternalStore } from 'react'
 import { getStudioAuthoredCss, subscribeStudioAuthoredCss } from '@site/studio/fsCodemodAdapter'
 import { CanvasFrameAdapterContext } from './CanvasContexts'
-import { resolveViewportUnitsForCanvas, type CanvasViewport } from './resolveViewportUnits'
+import type { CanvasViewport } from './resolveViewportUnits'
 import { CANVAS_CSS_LAYER_ORDER, USER_AUTHORED_LAYER } from './canvasCssLayers'
-import { rewritePrefersColorScheme } from './darkSchemeCssTransform'
+import { canvasFrameCss } from './canvasFrameCss'
 
 const STYLE_TAG_ID = 'mc-authored'
 
@@ -85,8 +86,7 @@ export function AuthoredCssInjector({ viewport }: AuthoredCssInjectorProps = {})
 
   useEffect(() => {
     if (!adapter) return
-    const viewportResolved = viewport ? resolveViewportUnitsForCanvas(authoredCss, viewport) : authoredCss
-    const css = rewritePrefersColorScheme(viewportResolved)
+    const css = canvasFrameCss(authoredCss, viewport)
     adapter.applyOverlay(
       STYLE_TAG_ID,
       css

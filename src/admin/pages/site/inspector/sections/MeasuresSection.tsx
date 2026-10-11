@@ -26,7 +26,7 @@
  *
  * `width`, `height`, `minWidth`, `maxWidth`, `minHeight`, `maxHeight`,
  * `aspectRatio`, `boxSizing` (ported from `SizeSection.tsx`, reused
- * UNCHANGED — its Fixed/Hug/Fill picker already reuses `elementSizing.ts`'s
+ * UNCHANGED — its Fixed/Hug/Fill picker already reuses `elementSizingRules.ts`'s
  * resolution and already disables Hug/Fill with a reason when there's no
  * real parent layout, which is the honest substance behind Penpot's FLEX
  * ELEMENT hug/fill buttons; this design does not duplicate that control into
@@ -138,6 +138,8 @@ import { RotationRow } from '../../panels/PropertiesPanel/RotationRow'
 import { ZIndexSettingsRow } from '../../panels/PropertiesPanel/ZIndexSettingsRow'
 import { SizeSection } from '../../panels/PropertiesPanel/SizeSection'
 import { useSizingParentLayout } from '../../panels/PropertiesPanel/useSizingParentLayout'
+import { useParentPlacementKind } from '../../panels/PropertiesPanel/useParentPlacementKind'
+import { FreeFrameChip, IgnoreAutoLayoutRow } from './IgnoreAutoLayoutRow'
 import { resolveLayoutMode } from './LayoutSection/layoutMode'
 import { RadiusCluster } from './RadiusCluster'
 import layoutStyles from '../../panels/PropertiesPanel/PropertyControlChrome.module.css'
@@ -185,6 +187,7 @@ export function MeasuresSection() {
   const commit = useInspectorCommit(model)
   const sizingParent = useSizingParentLayout()
   const spacingTokens = useSpacingTokens()
+  const placementKind = useParentPlacementKind(sizingParent.layout)
 
   const { selectedNodeId, selectedNode, assignedClassRules, activeContextId, computedValues } = model
 
@@ -413,11 +416,21 @@ export function MeasuresSection() {
         // identical reason.
         <div className={styles.flexElementSectionBreakout}>
           <Section title="Flex element" forceOpen flush>
-            <div className={styles.flexElementBody}>{positionRow}</div>
+            <div className={styles.flexElementBody}>
+              <IgnoreAutoLayoutRow
+                nodeId={selectedNodeId}
+                ignoring={usesConstraints}
+                locked={lockedProperties.has('position')}
+              />
+              {positionRow}
+            </div>
           </Section>
         </div>
       ) : (
-        positionRow
+        <>
+          {placementKind === 'free-frame' && <FreeFrameChip />}
+          {positionRow}
+        </>
       )}
       <div className={styles.rotationRadiusRow}>
         <div className={styles.rotationCellWrap}>

@@ -32,7 +32,7 @@
  */
 import { join } from 'node:path'
 import { Node, Project, SyntaxKind, type JsxExpression, type SourceFile } from 'ts-morph'
-import { listWorkspaceFiles } from '@core/page-parser'
+import { isDesignSystemPath, listWorkspaceFiles } from '@core/page-parser'
 import { readTextCapped } from './cappedFileRead'
 import { toLf } from '@core/utils/lineEndings'
 import { resolveAppRoot } from './appRoot'
@@ -281,13 +281,39 @@ function scanFile(absPath: string, relPath: string, out: HardcodedString[]): voi
  * Every copy-shaped string literal in the project's own `.tsx`/`.jsx` files,
  * sorted by file then position. Never throws — an unreadable or unparsable
  * file contributes nothing.
+ *
+ * `design-system/` is Studio's own vendored copy of the built-in design
+ * system (`isDesignSystemPath` — the same check `componentSources.ts` uses to
+ * keep it a black box), not the user's pages. A library's copy is not this
+ * project's copy to translate: extracting it would rewrite files that ship
+ * with every DS-backed project the same way, and the panel would offer to
+ * localise Studio's own component source rather than the user's screens. See
+ * {@link countDesignSystemHardcodedStrings} for the one place that folder's
+ * strings ARE counted — for a single summary line, never for extraction.
  */
 export function findHardcodedStrings(dir: string): HardcodedString[] {
+  return scanWorkspace(dir, (relFile) => !isDesignSystemPath(relFile))
+}
+
+/**
+ * How many copy-shaped strings sit inside the project's vendored
+ * `design-system/` folder — used ONLY to report one honest summary line
+ * ("N strings across the design system are left to the library") next to the
+ * extraction result. Never feeds extraction: {@link findHardcodedStrings}
+ * already excludes this folder, and nothing here reverses that.
+ */
+export function countDesignSystemHardcodedStrings(dir: string): number {
+  return scanWorkspace(dir, (relFile) => isDesignSystemPath(relFile)).length
+}
+
+/** The scan both exports above share — one walk, one filter argument, so "which files count" is answered in exactly one place. */
+function scanWorkspace(dir: string, include: (relFile: string) => boolean): HardcodedString[] {
   const appRootAbs = resolveAppRoot(dir)
   const out: HardcodedString[] = []
   for (const relFile of listWorkspaceFiles(appRootAbs)) {
     if (out.length >= MAX_STRINGS) break
     if (!/\.(tsx|jsx)$/.test(relFile)) continue
+    if (!include(relFile)) continue
     try {
       scanFile(join(appRootAbs, ...relFile.split('/')), relFile, out)
     } catch {

@@ -121,6 +121,25 @@ describe('addSlotPropToComponent — success, by type surface', () => {
     expect(text).not.toContain('ReactNode')
   })
 
+  it('puts the new binding in front of a `...rest` element — a rest element must be last (P5-C, shared `componentPropSignature`)', () => {
+    const file = write('components/Card.jsx', [
+      'export default function Card({ title, ...rest }) {',
+      '  return (',
+      '    <section {...rest}>',
+      '      <h1>{title}</h1>',
+      '      <footer>Static</footer>',
+      '    </section>',
+      '  )',
+      '}',
+      '',
+    ].join('\n'))
+    const loc = locateTag(read('components/Card.jsx'), 'footer')
+
+    const result = addSlotAt(file, 'default', loc.line, loc.col, 'footer')
+    expect(result.ok).toBe(true)
+    expect(read('components/Card.jsx')).toContain('{ title, footer, ...rest }')
+  })
+
   it('adds a brand-new destructured parameter (and interface, in TS) when the component takes none today', () => {
     const file = write('components/Static.tsx', [
       'export default function Static() {',
@@ -329,7 +348,7 @@ describe('addSlotPropToComponent — refusals', () => {
     expect(result.refusal.reason).toBe('unsupported-props-type')
   })
 
-  it('refuses prop-name-taken when the component already has a prop of that name', () => {
+  it('names the slot footer2 when the component already has a footer prop', () => {
     const file = write('components/Card.tsx', [
       'export default function Card({ footer }: { footer: string }) {',
       '  return <section><p>{footer}</p><footer>Static</footer></section>',
@@ -339,12 +358,17 @@ describe('addSlotPropToComponent — refusals', () => {
     const loc = locateTag(read('components/Card.tsx'), 'footer')
 
     const result = addSlotAt(file, 'default', loc.line, loc.col, 'footer')
-    expect(result.ok).toBe(false)
-    if (result.ok) return
-    expect(result.refusal.reason).toBe('prop-name-taken')
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.slotName).toBe('footer2')
+    const written = read('components/Card.tsx')
+    // The existing `footer` string prop is untouched; the new slot is the extra one.
+    expect(written).toContain('<p>{footer}</p>')
+    expect(written).toContain('<p>{footer}</p>{footer2}</section>')
+    expect(written).toContain('footer2')
   })
 
-  it('refuses prop-name-taken for "children" when the component already destructures children', () => {
+  it('names the slot children2 when the component already destructures children', () => {
     const file = write('components/Card.tsx', [
       "import type { ReactNode } from 'react'",
       'export default function Card({ children }: { children: ReactNode }) {',
@@ -355,9 +379,10 @@ describe('addSlotPropToComponent — refusals', () => {
     const loc = locateTag(read('components/Card.tsx'), 'footer')
 
     const result = addSlotAt(file, 'default', loc.line, loc.col, 'children')
-    expect(result.ok).toBe(false)
-    if (result.ok) return
-    expect(result.refusal.reason).toBe('prop-name-taken')
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.slotName).toBe('children2')
+    expect(read('components/Card.tsx')).toContain('<section>{children}{children2}</section>')
   })
 
   it('refuses not-found for a stale/renamed exportName', () => {

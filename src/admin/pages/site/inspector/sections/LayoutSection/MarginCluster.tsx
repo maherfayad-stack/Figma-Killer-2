@@ -29,6 +29,8 @@ interface MarginClusterProps {
   currentStyles: Record<string, unknown>
   tokens: ReadonlyArray<Token>
   onChange: (property: keyof CSSPropertyBag, value: string | number | undefined) => void
+  /** Patch-shaped commit — an H/V edit writes two sides as one history entry. */
+  onChangeMany: (patch: Record<string, string | number | null>) => void
   onPreview?: (patch: Partial<CSSPropertyBag>) => void
   onClearPreview?: () => void
 }
@@ -40,6 +42,7 @@ export function MarginCluster({
   currentStyles,
   tokens,
   onChange,
+  onChangeMany,
   onPreview,
   onClearPreview,
 }: MarginClusterProps) {
@@ -65,7 +68,7 @@ export function MarginCluster({
           storedStyles={storedStyles}
           currentStyles={currentStyles}
           tokens={tokens}
-          onChange={onChange}
+          onChangeMany={onChangeMany}
           onPreview={onPreview}
           onClearPreview={onClearPreview}
           data-testid="css-margin-horizontal"
@@ -79,7 +82,7 @@ export function MarginCluster({
           storedStyles={storedStyles}
           currentStyles={currentStyles}
           tokens={tokens}
-          onChange={onChange}
+          onChangeMany={onChangeMany}
           onPreview={onPreview}
           onClearPreview={onClearPreview}
           data-testid="css-margin-vertical"

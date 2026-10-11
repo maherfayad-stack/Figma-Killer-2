@@ -18,7 +18,6 @@ import {
   type PrototypeLink,
   type PrototypeTriggerKind,
 } from '@core/studio-prototype'
-import { pushToast } from '@ui/components/Toast'
 import { useEditorStore } from '@site/store/store'
 import { resolvedLinkSourceIds } from '@site/store/slices/prototypeSelectors'
 
@@ -56,27 +55,17 @@ export function ancestorChain(page: Page, nodeId: string): string[] {
 }
 
 /**
- * Apply a link, saying so when it could not move.
+ * Apply a link. A `back` with nowhere to go, or a `close` with nothing
+ * presented, does nothing at all — P3-A, the way a prototype player (Figma's
+ * included) answers it: the screen simply stays where it is, which is exactly
+ * what the person sees. It used to toast "Nowhere to go back to", a card for a
+ * tap that changed nothing.
  *
- * A `back` with nowhere to go, or a `close` with nothing presented, is a real
- * prototype bug and the player is where it should surface — so it toasts rather
- * than doing nothing and leaving the user to wonder whether the gesture landed.
- *
- * `silent` is for a press's RELEASE. Letting go of a "hold to peek" that has
- * already been dismissed some other way is not a bug anybody authored, and
- * toasting it would blame the user for lifting their finger.
+ * The gesture is still CLAIMED (`true`): it landed on a link, so it must not
+ * fall through to whatever is under it.
  */
-function applyLink(link: PrototypeLink, silent: boolean): boolean {
-  if (useEditorStore.getState().followPrototypeLink(link)) return true
-  if (silent) return true
-  pushToast({
-    kind: 'info',
-    title: link.action === 'back' ? 'Nowhere to go back to' : 'Nothing to close',
-    body:
-      link.action === 'back'
-        ? 'This is the screen the prototype started on.'
-        : 'No overlay is showing on this screen.',
-  })
+function applyLink(link: PrototypeLink): boolean {
+  useEditorStore.getState().followPrototypeLink(link)
   return true
 }
 
@@ -114,7 +103,7 @@ export function followPrototypeLinkAt(
   }
   if (!link) return null
 
-  applyLink(link, false)
+  applyLink(link)
   return link
 }
 
@@ -122,7 +111,7 @@ export function followPrototypeLinkAt(
 export function releasePrototypePress(link: PrototypeLink): void {
   const reverse = releaseActionFor(link)
   if (!reverse) return
-  applyLink(reverse, true)
+  applyLink(reverse)
 }
 
 /**
@@ -141,7 +130,7 @@ export function followPrototypeKey(key: string, candidatePageIds: readonly (stri
   for (const pageId of candidatePageIds) {
     if (!pageId) continue
     const link = linkForKey(state.prototype.links, resolved, pageId, key)
-    if (link) return applyLink(link, false)
+    if (link) return applyLink(link)
   }
   return false
 }

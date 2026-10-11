@@ -35,6 +35,15 @@
  * of the whole transform layer cancels out of both terms. Only the
  * client→frame-space conversion of the POINTER needs a fresh origin.
  *
+ * ## Bridge frames
+ *
+ * A Tier 2 frame's document is cross-origin: there is nothing to scan and no
+ * body to observe. Its candidates are asked for over the wire, once at
+ * `pointerdown` and again only when the index goes stale (a reparse under the
+ * gesture), and they arrive a round trip later — in practice long before the
+ * pointer clears the activation distance. Until they do the index is empty,
+ * which resolves exactly like a pointer over no candidate: no drop target.
+ *
  * ## What this module deliberately does not do
  *
  * It holds no React state, touches no DOM outside the two measurement calls,
@@ -43,7 +52,10 @@
  */
 import type { PageNode, NodeTree } from '@core/page-tree'
 import type { CanvasDropCandidate } from './canvasDnd'
-import { measureCanvasDropCandidates } from './canvasDomGeometry'
+import { measureCanvasDropCandidates, measureDropCandidatesThroughAdapter } from './canvasDomGeometry'
+import { listFrameAdapters } from './frameAdapter/canvasFrameAdapterRegistry'
+import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
+import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
 import type { CanvasTransform } from './math'
 
 /** A point in the parent document's client coordinate space. */
@@ -115,25 +127,81 @@ export interface FrameCandidateIndex {
    * nothing while it re-measures.
    */
   stale: boolean
+  /** Bumped per bridge-frame request, so only the newest answer is applied. */
+  measureGeneration: number
+  /** Called when a bridge frame's candidates land — see `buildFrameCandidateIndex`. */
+  onMeasured: (() => void) | null
 }
 
-/** Measure a frame's drop candidates and the client→frame-space conversion, once. */
+/**
+ * Measure a frame's drop candidates and the client→frame-space conversion, once.
+ *
+ * `onMeasured` is called when candidates land LATER than this call — a
+ * bridge frame's answer is a round trip (see `measureCandidatesInto`), so the
+ * session asks for a frame when it arrives rather than waiting for the next
+ * pointer move to notice it.
+ */
 export function buildFrameCandidateIndex(
   viewport: HTMLElement,
   tree: NodeTree<PageNode>,
   iframe: HTMLIFrameElement | null,
   transform: CanvasTransform | null,
+  onMeasured?: () => void,
 ): FrameCandidateIndex {
   const index: FrameCandidateIndex = {
-    candidates: measureCanvasDropCandidates(viewport, tree, iframe),
+    candidates: [],
     originX: 0,
     originY: 0,
     scale: 1,
     transform: transform ? { ...transform } : null,
     stale: false,
+    measureGeneration: 0,
+    onMeasured: onMeasured ?? null,
   }
+  measureCandidatesInto(index, viewport, tree, iframe)
   refreshIndexOrigin(index, viewport, transform)
   return index
+}
+
+/** The frame's adapter when it is a Tier 2 BRIDGE frame (a cross-origin document), else `null`. */
+function bridgeAdapterOf(iframe: HTMLIFrameElement | null): FrameDocumentAdapter | null {
+  if (!iframe) return null
+  const adapter = listFrameAdapters().get(iframe)
+  return adapter && !isPortalFrameAdapter(adapter) ? adapter : null
+}
+
+/**
+ * Fill `index.candidates`. A portal frame is one synchronous DOM scan. A
+ * bridge frame's document is cross-origin, so its candidates come over the
+ * wire (`measureDropCandidatesThroughAdapter`) and land a round trip later:
+ * the previous candidates stay in use until then (a drag must never show
+ * nothing while it re-measures), and an answer that a newer request has
+ * superseded is dropped.
+ */
+function measureCandidatesInto(
+  index: FrameCandidateIndex,
+  viewport: HTMLElement,
+  tree: NodeTree<PageNode>,
+  iframe: HTMLIFrameElement | null,
+): void {
+  const adapter = bridgeAdapterOf(iframe)
+  if (!adapter || !iframe) {
+    index.candidates = measureCanvasDropCandidates(viewport, tree, iframe)
+    return
+  }
+  index.measureGeneration += 1
+  const generation = index.measureGeneration
+  measureDropCandidatesThroughAdapter(adapter, viewport, iframe, tree)
+    .then((candidates) => {
+      if (index.measureGeneration !== generation) return
+      index.candidates = candidates
+      index.onMeasured?.()
+    })
+    .catch((err: unknown) => {
+      // A frame mid-reload does not answer; the drag keeps what it had and the
+      // next reflow (or the next drag) asks again.
+      console.warn('[canvasDragSession] bridge drop candidates failed:', err)
+    })
 }
 
 /**
@@ -149,7 +217,7 @@ export function refreshFrameCandidateIndex(
   transform: CanvasTransform | null,
 ): void {
   if (index.stale) {
-    index.candidates = measureCanvasDropCandidates(viewport, tree, iframe)
+    measureCandidatesInto(index, viewport, tree, iframe)
     index.stale = false
   }
   if (transformMoved(index.transform, transform)) {

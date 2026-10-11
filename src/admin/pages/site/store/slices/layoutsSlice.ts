@@ -157,7 +157,7 @@ export const createLayoutsSlice: EditorStoreSliceCreator<LayoutsSlice> = (
         pushToast({
           kind: 'warning',
           title: 'Only one content outlet',
-          body: 'This layout includes a content outlet and this document already has one.',
+          body: 'This layout includes a content outlet and this document already has one. Remove the extra outlet.',
           location: 'site-editor',
         })
         return null
@@ -187,7 +187,7 @@ export const createLayoutsSlice: EditorStoreSliceCreator<LayoutsSlice> = (
             pushToast({
               kind: 'warning',
               title: 'Circular component reference',
-              body: 'This layout contains a component that references the component being edited.',
+              body: 'This layout contains a component that references the component being edited. Remove that component from the layout.',
               location: 'site-editor',
             })
             return null

@@ -104,6 +104,6 @@ describe('read_styles (headless design-system read)', () => {
   it('is gated on a site read capability', () => {
     expect(readStyles.requiredCapabilities).toContain('site.read')
     expect(readStyles.execution).toBe('server')
-    expect(readStyles.mutates).toBeFalsy()
+    expect(readStyles.requiresWrite).toBeFalsy()
   })
 })

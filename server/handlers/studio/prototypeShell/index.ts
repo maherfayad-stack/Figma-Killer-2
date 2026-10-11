@@ -54,6 +54,7 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
+import { isUnlinkedWorkspacePath } from '@core/page-parser'
 import { parseJsonWithFallback } from '@core/utils/jsonValidate'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { discoverPageFiles, projectPagesDir } from '../../studioProjects'
@@ -61,9 +62,12 @@ import { assignPageIds } from '../../studioPageIds'
 import { isDesignSystemBacked } from '../builtinDesignSystem'
 import { readStudioMeta } from '../studioMeta'
 import { readPrototypeFile } from '../prototypeStore'
-import { generatedShellFiles, hasLanguageContext, readBoardsForShell, type ShellScreen } from './registryFile'
+import { generatedShellFiles, hasLanguageContext, type ShellScreen } from './registryFile'
+import { readBoardsFile } from '../boardGeometry'
+import { isStudioStorePathUnlinked, readStudioStoreText, studioStoreProjectRel, writeStudioStoreFile } from '../studioStore'
 import { playerShellFiles } from './playerTemplate'
 import { staticShellFiles, VITE_CONFIG_REL_PATH } from './shellFiles'
+import { forgetShellRun, rememberShellRun, shellInputPaths, unchangedShellRun } from './shellInputStamp'
 import type { ShellFile } from './shellPaths'
 
 export { PROTOTYPE_SHELL_DIR } from './shellPaths'
@@ -88,7 +92,7 @@ const SHELL_SCRIPTS: Record<string, string> = {
 const PackageJsonShape = Type.Object({}, { additionalProperties: true })
 
 /** Where the hashes of Studio-written shell files live. Inside `.studio/`, so it never ships in a download. */
-const SHELL_MANIFEST_REL = '.studio/shell.json'
+const SHELL_MANIFEST_FILE = 'shell.json'
 
 const ShellManifestSchema = Type.Object({
   version: Type.Number(),
@@ -119,6 +123,13 @@ export interface EnsureShellResult {
    * instead of silently wondering why live ids never show up.
    */
   viteConfigEditedByUser: boolean
+  /**
+   * `true` when nothing this run would read has changed since the last run
+   * for this project in this process, so nothing was read or written and the
+   * other fields repeat that run's `viteConfigEditedByUser` with nothing
+   * created or regenerated. See `./shellInputStamp`.
+   */
+  inputsUnchanged: boolean
 }
 
 /** `pages/SignUp.tsx` -> `SignUp`. The title the board and the flow tab row show. */
@@ -159,8 +170,17 @@ function collectLocales(dir: string): string[] {
   return keys.length > 0 ? [...keys] : ['en']
 }
 
-/** Write a file, creating its directory. Returns whether anything changed on disk. */
-function writeIfDifferent(absPath: string, contents: string): boolean {
+/**
+ * Write a file of the shell's inside project `root`, creating its directory.
+ * Returns whether anything changed on disk. Never through a link
+ * (`isUnlinkedWorkspacePath`): the shell's names — `vite.config.js`,
+ * `index.html`, `package.json`, `prototype/` — are names an imported
+ * repository can already hold as a symlink, and a write through one lands
+ * wherever it points (`vite.config.js -> ~/.bashrc` was overwritten on first
+ * open, adopted as "scaffolded before the manifest existed").
+ */
+function writeIfDifferent(root: string, absPath: string, contents: string): boolean {
+  if (!isUnlinkedWorkspacePath(root, absPath)) return false
   if (existsSync(absPath) && readFileSync(absPath, 'utf8') === contents) return false
   mkdirSync(dirname(absPath), { recursive: true })
   writeFileSync(absPath, contents, 'utf8')
@@ -183,6 +203,7 @@ function writeIfDifferent(absPath: string, contents: string): boolean {
  */
 export function mergeShellPackageJson(dir: string): boolean {
   const file = join(dir, 'package.json')
+  if (!isUnlinkedWorkspacePath(dir, file)) return false
   const existing = existsSync(file)
     ? parseJsonWithFallback(readFileSync(file, 'utf8'), PackageJsonShape, {}) as Record<string, unknown>
     : {}
@@ -204,37 +225,69 @@ export function mergeShellPackageJson(dir: string): boolean {
   merge('dependencies', SHELL_DEPENDENCIES)
   merge('devDependencies', SHELL_DEV_DEPENDENCIES)
 
-  return writeIfDifferent(file, `${JSON.stringify(next, null, 2)}\n`)
+  return writeIfDifferent(dir, file, `${JSON.stringify(next, null, 2)}\n`)
 }
 
 /**
  * Scaffold the shell into `dir` if it is not there, and bring its generated
  * half up to date with `.studio/`.
  *
- * Idempotent and cheap on the common path: the static files are `existsSync`
- * checks, and the generated ones are only written when their content actually
- * differs — which matters because a rewrite would move `package.json`'s mtime
- * and invalidate caches keyed on it (`compareVerdictCache`).
+ * Runs once per project per process, and again only when one of its inputs
+ * has changed (`./shellInputStamp`): every `/load` calls this, and a real run
+ * reads and compares every shell file — the 2 MB runtime bundle among them —
+ * to conclude, nearly always, that nothing changed. The answer to "did
+ * anything change" is a stat of each input instead.
+ *
+ * A real run is idempotent: generated files are only written when their
+ * content actually differs — which matters because a rewrite would move
+ * `package.json`'s mtime and invalidate caches keyed on it
+ * (`compareVerdictCache`).
  *
  * Never throws. A project this cannot scaffold (an unreadable directory, an
  * escaping `pagesDir`) must still open — the shell is an addition to a
  * workspace, never a precondition for reading one.
  */
 export function ensurePrototypeShell(dir: string): EnsureShellResult {
-  const result: EnsureShellResult = { created: [], regenerated: [], viteConfigEditedByUser: false }
-  if (!existsSync(dir)) return result
+  if (!existsSync(dir)) {
+    forgetShellRun(dir)
+    return { created: [], regenerated: [], viteConfigEditedByUser: false, inputsUnchanged: false }
+  }
+  const lastViteConfigEditedByUser = unchangedShellRun<boolean>(dir)
+  if (lastViteConfigEditedByUser !== null) {
+    return { created: [], regenerated: [], viteConfigEditedByUser: lastViteConfigEditedByUser, inputsUnchanged: true }
+  }
+
+  const startedAt = Date.now()
+  const { result, shellRelPaths } = runPrototypeShell(dir)
+  if (shellRelPaths) {
+    rememberShellRun(dir, shellInputPaths(dir, shellRelPaths, studioStoreProjectRel(SHELL_MANIFEST_FILE)), startedAt, result.viteConfigEditedByUser)
+  } else {
+    forgetShellRun(dir)
+  }
+  return result
+}
+
+/**
+ * One real run of the shell. `shellRelPaths` is every shell file it judged or
+ * wrote — what the input stamp watches — or `null` when the run failed and
+ * must not be remembered.
+ */
+function runPrototypeShell(dir: string): { result: EnsureShellResult; shellRelPaths: string[] | null } {
+  const result: EnsureShellResult = { created: [], regenerated: [], viteConfigEditedByUser: false, inputsUnchanged: false }
 
   try {
-    const manifestPath = join(dir, ...SHELL_MANIFEST_REL.split('/'))
-    const hadManifest = existsSync(manifestPath)
-    const manifest: ShellManifest = hadManifest
-      ? parseJsonWithFallback(readFileSync(manifestPath, 'utf8'), ShellManifestSchema, { version: 1, files: {} })
-      : { version: 1, files: {} }
+    const manifestText = readStudioStoreText(dir, SHELL_MANIFEST_FILE)
+    // A manifest reached through a link is unreadable, not absent: treating it
+    // as absent would adopt (overwrite) every shell file the user has edited.
+    const hadManifest = manifestText !== null || !isStudioStorePathUnlinked(dir, SHELL_MANIFEST_FILE)
+    const manifest: ShellManifest = parseJsonWithFallback(manifestText, ShellManifestSchema, { version: 1, files: {} })
     const nextHashes: Record<string, string> = { ...manifest.files }
     let hashesChanged = false
 
     for (const file of [...staticShellFiles(), ...playerShellFiles()]) {
       const abs = join(dir, ...file.relPath.split('/'))
+      // Never read or written through a link — see `writeIfDifferent`.
+      if (!isUnlinkedWorkspacePath(dir, abs)) continue
       const present = existsSync(abs)
       const current = present ? readFileSync(abs, 'utf8') : null
 
@@ -267,7 +320,8 @@ export function ensurePrototypeShell(dir: string): EnsureShellResult {
     }
 
     if (hashesChanged || !hadManifest) {
-      writeIfDifferent(manifestPath, `${JSON.stringify({ version: 1, files: nextHashes }, null, 2)}\n`)
+      const nextManifest = `${JSON.stringify({ version: 1, files: nextHashes }, null, 2)}\n`
+      if (nextManifest !== manifestText) writeStudioStoreFile(dir, SHELL_MANIFEST_FILE, nextManifest)
     }
 
     if (mergeShellPackageJson(dir)) result.created.push('package.json')
@@ -279,7 +333,7 @@ export function ensurePrototypeShell(dir: string): EnsureShellResult {
       // identically and would make every shell's wordmark the same.
       projectName: basename(dir),
       screens: collectScreens(dir),
-      boards: readBoardsForShell(dir),
+      boards: readBoardsFile(dir),
       frameDefaults: {
         width: meta.frameDefaults?.width ?? 393,
         height: meta.frameDefaults?.height ?? 852,
@@ -298,13 +352,14 @@ export function ensurePrototypeShell(dir: string): EnsureShellResult {
 
     for (const file of generated) {
       const abs = join(dir, ...file.relPath.split('/'))
-      if (writeIfDifferent(abs, file.contents)) result.regenerated.push(file.relPath)
+      if (writeIfDifferent(dir, abs, file.contents)) result.regenerated.push(file.relPath)
     }
+    const shellRelPaths = [...staticShellFiles(), ...playerShellFiles(), ...generated].map((file) => file.relPath)
+    return { result, shellRelPaths }
   } catch (err) {
     // The shell is an addition, never a precondition — a project that cannot
     // be scaffolded still has to open.
     console.error('[studio:prototypeShell]', err)
+    return { result, shellRelPaths: null }
   }
-
-  return result
 }

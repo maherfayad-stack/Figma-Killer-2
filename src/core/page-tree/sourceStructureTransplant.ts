@@ -39,9 +39,10 @@
  * whose line numbers the previous write already moved. Refused as
  * `multi-select`, with the remedy that is actually true.
  */
-import { decodeSourceNodeId, isSourceDerivedNodeId, isStudioPageRootId } from './sourceNodeId'
+import { decodeSourceNodeId, isInlinedNodeId, isSourceDerivedNodeId, isStudioPageRootId, loopTemplateNodeId } from './sourceNodeId'
 import { refusePlacement, type StructuralRefusal } from './sourceStructure'
-import { resolveContainerAnchor, resolveSourceContainer } from './sourceStructurePreview'
+import { getAncestors } from './selectors'
+import { resolveWriteAnchor, resolveWriteContainer } from './sourceStructurePreview'
 import type { PageNode } from './pageNode'
 import type { NodeTree } from './treeSchema'
 
@@ -62,6 +63,13 @@ export interface StructuralTransplantCommit {
   position: 'before' | 'after'
   /** K2 across frames — leave the origin's markup where it is and write only the copy. */
   copy: boolean
+  /**
+   * G-1c - set when the dragged node is part of a `.map` row: `nodeId` is then
+   * the row's TEMPLATE (one piece of JSX renders every row, so a row has no
+   * writable id of its own), `copy` is always true, and this names the array
+   * element the row is, so the destination gets the row's data as a constant.
+   */
+  row?: { array: string; index: number; length: number }
 }
 
 export type StructuralTransplantPreview =
@@ -89,7 +97,6 @@ export function previewStructuralTransplant(
 ): StructuralTransplantPreview {
   const { originTree, nodeIds, destinationTree, newParentId, newIndex } = input
   const copy = input.copy === true
-  const gesture = copy ? 'Copied' : 'Moved'
 
   const nodeId = nodeIds[0]
   const node = nodeId === undefined ? undefined : originTree.nodes[nodeId]
@@ -99,7 +106,7 @@ export function previewStructuralTransplant(
       refusal: {
         reason: 'reparent',
         message:
-          'The element this gesture started on is no longer on the board. Reload the project and try again.',
+          'The element this gesture started on is no longer on the board. Select it again and try again.',
       },
     }
   }
@@ -110,7 +117,7 @@ export function previewStructuralTransplant(
       nodeId: node.id,
       refusal: {
         reason: 'multi-select',
-        message: `Studio ${copy ? 'copies' : 'moves'} one element between frames at a time: each write changes the line numbers the next one would be written against, and several elements dropped at one position have no single order in the code. Drag them one by one.`,
+        message: `Studio ${copy ? 'copies' : 'moves'} one element between frames at a time, because each write changes the lines the next one targets. Drag them one by one.`,
       },
     }
   }
@@ -125,18 +132,19 @@ export function previewStructuralTransplant(
       refusal: {
         reason: 'insert',
         message:
-          'This element exists only on the canvas — there is no markup for it in the code, so Studio has nothing to move into the other frame. Add the component from the picker instead, which writes it to the source.',
+          'This element exists only on the canvas, so Studio has no markup to move into the other frame. Add the component from the picker instead.',
       },
     }
   }
 
-  const placement = refusePlacement(node, gesture)
+  const rowCopy = rowCopyOf(originTree, node)
+  const placement = rowCopy ? null : refusePlacement(node)
   if (placement && !(copy && copyEscapesOriginRefusal(placement.reason))) {
     return { ok: false, refusal: placement, nodeId: node.id }
   }
 
-  const container = resolveSourceContainer(destinationTree, newParentId)
-  if (!container.ok) return { ok: false, refusal: container.refusal }
+  const container = resolveWriteContainer(destinationTree, newParentId)
+  if (!container.ok) return { ok: false, refusal: container.refusal, nodeId: container.refusal.aboutNodeId }
 
   // The destination page has to BE a studio-imported page. Dropping imported
   // markup into a CMS tree has no file to write into at all.
@@ -147,22 +155,13 @@ export function previewStructuralTransplant(
       refusal: {
         reason: 'reparent',
         message:
-          'The frame this would land in is not backed by a file in your project, so there is nowhere to write the markup. Drop it into one of the imported screens instead.',
+          'The frame this would land in is not backed by a file in your project. Drop it into one of the imported screens.',
       },
     }
   }
 
-  const containerPlacement = refusePlacement(container.node, `${gesture} into`)
-  if (containerPlacement) {
-    return {
-      ok: false,
-      nodeId: container.node.id,
-      refusal: {
-        reason: containerPlacement.reason,
-        message: `The container this would land in is not an ordinary element: ${lowerFirst(containerPlacement.message)}`,
-      },
-    }
-  }
+  const containerPlacement = refusePlacement(container.node)
+  if (containerPlacement) return { ok: false, nodeId: container.node.id, refusal: containerPlacement }
 
   const fromFile = decodeSourceNodeId(node.id)?.rel
   const intoFile = decodeSourceNodeId(container.node.id)?.rel
@@ -173,7 +172,7 @@ export function previewStructuralTransplant(
       refusal: {
         reason: 'reparent',
         message:
-          'These two frames are two views of the same file, so this is an ordinary move rather than a move between screens. Drag it inside one frame.',
+          'These two frames are two views of the same file, so this is an ordinary move. Drag it inside one frame.',
       },
     }
   }
@@ -181,21 +180,91 @@ export function previewStructuralTransplant(
   return {
     ok: true,
     commit: {
-      nodeId: node.id,
+      nodeId: rowCopy ? rowCopy.templateId : node.id,
       destinationParentNodeId: container.node.id,
       // `newIndex` counts the DROP PARENT's children. When the container had
       // to be re-resolved (the page root became the page's root element), that
       // index names a position in a different list, so it is dropped rather
       // than applied to the wrong one — identical reasoning to
       // `previewStructuralMove`'s reparent branch.
-      ...resolveContainerAnchor(
-        destinationTree,
-        container.node,
-        container.node.id === newParentId ? newIndex : undefined,
-      ),
-      copy,
+      ...resolveWriteAnchor(destinationTree, container, newParentId, newIndex),
+      copy: copy || rowCopy !== null,
+      ...(rowCopy ? { row: rowCopy.row } : {}),
     },
   }
+}
+
+/**
+ * G-1c - a node of a `.map` row whose array is written in the same file can be
+ * COPIED out of its list: the row's template element goes to the destination
+ * with the row's data beside it. `null` for anything else - a node outside every
+ * row, a row of an imported/computed/nested array (those keep refusing, with the
+ * sentence that names why), or a row inlined from a shared component.
+ */
+function rowCopyOf(
+  tree: NodeTree<PageNode>,
+  node: PageNode,
+): { templateId: string; row: NonNullable<StructuralTransplantCommit['row']> } | null {
+  const templateId = loopTemplateNodeId(node.id)
+  if (templateId === null || isInlinedNodeId(node.id)) return null
+  // The row ROOT carries the stamp: the node itself, else its nearest ancestor that does.
+  const root = [node, ...getAncestors(tree, node.id).reverse()].find((candidate) => candidate.listRow !== undefined)
+  if (root?.listRow?.kind !== 'array') return null
+  const { array, index, length } = root.listRow
+  return { templateId, row: { array, index, length } }
+}
+
+/**
+ * P5-G (FC-5) — may this element leave its page for the free canvas (a LIFT:
+ * dragged out of a frame and released over empty board)?
+ *
+ * The origin half of {@link previewStructuralTransplant}, asked without a
+ * destination container because the destination is a NEW layer module — it
+ * has no children to be placed among and no refusal of its own to raise. So
+ * the same four origin rules apply, with the same copy exemption: a `.map` row
+ * and code-placed markup refuse either way; a shared component or route chrome
+ * refuses a MOVE (it would cut markup other screens share) but not a COPY.
+ * Whether the markup can travel at all is the AST's answer at save time
+ * (`captured-scope`), exactly as for a frame-to-frame move.
+ */
+export function previewStructuralLift(
+  originTree: NodeTree<PageNode>,
+  nodeIds: readonly string[],
+  copy: boolean,
+): { ok: true; nodeId: string } | { ok: false; refusal: StructuralRefusal; nodeId?: string } {
+  const nodeId = nodeIds[0]
+  const node = nodeId === undefined ? undefined : originTree.nodes[nodeId]
+  if (!node) {
+    return {
+      ok: false,
+      refusal: { reason: 'reparent', message: 'The element this gesture started on is no longer on the board. Select it again and try again.' },
+    }
+  }
+  if (nodeIds.length > 1) {
+    return {
+      ok: false,
+      nodeId: node.id,
+      refusal: {
+        reason: 'multi-select',
+        message: `Studio ${copy ? 'copies' : 'moves'} one element onto the canvas at a time. Drag them one by one.`,
+      },
+    }
+  }
+  if (!isSourceDerivedNodeId(node.id)) {
+    return {
+      ok: false,
+      nodeId: node.id,
+      refusal: {
+        reason: 'insert',
+        message: 'This element exists only on the canvas, so there is no markup to put on the free canvas. Add the component from the picker instead.',
+      },
+    }
+  }
+  const placement = refusePlacement(node)
+  if (placement && !(copy && copyEscapesOriginRefusal(placement.reason))) {
+    return { ok: false, refusal: placement, nodeId: node.id }
+  }
+  return { ok: true, nodeId: node.id }
 }
 
 /**
@@ -229,8 +298,10 @@ export function isTransplantDestinationTree(destinationTree: NodeTree<PageNode>)
  * The other two stay refused for both, because they are statements about THIS
  * element:
  *
- *  - `list-row` — a `.map` row has no source range of its own at all, so a
- *    copy has nothing to read, never mind anywhere to put it;
+ *  - `list-row` — a `.map` row has no source range of its own at all. Where its
+ *    array is written in the same file a cross-frame drag does not come through
+ *    here at all: `rowCopyOf` turns it into a COPY of the row (G-1c). What
+ *    reaches this refusal is a row the array cannot place;
  *  - `code-placed` — the code itself decides this element (a spread, a slot
  *    fill, an SVG built in code). Those are exactly the shapes whose meaning
  *    does not survive being lifted into another module, and a copy changes
@@ -246,7 +317,3 @@ function copyEscapesOriginRefusal(reason: StructuralRefusal['reason']): boolean 
   return reason === 'shared-component' || reason === 'route-chrome'
 }
 
-/** Lowercase the first letter of a sentence being embedded inside another one. */
-function lowerFirst(text: string): string {
-  return text.length === 0 ? text : text[0]!.toLowerCase() + text.slice(1)
-}

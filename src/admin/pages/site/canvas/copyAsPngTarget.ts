@@ -6,17 +6,19 @@
  *
  *   1. **A node is selected** → that element, cropped out of a capture of its
  *      page. Exactly what the Export section's PNG row already produces.
- *   2. **Board frames are selected, exactly one** → that frame's whole screen.
- *      A frame is a page on the board, so this is the page capture uncropped.
+ *   2. **Board frames are selected** → the ANCHOR frame's whole screen (the
+ *      one selected last, the same anchor a node selection has). A frame is a
+ *      page on the board, so this is the page capture uncropped. ERR-24 —
+ *      several frames used to be refused with a red card; one keystroke still
+ *      makes one image, and the anchor is the frame the user pointed at last,
+ *      so copying it is the useful answer, not a guess.
  *   3. **Nothing is selected** → the screen that is open in the canvas. The
  *      most common case, and the reason the shortcut works with no selection
  *      at all.
  *
- * Three cases are REFUSED by name rather than guessed at:
+ * Two cases have nothing to photograph, and the shortcut says so quietly
+ * (an `info` note, never an error — nothing went wrong):
  *
- *   - **More than one frame selected.** One keystroke, one image; picking the
- *     first of five would silently copy something the user did not point at,
- *     and a five-image clipboard does not exist.
  *   - **No open screen.** An empty board has nothing to photograph, and
  *     "nothing happened" is the worst possible answer to a copy shortcut.
  *   - **A Visual Component is open in the canvas.** The capture route
@@ -67,7 +69,7 @@ export function resolveCopyAsPngTarget(
   if (selection.isVisualComponentDocument) {
     return {
       ok: false,
-      reason: 'A Visual Component is open in the canvas, and only a screen can be photographed. Go back to a page first.',
+      reason: 'A Visual Component is open in the canvas, and only a screen can be photographed. Open a page first.',
     }
   }
 
@@ -75,7 +77,7 @@ export function resolveCopyAsPngTarget(
   //    and the store clears the frame selection when one is made anyway.
   if (selection.selectedNodeId) {
     if (!selection.activePageId) {
-      return { ok: false, reason: 'This element is not on an open screen, so there is nothing to photograph.' }
+      return { ok: false, reason: 'This element is not on an open screen, so there is nothing to photograph. Select an element on an open screen.' }
     }
     return {
       ok: true,
@@ -85,21 +87,15 @@ export function resolveCopyAsPngTarget(
     }
   }
 
-  // 2. Board frames.
-  if (selection.selectedFramePageIds.length > 1) {
-    return {
-      ok: false,
-      reason: `Copy as PNG produces one image, and ${selection.selectedFramePageIds.length} frames are selected. Select one frame, or deselect to copy the open screen.`,
-    }
-  }
-  const framePageId = selection.selectedFramePageIds[0]
+  // 2. Board frames — the anchor (last-selected) one. See the module doc.
+  const framePageId = selection.selectedFramePageIds.at(-1)
   if (framePageId) {
     return { ok: true, pageId: framePageId, nodeId: null, label: 'frame' }
   }
 
   // 3. Nothing selected — the open screen.
   if (!selection.activePageId) {
-    return { ok: false, reason: 'No screen is open, so there is nothing to copy.' }
+    return { ok: false, reason: 'No screen is open, so there is nothing to copy. Open a screen.' }
   }
   return {
     ok: true,

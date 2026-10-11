@@ -81,6 +81,15 @@
  * today — importing it back from here would reverse that layering. Inlined
  * instead, with this cross-reference so the two don't silently drift.
  *
+ * 5. **A gallery appearing or vanishing widens (CV-3).** A touched component
+ *    file's gallery count (`galleryCountForFile`) is compared with the
+ *    galleries the parse cache holds for it (their route keys carry the file).
+ *    Adding the first enum/boolean prop to a component, or removing the last
+ *    value that made one an axis, makes a gallery page appear or vanish — a
+ *    change of board shape no page patch can show. Only a file that may
+ *    declare an axis, or already owns a gallery, pays for the check, and it
+ *    runs against the kept project (`withWorkspaceProject`), not a rebuild.
+ *
  * ## Never trusts the wire blindly
  *
  * `files` round-trips through the client (it read them off the `/save`
@@ -94,16 +103,21 @@
  * the SAME absolute path the parse cache recorded, rather than missing every
  * dependency set and falling back to a full reload.
  */
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import { canonicalSourceRel } from '../studioWriteback'
 import { discoverAppRouterRoutes, discoverPageFiles, projectPagesDir, resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { assignAppRouterPageIds, assignPageIds } from '../studioPageIds'
 import { readStudioMeta, type StudioMeta } from './studioMeta'
 import { storyFilesIn } from './storyDiscovery'
 import { storyPageIdFromRoutePath } from './storyPages'
+import { galleryCountForFile, parseGalleryRouteKey } from './componentGallery'
+import { withWorkspaceProject } from './workspaceProject'
 import { cachedRouteDependencies } from './pageParseCache'
+import { canvasLayerIdFromRel, canvasLayerPageId } from '@core/studio-board'
+import { canvasLayerIdFromCacheRoute } from './canvasLayerLoad'
 
 const ROUTE_PATH = '/admin/api/studio/reload-scope'
 
@@ -128,13 +142,36 @@ function pageIdByRoutePath(meta: StudioMeta, pagesDir: string): Map<string, stri
   return assignPageIds(discoverPageFiles(pagesDir))
 }
 
+/** A touched component file whose gallery count (rule 5) the async half still has to compare with what the cache holds. */
+interface GalleryShapeCheck {
+  rel: string
+  cached: number
+}
+
 /**
- * `null` means "not provably safe — widen to a full reload". A non-null
- * array (never empty when it's returned) names exactly the page ids the
- * caller should re-fetch via the existing `GET /load?pageIds=` filter.
- * See this module's doc for the four widening rules enforced below.
+ * Text that could declare a variant axis: the word `boolean`, or a string
+ * literal on either side of a union bar. Cheap enough to run on every touched
+ * source file, and wrong only in the safe direction (a file with such a union
+ * that is no axis costs one catalog read of that file).
  */
-function resolveNarrowReloadPageIds(dir: string, filesRelToDir: readonly string[]): string[] | null {
+const MAY_DECLARE_AXIS = /\bboolean\b|['"][\w-]+['"]\s*\||\|\s*['"][\w-]+['"]/
+
+function mayDeclareAxis(absFile: string): boolean {
+  try {
+    return MAY_DECLARE_AXIS.test(readFileSync(absFile, 'utf8'))
+  } catch (_err) {
+    // Unreadable now: let the catalog read decide; widening on doubt is the safe side.
+    return true
+  }
+}
+
+/**
+ * `null` means "not provably safe — widen to a full reload". Otherwise the page
+ * ids (never empty) the caller should re-fetch via the existing
+ * `GET /load?pageIds=` filter, plus the gallery-shape checks rule 5 still has
+ * to run. See this module's doc for the widening rules enforced below.
+ */
+function resolveNarrowReloadPageIds(dir: string, filesRelToDir: readonly string[]): { pageIds: string[]; galleryChecks: GalleryShapeCheck[] } | null {
   if (filesRelToDir.length === 0) return null
 
   let pagesDir: string
@@ -156,9 +193,36 @@ function resolveNarrowReloadPageIds(dir: string, filesRelToDir: readonly string[
   // every story file to answer a question about which pages to reload.
   const storyRoutePaths = new Set<string>()
   const idByRoutePath = pageIdByRoutePath(meta, pagesDir)
+  // Rule 5 — galleries the cache holds per component file, and the route files
+  // (pages) that own none. A story route's key is neither, and is skipped below.
+  const cachedGalleryCount = new Map<string, number>()
+  const routeFiles = new Set<string>()
   for (const routePath of depsByRoutePath.keys()) {
+    // P5-G — a free-canvas layer module is parsed and cached like a route
+    // (`canvasLayerLoad.ts`), under its own key shape. It maps to its
+    // `canvas:<id>` page id, so an edit to a component a layer renders narrows
+    // to that layer (and every page that renders it) instead of widening.
+    const layerId = canvasLayerIdFromCacheRoute(routePath)
+    if (layerId) {
+      idByRoutePath.set(routePath, canvasLayerPageId(layerId))
+      continue
+    }
+    // CV-2 — a variants gallery is cached and named like a route: its key
+    // carries its page id, so an edit to the component narrows to that
+    // gallery's page. A gallery can also APPEAR or VANISH when an edit adds or
+    // removes an enum/boolean prop (CV-3's Add property does): rule 5 below.
+    const gallery = parseGalleryRouteKey(routePath)
+    if (gallery !== null) {
+      idByRoutePath.set(routePath, gallery.pageId)
+      const galleryFile = join(dir, ...gallery.file.split('/'))
+      cachedGalleryCount.set(galleryFile, (cachedGalleryCount.get(galleryFile) ?? 0) + 1)
+      continue
+    }
     const storyPageId = storyPageIdFromRoutePath(routePath)
-    if (storyPageId === null) continue
+    if (storyPageId === null) {
+      routeFiles.add(join(pagesDir, ...routePath.split('/')))
+      continue
+    }
     storyRoutePaths.add(routePath)
     // With stories turned off no story route exists any more, so a cache
     // entry left over from before the toggle names a page that is gone. It
@@ -191,13 +255,32 @@ function resolveNarrowReloadPageIds(dir: string, filesRelToDir: readonly string[
   }
 
   const pageIds = new Set<string>()
+  const galleryChecks: GalleryShapeCheck[] = []
   for (const relToDir of filesRelToDir) {
     // Never trust an unvalidated path into `join` — see this module's doc.
-    const rel = canonicalSourceRel(dir, relToDir)
+    // FC-1 — a layer module is admitted HERE only to be named (it maps to its
+    // `canvas:<id>` page id below and is never read or written), so the narrow
+    // resync a `/save` of a layer asks for stays narrow.
+    const rel = canonicalSourceRel(dir, relToDir, { canvasLayers: 'allow' })
     if (rel === null) return null
     const absFile = join(dir, ...rel.split('/'))
     // Rule 2b — editing a story file can remove its frame entirely.
     if (storyAbsFiles.has(absFile)) return null
+    // P5-G — a layer module IS its own route, whether it was just created,
+    // edited or deleted (a create has no cache entry yet; a place deletes the
+    // file). Its page id is derived from the path alone. A load returns every
+    // layer in `canvasLayers`, so naming it is enough to re-read it.
+    const layerId = canvasLayerIdFromRel(rel)
+    if (layerId) {
+      pageIds.add(canvasLayerPageId(layerId))
+      continue
+    }
+    // Rule 5 — a component file whose gallery count may have moved. A route
+    // file owns none (the load excludes it), so only the rest is compared.
+    if (/\.(tsx|jsx|ts|js|mjs|cjs)$/i.test(rel) && !routeFiles.has(absFile)) {
+      const cached = cachedGalleryCount.get(absFile) ?? 0
+      if (cached > 0 || mayDeclareAxis(absFile)) galleryChecks.push({ rel, cached })
+    }
     let dependents = 0
     for (const [routePath, deps] of depsByRoutePath) {
       if (!deps.has(absFile)) continue
@@ -213,7 +296,7 @@ function resolveNarrowReloadPageIds(dir: string, filesRelToDir: readonly string[
     if (dependents === 0) return null
   }
 
-  return pageIds.size > 0 ? [...pageIds] : null
+  return pageIds.size > 0 ? { pageIds: [...pageIds], galleryChecks } : null
 }
 
 /** `POST /admin/api/studio/reload-scope` — see module doc for the full contract. */
@@ -225,11 +308,17 @@ export async function tryServeStudioReloadScope(req: Request, _url: URL, pathnam
     if (!body) return badRequest('invalid reload-scope body')
     const dir = resolveProjectDir(body.dir)
 
-    const pageIds = resolveNarrowReloadPageIds(dir, body.files)
-    return jsonResponse(pageIds ? { ok: true, narrow: true, pageIds } : { ok: true, narrow: false })
+    const narrow = resolveNarrowReloadPageIds(dir, body.files)
+    // Rule 5, the async half: compare each flagged file's gallery count with the cache's.
+    const shapeChanged =
+      narrow !== null &&
+      narrow.galleryChecks.length > 0 &&
+      (await withWorkspaceProject(dir, async ({ project }) =>
+        narrow.galleryChecks.some((check) => galleryCountForFile(project, dir, check.rel) !== check.cached),
+      ))
+    return jsonResponse(narrow && !shapeChanged ? { ok: true, narrow: true, pageIds: narrow.pageIds } : { ok: true, narrow: false })
   } catch (err) {
     rethrowProjectDirRefusal(err)
-    console.error('[studio:reloadScope]', err)
-    return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    return internalServerError('[studio:reloadScope]', err)
   }
 }

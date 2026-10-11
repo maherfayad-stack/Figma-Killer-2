@@ -58,6 +58,11 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
   tooltip?: ReactNode;
   /** Which side the tooltip should prefer. Default: 'auto'. */
   tooltipSide?: TooltipSide;
+  /**
+   * P5-E (UX-23) — the action's formatted keyboard shortcut, shown as keycaps
+   * inside the tooltip after its label. Needs `tooltip`.
+   */
+  tooltipShortcut?: string;
   /** React 19: ref is a regular prop on function components. */
   ref?: Ref<HTMLButtonElement>;
 }
@@ -85,6 +90,7 @@ export function Button(
     "aria-label": ariaLabel,
     tooltip,
     tooltipSide,
+    tooltipShortcut,
     // Explicitly destructured so we can intercept disabled+tooltip combos
     // and preserve any direct aria-disabled prop passed by callers.
     disabled,
@@ -170,7 +176,7 @@ export function Button(
 
     if (tooltip) {
       return (
-        <Tooltip content={tooltip} side={tooltipSide ?? "auto"} disabled={popupOpen}>
+        <Tooltip content={tooltip} shortcut={tooltipShortcut} side={tooltipSide ?? "auto"} disabled={popupOpen}>
           {button}
         </Tooltip>
       );

@@ -30,7 +30,9 @@
  *
  * Each translation is applied with `writeTranslationEntry`, so a key whose
  * value is code, or a locale the project never declared, refuses exactly as
- * it would if the user had typed the text themselves. Those refusals come
+ * it would if the user had typed the text themselves — and so does an entry
+ * that changed on disk while the model was answering (compare-and-swap
+ * against the value read before the call; see `translationWrite.ts`). Those refusals come
  * back per key in `failures` — a partial success is reported as one, never
  * rounded up to "done".
  */
@@ -44,9 +46,10 @@ import { readTranslationCatalog } from '../../handlers/studio/translationCatalog
 import { writeTranslationEntry } from '../../handlers/studio/translationWrite'
 import { resolveDriver } from '../drivers'
 import { readCredentialForUser, resolveCredentialForDriver } from '../credentials/store'
+import type { AiResolvedCredential } from '../drivers/types'
 import { getDefault } from '../defaults/store'
-import { runOneShotCompletion } from '../oneShot'
-import { parseTranslationReply } from '../translationReply'
+import { AiOneShotError, runOneShotCompletion } from '../oneShot'
+import { parseTranslationReply, type TranslationReply } from '../translationReply'
 
 const ROUTE_PATH = '/admin/api/ai/translate-content'
 
@@ -116,6 +119,48 @@ export function selectPendingEntries(
   })
 }
 
+/**
+ * Writes a model's reply into the dictionary, one `(targetLocale, key)` at a
+ * time. Exported for its own test: this is the half of the route that touches
+ * the user's file.
+ *
+ * Two guarantees, both from `writeTranslationEntry`:
+ *
+ *  - **Only `targetLocale` is written.** The source locale — the language the
+ *    app is written in — is read to build the prompt and never touched here,
+ *    so a translation cannot put target-language text into it.
+ *  - **Nothing written over a newer file.** Each entry is compared against the
+ *    value `batch` read BEFORE the model call (`expected`), which can take many
+ *    seconds. A target entry someone filled or fixed in the meantime wins; the
+ *    stale translation is reported in `failures`, not written.
+ */
+export function applyTranslations(
+  dir: string,
+  targetLocale: string,
+  batch: readonly { key: string; values: Record<string, string> }[],
+  translations: Readonly<Record<string, string>>,
+): { translated: number; skipped: string[]; failures: { key: string; message: string }[] } {
+  const failures: { key: string; message: string }[] = []
+  const skipped: string[] = []
+  let translated = 0
+  for (const entry of batch) {
+    const value = translations[entry.key]
+    if (value === undefined) {
+      skipped.push(entry.key)
+      continue
+    }
+    const result = writeTranslationEntry(dir, {
+      locale: targetLocale,
+      key: entry.key,
+      value,
+      expected: entry.values[targetLocale] ?? null,
+    })
+    if (result.ok) translated += 1
+    else failures.push({ key: entry.key, message: result.message })
+  }
+  return { translated, skipped, failures }
+}
+
 export function tryHandleAiTranslateContent(req: Request, db: DbClient, url: URL): Promise<Response> | null {
   if (url.pathname !== ROUTE_PATH || req.method !== 'POST') return null
   return handle(req, db)
@@ -154,59 +199,127 @@ async function handle(req: Request, db: DbClient): Promise<Response> {
   const fallback = await getDefault(db)
   if (!fallback) {
     return jsonResponse(
-      { error: 'No default AI model is configured. Set one in Settings → AI before translating.' },
-      { status: 409 },
+      { error: 'No AI model is set up yet. Choose one in AI settings.' },
+      // 412, not 409: the request is fine, the editor is missing a precondition the user can supply.
+      { status: 412 },
     )
   }
   const record = await readCredentialForUser(db, user.id, fallback.credentialId)
-  if (!record) return jsonResponse({ error: 'The configured AI credential is no longer accessible.' }, { status: 409 })
+  if (!record) return jsonResponse({ error: 'The AI model you chose is no longer available. Choose another in AI settings.' }, { status: 412 })
 
-  let resolved
+  let resolved: AiResolvedCredential
   try {
     resolved = await resolveCredentialForDriver(record)
   } catch (err) {
     rethrowProjectDirRefusal(err)
-    return jsonResponse({ error: err instanceof Error ? err.message : 'Credential resolution failed.' }, { status: 409 })
+    return jsonResponse({ error: err instanceof Error ? err.message : 'The AI credential could not be read.' }, { status: 412 })
   }
 
-  const source: Record<string, string> = {}
-  for (const entry of batch) source[entry.key] = entry.values[sourceLocale]!
+  // Captured as their own `const`s, fixed at THIS narrowed point, rather than
+  // read through `record`/`fallback`/`body`/`user` inside `callModel` below —
+  // a nested function reading a captured `const` does not inherit the outer
+  // scope's control-flow narrowing (TS treats the closure as possibly running
+  // at a point where the type could differ, even though it provably cannot
+  // here), so `record.providerId` etc. re-widen to include `null`.
+  const providerId = record.providerId
+  const modelId = fallback.modelId
+  const targetLocale = body.targetLocale
+  const userId = user.id
+  const userCapabilities = user.capabilities
 
-  let raw: string
-  try {
-    raw = await runOneShotCompletion({
-      driver: resolveDriver(record.providerId),
-      credentials: resolved,
-      modelId: fallback.modelId,
-      instructions: instructionsFor(body.targetLocale, sourceLocale),
-      userMessage: JSON.stringify(source, null, 2),
-      signal: req.signal,
-      toolContextBase: {
-        db,
-        userId: user.id,
-        capabilities: user.capabilities,
-        conversationId: 'translate-content',
-        snapshot: null,
-      },
-    })
-  } catch (err) {
-    rethrowProjectDirRefusal(err)
-    console.error('[ai:translateContent]', err)
-    return jsonResponse({ error: err instanceof Error ? err.message : 'The model call failed.' }, { status: 502 })
+  /** One model call for `entries`, translated and parsed — or the Response to hand straight back. */
+  async function callModel(
+    entries: readonly { key: string; values: Record<string, string> }[],
+  ): Promise<{ ok: true; reply: TranslationReply } | { ok: false; response: Response }> {
+    const source: Record<string, string> = {}
+    for (const entry of entries) source[entry.key] = entry.values[sourceLocale]!
+
+    let raw: string
+    try {
+      raw = await runOneShotCompletion({
+        driver: resolveDriver(providerId),
+        credentials: resolved,
+        modelId,
+        instructions: instructionsFor(targetLocale, sourceLocale),
+        userMessage: JSON.stringify(source, null, 2),
+        signal: req.signal,
+        toolContextBase: {
+          db,
+          userId,
+          capabilities: userCapabilities,
+          conversationId: 'translate-content',
+          snapshot: null,
+        },
+      })
+    } catch (err) {
+      rethrowProjectDirRefusal(err)
+      console.error('[ai:translateContent]', err)
+      // The credential itself was rejected (a Claude CLI setup-token revoked
+      // or expired since it was saved) — not a translation problem, and the
+      // raw CLI text ("Claude CLI error: Failed to authenticate. API Error:
+      // 401 OAuth access token has been revoked.") names a wire protocol
+      // nobody asked about. Same reconnect action `Settings → AI →
+      // Providers` offers.
+      if (err instanceof AiOneShotError && err.authFailure) {
+        return {
+          ok: false,
+          response: jsonResponse(
+            { error: 'Claude needs to be reconnected. Open Settings → AI → Providers and sign in again.' },
+            { status: 401 },
+          ),
+        }
+      }
+      return {
+        ok: false,
+        response: jsonResponse({ error: err instanceof Error ? err.message : 'The model call failed.' }, { status: 502 }),
+      }
+    }
+
+    // Presentational deviations in the reply are absorbed; only an answer
+    // with no JSON object in it at all — not even a salvageable truncated
+    // one — is unusable. See `translationReply.ts`.
+    const reply = parseTranslationReply(raw, entries.map((entry) => entry.key))
+    if (!reply) {
+      console.error('[ai:translateContent] unparsable reply:', raw.slice(0, 400))
+      return {
+        ok: false,
+        response: jsonResponse(
+          { error: 'The model replied with no JSON object, so nothing was written. Try again.' },
+          { status: 502 },
+        ),
+      }
+    }
+    return { ok: true, reply }
   }
 
-  // Presentational deviations in the reply are absorbed; only an answer with
-  // no JSON object in it at all is unusable — see `translationReply.ts`.
-  const reply = parseTranslationReply(raw, batch.map((entry) => entry.key))
-  if (!reply) {
-    console.error('[ai:translateContent] unparsable reply:', raw.slice(0, 400))
-    return jsonResponse(
-      { error: 'The model replied with no JSON object, so nothing was written. Try again.' },
-      { status: 502 },
-    )
+  const first = await callModel(batch)
+  if (!first.ok) return first.response
+  let reply = first.reply
+
+  // A reply cut off mid-object (the driver's own output-token ceiling, for a
+  // big batch of long strings) is worth exactly ONE automatic, smaller retry
+  // for the keys the cut actually cost — retrying the SAME `MAX_BATCH`-sized
+  // request would just get cut at the same spot again, and "click try
+  // again" is not a fix a user should have to reach for. A retry that fails
+  // outright is not fatal: the first reply's salvaged translations still
+  // write below; whatever is still missing reports as `skipped`, same as a
+  // model that omitted a key on its own.
+  if (reply.truncated) {
+    const stillMissing = batch.filter((entry) => reply.translations[entry.key] === undefined)
+    if (stillMissing.length > 0) {
+      const retried = await callModel(stillMissing)
+      if (retried.ok) {
+        reply = {
+          translations: { ...reply.translations, ...retried.reply.translations },
+          unexpected: [...reply.unexpected, ...retried.reply.unexpected],
+          truncated: retried.reply.truncated,
+        }
+      }
+    }
   }
+
   if (Object.keys(reply.translations).length === 0) {
-    console.error('[ai:translateContent] no requested keys in reply:', raw.slice(0, 400))
+    console.error('[ai:translateContent] no requested keys in reply:', reply.unexpected.join(', ').slice(0, 400))
     return jsonResponse(
       {
         error: `The model returned ${reply.unexpected.length} keys, none of them the ones asked for, so nothing was written.`,
@@ -215,19 +328,7 @@ async function handle(req: Request, db: DbClient): Promise<Response> {
     )
   }
 
-  const failures: { key: string; message: string }[] = []
-  const skipped: string[] = []
-  let translated = 0
-  for (const entry of batch) {
-    const value = reply.translations[entry.key]
-    if (value === undefined) {
-      skipped.push(entry.key)
-      continue
-    }
-    const result = writeTranslationEntry(dir, { locale: body.targetLocale, key: entry.key, value })
-    if (result.ok) translated += 1
-    else failures.push({ key: entry.key, message: result.message })
-  }
+  const { translated, skipped, failures } = applyTranslations(dir, targetLocale, batch, reply.translations)
 
   return jsonResponse({
     ok: true,

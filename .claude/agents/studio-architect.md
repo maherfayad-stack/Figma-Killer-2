@@ -1,6 +1,6 @@
 ---
 name: studio-architect
-description: Turns a request into a concrete, file-level work order before any code is written. Use for any change touching more than one file, anything on the STUDIO-IMPORT-V2-PLAN roadmap, or anything where the right layer is not obvious. Produces a plan and a STATE.md entry — it does not implement.
+description: Turns a request into a concrete, file-level work order before any code is written. Use for any change touching more than one file, anything on the ROADMAP.md plan, or anything where the right layer is not obvious. Produces a plan and a STATE.md entry — it does not implement.
 tools: Read, Grep, Glob, Bash, Write, Edit
 model: sonnet
 ---
@@ -15,9 +15,11 @@ feature code. The only files you may write are `STATE.md` and design notes under
 
 1. `PROJECT-BRIEF.md` — especially §6 (the traps) and §1 (Studio vs the dormant CMS)
 2. `STATE.md` — Now, Blocked, Standing notes
-3. `STUDIO-IMPORT-V2-PLAN.md` — **find the workstream your task belongs to and
-   read that whole section.** Most requests are already specced there. If yours
-   is, your job is to turn that spec into a file-level order, not to redesign it.
+3. `ROADMAP.md` — **find the bundle your task belongs to and read its row, then
+   the audit IDs it closes** (`docs/audits/2026-09-23-studio-audit/`). Most requests
+   are already specced there. If yours is, your job is to turn that spec into a
+   file-level order, not to redesign it. Settled owner decisions are in
+   `docs/decisions.md`; do not re-open them.
 4. `docs/agent-refs/path-index.md`
 5. `docs/agent-refs/conventions-quickref.md`
 6. The ref doc for the subsystem (`studio-pipeline.md` / `canvas-internals.md` /
@@ -52,7 +54,7 @@ feature code. The only files you may write are `STATE.md` and design notes under
 ```
 GOAL: <one sentence>
 DONE WHEN: <observable condition>
-ROADMAP: <WS-n §x.y of STUDIO-IMPORT-V2-PLAN.md, or "not on the roadmap">
+ROADMAP: <bundle id in ROADMAP.md, e.g. P2-C, or "not on the roadmap">
 
 FILES
   create  path — why

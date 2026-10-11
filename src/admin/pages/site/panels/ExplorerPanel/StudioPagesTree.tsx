@@ -36,11 +36,11 @@
  * site document. The active page auto-expands the first time it becomes
  * active so opening/switching pages always reveals their layers.
  */
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSelectors'
-import type { Page } from '@core/page-tree'
-import { DomPanel, PageLayerSubtree } from '@site/panels/DomPanel'
+import { selectPageDirectory, type PageDirectoryEntry } from '@site/store/slices/pageDirectory'
+import { DomPanel, LayerDragBridgeContext, PageLayerSubtree, createLayerDragBridge } from '@site/panels/DomPanel'
 import { AddPagePicker } from '@site/canvas/BoardFramesLayer'
 import { Input } from '@ui/components/Input'
 import { TreeChevron, TreeContainer, TreeIconSlot, TreeLabel, TreeRow } from '@site/ui/Tree'
@@ -48,18 +48,15 @@ import { FileTextSolidIcon } from 'pixel-art-icons/icons/file-text-solid'
 import { useInlineRename } from '@site/hooks/useInlineRename'
 import styles from './StudioPagesTree.module.css'
 
-// Stable fallback reference — `?? []` inline would hand back a NEW array every
-// render, which a Zustand selector must never do (breaks useSyncExternalStore's
-// "did this change" check and can spiral into a "Maximum update depth
-// exceeded" render loop once anything downstream reacts to the selected value).
-const EMPTY_PAGES: Page[] = []
-
 interface StudioPagesTreeProps {
   editable?: boolean
 }
 
 export function StudioPagesTree({ editable = true }: StudioPagesTreeProps) {
-  const allPages = useEditorStore((s) => s.site?.pages ?? EMPTY_PAGES)
+  // The page LIST (id, title, root id) — not `site.pages`, which Mutative
+  // replaces on every edit and re-rendered this always-mounted panel on every
+  // keystroke (P2-I, PERF-12).
+  const allPages = useEditorStore(selectPageDirectory)
   const board = useEditorStore(selectActiveBoard)
   const boardsLoaded = useEditorStore((s) => s.boardsLoaded)
   const activePageId = useEditorStore((s) => s.activePageId)
@@ -92,6 +89,10 @@ export function StudioPagesTree({ editable = true }: StudioPagesTreeProps) {
     }
   }
 
+  // One bridge for the whole list: the active page's drag reaches the other
+  // pages' rows through it (a Layers drop onto another page is a transplant).
+  const [dragBridge] = useState(createLayerDragBridge)
+
   const toggleExpanded = (pageId: string) => {
     setExpandedIds((prev) => {
       const next = new Set(prev)
@@ -114,43 +115,55 @@ export function StudioPagesTree({ editable = true }: StudioPagesTreeProps) {
           <AddPagePicker iconOnly ariaLabel="Add page" size="micro" />
         </div>
       </div>
-      <TreeContainer ariaLabel="Pages" testId="studio-pages-tree" className={styles.scroll}>
-        {pages.map((page) => (
-          <PageRow
-            key={page.id}
-            page={page}
-            isActive={page.id === activePageId}
-            expanded={expandedIds.has(page.id)}
-            editable={editable}
-            onToggleExpand={() => toggleExpanded(page.id)}
-            onActivate={() => openPageInCanvas(page.id)}
-            onRename={(title) => renamePage(page.id, title)}
-          />
-        ))}
-      </TreeContainer>
+      <LayerDragBridgeContext.Provider value={dragBridge}>
+        <TreeContainer ariaLabel="Pages" testId="studio-pages-tree" className={styles.scroll}>
+          {pages.map((page) => (
+            <PageRow
+              key={page.id}
+              page={page}
+              isActive={page.id === activePageId}
+              expanded={expandedIds.has(page.id)}
+              editable={editable}
+              onToggleExpand={toggleExpanded}
+              onActivate={openPageInCanvas}
+              onRename={renamePage}
+            />
+          ))}
+        </TreeContainer>
+      </LayerDragBridgeContext.Provider>
     </div>
   )
 }
 
 interface PageRowProps {
-  page: Page
+  page: PageDirectoryEntry
   isActive: boolean
   expanded: boolean
   editable: boolean
-  onToggleExpand: () => void
-  onActivate: () => void
-  onRename: (title: string) => void
+  /** Handlers take the page id, so ONE stable function serves every row (see `PageRow`). */
+  onToggleExpand: (pageId: string) => void
+  onActivate: (pageId: string) => void
+  onRename: (pageId: string, title: string) => void
 }
 
-function PageRow({ page, isActive, expanded, editable, onToggleExpand, onActivate, onRename }: PageRowProps) {
-  const [rename, renameInputRef] = useInlineRename({ onCommit: onRename })
+/**
+ * `memo()` is the list-row bailout (CLAUDE.md "React Compiler and
+ * memoization", exception 2): the compiler memoizes inside a component, never
+ * across the rows a `.map` makes, so without it a selection that changes the
+ * active page re-rendered ALL forty rows (each a TreeRow, chevron, icon and
+ * label) when two of them - the page that stopped being active and the one
+ * that started - actually changed. Its props are therefore primitives and
+ * store-stable handlers that take the page id.
+ */
+const PageRow = memo(function PageRow({ page, isActive, expanded, editable, onToggleExpand, onActivate, onRename }: PageRowProps) {
+  const [rename, renameInputRef] = useInlineRename({ onCommit: (title) => onRename(page.id, title) })
 
   // Capture phase — fires before any click inside this row (the header, or a
   // node row in the revealed subtree), so `activePageId` is already this
   // page by the time selection/mutation logic runs. Mirrors
   // `BoardFramesLayer`'s `handleActivateCapture`.
   const handleActivateCapture = () => {
-    if (!isActive) onActivate()
+    if (!isActive) onActivate(page.id)
   }
 
   return (
@@ -162,17 +175,19 @@ function PageRow({ page, isActive, expanded, editable, onToggleExpand, onActivat
         aria-selected={isActive}
         aria-expanded={expanded}
         tabIndex={0}
-        onClick={onToggleExpand}
+        onClick={() => onToggleExpand(page.id)}
         onDoubleClick={(e) => {
           e.preventDefault()
           e.stopPropagation()
           rename.start(page.title)
         }}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggleExpand() }
+          // Only the row's own keys: a key bubbling from the rename input is the input's.
+          if (e.target !== e.currentTarget) return
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggleExpand(page.id) }
         }}
       >
-        <TreeChevron expanded={expanded} onClick={(e) => { e.stopPropagation(); onToggleExpand() }} />
+        <TreeChevron expanded={expanded} onClick={(e) => { e.stopPropagation(); onToggleExpand(page.id) }} />
         <TreeIconSlot icon={FileTextSolidIcon} iconSize={11} iconColor="var(--text-disabled)" />
         {rename.isRenaming ? (
           <Input
@@ -203,4 +218,4 @@ function PageRow({ page, isActive, expanded, editable, onToggleExpand, onActivat
       )}
     </div>
   )
-}
+})

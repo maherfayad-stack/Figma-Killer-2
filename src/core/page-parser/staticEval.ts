@@ -56,13 +56,13 @@ import {
   evaluateNode,
 } from './staticEvalCore'
 import type { EvalScope, StaticEvalOptions, StaticValue } from './staticEvalCore'
-import type { FunctionLike } from './types'
+import type { ComponentBody } from './types'
 
 export type { ArrowFunctionOrDecl, EvalScope, LocalBinding, PageEvalBudget, StaticEvalOptions, StaticValue, ValueOrigin } from './staticEvalCore'
 export { createPageEvalBudget }
 
 /** See `staticEvalCore.ts`'s `createEvalScope` — re-exported so every consumer imports one thing from `./staticEval`. */
-export function createEvalScope(sourceFile: SourceFile, componentFn?: FunctionLike): EvalScope {
+export function createEvalScope(sourceFile: SourceFile, componentFn?: ComponentBody): EvalScope {
   return createEvalScopeCore(sourceFile, componentFn)
 }
 

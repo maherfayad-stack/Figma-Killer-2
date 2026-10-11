@@ -1,4 +1,4 @@
-import type { SiteDocument } from '@core/page-tree'
+import type { Page, SiteDocument } from '@core/page-tree'
 
 /**
  * Which parts of the site document actually changed — and which rows were
@@ -44,5 +44,34 @@ export interface IPersistenceAdapter {
    * Load the single site draft document (shell + pages assembled).
    * Returns undefined before setup creates it.
    */
-  loadSite(id: string): Promise<SiteDocument | undefined>
+  loadSite(id: string, options?: LoadSiteOptions): Promise<SiteDocument | undefined>
+}
+
+export interface LoadSiteOptions {
+  /** Abandons the load: the request is aborted and the promise rejects with an `AbortError`. */
+  signal?: AbortSignal
+  /**
+   * P6-B — hand the document over while its pages are still arriving. An
+   * adapter that can (the Studio one) calls `open` once, then `pages` for each
+   * batch that follows, and resolves with the whole document only after the
+   * last batch; one that cannot ignores this and resolves as usual.
+   */
+  progress?: SiteLoadProgress
+}
+
+/** One page a streamed load has announced but not delivered yet. */
+export interface PendingPage {
+  id: string
+  title: string
+}
+
+export interface SiteLoadProgress {
+  /**
+   * The document with every page that has arrived so far, and the pages still
+   * to come, in the order they will be added to `site.pages`. Called once,
+   * before any `pages` call; never called when the load fails first.
+   */
+  open(site: SiteDocument, pending: readonly PendingPage[]): void
+  /** More pages, to be appended to `site.pages`. */
+  pages(pages: readonly Page[]): void
 }

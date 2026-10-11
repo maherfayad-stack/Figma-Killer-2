@@ -172,7 +172,7 @@ describe('PropertyControlRenderer — type dispatch', () => {
     expect(html).toContain('id="ctrl-title"')
   })
 
-  it('text → can normalize identifier values while typing', () => {
+  it('text → normalizes identifier values while typing, and commits the normalized value on blur', () => {
     const changes: Array<[string, unknown]> = []
 
     render(
@@ -184,10 +184,16 @@ describe('PropertyControlRenderer — type dispatch', () => {
       />,
     )
 
-    fireEvent.change(screen.getByLabelText('Form ID'), {
+    const input = screen.getByLabelText('Form ID') as HTMLInputElement
+    fireEvent.change(input, {
       target: { value: 'Contact Form "Main"' },
     })
 
+    // Draft, then commit (P2-G, UX-16): the field shows the normalized text
+    // as it is typed, and writes it once, when the user leaves the field.
+    expect(input.value).toBe('Contact-Form-Main')
+    expect(changes).toEqual([])
+    fireEvent.blur(input)
     expect(changes).toEqual([['formId', 'Contact-Form-Main']])
   })
 
@@ -223,7 +229,7 @@ describe('PropertyControlRenderer — type dispatch', () => {
     )
 
     const wrapper = screen.getByTestId('property-control-bgColor')
-    // G6.2 (`docs/features/inspector-disclosure.md`): the swatch is a `Button`
+    // G6.2 (`docs/features/inspector.md`): the swatch is a `Button`
     // that opens `ColorPickerPopover` — there is no native
     // `<input type="color">` in this component's DOM any more (see
     // `ColorPickerPopover.test.tsx` for the picker itself).
@@ -913,6 +919,72 @@ describe('PropertyControlRenderer — a source-locked node', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /why this value is read-only/i }))
     expect(screen.getByRole('button', { name: /open the array in code/i })).toBeDefined()
+  })
+
+  describe('a code-bound value that can be typed over (G-6, OD-20)', () => {
+    const unbindable: EditConstraint = {
+      reason: 'resolved-expression',
+      scope: 'prop',
+      explanation: 'Reads `heading` from code.',
+      actions: [],
+      unbindable: true,
+    }
+
+    it('commits the typed text once, on Enter, and keeps the lock glyph beside the field', () => {
+      const changes: [string, unknown][] = []
+      render(
+        <PropertyControlRenderer
+          propKey="title"
+          control={{ type: 'text', label: 'Title' }}
+          value="Today only"
+          onChange={(key, value) => changes.push([key, value])}
+          constraint={unbindable}
+        />,
+      )
+
+      const input = screen.getByRole('textbox', { name: 'Title' }) as HTMLInputElement
+      expect(input.value).toBe('Today only')
+      fireEvent.change(input, { target: { value: 'Fresh' } })
+      fireEvent.change(input, { target: { value: 'Fresh beans' } })
+      expect(changes).toEqual([]) // typing writes nothing
+      fireEvent.keyDown(input, { key: 'Enter' })
+      expect(changes).toEqual([['title', 'Fresh beans']])
+      // The field still says it is showing code, and says what committing does.
+      expect(screen.getByRole('button', { name: /set in code.*replace it with text/i })).toBeDefined()
+    })
+
+    it('Escape discards the typing and writes nothing', () => {
+      const changes: [string, unknown][] = []
+      render(
+        <PropertyControlRenderer
+          propKey="title"
+          control={{ type: 'text', label: 'Title' }}
+          value="Today only"
+          onChange={(key, value) => changes.push([key, value])}
+          constraint={unbindable}
+        />,
+      )
+      const input = screen.getByRole('textbox', { name: 'Title' }) as HTMLInputElement
+      fireEvent.change(input, { target: { value: 'Fresh' } })
+      fireEvent.keyDown(input, { key: 'Escape' })
+      expect(changes).toEqual([])
+      expect(input.value).toBe('Today only')
+    })
+
+    it('stays a read-only stand-in for a control that is not free text, and for a constraint that is not unbindable', () => {
+      const select = renderControl(
+        { type: 'select', label: 'Tone', options: [{ label: 'A', value: 'a' }] },
+        'tone',
+        'a',
+        unbindable,
+      )
+      expect(select).toContain('data-testid="code-value-tone"')
+      expect(select).not.toContain('<input')
+
+      const plain = renderControl({ type: 'text', label: 'Title' }, 'title', 'Today only', { ...unbindable, unbindable: undefined })
+      expect(plain).toContain('data-testid="code-value-title"')
+      expect(plain).not.toContain('<input')
+    })
   })
 
   it('leaves an unlocked node fully editable', () => {

@@ -15,8 +15,9 @@ lies, or that mutates state the editor also owns, is worse than no tool.
 1. `docs/features/mcp-connectors.md`
 2. `server/ai/mcp/registry.ts` — its module doc explains the two execution
    classes and the de-dup ordering. Read it before adding a tool.
-3. `STUDIO-IMPORT-V2-PLAN.md` → **WS-9** — the planned studio tool family is
-   specced there in full.
+3. `ROADMAP.md` → **P4** (the assistant bundles) and
+   `docs/audits/2026-09-23-studio-audit/06-assistant.md`: the planned tool work is
+   specced there.
 4. `docs/agent-refs/conventions-quickref.md` §1
 
 ## The two execution classes

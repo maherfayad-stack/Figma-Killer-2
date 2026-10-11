@@ -24,6 +24,13 @@ interface TokenizedColorFieldProps {
   fieldSize?: 'xs' | 'sm' | 'md'
   onTextChange: (value: string) => void
   onTextBlur: () => void
+  /**
+   * Esc: abandon the typed draft and restore the committed value. When
+   * supplied, Esc also leaves the field WITHOUT firing `onTextBlur`, so a
+   * cancelled draft never reaches the source. Omit for a live-edit caller
+   * (no draft buffer) — Esc then only closes the suggestion list.
+   */
+  onTextCancel?: () => void
   onSwatchChange: (value: string) => void
   onTokenSelect: (value: string) => void
   /**
@@ -88,6 +95,7 @@ export function TokenizedColorField({
   fieldSize = 'sm',
   onTextChange,
   onTextBlur,
+  onTextCancel,
   onSwatchChange,
   onTokenSelect,
   onTokenPreview,
@@ -99,8 +107,15 @@ export function TokenizedColorField({
   const colorSettings = useEditorStore((state) => state.site?.settings.framework?.colors)
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
+  // True once the user has moved the highlight onto a suggestion (arrow keys
+  // or hover). Until then Enter commits the TYPED text — the auto-highlighted
+  // first row is a default, not a choice (typing `#ff0000` + Enter used to
+  // apply the first token, `var(--color-metal)`).
+  const [highlightMoved, setHighlightMoved] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
   const swatchButtonRef = useRef<HTMLButtonElement>(null)
+  // Set by Esc so the blur it triggers cancels the draft instead of committing.
+  const cancelledRef = useRef(false)
   const variables = generateFrameworkColorVariableSets(colorSettings).light
     .filter((variable) => variable.tokenId !== excludeTokenId)
   const filteredVariables = computeFilteredVariables(value, variables)
@@ -116,7 +131,7 @@ export function TokenizedColorField({
   const menuId = id ? `${id}-token-menu` : undefined
   const showMenu = open && !disabled && filteredVariables.length > 0
 
-  // ── ColorPickerPopover wiring (G6.2, `docs/features/inspector-disclosure.md`) ──
+  // ── ColorPickerPopover wiring (G6.2, `docs/features/inspector.md`) ──
   // The swatch button opens the real picker (SV square, hue/alpha rails,
   // model select, eyedropper, contrast, Tabs) as an `InspectorPopover`
   // anchored to itself — separate from `open` above, which still drives the
@@ -146,6 +161,7 @@ export function TokenizedColorField({
   if (lastValue !== value) {
     setLastValue(value)
     setActiveIndex(0)
+    setHighlightMoved(false)
   }
 
   function handleTextFocus() {
@@ -153,7 +169,8 @@ export function TokenizedColorField({
   }
 
   function handleTextBlur(event: FocusEvent<HTMLInputElement>) {
-    onTextBlur()
+    if (cancelledRef.current) cancelledRef.current = false
+    else onTextBlur()
     if (event.relatedTarget instanceof HTMLElement && event.currentTarget.parentElement?.contains(event.relatedTarget)) {
       return
     }
@@ -174,7 +191,7 @@ export function TokenizedColorField({
 
   /**
    * T8 (`STUDIO-FIGMA-PARITY-PLAN.md` §11) / G6.2
-   * (`docs/features/inspector-disclosure.md`) — the swatch used to be a native
+   * (`docs/features/inspector.md`) — the swatch used to be a native
    * `<input type="color">` (no alpha, no eyedropper, no token awareness),
    * then a token listbox with an escape hatch to that same native dialog.
    * It now opens `ColorPickerPopover` directly — a real HSV picker with an
@@ -205,6 +222,41 @@ export function TokenizedColorField({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      if (showMenu && highlightMoved) {
+        commitToken(filteredVariables[activeIndex])
+        return
+      }
+      // Figma: Enter commits the typed text and leaves the field, so the next
+      // Ctrl+Z reaches the editor's undo instead of the input's own text undo.
+      // Blurring runs `onTextBlur`, the one commit path for typed text.
+      onTokenPreviewClear?.()
+      setOpen(false)
+      event.currentTarget.blur()
+      return
+    }
+
+    if (event.key === 'Tab') {
+      // Tab commits the typed text exactly like Enter (the blur it causes runs
+      // `onTextBlur`). The list and any hover preview must go first: left
+      // open, its option buttons would take the focus and the field would
+      // never blur.
+      onTokenPreviewClear?.()
+      setOpen(false)
+      return
+    }
+
+    if (event.key === 'Escape' && onTextCancel) {
+      event.preventDefault()
+      onTokenPreviewClear?.()
+      setOpen(false)
+      cancelledRef.current = true
+      onTextCancel()
+      event.currentTarget.blur()
+      return
+    }
+
     if (!showMenu) {
       if (event.key === 'ArrowDown' && filteredVariables.length > 0) {
         event.preventDefault()
@@ -219,13 +271,12 @@ export function TokenizedColorField({
       setOpen(false)
     } else if (event.key === 'ArrowDown') {
       event.preventDefault()
+      setHighlightMoved(true)
       setActiveIndex((index) => Math.min(index + 1, filteredVariables.length - 1))
     } else if (event.key === 'ArrowUp') {
       event.preventDefault()
+      setHighlightMoved(true)
       setActiveIndex((index) => Math.max(index - 1, 0))
-    } else if (event.key === 'Enter') {
-      event.preventDefault()
-      commitToken(filteredVariables[activeIndex])
     }
   }
 
@@ -345,10 +396,12 @@ export function TokenizedColorField({
                     key={`${variable.tokenId}-${variable.variantId}`}
                     type="button"
                     role="option"
+                    tabIndex={-1}
                     aria-selected={index === activeIndex}
                     className={styles.colorTokenOption}
                     onMouseEnter={() => {
                       setActiveIndex(index)
+                      setHighlightMoved(true)
                       onTokenPreview?.(`var(${variable.name})`)
                     }}
                     onMouseDown={(event) => event.preventDefault()}

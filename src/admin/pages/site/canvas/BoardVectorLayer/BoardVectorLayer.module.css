@@ -1,0 +1,102 @@
+/*
+ * Vector edit mode and the pen tool's preview (P5-D).
+ *
+ * POSITIONS IN BOARD UNITS, SIZES IN SCREEN PIXELS — the rule every board
+ * layer follows (see `BoardPrototypeLayer.module.css`). The svg sits at the
+ * transform layer's origin with overflow visible, so every coordinate the
+ * component writes is a plain board unit and pan/zoom are free. Strokes use
+ * `vector-effect: non-scaling-stroke`; anchor squares are baked at
+ * `px / zoom` by the component, re-baked when the zoom settles.
+ */
+.layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 1px;
+    height: 1px;
+    overflow: visible;
+    /* Only the hit path takes the pointer; a click anywhere else falls
+       through to the frame beneath, where it selects. */
+    pointer-events: none;
+}
+
+/* Edit mode: the box is fitted to the hit targets (`BoardVectorLayer`'s
+   `fitToPoints`), with a viewBox equal to it, so coordinates stay board units
+   AND the targets sit inside the box, where hit testing is reliable. */
+.fitted {
+    --vector-x: 0px;
+    --vector-y: 0px;
+    --vector-w: 1px;
+    --vector-h: 1px;
+    left: var(--vector-x);
+    top: var(--vector-y);
+    width: var(--vector-w);
+    height: var(--vector-h);
+}
+
+.outline,
+.penPath {
+    fill: none;
+    stroke: var(--canvas-selection-ring-color);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+}
+
+.penRubberBand {
+    fill: none;
+    stroke: var(--canvas-selection-ring-color);
+    stroke-width: 1;
+    stroke-dasharray: 4 3;
+    vector-effect: non-scaling-stroke;
+}
+
+.handleLines {
+    fill: none;
+    stroke: var(--canvas-selection-ring-color);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+}
+
+.anchors,
+.handleDots {
+    fill: var(--bg-surface);
+    stroke: var(--canvas-selection-ring-color);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+}
+
+.active {
+    fill: var(--canvas-selection-ring-color);
+    stroke: var(--bg-surface);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+}
+
+/* The outline's double-click target (add a point): a transparent 12 px stroke. */
+.outlineHit {
+    fill: none;
+    stroke: transparent;
+    stroke-width: 12;
+    vector-effect: non-scaling-stroke;
+    pointer-events: stroke;
+    cursor: copy;
+}
+
+/* Transparent, larger squares over every anchor and visible handle. */
+.hit {
+    fill: transparent;
+    stroke: none;
+    pointer-events: fill;
+    cursor: move;
+    touch-action: none;
+}
+
+/* Space held (or the hand tool): the pan owns the pointer. */
+:global(html[data-studio-canvas-parent-space-pan='1']) .hit,
+:global(html[data-studio-canvas-iframe-space-pan='1']) .hit,
+:global(html[data-studio-canvas-hand-tool='1']) .hit,
+:global(html[data-studio-canvas-parent-space-pan='1']) .outlineHit,
+:global(html[data-studio-canvas-iframe-space-pan='1']) .outlineHit,
+:global(html[data-studio-canvas-hand-tool='1']) .outlineHit {
+    pointer-events: none;
+}

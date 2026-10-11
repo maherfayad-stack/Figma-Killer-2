@@ -1,4 +1,5 @@
 # Audit 03 — Creative design from scratch
+> **Trust:** historical, dated 2026-08-06. Paths may be wrong. Never act on it.
 
 ## C1 — BLOCKER — CSS write-back can EDIT but cannot CREATE
 - `src/admin/pages/site/studio/styleRuleWriteback.ts:200-267` — `collectStyleRuleEdits`: any rule with no `styleRuleSources` entry goes to `unmapped`, never written.

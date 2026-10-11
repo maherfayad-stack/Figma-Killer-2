@@ -27,7 +27,7 @@ mode this project is most exposed to, because agents read docs instead of code.
 | Orientation, traps, task routing | `PROJECT-BRIEF.md` |
 | Work in flight | `STATE.md` → Now |
 | A measurement, dead end, or operational fact | `STATE.md` → Standing notes |
-| Intent not yet built | `STUDIO-IMPORT-V2-PLAN.md` |
+| Intent not yet built | `ROADMAP.md` (owner decisions: `docs/decisions.md`) |
 
 Put each fact in exactly **one** place and link to it from the others. Two copies
 drift, and the reader can't tell which is current.

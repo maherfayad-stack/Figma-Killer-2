@@ -53,7 +53,6 @@ function resetStore() {
     boardSnapGuides: [],
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     _historyPast: [],
     _historyFuture: [],
     canUndo: false,
@@ -106,8 +105,7 @@ describe('BoardFrameView memo() bailout', () => {
             hasManualHeight={false}
             isActive={false}
             isSelected={false}
-            isOnScreen={false}
-            isMounted={false}
+            isLive={false}
           />
           <BoardFrameView
             frame={frameB}
@@ -119,8 +117,7 @@ describe('BoardFrameView memo() bailout', () => {
             hasManualHeight={false}
             isActive={false}
             isSelected={false}
-            isOnScreen={false}
-            isMounted={false}
+            isLive={false}
           />
         </>
       )

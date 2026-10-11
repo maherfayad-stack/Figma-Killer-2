@@ -2,6 +2,7 @@ import { type Ref } from 'react'
 import { Button, type ButtonProps } from '@ui/components/Button'
 import { Separator } from '@ui/components/Separator'
 import { CheckIcon } from 'pixel-art-icons/icons/check'
+import { ShortcutKeys } from '@ui/components/Kbd'
 import { cn } from '@ui/cn'
 import styles from './ContextMenu.module.css'
 
@@ -15,6 +16,13 @@ interface ContextMenuItemProps extends Omit<ButtonProps, 'variant' | 'size' | 'm
    * call site doesn't have to wire that up by hand.
    */
   selected?: boolean
+  /**
+   * P5-E (UX-22) — the action's keyboard shortcut, already formatted for the
+   * platform, right-aligned as dim keycaps. A string, not a command id: this
+   * primitive cannot import the admin keybinding registry, so the caller
+   * passes `formatShortcut(getKeybindingForCommand(id).shortcut)`.
+   */
+  shortcut?: string
   /** React 19: ref is a regular prop on function components. */
   ref?: Ref<HTMLButtonElement>
 }
@@ -22,6 +30,7 @@ interface ContextMenuItemProps extends Omit<ButtonProps, 'variant' | 'size' | 'm
 export function ContextMenuItem({
   danger = false,
   selected,
+  shortcut,
   className,
   children,
   role,
@@ -42,6 +51,7 @@ export function ContextMenuItem({
       {...props}
     >
       {children}
+      {shortcut && <ShortcutKeys label={shortcut} className={styles.itemShortcut} />}
       {selected && <CheckIcon size={12} aria-hidden="true" className={styles.itemCheck} />}
     </Button>
   )

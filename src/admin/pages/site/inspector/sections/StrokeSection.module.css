@@ -29,13 +29,16 @@
     min-height: var(--inspector-row-h);
 }
 
+/* Position and weight split the row's free width EQUALLY (`flex-basis: 0`). With
+   `auto` the select's intrinsic width ("Inside" plus its chevron) was subtracted
+   first and the weight field got what was left - about two characters, "0p". */
 .position {
-    flex: 1 1 auto;
+    flex: 1 1 0;
     min-width: 0;
 }
 
 .weight {
-    flex: 1 1 auto;
+    flex: 1 1 0;
     min-width: 0;
 }
 

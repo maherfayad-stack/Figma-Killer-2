@@ -2,7 +2,7 @@
  * PaddingCluster — F4/F9's `[⊓ 66] [⊐ 155] [⊞]` → four sides, built on
  * `ExpandableFieldCluster`.
  *
- * Padding moves into the Layout section (docs/features/inspector-disclosure.md
+ * Padding moves into the Layout section (docs/features/inspector.md
  * §4 G4.2): padding is a layout property of a container, margin is a
  * relationship with siblings, and Figma draws the line the same place.
  *
@@ -104,7 +104,7 @@ export function PaddingCluster({
           storedStyles={storedStyles}
           currentStyles={currentStyles}
           tokens={tokens}
-          onChange={onChange}
+          onChangeMany={onChangeMany}
           onPreview={onPreview}
           onClearPreview={onClearPreview}
           data-testid="css-padding-horizontal"
@@ -118,7 +118,7 @@ export function PaddingCluster({
           storedStyles={storedStyles}
           currentStyles={currentStyles}
           tokens={tokens}
-          onChange={onChange}
+          onChangeMany={onChangeMany}
           onPreview={onPreview}
           onClearPreview={onClearPreview}
           data-testid="css-padding-vertical"

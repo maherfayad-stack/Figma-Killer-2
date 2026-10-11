@@ -17,7 +17,8 @@ const cardSpec: LocalComponentSpec = {
   name: 'Card',
   file: 'src/components/Card.tsx',
   exportName: 'default',
-  isDefaultExport: true,
+  isDefaultExport: true, line: 1, column: 1,
+  role: 'component',
   props: [
     { name: 'title', kind: { kind: 'string' }, required: true },
     { name: 'variant', kind: { kind: 'enum', values: ['primary', 'ghost'] }, required: false },
@@ -33,12 +34,13 @@ describe('buildComponentCallSiteRows', () => {
     expect(variantRow?.value).toBeUndefined()
   })
 
-  it('renders a named union alias (enum PropKind) as a select, not a text box', () => {
+  it('renders a named union alias (enum PropKind) of 2-4 members as a segmented select, not a text box', () => {
     const rows = buildComponentCallSiteRows(cardSpec, {})
     const variantRow = rows.find((r) => r.key === 'variant')
     expect(variantRow?.control).toEqual({
       type: 'select',
       label: 'variant',
+      display: 'segmented',
       options: [
         { label: 'primary', value: 'primary' },
         { label: 'ghost', value: 'ghost' },
@@ -77,7 +79,8 @@ describe('buildComponentCallSiteRows', () => {
       name: 'Button',
       file: 'src/components/Button.tsx',
       exportName: 'default',
-      isDefaultExport: true,
+      isDefaultExport: true, line: 1, column: 1,
+      role: 'component',
       props: [
         { name: 'variant', kind: { kind: 'enum', values: ['primary', 'gpay-personalized'] }, required: false },
         {
@@ -109,6 +112,48 @@ describe('buildComponentCallSiteRows', () => {
       const cardArtRow = rows.find((r) => r.key === 'cardArt')
       expect(cardArtRow).toBeDefined()
       expect(cardArtRow?.value).toBe('/x.png')
+    })
+  })
+
+  describe('variant rows (CV-1)', () => {
+    const spec: LocalComponentSpec = {
+      name: 'Tag',
+      file: 'src/Tag.tsx',
+      exportName: 'Tag',
+      isDefaultExport: false, line: 1, column: 1,
+      props: [
+        { name: 'tone', kind: { kind: 'enum', values: ['a', 'b', 'c', 'd'] }, required: false, defaultValue: 'b' },
+        { name: 'size', kind: { kind: 'enum', values: ['xs', 'sm', 'md', 'lg', 'xl'] }, required: false },
+        { name: 'solo', kind: { kind: 'enum', values: ['only'] }, required: false },
+        { name: 'pinned', kind: { kind: 'boolean' }, required: false, defaultValue: false },
+        { name: 'label', kind: { kind: 'string' }, required: true, defaultValue: 'Hi' },
+        { name: 'icon', kind: { kind: 'node' }, required: false },
+      ],
+    }
+
+    it('maps one declared prop kind to each row control', () => {
+      const rows = buildComponentCallSiteRows(spec, {})
+      const control = (key: string) => rows.find((r) => r.key === key)?.control
+      expect(control('tone')).toMatchObject({ type: 'select', display: 'segmented' })
+      // Four is the last count that fits as segments; five is a dropdown.
+      expect(control('size')).toMatchObject({ type: 'select' })
+      expect(control('size')).not.toHaveProperty('display')
+      expect(control('solo')).toEqual({ type: 'text', label: 'solo' })
+      expect(control('pinned')).toEqual({ type: 'toggle', label: 'pinned' })
+      expect(control('label')).toEqual({ type: 'text', label: 'label' })
+      expect(control('icon')).toEqual({ type: 'slot', label: 'icon' })
+    })
+
+    it('carries the declared default beside an unset value, and none where there is none', () => {
+      const rows = buildComponentCallSiteRows(spec, {})
+      expect(rows.find((r) => r.key === 'tone')).toMatchObject({ value: undefined, defaultValue: 'b' })
+      expect(rows.find((r) => r.key === 'pinned')?.defaultValue).toBe(false)
+      expect(rows.find((r) => r.key === 'size')).not.toHaveProperty('defaultValue')
+    })
+
+    it('keeps the call-site value separate from the default when the prop is set', () => {
+      const rows = buildComponentCallSiteRows(spec, { tone: 'd' })
+      expect(rows.find((r) => r.key === 'tone')).toMatchObject({ value: 'd', defaultValue: 'b' })
     })
   })
 })

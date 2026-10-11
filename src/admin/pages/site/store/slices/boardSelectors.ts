@@ -9,9 +9,9 @@
  * entry point for reading board state out of the store.
  */
 import type { EditorStore } from '@site/store/types'
-import type { Board, BoardFrame, BoardGuide, DocBlock, StickyNote } from '@core/studio-board'
+import type { Board, BoardFrame, BoardGuide, CanvasLayerPlacement, DocBlock, StickyNote } from '@core/studio-board'
 import { getActiveBoard } from '@core/studio-board'
-import type { SnapGuide } from '@site/canvas/boardSnapping'
+import type { SnapGuide, SnapSpacing } from '@core/studio-runtime'
 
 /** Select the active board (or `null` — not studio mode / not loaded yet). */
 export const selectActiveBoard = (s: EditorStore): Board | null =>
@@ -28,6 +28,7 @@ const EMPTY_FRAMES: readonly BoardFrame[] = []
 const EMPTY_NOTES: readonly StickyNote[] = []
 const EMPTY_DOCS: readonly DocBlock[] = []
 const EMPTY_GUIDES: readonly BoardGuide[] = []
+const EMPTY_LAYERS: readonly CanvasLayerPlacement[] = []
 
 /**
  * Per-collection selectors, one per `Board` sub-array — the fix for the
@@ -60,5 +61,36 @@ export const selectActiveBoardDocs = (s: EditorStore): readonly DocBlock[] =>
 export const selectActiveBoardGuides = (s: EditorStore): readonly BoardGuide[] =>
   getActiveBoard(s.boards, s.activeBoardId)?.guides ?? EMPTY_GUIDES
 
+/** P5-G — the active board's loose-layer placements (`Board.layers`), narrow like the four above. */
+export const selectActiveBoardLayers = (s: EditorStore): readonly CanvasLayerPlacement[] =>
+  getActiveBoard(s.boards, s.activeBoardId)?.layers ?? EMPTY_LAYERS
+
 /** Select the active drag's snap guides (empty outside of a drag). */
 export const selectBoardSnapGuides = (s: EditorStore): SnapGuide[] => s.boardSnapGuides
+export const selectBoardSnapSpacings = (s: EditorStore): SnapSpacing[] => s.boardSnapSpacings
+
+/**
+ * SB-1 — the board frame a Layers-panel row stands for. The Layers tree is the
+ * ACTIVE page's tree, and a board can render that page in more than one frame
+ * (a "duplicate as variant" shares every node id). A selection or hover made
+ * with no `frameId` is mirrored by every mounted frame whose page holds the
+ * node (PERF-2, PERF-13): each mounts a ring and pays the frame-fit and unroll
+ * passes for it. Naming ONE frame confines the chrome to it. The frame the
+ * user last worked in wins when it shows the active page; otherwise the first
+ * frame of that page. `null` when no frame of the active board shows the page
+ * (a Visual Component document, or no board) — the old mirrored behaviour,
+ * which is then the only one that can show anything.
+ */
+export function selectLayersFrameId(s: EditorStore): string | null {
+  const pageId = s.activeDocument === null || s.activeDocument.kind === 'page' ? s.activePageId : null
+  if (pageId === null) return null
+  const frames = selectActiveBoardFrames(s)
+  const remembered = s.selectedNodeFrameId
+  let first: string | null = null
+  for (const frame of frames) {
+    if (frame.pageId !== pageId) continue
+    if (frame.id === remembered) return frame.id
+    first ??= frame.id
+  }
+  return first
+}

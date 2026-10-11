@@ -1,4 +1,5 @@
 # Properties Panel Design Audit
+> **Trust:** historical, dated 2026-08-06. Paths may be wrong. Never act on it.
 
 Scope: `src/admin/pages/site/panels/PropertiesPanel/**`, `src/admin/pages/site/property-controls/**`,
 `src/admin/pages/site/sidebars/**`, `src/ui/components/**` primitives, `src/styles/globals.css`.

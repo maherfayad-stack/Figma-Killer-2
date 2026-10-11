@@ -7,13 +7,16 @@
  * rendered — the panel is same-origin `/admin` chrome, so it is its own trust
  * boundary and does not get to assume the server already checked).
  *
- * **Clicking an icon copies its markup**, it does not insert a node. That is
- * the honest action here: an icon in this design system is a `<FooIcon/>` a
- * component's icon PROP takes (the slot picker's job, where a target prop
- * exists), or SVG markup pasted into source. The Assets panel has no slot
- * selected and no honest `base.*` module to write an inline SVG into
- * (`moduleAvailability` hides `base.svg` — it has no `sourceIntrinsic`), so
- * offering an "insert" would be offering a refusal. The tooltip says "Copy".
+ * **Clicking an icon INSERTS it** as an inline `<svg>` right after the
+ * selection (P5-D SVG-5), and **dragging it onto a frame inserts it where the
+ * drop line shows** — the same insertion drag every other Assets card uses.
+ * Both go through `insertSvgAtTarget` (`canvasSvgInsert.ts`), the one SVG
+ * write P5-A's paste uses too: sanitised, converted to JSX (`svgToJsxNode`:
+ * no `style` strings, per-insert ids), ONE `insert` of the whole subtree, one
+ * undo step. Inline JSX, never an import — see `svgToJsxNode.ts` for why an
+ * SVG import is not a write Studio can honestly make.
+ *
+ * Copying the markup (the old click) is on the icon's context menu.
  *
  * The catalogue is fetched lazily — on first expand, never on panel open — so
  * opening Assets costs nothing for a project whose icons you never look at.
@@ -22,15 +25,32 @@ import { useEffect, useRef, useState } from 'react'
 import { sanitizeSvg } from '@core/sanitize'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { fetchStudioIconCatalog, type StudioIcon } from '@site/studio/iconCatalog'
+import { useEditorStore } from '@site/store/store'
+import { useCanvasInsertionDrag } from '@site/canvas/useCanvasInsertionDrag'
+import { CanvasInsertionDragOverlay } from '@site/canvas/CanvasInsertionDragOverlay'
+import { readSelectionInsertTarget } from '@site/canvas/canvasSelectionInsert'
+import { insertSvgAtTarget } from '@site/canvas/canvasSvgInsert'
 import { Button } from '@ui/components/Button'
+import { ContextMenu, ContextMenuItem } from '@ui/components/ContextMenu'
 import { EmptyState } from '@ui/components/EmptyState'
 import { pushToast } from '@ui/components/Toast'
+import { CopySolidIcon } from 'pixel-art-icons/icons/copy-solid'
 import { AssetSection } from './AssetSection'
 import { queryTokens } from './rankAssets'
 import styles from './AssetsPanel.module.css'
 
 /** How many icons render at once. The set runs to several hundred; search reaches the rest. */
 const VISIBLE_LIMIT = 120
+
+/** An icon's own size: its `width`/`height`, else its viewBox, else the 24 px icon grid. */
+function iconNaturalSize(markup: string): { width: number; height: number } {
+  const tag = /<svg[^>]*>/i.exec(markup)?.[0] ?? ''
+  const attr = (name: string) => Number(new RegExp(String.raw`\s${name}="([0-9.]+)(?:px)?"`, 'i').exec(tag)?.[1])
+  const viewBox = /viewBox="[-0-9.]+[ ,]+[-0-9.]+[ ,]+([0-9.]+)[ ,]+([0-9.]+)"/i.exec(tag)
+  const width = attr('width') || Number(viewBox?.[1]) || 24
+  const height = attr('height') || Number(viewBox?.[2]) || width
+  return { width, height }
+}
 
 interface IconsSectionProps {
   query: string
@@ -68,6 +88,34 @@ export function IconsSection({ query, collapsed, onToggle }: IconsSectionProps) 
     ),
   )
   const visible = matches.slice(0, VISIBLE_LIMIT)
+  const [menu, setMenu] = useState<{ icon: StudioIcon; x: number; y: number } | null>(null)
+
+  const insertWords = (icon: StudioIcon) => ({ undoLabel: `Add ${icon.name} icon`, refusalTitle: 'Cannot add that icon' })
+
+  /** Click: right after the selection, else at the end of the active frame's root (⇧K's and ⌘V's rule). */
+  function insertIcon(icon: StudioIcon) {
+    const target = readSelectionInsertTarget()
+    if (!target.ok) {
+      pushToast({ kind: 'warning', title: 'Cannot add that icon', body: target.message, location: 'site-editor' })
+      return
+    }
+    void insertSvgAtTarget({ kind: 'text', markup: icon.markup }, target, insertWords(icon))
+  }
+
+  // Drag: where the drop line shows. The hook has already made the dropped-on
+  // frame's page the active one when this runs.
+  const canvasDrag = useCanvasInsertionDrag<StudioIcon>({
+    ghostSize: (icon) => iconNaturalSize(icon.markup),
+    onDrop: (icon, location) => {
+      const state = useEditorStore.getState()
+      const pageId = state.activePageId
+      const page = pageId ? state.site?.pages.find((candidate) => candidate.id === pageId) : undefined
+      if (!pageId || !page) return false
+      const index = location.index ?? page.nodes[location.parentId]?.children.length ?? 0
+      void insertSvgAtTarget({ kind: 'text', markup: icon.markup }, { ok: true, pageId, parentId: location.parentId, index }, insertWords(icon))
+      return true
+    },
+  })
 
   async function copyIcon(icon: StudioIcon) {
     try {
@@ -86,7 +134,7 @@ export function IconsSection({ query, collapsed, onToggle }: IconsSectionProps) 
   return (
     <AssetSection
       title="Icons"
-      count={icons === null ? 0 : matches.length}
+      count={icons === null ? null : matches.length}
       collapsed={collapsed}
       onToggle={onToggle}
     >
@@ -108,9 +156,18 @@ export function IconsSection({ query, collapsed, onToggle }: IconsSectionProps) 
                 variant="ghost"
                 iconOnly
                 className={styles.iconTile}
-                aria-label={`Copy ${icon.name} SVG markup`}
-                tooltip={`Copy ${icon.name}`}
-                onClick={() => void copyIcon(icon)}
+                aria-label={`Add the ${icon.name} icon`}
+                tooltip={`Add ${icon.name} — click, or drag onto a frame`}
+                onPointerDown={(event) => canvasDrag.startDrag(event, icon, `Drop ${icon.name}`)}
+                onClick={() => {
+                  // The pointerup that ends a drag also clicks the tile.
+                  if (canvasDrag.shouldSuppressClick()) return
+                  insertIcon(icon)
+                }}
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  setMenu({ icon, x: event.clientX, y: event.clientY })
+                }}
               >
                 <span
                   className={styles.iconGlyph}
@@ -127,6 +184,37 @@ export function IconsSection({ query, collapsed, onToggle }: IconsSectionProps) 
           )}
         </>
       )}
+      {menu && (
+        <ContextMenu x={menu.x} y={menu.y} ariaLabel={`${menu.icon.name} icon actions`} width={188} onClose={() => setMenu(null)}>
+          <ContextMenuItem
+            onClick={() => {
+              const icon = menu.icon
+              setMenu(null)
+              void copyIcon(icon)
+            }}
+          >
+            <span aria-hidden="true"><CopySolidIcon size={13} /></span>
+            Copy SVG
+          </ContextMenuItem>
+        </ContextMenu>
+      )}
+      <CanvasInsertionDragOverlay
+        drag={canvasDrag.drag}
+        body={
+          canvasDrag.drag ? <span aria-hidden="true" dangerouslySetInnerHTML={{ __html: sanitizeSvg(canvasDrag.drag.ghost.markup) }} /> : undefined
+        }
+      >
+        {canvasDrag.drag && (
+          <>
+            <span
+              className={styles.dragGhostPreview}
+              aria-hidden="true"
+              dangerouslySetInnerHTML={{ __html: sanitizeSvg(canvasDrag.drag.ghost.markup) }}
+            />
+            {canvasDrag.drag.ghost.name}
+          </>
+        )}
+      </CanvasInsertionDragOverlay>
     </AssetSection>
   )
 }

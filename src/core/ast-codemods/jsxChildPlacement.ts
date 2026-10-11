@@ -31,8 +31,7 @@
  * and no unrelated line is reformatted.
  */
 import { Node, type JsxElement, type JsxFragment, type JsxSelfClosingElement, type SourceFile } from 'ts-morph'
-import { resolveJsxChildRange, type TextEdit } from './jsxChildRange'
-import { refuse, type InsertJsxRefusal } from './jsxSubtree'
+import { resolveJsxChildRange, type JsxChildRangeReason, type TextEdit } from './jsxChildRange'
 import type { JsxOpeningLikeElement } from './locateJsxElement'
 
 /**
@@ -52,12 +51,46 @@ export interface ChildPlacementRequest {
    * A byte range this placement must pretend is not there — the subtree being
    * MOVED. Without it, a reparent into an ancestor could resolve its own moved
    * element as the "last child" of the destination and write the copy beside
-   * the hole it is about to cut.
+   * the hole it is about to cut. (An ANCHOR inside that range is the caller's to
+   * refuse - `moveJsxElement` does, as `into-own-descendant`.)
    */
   exclude?: { start: number; end: number } | null
+  /**
+   * G-7 - an anchor that is not a child of the container (the canvas flattens a
+   * `<Fragment>`, so a node it shows as the container's child is written inside
+   * the fragment) is written BESIDE, in the anchor's own parent, instead of
+   * refused `not-siblings`. The newcomer renders exactly where the anchor does,
+   * so this is the position the person pointed at. Off by default: a cross-file
+   * transplant (`transplantJsxElement.ts`) carries bindings for the container's
+   * component, and a landing in some other component would carry the wrong ones.
+   */
+  besideAnchorInItsParent?: boolean
 }
 
-export type ChildPlacementResult = { ok: true; edit: TextEdit } | { ok: false; refusal: InsertJsxRefusal }
+/**
+ * The only ways a PLACEMENT can fail — narrower than any one codemod's own
+ * union, so a move, a duplicate and an insert each accept it without having to
+ * list the others' reasons (an insert's `asset-import`, say) as their own.
+ */
+export type ChildPlacementRefusalReason = JsxChildRangeReason | 'not-a-container' | 'not-siblings'
+
+export type ChildPlacementResult =
+  | {
+      ok: true
+      edit: TextEdit
+      /**
+       * The JSX element or fragment the bytes land INSIDE - the container, or
+       * (`besideAnchorInItsParent`) the anchor's own parent. A caller that moves
+       * markup checks the names it reads against THIS, not against the container
+       * it asked for.
+       */
+      landing: Node
+    }
+  | { ok: false; refusal: { reason: ChildPlacementRefusalReason; message: string } }
+
+function refuse(reason: ChildPlacementRefusalReason, message: string): ChildPlacementResult {
+  return { ok: false, refusal: { reason, message } }
+}
 
 /** The single edit that puts a rendered child inside `parentOpening`'s element. */
 export function resolveChildPlacement(
@@ -78,7 +111,7 @@ export function resolveChildPlacement(
     const end = parentOpening.getEnd()
     const selfCloseStart = text.lastIndexOf('/>', end)
     if (selfCloseStart < parentOpening.getStart()) {
-      return refuse('not-a-container', 'Studio could not read where this element closes, so it cannot add a child to it.')
+      return refuse('not-a-container', "Studio could not read where this element closes, so it cannot add a child to it. Check the element's syntax in the code.")
     }
     // Drop the whitespace the user had before `/>` — `<Foo />` closes as `<Foo>`.
     const beforeSlash = trimTrailingBlankBack(text, selfCloseStart)
@@ -90,12 +123,13 @@ export function resolveChildPlacement(
         end,
         text: `>\n${childIndent}${render(childIndent, unit)}\n${parentIndent}</${tagName}>`,
       },
+      landing: parentOpening,
     }
   }
 
   const parentElement = parentOpening.getParent()
   if (!parentElement || !Node.isJsxElement(parentElement)) {
-    return refuse('not-a-container', 'Studio could not resolve this element to something that can hold children.')
+    return refuse('not-a-container', 'Studio could not resolve this element to something that can hold children. Pick a different container.')
   }
 
   const anchorEdit = resolveAnchorPlacement(sourceFile, text, parentElement, request, render, unit)
@@ -105,7 +139,7 @@ export function resolveChildPlacement(
   const last = children[children.length - 1]
   if (last) {
     const range = resolveJsxChildRange(sourceFile, ...tagLocation(sourceFile, last))
-    if (range.ok) return { ok: true, edit: insertBeside(range.range, 'after', render, unit, text) }
+    if (range.ok) return { ok: true, edit: insertBeside(range.range, 'after', render, unit, text), landing: parentElement }
   }
 
   // Empty parent: replace the whitespace-only run between the tags.
@@ -118,11 +152,12 @@ export function resolveChildPlacement(
     // Children exist but none of them resolved to a plain element (an
     // expression child, a bare text node, or the very subtree being moved out
     // of here). Append after them without touching what is already there.
-    return { ok: true, edit: { start: innerEnd, end: innerEnd, text: `\n${childIndent}${jsx}\n${parentIndent}` } }
+    return { ok: true, edit: { start: innerEnd, end: innerEnd, text: `\n${childIndent}${jsx}\n${parentIndent}` }, landing: parentElement }
   }
   return {
     ok: true,
     edit: { start: innerStart, end: innerEnd, text: `\n${childIndent}${jsx}\n${parentIndent}` },
+    landing: parentElement,
   }
 }
 
@@ -138,30 +173,30 @@ function resolveAnchorPlacement(
   const { anchor } = request
   if (!anchor) return null
 
-  const resolved = resolveJsxChildRange(sourceFile, anchor.line, anchor.col)
+  // WB-22 — an anchor the code produces (a `.map` row, a conditional) is
+  // written beside the `{…}` container that produces it.
+  const resolved = resolveJsxChildRange(sourceFile, anchor.line, anchor.col, 'container')
   if (!resolved.ok) return refuse(resolved.reason, resolved.message)
-  if (resolved.range.parent !== parentElement) {
+  if (resolved.range.parent !== parentElement && request.besideAnchorInItsParent !== true) {
     return refuse(
       'not-siblings',
-      'The element this would be written next to is not a child of the container it was dropped into, so there is no single place in the file to write it.',
-    )
-  }
-  if (isWithin(resolved.range.element, request.exclude)) {
-    // The anchor is inside the subtree being moved — it is about to stop
-    // existing, so it cannot be what the new position is written against.
-    return refuse(
-      'not-siblings',
-      'The element this would be written next to is part of the element being moved, so there is no fixed position in the file to write it against.',
+      'The element this would be written next to is not a child of the container it was dropped into. Drop it next to an element inside that container.',
     )
   }
   return {
     ok: true,
     edit: insertBeside(resolved.range, request.position ?? 'after', render, unit, text),
+    landing: resolved.range.parent,
   }
 }
 
-/** The zero-length edit that puts the rendered child immediately before or after an existing child's owned range. */
-function insertBeside(
+/**
+ * The zero-length edit that puts the rendered child immediately before or
+ * after an existing child's owned range. Exported for `moveJsxElement`'s
+ * mixed-indentation reorder (WB-21), which lands the moved element exactly
+ * where an insert beside the same anchor would.
+ */
+export function insertBeside(
   range: { start: number; end: number; wholeLine: boolean },
   position: 'before' | 'after',
   render: RenderJsx,
@@ -208,7 +243,7 @@ export function elementChildren(element: JsxElement | JsxFragment): (JsxElement 
 }
 
 /** The 1-based `line, col` of a JSX element's tag name — the coordinate `resolveJsxChildRange` speaks. */
-export function tagLocation(sourceFile: SourceFile, element: JsxElement | JsxSelfClosingElement): [number, number] {
+function tagLocation(sourceFile: SourceFile, element: JsxElement | JsxSelfClosingElement): [number, number] {
   const opening = Node.isJsxElement(element) ? element.getOpeningElement() : element
   const { line, column } = sourceFile.getLineAndColumnAtPos(opening.getTagNameNode().getStart())
   return [line, column]
@@ -229,7 +264,7 @@ export function countLeadingWhitespace(text: string, from: number): number {
 /**
  * One level of indentation, as this file writes it — a tab when the file is
  * tab-indented, otherwise the smallest non-zero space indent it uses (falling
- * back to two spaces). Copied rather than assumed so a write never mixes a
+ * back to two spaces) - block-comment gutters (` * text`) do not count. Copied rather than assumed so a write never mixes a
  * second indentation style into a file.
  */
 export function indentUnit(text: string): string {
@@ -237,7 +272,10 @@ export function indentUnit(text: string): string {
   for (const line of text.split('\n')) {
     const width = countLeadingWhitespace(line, 0)
     if (width === 0 || line.trim() === '') continue
-    if (line[0] === '\t') return '\t'
+    // A block comment's ` * text` gutter is one space wide in almost every
+    // file; it says nothing about how the CODE is indented.
+    if (line.trimStart().startsWith('*')) continue
+    if (line[0] ==='\t') return '\t'
     if (smallest === 0 || width < smallest) smallest = width
   }
   return ' '.repeat(smallest > 0 ? smallest : 2)

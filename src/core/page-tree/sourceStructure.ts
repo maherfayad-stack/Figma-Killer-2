@@ -27,21 +27,25 @@
  *
  *   - **`list-row`** — a `.map` row (`…:70:21#2`). One piece of source JSX
  *     renders every row; there is no position an edit to row 2 could occupy
- *     that would not rewrite all of them.
+ *     that would not rewrite all of them. (OD-8: a row ROOT's reorder, delete
+ *     and duplicate are written to the array it maps over instead — the store
+ *     asks `listRowPlans.ts` first, so what reaches this rule is a gesture the
+ *     array cannot express, or a list whose array is not written here.)
  *   - **`shared-component`** — an inlined id (`callSite~component:l:c`). The
  *     markup lives in the component's own file, so moving it here moves it for
  *     every instance on the board.
  *   - **`route-chrome`** — a Next `layout`/`template` file, composed into
- *     every route beneath it. Same "one file, many frames" problem.
+ *     every route beneath it. Same "one file, many frames" problem. G-8: the
+ *     user can opt in to editing ONE layout file ("Edit layout (N routes)"),
+ *     and until they end that mode its nodes are ordinary placements.
  *   - **`code-placed`** — the parser recorded a structural `lockReason`: a
  *     spread, a dynamic child, a branch the source chooses at runtime. The
  *     source does not place this element at a fixed position, so neither can
  *     we.
- *   - **`multi-select`** — several elements REORDERED (or WRAPPED) at once.
- *     Each write shifts the others' line numbers, and the anchor a reorder
- *     writes against is resolved per element; one gesture, N interdependent
- *     targets. (A multi DELETE or DUPLICATE is fine — the save route orders a
- *     batch bottom-to-top, so no write can move a pending one's line.)
+ *   - several elements at once are NOT refused here any more (P3-D). A
+ *     multi-element move is planned as single-element moves applied in order
+ *     (`moveSequence.ts`) and written as one `/save` sequence; a multi-element
+ *     wrap is a group. Each single element is asked this question on its own.
  *   - **`cross-file`** / **`no-sibling-anchor`** — a reorder is written as
  *     "put this element before/after that one", so it needs a sibling that is
  *     itself a plain element in the same file to write against. A reparent
@@ -66,7 +70,7 @@
  * becomes the page's returned root element) before asking here.
  *
  * The refusals only a PARSE can answer stay with the codemods and arrive at
- * save time: `not-siblings`, `expression-child`, `mixed-indentation`,
+ * save time: `not-siblings`, `expression-child`,
  * `no-jsx-parent`, `into-own-descendant`, and — the one W4-1 added —
  * `out-of-scope`, a reparent whose markup reads a binding that does not exist
  * where it would land. See `src/core/ast-codemods/moveJsxElement.ts`.
@@ -75,15 +79,28 @@
  * consult it BEFORE mutating, `applyTreeOperation` consults it so a plugin or
  * an agent rides the same gate, and the server's codemods re-derive the same
  * facts from the AST. See `src/core/ast-codemods/moveJsxElement.ts` for the
- * residual refusals only the AST can answer (`not-siblings`, `mixed-indentation`).
+ * residual refusals only the AST can answer (`not-siblings`, `expression-child`).
  */
 import {
+  INLINE_ID_SEPARATOR,
   decodeSourceNodeId,
   hasWritableSourceLocation,
   isInlinedNodeId,
   isRouteChromeNodeId,
   isSourceDerivedNodeId,
 } from './sourceNodeId'
+import { listRowRefusalMessage, type ListRowSource } from './listRowSource'
+import { isEditedLayoutNodeId } from './layoutEdit'
+
+/**
+ * What `refuseStructuralEdit` is asked. A `reparent` names the container it
+ * lands in; every other gesture may name the sibling it is written against
+ * (`reorder` needs one, the rest ignore it). One shape per gesture so a move
+ * with no destination is not a question that can be asked.
+ */
+export type StructuralEditQuestion =
+  | { kind: 'reparent'; node: SourceStructureNode; destination: SourceStructureNode }
+  | { kind: Exclude<StructuralEditKind, 'reparent'>; node: SourceStructureNode; anchor?: SourceStructureNode | null }
 
 /** The structural gestures the editor offers. One refusal vocabulary for all of them. */
 export type StructuralEditKind =
@@ -113,12 +130,6 @@ export type StructuralRefusalReason =
   | 'wrap'
   | 'group'
   | 'ungroup'
-  // K3 — the wrapper is doing more than holding its children (a handler, a
-  // ref, a `key`, a spread, or a component tag), so dissolving it would drop
-  // behaviour the code relies on. Decided by the AST alone
-  // (`unwrapJsxElement`), which is why it arrives at save time like
-  // `out-of-scope` rather than from the id.
-  | 'has-behaviour'
   // `struct-11` — the container a group would write cannot legally sit where
   // it would land, or cannot legally hold what it would hold: a `<div>` inside
   // a `<p>`, any wrapper inside a `<ul>`, a wrapper around an `<li>`. Decided
@@ -129,40 +140,28 @@ export type StructuralRefusalReason =
   | 'multi-select'
   | 'cross-file'
   | 'no-sibling-anchor'
-  // `store-14` — ⌘Z (or ⌘⇧Z) on a source-writing gesture whose recorded
-  // inverse no longer addresses anything in the file. The undo stack holds
-  // `rel:line:col` ids minted when the gesture landed; something that changed
-  // the file OUTSIDE the stack (an external editor, a value edit that
-  // reflowed a `style={{…}}`) invalidates them, and re-issuing the write
-  // anyway would edit whatever now sits at that line. Decided on the client,
-  // against the live tree, before anything is posted.
-  | 'stale-undo'
 
 /** A refused structural edit: the machine-readable reason plus the sentence the user reads. */
 export interface StructuralRefusal {
   reason: StructuralRefusalReason
   message: string
+  /**
+   * The node the refusal is about when it is NOT the one the gesture moves: the
+   * container a move would land in. G-3's detach-and-replay needs it - a drop
+   * into an instance is refused because of the DESTINATION, and it is the
+   * destination's instance that has to be detached.
+   */
+  aboutNodeId?: string
 }
 
-/** The only two fields these rules read — structural, so a `BaseNode` can be asked the question too. */
+/** The fields these rules read — structural, so a `BaseNode` can be asked the question too. */
 export interface SourceStructureNode {
   id: string
   lockReason?: string
+  /** OD-8 — a `.map` row root's array stamp, which is what its refusal sentence names (`listRowSource.ts`). */
+  listRow?: ListRowSource
 }
 
-/** Human label for the gesture, used in every refusal sentence. */
-const GESTURE: Record<StructuralEditKind, string> = {
-  reorder: 'Moved',
-  reparent: 'Moved',
-  delete: 'Deleted',
-  // An insert is asked about the CONTAINER it lands in, not about a node that
-  // exists yet, so its refusals read "Added into <what this container is>".
-  insert: 'Added into',
-  duplicate: 'Duplicated',
-  wrap: 'Wrapped',
-  group: 'Grouped',
-  ungroup: 'Ungrouped',
-}
 
 /**
  * Whether this node's PLACE can be written back to the user's source, and if
@@ -179,46 +178,14 @@ const GESTURE: Record<StructuralEditKind, string> = {
  * lands INSIDE. It has to satisfy the same "ordinary, singly-placed element"
  * test the moved node does, and live in the same file.
  */
-export function refuseStructuralEdit(input: {
-  kind: StructuralEditKind
-  node: SourceStructureNode
-  anchor?: SourceStructureNode | null
-  /** The new parent, for `reparent`. */
-  destination?: SourceStructureNode | null
-  /** True when this gesture moves or wraps more than one node at once. */
-  multi?: boolean
-}): StructuralRefusal | null {
-  const { kind, node, anchor, destination, multi } = input
+export function refuseStructuralEdit(input: StructuralEditQuestion): StructuralRefusal | null {
+  const { node } = input
   if (!isSourceDerivedNodeId(node.id)) return null
 
-  const gesture = GESTURE[kind]
-
-  // A multi-DELETE or multi-DUPLICATE is safe: the save route orders a batch
-  // bottom-to-top, so a write cannot move the line of one still pending above
-  // it. A multi-REORDER is not — each element is written against an anchor
-  // whose position the previous write may already have changed, and the
-  // gesture's meaning ("all of these, in this order, there") has no single
-  // source target. A multi-WRAP is not either, for a nearer reason: one
-  // wrapper around several elements is one write spanning all of them, and
-  // Studio writes a wrapper around one element's own range.
-  if (multi && (kind === 'reorder' || kind === 'reparent')) {
-    return {
-      reason: 'multi-select',
-      message: `${gesture} several elements at once — Studio writes a move one element at a time, because each write moves the others' line numbers. Drag them one by one.`,
-    }
-  }
-  if (multi && kind === 'wrap') {
-    return {
-      reason: 'multi-select',
-      message:
-        'Studio wraps one element at a time: a single wrapper around several elements is one write spanning all of them, and in the code they may not even be neighbours. Wrap them one by one, or wrap a container they already share.',
-    }
-  }
-
-  const placement = refusePlacement(node, gesture)
+  const placement = refusePlacement(node)
   if (placement) return placement
 
-  switch (kind) {
+  switch (input.kind) {
     case 'insert':
       // An insert is asked about the CONTAINER, not about a node that exists —
       // the new element has no id yet, and it never gets a canvas-minted one:
@@ -262,26 +229,19 @@ export function refuseStructuralEdit(input: {
       // (`has-behaviour`).
       return null
     case 'reparent': {
-      if (!destination) {
-        return {
-          reason: 'reparent',
-          message:
-            'Studio writes a move into a new parent as "put this element inside that one", so it needs a container that is itself an ordinary element in the code.',
-        }
-      }
-      const destinationPlacement = refusePlacement(destination, 'Moved into')
-      if (destinationPlacement) {
-        return {
-          reason: destinationPlacement.reason,
-          message: `The container this would move into is not an ordinary element: ${lowerFirst(destinationPlacement.message)}`,
-        }
-      }
+      // A move into a new parent always names its container (the type says so):
+      // "put this element inside that one" has no meaning without one, so there is
+      // no refusal for its absence - only for a container that cannot take it.
+      const { destination } = input
+      const destinationPlacement = refusePlacement(destination)
+      // G-3: the refusal is about the CONTAINER, so detach-and-replay knows whose instance to detach.
+      if (destinationPlacement) return { ...destinationPlacement, aboutNodeId: destination.id }
       const fromFile = decodeSourceNodeId(node.id)?.rel
       const intoFile = decodeSourceNodeId(destination.id)?.rel
       if (fromFile !== intoFile) {
         return {
           reason: 'cross-file',
-          message: `This element is written in ${fromFile} and the container is in a different file (${intoFile}). Studio moves an element to a new parent within one file; across files the markup would land where the values it reads do not exist.`,
+          message: `This element is written in ${fromFile} and the container is in ${intoFile}. Drop it into a container from the same file.`,
         }
       }
       return null
@@ -290,26 +250,22 @@ export function refuseStructuralEdit(input: {
       break
   }
 
+  const anchor = input.anchor
   if (!anchor) {
     return {
       reason: 'no-sibling-anchor',
       message:
-        'This element has no plain sibling to be written next to. Studio records a reorder as "put this before that one", so it needs a neighbour that is itself an ordinary element in the same file.',
+        'This element has no plain sibling to be written next to. Drop it into a container instead.',
     }
   }
-  const anchorPlacement = refusePlacement(anchor, 'Moved')
-  if (anchorPlacement) {
-    return {
-      reason: 'no-sibling-anchor',
-      message: `The element this would be written next to is not an ordinary one: ${lowerFirst(anchorPlacement.message)}`,
-    }
-  }
+  const anchorPlacement = refusePlacement(anchor)
+  if (anchorPlacement) return { reason: 'no-sibling-anchor', message: anchorPlacement.message }
   const nodeFile = decodeSourceNodeId(node.id)?.rel
   const anchorFile = decodeSourceNodeId(anchor.id)?.rel
   if (nodeFile !== anchorFile) {
     return {
       reason: 'cross-file',
-      message: `These two elements come from different files (${nodeFile} and ${anchorFile}), so there is no single place to write the new order.`,
+      message: `These two elements come from different files (${nodeFile} and ${anchorFile}), so there is no single place to write the new order. Drop it next to an element from the same file.`,
     }
   }
   return null
@@ -346,32 +302,67 @@ export function refuseStructuralEdit(input: {
  * own module doc for how it threads this through when a caller can supply it,
  * and what it checks independently from the AST when a caller cannot.
  */
-export function refusePlacement(node: SourceStructureNode, gesture: string): StructuralRefusal | null {
+export function refusePlacement(node: SourceStructureNode): StructuralRefusal | null {
   if (!hasWritableSourceLocation(node.id)) {
-    return {
-      reason: 'list-row',
-      message: `${gesture} a row of a list that the code generates. One piece of source JSX renders every row, so there is no way to change just this one — edit the array it maps over.`,
-    }
+    // OD-8 — a row root whose array is editable is written THROUGH it by the
+    // store (`listRowPlans.ts`) before this is asked; what reaches here is a
+    // gesture the array cannot express, a node inside a row, or a list whose
+    // array is not written here — each told apart in the sentence.
+    return { reason: 'list-row', message: listRowRefusalMessage(node, false) }
   }
-  if (isInlinedNodeId(node.id)) {
+  if (isInlinedNodeId(node.id) && !isSoleInstanceNodeId(node.id)) {
     return {
       reason: 'shared-component',
-      message: `${gesture} markup that lives in a shared component's own file, so the change would apply to every place that component is used, not just here.`,
+      message: 'This element lives in a shared component, so the change would apply to every place it is used. Detach this instance first.',
     }
   }
-  if (isRouteChromeNodeId(node.id)) {
+  // G-8 — not while the user is explicitly editing THIS layout file (`layoutEdit.ts`).
+  if (isRouteChromeNodeId(node.id) && !isEditedLayoutNodeId(node.id)) {
     return {
       reason: 'route-chrome',
-      message: `${gesture} markup from a layout file, which every page below it renders — the change would apply to all of them, not just this frame.`,
+      message: 'This element lives in a layout every page renders, so the change would apply to all of them. Use Edit layout to change it.',
     }
   }
   if (node.lockReason) {
     return {
       reason: 'code-placed',
-      message: `The code decides where this element goes (${node.lockReason}), so its position is not something Studio can write.`,
+      message: `The code decides where this element goes (${node.lockReason}), so Studio cannot write its position. Change it in the code.`,
     }
   }
   return null
+}
+
+/**
+ * OD-7 — component files Studio made for ONE call site: the copy
+ * (`extractComponentCopy`, `Card` → `Card2`) the editor writes when a detach
+ * refuses. Markup inlined from such a file has exactly one instance, so a
+ * structural edit written into it changes only that instance — an honest
+ * single target, not a `shared-component` refusal. Recorded by the store the
+ * moment it makes the copy; a board read never forgets it for the session.
+ */
+const soleInstanceComponentFiles = new Set<string>()
+
+export function markSoleInstanceComponentFile(rel: string): void {
+  soleInstanceComponentFiles.add(rel)
+}
+
+/** True for markup inlined ONE level deep from a file in {@link markSoleInstanceComponentFile}'s set. */
+function isSoleInstanceNodeId(nodeId: string): boolean {
+  const segments = nodeId.split(INLINE_ID_SEPARATOR)
+  const rel = decodeSourceNodeId(nodeId)?.rel
+  return segments.length === 2 && rel !== undefined && soleInstanceComponentFiles.has(rel)
+}
+
+/**
+ * OD-7 — a `shared-component` refusal is not the end of a gesture in the
+ * editor: the store detaches THIS instance and replays the gesture on the
+ * markup that replaced it (`instanceOnlyGesture.ts`), as one undo. A surface
+ * that PREVIEWS a gesture — a drop line, a context-menu item — asks this so it
+ * does not grey out what the commit will do. (When the detach itself refuses,
+ * the commit shows the refusal dialog, exactly as before.)
+ */
+export function isResolvedByInstanceDetach(reason: string): boolean {
+  return reason === 'shared-component'
 }
 
 /**
@@ -401,7 +392,7 @@ export function refuseMintedNodeInsert(input: {
   return {
     reason: 'insert',
     message:
-      'This element was created in the editor, so it has no markup in your project for Studio to write. Add a component from the canvas picker instead — that one writes the element and its import into the file.',
+      'This element was created in the editor, so it has no markup in your project to write. Add a component from the canvas picker instead.',
   }
 }
 
@@ -436,7 +427,7 @@ export function refuseMintedNodeCopy(input: {
   const noun = input.kind === 'reparent' ? 'move' : input.kind
   return {
     reason: input.kind,
-    message: `Studio ${noun}s imported markup by editing your project's source and re-reading it. This path changes the canvas tree only, so the ${noun} would never reach the file — do it from the editor, which writes it.`,
+    message: `Studio ${noun}s imported markup by editing your source, and this path changes the canvas tree only. Do it from the editor, which writes the file.`,
   }
 }
 
@@ -457,7 +448,3 @@ export class SourceStructureError extends Error {
   }
 }
 
-/** Lower-cases the first character so a refusal can be quoted mid-sentence. */
-function lowerFirst(text: string): string {
-  return text.length > 0 ? text[0]!.toLowerCase() + text.slice(1) : text
-}

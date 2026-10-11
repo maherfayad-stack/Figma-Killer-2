@@ -32,7 +32,8 @@
  * file's own doc for the conversion.
  */
 import type { PreviewAxes } from '@core/studio-board'
-import type { ElementSizePatch, RuntimeErrorKind } from '@core/studio-runtime'
+import type { FrameGeometrySnapshot } from '../frameGeometry/frameGeometryTypes'
+import type { ResizeAnchors, ResizeCommitPatch, ResizeSizingMarkers, RuntimeErrorKind, SnapGuide } from '@core/studio-runtime'
 
 /** A real, canonical parser/tree node id — the ONLY id shape any caller outside `frameAdapter/` ever sees. */
 export interface NodeRef {
@@ -72,17 +73,19 @@ export interface DropCandidateGeometry {
 }
 
 /**
- * The four structural DOM mutations today's reorder-drag code already
- * performs immediately (same tick) for the paint-on-drop feel, ahead of the
- * HMR/writeback reconciliation that follows within milliseconds. Portal mode:
- * a close-to-direct pass-through onto the local `Document`. Bridge mode: the
- * four already-built `optimistic.*` wire messages.
+ * The three structural DOM mutations a structural gesture performs
+ * immediately (same tick) for the paint-on-drop feel, ahead of the
+ * HMR/writeback reconciliation that follows within milliseconds, plus the
+ * style preview. Portal mode: a close-to-direct pass-through onto the local
+ * `Document`. Bridge mode: the `optimistic.*` wire messages.
+ *
+ * There is no text op: a text edit happens IN the frame (`startTextEdit`),
+ * so the element already shows what the user typed.
  */
 export interface OptimisticDomOps {
   insert(nodeId: string, parentNodeId: string, index: number, tagName: string, text?: string): void
   delete(nodeId: string): void
   move(nodeId: string, parentNodeId: string, index: number): void
-  text(nodeId: string, text: string): void
   /**
    * `speed-01` — a properties-panel style commit or scrub preview, applied
    * as a stylesheet rule scoped to `nodeId`'s own element (never `nodeId`'s
@@ -101,10 +104,25 @@ export interface OptimisticDomOps {
   style(nodeId: string, patch: Record<string, string>, className?: string): void
   /** Drops whatever optimistic style rule is currently active for `nodeId` — a no-op when none is. */
   clearStyle(nodeId: string): void
+  /**
+   * store-17 — the structural write behind an optimistic `delete`/`move` of
+   * these nodes did not land (refused, or never answered), so no HMR will
+   * reconcile the frame: put their optimistic hide or move back now. Called
+   * from `structuralCommitRollback.ts`, beside the tree's own inverse replay.
+   * A portal frame's DOM IS the tree, so its implementation is a no-op.
+   */
+  revert(nodeIds: readonly string[]): void
 }
 
 export type FrameRuntimeEvent =
   | { type: 'ready' }
+  /**
+   * SB-3 — the geometry last returned by `measureAll` may be stale (content or
+   * style changed, a stylesheet or font or image landed, a transition ended, the
+   * viewport resized). A latch: fired once, then quiet until the next
+   * `measureAll`. Never fires before the first `measureAll`.
+   */
+  | { type: 'geometry:dirty' }
   | { type: 'hmr:before' }
   | { type: 'hmr:after' }
   | { type: 'frame:resize'; height: number }
@@ -137,10 +155,14 @@ export type FrameRuntimeEvent =
    * `live-13` — a finished drag on the frame's own resize handles changed the
    * node's size; `patch` is the inline-style write the consumer commits
    * through the store (only the dimensions the drag changed, as `px`
-   * strings). Bridge mode only in practice: a portal frame's handles are the
-   * parent's own React elements (`CanvasResizeHandles`) and commit directly.
+   * strings, plus the Fixed companions a flex/grid child needs — `null`
+   * clears one; canvas-23). Bridge mode only in practice: a portal frame's
+   * handles are the parent's own React elements (`CanvasResizeHandles`) and
+   * commit directly.
    */
-  | { type: 'resize:commit'; nodeId: string; patch: ElementSizePatch }
+  | { type: 'resize:commit'; nodeId: string; patch: ResizeCommitPatch }
+  /** canvas-26 — the snap guides of the frame's resize step changed (`[]` when it ends), in frame-document px; the consumer paints them in the frame's drag layer. */
+  | { type: 'resize:guides'; guides: SnapGuide[] }
   /** `live-12` — a design-mode wheel gesture inside a bridge frame, in frame-local client pixels; the parent re-dispatches it on the iframe element. */
   | {
       type: 'wheel'
@@ -151,6 +173,23 @@ export type FrameRuntimeEvent =
       clientY: number
       modifiers: { shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean }
     }
+  /**
+   * P2-B — a design-mode keystroke inside a bridge frame, already cancelled
+   * there. `useBridgeFrameInteraction` replays it through
+   * `canvasFrameKeyRelay.ts`, the portal frame's own keyboard path. Bridge
+   * mode only: a portal frame's keyboard is heard natively.
+   */
+  | {
+      type: 'key'
+      phase: 'down' | 'up'
+      key: string
+      code: string
+      location: number
+      repeat: boolean
+      modifiers: { shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean }
+    }
+  /** P2-B / ERR-11 — the bridge frame's window lost focus; any key held in it may have been released elsewhere. */
+  | { type: 'blur' }
   /** `live-18` — a double-click on a text-bearing node inside the frame; the parent decides allowed/refused via `startTextEdit`. */
   | { type: 'text:editStart'; nodeId: string }
   /** `live-18` — Enter (no Shift) or blur ended the session with this final text. */
@@ -172,13 +211,43 @@ export type FrameRuntimeEvent =
 export type Unsubscribe = () => void
 
 /**
+ * What a resize target needs beyond the node itself — everything a portal
+ * drag reads straight off the store and a live frame cannot.
+ */
+export interface ResizeTargetOptions {
+  /** `K4`'s scale tool is armed: keep the aspect ratio. */
+  proportional: boolean
+  /** canvas-23 — the node's STORED inline sizing markers, which the Fixed switch reads to decide what a resize clears. */
+  sizing?: ResizeSizingMarkers
+  /** canvas-26 — what the moving edge snaps to: the node's tree siblings and parent, and the canvas zoom for the screen-px threshold. */
+  snap?: { siblings: NodeRef[]; parent: NodeRef | null; zoom: number }
+  /** PA-8 — which offsets the node's source anchors it by, so a live resize writes the same edge a portal one does. */
+  anchors?: ResizeAnchors
+}
+
+export interface ApplyOverlayOptions {
+  /** Apply `css` as a rule-level edit of the existing sheet when possible. */
+  incremental?: boolean
+}
+
+/**
  * The interface. 7 methods (the plan's own literal sketch is corrected from
  * 6 — see `STATE.md`'s `live-05` entry, "The plan's literal interface is
  * incomplete") plus a symmetric `dispose()`.
  */
 export interface FrameDocumentAdapter {
-  /** Mounts/updates a managed `<style id="...">`-equivalent with `css` — the generic mechanism every CSS-text injector (`ClassStyleInjector`, `EditorChromeInjector`, ...) now goes through instead of a direct `targetDocument.head.appendChild`. */
-  applyOverlay(id: string, css: string): void
+  /**
+   * Mounts/updates a managed `<style id="...">`-equivalent with `css` — the generic mechanism every CSS-text injector (`ClassStyleInjector`, `EditorChromeInjector`, ...) now goes through instead of a direct `targetDocument.head.appendChild`.
+   *
+   * `options.incremental` (SB-7) is a request, not a promise: the stylesheet is
+   * large and re-sent on every edit, so an adapter that can should apply the
+   * difference to the live sheet's rules instead of rewriting its text, which
+   * restyles everything either text could match. The resulting sheet is the
+   * same either way; only the invalidation differs. The portal adapter honours
+   * it (and then the `<style>` element holds no text, only rules); the bridge
+   * adapter ships the whole text and the in-frame runtime replaces it.
+   */
+  applyOverlay(id: string, css: string, options?: ApplyOverlayOptions): void
   removeOverlay(id: string): void
   /** Shows/positions the selection ring(s) for exactly these nodes; an empty array clears selection. */
   select(refs: NodeRef[]): void
@@ -186,6 +255,17 @@ export interface FrameDocumentAdapter {
   hover(ref: NodeRef | null): void
   /** Rects + a bounded set of computed-style properties. Portal mode resolves synchronously (wrapped in a resolved `Promise` so callers never branch on adapter kind); bridge mode is genuinely async (a real `postMessage` round trip, bounded by a timeout). */
   measure(refs: NodeRef[], properties?: string[]): Promise<NodeMeasurement[]>
+  /**
+   * SB-3 — every boxed node in the frame, in ONE batched read, for the rect
+   * index (`frameGeometry/`). Unlike `measure` it takes no refs and reads no
+   * computed style beyond the five hit-test facts on {@link NodeGeometry}; unlike
+   * `measureDropCandidates` it is linear in the node count and carries ancestry.
+   * Portal mode resolves synchronously (wrapped in a resolved `Promise`); bridge
+   * mode is one `postMessage` round trip carrying a single array. The FIRST call
+   * also arms the frame's `geometry:dirty` signal (see {@link FrameRuntimeEvent}),
+   * so a frame nobody indexes pays nothing for it.
+   */
+  measureAll(): Promise<FrameGeometrySnapshot>
   /**
    * `speed-06` — every node currently in the frame's document, with its
    * drop-target geometry, for a per-drag candidate snapshot
@@ -211,10 +291,11 @@ export interface FrameDocumentAdapter {
    * whether `K4`'s scale tool is armed. The caller has already applied the
    * module policy (`resizeOffer.ts`); the frame applies the geometric one
    * (an element whose computed display ignores a size gets no handles).
+   * `options` also carries what the frame cannot know itself (canvas-23/26).
    * Portal mode draws its handles as the parent's own React elements
    * (`CanvasResizeHandles`) and ignores this call — see `PortalFrameAdapter`.
    */
-  setResizeTarget(ref: NodeRef | null, options: { proportional: boolean }): void
+  setResizeTarget(ref: NodeRef | null, options: ResizeTargetOptions): void
   /**
    * `live-18` — replies to the frame's `text:editStart`: whether `nodeId`
    * may be edited inline (the same predicate the portal editor's
@@ -224,6 +305,13 @@ export interface FrameDocumentAdapter {
    * round trip — a documented no-op there.
    */
   startTextEdit(nodeId: string, allowed: boolean, text?: string): void
+  /**
+   * Open `nodeId` for inline editing on the PARENT's initiative — a text just
+   * drawn, Enter on a selected text — with no `text:editStart` to answer. The
+   * frame waits for the element to reach its DOM. A portal frame's own
+   * `NodeRenderer` opens its session from the store, so this is a no-op there.
+   */
+  beginTextEdit(nodeId: string, text: string): void
   optimistic: OptimisticDomOps
   /** Subscribes to a runtime event. Portal mode: real DOM/synthetic events (`ready` fires once, synchronously — a portal frame has no real "boot" moment). Bridge mode: the matching inbound `postMessage` from `runtime.ts`. */
   on<E extends FrameRuntimeEvent['type']>(event: E, handler: (msg: Extract<FrameRuntimeEvent, { type: E }>) => void): Unsubscribe

@@ -40,7 +40,7 @@ import { SYSTEM_ROLES } from '../../../server/auth/capabilities'
 import { selectStudioTools } from '../../../server/ai/tools'
 import { studioAgentTools } from '../../../server/ai/tools/studio'
 import { referenceRenderTool } from '../../../server/ai/mcp/tools/studio/referenceRender'
-import { agentWriteRefusalReason } from '../../../server/handlers/studio/agentWriteScope'
+import { agentWriteRefusal } from '../../../server/handlers/studio/agentWriteScope'
 
 const REPO_ROOT = join(import.meta.dir, '..', '..', '..')
 
@@ -83,6 +83,8 @@ describe('Tier-2 Studio tools — gate 2: the project\'s own trust tier', () => 
         join(REPO_ROOT, 'server', 'ai', 'mcp', 'tools', 'studio', 'referenceRender.ts'),
         'utf8',
       ),
+      // AI-21 — ESLint loads the project's config and plugins: project code.
+      studio_lint: readFileSync(join(REPO_ROOT, 'server', 'ai', 'mcp', 'tools', 'studio', 'lintTool.ts'), 'utf8'),
     }
     for (const tool of tier2Tools) {
       const source = sources[tool.name]
@@ -101,14 +103,20 @@ describe('Tier-2 Studio tools — gate 2: the project\'s own trust tier', () => 
     // that stops being refused, gate 2 is a field its own caller can set and
     // this whole describe block is decoration.
     const project = join(REPO_ROOT, 'studio-workspace', 'any-project')
-    expect(agentWriteRefusalReason(join(project, '.studio', 'meta.json'), project)).not.toBeNull()
-    expect(agentWriteRefusalReason(join(project, 'src', 'Home.tsx'), project)).toBeNull()
+    expect(agentWriteRefusal(join(project, '.studio', 'meta.json'), project)).not.toBeNull()
+    expect(agentWriteRefusal(join(project, 'src', 'Home.tsx'), project)).toBeNull()
   })
 
   it('the tool description tells the caller about BOTH gates', () => {
     // A weaker model only ever sees the description. A refusal it was not
     // warned about reads as a broken tool and gets retried.
-    expect(referenceRenderTool.description).toContain('studio.run.project')
-    expect(referenceRenderTool.description).toContain('trust-tier-required')
+    for (const tool of tier2Tools) {
+      expect(tool.description, tool.name).toContain('studio.run.project')
+      expect(tool.description, tool.name).toContain('trust-tier-required')
+    }
+  })
+
+  it('studio_lint is one of the Tier-2 tools (AI-21)', () => {
+    expect(tier2Tools.map((t) => t.name)).toContain('studio_lint')
   })
 })

@@ -427,14 +427,18 @@ describe('wrapJsxElement', () => {
     expect(fs.readFileSync(file, 'utf8')).toBe(PAGE)
   })
 
-  it('REFUSES a wrapper whose name this file already binds to something else', () => {
+  it('P3-C (WB-19) — imports a wrapper whose name this file already binds under an alias, never shadowing it', () => {
     const file = writeFixture(PAGE)
     const first = locateTag(PAGE, 'p', 1)
 
     const result = wrapJsxElement({ file, ...first, name: 'Third', importSpecifier: '@acme/ui' })
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.refusal.reason).toBe('binding-conflict')
-    expect(fs.readFileSync(file, 'utf8')).toBe(PAGE)
+    expect(result.ok).toBe(true)
+    expect(fs.readFileSync(file, 'utf8')).toBe(
+      PAGE.replace("import { Third } from './Third'\n", "import { Third } from './Third'\nimport { Third as Third2 } from '@acme/ui'\n").replace(
+        '      <p className="first">First</p>\n',
+        '      <Third2>\n        <p className="first">First</p>\n      </Third2>\n',
+      ),
+    )
   })
 
   it('REFUSES wrapping the element a component returns', () => {
@@ -613,7 +617,7 @@ describe('moveJsxElement — the reparent form', () => {
       position: 'after',
     })
     expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.refusal.reason).toBe('not-siblings')
+    if (!result.ok) expect(result.refusal.reason).toBe('into-own-descendant')
     expect(fs.readFileSync(file, 'utf8')).toBe(TWO_COMPONENTS)
   })
 
@@ -626,12 +630,4 @@ describe('moveJsxElement — the reparent form', () => {
     expect(fs.readFileSync(file, 'utf8')).toBe(PAGE)
   })
 
-  it('still refuses a same-parent reorder with no anchor to write against', () => {
-    const file = writeFixture(PAGE)
-    const first = locateTag(PAGE, 'p', 1)
-    const result = moveJsxElement({ file, ...first })
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.refusal.reason).toBe('no-anchor')
-    expect(fs.readFileSync(file, 'utf8')).toBe(PAGE)
-  })
 })

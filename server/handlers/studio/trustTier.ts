@@ -52,7 +52,7 @@
  * why a demotion that only edits a file is not a demotion.
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { stopDevServer } from './devServer'
 import { resolveLiveCapability } from './liveCapability'
@@ -126,8 +126,7 @@ export async function tryServeStudioTrustTier(req: Request, url: URL, pathname: 
       return jsonResponse({ ok: true, trust: body.trust })
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio:trustTier]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio:trustTier]', err)
     }
   }
 

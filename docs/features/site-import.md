@@ -1,10 +1,11 @@
 # Site Import
+> **Purpose:** the static-site importer and the CMS bundle import in the same modal · **Read when:** touching SiteImportModal or @core/siteImport · **Trust:** current-cms · **Owner:** parser-surgeon · **Verified:** not yet
 
 `src/admin/modals/SiteImport` is the canonical import surface. It routes static-site bundles (HTML pages, CSS files, images, fonts, JS) through `src/core/siteImport`, and routes CMS-exported site-transfer ZIP bundles through the CMS transfer endpoints for full import/export parity.
 
 The static-site pipeline has two parts: a pure analysis function (`buildImportPlan`) that produces an `ImportPlan` preview, and an async commit function (`commitImportPlan`) that uploads assets and writes to the store. CMS bundle imports keep their native semantics: validate the `SiteBundle`, preview against `/admin/api/cms/import/preview`, resolve any row slug conflicts in the shared Conflicts step, then apply through `/admin/api/cms/import` or `/admin/api/cms/import/archive`. The modal uses the same Review category navigator and Import progress surface for CMS bundles, so tables, media, folders, redirects, conflict resolution, and completion all live in the same picker pattern as HTML/CSS/media imports.
 
-> This one modal mixes two things with different futures: the static-site import path (this doc's main subject — `DropStep`, `AnalyzeStep`, `ConflictsStep`, `@core/siteImport`) is a live feature. The CMS-bundle branch (`CmsBundleAnalyzeStep`, `CmsBundleConflictsStep`, `cmsBundleFlow.ts`, `useCmsBundleImport.ts`, and the `SiteExportModal`/`ExportDialog` counterpart) is present and functional but blocked on a product decision about whether portable full-site export/import between installations is still required — see `STUDIO-CMS-REMOVAL-PLAN.md` (Tier 2).
+> This one modal mixes two things with different futures: the static-site import path (this doc's main subject — `DropStep`, `AnalyzeStep`, `ConflictsStep`, `@core/siteImport`) is a live feature. The CMS-bundle branch (`CmsBundleAnalyzeStep`, `CmsBundleConflictsStep`, `cmsBundleFlow.ts`, `useCmsBundleImport.ts`, and the `SiteExportModal`/`ExportDialog` counterpart) is present and functional but blocked on a product decision about whether portable full-site export/import between installations is still required — see the CMS-removal rows in [`ROADMAP.md`](../../ROADMAP.md) §13 (Tier 2).
 
 ---
 

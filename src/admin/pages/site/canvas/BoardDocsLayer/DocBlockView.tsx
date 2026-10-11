@@ -30,6 +30,7 @@
  * involved in the write.
  */
 import { useCallback, useEffect, useRef, useState, memo, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
+import { clearAnnotationEditRequest, hasAnnotationEditRequest } from '../annotationPlacement'
 import { createPortal } from 'react-dom'
 import type { DocBlock } from '@core/studio-board'
 import { sanitizeBoardDocHtml } from '@core/sanitize'
@@ -66,7 +67,11 @@ function DocBlockViewImpl({ doc }: DocBlockViewProps) {
   // whatever the ref held on the render that happened to run.
   const [cardEl, setCardEl] = useState<HTMLDivElement | null>(null)
   const bodyRef = useRef<HTMLDivElement | null>(null)
-  const [isEditing, setIsEditing] = useState(false)
+  // A doc just added from the toolbar mounts already editing (annotationPlacement.ts).
+  const [isEditing, setIsEditing] = useState(() => hasAnnotationEditRequest(doc.id))
+  useEffect(() => {
+    clearAnnotationEditRequest(doc.id)
+  }, [doc.id])
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [linkDialogOpen, setLinkDialogOpen] = useState(false)
 

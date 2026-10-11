@@ -27,6 +27,7 @@ import { UserStylesheetInjector } from '@site/canvas/UserStylesheetInjector'
 import { CanvasFrameAdapterContext } from '@site/canvas/CanvasContexts'
 import { PortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
 import { useEditorStore } from '@site/store/store'
+import { recordOverlayCss } from './recordOverlayCss'
 import {
   CANVAS_CSS_LAYER_ORDER,
   RESET_LAYER,
@@ -45,16 +46,14 @@ function resetEditorStore() {
 }
 
 let adapter: PortalFrameAdapter | null = null
-
-function overlayCss(logicalId: string): string {
-  return document.querySelector(`[data-studio-overlay-id="${logicalId}"]`)?.textContent ?? ''
-}
+let overlayCss: (logicalId: string) => string = () => ''
 
 beforeEach(() => {
   cleanup()
   document.head.replaceChildren()
   resetEditorStore()
   adapter = new PortalFrameAdapter(document)
+  overlayCss = recordOverlayCss(adapter)
 })
 
 afterEach(() => {

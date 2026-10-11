@@ -24,6 +24,8 @@ export class AiImageInputError extends Error {
 
 export interface AiUserContentPreflight {
   readonly text: string
+  /** `'studio'` when Studio composed the text rather than the user typing it — kept through canonicalisation. */
+  readonly textOrigin?: 'studio'
   readonly images: readonly AiUserImageBlock[]
   readonly imageBytes: readonly Buffer[]
 }
@@ -62,7 +64,8 @@ export function preflightAiUserContent(
   }
 
   const imageBytes = imageBlocks.map(preflightAiUserImage)
-  return { text, images: imageBlocks, imageBytes }
+  const textOrigin = textBlocks[0]?.origin
+  return { text, images: imageBlocks, imageBytes, ...(textOrigin ? { textOrigin } : {}) }
 }
 
 /** Full decoder boundary + canonical block reconstruction after admission gates. */
@@ -74,7 +77,9 @@ export async function canonicaliseAiUserContent(
   // removes whitespace-only text so no driver emits an empty text part and
   // reconstructs the image so request-only extra fields cannot be persisted.
   const canonical: AiContentBlock[] = []
-  if (preflight.text) canonical.push({ kind: 'text', text: preflight.text })
+  if (preflight.text) {
+    canonical.push(preflight.textOrigin ? { kind: 'text', text: preflight.text, origin: preflight.textOrigin } : { kind: 'text', text: preflight.text })
+  }
   // Decode sequentially. Eight concurrent Sharp pipelines would multiply the
   // per-request memory peak for no user-visible benefit.
   for (const bytes of preflight.imageBytes) {

@@ -12,7 +12,12 @@ export const BUILTIN_DESIGN_SYSTEM_DIR = resolve(process.cwd(), 'vendor', 'alm-d
 /** The folder name, relative to a project root, that carries the project's copy. */
 export const PROJECT_DESIGN_SYSTEM_DIR = 'design-system'
 
+/** The entry file whose presence makes a project design-system-backed. */
+export function designSystemEntryPath(projectDir: string): string {
+  return join(projectDir, PROJECT_DESIGN_SYSTEM_DIR, 'index.js')
+}
+
 /** True when the project carries a design-system folder with an entry file. */
 export function isDesignSystemBacked(projectDir: string): boolean {
-  return existsSync(join(projectDir, PROJECT_DESIGN_SYSTEM_DIR, 'index.js'))
+  return existsSync(designSystemEntryPath(projectDir))
 }

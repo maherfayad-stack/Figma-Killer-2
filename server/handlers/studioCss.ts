@@ -85,6 +85,8 @@ import { IMPORTED_RULE_ID_PREFIX, IMPORTED_RULE_TIMESTAMP, type ConditionDef, ty
 import { cssToStyleRules, type ImportWarning } from '@core/siteImport'
 import { collectEntryStylesheets, collectPageStylesheets } from '@core/studio-sync/collectPageStylesheets'
 import type { PageStylesheet } from '@core/studio-sync/pageStylesheet'
+import { relativeCssUrlsToAssetSentinels } from './studioAsset'
+import { registerModifierClasses } from './studioModifierClasses'
 
 /** Guard against a pathological vendored bundle being pulled in as "the page's CSS". */
 const MAX_STYLESHEET_BYTES = 2 * 1024 * 1024
@@ -132,9 +134,16 @@ export interface StudioStyles {
    * the two stay reconciled once a user edits an imported rule mid-session.
    */
   authoredCss: string
+  /**
+   * P6-B — the absolute path of every stylesheet this load read (whether or
+   * not it parsed). The `/load` memo (`studio/studioLoadMemo.ts`) records
+   * them beside the parse's own dependencies, so an edited stylesheet is
+   * noticed by a `stat` rather than by walking the project.
+   */
+  stylesheetFiles: string[]
 }
 
-const EMPTY_STYLES: StudioStyles = { styleRules: {}, conditions: [], classIdsByName: {}, sources: {}, warnings: [], authoredCss: '' }
+const EMPTY_STYLES: StudioStyles = { styleRules: {}, conditions: [], classIdsByName: {}, sources: {}, warnings: [], authoredCss: '', stylesheetFiles: [] }
 
 /**
  * Deterministic rule id. Derived from the rule's identity so the same CSS
@@ -301,10 +310,11 @@ export async function loadStudioStyles(
       if (!sheets.has(sheet.absPath) && !COMPILED_ELSEWHERE_RE.test(sheet.relPath)) sheets.set(sheet.absPath, sheet)
     }
   }
+  const stylesheetFiles = [...sheets.keys()]
   if (sheets.size === 0 && !extraCss) return EMPTY_STYLES
 
   const SheetCtor = await loadSheetConstructor()
-  if (!SheetCtor) return EMPTY_STYLES
+  if (!SheetCtor) return { ...EMPTY_STYLES, stylesheetFiles }
 
   const styleRules: Record<string, StyleRule> = {}
   const conditionsById = new Map<string, ConditionDef>()
@@ -328,7 +338,9 @@ export async function loadStudioStyles(
    * understands, so mapping one would let a save silently corrupt it.
    */
   const mergeParsedCss = (cssText: string, sourceFile?: string): void => {
-    authoredCssParts.push(cssText)
+    // P5-B3 — the canvas copy pins each relative `url()` to the file it names
+    // (`relativeCssUrlsToAssetSentinels`); the registry below keeps the text.
+    authoredCssParts.push(sourceFile ? relativeCssUrlsToAssetSentinels(cssText, sourceFile) : cssText)
     const parsed = cssToStyleRules(cssText, { sheetConstructor: SheetCtor })
     for (const condition of parsed.conditions) conditionsById.set(condition.id, condition)
     warnings.push(...parsed.warnings)
@@ -383,6 +395,8 @@ export async function loadStudioStyles(
     mergeParsedCss(cssText, sheet.relPath)
   }
 
+  registerModifierClasses(styleRules, classIdsByName, sources)
+
   // Track B1/B3 — these used to vanish entirely (only `.rules`/`.conditions`
   // were ever read off `cssToStyleRules`'s result). A dropped at-rule, an
   // unknown/blocked property, or a duplicate class is the only signal that a
@@ -399,6 +413,7 @@ export async function loadStudioStyles(
     sources,
     warnings,
     authoredCss: authoredCssParts.join('\n\n'),
+    stylesheetFiles,
   }
 }
 

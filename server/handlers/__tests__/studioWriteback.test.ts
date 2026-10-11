@@ -214,6 +214,7 @@ describe('applyStudioEdit — the literal kind', () => {
       kind: 'literal',
       nodeId: 'src/i18n/translations.js:3:16',
       text: 'Members-only hotel rates',
+      expected: 'Exclusive rates on hotels',
     })
 
     expect(applied.applied).toBe(true)
@@ -233,6 +234,7 @@ describe('applyStudioEdit — the literal kind', () => {
         kind: 'literal',
         nodeId: `../${path.basename(outside)}:1:18`,
         text: 'overwritten',
+        expected: 'keep me',
       })
 
       expect(applied.applied).toBe(false)
@@ -242,11 +244,25 @@ describe('applyStudioEdit — the literal kind', () => {
     }
   })
 
+  it('refuses `literal-changed` and writes nothing when the entry changed since the board read it', () => {
+    // The board read `en` while it still held the Arabic; the file was fixed
+    // by hand since. Writing what the board remembers would undo the fix.
+    write('src/i18n/translations.js', DICTIONARY)
+
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'literal', nodeId: 'src/i18n/translations.js:3:16', text: 'عروض حصرية', expected: 'عروض' },
+    ])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals).toEqual([expect.objectContaining({ kind: 'literal', reason: 'literal-changed' })])
+    expect(read('src/i18n/translations.js')).toBe(DICTIONARY)
+  })
+
   it('propagates the codemod refusal when the target is not a literal', () => {
     write('src/consts.ts', 'export const COUNT = 42\n')
 
     expect(() =>
-      applyStudioEdit(tmpDir, { kind: 'literal', nodeId: 'src/consts.ts:1:22', text: 'nope' }),
+      applyStudioEdit(tmpDir, { kind: 'literal', nodeId: 'src/consts.ts:1:22', text: 'nope', expected: '42' }),
     ).toThrow()
     expect(read('src/consts.ts')).toContain('42')
   })
@@ -489,13 +505,29 @@ export default function Home() {
     const result = applyStudioEditBatch(tmpDir, [{
       kind: 'insert',
       nodeId: 'src/Home.tsx:5:6',
+      name: 'script',
+    }])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals?.[0]?.reason).toBe('unsafe-tag')
+    expect(read('src/Home.tsx')).toBe(before)
+  })
+
+  it('P3-C (WB-19) — a component whose name the file already binds is inserted under an alias, through the batch', () => {
+    write('src/Home.tsx', `import { Button } from './ui/Button'\n\nexport default function Home() {\n  return (\n    <section>\n      <Button />\n    </section>\n  )\n}\n`)
+
+    const result = applyStudioEditBatch(tmpDir, [{
+      kind: 'insert',
+      nodeId: 'src/Home.tsx:5:6',
       name: 'Button',
       importSpecifier: '@alm-design/design-system',
     }])
 
-    expect(result.written).toBe(0)
-    expect(result.refusals?.[0]?.reason).toBe('binding-conflict')
-    expect(read('src/Home.tsx')).toBe(before)
+    expect(result.refusals).toEqual([])
+    expect(result.written).toBe(1)
+    expect(read('src/Home.tsx')).toBe(
+      `import { Button } from './ui/Button'\nimport { Button as Button2 } from '@alm-design/design-system'\n\nexport default function Home() {\n  return (\n    <section>\n      <Button />\n      <Button2 />\n    </section>\n  )\n}\n`,
+    )
   })
 
   it('is always treated as shared — the write shifts every line below it', () => {
@@ -617,33 +649,94 @@ export default function Home() {
   })
 })
 
-describe('applyStudioEditBatch — unexplainedSkips (STUDIO-FIGMA-PARITY-PLAN.md item 0.7)', () => {
-  it('names a synthetic-node skip (no writable source location) with its nodeId and kind', () => {
+describe('applyStudioEditBatch — every edit that does not write is a named refusal (WB-12)', () => {
+  // Before WB-12 each of these fell into `unexplainedSkips`, which the client
+  // could only answer with one red "Some changes were not saved to source"
+  // that blamed "text that comes from a prop or a variable" for all of them.
+
+  it('a synthetic node refuses `no-source-location`', () => {
     const result = applyStudioEditBatch(tmpDir, [
       { kind: 'prop', nodeId: 'index:body', prop: 'title', value: 'Hi' },
     ])
 
     expect(result.skipped).toBe(1)
-    expect(result.refusals).toHaveLength(0)
-    expect(result.unexplainedSkips).toEqual([{ nodeId: 'index:body', kind: 'prop' }])
+    expect(result.refusals).toEqual([
+      expect.objectContaining({ nodeId: 'index:body', kind: 'prop', prop: 'title', reason: 'no-source-location' }),
+    ])
   })
 
-  it('does not double-count a NAMED refusal as an unexplained skip', () => {
+  it('a text edit on an element with mixed children refuses `mixed-children`, and the sentence carries no path', () => {
+    write('src/Home.tsx', `export default function Home() {\n  return <p>Hi <b>there</b></p>\n}\n`)
+
+    const result = applyStudioEditBatch(tmpDir, [{ kind: 'text', nodeId: 'src/Home.tsx:2:11', text: 'Bye' }])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals).toHaveLength(1)
+    expect(result.refusals[0]).toMatchObject({ kind: 'text', reason: 'mixed-children' })
+    // WB-33 — the codemod's own message names the absolute temp path; the
+    // sentence a person reads must not.
+    expect(result.refusals[0]!.message).not.toContain(tmpDir)
+    expect(result.refusals[0]!.message).not.toContain('ast-codemods')
+    expect(read('src/Home.tsx')).toContain('<p>Hi <b>there</b></p>')
+  })
+
+  it('a value edit whose line:col holds no element refuses `element-moved` (the board recovers it)', () => {
+    write('src/Home.tsx', `export default function Home() {\n  return <h1 title="old">Hi</h1>\n}\n`)
+
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'prop', nodeId: 'src/Home.tsx:1:1', prop: 'title', value: 'new' },
+    ])
+
+    expect(result.refusals).toEqual([
+      expect.objectContaining({ kind: 'prop', prop: 'title', reason: 'element-moved' }),
+    ])
+    expect(result.refusals[0]!.message).not.toContain(tmpDir)
+  })
+
+  it('renaming a component tag refuses `component-tag`', () => {
+    write('src/Home.tsx', `import { Card } from './Card'\nexport default function Home() {\n  return <Card />\n}\n`)
+
+    const result = applyStudioEditBatch(tmpDir, [{ kind: 'tag', nodeId: 'src/Home.tsx:3:11', tag: 'section' }])
+
+    expect(result.refusals).toEqual([expect.objectContaining({ kind: 'tag', reason: 'component-tag' })])
+  })
+
+  it('a literal edit whose position holds something other than a string refuses `not-a-literal`', () => {
+    write('src/copy.ts', `export const COPY = { title: 42 }\n`)
+
+    const result = applyStudioEditBatch(tmpDir, [{ kind: 'literal', nodeId: 'src/copy.ts:1:30', text: 'Hello', expected: '42' }])
+
+    expect(result.refusals).toEqual([expect.objectContaining({ kind: 'literal', reason: 'not-a-literal' })])
+  })
+
+  it('does not double-count a NAMED refusal', () => {
     write('src/Home.tsx', `import { Button } from './ui/Button'\n\nexport default function Home() {\n  return (\n    <section>\n      <Button />\n    </section>\n  )\n}\n`)
 
     const result = applyStudioEditBatch(tmpDir, [{
       kind: 'insert',
       nodeId: 'src/Home.tsx:5:6',
-      name: 'Button',
-      importSpecifier: '@alm-design/design-system',
+      name: 'script',
     }])
 
     expect(result.skipped).toBe(1)
     expect(result.refusals).toHaveLength(1)
-    expect(result.unexplainedSkips).toHaveLength(0)
   })
 
-  it('a successful write contributes nothing to unexplainedSkips', () => {
+  it('WB-35 — a partly refused batch writes the rest, and names only the refused edit', () => {
+    write('src/Home.tsx', `export default function Home() {\n  return <h1 title="old">Hi <b>x</b></h1>\n}\n`)
+
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'prop', nodeId: 'src/Home.tsx:2:11', prop: 'title', value: 'new' },
+      { kind: 'text', nodeId: 'src/Home.tsx:2:11', text: 'Bye' },
+    ])
+
+    expect(result.written).toBe(1)
+    expect(result.skipped).toBe(1)
+    expect(result.refusals.map((refusal) => `${refusal.kind}:${refusal.reason}`)).toEqual(['text:mixed-children'])
+    expect(read('src/Home.tsx')).toContain('title="new"')
+  })
+
+  it('a successful write contributes no refusal', () => {
     write('src/Home.tsx', `export default function Home() {\n  return <h1 title="old">Hi</h1>\n}\n`)
 
     const result = applyStudioEditBatch(tmpDir, [
@@ -651,7 +744,7 @@ describe('applyStudioEditBatch — unexplainedSkips (STUDIO-FIGMA-PARITY-PLAN.md
     ])
 
     expect(result.written).toBe(1)
-    expect(result.unexplainedSkips).toHaveLength(0)
+    expect(result.refusals).toEqual([])
   })
 })
 
@@ -877,16 +970,17 @@ describe('applyStudioEdit — the css kind (WS-6.3)', () => {
 })
 
 /**
- * `panel-02` — the honest-target gate (`analyzeDeclarationTarget`) reaching
- * the real dispatch, not just its own unit tests. Each case below is a write
- * that WOULD have succeeded at the filesystem level and changed nothing the
- * user could see, because `setDeclaration` targets the FIRST matching rule
- * while the CSS cascade lets the LAST declaration win. A silent no-op is the
- * worst available outcome here, so each one refuses with a reason instead —
- * and, critically, leaves the file byte-identical.
+ * P3-C (WB-16) — a css edit is written where the CASCADE reads it, through the
+ * real dispatch. These three shapes used to REFUSE (`duplicate-selector`,
+ * `shorthand-override`, `duplicate-declaration`): `setDeclaration` wrote the
+ * FIRST matching rule while the cascade honours the LAST declaration, so the
+ * write would have changed nothing on screen. But the declaration the canvas
+ * shows is a real line in the file — one honest target — so it is written
+ * there now, and the bytes are asserted. The one refusal left is a covering
+ * `!important`, which leaves the file byte-identical.
  */
-describe('applyStudioEditBatch — css edits refuse rather than write invisibly', () => {
-  it('refuses when the selector is declared twice and the later block sets the same property', () => {
+describe('applyStudioEditBatch — css edits land on the declaration that takes effect', () => {
+  it('writes the LATER block when the selector is declared twice and both set the property', () => {
     const before = '.hero {\n  color: red;\n}\n\n.hero {\n  color: green;\n}\n'
     write('src/screens/Home.css', before)
 
@@ -900,13 +994,12 @@ describe('applyStudioEditBatch — css edits refuse rather than write invisibly'
       value: 'blue',
     }])
 
-    expect(result.written).toBe(0)
-    expect(result.refusals).toHaveLength(1)
-    expect(result.refusals[0]).toMatchObject({ kind: 'css', reason: 'duplicate-selector' })
-    expect(read('src/screens/Home.css')).toBe(before)
+    expect(result.refusals).toEqual([])
+    expect(result.written).toBe(1)
+    expect(read('src/screens/Home.css')).toBe('.hero {\n  color: red;\n}\n\n.hero {\n  color: blue;\n}\n')
   })
 
-  it('refuses when a shorthand later in the same rule would reset the edited longhand', () => {
+  it('writes the longhand right after a shorthand that would otherwise reset it', () => {
     const before = '.hero {\n  padding-top: 2px;\n  padding: 0;\n}\n'
     write('src/screens/Home.css', before)
 
@@ -920,12 +1013,11 @@ describe('applyStudioEditBatch — css edits refuse rather than write invisibly'
       value: '12px',
     }])
 
-    expect(result.refusals[0]).toMatchObject({ kind: 'css', reason: 'shorthand-override' })
-    expect(result.refusals[0]!.message).toContain('padding')
-    expect(read('src/screens/Home.css')).toBe(before)
+    expect(result.refusals).toEqual([])
+    expect(read('src/screens/Home.css')).toBe('.hero {\n  padding-top: 2px;\n  padding: 0;\n  padding-top: 12px;\n}\n')
   })
 
-  it('refuses when an !important shorthand outranks the edited longhand from any position', () => {
+  it('rewrites an !important shorthand in place when it outranks the edited longhand from any position (G-5)', () => {
     const before = '.hero {\n  margin: 0 !important;\n  margin-left: 4px;\n}\n'
     write('src/screens/Home.css', before)
 
@@ -939,11 +1031,12 @@ describe('applyStudioEditBatch — css edits refuse rather than write invisibly'
       value: '9px',
     }])
 
-    expect(result.refusals[0]).toMatchObject({ kind: 'css', reason: 'important-override' })
-    expect(read('src/screens/Home.css')).toBe(before)
+    expect(result.refusals).toEqual([])
+    expect(result.styleLandings.map((landing) => landing.rung)).toEqual(['expanded'])
+    expect(read('src/screens/Home.css')).toBe('.hero {\n  margin: 0 0 0 9px !important;\n  margin-left: 4px;\n}\n')
   })
 
-  it('refuses a property declared twice inside one rule', () => {
+  it('writes the second of a property declared twice inside one rule', () => {
     const before = '.hero {\n  color: red;\n  color: green;\n}\n'
     write('src/screens/Home.css', before)
 
@@ -957,8 +1050,28 @@ describe('applyStudioEditBatch — css edits refuse rather than write invisibly'
       value: 'blue',
     }])
 
-    expect(result.refusals[0]).toMatchObject({ kind: 'css', reason: 'duplicate-declaration' })
-    expect(read('src/screens/Home.css')).toBe(before)
+    expect(result.refusals).toEqual([])
+    expect(read('src/screens/Home.css')).toBe('.hero {\n  color: red;\n  color: blue;\n}\n')
+  })
+
+  it('P3-C (WB-31) — writes a @container override into its own block', () => {
+    write('src/screens/Home.css', '.hero {\n  color: red;\n}\n')
+
+    const result = applyStudioEditBatch(tmpDir, [{
+      kind: 'css',
+      op: 'set',
+      nodeId: 'css:src/screens/Home.css#.hero#container card (min-width: 400px)#color',
+      file: 'src/screens/Home.css',
+      selector: '.hero',
+      property: 'color',
+      value: 'blue',
+      atRule: 'container card (min-width: 400px)',
+    }])
+
+    expect(result.refusals).toEqual([])
+    expect(read('src/screens/Home.css')).toBe(
+      '.hero {\n  color: red;\n}\n\n@container card (min-width: 400px) {\n  .hero {\n    color: blue;\n  }\n}\n',
+    )
   })
 
   it('still writes when a duplicate selector exists but does not touch this property', () => {
@@ -980,11 +1093,12 @@ describe('applyStudioEditBatch — css edits refuse rather than write invisibly'
   })
 
   it('one refusal does not abort the rest of the batch', () => {
-    write('src/screens/Bad.css', '.a {\n  color: red;\n  color: green;\n}\n')
+    // A stylesheet that does not parse is the style refusal that survives G-5.
+    write('src/screens/Bad.css', '.a {\n  padding-top: 1px;\n  padding: 0')
     write('src/screens/Good.css', '.b {\n  color: red;\n}\n')
 
     const result = applyStudioEditBatch(tmpDir, [
-      { kind: 'css', op: 'set', nodeId: 'css:a', file: 'src/screens/Bad.css', selector: '.a', property: 'color', value: 'blue' },
+      { kind: 'css', op: 'set', nodeId: 'css:a', file: 'src/screens/Bad.css', selector: '.a', property: 'padding-top', value: '4px' },
       { kind: 'css', op: 'set', nodeId: 'css:b', file: 'src/screens/Good.css', selector: '.b', property: 'color', value: 'blue' },
     ])
 
@@ -1179,7 +1293,7 @@ describe('applyStudioEdit — the promote-component kind (E2.4/E2.1)', () => {
     expect(read('src/Page.tsx')).toContain('<Card user={user} />')
   })
 
-  it('reports a refusal through the batch rather than throwing (name-taken)', () => {
+  it('resolves a taken component name through the batch instead of refusing it', () => {
     write(
       'src/Page.tsx',
       `export default function Page() {
@@ -1198,9 +1312,12 @@ describe('applyStudioEdit — the promote-component kind (E2.4/E2.1)', () => {
       { kind: 'promote-component', nodeId: 'src/Page.tsx:3:6', componentName: 'Card' },
     ])
 
-    expect(result.written).toBe(0)
-    expect(result.refusals?.[0]?.reason).toBe('name-taken')
-    expect(read('src/Page.tsx')).toBe(before)
+    expect(result.written).toBe(1)
+    expect(result.refusals ?? []).toEqual([])
+    expect(result.promoteDetails[0]?.componentName).toBe('Card2')
+    expect(read('src/Card.tsx')).toBe('export function Card() { return <div /> }\n')
+    expect(read('src/Card2.tsx')).toContain('export function Card2')
+    expect(read('src/Page.tsx')).not.toBe(before)
   })
 
   it('is always treated as shared — extraction always shifts line numbers', () => {
@@ -1253,7 +1370,7 @@ describe('applyStudioEdit — the add-slot-prop kind (E2.2)', () => {
 
     expect(result.written).toBe(0)
     expect(result.skipped).toBe(0)
-    expect(result.unexplainedSkips).toEqual([])
+    expect(result.refusals).toEqual([])
     expect(result.addSlotPropDetails).toHaveLength(1)
     expect(result.addSlotPropDetails[0]?.committed).toBe(false)
     expect(result.addSlotPropDetails[0]?.callSites).toHaveLength(1)
@@ -1419,6 +1536,62 @@ describe('applyStudioEdit — the class kind, module tokens', () => {
     expect(read('src/ui/Card.tsx')).toContain('className={s.row}')
   })
 
+  it('P3-C (WB-18) — a stylesheet the file does not import is imported AFTER the batch, so no pending edit is mis-aimed', () => {
+    // The class edit is BELOW the text edit, so it runs first (bottom-to-top).
+    // An import line added right then would move the heading off line 3 and
+    // the text edit would land on the wrong element — or refuse.
+    const before = [
+      'export function Recipe() {',
+      '  return <section>',
+      '    <h2>Soup</h2>',
+      '    <p>Simmer</p>',
+      '  </section>',
+      '}',
+      '',
+    ].join('\n')
+    write('src/ui/Recipe.tsx', before)
+    write('src/ui/Recipe.module.css', '.step { color: red; }\n')
+
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'text', nodeId: 'src/ui/Recipe.tsx:3:6', text: 'Stew' },
+      { kind: 'class', nodeId: 'src/ui/Recipe.tsx:4:6', add: [{ kind: 'module', file: 'src/ui/Recipe.module.css', local: 'step' }], remove: [] },
+    ])
+
+    expect(result.refusals).toEqual([])
+    expect(result.written).toBe(2)
+    expect(result.shifted).toBe(true)
+    expect(read('src/ui/Recipe.tsx')).toBe(
+      [
+        "import styles from './Recipe.module.css'",
+        'export function Recipe() {',
+        '  return <section>',
+        '    <h2>Stew</h2>', // WB-9 — raw text stays raw
+        '    <p className={styles.step}>Simmer</p>',
+        '  </section>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+  })
+
+  it('P3-C (WB-18) — a lone applyStudioEdit adds the import itself (nothing is pending below it)', () => {
+    const before = ['export function Recipe() {', '  return <p>Simmer</p>', '}', ''].join('\n')
+    write('src/ui/Recipe.tsx', before)
+    write('src/ui/Recipe.module.css', '.step { color: red; }\n')
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'class',
+      nodeId: 'src/ui/Recipe.tsx:2:11',
+      add: [{ kind: 'module', file: 'src/ui/Recipe.module.css', local: 'step' }],
+      remove: [],
+    })
+
+    expect(applied.applied).toBe(true)
+    expect(read('src/ui/Recipe.tsx')).toBe(
+      ["import styles from './Recipe.module.css'", 'export function Recipe() {', '  return <p className={styles.step}>Simmer</p>', '}', ''].join('\n'),
+    )
+  })
+
   it('declines an out-of-workspace module path without writing anything', () => {
     write('src/ui/Card.tsx', page)
 
@@ -1468,7 +1641,7 @@ describe('applyStudioEdit — the class kind, module tokens', () => {
  * dispatcher and onto a real file: clearing a declaration, and writing one
  * under a breakpoint's `@media` query.
  */
-describe('applyStudioEdit — css unset + atMedia', () => {
+describe('applyStudioEdit — css unset + atRule', () => {
   it('clears a declaration and leaves the rest of the file alone', () => {
     write('src/app.css', '.card {\n  color: red;\n  padding: 4px;\n}\n')
 
@@ -1501,20 +1674,18 @@ describe('applyStudioEdit — css unset + atMedia', () => {
     expect(read('src/app.css')).toBe('.card {\n  padding: 4px;\n}\n')
   })
 
-  it('refuses an unset the cascade would ignore, exactly as a set would be refused', () => {
-    write('src/app.css', '.card {\n  color: red;\n}\n\n.card {\n  color: blue;\n}\n')
+  it('P3-C (WB-16) — an unset clears the property from every block, so the class stops setting it', () => {
+    write('src/app.css', '.card {\n  color: red;\n}\n\n.card {\n  color: blue;\n  margin: 0;\n}\n')
 
-    expect(() =>
-      applyStudioEdit(tmpDir, {
-        kind: 'css',
-        op: 'unset',
-        nodeId: 'css:src/app.css#.card##color',
-        file: 'src/app.css',
-        selector: '.card',
-        property: 'color',
-      }),
-    ).toThrow(/declared more than once/)
-    expect(read('src/app.css')).toBe('.card {\n  color: red;\n}\n\n.card {\n  color: blue;\n}\n')
+    applyStudioEdit(tmpDir, {
+      kind: 'css',
+      op: 'unset',
+      nodeId: 'css:src/app.css#.card##color',
+      file: 'src/app.css',
+      selector: '.card',
+      property: 'color',
+    })
+    expect(read('src/app.css')).toBe('.card {\n  margin: 0;\n}\n')
   })
 
   it('writes a set into a new @media block, leaving the unconditional rule untouched', () => {
@@ -1528,7 +1699,7 @@ describe('applyStudioEdit — css unset + atMedia', () => {
       selector: '.card',
       property: 'color',
       value: 'blue',
-      atMedia: '(max-width: 768px)',
+      atRule: 'media (max-width: 768px)',
     })
 
     const written = read('src/app.css')
@@ -1548,7 +1719,7 @@ describe('applyStudioEdit — css unset + atMedia', () => {
       selector: '.card',
       property: 'color',
       value: 'blue',
-      atMedia: 'print',
+      atRule: 'media print',
     })
 
     const written = read('src/app.css')
@@ -1568,7 +1739,7 @@ describe('applyStudioEdit — css unset + atMedia', () => {
       selector: '.card',
       property: 'color',
       value: 'blue',
-      atMedia: 'print',
+      atRule: 'media print',
     })
 
     expect(applied.applied).toBe(true)
@@ -1598,18 +1769,36 @@ describe('applyStudioEdit — the style kind, removal + refusal', () => {
     expect(written).not.toContain('color')
   })
 
-  it('turns a JsxStyleTargetError into a NAMED refusal, so it is never an unexplained skip', () => {
+  it('turns a JsxStyleTargetError into a NAMED refusal, whose sentence carries no path', () => {
+    // A REMOVAL from an expression `style` is the refusal P3-C (WB-17) kept:
+    // the key lives inside `s`, so there is nothing in this file to delete.
+    const before = ['export function Card({ s }) {', '  return <div style={s}>Hi</div>', '}', ''].join('\n')
+    write('src/ui/Card.tsx', before)
+
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'style', nodeId: 'src/ui/Card.tsx:2:11', style: {}, remove: ['color'] },
+    ])
+
+    expect(result.written).toBe(0)
+    expect(result.skipped).toBe(1)
+    expect(result.refusals).toHaveLength(1)
+    expect(result.refusals[0]!.reason).toBe('style-target')
+    expect(result.refusals[0]!.message).not.toContain(tmpDir)
+    expect(read('src/ui/Card.tsx')).toBe(before)
+  })
+
+  it('P3-C (WB-17) — a SET on an expression `style` wraps it, keeping the binding, through the batch', () => {
     write('src/ui/Card.tsx', ['export function Card({ s }) {', '  return <div style={s}>Hi</div>', '}', ''].join('\n'))
 
     const result = applyStudioEditBatch(tmpDir, [
       { kind: 'style', nodeId: 'src/ui/Card.tsx:2:11', style: { color: 'red' } },
     ])
 
-    expect(result.written).toBe(0)
-    expect(result.skipped).toBe(1)
-    expect(result.unexplainedSkips).toHaveLength(0)
-    expect(result.refusals).toHaveLength(1)
-    expect(result.refusals[0]!.reason).toBe('style-target')
+    expect(result.refusals).toEqual([])
+    expect(result.written).toBe(1)
+    expect(read('src/ui/Card.tsx')).toBe(
+      ['export function Card({ s }) {', '  return <div style={{ ...s, color: "red" }}>Hi</div>', '}', ''].join('\n'),
+    )
   })
 })
 
@@ -1892,13 +2081,13 @@ describe('applyStudioEditBatch — group / ungroup on a real imported page (K3)'
     expect(read(REL)).toBe(GROUPED_FEATURE_ROW)
   })
 
-  it('REFUSES a run with an unselected sibling in the middle, and writes nothing', () => {
+  it('a run with an unselected sibling in the middle is no longer refused for the gap (G-7): here the <ul> is what refuses, and nothing is written', () => {
     const result = applyStudioEditBatch(tmpDir, [
       { kind: 'group', nodeId: at('li', 1), siblingNodeIds: [at('li', 3)], name: 'div' },
     ])
 
     expect(result.written).toBe(0)
-    expect(result.refusals?.[0]?.reason).toBe('not-contiguous')
+    expect(result.refusals?.[0]?.reason).toBe('content-model')
     expect(read(REL)).toBe(IMPORTED_PAGE)
   })
 
@@ -1932,22 +2121,20 @@ describe('applyStudioEditBatch — group / ungroup on a real imported page (K3)'
     expect(read(REL)).toBe(IMPORTED_PAGE)
   })
 
-  it('REFUSES ungrouping a container that carries behaviour, and writes nothing', () => {
+  it('ungrouping a container that carries behaviour keeps it - here an empty husk, so the file is untouched (G-7)', () => {
     // `<span … dangerouslySetInnerHTML={{…}} />` is a container doing more than
-    // holding children: dissolving it would drop the markup it injects.
+    // holding children, and it holds none: there is nothing to hand back, and
+    // dissolving it would drop the markup it injects. It stays, byte for byte.
     const result = applyStudioEditBatch(tmpDir, [{ kind: 'ungroup', nodeId: at('span', 1) }])
 
-    expect(result.written).toBe(0)
-    expect(result.refusals?.[0]?.reason).toBe('has-behaviour')
-    expect(result.refusals?.[0]?.message).toContain('dangerouslySetInnerHTML')
+    expect(result.refusals).toEqual([])
     expect(read(REL)).toBe(IMPORTED_PAGE)
   })
 
-  it('REFUSES ungrouping a COMPONENT — that would delete a usage, not a group', () => {
+  it('ungrouping a COMPONENT keeps its call site - a usage is not a group (G-7)', () => {
     const result = applyStudioEditBatch(tmpDir, [{ kind: 'ungroup', nodeId: at('IOSStatusBar') }])
 
-    expect(result.written).toBe(0)
-    expect(result.refusals?.[0]?.reason).toBe('has-behaviour')
+    expect(result.refusals).toEqual([])
     expect(read(REL)).toBe(IMPORTED_PAGE)
   })
 

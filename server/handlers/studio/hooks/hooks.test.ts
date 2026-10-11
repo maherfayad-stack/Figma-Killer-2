@@ -43,6 +43,7 @@ const SPAWN_TIMEOUT_MS = 30_000
 
 const RECORD_SCRIPT = path.join(import.meta.dir, 'recordToolWrite.ts')
 const GATE_SCRIPT = path.join(import.meta.dir, 'stopGateCheck.ts')
+const DENY_SCRIPT = path.join(import.meta.dir, 'denyControlPlaneWrite.ts')
 
 interface RunResult {
   readonly exitCode: number
@@ -227,6 +228,56 @@ describe('stopGateCheck.ts (spawned)', () => {
       )
       expect(result.exitCode).toBe(0)
       expect(result.stdout.trim()).toBe('')
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true })
+    }
+  }, SPAWN_TIMEOUT_MS)
+})
+
+describe('denyControlPlaneWrite.ts (spawned) — the CLI path asks for host-executed files too (F3)', () => {
+  it('blocks a Write to vite.config.ts, package.json and CLAUDE.md with the needs-user message, and allows a screen', async () => {
+    const projectDir = await freshDir()
+    try {
+      for (const rel of ['vite.config.ts', 'package.json', 'CLAUDE.md', '.husky/pre-commit']) {
+        const result = await run(DENY_SCRIPT, {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'Write',
+          tool_input: { file_path: path.join(projectDir, ...rel.split('/')), content: 'x' },
+          cwd: projectDir,
+        })
+        expect(result.exitCode, rel).toBe(2)
+        expect(result.stderr, rel).toContain('ask them to make or approve it')
+      }
+      const screen = await run(DENY_SCRIPT, {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Write',
+        tool_input: { file_path: path.join(projectDir, 'pages', 'Home.tsx'), content: 'x' },
+        cwd: projectDir,
+      })
+      expect(screen.exitCode).toBe(0)
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true })
+    }
+  }, SPAWN_TIMEOUT_MS)
+})
+
+describe('denyControlPlaneWrite.ts (spawned) — the re-review bypass (R1)', () => {
+  it('blocks the shell runtime vite.config.js imports and a module the project config imports', async () => {
+    const projectDir = await freshDir()
+    try {
+      fs.writeFileSync(path.join(projectDir, 'vite.config.ts'), "import { p } from './vite/plugins'\nexport default {}\n")
+      fs.mkdirSync(path.join(projectDir, 'vite'))
+      fs.writeFileSync(path.join(projectDir, 'vite', 'plugins.ts'), 'export const p = 1\n')
+      for (const [rel, code] of [['prototype/studioRuntime.generated.js', 'preview shell'], ['vite/plugins.ts', 'imported by vite.config.ts']] as const) {
+        const result = await run(DENY_SCRIPT, {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'Edit',
+          tool_input: { file_path: path.join(projectDir, ...rel.split('/')), old_string: 'a', new_string: 'b' },
+          cwd: projectDir,
+        })
+        expect(result.exitCode, rel).toBe(2)
+        expect(result.stderr, rel).toContain(code)
+      }
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true })
     }

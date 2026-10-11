@@ -1,4 +1,5 @@
 # Inspector progressive disclosure
+> **Purpose:** the properties panel's density contract: laws, goals G1–G12, the field model, the height gate · **Read when:** touching the inspector, or reading a "Law n" / "§4 Gn" code comment · **Trust:** current · **Owner:** panel-designer · **Verified:** not yet
 
 The properties panel's density contract: five laws, ten goals (G1–G10), the
 field model every numeric control shares, and the list of Figma controls Studio
@@ -15,36 +16,23 @@ the measurement gate, `§7` the do-not-copy list, `§8` the resolved decisions.
 existed and is deliberately never reused; `§5` was empty until W8-1 wrote the
 field model into it, which added a section without renumbering one.)
 
-> **History.** This content was the delivery plan `STUDIO-INSPECTOR-DISCLOSURE-PLAN.md`,
-> retired once its work orders shipped. The plan's own progress bookkeeping is
-> gone (git remembers it); the design rules, which the code still cites, live
-> here. Per-track status for the wider parity effort is
-> [`STUDIO-FIGMA-PARITY-PLAN.md`](../../STUDIO-FIGMA-PARITY-PLAN.md) **§0a** —
-> the single status ledger. The narrative summary of these laws, in design
-> language, is [`docs/design.md`](../design.md) → "The inspector".
->
-> **Track P shipped.** `STUDIO-LIVE-CANVAS-PLAN.md` Track P (Penpot-exact
-> inspector) rebuilt this panel on top of everything below, structure first:
-> P1 wrapped the panel in a new Design / Prototype / Inspect shell
-> (`src/admin/pages/site/inspector/`), collapsed the old independent
-> Element/Class blocks into one `StyleSectionsEditor` call driven by
-> `resolveWriteTarget.ts` ("the write target is a rule, not a mode"), and
-> deleted the sticky search bar + `StyleCategoryRail` from the single-node
-> surface (`StyleSurface.tsx`) — `SelectorInspector.tsx`'s separate
-> global/ambient-selector surface keeps both, since a bare CSS selector has
-> no element-vs-class ambiguity to resolve. Every law and primitive below is
-> unchanged in shape; P3 completed (`STATE.md` `panel-25` — 11 of 11
-> sections migrated, Studio extras/item 11 the last), every category
-> `StyleSectionsEditor.tsx` used to render (now deleted) re-skinned to the
-> measured Penpot baseline (`docs/audits/penpot-inspector-baseline/`) as its
-> own `INSPECTOR_SECTIONS` manifest entry; P4 (`panel-23`) rewired
-> computed-value reads onto `SelectionModel`; P5 (`panel-26`) sourced those
-> values through the live DOM at Tier 2. **P6 (`STATE.md` `panel-27`) is
-> this file's own retirement** — the file you are reading is the renamed
-> `inspector-disclosure.md`, and §6 below is now the real, running gate
-> instead of the "Not implemented" placeholder it used to be. This page
-> remains the authoritative reference for the vocabulary the source cites;
-> only its filename and §6 changed.
+> **How the panel is built.** The inspector is the Penpot-exact panel of
+> Track P: a Design / Prototype / Inspect shell (`src/admin/pages/site/inspector/`),
+> one `INSPECTOR_SECTIONS` manifest entry per section, each re-skinned to the
+> measured Penpot baseline (`docs/audits/penpot-inspector-baseline/`); the write
+> target is resolved by `resolveWriteTarget.ts` ("the write target is a rule, not
+> a mode"; G-5: a class that cannot hold the typed value — a styled template
+> cannot spell a `;` or a backtick — steps aside through `holds`, so the value
+> lands on the element instead of being refused), a style edit never refuses
+> and `StyleLandingChip` says where it went after the write ("Saved in
+> `Card.module.css`" / "as an override" / "shorthand expanded" / "inline", with
+> an Undo for the two rungs a value-set cannot take back — see
+> `docs/features/studio-import.md` "CSS write-back"), and computed values are read
+> through `SelectionModel` (from the live DOM at Tier 2). `SelectorInspector.tsx`, the separate surface for a bare CSS
+> selector, keeps its search bar and category rail. Every law and primitive below
+> applies to all of it. The same rules in design language are in
+> [`docs/design.md`](../design.md) → "The inspector"; why the panel was rebuilt this
+> way is LIVE §7.3 in [`docs/decisions.md`](../decisions.md).
 
 ---
 
@@ -52,9 +40,8 @@ field model into it, which added a section without renumbering one.)
 
 G1–G12 shipped: G9 completed in W8-1, G11 (Export) added in W8-4, G12
 (Studio extras) added when P3 completed (`STATE.md` `panel-25`, item 11).
-One piece did not, and is tracked as an
-open workstream in
-[`STUDIO-NEXT-WORKSTREAMS.md`](../../STUDIO-NEXT-WORKSTREAMS.md):
+One piece did not, and is an open row in
+[`ROADMAP.md`](../../ROADMAP.md) §13:
 
 | Open | What is missing |
 |---|---|
@@ -77,6 +64,17 @@ panel), and `animation`/`transition` landed on
 `AnimationEditorPopover.tsx`/`AnimationScrubRow.tsx` unchanged, which is
 where the structured per-entry editor and scrub row still live. See **G12**
 below for the full six-section list.
+
+**Nothing selected (P5-F, UX-9)** is the open screen's own properties, not a
+sentence: `EmptySelectionPanel` shows the frame's size (`FrameSizePanel`),
+a **Screen** section with Copy as PNG (the same run as ⌘⇧C,
+`canvas/copyAsPng.ts`), and a **Snapping** section with the two snap toggles
+(the store preference ⌘⇧' / ⌘' flip). A board background swatch and a
+downloadable board export are not there yet — there is no board background
+in the model, and export of a whole board is a separate capture.
+
+**Collapsed sections show their chevron at rest (P5-F, UX-8)**, so a folded
+section with a body never reads like an empty one (which has no toggle).
 
 ---
 
@@ -174,8 +172,8 @@ Stroke's row reads four sides through a uniform/mixed model with its own
 `ColorValueInput`+`placeholder` idiom (distinct from Fill's "show the real
 value, muted" idiom — see `StrokeSection.tsx`), and Shadow/Blur's rows are
 structured multi-field values (offset/blur/spread/colour, or a blur radius)
-with **no muted-rendering concept at all today** (`ShadowSection.tsx`'s own
-doc: "no `currentStyles` bag is built here" — a genuinely separate, larger
+with **no muted-rendering concept at all today** (`EffectsSection.tsx`, which
+merged them in P2-F: "no `currentStyles` bag is built here" — a genuinely separate, larger
 feature: parsing a computed `box-shadow`/`filter` string into a synthetic
 muted layer, then wiring per-synthetic-layer write-target resolution). A
 future session must still reuse `rendersUnstoredValue`, not reimplement this
@@ -369,7 +367,9 @@ popover, not the Layout `⚙`.
 #### Hug/Fill is resolved against the real parent (W8-4)
 
 `Fixed`/`Hug`/`Fill` are **intents**, and the CSS that expresses an intent
-depends entirely on how the element's parent lays it out. `elementSizing.ts`
+depends entirely on how the element's parent lays it out. `elementSizingRules.ts`
+(`@core/studio-runtime` — the canvas resize, in a portal frame and inside a
+live frame's runtime, reads the same model)
 classifies each axis against the parent's *computed* `display`/`flex-direction`
 (`sizingAxisRole`) and writes accordingly:
 
@@ -379,6 +379,14 @@ classifies each axis against the parent's *computed* `display`/`flex-direction`
 | flex, **cross** axis | `align-self: stretch` (clears the axis length) | `width\|height: fit-content` |
 | grid | `justify-self` (inline) / `align-self` (block) `: stretch`, clears the axis length | `width\|height: fit-content` |
 | block | `width\|height: 100%` | `width\|height: fit-content` |
+| **absolute / fixed** (PA-5), whatever the parent | both insets, axis length cleared: the Left-and-right / Top-and-bottom constraint, planned by `constraintMapping`'s `planConstraintChange(axis, 'stretch')` so the size field and the crosshair share one write | `width\|height: fit-content`; a stretch's end inset is released |
+
+An element that is `absolute`/`fixed` has left the parent's layout, so its role
+is `absolute` regardless of the parent (`SizingParentLayout.childPosition`,
+read from the element's own `position`). Fixed there freezes the measured
+length and drops a stretch's end inset. Fill is disabled with the constraints
+gate's reason (e.g. an unpositioned parent) when the stretch has no honest
+patch.
 
 The earlier model wrote `fit-content`/`100%` unconditionally. `100%` on a flex
 child resolves against the container's content box and ignores `gap`, so a
@@ -399,6 +407,55 @@ layout comes from `useSizingParentLayout` — a live `getComputedStyle` read of
 the parent's rendered element, the same source `SingleNodeAlignRow` uses for
 G10; a stored declaration cannot tell you what the cascade resolved `display`
 to.
+
+#### Ignore auto layout (PA-4)
+
+A child of a flex/grid container shows an **Ignore auto layout** switch in the
+"Flex element" section. On: `setIgnoreAutoLayout` writes `position: absolute`
+and the `left`/`top` the layer already occupies (measured against the container
+by `containingBlockOffsets`, margin taken off) on the child and, when the
+container does not yet contain absolute children, `position: relative` on the
+container, **in one undo step**. The container write happens only when that one
+declaration stays on one element: a container inlined from a component used in
+N places, or repeated per `.map` row, refuses with a dialog naming N and
+offering the same write as an explicit remedy (OD-P2). Off: position and every
+inset are cleared (the layer's source index never changed) and a container
+`relative` that nothing else needs is released, so on-then-off restores the
+file. A position that comes from a class is refused with that reason. A
+container whose children are all absolute shows a derived **Free frame** chip
+(`useParentPlacementKind`); the menu items read "Add auto layout" / "Add /
+remove auto layout" to match shift-A. Live (Tier 2) frames cannot be measured
+and say so.
+
+#### Add auto layout / Remove auto layout, keeping positions (PA-7, PA-8)
+
+⇧A, the layer menu's **Add auto layout / Remove (keep positions)** and the
+palette are one command, `toggleFlexLayout`, and it reads the frame before it
+writes. On a container that is not auto layout it **adds** it: the children's
+measured rects go through `core/studio-runtime/inferAutoLayout.ts` (direction
+from how they overlap vertically, gap from the spaces between their MARGIN
+boxes, `align-items` from the edge they share, `flex-wrap` plus a row gap when
+they form lines, padding from the container's padding box to the first
+child), and `convertLayout` writes `display: flex` with those values. A free
+frame's absolute children flow back in visual order (their `position`, insets
+and `translate` cleared; if the source order differs the reorder is the usual
+structural move written first and the restyle follows it, so that case is two
+undo entries, the move and the layout; in order it is one). Block children that
+fill their parent get `align-items: stretch` so they keep filling it; a bare
+content-box container that gains padding becomes `border-box` so it keeps its
+outer size. An absolute badge on a flow container stays pinned. On a container
+that **is** auto layout it **removes** it without moving anything
+(`freezePositions`): each in-flow child becomes `position: absolute` at the
+offset from the container's padding box (border and its own margin taken off)
+with its measured width and height, and the container leaves flex, becomes
+`position: relative` if it was static and keeps its height. Either way the
+container and all its children are written in one `convertLayout` call, all or
+nothing: a `.map` row, markup shared by other call sites or a style set in code
+refuses the whole gesture and a dialog names the element. Uneven spacing is
+averaged and the toast says a few layers move; live (Tier 2) frames cannot be
+measured and say so. Undo restores the same declarations, but a key the write
+removed returns at the END of its `style` object (style undo is a patch replay,
+not a journal restore).
 
 ### G3 — Layout: the settings popover (F3–F8)
 
@@ -447,7 +504,9 @@ state is Figma's link: one field, writing the four longhands in a single
 history entry (`LinkedSidesField.tsx`). It is not the `padding` shorthand —
 here the link is about how many fields are drawn, unlike corner radius (G5.5),
 where the shorthand is what a human writes and the link picks the declaration.
-Before P9 the H/V pair was the whole collapsed state, so the most common
+The all-sides field shows **Mixed** unless all four sides render equal
+(`padding-inline: 16px` alone leaves top/bottom at 0), and an H or V edit is one
+`onChangeMany` patch, so its two sides undo together. Before P9 the H/V pair was the whole collapsed state, so the most common
 padding gesture of all — one number on every side — took two edits. The `SpacingBoxControl`
 diagram — the tallest single block in the panel — survives as an opt-in behind
 the Spacing `⚙` (*Box model*), because it is the best control for "which side is
@@ -470,9 +529,12 @@ invention.
 - **G5.5 — The radius link writes the shorthand (P9).** The cluster's toggle is
   a chain link, and it chooses the *declaration*: **linked** writes
   `border-radius: 12px` and clears the four longhands, **unlinked** writes the
-  four longhands and clears the shorthand. Never both — a shorthand and a
-  longhand in one rule resolve by source order, which a property bag does not
-  model. Before P9 the linked field wrote four longhands regardless, so a
+  **one corner's longhand, written after the shorthand** (a longhand after a
+  shorthand wins by order, and the cluster reads the longhand over it) — the
+  author's `border-radius: 8px` and the other three corners are never rewritten
+  into four lines by one corner's edit (r3-inspector). Linking again writes the
+  shorthand and clears the longhands, so the pair never outlives a linked edit.
+  Before P9 the linked field wrote four longhands regardless, so a
   hand-written `border-radius: 12px` came back as four lines the first time
   anything touched it.
 
@@ -575,34 +637,40 @@ element with no image is the exact defect this page exists to prevent.
      `GET /admin/api/studio/project-assets` (`server/handlers/studio/projectAssets.ts`),
      a `readdir` filtered to image extensions. `node_modules`, `.git`, `dist`,
      `.studio` and Studio's own `prototype/` scaffold are never offered.
-  2. **Upload** — lands a file into the project through the existing
-     `POST /admin/api/studio/asset-upload` pipeline (magic-number sniffing,
-     symlink-aware containment on the real path, collision-safe naming, SVG
-     sanitisation). No CMS media library is involved: Studio's assets live on
-     disk, in the user's repo.
+  2. **Upload** — lands a file through `POST /admin/api/studio/asset-drop`
+     (`dropStudioAsset`), the route for every image a literal URL will
+     reference: into the app's own `public/` (under the app root, so a
+     monorepo's `apps/web/public/`, not the project's), through the shared
+     pipeline (magic-number sniffing, symlink-aware containment on the real
+     path, collision-safe naming, SVG sanitisation, content dedupe). No CMS
+     media library is involved: Studio's assets live on disk, in the user's repo.
   3. **URL** — written verbatim, for a CDN image.
 
   Nothing is written until a source is chosen — the button never inserts a
   speculative `url('')` into the user's source.
 
-  **Which URL gets written is the load-bearing decision** (`imageFillValue.ts`).
-  It is never Studio's own `/admin/api/studio/asset?dir=…` endpoint — that is an
-  admin-origin URL, meaningless in the user's repo, and pasting it into their
-  stylesheet would be exactly the lying edit this product refuses. It is the URL
-  *their* build resolves. Only one form is unconditionally correct for a CSS
-  `background-image` across Vite, Next and CRA: a file under the public root
-  (`public/`, or the `static/` spelling), referenced root-relatively — copied
-  verbatim to the site root by all three, so it works in dev and in a production
-  build, from an inline `style` attribute and from a CSS file alike. That is why
-  **uploads target `public/`**.
+  **Which URL gets written is the load-bearing decision, and the server makes
+  it** (`server/handlers/studio/assetSiteUrl.ts`, IMG-1). It is never Studio's
+  own `/admin/api/studio/asset?dir=…` endpoint — that is an admin-origin URL,
+  meaningless in the user's repo, and pasting it into their stylesheet would be
+  exactly the lying edit this product refuses. It is the URL *their* site
+  serves the file at. The upload's response carries it as `src`, and every
+  entry of `project-assets` carries `{ relPath, src, buildSafe }`; the picker
+  writes `src` verbatim and derives nothing. The rule: relative to the app
+  root, a file under `public/` is served verbatim from the site root by every
+  recognised framework, so `url('/hero.png')` works in dev and in a production
+  build, from an inline `style` attribute and from a CSS file alike.
 
-  A file elsewhere (`src/assets/hero.png`, reached through an `import` in the
-  user's code) still gets a root-relative URL, because it is the only thing that
-  can work at all and it *does* work on their dev server — but the picker labels
-  that tile **"dev only"** and says why in its tooltip, rather than quietly
-  shipping a background that 404s after `npm run build`. The admin previews it
-  through the authenticated read endpoint; the reverse mapping URL → file is
-  resolved against the KNOWN asset list, never guessed from the path.
+  A file elsewhere under the app root (`src/assets/hero.png`, reached through
+  an `import` in the user's code) still gets a root-relative URL, because it is
+  the only thing that can work at all and it *does* work on their dev server,
+  but `buildSafe: false`: the picker labels that tile **"dev only"** and says
+  why in its tooltip, rather than quietly shipping a background that 404s after
+  `npm run build`. A file outside the app root has no URL (`src: null`); its
+  tile is disabled and says nothing serves it. The admin previews a tile
+  through the authenticated read endpoint; the reverse mapping URL → file
+  (`imageFillPreviewSrc`) matches the written URL against each listed file's
+  server `src`, never re-deriving a path from the URL.
 
   An image layer's popover then carries the two Figma controls, both pure sugar
   over satellites the rows underneath still show:
@@ -637,13 +705,58 @@ ships only the values we can honestly write (§7).
 What remained was small enough that `BorderControl` was **deleted**, not left as
 a shell (**G7.6**).
 
+Adding a stroke writes ONE `border: 1px solid #808080` (mid grey, visible on a
+light and a dark canvas), not twelve longhands: `studio/sideShorthandWrites.ts`
+collapses the twelve side/width/style/color writes into the shorthand when every
+side agrees, exactly as it does for `padding`/`margin`, and removes the shorthand
+when all twelve are cleared. The section reads it back through
+`borderShorthand.ts` (`withBorderShorthandExpanded`): a side's own longhand wins
+over `border`.
+
+### G7b — Vector: an inline `<svg>`'s own paint
+
+Fill and Stroke above edit CSS — a box's `background` and `border`. On an
+`<svg>` that is the wrong property: its fill is the `fill` ATTRIBUTE, inherited
+down its shapes, and CSS `background` only paints the rectangle behind the
+icon. So one selected `base.svg` also gets a **Vector** section, directly above
+Fill (`sections/VectorSection.tsx`, predicate `showsVectorSection`): fill and
+stroke (Colour / None / Current colour + a colour field), stroke weight, caps
+and joins, opacity, and the `<svg>`'s own W / H / viewBox (proportional while W
+and H already follow the viewBox's ratio).
+
+- **Writes** are P5-D `svg-attr` edits (`studioSvgWriteback.ts`), JSX
+  attributes on the element that carries them (`fill="#ff0000"`,
+  `strokeWidth={3}`). "Applies to" picks the whole graphic or one stamped part;
+  the WHOLE graphic writes the root and removes the same literal attribute from
+  every shape that set its own, so the change is visible (opacity excepted — it
+  composes, it does not inherit). Model: `vectorPaintModel.ts`.
+- **One gesture = one save.** A colour drag or scrub is previewed on the
+  in-frame element and posted once, 400 ms after the last change, with the
+  values from before the burst as its undo (`vectorPaintCommit.ts`). A burst
+  that ends where it began posts nothing.
+- **Refusals are sentences.** An attribute that comes from code (the parser's
+  `data-studio-svg-code` stamp, which the ROOT now carries too) or a spread
+  locks its control with the reason; a `?raw` icon, a `.map` row or a locked
+  node disables the section with why (`vectorPaintRefusal`).
+- A `<svg>` drawn on the free canvas gets the same controls from the
+  loose-layer inspector (`CanvasLayerInspector.tsx`).
+- The controls load behind a lazy boundary (`LazyVectorPaintControls.tsx`):
+  they mount only for an `<svg>`, and eager they cost the editor body ~17 KB
+  (`bundle-size-budgets.test.ts`).
+
 ### G8 — Effects (F13/F20–F22)
 
-> **Superseded, `STATE.md` `panel-25` P3 items 7-8, 11.** `EffectsSection.tsx`/
-> `EffectEditorPopover.tsx` are deleted — Penpot has no single "Effects"
-> section, so this split into `ShadowSection.tsx` (`boxShadow`/`textShadow`,
-> item 7) and `BlurSection.tsx` (`filter`/`backdropFilter`, item 8), each its
-> own `INSPECTOR_SECTIONS` manifest entry. **G8.4**'s own `transform`/
+> **Merged again, P2-F (owner decision OD-4).** P3 items 7-8 had split this
+> section into `ShadowSection.tsx` and `BlurSection.tsx`, following Penpot,
+> which keeps them apart. Figma draws one **Effects** section, the owner's bar
+> is Figma, and the split cost a 33px header plus a section gap on every
+> selection — so shadows and blurs are one `INSPECTOR_SECTIONS` entry again:
+> `inspector/sections/EffectsSection.tsx`, one header, one `+` menu (Drop
+> shadow, Inner shadow, Text shadow | Layer blur, Background blur), one
+> `PropertyList` with the shadow rows first, and one per-row editor,
+> `EffectEditorPopover.tsx`. The models below did not change.
+>
+> *Earlier history, `STATE.md` `panel-25` P3 items 7-8, 11:* **G8.4**'s own `transform`/
 > `transformOrigin` ⚙ has no Penpot section either — item 11 (Studio extras)
 > gave it a real one, `TransformSection.tsx`, ending its stopover in
 > `classStyleSections.ts`'s registry. The vocabulary below (the typed "+"
@@ -912,12 +1025,12 @@ P3's last item folded the remaining "no Penpot home" concerns into their own
 `INSPECTOR_SECTIONS` manifest entries — the same one-continuously-scrolling
 column every other section renders in, no separate tab. **S5 then moved four
 of them off the Design tab's always-mounted height**, because none of them is
-something a designer reaches for often enough to pay 152px for on every
-selection (164px before panel-39 moved the section gap to 8px — see §6):
+something a designer reaches for often enough to pay 164px for on every
+selection at the 12px section gap (152px while panel-39 held it at 8px — see §6):
 
 | order | id | Component | Where it mounts | Claims |
 |---|---|---|---|---|
-| 10 | `component` | `ComponentSection.tsx` | Design, inline — `studio.instance` nodes only | call-site props |
+| 3 | `component` | `ComponentSection.tsx` | Design, inline, directly under Measures — ONE selected `studio.instance` only | call-site props |
 | 11 | `transform` | `TransformSection.tsx` | Design **More**, and Prototype expanded | `transform`, `transformOrigin` |
 | 12 | `animations` | `AnimationsSection.tsx` | Design **More**, and Prototype expanded | `animation*`, `transition` |
 | 13 | `interaction` | `InteractionSection.tsx` | Design **More**, and Prototype expanded | `cursor`, `pointerEvents`, `userSelect`, `scrollBehavior` |
@@ -944,6 +1057,30 @@ tests. The `htmlAttributes` **prop** is untouched — the publisher,
 `htmlImport`, and every base module's renderer still read it; only its
 retired editor UI is gone.
 
+**The Component section, after P2-G (UX-4, UX-7, UX-14, UX-16).** It is no
+longer at the tail: an instance's props are the thing an instance is selected
+to edit, so the entry is `order: 3`, directly under Measures — Penpot's frame
+order (layer → measures → component → layout) and Figma's. It is drawn as ONE
+title row, `SectionStaticHeader` reading "Button · Local" with Detach and Swap
+as icon buttons in the trailing slot, where it used to stack a "Component"
+section title, a filled band repeating the name, and a bordered actions row.
+Swap opens an `InspectorPopover` instead of pushing the props down. The
+section does not mount for a multi-selection (`showsComponentSection`): the
+anchor's call-site values are not the selection's, and every row, Detach and
+Swap would have written the anchor alone. It is also the one entry with
+`writes: 'call-site'`: `StyleSurface` replaces the style sections with one
+notice when no style target is writable, which is always the case for an
+instance with no class, and before P2-G that notice swallowed the props too.
+`designCallSiteSections` still mounts it above the notice. A Detach refusal
+shows the parser's sentence under the title, and `explainDetachConstraint`
+alone decides whether "duplicate as a new file" is offered. A prop's control
+depends on its declared kind, which only the project's component catalog
+knows, so while that fetch is in flight (`useLocalComponentCatalog()` returns
+`null`) the section draws one disabled `ControlRow` with a field-height
+skeleton per prop the call site sets — never a guessed text box that becomes a
+dropdown a moment later. A catalog that has already arrived is read on the
+first render, so selecting the next instance draws no placeholder.
+
 **Separate entries, not one "Studio extras" component** — Component only applies
 to `studio.instance` nodes (the others apply to any node), and cramming
 several different `appliesTo` predicates behind one component's internal `if`
@@ -951,7 +1088,7 @@ ladder would reintroduce the per-node-kind branching this whole series spent
 eleven sections removing. `component` is a near-verbatim move
 (`InstanceCallSiteView.tsx`, renamed) off its old bespoke Module-section
 home; `transform`/`interaction` follow
-Law 1's empty-header/`forceOpen` disclosure exactly like Stroke/Shadow/Blur;
+Law 1's empty-header/`forceOpen` disclosure exactly like Stroke/Effects;
 `animations` is the heaviest port, combining what used to be two exports
 (`AnimationsSection` the body, `AnimationsSectionActions` the header "+"
 menu) into one component with its own local Law-1 disclosure —
@@ -963,31 +1100,27 @@ migrated section narrows its own bag to the handful of properties it claims;
 this one instead claims "every uncurated key" (`!isCuratedProperty`), the
 Webflow/Framer-style escape hatch `CustomPropertiesSection.tsx` (kept at its
 original path, widened with an additive `forceOpen` prop) has always been.
-It has two call sites — the manifest wrapper here (`forceOpen` always on,
-serving one node and N alike since S5), plus `StyleRuleComposer.tsx`
-(ambient/global-selector), which calls it directly now that
-`StyleSectionsEditor.tsx` — the registry-driven renderer every curated section
-(G1–G11) used to share — is deleted.
+It has two call sites: the manifest wrapper here (`forceOpen` always on,
+serving one node and N alike), and `StyleRuleComposer.tsx`.
 
-**`StyleSectionsEditor.tsx` and `classStyleSections.ts`'s `CLASS_STYLE_SECTIONS`
-array are retired, not both deleted.** `StyleSectionsEditor.tsx` (the last
-file that ever rendered the legacy curated-section registry) is deleted
-outright. `CLASS_STYLE_SECTIONS` itself is permanently `[]`, not removed —
-`StyleCategoryRail.tsx` (the ambient-selector rail's "one button per CSS
-category" loop, now rendering zero buttons — a disclosed, by-construction
-narrowing, not a bug) and `cssControlTypes.ts` (`ALL_CURATED_CSS_PROPERTIES`)
-still import from that file.
+**The ambient/global-selector surface is the one place that is not a manifest
+section.** Picking a class in the Classes panel (`SelectorsPanel`) makes
+`PropertiesPanelBody.tsx` mount `SelectorInspector.tsx` instead of
+`StyleSurface`. The manifest sections all read `useSelectionModel()`, which
+needs a selected node, and this surface has none, so it renders two things:
 
-**Multi-select narrowed with it, and S5 reversed that.** By the time P3
-reached item 11, every curated category had migrated to a manifest entry
-reading `useSelectionModel()` — which was built for exactly one node — so the
-legacy composers were left rendering only `CustomPropertiesSection`, and a
-multi-selection lost every other section. That was never a design decision,
-just the far end of a migration. S5 widened the model to N (§9.0) and deleted
-the multi-select composer entirely; the ambient/global-selector surface
-(`StyleRuleComposer.tsx` + `StyleCategoryRail.tsx`) is the only caller of the
-now-empty `CLASS_STYLE_SECTIONS` left, and closing that one is its own
-ticket.
+- `StyleRuleComposer.tsx`: the rule's own stored bag (base, the active custom
+  condition's or the active breakpoint's `contextStyles`) through `CustomPropertiesSection`, and nothing
+  else.
+- `StyleCategoryRail.tsx`: the "one button per CSS category" rail. It loops
+  over `classStyleSections.ts`'s `CLASS_STYLE_SECTIONS`, which is `[]`, so it
+  renders no category buttons.
+
+`CLASS_STYLE_SECTIONS` stays exported, empty, because `SelectorInspector.tsx`,
+`StyleCategoryRail.tsx` and `cssControlTypes.ts` (`ALL_CURATED_CSS_PROPERTIES`)
+still import it. A multi-selection does not use this surface: it renders the
+ordinary `INSPECTOR_SECTIONS` column (§9.0), with `MultiSelectTargetBar.tsx`
+above it (§9.4).
 
 ---
 
@@ -1048,7 +1181,7 @@ a breakpoint/condition tab is active — not only for a property nothing
 declares anywhere. See §4's Law 1 for the full account, the non-inherited
 "true CSS initial value" guard (`cssInitialValues.ts`) that keeps an ordinary
 element from flooding open (never consulted for the "declared elsewhere"
-branch — a real source is never a UA default), and why Stroke/Shadow/Blur
+branch — a real source is never a UA default), and why Stroke/Effects
 remain governed by the STORED-bag-only rule this paragraph originally stated
 for their OWN list rows (their scalar sibling fields, e.g. Stroke's weight
 inputs, already go through `resolveStyleFieldDisplay` and were never affected
@@ -1090,10 +1223,10 @@ on a text layer, rather than one that is promoted to the top of a fixed list
 duplicated) from `styleSectionOrder.ts`. `orderStyleSections`/
 `isTextSelection`/this section's own "Typography renders first" reordering
 stays live, unchanged, for the one surface this migration didn't touch:
-`StyleRuleComposer.tsx`/`StyleCategoryRail.tsx` (`SelectorInspector.tsx`'s
-ambient global-selector surface), which still renders the legacy
-`CLASS_STYLE_SECTIONS` list directly and has no `typography` entry left to
-promote, so the reordering is now an inert no-op there, not a bug. (The other
+`StyleCategoryRail.tsx` (in `SelectorInspector.tsx`'s ambient global-selector
+surface), which still renders the `CLASS_STYLE_SECTIONS` list directly; that
+list is empty and has no `typography` entry to promote, so the reordering is
+an inert no-op there, not a bug. (The other
 former caller, the multi-select composer, is deleted — see §9.0.) It resolves
 for real when the ambient surface joins the manifest too.
 
@@ -1176,10 +1309,30 @@ used to `blur()` instead, which meant the panel's keyboard focus fell out from
 under a user adjusting one value repeatedly.
 
 Blur still commits (clicking away is not a discard) and Escape still reverts.
+`TextControl` — a module's or component's plain text props, and the style rows
+that have no scrub mark — joined this model in P2-G (UX-16): it used to write
+on every keystroke, one call-site source edit per character on a component
+prop, and Escape had nothing to go back to. `textFieldDraft.ts` holds its
+commit rule (`decideTextCommit`: write only what was typed, and only when it
+changes the value).
 Escape's revert needs care: the blur it triggers fires *before* React has
 re-rendered the reverted draft, so both `ScrubInput` and `TokenAwareInput` set
 a flag that makes that one blur discard instead of commit — otherwise Escape
 writes the very value it was pressed to abandon.
+
+`TextareaControl` (a module's multi-line text, e.g. a Text node's `text`) uses the same draft: it used to write on every keystroke and Enter inserted a newline, so `title="First"` became `title={"Alpha
+"}` and unwinding took one undo per character. Enter or blur now commits once (one history entry); **Shift+Enter is a line break only when the text is the node's own JSX text** (`multiline`, from `renderModuleTabContent`: no `textOrigin`, not code-bound). Text that lands in a call-site attribute (`ComponentSection`) or another file's string literal has no honest newline: there Shift+Enter commits like Enter and pasted line breaks fold to spaces, so a plain string attribute stays a plain string attribute. **Escape on a token-aware field (padding, margin, gap...) now also clears the as-you-type canvas preview** (`TokenAwareInput` called only `onDraftClear`, leaving the abandoned value painted and the panel reading the stale computed value).
+
+**A parked caret commits nothing (ERR-1).** Keeping focus means the caret
+usually sits in a field that has nothing left to say. `ScrubInput` tracks one
+bit, `typed` — set by a keystroke into the text, cleared by every commit,
+nudge, revert and sync — and while it is clear the field follows its `value`
+exactly as an unfocused one does, and blur and Enter commit nothing. Before
+this, a parked field kept its stale text and wrote it back on click-away: type
+a width, Enter, ⌘Z, click the canvas, and the undo was undone and the redo
+stack cleared. The same happened to an agent edit, a resync or a selection
+change that landed while the caret sat there. Text the user IS typing is never
+overwritten by an external change, and still commits on blur.
 
 ### §5.5 One scrub engine, and the mark is the handle
 
@@ -1389,22 +1542,24 @@ which the Module block was the last surface to break.
 
 One fixture is left, and every pixel of its overflow is a value the user's
 own source sets, rendered once, at the 32px row height Penpot measures
-(`04-token-gaps.md`).
+(`04-token-gaps.md`) — plus the section gap the owner asked for (P2-F, below).
 
-**F2 (text), 36px over — 782 against 746.** Its Design tab carries:
+**F2 (text), 23px over — 769 against 746** (it was 36 over before P2-F, 26
+after it; P2-G's frozen `ControlRow` gaps took 3px off the Module block). Its
+Design tab carries:
 
 | Block | px | What it is |
 |---|---:|---|
-| Text | 189 | Figma's own four typography rows (family; weight+size; line-height+letter-spacing; align) |
-| Measures | 122 | W/H, the CSS position mode, rotation+radius |
-| Module | 80 | the node's own `text` content, now sized to the text |
+| Text | 177 | Figma's own four typography rows (family; weight+size; line-height+letter-spacing; align), 4px apart |
+| Measures | 114 | W/H, the CSS position mode, rotation+radius, 4px apart |
+| Module | 92 | a 32px header, the node's own `text` content sized to the text, 8px of padding, a hairline |
 | Fill | 65 | the text colour the class sets |
 | Layer | 32 | opacity, blend, visibility |
-| 6 collapsed one-row sections | 198 | Layout, Stroke, Shadow, Blur, Export, More |
-| gaps + container padding | 96 | 10 × 8px, plus 2 × 8px |
+| 5 collapsed one-row sections | 165 | Layout, Stroke, Effects, Export, More |
+| gaps + container padding | 124 | 9 × 12px, plus 2 × 8px |
 
-Nothing there is pre-drawn. Closing the last 36px means either collapsing a
-section that has values in it, or the lever below.
+Nothing there is pre-drawn. Closing the last 23px means collapsing a section
+that has values in it, or giving back segregation the owner asked for.
 
 #### The gate: one budget, one named exception
 
@@ -1415,8 +1570,10 @@ so reclaiming chrome moves the budget by itself. panel-39's blanket
 outright, so a uniform 210px slack would hide a 200px regression on any of
 them.
 
-What replaces it is `TEXT_LAYER_OVERFLOW_PX` (60), applying to **`f2-text`
-and no other fixture**, for the one cause tabulated above. F1, F3 and F4 are
+What replaces it is `TEXT_LAYER_OVERFLOW_PX` (47 — the measured 23 plus the
+same 24px of machine-to-machine slack panel-41 left; it was 50 against 26
+after P2-F, 60 against 36 before), applying to **`f2-text`
+and no other fixture**, for the one cause tabulated above. F1, F3, F4 and F5 are
 asserted strictly (`contentHeight <= clientHeight`). A second exception means
 naming its cause in this section, in the same change.
 
@@ -1424,7 +1581,7 @@ The folds the budget rests on are pinned as **structure** as well, because a
 height number cannot say WHICH fold was deleted when it goes red:
 
 - the four Studio-extras sections are folded behind one More disclosure at
-  rest, and one click reaches all four (worth 152px);
+  rest, and one click reaches all four (worth 164px);
 - the Module block folds the props the source does not set, and one click
   mounts them under the same `property-control-<key>` ids (worth 122px on
   the image fixture);
@@ -1439,28 +1596,71 @@ the **Module block** — `StyleSurface.tsx` gives it `data-section-id="module"`
 precisely because being outside the manifest is why it went unbudgeted until
 panel-37 measured it.
 
-#### The one open lever, with its number
+#### P2-F — segregation, paid for by the Effects merge
 
-**Shadow and Blur are one section in Figma, and in WS-6.1's own diagram:
-`Effects  shadow / blur  + −`.** Studio draws them as two collapsed
-one-row sections, which costs 33px of header plus an 8px gap — a measured
-**41px on every selection**. Merging them would put F2 at **741 against 746**
-and every fixture strictly inside the budget, letting the last exception go.
+The owner's ask (2026-09-23): *"improve the design pane, add spacing to
+segregate a bit, specially in between props and the element below"*. The
+panel's proximity hierarchy was flat — a prop row sat 8px from its sibling
+prop and 8px from the unrelated opacity row below it, with no line and no
+title between them (`docs/audits/2026-09-23-studio-audit/05-design-pane-ux.md`
+§0, UX-1…UX-6). What changed, measured at 1400×900:
 
-It is deliberately not done here: it is a section-manifest change plus a
-restructure of `ShadowSection.tsx` (636 lines) and `BlurSection.tsx` (416),
-both rewritten days earlier by `panel-38` for the Mixed contract (§9.3), and
-it needs a merged add-menu over five items with their own disabled rules. It
-is a parity change with its own dogfood, not a density trim, and it deserves
-its own work order.
+| Change | Where | Measured |
+|---|---|---:|
+| **The props block has a real boundary** — its title is `SectionStaticHeader` (the 32px, bold, full-contrast recipe every section title uses, not a ~10px uppercase label), its body ends in 8px of padding, and the block closes on an `--inspector-divider` hairline (UX-1) | `ModuleBlock.tsx/.module.css`, `Section.tsx` | **+7px** on F1/F3, **+15px** on F2/F4 |
+| **Between sections is its own token**, `--inspector-section-gap`, at 12px (OD-4; UX-2). It was 8px on the claim that 8 is Penpot's section gap — Penpot's flex gap is 8, but every menu also ends in an 8px `margin-block-end`, so its real boundary is 16 (the Δ16 in `02-measurements.md`) | `globals.css`, `StyleSurface.module.css` | **+32…+36px** |
+| **Rows inside one group sit 4px apart** — Module props, Text's four rows (`StackedPropertyGrid rhythm="within-group"`), Measures' size / position / rotation, a component's props (UX-3; Penpot `menus/text.scss`, `menus/measures.scss`, `menus/component.scss`) | `ModuleBlock`, `TextSection`, `StackedPropertyGrid`, `MeasuresSection`, `ComponentSection` CSS | **−12px** Text, **−8px** Measures |
+| **Shadow + Blur are one Effects section** (UX-5, OD-4) | `EffectsSection.tsx`, `EffectEditorPopover.tsx`, `sections/index.ts` | **−45px** everywhere |
+| **The ClassPicker fade only shows once scrolled** — at rest it dimmed the Module title under it (UX-6) | `StyleSurface.tsx` (`data-scrolled`), `PropertiesPanel.module.css` | 0 |
 
-Two further observations from the same measurement, for whoever takes it:
+| Fixture | before | after | room |
+|---|---:|---:|---:|
+| F1 rectangle | 608 | **598** | 746 |
+| F2 text | 782 | **772** (26 over) | 746 |
+| F3 flex board | 725 | **715** | 746 |
+| F4 image | 603 | **601** | 746 |
+
+Every fixture came out shorter than it went in: the segregation is paid for.
+
+**P2-G — the Component section (UX-4, UX-7, UX-10, UX-14, UX-16).** The gate
+gained **F5, a local component instance**, because before P2-G there was no
+Component section height to measure: an instance with no writable class drew
+the "no writable style" notice in place of every section, its props included.
+
+| Fixture | P2-F | P2-G | room |
+|---|---:|---:|---:|
+| F1 rectangle | 598 | **598** | 746 |
+| F2 text | 772 | **769** (23 over) | 746 |
+| F3 flex board | 715 | **715** | 746 |
+| F4 image | 601 | **595** | 746 |
+| F5 instance | notice only, no props | **276** — Component section 137 | 746 |
+
+The Component section is one 32px title row plus its prop rows, 4px apart
+(137px for three props, with the hairline). Drawn the old way — a 32px
+"Component" title, a filled name band, a bordered actions row and an 8px
+margin above the rows — the same three props compute to about 213px (33 + 31 + 37 + 8 + 104). F2 and F4
+lost 3px per stacked prop row: inside the panel `ControlRow`'s gaps now read
+the frozen `--inspector-*` scale, not the admin's fluid `--space-*` one
+(UX-10). `TEXT_LAYER_OVERFLOW_PX` ratchets 50 → 47.
+
+**P2-H — panel polish.** F1–F4 re-measure unchanged. F5 is **276 → 256**:
+the notice under its Component section drops its fluid `--space-4xl` /
+`--space-5xl` padding for the frozen `--inspector-space-xl` (UX-27). The
+node-level notices above the ClassPicker now sit in a `.nodeNotices` band
+that `:empty` collapses, so a selection with no notice pays 0px for it.
+The spacing hierarchy is now three named steps — **4px** within a group
+(`--inspector-space-2xs`), **8px** between groups inside a section
+(`--inspector-space-m`), **12px** between sections
+(`--inspector-section-gap`) — documented once, in `globals.css`'s inspector
+block.
+
+Two further observations from panel-41's measurement, still open:
 
 - F4's Fill section renders `forceOpen` with a body of zero rows (33px of
   header plus nothing). That is the Law-1 "empty section is not a
   disclosure" case, and fixing it is worth 8px on that fixture.
-- `Measures` is 122px on every fixture but F1, where `position: relative`
-  adds the TRBL grid and it becomes 199px. F1 has 138px of spare room, so
+- `Measures` is 114px on every fixture but F1, where `position: relative`
+  adds the TRBL grid and it becomes 191px. F1 has 148px of spare room, so
   that is not currently a problem — but it is the largest single block in the
   panel and the first thing to check if the budget tightens again.
 
@@ -1480,10 +1680,11 @@ computed from the frozen tokens and asserted in the static half:
 | 11 inline sections + 4 Studio extras inline (pre-S5) | 920 |
 | 10 inline sections + 1 collapsed `More` header (S5) | 756 |
 | …at panel-39's 8px section gap | 716 |
-| …with Layout collapsed until a layout exists (panel-39) | **612** |
+| …with Layout collapsed until a layout exists (panel-39) | 612 |
+| …P2-F: 12px `--inspector-section-gap`, Shadow + Blur → Effects, no phantom gap for an empty Align | **596** |
 
-The More fold is worth **152px** at the 8px gap (it was 164 at 12px — three
-fewer gaps × 4px); collapsing Layout is worth a further **104px** in this
+The More fold is worth **164px** at the 12px section gap (it was 152 while
+panel-39 held the gap at 8px — three fewer gaps × 4px); collapsing Layout is worth a further **104px** in this
 computed model and a measured **167px** in a real browser, because the real
 body carries a flex/grid block and a settings row a row count does not try to
 predict. `docs/audits/penpot-inspector-baseline/05-section-heights.md`
@@ -1496,7 +1697,7 @@ row count for a static sum to see — which is exactly why the height assertion
 is a Playwright spec measuring the real scroll container rather than an
 arithmetic claim. The Module block used to be in that list and is not any
 more: it carries `data-section-id="module"`, so it appears in the measured
-artefact's per-section table (80px on a text node, 130px on an image) and
+artefact's per-section table (95px on a text node, 145px on an image) and
 can no longer grow unnoticed by both gates at once.
 
 **The width invariant still holds, verbatim in spirit.** Every section
@@ -1625,7 +1826,7 @@ section file changed**: every section already reads
 | `selectedNode.codeProps` | only the `style:<prop>` locks present on **every** node — a lock on one of five must not disable a control that works for four |
 | `computedValues` | `null`. `useFrameComputedStyleValues` reads ONE mounted element; showing the anchor's as the selection's placeholder would claim agreement nobody measured |
 | `assignedClassRules` | `[]` (Element/inline), or the one shared class once the user picks it and clears its gate — see §9.4 |
-| `selectedNodes`, `inlineWritableNodeIds`, `inlineUnwritableNodes`, `blockedPropertyCounts`, `sharedClassRules` | the N-node facts the target bar and its notices state |
+| `selectedNodes`, `inlineWritableNodeIds`, `inlineUnwritableNodes`, `inlineWriteReach`, `sharedClassRules` | the N-node facts the target bar and its notices state |
 
 `commitApi.ts` is the other half: an inline write for N dispatches to
 `setNodesInlineStyles` instead of `setNodeInlineStyles`. A class write needs no
@@ -1815,10 +2016,10 @@ final word to. Confirmation is remembered per class id while the surface stays
 mounted: re-asking on every keystroke trains the user to click through. The
 gate is inline, under the chip that raised the question — never
 `window.confirm` (`no-native-browser-dialogs`), and never a modal, because the
-question is about the surface already on screen. Once confirmed, the class
-target mounts the ordinary `StyleRuleComposer` under the same pre-flight
-`StyleWriteLockContext` the single-node surface provides, so a compiled class
-is as unwritable here as it is there.
+question is about the surface already on screen. Once confirmed,
+`MultiSelectTargetBar.tsx` sets the class as the write target and the ordinary
+`INSPECTOR_SECTIONS` column writes to it; a multi-selection has no separate
+composer.
 
 ### §9.4a The write lock carries a count, not a boolean
 
@@ -1840,6 +2041,20 @@ whose `width` comes from an expression takes a `color` edit perfectly well, and
 a selection-wide count would be wrong on every property but one. Each row asks
 about its own property in O(1) via `resolveRowWriteLock`, and carries
 `data-write-partial="true"` when it has something to disclose.
+
+**Who provides it.** `StyleSurface` is the one provider: it wraps the mounted
+sections (and the More group) in `StyleWriteLockContext.Provider` with
+`partialStyleWriteLock(model.inlineWriteReach)`. The selection model builds
+`inlineWriteReach` with `buildInlineStyleWriteReach` for a multi-selection
+aimed at Element, and leaves it `null` for one layer and for a class target
+(one write that reaches every carrier). The partial row also underlines its
+label, dotted, in `--warning`, so the count is findable without hovering every
+row. Only `ClassPropertyRow` reads the context; the bespoke `ScrubInput`
+fields (W/H, X/Y, rotation angle) do not, and their counts are stated once
+above the sections by `MultiSelectTargetBar.tsx`. Nothing in the app provides
+`blocked`: a whole class that cannot be written is the selection model's
+`writableClasses[].lockReason` (via `classCssWritability.ts`), which drops it
+from the write targets. Pinned by `styleSurfacePartialWrite.test.tsx`.
 
 ### §9.4b Selection colors (G6.4)
 
@@ -1886,22 +2101,38 @@ thing that is actually real here: **a CSS custom property the open project's
 own stylesheets declare** — `--color-primary`, `--space-4`, `--radius-card` —
 written into the source as `var(--name)`.
 
+The hexagon is revealed after a **350 ms dwell** on the field (immediately while the field has focus or the picker is open), and is out of hit-testing until then (`VariableField.module.css`, `visibility`). On a narrow field - a radius corner, a padding side - the 24 px button covers most of the input, so a click that arrived with the pointer, the ordinary way to focus a field, used to open the picker and type into its search box.
+
 ### §10.1 Where the variables come from
 
-`projectVariables.ts` (`src/admin/pages/site/property-controls/`) scans the
-raw CSS the client **already has** for the canvas — `studioRawCssStores.ts`'s
-`authoredCss` (the project's own `.css`, concatenated in cascade order) and
-`vendorCss` (a design system's package stylesheets) — plus a third string it
-generates locally with `generateFrameworkRootCss`, the same generator
-`canvasClassCss.ts` feeds the canvas. No server change, no second wire
-format, and the catalog can never disagree with what the canvas is rendering,
-because it *is* what the canvas is rendering.
+The server's **token catalog** (CT-1): `GET /admin/api/studio/token-catalog`
+(`server/handlers/studio/tokenCatalog.ts`) reads the exact stylesheet stack the
+canvas loads (`projectTokenSources.ts` — Studio's design-system sheet, package
+CSS, compiled Sass/PostCSS/Tailwind output, the entry module's global
+stylesheets, in cascade order, each with the file it came from) and returns
+every custom property with **every declaration of it, gated by the mode it is
+written under** (`:root`, `[data-theme="dark"]`, `.dark`, `@media …`, Tailwind
+v4 `@theme`, a component's own `.btn { --btn-pad }`). `@core/studio-tokens`
+holds the pure half — the gate classifier (`gates.ts`), the gated declaration
+scan (`scan.ts`), the wire schema — and the same module backs `studio_set_tokens`
+through the shared write planner (§10.7). The catalog is cheap to refetch and
+is re-read whenever the load's raw CSS changes (`projectVariables.ts` →
+`studioTokenCatalog.ts`'s external store), so it can still never disagree with
+the canvas. **There is no CSS scan in the client any more.**
 
-Each entry carries a name, a **resolved** value (chains of `var(--a)` →
-`var(--b)` → `4px` are followed, bounded and cycle-safe), a kind, and the
-bundle it came from. Groups in the picker read Project / Package / Framework.
-A package re-declaring a name the user's own stylesheet already declares does
-**not** relabel it — the user's own value and label win.
+Provisional model decisions (CT-OD-1…5, owner to confirm): tokens are the
+project's own CSS custom properties plus Tailwind v4 `@theme`; **modes are
+inferred** from the gates found (nothing is stored beside the CSS); Studio's
+**Framework scales stay a generator** — `@core/framework` still generates them
+and the picker lists them as a separate, read-only "Framework" group, never
+shadowing a project variable of the same name.
+
+Each picker row carries a name, a **resolved** value (`var(--a)` → `var(--b)`
+→ `4px` chains followed per mode, bounded and cycle-safe), a kind, the bundle
+that owns the declaration (Project / Package / Framework), its **file**, its
+collection, and its value in every other mode (the row's tooltip). A package
+re-declaring a name the user's own stylesheet already declares does **not**
+relabel it — the user's own value and label win.
 
 `ProjectVariablesProvider` publishes the catalog on the panel's root
 `<aside>`, the same altitude as `data-field-skin="inspector"` and for the
@@ -1913,9 +2144,11 @@ threaded through all of them.
 A field only offers variables **compatible with its property**, and the kind
 is inferred from the *resolved value*, never from the name (`--brand-4` is a
 colour in one project and a spacing step in another). `classifyVariableValue`
-buckets into `color` / `length` / `number` / `other`. A width field that
-offered `--color-primary` would let one click write a declaration the browser
-drops, leaving a field that reads as bound while rendering nothing.
+buckets into `color` / `length` / `number` / `duration` / `font-family` /
+`shadow` / `other`. A width field that offered `--color-primary` — or a
+`box-shadow` field that offered a length — would let one click write a
+declaration the browser drops, leaving a field that reads as bound while
+rendering nothing.
 
 Corollary: **when nothing compatible exists, no icon is rendered at all.** An
 icon that opens an empty list is the same defect in a different costume.
@@ -1994,7 +2227,180 @@ inherits from them — `ScrubTokenField`, `AddablePropertyField`,
 `SpacingBoxControl`, `ClassPropertyRow`'s generic rows, and the bespoke
 Size / Spacing / Position / Typography / Stroke / Appearance fields.
 `TokenizedColorField` (and therefore `ColorValueInput`) carries the trigger
-for colour variables.
+for colour variables. The plain text style fields opt in with
+`TextControl`'s `variableKinds` (`variableKindsForProperty.ts` is the explicit
+map: `letterSpacing`, `lineHeight`, `boxShadow`, `transitionDuration`, …) and
+`FontFamilyControl` takes `font-family` variables; a property not in the map
+gets no affordance rather than a guess.
+
+### §10.7 Create from a value, detach, and the one write path (CT-2)
+
+The picker's footer (the hook feeds it, `VariablePickerPopover` draws it):
+
+- **Detach variable** — bound fields only; writes the resolved literal, the
+  same write as the chip's ×.
+- **Use `--x` — same value** — when a variable of an accepted kind already
+  holds exactly this literal, it is offered first so no duplicate is made.
+- **Create variable from `<value>`** — only for a literal the field's own kinds
+  can take (a `width: auto` field has nothing to turn into a variable), and
+  only inside the site editor (`VariableActionsContext`). It asks for a name
+  (`suggestVariableName`: from what the value is, in the prefix the project
+  already uses, unique against the catalog), POSTs `{ op: 'insert' }` to
+  `/admin/api/studio/token-catalog`, re-syncs the board
+  (`resyncBoardAfterWrite`) and binds the field to `var(--name)`. A refusal
+  (no project stylesheet, name already declared, stale file) shows inline next
+  to the control with its remedy; the field stays unbound. Undoing the field
+  edit un-binds the field but leaves the declared token — it is a real project
+  token now.
+
+`server/handlers/studio/tokenWrite.ts`'s `planTokenEdits` is the single planner
+behind both `studio_set_tokens` and this route: `set` edits the ONE declaration
+that is a token for a mode (`light` / `dark` / an explicit gate), `insert`
+declares a new token or a new mode of one (or the project's override of a
+package token) in a hand-written global `.css` file — beside its siblings in the
+same rule, inside `@theme` for a Tailwind namespace when the file already has
+one, in a new gate block otherwise. `insertCustomProperty`
+(`@core/css-codemods`) is the CST codemod; line endings and every other byte
+are kept. Refusals are the same from both writers: `no-such-token`,
+`read-only-source`, `ambiguous-declaration`, `already-declared`,
+`no-project-stylesheet`, `invalid-input`, `stale-source`.
+
+### §10.8 The Variables panel (CT-3)
+
+The rail's **Variables** entry (`panels/VariablesPanel/`) lists every token of
+the catalog, grouped by collection, with one column per MODE the project's own
+gates define and a usage count (`GET token-catalog?usage=1`, read when the panel
+opens and when the project's stylesheets change). The contract of a value cell:
+
+- **Typing previews, committing writes once.** Each keystroke sets
+  `studioTokenPreview`; every iframe frame's `TokenPreviewInjector` restates that
+  ONE declaration under its own gate (selector doubled, conditional at-rules kept,
+  `prefers-color-scheme` rewritten as for the project's stylesheets), so a dark
+  value repaints dark frames only. Enter/blur POSTs a single `set` (or `insert`
+  for a mode with no value); Escape clears the preview and writes nothing.
+- **One write, one undo.** The route records the files it changed in the undo
+  journal and returns `undoToken`; the panel pushes `journaledWriteOutcome`, so
+  Cmd/Ctrl+Z (or the panel's Undo) restores every file byte for byte, refusing
+  `restore-stale` if any moved since. The journal's path rule gained one
+  extension for this (`SourceTargetScope.journalStylesheets`, `.css`, journal
+  only). Redo is not offered: there is no `/save` edit for a token write.
+- **CSS Modules and scoped declarations (r3).** A token declared in a `.module.css`
+  is planned against, and written to, the module's OWN text
+  (`projectTokenSources.ts` reads the file, not the class-hashed compiled chunk),
+  so the stale check compares source text with source text and a write can never
+  put hashed selectors into the user's file. A token declared inside a rule of its
+  own (`.card { --x: #000 }`) is not a mode column; the row lists it under the
+  mode cells as `in .card` + file, editable in place (`set` with a `scope` gate
+  target, written where it is declared). A scoped cell in a CSS Module previews on
+  commit only (the canvas renames the class). A file that moved between the read
+  and the write is re-planned once on the server; only a second miss answers 409.
+- **Layout.** The table is as wide as its modes need; the name column is sticky,
+  the mode columns scroll under it, and a row's Rename / Remove / Apply as a
+  class live in its `Actions for <name>` menu. Rename and remove confirmations,
+  notes and refusals are as wide as the visible table, so a refusal is never
+  scrolled out of sight.
+- **Rename** (`{ op: 'rename' }`) rewrites every mention of the name in project
+  source: the declarations of all modes, `var()`, strings in TSX, Tailwind
+  arbitrary values, in one plan. It refuses a name already declared or named in
+  source and a package/compiled declaration. A Tailwind `@theme` variable
+  (`--color-brand`) is also the utility classes that read it, so the rename moves
+  those too - `bg-brand`, `hover:text-brand/50`, `!border-brand`, in string and
+  template-literal text of script files and in `@apply` - and the plan counts
+  them. See "Tailwind theme (CT-6)" below for what it refuses.
+- **Tailwind theme (CT-6).** Editing an `@theme` value is the ordinary `set`
+  (the compiled Tailwind output that echoes a project `@theme` variable is not a
+  second source: it is dropped from the catalog, so the row stays editable).
+  Rename refuses, naming why: `--spacing-*`, `--breakpoint-*`, `--container-*`
+  and the bare `--spacing` (their names are read by too many utilities or by
+  variants to follow); a new name outside the variable's namespace (the prefix is
+  what makes it a `bg-` colour); a class two theme namespaces both spell
+  (`text-lg` is a colour AND a size when both exist); a new name whose classes
+  are already used in source; classes in a file type the undo journal cannot
+  restore (`.html`, `.vue`, `.scss`). A class built at runtime (`` `bg-${tone}` ``)
+  names no literal: the rename still lands and the status line lists those
+  `file:line`s next to Undo. Remove counts classes as readers (`in-use` until
+  `replaceWith`, a variable of the same namespace; `remove-blocked` for the
+  namespaces whose readers cannot be found by spelling). The usage count of an
+  `@theme` variable includes its classes.
+- **JavaScript themes (CT-6).** `GET token-catalog?usage=1` also returns
+  `jsTheme`: every value a Tailwind v3 `tailwind.config.*` (and the token file it
+  imports, one relative hop at a time) or a standalone `theme.ts` defines, parsed
+  and never run (`tokenJsThemeStatic.ts`). The panel lists them per file under
+  "Theme (read-only)": a value is plain text, never an input; "Why" shows the
+  sentence (where it is written, that Studio reads the file without running it,
+  and to edit it there); a computed value (`require`, a call, a function of
+  `theme`, a package reference) shows what is written and says it is computed.
+  The one thing that works is **apply as a class**: it adds `bg-primary` (etc.)
+  to the selection's `className` as a literal `class` edit (`setJsxClassName`),
+  one commit for the selection, marked `restyle` (CT-5) so the batch is journaled and
+  all-or-nothing: Undo puts the file back byte for byte even if the class was
+  already there. A token file no
+  Tailwind config reads has no class to apply and says so.
+- **Remove** (`{ op: 'remove', replaceWith? }`) deletes all declarations (and
+  rules left empty). A token still read needs `replaceWith` (same family,
+  chosen in the row); the server refuses `in-use` otherwise, listing where.
+- Rows whose declarations are not project files render their values as text and
+  disable rename/remove with the reason: no control that cannot write.
+
+`studio_set_tokens` takes `rename` / `remove` (each its own call) next to
+`set`, through the same planner.
+
+### §10.9 Text and effect styles (CT-5)
+
+Figma's text and effect styles are a library the document owns. Here they are
+the project's own classes: **a text style is a class whose declarations are one
+typography bundle, an effect style one shadow/blur bundle** (`studio/
+textStyleDiscovery.ts`, read from the registry the board loaded, so it covers
+`.css` and `*.module.css` alike; a CSS Module class is listed by its local
+name). Text: at least two declarations, one of them family/size/weight/line
+height/letter spacing, and nothing but typography (alignment, colour and
+wrapping are tolerated companions; `margin` or `display` make it a component's
+class). Effect: only `box-shadow`, `filter`, `backdrop-filter`, `text-shadow`,
+at least one not `text-shadow`. Framework-generated utilities, ambient rules,
+`@keyframes` and styled-component classes are never styles.
+
+The Text and Effects section headers carry a styles button (single selection
+only) whose menu lists the project's styles of that family, then **Create ...
+style from selection** and, while one is applied, **Detach style**; the applied
+style also shows as a chip at the top of the section with its detach button.
+Each gesture is planned by `studio/textStylePlan.ts` into edits the writeback
+already has and posted as ONE structural commit (`textStyleCommit.ts`):
+
+| gesture | edits |
+|---|---|
+| apply | `class` add (and take off the family's other style) + `style` strip of the inline values the class now owns - an inline value outranks a class, so leaving it would make the click do nothing |
+| create | `css` insert (the new `.text-<name>` / `.effect-<name>` rule, from the values the layer shows: its classes in cascade order, then its inline values; a value the layer computes in code is not copied) + `class` add + `style` strip. The rule goes where the class picker puts a new class (`resolveCssInsertDestination`); with no stylesheet at all the server makes a plain global `studio.css` |
+| detach | `class` remove + `style` set of the class's declarations inline, except the ones the element already set itself. Refused for a style that also changes at a breakpoint (a `style=""` attribute cannot be media-queried) |
+
+Every `class` edit carries `restyle: true` (`studioEditSchemas.ts`), which asks
+the batch for two things no other class edit gets: it is **journaled** - the
+journal's pre-image also holds the stylesheet a `css` edit names (a CSS edit
+names a file, not a `line:col`, so it is not in the touched-file set) and the
+stylesheet a create made - and it is **all or nothing**
+(`BatchUndoJournal.rollbackRestyle`): if any edit of the batch refuses, every
+file goes back to the pre-image, a created stylesheet is removed, `written` is
+0, and the edits that had run are reported `restyle-rolled-back` after the real
+refusal. Without that, a refused `className` (an expression the codemod cannot
+rewrite) would have left the inline values stripped and no class on the layer.
+Cmd+Z is the journal's `restore` (all files byte for byte); Cmd+Shift+Z posts
+the same edits again.
+
+**In a CSS Modules project** (`className={styles.greet}`) a style is reached through
+the file's binding. Applying one swaps the element's bound class for another
+(`styles.greet` becomes `styles.counter`; a `{`${styles.a} ${styles.b}`}` list loses one span and
+keeps the rest, `setJsxClassName` + `classNameTemplate.ts`), and a create writes
+the rule into the page's own module (`Probe.module.css`, the co-located
+stylesheet) and attaches it as `styles["text-hero"]`. A template that holds a
+span glued to text (`btn-${size}`) is not a class list and still refuses
+`template-dynamic`, so the apply is refused whole. The menu's value summary names a
+token (`font-display`), not `var(--font-display)`.
+
+A refusal the client can know (a name taken, a layer computed in code, a
+generated `.map` row) is a sentence in the name popover or a warning toast
+("Style not applied"), never a silent no-op. Not built: hover preview of a
+style on the canvas (an inline value would mask it), multi-selection, and
+breakpoint-aware create.
+
 ## §11. What an inspector gesture costs the undo stack
 
 Two defects made Ctrl+Z read as broken from the Properties panel. Both were
@@ -2084,6 +2490,12 @@ It is erased from a production build at its mount site.
 
 ---
 
+## §13. Editing a variant: the write target is the variant's rule (CV-4)
+
+While the selected element is a component's own element and the person is editing the MAIN component (any element of a variants gallery, or a component named by "Edit main component"), `SelectionModel.writeTargetFor` is not the P1 rule: a variant prop that styles the element aims EVERY property at the shown variant's rule (`.btn-ghost`), or returns `none` with the reason and the remedy when that variant has no honest rule. It never falls back to the base class or to `style=""`, which is exactly the leak the rule exists to close. `VariantContextChip` (above the sections) says "Editing variant ghost: .btn-ghost in Button.module.css", switches axis when several props style the element, and is the refusal text when none can; a refused commit is one `warning` toast with "Open in code". On an INSTANCE (which owns no element) the Component section's Main component mode shows the same sentence with **Edit style**, which enters the instance and selects the element. Contract and limits: `docs/features/studio-import.md`, "Style edits per variant — the variant edit context (CV-4)".
+
+---
+
 ## Gates that bite work in this area
 
 `css-token-policy`, `no-css-var-fallbacks`, `button-primitive-usage` (popovers
@@ -2107,6 +2519,18 @@ landed — `panel-38`).
 `PanelBoundary`, `InspectorShell` wraps all three tabs, the component never opts
 out of `silentToast`, and every `INSPECTOR_SECTIONS` entry carries a `label`.
 
+`measurement.test.ts`'s P2-H block gates the panel's finish, over every CSS
+module under `PropertiesPanel/`, `property-controls/`, `inspector/sections/`
+and `Section/`: no fluid `--space-*` step at all (only `--space-px`), no
+literal px `border-radius` (a token, `0` or `50%`), no `--text-disabled` on
+text outside a disabled/placeholder rule, `--text-subtle` at 4.5:1 on the
+docked panel in both themes, and a field hover that sits further from the
+panel than the resting field. The node-level notices (shared component, slot
+fill, source constraint, branch choice) mount in one `.nodeNotices` band on
+the 12px gutter, which `:empty` collapses to nothing. The computed half —
+real hover, real `:focus-visible`, real rects — is
+`tests/e2e/inspector-panel-polish.e2e.ts`.
+
 Ownership, when routing work: `panel-designer` owns the sections and primitives;
 `store-engineer` owns the multi-select surface (§9) and is needed for G8.3
 (shadow-layer modelling); `test-engineer` owns the §6 measurement gate.
@@ -2119,7 +2543,5 @@ Ownership, when routing work: `panel-designer` owns the sections and primitives;
   language, plus panel geometry, skins, provenance and placeholders
 - [`docs/reference/ui-primitives.md`](../reference/ui-primitives.md) — the
   primitives these goals are built on
-- [`STUDIO-FIGMA-PARITY-PLAN.md`](../../STUDIO-FIGMA-PARITY-PLAN.md) **§0a** —
-  the single per-track status ledger
-- [`STUDIO-NEXT-WORKSTREAMS.md`](../../STUDIO-NEXT-WORKSTREAMS.md) — where G6.4
-  and the §6 gate are tracked
+- [`ROADMAP.md`](../../ROADMAP.md) §13 — where G6.4 (selection colours) is
+  tracked

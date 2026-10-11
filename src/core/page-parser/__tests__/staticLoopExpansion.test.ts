@@ -125,22 +125,45 @@ describe('static loop expansion', () => {
     expect(spans[0]!.loc.line).toBe(3)
   })
 
-  it('locks each row, naming the array it came from', () => {
+  it('locks each row whose array is not written here, naming the array it came from', () => {
+    write('pages/gbs.js', 'export const GBS = [1, 2]\n')
     write(
       'pages/Packages.jsx',
       [
-        'const GBS = [1, 2]',
+        "import { GBS } from './gbs'",
         'export default function Packages() {',
-        '  return <div>{GBS.map((gb) => <span key={gb}>{gb}</span>)}</div>',
+        '  return <div>{GBS.map((gb) => <span key={gb}><b>{gb}</b></span>)}</div>',
         '}',
         '',
       ].join('\n'),
     )
 
-    const spans = loadNodes('pages/Packages.jsx', evalOptions()).filter((n) => n.name === 'span')
+    const nodes = loadNodes('pages/Packages.jsx', evalOptions())
+    const spans = nodes.filter((n) => n.name === 'span')
     expect(spans.every((s) => s.locked)).toBe(true)
     expect(spans[0]!.lockReason).toBe('item 1 of GBS')
     expect(spans[1]!.lockReason).toBe('item 2 of GBS')
+    expect(nodes.filter((n) => n.name === 'b').every((b) => b.locked)).toBe(true)
+  })
+
+  it('OD-8 — a row over an array written in this file is placed by that array: its root is unlocked, its insides are not', () => {
+    write(
+      'pages/Packages.jsx',
+      [
+        'const GBS = [1, 2]',
+        'export default function Packages() {',
+        '  return <div>{GBS.map((gb) => <span key={gb}><b>{gb}</b></span>)}</div>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    const nodes = loadNodes('pages/Packages.jsx', evalOptions())
+    const spans = nodes.filter((n) => n.name === 'span')
+    expect(spans.map((s) => [s.locked, s.lockReason])).toEqual([[false, undefined], [false, undefined]])
+    expect(spans.map((s) => s.listRow?.kind)).toEqual(['array', 'array'])
+    // One piece of JSX still renders what is inside every row.
+    expect(nodes.filter((n) => n.name === 'b').map((b) => b.lockReason)).toEqual(['item 1 of GBS', 'item 2 of GBS'])
   })
 
   it('binds the index parameter too', () => {

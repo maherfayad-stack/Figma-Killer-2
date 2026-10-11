@@ -57,6 +57,11 @@
   line-height: 1.5;
 }
 
+/* ERR-18 — the Retry button sits under the reason, at its own width. */
+.canvasBootstrapRetry {
+  justify-self: center;
+}
+
 .canvasBootstrapStatus {
   position: relative;
   display: block;

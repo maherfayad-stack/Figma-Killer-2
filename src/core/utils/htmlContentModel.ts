@@ -334,14 +334,14 @@ export function chooseGroupWrapperTag(context: GroupWrapperContext): GroupWrappe
         return {
           ok: false,
           reason: 'member-is-positional',
-          message: `A <${normalise(tag)}> only means anything as a direct child of <${parent}>, so putting a container around it would break the list or table it belongs to. Group the <${parent}> itself, or add the container in the file.`,
+          message: `A <${normalise(tag)}> only means something as a direct child of <${parent}>, so a container around it would break the list or table. Group the <${parent}> itself.`,
         }
       }
       if (category === 'metadata') {
         return {
           ok: false,
           reason: 'member-is-positional',
-          message: `<${normalise(tag)}> is document metadata, not page content, so there is nothing Studio could legally write around it. Group the elements around it instead.`,
+          message: `<${normalise(tag)}> is document metadata, not page content, so Studio cannot write a container around it. Group the elements around it instead.`,
         }
       }
     }
@@ -356,7 +356,7 @@ export function chooseGroupWrapperTag(context: GroupWrapperContext): GroupWrappe
     return {
       ok: false,
       reason: 'phrasing-conflict',
-      message: `<${parentTag}> can only hold text-level elements, but one of these is a block, so any container Studio wrote here would be invalid HTML — React reports that as a hydration error in your app. Add the container in the file, or move these out of the <${parentTag}> first.`,
+      message: `<${parentTag}> can only hold text-level elements, and one of these is a block, so a container would be invalid HTML. Move these out of the <${parentTag}> first.`,
     }
   }
   if (demand === 'phrasing' && canSpan) return { ok: true, tag: 'span' }
@@ -443,7 +443,7 @@ function parentDescription(parentTag: string, model: HtmlContentModel | null): s
   if (model?.kind === 'restricted') {
     const allows = [...model.allows].filter((name) => name !== 'script' && name !== 'template')
     const list = allows.map((name) => `<${name}>`).join(', ')
-    return `<${parentTag}> can only contain ${list}, so a container around these would be invalid HTML and the browser would move it out. Add the container inside one of them, or in the file.`
+    return `<${parentTag}> can only contain ${list}, so a container around these would be invalid HTML. Add the container inside one of them.`
   }
-  return `<${parentTag}> cannot contain other elements, so there is nothing Studio could write around these.`
+  return `<${parentTag}> cannot contain other elements, so Studio cannot write a container around these. Group elements that sit outside it.`
 }

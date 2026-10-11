@@ -21,7 +21,8 @@
  *   | `className={cn('a', x)}` / `clsx`/`classNames`/`classnames` | ADD merges into (or appends) a literal string argument; REMOVE strips a token from every literal string argument it appears in (best-effort — a token produced only by a non-literal argument is left alone, matching every other Tier A/B/C path's "never guess" degrade) |
  *   | `className={styles.card}` (a CSS Modules default-import member access) | ADD rewrites it to `` className={`${styles.card} added`} `` — attaching a class is not editing a declaration; a REMOVE of a LITERAL token refuses `css-module-binding`, because that token is produced by the module and deleting it here would not delete it (removing the module token ITSELF is a different question — see "Module tokens" below) |
  *   | `className={...spread}`                      | refuses `spread-attribute` |
- *   | any other expression (identifier, ternary, an unrecognized call, …) | refuses `unsupported-expression` / `unsupported-call` |
+ *   | an identifier, member chain, ternary, logical, or an unrecognized call (`{cls}`, `{open ? 'on' : 'off'}`, `{variant(size)}`) | ADD wraps it (P3-C, WB-18 — see "Wrapping an expression" below); REMOVE refuses `unsupported-expression` / `unsupported-call` — the token might be produced by the expression, and there is no text in the file to delete it from |
+ *   | any other expression (an object, an arrow, a number, …) | refuses `unsupported-expression` |
  *
  * A request that changes nothing (both `add` and `remove` resolve to an empty
  * set once deduped, e.g. every token already present/absent) is a no-op —
@@ -35,8 +36,25 @@
  * inserted), so this codemod never shifts another node's `line:col` the way
  * a structural edit does — same behaviour `setJsxProp`/`setJsxStyle` already
  * have. **That promise is load-bearing for the `module` token below**, and is
- * the whole reason this codemod refuses to ADD a missing `import` declaration
- * — see `css-module-import-missing`.
+ * the whole reason this codemod never ADDS a missing `import` declaration
+ * itself — it reserves one in the batch's `ModuleImportPlan` instead.
+ *
+ * ## Wrapping an expression (P3-C, WB-18)
+ *
+ * An ADD to a `className` this codemod cannot read into keeps the expression
+ * and joins the new tokens to it — the binding is not the user's to lose:
+ *
+ *   - with a class-join helper already in the file's scope (`cn`/`clsx`/
+ *     `classNames`/`classnames`, imported or declared): `cn(expr, "a")`, the
+ *     file's own idiom, which also drops a falsy `expr`;
+ *   - otherwise a template with the new tokens FIRST: `` `a ${expr || ''}` ``.
+ *     First, because the parser keeps a partial template's static PREFIX
+ *     (`staticEvalCore.ts`'s `evaluateTemplate`) — tokens after an unresolved
+ *     span would vanish from the canvas on the next parse, which is an edit
+ *     the editor could not keep. `|| ''` because an optional `className` prop
+ *     is `undefined` at runtime and `` `a ${undefined}` `` is the class
+ *     "undefined" — dropped only for a ternary whose branches are both plain
+ *     strings, which can never be undefined.
  *
  * ## Module tokens (`style-02`) — a class in a `*.module.css` is not a string
  *
@@ -50,19 +68,22 @@
  * `s`, `css`, …) before writing `<binding>.<local>` (or
  * `<binding>['<local>']` when `local` is not a JS identifier).
  *
- * Two named refusals guard it:
+ * When the file does not import that stylesheet at all, adding the `import`
+ * would insert a LINE at the top of the file, shifting the `line:col` of every
+ * other edit still pending in the same batch (the exact hazard
+ * `orderStudioEditsForApply` and `pruneOrphanedImports`' post-pass exist to
+ * avoid). So the binding is RESERVED in `pendingModuleImports` (P3-C, WB-18 —
+ * `cssModuleImportPlan.ts`) and the batch adds the import line after its last
+ * edit. Only a caller with no plan still gets `css-module-import-missing`. A
+ * side-effect import that is already there (`import './x.module.css'`) gains a
+ * default binding in place, which costs no line.
  *
- *   - `css-module-import-missing` — the file does not import that stylesheet
- *     at all. Adding the `import` would insert a LINE at the top of the file,
- *     shifting the `line:col` of every other edit still pending in the same
- *     batch (the exact hazard `orderStudioEditsForApply` and
- *     `pruneOrphanedImports`' post-pass exist to avoid). Refused by name, with
- *     the import to add spelled out, rather than risking a mis-aimed sibling
- *     write. A side-effect import that is already there (`import './x.module.css'`)
- *     is NOT this case — a default binding is added to it in place, which
- *     costs no line.
- *   - `css-module-binding` — an existing `className={styles.card}` where the
- *     caller asked to remove some OTHER token. Unchanged from before.
+ * A reserved or added binding is never a name the file already uses ANYWHERE —
+ * not just at top level: a parameter or local called `styles` inside the
+ * component would shadow the import, and `styles.row` would read the local.
+ *
+ * `css-module-binding` — an existing `className={styles.card}` where the
+ * caller asked to remove some OTHER token — is unchanged.
  *
  * Removing a module token IS supported where it is unambiguous: the whole
  * attribute when the binding is the entire value, or one `cn(...)` argument.
@@ -72,6 +93,7 @@
 import {
   Node,
   Project,
+  SyntaxKind,
   type CallExpression,
   type JsxAttribute,
   type PropertyAccessExpression,
@@ -79,8 +101,10 @@ import {
   type TemplateExpression,
 } from 'ts-morph'
 import { CLASS_NAME_JOIN_BUILTIN_NAMES } from '@core/page-parser'
+import { rebuildTemplateClassName } from './classNameTemplate'
+import { isWrappableClassExpression, wrapExpressionWithTokens } from './classNameWrap'
+import type { PendingModuleImports } from './cssModuleImportPlan'
 import { createProject, findJsxElementAtLocationOrThrow, loadSourceFile } from './locateJsxElement'
-import { topLevelBindingNames } from './importReconcile'
 
 /**
  * One class this edit attaches to (or detaches from) an element.
@@ -107,6 +131,13 @@ export interface SetJsxClassNameParams {
   remove: readonly ClassNameToken[]
   /** Optional pre-existing project to reuse (e.g. across multiple edits). */
   project?: Project
+  /**
+   * The batch's import reservations for THIS file (`cssModuleImportPlan.ts`).
+   * With it, a `module` token whose stylesheet the file does not import yet is
+   * written against a reserved binding and imported after the batch; without
+   * it, that refuses `css-module-import-missing`.
+   */
+  pendingModuleImports?: PendingModuleImports
 }
 
 export type ClassNameRefusalReason =
@@ -162,11 +193,31 @@ function memberAccessText(binding: string, local: string): string {
  *     refusal or a no-op, because `params.project` can be shared across
  *     several edits and an unsaved-then-saved-by-someone-else binding would
  *     leave an unused import behind (a `noUnusedLocals` build failure).
- *   - `null` — the file does not import that stylesheet at all.
+ *   - `null` — the file does not import that stylesheet, and there is no
+ *     `pending` plan to reserve an import in.
+ *
+ * With `pending`, a missing import is RESERVED rather than refused: the
+ * binding is written now and the import line is added by the batch after its
+ * last edit (`cssModuleImportPlan.ts`). The reservation is itself a deferred
+ * `bind`, so a refused edit reserves nothing.
  */
-function moduleBindingFor(sourceFile: SourceFile, specifier: string): { binding: string; bind?: () => void } | null {
+function moduleBindingFor(
+  sourceFile: SourceFile,
+  specifier: string,
+  reservations: Reservations,
+): { binding: string; bind?: () => void } | null {
+  const { pending, tentative } = reservations
+  const already = pending?.get(specifier) ?? tentative.get(specifier)
+  if (already) return { binding: already }
+  const taken = new Set([...(pending?.values() ?? []), ...tentative.values()])
+
   const declaration = sourceFile.getImportDeclarations().find((imp) => imp.getModuleSpecifierValue() === specifier)
-  if (!declaration) return null
+  if (!declaration) {
+    if (!pending) return null
+    const binding = freeStylesBinding(sourceFile, taken)
+    tentative.set(specifier, binding)
+    return { binding, bind: () => pending.set(specifier, binding) }
+  }
 
   const existing = declaration.getDefaultImport()
   if (existing) return { binding: existing.getText() }
@@ -175,14 +226,35 @@ function moduleBindingFor(sourceFile: SourceFile, specifier: string): { binding:
   // stylesheet. Giving it a binding is an in-place edit on the SAME line, so
   // it keeps this codemod's no-line-shift promise.
   if (declaration.getNamedImports().length > 0 || declaration.getNamespaceImport()) return null
-  const bound = topLevelBindingNames(sourceFile)
+  const binding = freeStylesBinding(sourceFile, taken)
+  tentative.set(specifier, binding)
+  return { binding, bind: () => declaration.setDefaultImport(binding) }
+}
+
+/**
+ * The batch's committed reservations for this file, plus the ones THIS call
+ * has made but not yet committed (they commit only on the write path) — so two
+ * stylesheets attached in one edit never both reserve `styles`.
+ */
+interface Reservations {
+  pending: PendingModuleImports | undefined
+  tentative: Map<string, string>
+}
+
+/**
+ * `styles`, `styles2`, … — the first name no identifier in the file uses and
+ * no other reservation has taken. Every identifier, not only top-level
+ * bindings: a component's own `styles` parameter would shadow the import.
+ */
+function freeStylesBinding(sourceFile: SourceFile, reserved: ReadonlySet<string>): string {
+  const used = new Set(sourceFile.getDescendantsOfKind(SyntaxKind.Identifier).map((identifier) => identifier.getText()))
   let binding = 'styles'
   let n = 2
-  while (bound.has(binding)) {
+  while (used.has(binding) || reserved.has(binding)) {
     binding = `styles${n}`
     n += 1
   }
-  return { binding, bind: () => declaration.setDefaultImport(binding) }
+  return binding
 }
 
 /** `add`/`remove` split into plain string tokens and resolved member-expression texts. */
@@ -196,10 +268,14 @@ interface ResolvedTokens {
 /**
  * Turns the caller's structural tokens into the two vocabularies every branch
  * below works in, resolving each `module` token through this file's own
- * imports. Refuses (never guesses a binding name) when the stylesheet is not
- * imported here at all.
+ * imports — or through a reservation in `pending` when it is not imported yet.
+ * Refuses only when there is neither an import nor a plan to add one.
  */
-function resolveTokens(tokens: readonly ClassNameToken[], sourceFile: SourceFile): ResolvedTokens | ClassNameRefusal {
+function resolveTokens(
+  tokens: readonly ClassNameToken[],
+  sourceFile: SourceFile,
+  reservations: Reservations,
+): ResolvedTokens | ClassNameRefusal {
   const literals: string[] = []
   const expressions: string[] = []
   const pendingBinds: (() => void)[] = []
@@ -208,15 +284,12 @@ function resolveTokens(tokens: readonly ClassNameToken[], sourceFile: SourceFile
       literals.push(token.token)
       continue
     }
-    const resolved = moduleBindingFor(sourceFile, token.specifier)
+    const resolved = moduleBindingFor(sourceFile, token.specifier, reservations)
     if (resolved === null) {
       return {
         reason: 'css-module-import-missing',
         message:
-          `this class lives in ${token.specifier}, a CSS Module, so it can only be attached as a binding ` +
-          `(e.g. \`styles.${token.local}\`) — but ${sourceFile.getBaseName()} does not import that stylesheet, and ` +
-          'adding the import would move every other pending edit in this file. Add ' +
-          `\`import styles from '${token.specifier}'\` to the file and try again.`,
+          `This class lives in the CSS Module ${token.specifier}, but this file does not import it. Add \`import styles from '${token.specifier}'\` to the file and try again.`,
       }
     }
     if (resolved.bind) pendingBinds.push(resolved.bind)
@@ -302,24 +375,16 @@ function appendToTemplateHead(expr: TemplateExpression, add: readonly string[]):
  * `className={cn('a', x)}` / `clsx(...)` / `classNames(...)` / `classnames(...)`
  * — matched by identifier name only, the identical set §7.5's evaluator
  * treats as the class-name-join built-in (`CLASS_NAME_JOIN_BUILTIN_NAMES`).
- * Any other callee refuses `unsupported-call` rather than guessing what the
- * function does with its arguments.
+ * Any other callee is never edited INSIDE — this codemod does not guess what
+ * the function does with its arguments; an ADD wraps the whole call instead
+ * (WB-18), and a REMOVE refuses `unsupported-call`.
  */
-function applyClassNameJoinCall(
-  expr: CallExpression,
-  add: ResolvedTokens,
-  remove: ResolvedTokens,
-): ClassNameRefusal | null {
+function isClassNameJoinCall(expr: CallExpression): boolean {
   const callee = expr.getExpression()
-  if (!Node.isIdentifier(callee) || !CLASS_NAME_JOIN_BUILTIN_NAMES.has(callee.getText())) {
-    return {
-      reason: 'unsupported-call',
-      message:
-        `className is set by a function call ("${expr.getText()}") this codemod does not recognize as a ` +
-        'class-name join (only cn/clsx/classNames/classnames) — refusing rather than guess what it does with its arguments.',
-    }
-  }
+  return Node.isIdentifier(callee) && CLASS_NAME_JOIN_BUILTIN_NAMES.has(callee.getText())
+}
 
+function applyClassNameJoinCall(expr: CallExpression, add: ResolvedTokens, remove: ResolvedTokens): void {
   if (remove.literals.length > 0 || remove.expressions.length > 0) {
     const removeSet = new Set(remove.literals)
     const removeExpressionSet = new Set(remove.expressions)
@@ -358,8 +423,6 @@ function applyClassNameJoinCall(
     if (expr.getArguments().some((arg) => arg.getText() === expression)) continue // already attached — idempotent re-send
     expr.addArgument(expression)
   }
-
-  return null
 }
 
 /** `className={styles.card}` where `styles` is a default import from a `*.module.css` file. */
@@ -386,9 +449,10 @@ export function setJsxClassName(params: SetJsxClassNameParams): SetJsxClassNameR
   // token resolution so a no-op request also never adds an import binding.
   if (params.add.length === 0 && params.remove.length === 0) return { ok: true }
 
-  const add = resolveTokens(params.add, sourceFile)
+  const reservations: Reservations = { pending: params.pendingModuleImports, tentative: new Map() }
+  const add = resolveTokens(params.add, sourceFile, reservations)
   if (isRefusal(add)) return { ok: false, refusal: add }
-  const remove = resolveTokens(params.remove, sourceFile)
+  const remove = resolveTokens(params.remove, sourceFile, reservations)
   if (isRefusal(remove)) return { ok: false, refusal: remove }
 
   const addCount = add.literals.length + add.expressions.length
@@ -418,7 +482,7 @@ export function setJsxClassName(params: SetJsxClassNameParams): SetJsxClassNameR
       ok: false,
       refusal: {
         reason: 'spread-attribute',
-        message: 'the "className" attribute is a spread attribute — cannot edit an individual class token inside it.',
+        message: 'The "className" attribute is a spread attribute, so a single class cannot be edited in it. Edit the class in the code.',
       },
     }
   }
@@ -439,7 +503,7 @@ export function setJsxClassName(params: SetJsxClassNameParams): SetJsxClassNameR
       ok: false,
       refusal: {
         reason: 'unsupported-expression',
-        message: 'the "className" attribute has no rewritable value (a valueless shorthand, or a JSX-element/fragment initializer).',
+        message: 'The "className" attribute has no value Studio can rewrite. Set it to a string in the code.',
       },
     }
   }
@@ -450,7 +514,7 @@ export function setJsxClassName(params: SetJsxClassNameParams): SetJsxClassNameR
       ok: false,
       refusal: {
         reason: 'unsupported-expression',
-        message: 'the "className" attribute has an empty expression container ({}) — nothing to rewrite.',
+        message: 'The "className" attribute is an empty expression. Set it to a string in the code.',
       },
     }
   }
@@ -467,16 +531,20 @@ export function setJsxClassName(params: SetJsxClassNameParams): SetJsxClassNameR
   // owned here.
   if (Node.isTemplateExpression(expr)) {
     if (removeCount > 0) {
-      return {
-        ok: false,
-        refusal: {
-          reason: 'template-dynamic',
-          message:
-            'className is a template literal with an interpolated value ("' +
-            expr.getText() +
-            '") — a class token could live in the dynamic part, so removing one cannot be done safely from source text alone.',
-        },
+      const rebuilt = rebuildTemplateClassName(expr, add, remove)
+      if (rebuilt.kind === 'refuse') {
+        return {
+          ok: false,
+          refusal: {
+            reason: 'template-dynamic',
+            message: `className is a template with an interpolated value ("${expr.getText()}"), and a class could hide in the dynamic part. Remove the class in the code.`,
+          },
+        }
       }
+      if (rebuilt.kind === 'remove-attribute') existingAttribute.remove()
+      else if (rebuilt.kind === 'string') existingAttribute.setInitializer('"' + rebuilt.text + '"')
+      else expr.replaceWithText(rebuilt.text)
+      return commit()
     }
     if (addCount === 0) return { ok: true }
     // A module token becomes its own interpolated span appended after the
@@ -492,9 +560,9 @@ export function setJsxClassName(params: SetJsxClassNameParams): SetJsxClassNameR
   }
 
   // `className={cn('a', x)}` / `clsx(...)` / `classNames(...)` / `classnames(...)`.
-  if (Node.isCallExpression(expr)) {
-    const refusal = applyClassNameJoinCall(expr, add, remove)
-    if (refusal) return { ok: false, refusal }
+  // Any other call falls through to the wrap below.
+  if (Node.isCallExpression(expr) && isClassNameJoinCall(expr)) {
+    applyClassNameJoinCall(expr, add, remove)
     return commit()
   }
 
@@ -520,8 +588,22 @@ export function setJsxClassName(params: SetJsxClassNameParams): SetJsxClassNameR
     // Detaching the module token that IS this whole attribute is the one
     // unambiguous removal here — the element stops carrying that class, which
     // is exactly what was asked, and nothing else is left to keep.
-    if (remove.expressions.includes(bindingText) && remove.literals.length === 0 && addCount === 0) {
-      existingAttribute.remove()
+    if (remove.expressions.includes(bindingText) && remove.expressions.length === 1 && remove.literals.length === 0) {
+      if (addCount === 0) {
+        existingAttribute.remove()
+        return commit()
+      }
+      // A swap (`styles.greet` -> `styles.counter`, a text style replaced by another): the binding being
+      // detached is the whole attribute, so the attribute simply becomes what is being attached.
+      const attached = add.expressions.filter((expression) => expression !== bindingText)
+      if (attached.length === 0 && add.literals.length > 0) {
+        existingAttribute.setInitializer('"' + add.literals.join(' ') + '"')
+      } else if (attached.length === 1 && add.literals.length === 0) {
+        expr.replaceWithText(attached[0]!)
+      } else {
+        const parts = [...attached.map((expression) => '${' + expression + '}'), ...add.literals]
+        expr.replaceWithText('`' + parts.join(' ') + '`')
+      }
       return commit()
     }
     if (removeCount > 0) {
@@ -530,8 +612,7 @@ export function setJsxClassName(params: SetJsxClassNameParams): SetJsxClassNameR
         refusal: {
           reason: 'css-module-binding',
           message:
-            `className is bound to a CSS Modules import ("${bindingText}") — that token comes from the module, so ` +
-            "removing it here would not remove it. Edit the class's own declaration in the stylesheet instead.",
+            `className is bound to a CSS Modules import ("${bindingText}"), so removing the token here would remove nothing. Edit the class's own declaration in the stylesheet.`,
         },
       }
     }
@@ -542,11 +623,31 @@ export function setJsxClassName(params: SetJsxClassNameParams): SetJsxClassNameR
     return commit()
   }
 
-  return {
-    ok: false,
-    refusal: {
-      reason: 'unsupported-expression',
-      message: `className is set by an expression ("${expr.getText()}") this codemod does not understand — refusing rather than guess.`,
-    },
+  // P3-C (WB-18) — an identifier, a member chain, a ternary, a logical, or a
+  // call this codemod does not recognise. An ADD wraps it (see "Wrapping an
+  // expression"); a REMOVE has no text in this file to delete from.
+  if (removeCount > 0 || !isWrappableClassExpression(expr)) {
+    if (Node.isCallExpression(expr) && isWrappableClassExpression(expr)) {
+      return {
+        ok: false,
+        refusal: {
+          reason: 'unsupported-call',
+          message:
+            `className is set by a call ("${expr.getText()}") that Studio does not read as a class join (only cn, clsx, classNames and classnames). Remove the class in the code.`,
+        },
+      }
+    }
+    return {
+      ok: false,
+      refusal: {
+        reason: 'unsupported-expression',
+        message: isWrappableClassExpression(expr)
+          ? `className is set by an expression ("${expr.getText()}"), so a class it produces cannot be removed here. Remove the class in the code.`
+          : `className is set by an expression ("${expr.getText()}") that is not a class string. Set it to a string in the code.`,
+      },
+    }
   }
+  if (addCount === 0) return { ok: true }
+  expr.replaceWithText(wrapExpressionWithTokens(expr, add, sourceFile))
+  return commit()
 }

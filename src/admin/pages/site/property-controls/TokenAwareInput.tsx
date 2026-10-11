@@ -362,9 +362,16 @@ export function TokenAwareInput({
         disabled={disabled}
         data-testid={dataTestId}
         className={cn(styles.input, inputClassName)}
-        onFocus={() => {
+        onFocus={(e) => {
           setIsEditing(true)
           onFocus?.()
+          // Figma: entering a field selects its whole value, so the first
+          // keystroke REPLACES it. Without this a click lands a caret after
+          // `0px` and typing `16` wrote `0px16` into the user's stylesheet.
+          // Deferred one frame because the click that focused the field
+          // places the caret after this handler runs.
+          const input = e.currentTarget
+          requestAnimationFrame(() => input.select())
         }}
         onChange={(e) => {
           const next = e.target.value
@@ -402,6 +409,9 @@ export function TokenAwareInput({
             revertingRef.current = true
             setDraft(display)
             setIsEditing(false)
+            // The as-you-type preview is on the canvas until something clears it; a
+            // revert that only resets the field leaves the abandoned value painted.
+            onClearPreview?.()
             onDraftClear?.()
             ;(e.target as HTMLInputElement).blur()
           } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {

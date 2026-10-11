@@ -98,9 +98,15 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { designSystemImportSpecifier } from '@core/page-parser'
 import { Type } from '@core/utils/typeboxHelpers'
-import { DEFAULT_PAGE_KIND, DEFAULT_PROJECT_PLATFORM, frameDefaultsForPlatform, PageKindSchema } from '@core/studio-board'
+import {
+  BoardFramePlacementSchema,
+  DEFAULT_PAGE_KIND,
+  DEFAULT_PROJECT_PLATFORM,
+  frameDefaultsForPlatform,
+  PageKindSchema,
+} from '@core/studio-board'
 import type { StudioSessionRuntime } from './routeGate'
-import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import { ProjectTrashError, trashStudioProject } from './projectTrash'
 import { ProjectDuplicateError, duplicateStudioProject } from './projectDuplicate'
 import { SampleProjectError, createSampleProject } from './sampleProject'
@@ -172,6 +178,11 @@ const CreatePageBodySchema = Type.Object({
    * `autoPlaceBoardFrame` has always applied.
    */
   boardId: Type.Optional(Type.String()),
+  /**
+   * P5-F / IX-13 — where the author drew the new frame with the board tool
+   * (B), in board units. Optional: every other caller gets the next grid slot.
+   */
+  placement: Type.Optional(BoardFramePlacementSchema),
 })
 
 /**
@@ -255,8 +266,7 @@ export async function tryServeStudioProjectRoutes(
       if (err instanceof ProjectTrashError) {
         return jsonResponse({ error: err.message }, { status: err.reason === 'not-found' ? 404 : 400 })
       }
-      console.error('[studio]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio]', err)
     }
   }
 
@@ -276,8 +286,7 @@ export async function tryServeStudioProjectRoutes(
         const status = err.reason === 'not-found' ? 404 : err.reason === 'name-taken' ? 409 : 400
         return jsonResponse({ error: err.message }, { status })
       }
-      console.error('[studio]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio]', err)
     }
   }
 
@@ -291,8 +300,7 @@ export async function tryServeStudioProjectRoutes(
       if (err instanceof SampleProjectError) {
         return jsonResponse({ error: err.message }, { status: err.reason === 'missing-source' ? 500 : 409 })
       }
-      console.error('[studio]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio]', err)
     }
   }
 
@@ -321,8 +329,7 @@ export async function tryServeStudioProjectRoutes(
       return jsonResponse({ projects })
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio]', err)
     }
   }
 
@@ -378,8 +385,7 @@ export async function tryServeStudioProjectRoutes(
       return jsonResponse({ project: studioProjectSummary(dir) })
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio]', err)
     }
   }
 
@@ -399,8 +405,7 @@ export async function tryServeStudioProjectRoutes(
       return jsonResponse({ project: studioProjectSummary(dir) })
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio]', err)
     }
   }
 
@@ -426,8 +431,7 @@ export async function tryServeStudioProjectRoutes(
       // actually yields — the number the summary step was asking about.
       return jsonResponse({ project: studioProjectSummary(dir) })
     } catch (err) {
-      console.error('[studio]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio]', err)
     }
   }
 
@@ -439,17 +443,16 @@ export async function tryServeStudioProjectRoutes(
   // Idempotency-key-guarded: see `./idempotentReplay.ts` — a retry of a lost
   // response after a `bun --watch` restart must never scaffold a second page.
   if (pathname === '/admin/api/studio/page' && req.method === 'POST') {
-    return withIdempotentReplay(req, async () => {
+    return withIdempotentReplay(req, runtime.user.id, async () => {
       try {
         const body = await readValidatedBody(req, CreatePageBodySchema)
         if (!body) return badRequest('invalid page body')
-        const result = await scaffoldPageLocked(resolveProjectDir(body.dir), body.name ?? '', body.kind ?? DEFAULT_PAGE_KIND, body.boardId)
+        const result = await scaffoldPageLocked(resolveProjectDir(body.dir), body.name ?? '', body.kind ?? DEFAULT_PAGE_KIND, body.boardId, body.placement)
         if (!result.ok) return jsonResponse({ error: result.conflict }, { status: 409 })
         return jsonResponse(result)
       } catch (err) {
         rethrowProjectDirRefusal(err)
-        console.error('[studio]', err)
-        return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+        return internalServerError('[studio]', err)
       }
     })
   }
@@ -463,7 +466,7 @@ export async function tryServeStudioProjectRoutes(
   // response must not make a retry throw a SECOND page's frames away if the
   // first delete already landed.
   if (pathname === '/admin/api/studio/page' && req.method === 'DELETE') {
-    return withIdempotentReplay(req, async () => {
+    return withIdempotentReplay(req, runtime.user.id, async () => {
       try {
         const body = await readValidatedBody(req, DeletePageBodySchema)
         if (!body) return badRequest('invalid delete page body')
@@ -472,8 +475,7 @@ export async function tryServeStudioProjectRoutes(
         return jsonResponse(result)
       } catch (err) {
         rethrowProjectDirRefusal(err)
-        console.error('[studio]', err)
-        return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+        return internalServerError('[studio]', err)
       }
     })
   }

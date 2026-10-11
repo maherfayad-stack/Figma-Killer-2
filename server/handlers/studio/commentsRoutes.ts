@@ -23,7 +23,7 @@
  * point. A comment also carries a byline, which is why an anonymous write was
  * never an option — there would be no honest name to put on it.
  */
-import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import type { StudioSessionRuntime } from './routeGate'
 import { Type } from '@core/utils/typeboxHelpers'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
@@ -54,7 +54,7 @@ export async function tryServeStudioComments(
       return jsonResponse({ dir, comments: readCommentsFile(dir) })
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio]', err)
     }
   }
 
@@ -84,7 +84,7 @@ export async function tryServeStudioComments(
       return jsonResponse({ ok: true, changed: result.changed, comments: result.file })
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio]', err)
     }
   }
 

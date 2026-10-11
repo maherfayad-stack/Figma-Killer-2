@@ -49,6 +49,13 @@ export interface StudioDefaultBoardSeedInputs {
    * other, so this has to be an explicit gate.
    */
   frameDefaultsSettled: boolean
+  /**
+   * P6-B — whether a streamed load still has pages on their way
+   * (`streamedLoadSlice.ts`). Seeding then would give the board a frame for
+   * the pages that happen to have arrived and none for the rest, and the
+   * board autosave would write that partial board to `.studio/boards.json`.
+   */
+  pagesArriving: boolean
 }
 
 export function shouldSeedDefaultBoard(inputs: StudioDefaultBoardSeedInputs): boolean {
@@ -58,5 +65,6 @@ export function shouldSeedDefaultBoard(inputs: StudioDefaultBoardSeedInputs): bo
   if (inputs.activeBoardFrameCount !== 0) return false
   if (inputs.pageCount === 0) return false
   if (!inputs.frameDefaultsSettled) return false
+  if (inputs.pagesArriving) return false
   return true
 }

@@ -150,6 +150,20 @@
     color: var(--text);
 }
 
+/* The armed draw tools (`CanvasDrawToolButtons`): the pressed tool wears the
+   same raised tone as the canvas mode toggle's active tab, so "which tool is
+   armed" reads the same way in both toolbars. */
+.toolGroup {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-4xs);
+}
+
+.notch .toolButton[aria-pressed="true"] {
+    color: var(--text);
+    background: var(--overlay-20);
+}
+
 .divider {
     width: 1px;
     height: 18px;

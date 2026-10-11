@@ -19,7 +19,7 @@
  *   - Close affordance + optional action use the Button primitive
  *   - Pixel-art icons only (close, circle-alert, warning-diamond)
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { Button } from '@ui/components/Button'
 import { cn } from '@ui/cn'
@@ -42,6 +42,25 @@ const DEFAULT_DURATION_MS: Record<ToastKind, number> = {
 }
 
 const TOAST_ROOT_ID = 'toast-root'
+
+/**
+ * Surfaces a toast must never sit on top of (the inspector, docked or
+ * floating) carry this attribute. The stack keeps its bottom-right anchor but
+ * moves left of whichever marked surface is docked on the right, so a
+ * notification can never swallow a click meant for a control behind it.
+ */
+const AVOID_ATTRIBUTE = 'data-toast-avoid'
+
+/** How far in from the viewport's right edge the marked surfaces reach, 0 when none is on the right half. */
+function measureRightClearance(): number {
+  let clear = 0
+  for (const element of document.querySelectorAll(`[${AVOID_ATTRIBUTE}]`)) {
+    const rect = element.getBoundingClientRect()
+    if (rect.width === 0 || rect.height === 0 || rect.left < window.innerWidth / 2) continue
+    clear = Math.max(clear, window.innerWidth - rect.left)
+  }
+  return Math.ceil(clear)
+}
 
 function getToastRoot(): HTMLElement {
   let root = document.getElementById(TOAST_ROOT_ID)
@@ -84,10 +103,22 @@ export function ToastProvider() {
   // Per-toast time left, in ms — the state the timer effect cannot keep in a
   // `setTimeout` alone. See the effect below for why it has to exist.
   const remainingRef = useRef(new Map<string, number>())
+  const [clearRight, setClearRight] = useState(0)
 
   useEffect(() => {
     return subscribeToasts((next) => setItems(next))
   }, [])
+
+  // Re-measured whenever the stack changes and while the window resizes: the
+  // inspector can be dragged wider or collapsed between two toasts.
+  const hasItems = items.length > 0
+  useLayoutEffect(() => {
+    if (!hasItems) return
+    const measure = () => setClearRight(measureRightClearance())
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [hasItems, items])
 
   // Single timer-lifecycle effect: arm a setTimeout per visible toast (unless
   // paused or opted-out), and clean them up on re-render / unmount.
@@ -144,6 +175,7 @@ export function ToastProvider() {
       className={styles.stack}
       data-testid="toast-stack"
       aria-label="Notifications"
+      style={{ '--toast-clear-right': `${clearRight}px` } as CSSProperties}
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
     >
@@ -201,9 +233,6 @@ function ToastItem({ toast }: { toast: Toast }) {
           )}
         </p>
         {toast.body && <p className={styles.body}>{toast.body}</p>}
-        {toast.location && (
-          <p className={styles.location}>{toast.location}</p>
-        )}
       </div>
       <div className={styles.actions}>
         {toast.action && (

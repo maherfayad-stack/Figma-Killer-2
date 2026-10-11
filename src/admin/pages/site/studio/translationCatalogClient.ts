@@ -69,11 +69,17 @@ export async function fetchContentSnapshot(): Promise<ContentSnapshot> {
   return { catalog: res.catalog, hardcoded: res.hardcoded }
 }
 
-/** Writes one `(locale, key)` into the project's dictionary. A structured refusal arrives as `{ ok: false, message }`, not a throw. */
+/**
+ * Writes one `(locale, key)` into the project's dictionary. `expected` is the
+ * value the caller showed for that entry (`null` for a gap); a file that no
+ * longer holds it refuses. A structured refusal arrives as
+ * `{ ok: false, message }`, not a throw.
+ */
 export async function writeTranslation(entry: {
   locale: string
   key: string
   value: string
+  expected: string | null
 }): Promise<Static<typeof WriteResponseSchema>> {
   return apiRequest('/admin/api/studio/translations', {
     method: 'POST',

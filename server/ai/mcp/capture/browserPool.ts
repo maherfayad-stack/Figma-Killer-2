@@ -28,6 +28,8 @@
  * modules now need it and a second copy would drift.
  */
 
+import { DeadlineExceededError, withDeadline } from './withDeadline'
+
 /** The navigation + rasterisation surface both capture paths need. Real `chromium.launch()` output satisfies it. */
 export interface PlaywrightLikePage {
   goto(url: string, options: { waitUntil: 'load'; timeout: number }): Promise<unknown>
@@ -67,9 +69,17 @@ export type LaunchBrowser<TPage extends PlaywrightLikePage = PlaywrightLikePage>
 /** How long the warm browser survives with no captures before it is torn down. */
 const BROWSER_IDLE_MS = 5 * 60_000
 
+/**
+ * Playwright's own launch timeout. Shorter than {@link LAUNCH_HARD_LIMIT_MS} on
+ * purpose: when Playwright gives up it kills the child process it spawned, so a
+ * launch that never completes cleans up after itself; our deadline is only the
+ * backstop for the one that completes a moment after we stopped waiting.
+ */
+const PLAYWRIGHT_LAUNCH_TIMEOUT_MS = 80_000
+
 export const defaultLaunchBrowser: LaunchBrowser<CapturePage> = async () => {
   const { chromium } = await import('playwright-core')
-  const browser = await chromium.launch({ headless: true })
+  const browser = await chromium.launch({ headless: true, timeout: PLAYWRIGHT_LAUNCH_TIMEOUT_MS })
   return browser as unknown as PlaywrightLikeBrowser<CapturePage>
 }
 
@@ -81,6 +91,17 @@ interface WarmBrowser {
 let warm: WarmBrowser | null = null
 /** Serialises captures — see module doc. */
 let captureTail: Promise<unknown> = Promise.resolve()
+
+/**
+ * How long ONE Chromium launch may run before it is abandoned. A cold start on
+ * a loaded machine (a dev stack, a build, an install running beside it) takes
+ * well past the 30 s this used to allow - and abandoning it then, while the
+ * process kept starting, is what leaked a browser per attempt.
+ */
+const LAUNCH_HARD_LIMIT_MS = 90_000
+
+/** How long a CAPTURE waits for the launch it joined. Shorter than the launch itself: the caller falls back to the open tab and the launch carries on for the next one. */
+const LAUNCH_WAIT_MS = 60_000
 
 /**
  * When a launch last failed, and why.
@@ -125,17 +146,57 @@ function scheduleBrowserTeardown(entry: WarmBrowser): void {
   }, BROWSER_IDLE_MS)
 }
 
+/**
+ * The ONE launch in flight, shared by every caller. A second capture arriving
+ * while Chromium is still starting joins it instead of starting another - the
+ * second process was the other half of the pile-up on a slow machine.
+ */
+let launching: Promise<PlaywrightLikeBrowser<CapturePage>> | null = null
+
+function closeQuietly(browser: PlaywrightLikeBrowser<CapturePage>): Promise<void> {
+  return browser.close().catch(() => {
+    // already gone
+  })
+}
+
+function startLaunch(launch: LaunchBrowser<CapturePage>): Promise<PlaywrightLikeBrowser<CapturePage>> {
+  const attempt: Promise<PlaywrightLikeBrowser<CapturePage>> = withDeadline(
+    launch(),
+    LAUNCH_HARD_LIMIT_MS,
+    'Launching the capture browser',
+    // A launch that resolves after we gave up is a running process nobody holds.
+    { onLateResult: closeQuietly },
+  ).then(
+    (browser) => {
+      launchFailure = null
+      warm = { browser, idleTimer: null }
+      return browser
+    },
+    (err: unknown) => {
+      launchFailure = { at: Date.now(), message: err instanceof Error ? err.message : String(err) }
+      throw err
+    },
+  ).finally(() => {
+    if (launching === attempt) launching = null
+  })
+  launching = attempt
+  return attempt
+}
+
 async function getWarmBrowser(launch: LaunchBrowser<CapturePage>): Promise<PlaywrightLikeBrowser<CapturePage>> {
   if (warm && (warm.browser.isConnected?.() ?? true)) return warm.browser
   if (warm?.idleTimer) clearTimeout(warm.idleTimer)
   warm = null
+  // The launch outlives this caller's patience: if the wait below expires the
+  // launch keeps going, becomes the warm browser, and the next capture uses it.
   try {
-    const browser = await launch()
-    launchFailure = null
-    warm = { browser, idleTimer: null }
-    return browser
+    return await withDeadline(launching ?? startLaunch(launch), LAUNCH_WAIT_MS, 'Launching the capture browser')
   } catch (err) {
-    launchFailure = { at: Date.now(), message: err instanceof Error ? err.message : String(err) }
+    // Still starting: remember it so the next captures fall back at once instead
+    // of each waiting out the same launch. The launch finishing clears the memo.
+    if (err instanceof DeadlineExceededError && launching) {
+      launchFailure = { at: Date.now(), message: err.message }
+    }
     throw err
   }
 }
@@ -236,6 +297,7 @@ export async function closeWarmCaptureBrowser(): Promise<void> {
   const entry = warm
   warm = null
   prewarming = null
+  launching = null
   if (!entry) return
   if (entry.idleTimer) clearTimeout(entry.idleTimer)
   await entry.browser.close().catch(() => {

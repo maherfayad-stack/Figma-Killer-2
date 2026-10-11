@@ -38,7 +38,7 @@ import { createPortal } from 'react-dom'
 import { useAdminUi } from '@admin/state/adminUi'
 import { useEditorStore } from '@site/store/store'
 import type { Breakpoint, Page } from '@core/page-tree'
-import { MIN_FRAME_SIZE, type BoardFrame, type PreviewAxes } from '@core/studio-board'
+import { MIN_FRAME_SIZE, mergePreviewAxes, type BoardFrame, type PreviewAxes } from '@core/studio-board'
 import { Input } from '@ui/components/Input'
 import { ContextMenu, ContextMenuItem } from '@ui/components/ContextMenu'
 import { useInlineRename } from '@site/hooks/useInlineRename'
@@ -53,16 +53,20 @@ import { RESIZE_HANDLES, type ResizeHandle } from '@core/studio-runtime'
 import { resizeRect, type ResizeRect } from '../rectResize'
 import { useBoardFrameMoveDrag } from './useBoardFrameMoveDrag'
 import { useFramePosterCapture } from './useFramePosterCapture'
-import { getFramePoster } from './frameSnapshotCache'
+import { selectPosterStyleSignature, useFramePoster } from './framePosters'
+import { posterKey } from './posterKey'
+import { afterPressPaint } from '../pressRing'
 import { FramePosterPlaceholder } from './FramePosterPlaceholder'
 import { LiveBoardFrame } from './LiveBoardFrame'
-import { resolveFrameMount } from './framePool'
+import { resolveFrameMount } from './frameMount'
+import { observeFrameHeight } from './frameMeasuredHeights'
+import { armPosterPress, replayPosterPress } from './posterPress'
+import { FrameModeChips } from './FrameModeChips'
 import { FrameDiagnosticsBadge } from './FrameDiagnosticsBadge'
+import { GalleryAddVariantButton } from './GalleryAddVariantButton'
 import { describePinnedAxes } from './pinnedAxesLabel'
 import {
-  getColorSchemeCapability,
   getLocalesCapability,
-  subscribeColorSchemeCapability,
   subscribeLocalesCapability,
 } from '@site/studio/previewAxesCapability'
 import { getStudioTrustTier, subscribeStudioTrustTier } from '@site/studio/studioProjectTrust'
@@ -130,6 +134,9 @@ function buildStudioBreakpoint(width: number): Breakpoint {
   return breakpoint
 }
 
+/** A press that moved further than this between down and up was a pan, not a click on the poster. */
+const POSTER_PRESS_SLOP_PX = 4
+
 interface ResizeDragState {
   pointerId: number
   handle: ResizeHandle
@@ -161,29 +168,13 @@ interface BoardFrameViewProps {
   /** WS-7.1 — whether this frame is part of the bulk-selection set (`selectedFrameIds`). Distinct from `isActive`. */
   isSelected: boolean
   /**
-   * Whether this frame's board rect intersects the viewport (plus margin). It
-   * drives the frozen-poster CAPTURE only — the picture has to be taken while
-   * the frame is genuinely on screen and settled.
+   * Whether the board's live set (`liveFrameCap.ts`, applied by
+   * `BoardFramesLayer`) holds this frame: it is selected, edited, played, in
+   * view at a readable zoom within the cap, or being photographed for its
+   * poster. Every other frame renders its picture (or, before it has one, the
+   * title placeholder) and no iframe at all.
    */
-  isOnScreen: boolean
-  /**
-   * Whether the mount pool (`framePool.ts`) is holding this frame. A
-   * superset of `isOnScreen`: the pool keeps recently-departed frames
-   * mounted so panning back to them costs nothing. A pooled, offscreen frame
-   * is simply outside the visible area — it renders exactly as it did on
-   * screen, it just isn't being looked at. The budget that decided this is
-   * the board's, not this component's: one pool, sized by what a frame costs
-   * on this tier.
-   *
-   * Optional, defaulting to `isOnScreen` (through `resolveFrameMount`): a
-   * caller that does not take part in the pool — a unit test, or any future
-   * surface rendering one frame outside `BoardFramesLayer` — means "mounted
-   * exactly while visible", which is the pre-pool behaviour and the only
-   * honest default. Required here once, it silently unmounted every such
-   * caller (`meta-14` landmine 1; `boardFrameViewTierFork.test.tsx` is the
-   * gate).
-   */
-  isMounted?: boolean
+  isLive: boolean
 }
 
 /**
@@ -206,16 +197,9 @@ function BoardFrameViewImpl({
   hasManualHeight,
   isActive,
   isSelected,
-  isOnScreen,
-  isMounted,
+  isLive,
 }: BoardFrameViewProps) {
   const trust = useSyncExternalStore(subscribeStudioTrustTier, getStudioTrustTier, getStudioTrustTier)
-  // ONE module answers "does this frame hold an iframe, and why"
-  // (`framePool.ts`). The tier no longer enters here at all: it picked the
-  // pool's budget back in `BoardFramesLayer`, which is the only place a
-  // frame's cost is a question. `reason` is stamped on the frame element
-  // below so the answer is legible from the DOM.
-  const { mounted, reason: mountReason } = resolveFrameMount({ isOnScreen, isPooled: isMounted })
   const resizeRef = useRef<ResizeDragState | null>(null)
   const [rename, renameInputRef] = useInlineRename({
     onCommit: (title) => useEditorStore.getState().renamePage(page.id, title),
@@ -227,18 +211,12 @@ function BoardFrameViewImpl({
   // otherwise duplicating an already-overridden RTL frame "as RTL" would be
   // a no-op flip instead of producing the LTR sibling the label promises.
   const boardAxes = useEditorStore((s) => s.previewAxes)
-  const effectiveAxes: PreviewAxes = { ...boardAxes, ...frame.axes }
+  const effectiveAxes = mergePreviewAxes(boardAxes, frame.axes)
   // Header badge — the ONLY thing that makes a pinned frame visibly
   // different from an unpinned one (see `pinnedAxesLabel.ts`'s doc). `null`
   // whenever `frame.axes` is absent or empty, so an ordinary frame renders
   // no badge at all rather than an empty one.
   const pinnedAxesLabel = describePinnedAxes(frame.axes)
-  const colorSchemeCapability = useSyncExternalStore(
-    subscribeColorSchemeCapability,
-    getColorSchemeCapability,
-    getColorSchemeCapability,
-  )
-  const schemeVariantApplies = colorSchemeCapability !== null && colorSchemeCapability.mechanism !== 'none'
   // WS-10 §4.4 (Phase 4) — locale duplicate variant, same probe-honesty gate
   // (§7.4) the scheme variant above uses: omitted (not disabled) when the
   // probe found no locale dictionary at all, or found only one locale (a
@@ -262,11 +240,11 @@ function BoardFrameViewImpl({
     void ensureLocalizedPage(projectDir, frame.pageId, frame.axes.locale)
   }, [projectDir, frame.pageId, frame.axes?.locale, boardAxes.locale, ensureLocalizedPage])
   // WS-5.3 — frozen poster for this frame's offscreen placeholder. Capture
-  // reads the live iframe straight out of `frameBodyRef` while on screen; see
-  // `useFramePosterCapture.ts`'s own doc comment for why it doesn't mount a
-  // second offscreen frame to do this.
+  // reads the live iframe straight out of `frameBodyRef` while it is still
+  // mounted; see `useFramePosterCapture.ts`'s own doc comment for when (P2-I:
+  // not while the frame is on screen and already has one) and for why it
+  // doesn't mount a second offscreen frame to do this.
   const frameBodyRef = useRef<HTMLDivElement>(null)
-  useFramePosterCapture(frameBodyRef, page, width, isOnScreen)
   // S1 — the frame's mount is staged (iframe -> injectors -> node tree; see
   // `IframeFrameSurface`'s header), so between entering the viewport and the
   // tree's commit the iframe is a real but EMPTY document. The poster stays
@@ -276,20 +254,61 @@ function BoardFrameViewImpl({
   // stable by React's own contract, so it cannot defeat `BreakpointFrame`'s
   // `memo()` bailout the way a fresh closure would.
   const [contentReady, setContentReady] = useState(false)
+  // SB-2 — the picture is keyed by what the frame renders (content hash + axes + width), so an edit
+  // makes a new key and the old picture is unreachable. A Tier-2 frame reports no readiness (see
+  // below), so it is captured on the same terms as before: once mounted and quiet.
+  const styleSignature = useEditorStore(selectPosterStyleSignature)
+  const posterId = posterKey({ frameId: frame.id, page, styleSignature, axes: effectiveAxes, width })
+  const posterUrl = useFramePoster(posterId)
+  // ONE module answers "does this frame hold an iframe, and what does it show
+  // instead" (`frameMount.ts`). `reason` is stamped on the frame element below
+  // so the answer is legible from the DOM.
+  const { mounted, reason: mountReason } = resolveFrameMount({ isLive, hasPoster: posterUrl !== undefined })
+  useFramePosterCapture(frameBodyRef, page.id, posterId, width, posterUrl !== undefined, mounted, contentReady || trust === 'run-project')
 
   // Capture phase — fires before the frame's own node-click handling, so
   // `activePageId` is already switched to this page by the time selection
   // logic runs (see the module doc's "Activation + edit routing" note).
   const activatePage = activatePageHandler(page.id)
 
-  const handleActivateCapture = () => {
-    if (!isActive) activatePage()
+  const handleActivateCapture = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (isActive) return
+    // A press inside the frame's own document is painted first: the page
+    // activation queues behind the press ring and runs, in one flush with the
+    // selection it precedes, a frame later (`pressRing.ts`).
+    const win = (e.target as Node).ownerDocument?.defaultView
+    if (win && win !== window) afterPressPaint(win, activatePage)
+    else activatePage()
   }
 
   // The header move-drag, end to end (press, snap, Alt-copy, Escape,
   // release) — its own hook so this view keeps owning what a frame LOOKS
   // like. See `useBoardFrameMoveDrag`.
   const moveDrag = useBoardFrameMoveDrag({ frameId: frame.id, pageId: page.id, x, y, width, height })
+
+  // A poster has no document to press on, so the frame body takes the press itself: a click (not the end of a
+  // pan) selects the frame, and a selected frame is live, so the one press promotes AND selects. At a readable zoom
+  // the layer under the pointer is selected too once the frame has committed (`posterPress.ts`).
+  const posterPressDownRef = useRef<{ x: number; y: number } | null>(null)
+  const handlePosterPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    posterPressDownRef.current = { x: e.clientX, y: e.clientY }
+  }
+  const handlePosterClick = (e: ReactMouseEvent<HTMLDivElement>) => {
+    const down = posterPressDownRef.current
+    posterPressDownRef.current = null
+    if (e.button !== 0 || (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > POSTER_PRESS_SLOP_PX)) return
+    useEditorStore.getState().selectFrame(page.id, e.shiftKey ? 'toggle' : 'replace')
+    if (!e.shiftKey) armPosterPress(frame.id, { clientX: e.clientX, clientY: e.clientY, deep: e.metaKey || e.ctrlKey })
+  }
+  useEffect(() => {
+    if (mounted && contentReady) void replayPosterPress(frame.id, page.id)
+  }, [mounted, contentReady, frame.id, page.id])
+  // A frame that hugs its content is as tall as its document (or its poster): the layer needs that to know what is in view.
+  useEffect(() => {
+    const body = frameBodyRef.current
+    if (!body || hasManualHeight) return
+    return observeFrameHeight(body, frame.id)
+  }, [frame.id, hasManualHeight])
 
   const handleHeaderContextMenu = (e: ReactMouseEvent<HTMLDivElement>) => {
     e.preventDefault()
@@ -375,7 +394,7 @@ function BoardFrameViewImpl({
   return (
     // `data-frame-mount` is `FRAME_MOUNT_ATTR` spelled out — JSX cannot take
     // a computed attribute name without a spread. The two spellings are tied
-    // together by `framePoolMountReason.test.tsx`, which reads this element
+    // together by `frameMountReason.test.tsx`, which reads this element
     // back through `readFrameMountReason`.
     <div
       className={styles.frame}
@@ -440,7 +459,9 @@ function BoardFrameViewImpl({
             `CanvasDiagnosticsInjector`, a Tier-2 live one through
             `useBridgeFrameDiagnostics`), so the badge does not branch on
             trust. */}
+        <FrameModeChips frame={frame} />
         <FrameDiagnosticsBadge scopeKey={frame.id} />
+        <GalleryAddVariantButton page={page} />
       </div>
 
       {contextMenu && createPortal(
@@ -457,13 +478,18 @@ function BoardFrameViewImpl({
             <span aria-hidden="true"><PenSquareSolidIcon size={13} /></span>
             Rename
           </ContextMenuItem>
+          <ContextMenuItem
+            onClick={() => { setContextMenu(null); handleDuplicateAsVariant({ ...frame.axes }) }}
+          >
+            <span aria-hidden="true"><CopyPlusSolidIcon size={13} /></span>
+            Duplicate frame
+          </ContextMenuItem>
           {/* WS-10 Phase 2 (§4.3-§4.4) — "duplicate as variant": a second
               frame of the SAME page, beside this one, with one preview axis
               flipped. Direction always applies (no probe gate — `dir`
-              always works, same as the toolbar toggle); the color-scheme
-              variant is omitted (not disabled) when the probe found no
-              dark-mode mechanism, so the menu never offers a duplicate that
-              would look identical to its source. */}
+              always works, same as the toolbar toggle). Duplicating into a
+              colour scheme or any other project mode is the header's
+              "+ Mode" (`FrameModeChips`), driven by the token catalog. */}
           <ContextMenuItem
             onClick={() => {
               setContextMenu(null)
@@ -473,17 +499,6 @@ function BoardFrameViewImpl({
             <span aria-hidden="true"><CopyPlusSolidIcon size={13} /></span>
             Duplicate as {effectiveAxes.direction === 'rtl' ? 'LTR' : 'RTL'}
           </ContextMenuItem>
-          {schemeVariantApplies && (
-            <ContextMenuItem
-              onClick={() => {
-                setContextMenu(null)
-                handleDuplicateAsVariant({ colorScheme: effectiveAxes.colorScheme === 'dark' ? 'light' : 'dark' })
-              }}
-            >
-              <span aria-hidden="true"><CopyPlusSolidIcon size={13} /></span>
-              Duplicate as {effectiveAxes.colorScheme === 'dark' ? 'Light' : 'Dark'}
-            </ContextMenuItem>
-          )}
           {localeVariantApplies && (
             <ContextMenuItem
               onClick={() => {
@@ -531,14 +546,17 @@ function BoardFrameViewImpl({
           UNLESS the frame has never been manually resized, in which case
           `data-frame-auto-height` (canvas-04) lets the box grow to wrap its
           already-correctly-fitted iframe instead (see
-          `BoardFramesLayer.module.css`). Gated on `mounted` too: a
-          frame with no live iframe has nothing to size against, so it keeps
-          the fixed fallback box the placeholder needs — same as before. */}
+          `BoardFramesLayer.module.css`). Gated on `mounted` or a poster: a
+          frame with neither has nothing to size against, so it keeps the
+          fixed fallback box the placeholder needs; a poster is as tall as the
+          live frame it photographed, so promotion does not resize the frame. */}
       <div
         ref={frameBodyRef}
         className={styles.frameBody}
         data-testid="board-frame-body"
-        data-frame-auto-height={!hasManualHeight && mounted ? 'true' : undefined}
+        data-frame-auto-height={!hasManualHeight && (mounted || posterUrl !== undefined) ? 'true' : undefined}
+        onPointerDown={mounted ? undefined : handlePosterPointerDown}
+        onClick={mounted ? undefined : handlePosterClick}
         style={{ '--frame-w': `${width}px`, '--frame-h': `${height}px` } as CSSProperties}
       >
         {/* `CanvasDiagnosticsScopeContext` (Z5) is where this frame's runtime
@@ -550,7 +568,7 @@ function BoardFrameViewImpl({
             <CanvasPageContext.Provider value={page.id}>
               {/* WS-10 Phase 2 — this frame's OWN id, so NodeRenderer can tag
                   every selection/hover it originates with the frame it came
-                  from (`selectedNodeFrameId`/`hoveredFrameId`). Without this a
+                  from (`selectedNodeFrameId`, `canvasHover`'s `frameId`). Without this a
                   "duplicate as variant" sibling of this page — sharing every
                   node id (trap #2) — would light up from a selection made in
                   THIS frame. See `CanvasFrameContext`'s doc. */}
@@ -567,7 +585,7 @@ function BoardFrameViewImpl({
                     onActivate={activatePage}
                     frameId={frame.id}
                     axesOverride={frame.axes}
-                    width={width}
+                    posterUrl={posterUrl}
                   />
                 ) : (
                   // Byte-for-byte the SAME call this branch has always made —
@@ -592,20 +610,20 @@ function BoardFrameViewImpl({
             </CanvasPageContext.Provider>
           </CanvasDiagnosticsScopeContext.Provider>
         ) : (
-          <FramePosterPlaceholder title={page.title} posterUrl={getFramePoster(page, width)} />
+          <FramePosterPlaceholder title={page.title} posterUrl={posterUrl} />
         )}
         {/* The poster stays painted over a portal frame until its tree has
             committed. A Tier-2 frame reports no such readiness — it draws its
             own boot and crash chrome (`LiveBoardFrame`) — so an overlay there
             would be a poster that never lifts. */}
         {mounted && trust !== 'run-project' && !contentReady && (
-          <FramePosterPlaceholder title={page.title} posterUrl={getFramePoster(page, width)} overlay />
+          <FramePosterPlaceholder title={page.title} posterUrl={posterUrl} overlay />
         )}
         {/* A page with nothing on it renders as a blank rectangle, which reads
             as "it did not load". Only for a frame that is actually drawing its
             iframe: an offscreen frame is showing a poster, and a caption over
             that would be about a page nobody can see. */}
-        {mounted && pageHasNoContent(page) && <CanvasEmptyPageHint />}
+        {mounted && pageHasNoContent(page) && <CanvasEmptyPageHint pageId={page.id} />}
       </div>
       {/* Resize handles — SELECTED frames only, not merely active.
           `activePageId` is the edit target: it is set by a capture-phase click

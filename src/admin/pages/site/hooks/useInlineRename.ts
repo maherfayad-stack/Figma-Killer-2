@@ -59,11 +59,15 @@ export function useInlineRename(
 
   const cancel = () => setIsRenaming(false)
 
-  // stopPropagation prevents bubbling to the row's own key handling (e.g. a
-  // parent row's expand/collapse on Enter).
+  // While the field is open it owns the keyboard: EVERY key stops here, not
+  // only Enter/Escape. The row around it has its own key handling (Space and
+  // Enter activate it - which ate the space in "Flow A") and the editor
+  // listens above that for single-letter tool shortcuts (typing `r` armed the
+  // rectangle tool).
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); commit() }
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancel() }
+    e.stopPropagation()
+    if (e.key === 'Enter') { e.preventDefault(); commit() }
+    if (e.key === 'Escape') { e.preventDefault(); cancel() }
   }
 
   return [{ isRenaming, value, setValue, start, commit, cancel, handleKeyDown }, inputRef]

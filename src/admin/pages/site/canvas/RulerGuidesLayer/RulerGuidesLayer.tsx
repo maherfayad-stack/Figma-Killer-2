@@ -22,6 +22,13 @@
  * element's `--guide-position` custom property (no `setState` per
  * pointermove — same perf rule `useCanvas`'s gesture handling follows) and
  * committed via `moveGuide` on release.
+ *
+ * ERR-12 — the frames are iframes, so a release over one never reaches this
+ * document on its own and the line kept following the cursor. The drag holds
+ * pointer capture on the line and arms the cross-iframe relay
+ * (`markCanvasPointerRelay`) exactly like the reorder drag does, and
+ * `guardDragSession` finishes it on a move with the button up and cancels it
+ * (line back where it was) when the window loses focus.
  */
 import { useContext, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
 import { createPortal } from 'react-dom'
@@ -33,6 +40,8 @@ import { CloseIcon } from 'pixel-art-icons/icons/close'
 import { CanvasViewportActionsContext } from '../CanvasContexts'
 import { screenToBoard } from '../CanvasRulers/rulerGeometry'
 import { MAX_PAN } from '../math'
+import { guardDragSession } from '@core/studio-runtime'
+import { clearCanvasPointerRelay, markCanvasPointerRelay } from '../canvasPointerRelay'
 import styles from './RulerGuidesLayer.module.css'
 
 /** Guide lines span the full reachable pan range so they always cross the visible viewport regardless of zoom/pan. */
@@ -60,33 +69,67 @@ function GuideLine({ guide }: { guide: BoardGuide }) {
     // only runs for middle-button or space+primary.
     event.preventDefault()
     const { canvasRootRef, transformRef } = viewportActions
+    const handle = event.currentTarget
+    const pointerId = event.pointerId
+    let last = { clientX: event.clientX, clientY: event.clientY }
 
-    const onMove = (e: PointerEvent) => {
+    const boardPositionOf = (point: { clientX: number; clientY: number }): number | null => {
       const root = canvasRootRef.current
-      const line = lineRef.current
-      if (!root || !line) return
+      if (!root) return null
       const rect = root.getBoundingClientRect()
       const t = transformRef.current
-      const screenPos = guide.axis === 'x' ? e.clientX - rect.left : e.clientY - rect.top
+      const screenPos = guide.axis === 'x' ? point.clientX - rect.left : point.clientY - rect.top
       const pan = guide.axis === 'x' ? t.panX : t.panY
-      const boardPos = screenToBoard(screenPos, t.zoom, pan)
-      line.style.setProperty('--guide-position', `${boardPos}px`)
+      return screenToBoard(screenPos, t.zoom, pan)
     }
-    const onUp = (e: PointerEvent) => {
+    const onMove = (e: PointerEvent) => {
+      last = { clientX: e.clientX, clientY: e.clientY }
+      const boardPos = boardPositionOf(last)
+      if (boardPos !== null) lineRef.current?.style.setProperty('--guide-position', `${boardPos}px`)
+    }
+    const end = () => {
+      disposeGuard()
+      clearCanvasPointerRelay()
       document.removeEventListener('pointermove', onMove)
       document.removeEventListener('pointerup', onUp)
-      const root = canvasRootRef.current
-      if (!root) return
-      const rect = root.getBoundingClientRect()
-      const t = transformRef.current
-      const screenPos = guide.axis === 'x' ? e.clientX - rect.left : e.clientY - rect.top
-      const pan = guide.axis === 'x' ? t.panX : t.panY
-      moveGuide(guide.id, Math.round(screenToBoard(screenPos, t.zoom, pan)))
+      document.removeEventListener('pointercancel', onCancel)
+      try {
+        handle.releasePointerCapture(pointerId)
+      } catch (_err) {
+        // Released with the pointer already — nothing to undo.
+      }
       // `store-09` — close the undo-coalescing burst this drag opened.
       useEditorStore.getState().endBoardGesture()
     }
+    const commit = () => {
+      end()
+      const boardPos = boardPositionOf(last)
+      if (boardPos !== null) moveGuide(guide.id, Math.round(boardPos))
+    }
+    const onUp = (e: PointerEvent) => {
+      last = { clientX: e.clientX, clientY: e.clientY }
+      commit()
+    }
+    const onCancel = () => {
+      end()
+      lineRef.current?.style.setProperty('--guide-position', `${guide.position}px`)
+    }
+
+    try {
+      handle.setPointerCapture(pointerId)
+    } catch (_err) {
+      // Refused in some test environments — the relay below still carries the drag.
+    }
+    markCanvasPointerRelay(pointerId)
+    const disposeGuard = guardDragSession({
+      documents: [document],
+      focusWindow: window,
+      onReleaseLost: commit,
+      onAbandon: onCancel,
+    })
     document.addEventListener('pointermove', onMove)
-    document.addEventListener('pointerup', onUp, { once: true })
+    document.addEventListener('pointerup', onUp)
+    document.addEventListener('pointercancel', onCancel)
   }
 
   const onContextMenu = (event: ReactMouseEvent) => {

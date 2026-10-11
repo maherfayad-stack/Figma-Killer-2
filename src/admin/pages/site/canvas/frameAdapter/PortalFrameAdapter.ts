@@ -18,20 +18,30 @@ import { getColorSchemeCapability } from '@site/studio/previewAxesCapability'
 import type { PreviewAxes } from '@core/studio-board'
 import {
   collectDropCandidates,
+  collectNodeGeometry,
+  createGeometryDirtySignal,
   OVERLAY_ID_ATTR,
+  OVERLAY_REVISION_ATTR,
   SELECTION_CHROME_RULES,
   SELECTION_OVERLAY_ROOT_ID,
   SELECTION_STYLE_TAG_ID,
   startAnimationFreeze,
   startHoverSuppression,
   startScrollUnroll,
+  isSelectionChromeMutation,
+  presentedElementOf,
   type AnimationFreezeController,
+  type GeometryDirtySignal,
   type HoverSuppressionController,
   type ScrollUnrollController,
 } from '@core/studio-runtime'
+import type { FrameGeometrySnapshot } from '../frameGeometry/frameGeometryTypes'
 import { applyPreviewAxesToFrameDocument } from '../previewAxesFrameEffect'
+import { currentModeAxes } from '../modeRootPlan'
 import { escapeCssAttributeValue } from '../escapeCssAttributeValue'
+import { OverlayRulePatcher, splitCssChunks } from './overlayRuleDiff'
 import type {
+  ApplyOverlayOptions,
   DropCandidateGeometry,
   FrameDocumentAdapter,
   FrameRuntimeEvent,
@@ -39,6 +49,7 @@ import type {
   NodeRect,
   NodeRef,
   OptimisticDomOps,
+  ResizeTargetOptions,
   Unsubscribe,
 } from './FrameDocumentAdapter'
 
@@ -114,6 +125,24 @@ class SyntheticEventBus {
 export class PortalFrameAdapter implements FrameDocumentAdapter {
   private readonly doc: Document
   private readonly overlayStyles = new Map<string, HTMLStyleElement>()
+  /**
+   * The CSS text each overlay last received. Assigning a `<style>`'s
+   * `textContent` replaces its text node and makes the browser re-parse the
+   * sheet and invalidate style for the WHOLE document — even when the text is
+   * identical. Every mounted frame's injectors re-apply on inputs that change
+   * nothing they emit (a click re-runs the forced-state preview in every
+   * frame, and it writes the same empty string each time), so an unchanged
+   * write is skipped here, once, for every injector (P6-C).
+   */
+  private readonly overlayCss = new Map<string, string>()
+  /**
+   * The rule patcher of each `incremental` overlay (SB-7). `null` is a
+   * decision, not an absence: this overlay is in text mode for good, either
+   * because the browser gave its `<style>` no sheet to patch or because a patch
+   * failed and the sheet was rebuilt from text.
+   */
+  private readonly overlayPatchers = new Map<string, OverlayRulePatcher | null>()
+  private overlayRevision = 0
   private readonly selectionRings = new Map<string, HTMLDivElement>()
   private hoverRing: HTMLDivElement | null = null
   private hoverNodeId: string | null = null
@@ -127,6 +156,9 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
   private disposed = false
   private repositionRaf: number | null = null
   private layoutObserver: MutationObserver | null = null
+  private ringTrackingArmed = false
+  /** SB-3 — created by the first `measureAll`; fed by `layoutObserver` below, so geometry adds no body observer of its own. */
+  private geometrySignal: GeometryDirtySignal | null = null
 
   readonly optimistic: OptimisticDomOps = {
     insert: (nodeId, parentNodeId, index, tagName, text) => {
@@ -147,10 +179,6 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
       if (!el || !parent) return
       parent.insertBefore(el, parent.children[index] ?? null)
     },
-    text: (nodeId, text) => {
-      const el = findByNodeId(this.doc, nodeId)
-      if (el) el.textContent = text
-    },
     // `speed-01` — a documented no-op. The store write this call previews/
     // commits already re-renders the portal tree through React on the SAME
     // tick; a second DOM write here would be a redundant paint racing the
@@ -158,6 +186,9 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
     // for skipping portal adapters on insert/delete/move.
     style: () => {},
     clearStyle: () => {},
+    // store-17 — a documented no-op: a portal frame's DOM is React's render of
+    // the tree, and the rollback that calls this already replayed the tree.
+    revert: () => {},
   }
 
   constructor(doc: Document) {
@@ -166,25 +197,47 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
     queueMicrotask(() => {
       if (!this.disposed) this.bus.emit({ type: 'ready' })
     })
+  }
 
-    // Keeps rings glued to their node across resize/layout changes — mirrors
-    // `runtime.ts`'s own `scheduleReposition`/`layoutObserver` pair.
-    const view = doc.defaultView
+  /**
+   * Keeps this adapter's OWN rings glued to their node across resize/layout
+   * changes — mirrors `runtime.ts`'s `scheduleReposition`/`layoutObserver`
+   * pair. Armed on the first `select`/`hover`, never in the constructor
+   * (PERF-10): portal mode's selection chrome is `BreakpointSelectionOverlay`'s
+   * own portal, so on an ordinary board nothing ever calls those two and this
+   * adapter has no rings to reposition. A subtree `attributes` observer armed
+   * anyway allocated records and scheduled a no-op animation frame for every
+   * attribute write in every frame — a ring style write, every frame of an
+   * element resize.
+   *
+   * SB-3: the first `measureAll` arms it too, because the same observer is the
+   * rect index's dirty signal for content and style-attribute changes (it
+   * forwards to `geometrySignal`). A frame nobody hit-tests still pays nothing.
+   */
+  private armLayoutTracking(): void {
+    if (this.ringTrackingArmed || this.disposed) return
+    this.ringTrackingArmed = true
+    const view = this.doc.defaultView
     const raf = view?.requestAnimationFrame?.bind(view) ?? requestAnimationFrame
-    const scheduleReposition = () => {
+    const scheduleReposition = (records?: MutationRecord[]) => {
+      // This adapter's own ring writes are chrome; repositioning for them
+      // would schedule another frame for nothing.
+      if (records?.every(isSelectionChromeMutation)) return
+      this.geometrySignal?.notify()
       if (this.repositionRaf !== null) return
       this.repositionRaf = raf(() => {
         this.repositionRaf = null
         this.repositionAllRings()
       })
     }
-    view?.addEventListener('resize', scheduleReposition)
-    this.domUnsubscribes.push(() => view?.removeEventListener('resize', scheduleReposition))
-    if (doc.body) {
+    const onResize = () => scheduleReposition()
+    view?.addEventListener('resize', onResize)
+    this.domUnsubscribes.push(() => view?.removeEventListener('resize', onResize))
+    if (this.doc.body) {
       const MutationObserverCtor = view?.MutationObserver ?? MutationObserver
       try {
         this.layoutObserver = new MutationObserverCtor(scheduleReposition)
-        this.layoutObserver.observe(doc.body, { childList: true, subtree: true, attributes: true })
+        this.layoutObserver.observe(this.doc.body, { childList: true, subtree: true, attributes: true })
       } catch (_err) {
         // Some browser realms reject observing a cross-realm node. Rings
         // still reposition on the next explicit select/hover/resize.
@@ -198,7 +251,7 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
     if (this.hoverRing && this.hoverNodeId !== null) this.positionRingOnNode(this.hoverRing, this.hoverNodeId)
   }
 
-  applyOverlay(id: string, css: string): void {
+  applyOverlay(id: string, css: string, options?: ApplyOverlayOptions): void {
     let el = this.overlayStyles.get(id)
     if (!el) {
       el = this.doc.createElement('style')
@@ -207,12 +260,51 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
       this.doc.head?.appendChild(el)
       this.overlayStyles.set(id, el)
     }
+    if (this.overlayCss.get(id) === css) return
+    this.overlayCss.set(id, css)
+    if (options?.incremental && this.patchOverlayRules(id, el, css)) return
     el.textContent = css
+  }
+
+  /**
+   * Brings an `incremental` overlay's sheet to `css` as rule-level edits, so the
+   * browser restyles only what the changed rules match. False when the overlay
+   * is in text mode (the caller then writes the text). The `<style>` of a
+   * patched overlay never has text: its rules are the only copy, which is also
+   * what keeps hover suppression's text-keyed plan cache from reading a stale
+   * string. Observers of the head are told through `OVERLAY_REVISION_ATTR`.
+   */
+  private patchOverlayRules(id: string, el: HTMLStyleElement, css: string): boolean {
+    let patcher = this.overlayPatchers.get(id)
+    if (patcher === undefined) {
+      patcher = el.sheet && !el.textContent ? new OverlayRulePatcher(el.sheet) : null
+      this.overlayPatchers.set(id, patcher)
+    }
+    if (!patcher) return false
+    try {
+      patcher.apply(css)
+    } catch (err) {
+      console.warn(`[PortalFrameAdapter] overlay "${id}" could not be patched rule by rule; rewriting its text:`, err)
+      this.overlayPatchers.set(id, null)
+      return false
+    }
+    // A style engine that refused every rule (one that cannot model `@layer`,
+    // the sheet's wrapper) leaves an empty sheet for non-empty CSS: the text
+    // is the only honest copy then, so rebuild from it for good.
+    if (el.sheet && el.sheet.cssRules.length === 0 && splitCssChunks(css).length > 0) {
+      this.overlayPatchers.set(id, null)
+      return false
+    }
+    this.overlayRevision += 1
+    el.setAttribute(OVERLAY_REVISION_ATTR, String(this.overlayRevision))
+    return true
   }
 
   removeOverlay(id: string): void {
     this.overlayStyles.get(id)?.remove()
     this.overlayStyles.delete(id)
+    this.overlayCss.delete(id)
+    this.overlayPatchers.delete(id)
   }
 
   private ensureOverlayRoot(): HTMLDivElement | null {
@@ -271,6 +363,7 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
   }
 
   select(refs: NodeRef[]): void {
+    this.armLayoutTracking()
     const next = new Set(refs.map((ref) => ref.nodeId))
     for (const [nodeId, ring] of this.selectionRings) {
       if (!next.has(nodeId)) {
@@ -289,6 +382,7 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
   }
 
   hover(ref: NodeRef | null): void {
+    this.armLayoutTracking()
     this.hoverNodeId = ref?.nodeId ?? null
     if (!ref) {
       if (this.hoverRing) this.hoverRing.style.display = 'none'
@@ -302,14 +396,32 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
     const props = properties?.length ? properties : DEFAULT_MEASURED_PROPERTIES
     const view = this.doc.defaultView
     return refs.map(({ nodeId }) => {
-      const el = findByNodeId(this.doc, nodeId)
-      if (!el || !this.doc.body || !view) return { nodeId, rect: null, computedStyle: {} }
+      const own = findByNodeId(this.doc, nodeId)
+      if (!own || !this.doc.body || !view) return { nodeId, rect: null, computedStyle: {} }
+      // A design-system instance's host is `display: contents`: its box is its rendered root's.
+      const el = presentedElementOf(view, own)
       const rect = rectRelativeToBody(el, this.doc.body)
       const computed = view.getComputedStyle(el)
       const computedStyle: Record<string, string> = {}
       for (const prop of props) computedStyle[prop] = computed.getPropertyValue(prop)
       return { nodeId, rect, computedStyle }
     })
+  }
+
+  /**
+   * SB-3 — the same `collectNodeGeometry` the bridge runtime answers `measureAll`
+   * with, run on the same-origin document. Synchronous under the hood. The first
+   * call arms the layout observer and the extra dirty listeners (see
+   * {@link armLayoutTracking}); every call re-arms the `geometry:dirty` latch.
+   */
+  async measureAll(): Promise<FrameGeometrySnapshot> {
+    const view = this.doc.defaultView
+    if (!view) return { origin: { x: 0, y: 0 }, nodes: [], truncated: false }
+    this.armLayoutTracking()
+    this.geometrySignal ??= createGeometryDirtySignal(this.doc, view, () => this.bus.emit({ type: 'geometry:dirty' }))
+    this.geometrySignal.track()
+    this.geometrySignal.markClean()
+    return collectNodeGeometry(this.doc, view)
   }
 
   /**
@@ -325,7 +437,7 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
 
   setAxes(axes: PreviewAxes): void {
     if (!this.doc.documentElement) return
-    applyPreviewAxesToFrameDocument(this.doc.documentElement, axes, getColorSchemeCapability())
+    applyPreviewAxesToFrameDocument(this.doc.documentElement, axes, getColorSchemeCapability(), currentModeAxes())
   }
 
   /**
@@ -336,7 +448,7 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
    * in-frame handles this call drives exist for the cross-origin bridge; a
    * second set here would be two sets of handles on one element.
    */
-  setResizeTarget(_ref: NodeRef | null, _options: { proportional: boolean }): void {}
+  setResizeTarget(_ref: NodeRef | null, _options: ResizeTargetOptions): void {}
 
   /**
    * `live-18` — a documented no-op. Nothing in portal mode ever emits
@@ -347,6 +459,9 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
    * and `PortalFrameAdapter` satisfy the same `FrameDocumentAdapter` shape.
    */
   startTextEdit(_nodeId: string, _allowed: boolean, _text?: string): void {}
+
+  /** A documented no-op for the same reason as {@link startTextEdit}: the store's session opens the editor in `NodeRenderer`. */
+  beginTextEdit(_nodeId: string, _text: string): void {}
 
   setInteractionMode(mode: 'design' | 'live'): void {
     if (mode === this.interactionMode) return
@@ -420,6 +535,7 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
     for (const unsubscribe of this.domUnsubscribes) unsubscribe()
     this.domUnsubscribes.length = 0
     this.layoutObserver?.disconnect()
+    this.geometrySignal?.dispose()
     if (this.repositionRaf !== null) {
       const view = this.doc.defaultView
       ;(view?.cancelAnimationFrame?.bind(view) ?? cancelAnimationFrame)(this.repositionRaf)
@@ -431,6 +547,8 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
 
     for (const el of this.overlayStyles.values()) el.remove()
     this.overlayStyles.clear()
+    this.overlayCss.clear()
+    this.overlayPatchers.clear()
 
     for (const ring of this.selectionRings.values()) ring.remove()
     this.selectionRings.clear()

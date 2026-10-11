@@ -10,8 +10,8 @@ import { describe, expect, it } from 'bun:test'
 import {
   INLINE_ID_SEPARATOR,
   callSitePosition,
+  inlineSegments,
   decodeSourceNodeId,
-  matchesCallSitePosition,
 } from '../sourceNodeId'
 
 describe('callSitePosition', () => {
@@ -32,30 +32,15 @@ describe('callSitePosition', () => {
   })
 })
 
-describe('matchesCallSitePosition', () => {
-  const position = 'pages/Home.jsx:77:19'
 
-  it('matches the position itself (a plain, never-inlined node)', () => {
-    expect(matchesCallSitePosition(position, position)).toBe(true)
+describe('inlineSegments (G-2b)', () => {
+  it('names every position of a chain, outermost first, each a plain id the path decoder takes on its own', () => {
+    const nodeId = ['pages/Home.jsx:5:8', 'components/Card.jsx:4:6', 'components/Badge.jsx:2:10'].join(INLINE_ID_SEPARATOR)
+    expect(inlineSegments(nodeId)).toEqual(['pages/Home.jsx:5:8', 'components/Card.jsx:4:6', 'components/Badge.jsx:2:10'])
+    expect(inlineSegments(nodeId).map((segment) => decodeSourceNodeId(segment)?.rel)).toEqual(['pages/Home.jsx', 'components/Card.jsx', 'components/Badge.jsx'])
   })
 
-  it('matches a composite id inlined from that call site', () => {
-    const inlined = `${position}${INLINE_ID_SEPARATOR}components/Icon.jsx:3:6`
-    expect(matchesCallSitePosition(inlined, position)).toBe(true)
-  })
-
-  it('does not match a different call site', () => {
-    expect(matchesCallSitePosition('pages/Home.jsx:99:1', position)).toBe(false)
-  })
-
-  it('does not match a different call site even when composite', () => {
-    const other = `pages/Home.jsx:99:1${INLINE_ID_SEPARATOR}components/Icon.jsx:3:6`
-    expect(matchesCallSitePosition(other, position)).toBe(false)
-  })
-
-  it('does not match a position that is only a string prefix, not a real call-site boundary', () => {
-    // Guards the naive `nodeId.startsWith(position)` bug: "…:77:19" must not
-    // match "…:77:190" — the separator check is what prevents that.
-    expect(matchesCallSitePosition('pages/Home.jsx:77:190', position)).toBe(false)
+  it('a plain id is its own single segment', () => {
+    expect(inlineSegments('pages/Home.jsx:5:8')).toEqual(['pages/Home.jsx:5:8'])
   })
 })

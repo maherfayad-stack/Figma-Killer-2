@@ -141,7 +141,7 @@ export const PARSER_FIDELITY_CODES: readonly FidelityCodeDef[] = [
     title: 'One branch of a conditional was auto-selected',
     severity: 'info',
     description: 'The parser found more than one JSX-bearing `return`, or a ternary/`&&`, and rendered the heuristically-chosen branch (the last unconditional `return`; a ternary\'s consequent; `&&`\'s body) — never all of them stacked. The untaken alternative(s) are recorded (label + source location) but not rendered; a statically-resolvable condition (a literal, a module-scope const) always wins over the heuristic. This is informational, not a defect: the node is NOT locked, only the choice is heuristic.',
-    fix: 'If the auto-selected branch is wrong for this audit, open `studio_get_node_source` on the alternative\'s location to see what would render instead — evaluating the condition to switch branches is Tier D (never done). Split the branches into separate named components/files if they are genuinely different screens.',
+    fix: 'If the auto-selected branch is wrong for this audit, open the alternative\'s recorded source location (file:line) to see what would render instead — evaluating the condition to switch branches is Tier D (never done). Split the branches into separate named components/files if they are genuinely different screens.',
     impact: 'One node instead of N — verify against a real run of the app (studio_render_reference) if the chosen branch matters for the audit.',
   },
   {

@@ -29,8 +29,8 @@
  * removed, DELETE the allowlists below (not just empty them) and tighten
  * this gate to a flat ban across all of `src/admin`.
  *
- * @see STUDIO-FIGMA-PARITY-PLAN.md — D2, "the target architecture"
- * @see docs/reference/canvas-dnd.md — current-state DnD reference
+ * @see docs/reference/canvas-dnd.md — "The D2 target architecture, and how much of it exists"
+ * @see docs/archive/plans/STUDIO-FIGMA-PARITY-PLAN.md — D2, where the target was first specced
  */
 
 import { describe, expect, it } from 'bun:test'
@@ -121,7 +121,10 @@ const NATIVE_HTML5_DND_ALLOWLIST: ReadonlySet<string> = new Set([
   // could be driven directly: cancel every drag's default inside a design
   // frame, because the browser's default is to navigate the portal's document
   // away and a dropped LINK is as destructive there as a dropped file; relay
-  // only the file-carrying ones.
+  // the file- and link-carrying ones (P5-B3: an image dragged out of another
+  // tab is a link, which the board's intake reads at drop and refuses unless
+  // it is an image — `canvasDropIntake.ts`, which reads a transfer the hook
+  // hands it and wires no DnD listener, so it is not on this list).
   'admin/pages/site/canvas/canvasFrameDragRelay.ts',
 ])
 
@@ -156,7 +159,7 @@ describe('Architecture — DnD mechanism containment (D2)', () => {
           violations.map((v) => `  ${v}`).join('\n') +
           `\n\nEither add this file to DND_KIT_ALLOWLIST in this test with a reason, ` +
           `or (preferred) route the new surface through the raw-pointer-event drag ` +
-          `pattern instead — see STUDIO-FIGMA-PARITY-PLAN.md's D2 target architecture.`,
+          `pattern instead — see docs/reference/canvas-dnd.md, "The D2 target architecture".`,
       )
     }
     expect(violations).toHaveLength(0)
@@ -197,7 +200,7 @@ describe('Architecture — DnD mechanism containment (D2)', () => {
           violations.map((v) => `  ${v}`).join('\n') +
           `\n\nEither add this file to NATIVE_HTML5_DND_ALLOWLIST in this test with a reason, ` +
           `or (preferred) route the new surface through the raw-pointer-event drag ` +
-          `pattern instead — see STUDIO-FIGMA-PARITY-PLAN.md's D2 target architecture.`,
+          `pattern instead — see docs/reference/canvas-dnd.md, "The D2 target architecture".`,
       )
     }
     expect(violations).toHaveLength(0)

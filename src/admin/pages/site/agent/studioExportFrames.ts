@@ -67,6 +67,7 @@ import { FRAME_WIDTH, FRAME_HEIGHT } from '@core/studio-board'
 import { getAgentStoreApi } from './storeRef'
 import { agentRenderFrameMountReason, captureAgentRenderSnapshot, waitForAgentRenderFrame } from './renderEvidence'
 import { settleCaptureDocument } from '../canvas/canvasCaptureSettle'
+import { holdFramesStatic } from '../canvas/BoardFramesLayer/staticFrameHold'
 
 type StudioExportFramesInput = Static<typeof StudioExportFramesInputSchema>
 
@@ -138,6 +139,9 @@ async function exportFrames(input: StudioExportFramesInput): Promise<AiToolOutpu
 
   const results: Array<FrameExportSuccess | FrameExportFailure> = []
   const images: AiToolImage[] = []
+  // Tier-2 frames are cross-origin dev-server iframes this document cannot
+  // photograph; hold them on their static render for the batch.
+  const releaseStaticHold = holdFramesStatic()
 
   try {
     for (const pageId of input.pageIds) {
@@ -166,12 +170,13 @@ async function exportFrames(input: StudioExportFramesInput): Promise<AiToolOutpu
         FRAME_MOUNT_TIMEOUT_MS,
       )
       if (!mounted) {
-        // Say WHY, from the one module that decides it (`framePool.ts`). The
-        // pan above should have put this frame on screen, so `offscreen` here
-        // means the mount pool never took it and the board's viewport read is
-        // the thing to look at; `on-screen`/`pooled` means the frame IS
-        // mounted and it is the staged node tree (`perf-08`) that never
-        // landed. Those are different bugs and used to read identically.
+        // Say WHY, from the one module that decides it (`frameMount.ts`). The
+        // pan above put this frame in view at zoom 1 and opened its page, so it
+        // is in the live set: `live` here means the frame IS mounted and it is
+        // the staged node tree (`perf-08`) that never landed; `poster` or
+        // `cold` means the live set never took it, and the board's viewport
+        // read is the thing to look at. Those are different bugs and used to
+        // read identically.
         const mountReason = agentRenderFrameMountReason(pageId)
         results.push({
           pageId,
@@ -231,6 +236,7 @@ async function exportFrames(input: StudioExportFramesInput): Promise<AiToolOutpu
       })
     }
   } finally {
+    releaseStaticHold()
     getStoreState().setCanvasTransform(original.zoom, original.panX, original.panY)
     if (original.activePageId) getStoreState().openPageInCanvas(original.activePageId)
     if (input.axes) getStoreState().setPreviewAxes(originalAxes)

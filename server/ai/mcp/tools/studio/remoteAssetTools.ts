@@ -1,13 +1,14 @@
 /**
  * studio_fetch_remote_asset — lands a URL's bytes into the project without
- * ever routing them through the calling model. See `server/handlers/studio/
- * remoteAssetFetch.ts` for the fetch-side safety reasoning (scheme
- * restriction, no redirect followed, streamed size cap) and `assetLanding.ts`
- * for the write pipeline this shares with `studio_upload_asset`.
+ * ever routing them through the calling model. See `remoteFetchPolicy.ts` for
+ * which hosts an agent may name (P4-E, security review of #233 F8),
+ * `server/handlers/studio/remoteAssetFetch.ts` for the transport's safety
+ * reasoning (scheme, pinned DNS, no redirect, byte cap, deadline, content
+ * type, magic bytes), and `agentWriteSupport.ts`'s `landAgentAsset` for the
+ * landing (the agent write gate, the project lock, `assetLanding.ts`).
  *
- * `execution: 'server'` — unlike `studio_upload_asset` (browser-bridged,
- * because the model hands it bytes the BROWSER then POSTs as multipart form
- * data), there is nothing here the live editor needs to mediate: the fetch,
+ * `execution: 'server'` — like `studio_upload_asset`, there is nothing here
+ * the live editor needs to mediate: the fetch,
  * the sniff, the sanitize, and the write are all plain filesystem/network
  * operations this process can do directly, the same posture every other
  * headless Studio write tool (`studio_apply_edits`, `studio_create_page`,
@@ -16,24 +17,46 @@
 import { StudioFetchRemoteAssetInputSchema, toolRefusal } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
-import { fetchRemoteAsset } from '../../../../handlers/studio/remoteAssetFetch'
+import { remoteFetchRefusal } from './remoteFetchPolicy'
+import { isRefusal, landAgentAsset } from './agentWriteSupport'
+import { fetchRemoteBytes, type FetchRemoteAssetDeps } from '../../../../handlers/studio/remoteAssetFetch'
+
+/**
+ * The handler, with the transport injectable so a test can drive it against a
+ * local server. Three gates, in order, each before any cost the next one
+ * would incur: which host (`remoteFetchPolicy.ts` — no request at all for a
+ * host the agent may not name), the transport (`fetchRemoteBytes` — SSRF,
+ * redirects, size, deadline, content type, magic bytes), then the landing
+ * (`landAgentAsset` — the agent write gate on the target directory, the
+ * project write lock, `assetLanding.ts`).
+ */
+export async function fetchRemoteAssetForAgent(
+  input: { dir?: string; url: string; targetDir?: string },
+  ctx: ToolContext,
+  deps: FetchRemoteAssetDeps = {},
+): Promise<Record<string, unknown>> {
+  const dir = resolveToolProjectDir(input.dir, ctx)
+  const refused = remoteFetchRefusal(input.url, ctx, { allowLoopback: deps.allowLoopback })
+  if (refused) return refused
+  const fetched = await fetchRemoteBytes(input.url, deps)
+  if (!fetched.ok) return toolRefusal('remote-fetch-failed', fetched.error)
+  const landed = await landAgentAsset(dir, ctx, input.targetDir, fetched.bytes, fetched.filenameHint)
+  if (isRefusal(landed)) return landed
+  return { ok: true, dir, ...landed }
+}
 
 const fetchRemoteAssetTool: AiTool = {
   name: 'studio_fetch_remote_asset',
   scope: 'shared',
   execution: 'server',
-  mutates: true,
+  sideEffects: 'write',
+  requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
-    'Fetch an http(s) URL SERVER-SIDE and land the response as a new image file in the project — the way to bring in an asset another tool (e.g. a connected Figma MCP server\'s export/download tool) already returned as a URL, WITHOUT round-tripping its bytes through your own context the way studio_upload_asset\'s imageBase64 input requires. The URL is fetched here; no redirect is ever followed; the response is capped at 25 MB by streamed byte count; the actual bytes are sniffed against real image magic numbers to decide the written extension (a declared/URL-suggested extension is never trusted); an SVG response is sanitized before it touches disk. Returns { relPath } — the new file\'s workspace-relative POSIX path, ready to pass as an insert edit\'s import target or a kind:"asset" edit\'s assetPath, same shape studio_upload_asset returns. Fails with a plain error (never a partial write) for a non-http(s) URL, an unreachable host, a redirect response, a non-2xx status, an oversized body, or content that does not sniff as a recognized image format. Requires studio.write.',
+    'Fetch an image URL SERVER-SIDE and land it as a new project file, so its bytes never pass through your context. Only from: Figma asset hosts (the URLs a Figma connector returns), the stock photo host, or a URL the user pasted into this conversation — any other host refuses host-not-allowed before a request is made. No redirect is followed; the response must be an image content type whose bytes match it, under 25 MB and 30 s; SVG is sanitized. Lands in targetDir (default src/assets) through the agent write gate. Returns { relPath, src, buildSafe, width, height, deduped }: import relPath from the file that shows it; src is its site URL, which a production build serves only when buildSafe is true. An identical file already there is reused. For a photo you do not have a URL for, use studio_find_image. Requires studio.write.',
   inputSchema: StudioFetchRemoteAssetInputSchema,
-  handler: async (input, ctx: ToolContext) => {
-    const { dir: dirInput, url, targetDir } = input as { dir?: string; url: string; targetDir?: string }
-    const dir = resolveToolProjectDir(dirInput, ctx)
-    const result = await fetchRemoteAsset(dir, url, targetDir)
-    if (!result.ok) return toolRefusal('remote-fetch-failed', result.error)
-    return { ok: true, dir, relPath: result.relPath, bytesWritten: result.bytesWritten }
-  },
+  handler: async (input, ctx: ToolContext) =>
+    fetchRemoteAssetForAgent(input as { dir?: string; url: string; targetDir?: string }, ctx),
 }
 
 export const studioRemoteAssetMcpTools: AiTool[] = [fetchRemoteAssetTool]

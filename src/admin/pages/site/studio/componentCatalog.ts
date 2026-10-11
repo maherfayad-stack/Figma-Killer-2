@@ -29,10 +29,16 @@ const ComponentsResponseSchema = Type.Object({
   components: Type.Array(LocalComponentSpecSchema),
 })
 
-/** Never mutated — a stable empty-array identity for the "not loaded yet" / "fetch failed" case (`selectorStability`). */
-const EMPTY_CATALOG: readonly LocalComponentSpec[] = []
-
-let cache: { dir: string | undefined; promise: Promise<LocalComponentSpec[]> } | null = null
+/**
+ * The in-flight or settled catalog for one workspace dir. `settled` is set
+ * when the promise resolves, so a panel mounting AFTER that reads the catalog
+ * on its first render instead of drawing its loading state for one frame.
+ */
+let cache: {
+  dir: string | undefined
+  promise: Promise<LocalComponentSpec[]>
+  settled: readonly LocalComponentSpec[] | null
+} | null = null
 
 /**
  * Fetches the current project's component catalog, cached per workspace dir.
@@ -52,32 +58,78 @@ export function fetchLocalComponentCatalog(): Promise<LocalComponentSpec[]> {
       console.error('[componentCatalog] fetch failed:', err)
       return []
     })
-  cache = { dir, promise }
+  const entry = { dir, promise, settled: null as readonly LocalComponentSpec[] | null }
+  cache = entry
+  void promise.then((list) => {
+    entry.settled = list
+  })
   return promise
 }
 
-/** Drops the cached catalog — call after an edit that changes which components exist (e.g. a future "promote to component"). */
+/** The catalog for the current project if it has already arrived, else `null`. Never fetches. */
+function settledLocalComponentCatalog(): readonly LocalComponentSpec[] | null {
+  const dir = studioWriteDir() ?? undefined
+  return cache && cache.dir === dir ? cache.settled : null
+}
+
+/** Mounted readers (`useLocalComponentCatalog`) re-fetch when the catalog is invalidated, so a panel never keeps showing a prop that is gone. */
+const refreshers = new Set<() => void>()
+
+/** Drops the cached catalog — call after an edit that changes which components exist or what they take. */
 export function invalidateLocalComponentCatalog(): void {
   cache = null
+  for (const refresh of refreshers) refresh()
 }
 
 /**
- * React hook wrapper: the catalog for the CURRENT project, or the frozen
- * `EMPTY_CATALOG` while loading/on failure. One fetch per mount (the
- * underlying promise is cached by dir, so re-mounting the same panel for a
- * different node in the same project is free).
+ * The `/save` edit kinds that change a component's DEFINITION (its props, their
+ * values), and so what the catalog says. `restore` is the undo journal's
+ * ⌘Z/⇧⌘Z of any journaled write; it is cheap to refresh after.
  */
-export function useLocalComponentCatalog(): readonly LocalComponentSpec[] {
-  const [components, setComponents] = useState<readonly LocalComponentSpec[]>(EMPTY_CATALOG)
+const COMPONENT_DEFINITION_KINDS: ReadonlySet<string> = new Set([
+  'add-variant',
+  'remove-variant',
+  'add-component-prop',
+  'expose-prop',
+  'expose-class',
+  'promote-class-override',
+  'add-slot-prop',
+  'promote-component',
+  'restore',
+])
+
+/** Invalidates the catalog when a landed batch held an edit that changes a component's definition. */
+export function invalidateCatalogAfterWrite(edits: ReadonlyArray<{ kind: string }>): void {
+  if (edits.some((edit) => COMPONENT_DEFINITION_KINDS.has(edit.kind))) invalidateLocalComponentCatalog()
+}
+
+/**
+ * React hook wrapper: the catalog for the CURRENT project, `[]` when the
+ * fetch failed, or `null` while it is still in flight — a caller must not
+ * guess a prop's control before the catalog says what the prop IS (a union
+ * drawn as a text box, then swapped for a dropdown, `panel-44`). One fetch per
+ * project (the promise is cached by dir, and a settled catalog is read on the
+ * first render, so re-mounting the panel for another node costs nothing).
+ */
+export function useLocalComponentCatalog(enabled = true): readonly LocalComponentSpec[] | null {
+  const [components, setComponents] = useState<readonly LocalComponentSpec[] | null>(settledLocalComponentCatalog)
   useEffect(() => {
+    // A reader that has no use for the catalog yet (the inspector's variant edit
+    // context, until an element of a component is selected) costs no request.
+    if (!enabled) return
     let cancelled = false
-    fetchLocalComponentCatalog().then((list) => {
-      if (!cancelled) setComponents(list)
-    })
+    const load = () => {
+      void fetchLocalComponentCatalog().then((list) => {
+        if (!cancelled) setComponents(list)
+      })
+    }
+    load()
+    refreshers.add(load)
     return () => {
       cancelled = true
+      refreshers.delete(load)
     }
-  }, [])
+  }, [enabled])
   return components
 }
 

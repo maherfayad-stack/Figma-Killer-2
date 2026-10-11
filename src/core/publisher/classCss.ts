@@ -33,7 +33,7 @@ function toKebab(camel: string): string {
  *
  * `--custom-properties` and vendor-prefixed names (`-webkit-…`) pass too.
  *
- * @see docs/plans/2026-05-30-css-fidelity-and-at-rules.md (Part 1)
+ * @see docs/reference/css-class-registry.md → "Compiling rules to CSS"
  */
 
 /**
@@ -97,7 +97,7 @@ const SIDE_PROP_TO_PREFIX = new Map<string, SideShorthandPrefix>(
  *   - left == right                → "T L B"       (e.g. `20px 8px 12px`)
  *   - otherwise                    → "T R B L"     (e.g. `20px 8px 12px 4px`)
  */
-function buildSidesShorthand(top: string, right: string, bottom: string, left: string): string {
+export function buildSidesShorthand(top: string, right: string, bottom: string, left: string): string {
   if (top === right && right === bottom && bottom === left) return top
   if (top === bottom && left === right) return `${top} ${right}`
   if (left === right) return `${top} ${left} ${bottom}`

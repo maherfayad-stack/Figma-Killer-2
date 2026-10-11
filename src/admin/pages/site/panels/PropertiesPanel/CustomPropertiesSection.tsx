@@ -135,7 +135,7 @@ export function CustomPropertiesSection({
       forceOpen={forceOpen}
       flush
       indicator={setCount > 0}
-      meta={setCount > 0 ? `${setCount} set` : undefined}
+      status={setCount > 0 ? `${setCount} set` : undefined}
     >
       <div className={sectionStyles.sectionBody}>
         {customKeys.map((key) => {

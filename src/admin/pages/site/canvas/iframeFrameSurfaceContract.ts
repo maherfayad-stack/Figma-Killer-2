@@ -27,17 +27,20 @@ export interface IframeFrameSurfaceProps {
   className?: string
   style?: CSSProperties
   /**
-   * Click handler delegated to the iframe's `<body>`. The original frame
-   * had its onClick on the viewport `<div>`; we replicate that on the body
-   * so clicking the empty area still activates the breakpoint.
+   * A click on the frame's EMPTY AREA, which is two different elements of
+   * the frame document: its `<body>` itself (`'body'` — the page root, a
+   * canvas node whose own click `NodeRenderer` already handles), or its
+   * `<html>` outside the body (`'outside-body'` — the body's margins and
+   * anything below it, which no node covers and no node handler hears).
+   * Design and capture frames only; a live frame's clicks are the page's.
    */
-  onClick?: () => void
+  onEmptyAreaClick?: (area: 'body' | 'outside-body') => void
   /** Cursor movement inside the iframe, translated by callers as needed. */
   onCursorMove?: (event: MouseEvent) => void
   /** Cursor leave from the iframe element. */
   onCursorLeave?: () => void
-  /** Page tree React subtree to mount inside the iframe's body. */
-  children: ReactNode
+  /** Page tree React subtree to mount inside the iframe's body. Portal mode only: a `bridge` frame renders the dev server's own app and takes none. */
+  children?: ReactNode
   /**
    * `data-*` attributes forwarded onto the iframe element itself. The
    * outgoing `data-breakpoint-id` lives on the iframe's `<body>` (so it can
@@ -106,6 +109,13 @@ export interface IframeFrameSurfaceProps {
    * is written out at length for.
    */
   onContentReadyChange?: (ready: boolean) => void
+  /**
+   * P5-G — `'content'` (default): a design frame grows to its content
+   * (`useIframeFrameAutoHeight`). `'fixed'`: the caller sizes the iframe
+   * through `style` and nothing measures it — the free-canvas surface, a
+   * window over the board whose hosts are absolutely positioned.
+   */
+  sizing?: 'content' | 'fixed'
 }
 
 export interface IframeFrameSurfaceHandle {

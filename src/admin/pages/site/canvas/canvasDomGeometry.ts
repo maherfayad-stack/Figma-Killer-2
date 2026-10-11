@@ -5,26 +5,30 @@ import type {
   CanvasRect,
 } from './canvasDnd'
 import { resolvePortalDocument } from './frameAdapter/resolvePortalDocument'
-import { resolveCanvasAxisFromStyle, resolveCanvasInsertionAxis } from '@core/studio-runtime'
+import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
+import { nodeVisualRect, resolveCanvasAxisFromStyle, resolveCanvasInsertionAxis, type CanvasRectSource, type ClientRectLike } from '@core/studio-runtime'
 
 // Re-exported verbatim — `speed-06` moved the implementation into
 // `@core/studio-runtime/dropAxisRules.ts` so the in-frame bridge candidate
 // builder can share it, but existing admin-side imports of these two names
 // from THIS module (`canvasInsertionAxis.test.ts`) stay valid.
 export { resolveCanvasAxisFromStyle, resolveCanvasInsertionAxis }
+// SB-3 moved `nodeVisualRect` (and its two structural rect types) into
+// `@core/studio-runtime/nodeVisualRect.ts` so the in-frame bridge runtime's
+// `measureAll` measures a node exactly as the portal canvas does. Admin code
+// keeps importing the names from here.
+export { nodeVisualRect }
+export type { CanvasRectSource, ClientRectLike }
 export type { CanvasAxisResolution, CanvasAxisStyleInput } from '@core/studio-runtime'
 
 const CANVAS_NODE_SELECTOR = '[data-node-id]'
 
 /**
- * Bridge-mode drop-candidate enumeration is a genuinely separate, larger
- * design question `measureCanvasDropCandidates` below does NOT attempt:
- * unlike a single-node measurement (`adapter.measure([{nodeId}])`), "every
- * draggable node's rect, for drop-target scoring" has no adapter method
- * shaped for it yet — it would mean calling `adapter.measure` for every node
- * id in the tree, a fundamentally more expensive operation than one DOM scan,
- * not a drop-in replacement. Named here as the concrete blocker, not
- * silently unsupported (`live-05`, STATE.md).
+ * A bridge frame's document is cross-origin, so `measureCanvasDropCandidates`
+ * below (one DOM scan) cannot reach it. Its candidates come over the wire
+ * instead — `FrameDocumentAdapter.measureDropCandidates()` (`speed-06`),
+ * converted into the same frame-space units by
+ * `measureDropCandidatesThroughAdapter` at the bottom of this module.
  */
 
 export function getViewportLocalPoint(
@@ -177,100 +181,6 @@ export function measureCanvasDropCandidates(
   return candidates
 }
 
-/**
- * Subset of `DOMRect` that `clientRectToViewportRect` actually reads. Using
- * a structural type lets callers pass either a real `DOMRect` (from
- * `getBoundingClientRect()`) or a plain object built by the iframe-coord
- * translation path above — both work, and we don't need `new DOMRect(...)`
- * which isn't available in every test environment.
- */
-export interface ClientRectLike {
-  left: number
-  top: number
-  right: number
-  bottom: number
-  width: number
-  height: number
-}
-
-/** How far `nodeVisualRect` will descend looking for a box. */
-const MAX_TRANSPARENT_WRAPPER_DEPTH = 4
-
-/**
- * Anything the canvas can measure a box from: a real DOM `Element`, or a
- * SYNTHETIC stand-in for a node that rendered no element of its own.
- *
- * The second case exists for zero-DOM fragment nodes — `studio.instance`
- * (WS-4.2) renders `<>{children}</>` and therefore spreads `data-node-id`
- * nowhere, so `[data-node-id="…"]` finds nothing to measure. `canvasNodeLookup`
- * builds a synthetic source whose rect is the union of the node's shallowest
- * rendered descendants; because every measurement path here and in
- * `canvasOverlayGeometry` only ever calls `getBoundingClientRect()` (and, for
- * the box-less fallback below, reads `children`), such a stand-in flows through
- * all of them unchanged.
- */
-export interface CanvasRectSource {
-  getBoundingClientRect(): ClientRectLike
-  readonly children?: HTMLCollection
-}
-
-/**
- * The box a canvas node element actually occupies, or `null` when it occupies
- * none at all.
- *
- * A module whose root element is LAYOUT-TRANSPARENT (`display: contents`, how a
- * module hosts a third-party component without inserting a box into the author's
- * layout — see `src/modules/alm/register.tsx`) generates no box of its own, so
- * `getBoundingClientRect()` is all zeros. What the user sees and clicks is its
- * children, so their union is the node's visual box. Without this such a node
- * gets no selection ring, no hover outline, and cannot be a drop target.
- *
- * Also covers the ordinary empty-element case: a node with neither a box nor any
- * boxed descendant returns `null`, which is what both callers already did with a
- * zero rect.
- */
-export function nodeVisualRect(element: CanvasRectSource, depth: number = 0): ClientRectLike | null {
-  const rect = element.getBoundingClientRect()
-  if (rect.width !== 0 || rect.height !== 0) return rect
-  if (depth >= MAX_TRANSPARENT_WRAPPER_DEPTH) return null
-
-  // Duck-typed, like `measure`'s own `getBoundingClientRect` check: elements
-  // arrive from an iframe document with their own classes, and test doubles
-  // implement only what they are asked about.
-  const children = element.children
-  if (!children || typeof children.length !== 'number') return null
-
-  let union: ClientRectLike | null = null
-  for (const child of Array.from(children)) {
-    const childRect = nodeVisualRect(child, depth + 1)
-    if (!childRect) continue
-    // NEVER assign `union = childRect` directly (the single/first-child
-    // case) when `childRect` can be a real `DOMRect` — `getBoundingClientRect()`
-    // returns one whenever a child's own box is non-empty (the `return rect`
-    // branch above). `left`/`top`/`right`/`bottom` on a `DOMRect` are
-    // PROTOTYPE getters, not the instance's own enumerable properties, so a
-    // later `{ ...union, ... }` spread (below) silently drops them — the
-    // result keeps a correct `width`/`height` (computed from `right`/`left`,
-    // which ARE readable via normal property access) but `x`/`y` come out
-    // `undefined`, then `undefined * zoom` is `NaN` wherever a caller
-    // multiplies it. Explicit field reads work on a DOMRect either way — copy
-    // fields into a plain object immediately so nothing downstream can spread
-    // it again and reintroduce this.
-    union = union === null
-      ? { left: childRect.left, top: childRect.top, right: childRect.right, bottom: childRect.bottom, width: 0, height: 0 }
-      : {
-        left: Math.min(union.left, childRect.left),
-        top: Math.min(union.top, childRect.top),
-        right: Math.max(union.right, childRect.right),
-        bottom: Math.max(union.bottom, childRect.bottom),
-        width: 0,
-        height: 0,
-      }
-  }
-  if (union === null) return null
-  return { left: union.left, top: union.top, right: union.right, bottom: union.bottom, width: union.right - union.left, height: union.bottom - union.top }
-}
-
 export function clientRectToViewportRect(
   viewport: HTMLElement,
   rect: ClientRectLike,
@@ -359,4 +269,36 @@ export function buildDepthMap(tree: NodeTree<PageNode>): Map<string, number> {
   }
 
   return depths
+}
+
+/**
+ * A bridge frame's drop candidates, asked over the wire ONCE and converted into
+ * the frame-space units `measureCanvasDropCandidates` produces for a portal
+ * frame — so every drop resolver downstream reads one shape whichever frame
+ * kind the pointer is over. Shared by the insertion drag's per-drag snapshot
+ * (`canvasInsertionDragSnapshot.ts`) and an element drag's candidate index
+ * (`canvasDragSession.ts`). A node the tree does not know, or has hidden, is
+ * never a candidate — the same filter the portal scan applies.
+ */
+export async function measureDropCandidatesThroughAdapter(
+  adapter: Pick<FrameDocumentAdapter, 'measureDropCandidates'>,
+  viewport: HTMLElement,
+  iframe: HTMLIFrameElement,
+  tree: NodeTree<PageNode>,
+): Promise<CanvasDropCandidate[]> {
+  const geometries = await adapter.measureDropCandidates()
+  const depths = buildDepthMap(tree)
+  const candidates: CanvasDropCandidate[] = []
+  for (const geometry of geometries) {
+    const node = tree.nodes[geometry.nodeId]
+    if (!node || node.hidden) continue
+    candidates.push({
+      nodeId: geometry.nodeId,
+      depth: depths.get(geometry.nodeId) ?? 0,
+      rect: bodyRelativeRectToFrameSpace(viewport, iframe, geometry.rect),
+      axis: geometry.axis,
+      reversed: geometry.reversed,
+    })
+  }
+  return candidates
 }

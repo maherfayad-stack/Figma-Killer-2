@@ -201,6 +201,17 @@ export function deleteThread(file: CommentsFile, threadId: string): CommentsFile
   return { ...file, threads }
 }
 
+/**
+ * Put a previously deleted thread back (undo of "Delete thread"). `null` when a
+ * thread with that id is already present — restoring twice is a no-op. The
+ * thread keeps its own id, `seq` and timestamps; `nextSeq` was never rewound by
+ * the delete, so it cannot collide with a number handed out since.
+ */
+export function restoreThread(file: CommentsFile, thread: CommentThread): CommentsFile | null {
+  if (file.threads.some((existing) => existing.id === thread.id)) return null
+  return { ...file, threads: [...file.threads, thread] }
+}
+
 function replaceThread(
   file: CommentsFile,
   threadId: string,

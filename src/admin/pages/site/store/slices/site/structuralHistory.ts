@@ -13,25 +13,14 @@
  * element moved, and the next reparse snaps the canvas back to it. The undo
  * has to be the INVERSE WRITE.
  *
- * `tagStructuralGesture` records what that inverse write is at gesture time
- * (the only moment the pre-move position is still known), and
- * `reissueStructuralMove` performs it through the same `moveNodes` action a
- * drag uses — so an undo rides every refusal gate, resolves its own anchor
- * against the tree as it is NOW, and writes to source exactly once.
- *
- * `captureDeleteOrigin` (`store-15`) is the same idea for a DELETE: the tree
- * is still what it was, one moment before `deleteNode`/`deleteNodes` removes
- * the element, so this is the last chance to record where it sat. Unlike a
- * move, a delete's undo does not re-issue through a store action — it is
- * folded into the `source` gesture family (`tagStructuralGesture(set,
- * {gesture:'source', …})`, built in `deleteNodesAction.ts`/`nodeActions.ts`
- * from what this function returns) and writes a `reinsert-source` edit once
- * the delete's own commit reports the bytes it discarded.
+ * `tagStructuralGesture` tags the entry the eager tree mutation already pushed
+ * as a `source` gesture (the optimistic preview stays; its patches are never
+ * replayed). A DELETE and a MOVE (single or sequence) are tagged this way, and
+ * their ⌘Z is the undo journal's `restore` (P3-F) once the commit reports the
+ * token: every file back byte for byte, including the blank line and the
+ * indentation a move changes. Re-issuing `moveNodes` by position could not.
  */
-import { hasWritableSourceLocation, type NodeTree, type PageNode } from '@core/page-tree'
-import { pushToast } from '@ui/components/Toast'
-import { resolveActiveTreeTarget } from './helpers'
-import type { SiteSliceHelpers, StructuralHistory, StructuralHistoryMove } from './types'
+import type { SiteSliceHelpers, StructuralHistory } from './types'
 
 /**
  * Mark the transaction just committed by `mutateActiveTree` as structural.
@@ -74,103 +63,15 @@ export function tagStructuralGesture(
 }
 
 /**
- * Where `nodeId` sits right now, in the terms `moveNodes` takes.
- *
- * The index is read off the parent's own child list rather than a stored
- * counter, and `moveNode` detaches before it splices — so feeding this pair
- * straight back in restores the exact slot, same-parent reorder or reparent
- * alike.
+ * What one structural undo/redo step came to (`undoRedoActions.ts`'s
+ * `runStructuralStep` reads it):
+ *  - `posted` — a write is on its way; `pendingCommitId` is the id its
+ *    rollback answers to (ERR-6), when the write carries one;
+ *  - `skipped` — the step can never happen as recorded, so the entry is
+ *    dropped rather than left to jam the stack (ERR-2, ERR-28). `notice` is
+ *    the one sentence saying why, or `null` when the refusal has already been
+ *    presented (the move gate's own toast or dialog).
  */
-export function captureMoveOrigin(
-  tree: NodeTree<PageNode>,
-  nodeId: string,
-): StructuralHistoryMove | null {
-  const parentId = tree.nodes[nodeId]?.parentId
-  if (parentId === undefined || parentId === null) return null
-  const index = tree.nodes[parentId]?.children.indexOf(nodeId) ?? -1
-  if (index < 0) return null
-  return { nodeId, parentId, index }
-}
-
-/**
- * Re-issue one direction of a structural move. Returns whether the gesture was
- * actually performed — `false` means the stack must be left exactly as it was,
- * because nothing happened.
- *
- * Two ways it can decline, both of them honest rather than silent:
- *  - the entry addresses a tree that is no longer open (the user switched page
- *    or opened a Visual Component), which would otherwise move the wrong
- *    element or throw inside a Mutative recipe;
- *  - `moveNodes` itself refuses (a locked node, a `.map` row, an anchor the
- *    AST will not accept) — it has already explained why in its own toast, and
- *    pushing a second one here would double it.
- */
-export function reissueStructuralMove(
-  get: SiteSliceHelpers['get'],
-  step: StructuralHistoryMove,
-): boolean {
-  const state = get()
-  const target = resolveActiveTreeTarget(state)
-  if (!target || !target.tree.nodes[step.nodeId] || !target.tree.nodes[step.parentId]) {
-    pushToast({
-      kind: 'warning',
-      title: 'Nothing to undo here',
-      body: 'That move happened on a document that is no longer open. Open it again to undo it.',
-      location: 'site-editor',
-    })
-    return false
-  }
-  const before = get()._historyPast.length
-  state.moveNodes([step.nodeId], step.parentId, step.index)
-  // A performed move always commits one transaction; a refused one commits
-  // none. That count IS the outcome — no second return channel needed.
-  return get()._historyPast.length > before
-}
-
-/**
- * `store-15` — where `nodeId` sits right now, in the terms a `reinsert-source`
- * edit needs: the parent to write into, and the child position among the
- * parent's PLAIN JSX element siblings only — `reinsertJsxSource`'s own
- * `elementChildren` count, which never sees a `.map` row or a conditional
- * branch's element (those sit inside an expression the parent's direct JSX
- * children list does not contain). Call this BEFORE the delete: it is the
- * last moment the pre-delete tree still has the node to ask about.
- *
- * `null` — no origin an undo could use — for three cases, none of them
- * partial:
- *  - the node has no parent (should not happen; a delete never targets the
- *    tree root);
- *  - the parent has no writable source position at all — the synthetic page
- *    root, whose only "position" is the page's own return statement.
- *    Deleting the page's sole returned element is already refused there by
- *    `deleteJsxElement`'s own `no-jsx-parent` (the AST answers a question the
- *    tree cannot), so a delete that reaches here with such a parent is one
- *    the write is about to refuse anyway — recording no origin for it is
- *    honest, not a gap;
- *  - the node itself does not turn up among its own parent's plain-element
- *    siblings, which cannot happen for a node `refuseStructuralEdit` already
- *    let through as `kind: 'delete'` — checked anyway, because a wrong index
- *    would restore the wrong thing.
- */
-export interface StructuralHistoryDeleteOrigin {
-  nodeId: string
-  parentId: string
-  index: number
-}
-
-export function captureDeleteOrigin(
-  tree: NodeTree<PageNode>,
-  nodeId: string,
-): StructuralHistoryDeleteOrigin | null {
-  const parentId = tree.nodes[nodeId]?.parentId
-  if (parentId === undefined || parentId === null) return null
-  if (!hasWritableSourceLocation(parentId)) return null
-  const siblings = (tree.nodes[parentId]?.children ?? []).filter((id) => isPlainJsxSibling(tree.nodes[id]))
-  const index = siblings.indexOf(nodeId)
-  return index < 0 ? null : { nodeId, parentId, index }
-}
-
-/** A parent's own direct JSX element/self-closing child — never a `.map` row, a conditional branch, or anything else `lockReason` marks as structurally decided elsewhere. */
-function isPlainJsxSibling(node: PageNode | undefined): boolean {
-  return node !== undefined && hasWritableSourceLocation(node.id) && !node.lockReason
-}
+export type StructuralStepOutcome =
+  | { kind: 'posted'; pendingCommitId: number | null }
+  | { kind: 'skipped'; notice: string | null }

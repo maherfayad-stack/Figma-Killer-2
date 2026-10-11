@@ -27,10 +27,19 @@
  * no isolated place to land — it would rewrite the template for every row. The
  * data is the thing to edit, in the source array.
  */
-import { Node, type ArrowFunction, type FunctionExpression } from 'ts-morph'
-import type { StaticValue } from './staticEvalCore'
+import {
+  Node,
+  VariableDeclarationKind,
+  type ArrayLiteralExpression,
+  type ArrowFunction,
+  type FunctionExpression,
+  type VariableDeclaration,
+} from 'ts-morph'
+import { buildSourceNodeId, type ListRowKey, type ListRowRefusalCode, type ListRowSource } from '@core/page-tree'
+import { findImportBinding, type StaticValue } from './staticEvalCore'
 import type { PageEvalContext } from './nodeResolution'
 import { evaluateExpression } from './staticEval'
+import type { ParsedNode } from './types'
 
 /**
  * Hard cap on nodes one loop may contribute, mirroring `inlineLocalComponents`'
@@ -50,6 +59,8 @@ export interface StaticLoop {
   items: StaticValue[]
   /** Source text of the array expression, for the lock reason. */
   sourceText: string
+  /** The expression `.map` is called on — what OD-8 traces back to an array literal (`listRowSourceFor`). */
+  receiver: Node
 }
 
 /**
@@ -84,6 +95,7 @@ export function readStaticLoop(expr: Node, evalCtx: PageEvalContext | undefined)
     callback,
     items: resolved.items.slice(0, MAX_LOOP_ITERATIONS),
     sourceText: receiver.getText(),
+    receiver,
   }
 }
 
@@ -133,4 +145,169 @@ export function loopCallbackBody(callback: LoopCallback): Node | undefined {
     if (Node.isReturnStatement(statement)) return statement.getExpression()
   }
   return undefined
+}
+
+// ---------------------------------------------------------------------------
+// OD-8 — which array element each row IS
+// ---------------------------------------------------------------------------
+
+/**
+ * What every row of `loop` is in the source, as a function of its index and
+ * how many root nodes that iteration rendered: element `index` of an array
+ * literal written in THIS file, or why there is no such array to edit.
+ *
+ * Read off the SAME binding the evaluator resolved the receiver through
+ * (`resolveIdentifier`'s order: component-body locals, then a same-file
+ * module const, then an import), so the array a write edits is the array the
+ * board shows. Nothing is evaluated here — this only locates a declaration.
+ *
+ * Refuses, by code: an array imported from another file (`imported`), a
+ * value handed in as a prop (`prop`), anything computed (`computed` — a call,
+ * a `.filter()`, a `let`), a literal that spreads another list or skips a slot
+ * (`spread`), a list drawn inside another list's row (`nested` — its array is
+ * shared by every outer row), and an item that renders several root elements
+ * (`multi-root` — one of them cannot go without the others).
+ */
+export function listRowSourceFor(
+  loop: StaticLoop,
+  evalCtx: PageEvalContext,
+  relFile: string,
+  nested: boolean,
+): (index: number, rootCount: number) => ListRowSource {
+  const source = loop.sourceText
+  const array = nested ? 'nested' : resolveLoopArray(loop.receiver, evalCtx)
+  const key = readRowKey(loop.callback)
+  return (index, rootCount) => {
+    if (typeof array === 'string') return { kind: 'refused', reason: array, source }
+    if (rootCount !== 1) return { kind: 'refused', reason: 'multi-root', source }
+    const { line, column } = array.getSourceFile().getLineAndColumnAtPos(array.getStart())
+    return {
+      kind: 'array',
+      array: buildSourceNodeId(relFile, line, column),
+      index,
+      length: array.getElements().length,
+      key,
+      source,
+    }
+  }
+}
+
+/**
+ * Stamps each root node one iteration rendered with its row's source.
+ *
+ * A row root whose array is editable is UNLOCKED when the loop was its only
+ * lock (`loopReason`): its place in the list is written through the array,
+ * so the structural lock — "the source does not place this" — is no longer
+ * true of it. Everything inside the row stays locked (one piece of JSX
+ * renders it in every row), and so does a root locked for its own reason (a
+ * spread). The gestures the array cannot express still refuse by the id
+ * (`list-row`), which never depended on this flag.
+ */
+export function stampListRows(
+  nodes: Record<string, ParsedNode>,
+  rootIds: readonly string[],
+  listRow: ListRowSource,
+  loopReason: string,
+): void {
+  for (const id of rootIds) {
+    const node = nodes[id]
+    if (!node) continue
+    node.listRow = listRow
+    if (listRow.kind === 'array' && node.lockReason === loopReason) {
+      node.locked = false
+      delete node.lockReason
+    }
+  }
+}
+
+/** `expr` without the wrappers that do not change which value it is (`(…)`, `as`, `satisfies`, `!`). */
+function unwrapValue(expr: Node): Node {
+  let current = expr
+  while (
+    Node.isParenthesizedExpression(current) ||
+    Node.isAsExpression(current) ||
+    Node.isSatisfiesExpression(current) ||
+    Node.isNonNullExpression(current) ||
+    Node.isTypeAssertion(current)
+  ) {
+    current = current.getExpression()
+  }
+  return current
+}
+
+function resolveLoopArray(receiver: Node, evalCtx: PageEvalContext): ArrayLiteralExpression | ListRowRefusalCode {
+  const expr = unwrapValue(receiver)
+  if (Node.isArrayLiteralExpression(expr)) return plainArray(expr)
+  if (!Node.isIdentifier(expr)) return 'computed'
+  const name = expr.getText()
+  const local = evalCtx.scope.locals.get(name)
+  if (local) {
+    if (local.kind === 'resolved') return 'prop'
+    if (local.kind !== 'expr') return 'computed'
+    const declaration = local.node.getParent()
+    return Node.isVariableDeclaration(declaration) ? constArray(declaration) : 'computed'
+  }
+  const sourceFile = evalCtx.scope.sourceFile
+  if (sourceFile.getFunction(name)) return 'computed'
+  const moduleVar = sourceFile.getVariableDeclaration(name)
+  if (moduleVar) return constArray(moduleVar)
+  return findImportBinding(sourceFile, name) ? 'imported' : 'computed'
+}
+
+/** A `const`'s array-literal initializer — a `let`/`var` can be reassigned, so what it holds is computed. */
+function constArray(declaration: VariableDeclaration): ArrayLiteralExpression | ListRowRefusalCode {
+  const list = declaration.getParent()
+  if (!Node.isVariableDeclarationList(list) || list.getDeclarationKind() !== VariableDeclarationKind.Const) return 'computed'
+  const init = declaration.getInitializer()
+  const value = init ? unwrapValue(init) : undefined
+  return value && Node.isArrayLiteralExpression(value) ? plainArray(value) : 'computed'
+}
+
+/** An array literal whose element `k` is row `k`: no spread, no skipped slot, at least one element. */
+function plainArray(array: ArrayLiteralExpression): ArrayLiteralExpression | ListRowRefusalCode {
+  const elements = array.getElements()
+  if (elements.length === 0) return 'computed'
+  return elements.some((element) => Node.isSpreadElement(element) || Node.isOmittedExpression(element)) ? 'spread' : array
+}
+
+/** The attributes of the element a callback returns, when it returns one element. */
+function rootAttributes(callback: LoopCallback): Node[] | undefined {
+  const body = loopCallbackBody(callback)
+  const element = body ? unwrapValue(body) : undefined
+  if (element && Node.isJsxElement(element)) return element.getOpeningElement().getAttributes()
+  if (element && Node.isJsxSelfClosingElement(element)) return element.getAttributes()
+  return undefined
+}
+
+/** How the row's `key` reads its item — what a copy of the item must change to keep keys unique. */
+function readRowKey(callback: LoopCallback): ListRowKey {
+  const attributes = rootAttributes(callback)
+  if (!attributes) return { kind: 'computed' }
+  const keyAttribute = attributes.find((attribute) => Node.isJsxAttribute(attribute) && attribute.getNameNode().getText() === 'key')
+  if (!keyAttribute || !Node.isJsxAttribute(keyAttribute)) return { kind: 'none' }
+  const initializer = keyAttribute.getInitializer()
+  const expr = initializer && Node.isJsxExpression(initializer) ? initializer.getExpression() : undefined
+  if (!expr) return { kind: 'computed' }
+  const [itemParam, indexParam] = callback.getParameters()
+  const itemName = itemParam?.getNameNode()
+  const key = unwrapValue(expr)
+  if (Node.isIdentifier(key)) {
+    const name = key.getText()
+    if (indexParam && indexParam.getNameNode().getText() === name) return { kind: 'none' }
+    if (itemName && Node.isIdentifier(itemName) && itemName.getText() === name) return { kind: 'item' }
+    if (itemName && Node.isObjectBindingPattern(itemName)) {
+      const binding = itemName.getElements().find((el) => !el.getDotDotDotToken() && el.getNameNode().getText() === name)
+      if (binding) return { kind: 'field', field: binding.getPropertyNameNode()?.getText() ?? name }
+    }
+    return { kind: 'computed' }
+  }
+  if (!itemName || !Node.isIdentifier(itemName)) return { kind: 'computed' }
+  if (Node.isPropertyAccessExpression(key) && key.getExpression().getText() === itemName.getText()) {
+    return { kind: 'field', field: key.getName() }
+  }
+  if (Node.isElementAccessExpression(key) && key.getExpression().getText() === itemName.getText()) {
+    const argument = key.getArgumentExpression()
+    if (argument && Node.isStringLiteral(argument)) return { kind: 'field', field: argument.getLiteralValue() }
+  }
+  return { kind: 'computed' }
 }

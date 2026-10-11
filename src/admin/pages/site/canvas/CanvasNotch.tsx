@@ -31,13 +31,17 @@ import {
   TextGlyphIcon,
 } from "@ui/components/ElementIcons";
 import { Button } from "@ui/components/Button";
+import { shortcutLabelFor } from "@admin/spotlight/keybindings";
 import {
   ContextMenu,
   ContextMenuItem,
   ContextMenuSeparator,
 } from "@ui/components/ContextMenu";
 import { UndoRedoButtons } from "./UndoRedoButtons";
+import { CanvasDrawToolButtons } from "./CanvasDrawToolButtons";
 import { useCanvasInsertionDrag } from "./useCanvasInsertionDrag";
+import { newLayerPlacementStyles } from "./canvasNewLayerPlacement";
+import { canPlaceModuleOnCanvas, EMPTY_BOX_EDGE_PX, placeModuleOnCanvas } from "@site/hooks/placeModuleOnCanvas";
 import { CanvasInsertionDragOverlay } from "./CanvasInsertionDragOverlay";
 import { cn } from "@ui/cn";
 import styles from "./CanvasNotch.module.css";
@@ -118,6 +122,7 @@ export function CanvasNotch({
             actions.map((action) => renderActionButton(action))
           ) : (
             <>
+              <CanvasDrawToolButtons />
               <PrimitiveNotchActions />
               <div aria-hidden="true" className={styles.divider} />
               <FavoriteNotchActions />
@@ -195,10 +200,22 @@ function PrimitiveNotchActions() {
   // is over — `useCanvasInsertionDrag` resolves both through the same
   // `resolveInsertLocation`, so the two entry points cannot disagree.
   const canvasDrag = useCanvasInsertionDrag<PrimitiveSpec>({
-    onDrop: (spec, location) => {
+    // A Div or Span is an empty box: the ghost is the box it becomes on the
+    // board. Text has no fixed size - its ghost is the text itself.
+    ghostSize: (spec) => (spec.moduleId === "base.container" ? { width: EMPTY_BOX_EDGE_PX, height: EMPTY_BOX_EDGE_PX } : null),
+    onDrop: (spec, location, placement) => {
       const mod = registry.get(spec.moduleId);
       if (!mod) return false;
-      return insertModule(mod, location, { defaults: resolveDefaults(mod, spec) }) !== null;
+      return insertModule(mod, location, { defaults: resolveDefaults(mod, spec), inlineStyles: newLayerPlacementStyles(placement) }) !== null;
+    },
+    // P5-G G1 — released on the empty board, the primitive becomes a loose
+    // layer there instead of doing nothing.
+    freeCanvas: {
+      accepts: (spec) => canPlaceModuleOnCanvas(spec.moduleId, spec.defaults),
+      onDrop: (spec, at) => {
+        const mod = registry.get(spec.moduleId);
+        return mod ? placeModuleOnCanvas(spec.moduleId, resolveDefaults(mod, spec), at) : false;
+      },
     },
   });
 
@@ -241,7 +258,10 @@ function PrimitiveNotchActions() {
           },
         );
       })}
-      <CanvasInsertionDragOverlay drag={canvasDrag.drag}>
+      <CanvasInsertionDragOverlay
+        drag={canvasDrag.drag}
+        body={canvasDrag.drag?.ghost.moduleId === "base.text" ? primitiveGhostText(canvasDrag.drag.ghost) : undefined}
+      >
         {canvasDrag.drag && (
           <>
             <canvasDrag.drag.ghost.icon size={13} aria-hidden="true" />
@@ -251,6 +271,13 @@ function PrimitiveNotchActions() {
       </CanvasInsertionDragOverlay>
     </>
   );
+}
+
+/** The words a dragged Text primitive will carry, so its ghost reads as the element. */
+function primitiveGhostText(spec: PrimitiveSpec): string {
+  const mod = registry.get(spec.moduleId);
+  const text = mod ? resolveDefaults(mod, spec).text : undefined;
+  return typeof text === "string" && text !== "" ? text : spec.label;
 }
 
 /** A primitive's own prop overrides layered onto the module's defaults. */
@@ -433,6 +460,16 @@ function actionForItem(
   return null;
 }
 
+/**
+ * P5-E (UX-23) — the tool key that draws what a notch primitive inserts, shown
+ * in its tooltip ("Add Text  T"). Keyed by module, because the notch lists
+ * modules; only the two with a tool of their own have one.
+ */
+const NOTCH_TOOL_COMMANDS: Readonly<Record<string, string>> = {
+  "base.text": "tools.text",
+  "base.container": "tools.frame",
+};
+
 function renderActionButton(
   action: CanvasNotchAction,
   options?: {
@@ -454,6 +491,11 @@ function renderActionButton(
       disabled={Boolean(action.disabledReason)}
       aria-label={`Add ${action.label}`}
       tooltip={action.disabledReason ?? `Add ${action.label}`}
+      tooltipShortcut={
+        action.disabledReason || !action.moduleId
+          ? undefined
+          : shortcutLabelFor(NOTCH_TOOL_COMMANDS[action.moduleId] ?? "")
+      }
       data-testid={`canvas-notch-${testIdPart(action.label)}-btn`}
     >
       {ActionIcon ? (

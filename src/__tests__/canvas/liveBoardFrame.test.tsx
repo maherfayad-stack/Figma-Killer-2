@@ -1,8 +1,9 @@
 /**
  * LiveBoardFrame — L8 Phase A (`perf-06`, STATE.md).
  *
- * Proves the three-way not-ready/ready render fork the design specifies:
- * poster cached, no poster cached, and the real `ready` swap — driven by a
+ * Proves the not-ready/ready render fork: the fallback with no poster, the
+ * fallback with its cached poster painted over it until its tree commits,
+ * and the real `ready` swap — driven by a
  * REAL `BridgeFrameAdapter` constructed by the real `IframeFrameSurface`
  * (only `useLiveOrigin`/`useDevServerReadiness` are stubbed, so this proves
  * the actual wiring, not a mocked stand-in for it).
@@ -10,7 +11,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
 import { cleanup, render, waitFor } from '@testing-library/react'
 import { resolveLiveFrameSrc } from '@site/canvas/resolveLiveFrameSrc'
-import { setFramePoster } from '@site/canvas/BoardFramesLayer/frameSnapshotCache'
 import { setStudioProjectKey } from '@site/studio/studioProjectTrust'
 import { useEditorStore } from '@site/store/store'
 import { makeNode, makePage, makeSite } from '../fixtures'
@@ -59,7 +59,6 @@ afterAll(() => {
 const { LiveBoardFrame } = await import('@site/canvas/BoardFramesLayer/LiveBoardFrame')
 
 const BREAKPOINT = { id: 'studio', label: 'Studio', mediaQuery: '(max-width: 1024px)', width: 800 }
-const WIDTH = 800
 
 // `projectKey` starts null (Tier 0/1 default) — every test in this file
 // exercises the Tier-2 `LiveBoardFrame`, so it needs a real key before each
@@ -90,7 +89,7 @@ describe('LiveBoardFrame — not-ready render fork', () => {
         isActive={false}
         onActivate={() => {}}
         frameId="frame-1"
-        width={WIDTH}
+        posterUrl={undefined}
       />,
     )
 
@@ -109,9 +108,13 @@ describe('LiveBoardFrame — not-ready render fork', () => {
     })
   })
 
-  it('poster cached: shows the poster instead of a second live portal render', async () => {
+  it('poster cached: the poster is painted OVER the clickable fallback, never instead of it (P6-C)', async () => {
+    // A frame whose poster was captured while it sat in the pool comes back
+    // on screen with that poster cached. It used to render the poster ALONE —
+    // a picture with no frame under it, which nothing could select until the
+    // dev server reported ready, and on a board whose server could not start,
+    // never.
     const page = makePage({ id: 'sms' })
-    setFramePoster(page, WIDTH, 'data:image/png;base64,AAAA')
 
     const { container } = render(
       <LiveBoardFrame
@@ -120,13 +123,20 @@ describe('LiveBoardFrame — not-ready render fork', () => {
         isActive={false}
         onActivate={() => {}}
         frameId="frame-2"
-        width={WIDTH}
+        posterUrl="blob:cached-poster"
       />,
     )
 
-    expect(container.querySelector('[data-testid="board-frame-poster"]')).not.toBeNull()
-    // No SECOND portal render underneath the poster.
-    expect(container.querySelector('iframe[srcdoc]')).toBeNull()
+    // The real, interactive fallback is mounted, and the poster is never a
+    // standalone placeholder in its place. (It is an overlay until the
+    // fallback's tree commits — which `render`'s `act` has usually already
+    // flushed here, so only its eventual absence is asserted.)
+    expect(container.querySelector('iframe[srcdoc]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="board-frame-poster"]')).toBeNull()
+    await waitFor(() => {
+      expect(container.querySelector('[data-testid="board-frame-poster-overlay"]')).toBeNull()
+    })
+    expect(container.querySelector('iframe[srcdoc]')).not.toBeNull()
 
     const bridgeContainer = container.querySelector('[data-testid="live-board-frame-bridge"]')
     expect(bridgeContainer?.hasAttribute('hidden')).toBe(true)
@@ -141,7 +151,7 @@ describe('LiveBoardFrame — not-ready render fork', () => {
         isActive={false}
         onActivate={() => {}}
         frameId="frame-3"
-        width={WIDTH}
+        posterUrl={undefined}
       />,
     )
 
@@ -190,7 +200,7 @@ describe('LiveBoardFrame — selection chrome while not ready (speed-04)', () =>
         isActive={false}
         onActivate={() => {}}
         frameId="frame-1"
-        width={WIDTH}
+        posterUrl={undefined}
       />,
     )
 

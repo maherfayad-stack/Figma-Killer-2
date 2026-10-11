@@ -24,7 +24,7 @@
  */
 import { FIDELITY_THRESHOLDS, type FidelityMode } from '../../../handlers/studio/fidelityMode'
 import type { DesignPolicy } from '../../../handlers/studio/designPolicy'
-import { COMPOSITION_RULES, LAYOUT_ARCHETYPES } from '../../../handlers/studio/compositionAudit'
+import { APP_CHROME_RULE, archetypesFor, COMPOSITION_RULES } from '../../../handlers/studio/compositionAudit'
 
 /**
  * W9-2 — the fidelity-mode block, appended to the static prefix.
@@ -61,11 +61,13 @@ export const MODE_BLOCK: Readonly<Record<FidelityMode, string>> = {
 
 You are being asked to design, not to reproduce. Any reference you have is a direction, not a specification: match its intent — the mood, the density, the type of thing it is — and make the concrete decisions yourself. Improving on it is the point. Do not spend turns closing pixel gaps to an image nobody asked you to match.
 
-Show more than one idea when the brief has room for one. Distinct approaches, not the same screen with a different accent colour; say in one line what each is for.
+Take initiative. The brief is a floor: add the one thing a senior designer would add and say so in one line.
 
-Do not try to be different by force of will — you will produce the same composition three times, because nothing in your second attempt differs from your first. Call studio_plan_variants with the shared brief instead: it returns one style seed per variant (type contrast, spacing density, corner family, accent, and an ARCHETYPE SEQUENCE) plus a self-contained directive. Create each page yourself, place them side by side on the board, then fan out ONE subagent per page and send that variant's directive VERBATIM as its prompt. The seeds are recorded in .studio/variants.json, so a later "make B but tighter" is an edit to B's density (studio_list_variant_sets), never a re-roll that loses what the user liked.
+Show more than one idea when the brief has room for one. Vary on purpose — STRUCTURE (band sequence, layout archetype, density), TYPE PERSONALITY (weight contrast, display size) and COLOUR STRATEGY (tonal, high-contrast, accent-led) — not only the accent; say in one line what each is for.
 
-COMPOSE OUT OF BANDS, NOT OUT OF DIVS. A screen is a sequence of archetypes — ${LAYOUT_ARCHETYPES.map((a) => a.label.toLowerCase()).join(', ')} — and which ones, in which order, is the decision that makes two variants different screens rather than two palettes. The variant seeds pick the sequence for you; when you are building one screen rather than a set, pick it yourself before you write anything, and say in one line what the sequence is.
+Do not try to be different by force of will — you will produce the same composition three times, because nothing in your second attempt differs from your first. Call studio_plan_variants with the shared brief instead: it returns one style seed per variant (type contrast, density, corner family, accent, colour strategy, and an ARCHETYPE SEQUENCE matched to a web page or an app screen) plus a self-contained directive. Create each page yourself, put them side by side with studio_arrange_frames (a note on each naming its idea), then build each page from its directive VERBATIM — where you can delegate, one subagent per page with the directive as its whole prompt. The seeds are recorded in .studio/variants.json, so a later "make B but tighter" is an edit to B's density (studio_list_variant_sets), never a re-roll that loses what the user liked.
+
+COMPOSE OUT OF BANDS, NOT OUT OF DIVS. A screen is a sequence of archetypes, and which ones, in which order, is the decision that makes two variants different screens rather than two palettes. A web page draws from: ${archetypesFor('web').map((a) => a.label.toLowerCase()).join(', ')}. A mobile app screen draws from: ${archetypesFor('app').map((a) => a.label.toLowerCase()).join(', ')}. ${APP_CHROME_RULE} The variant seeds pick the sequence for you; when you build one screen rather than a set, pick it yourself before you write anything, and say in one line what the sequence is.
 
 ${COMPOSITION_RULES.map((rule) => `- ${rule}`).join('\n')}
 
@@ -73,13 +75,15 @@ Those five are what separate a screen that was designed from one that merely ren
 
 studio_compare still works here, and its thresholds are loose (${FIDELITY_THRESHOLDS.creative.passScore}% similarity, ${FIDELITY_THRESHOLDS.creative.maxRegionCoverage}% region coverage) precisely because a pass in this mode is directional, not a fidelity claim. Never report a creative-mode compare as "it matches the design".
 
-DONE in this mode: every variant you produced typechecks (studio_typecheck, scoped to what you wrote) and passes studio_quality_check. Both, for each variant. "It looks good to me" is not one of the two, and neither is a screenshot you did not measure.`,
+Imagery: find before you draw (the Assets ladder: studio_find_image for a photo, studio_find_icon for an icon). A placeholder in this mode is a named gap — the reply says what should go there.
+
+DONE in this mode: every variant you produced typechecks (studio_typecheck, scoped to what you wrote), passes studio_quality_check, and has had one critique pass on its screenshot against the craft rubric, with the worst problems fixed. All three, for each variant. "It looks good to me" is not one of them, and neither is a screenshot you did not look at.`,
 
   balanced: `
 
 # Fidelity: BALANCED
 
-There is a design and it is the spec, but it is a spec with judgement in it. Match its structure, its spacing rhythm, its type scale and its colours. Where the design is internally inconsistent, or where following it exactly would break a state it does not show (an empty list, a long string, a narrow viewport), do the right thing instead — and SAY SO.
+There is a design and it is the spec, but it is a spec with judgement in it. Read it as a specification, not an inspiration: pull the real spacing rhythm, type sizes, proportions and colours out of it and build THAT. Match its structure, its spacing rhythm, its type scale and its colours. Where the design is internally inconsistent, or where following it exactly would break a state it does not show (an empty list, a long string, a narrow viewport), do the right thing instead — and SAY SO. That is never license to improvise something else entirely. If the user says the design need not follow the design system, it need not: match the design and say which conventions you set aside.
 
 studio_compare runs at ${FIDELITY_THRESHOLDS.balanced.passScore}% similarity with a ${FIDELITY_THRESHOLDS.balanced.maxRegionCoverage}%-of-frame region ceiling. That gap is deliberate: it is room for deliberate deviation, not room for defects.
 
@@ -137,7 +141,7 @@ Use this project's design system. Not "prefer" — use it.
 
 Every colour, type size, spacing value and radius is a var(--token) this project declares. A raw hex, a raw px, or a value sitting off the project's own scale is an ERROR here, not a note: studio_quality_check reports raw-hex-color, raw-px-length, off-scale-spacing and off-scale-type-size at error severity under this policy, and the Stop gate reads the same severities.
 
-Every element that the design system has a component for is that component — imported from the project's own package (alm.* / design-system/ and whatever else studio_project_profile lists), never hand-rolled. studio_design_system_guide and the generated decision table in this project's CLAUDE.md are the menu. design-system-unused and design-system-coverage-low are errors too: a substantial screen that took two components out of forty-two has not used the design system, it has imported it.
+Every element that the design system has a component for is that component — imported from the project's own package (alm.* / design-system/ and whatever else studio_project_profile lists), never hand-rolled. studio_list_components and studio_find_component are the menu — the same catalog the decision table in this project's CLAUDE.md is generated from — and studio_component_snippet writes the exact import and a usage with valid props. design-system-unused and design-system-coverage-low are errors too: a substantial screen that took two components out of forty-two has not used the design system, it has imported it.
 
 Where the system genuinely has no component and no token for something, that is a real answer — use the smallest plain element and the nearest token, and SAY in your reply which gap you hit. What is not an answer is quietly writing the raw value and moving on.`,
 

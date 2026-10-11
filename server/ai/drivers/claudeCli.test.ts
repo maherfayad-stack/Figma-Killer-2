@@ -25,6 +25,7 @@ import type { ClaudeCliSessionConnector } from '../mcp/sessionConnector'
 import { getPermissionGate } from '../mcp/permissionGate'
 import { disposeAllWarmSessions } from './claudeCliSessionPool'
 import { readFileProtection, type FileProtection } from '../credentials/fileProtection.testHelpers'
+import { fakeCliSpawn, streamFromString } from './claudeCli.testHelpers'
 
 let dataRoot: string
 let projectsRoot: string
@@ -45,95 +46,6 @@ afterEach(async () => {
   rmSync(dataRoot, { recursive: true, force: true })
   rmSync(projectsRoot, { recursive: true, force: true })
 })
-
-function streamFromString(text: string): ReadableStream<Uint8Array> {
-  const bytes = new TextEncoder().encode(text)
-  return new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(bytes)
-      controller.close()
-    },
-  })
-}
-
-interface FakeCliOptions {
-  stdoutLines: object[]
-  stderr?: string
-  exitCode?: number
-  onSpawn?: (argv: string[], env: Record<string, string>, cwd: string, stdin: string) => void
-}
-
-/**
- * A fake `claude` that answers BOTH ways the driver can talk to it, because
- * production uses both: a warm session (`stdin: 'pipe'`, one NDJSON line per
- * turn, process stays alive) and a cold turn (`stdin: <bytes>`, answer once,
- * exit). Injecting one fake through the single `spawn` seam is what lets the
- * suite below assert that argv, the MCP config, and the connector lifecycle
- * are identical on both.
- *
- * `onSpawn`'s fourth argument is the PROMPT either way — extracted from the
- * NDJSON envelope on the warm path — so every existing assertion about what
- * the user's turn contained keeps meaning the same thing.
- */
-function fakeCliSpawn(opts: FakeCliOptions): SubprocessSpawnFn {
-  const stdoutText = (): string => opts.stdoutLines.map((line) => JSON.stringify(line)).join('\n') + '\n'
-  return (argv, options) => {
-    if (options.stdin !== 'pipe') {
-      // Cold: the prompt is piped up front, never an argv positional.
-      const stdin = options.stdin === 'ignore' ? '' : new TextDecoder().decode(options.stdin)
-      opts.onSpawn?.(argv, options.env, options.cwd, stdin)
-      return {
-        stdout: streamFromString(stdoutText()),
-        stderr: streamFromString(opts.stderr ?? ''),
-        exited: Promise.resolve(opts.exitCode ?? 0),
-        kill: () => {},
-      }
-    }
-
-    // Warm: nothing is emitted until a user line arrives, exactly as the real
-    // binary behaves — a warm session discards anything queued before a turn
-    // starts, so a fake that answered eagerly would test nothing.
-    let stdoutController: ReadableStreamDefaultController<Uint8Array> | null = null
-    let exitProcess: (code: number) => void = () => {}
-    const proc: SpawnedProcessLike = {
-      stdout: new ReadableStream<Uint8Array>({
-        start(controller) {
-          stdoutController = controller
-        },
-      }),
-      stderr: streamFromString(opts.stderr ?? ''),
-      exited: new Promise<number>((resolve) => {
-        exitProcess = resolve
-      }),
-      stdin: {
-        write: (chunk) => {
-          const frame = JSON.parse(new TextDecoder().decode(chunk))
-          if (frame.type !== 'user') return
-          opts.onSpawn?.(argv, options.env, options.cwd, frame.message.content[0].text)
-          if ((opts.exitCode ?? 0) !== 0) {
-            // A CLI that dies instead of answering — the warm path must fall
-            // back to a cold spawn rather than surfacing a subprocess error.
-            stdoutController?.close()
-            exitProcess(opts.exitCode ?? 0)
-            return
-          }
-          stdoutController?.enqueue(new TextEncoder().encode(stdoutText()))
-        },
-        flush: () => {},
-        end: () => {},
-      },
-      kill: () => {
-        try {
-          stdoutController?.close()
-        } catch {
-          // Already closed.
-        }
-        exitProcess(143)
-      },
-    }
-    return proc
-  }
-}
 
 function userMessage(text: string): AiMessage {
   return { role: 'user', content: [{ kind: 'text', text }] }
@@ -462,11 +374,17 @@ describe('streamClaudeCli — project guide generation', () => {
 })
 
 describe('streamClaudeCli — dynamic system-prompt suffix + turn write log (the write-verification gate)', () => {
-  it('forwards ONLY the dynamic suffix via --append-system-prompt, never the static prefix', async () => {
+  it('forwards the static prefix AND the dynamic suffix, through a file and never as argv text', async () => {
     let capturedArgv: string[] = []
+    let appended: string | null = null
     const spawn = fakeCliSpawn({
       stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
-      onSpawn: (argv) => { capturedArgv = argv },
+      onSpawn: (argv) => {
+        capturedArgv = argv
+        // Read at spawn: the driver's own `finally` deletes the file when the turn ends.
+        const flag = argv.indexOf('--append-system-prompt-file')
+        appended = flag === -1 ? null : readFileSync(argv[flag + 1]!, 'utf8')
+      },
     })
     await collect(
       baseRequest({
@@ -475,23 +393,23 @@ describe('streamClaudeCli — dynamic system-prompt suffix + turn write log (the
       }),
       testOptions({ spawn }),
     )
-    const flagIndex = capturedArgv.indexOf('--append-system-prompt')
-    expect(flagIndex).toBeGreaterThan(-1)
-    expect(capturedArgv[flagIndex + 1]).toBe('DYNAMIC SUFFIX TEXT')
-    expect(capturedArgv).not.toContain('STATIC PREFIX TEXT')
+    expect(appended).toBe(['STATIC PREFIX TEXT', 'DYNAMIC SUFFIX TEXT'].join('\n\n'))
+    // The CLI refuses the two flags together, and the text never rides argv.
+    expect(capturedArgv).not.toContain('--append-system-prompt')
+    expect(capturedArgv.some((arg) => arg.includes('STATIC PREFIX TEXT'))).toBe(false)
   })
 
-  it('omits --append-system-prompt entirely when systemPrompt has no boundary marker', async () => {
+  it('omits the system prompt entirely when systemPrompt has no boundary marker', async () => {
     let capturedArgv: string[] = []
     const spawn = fakeCliSpawn({
       stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
       onSpawn: (argv) => { capturedArgv = argv },
     })
     await collect(baseRequest({ workspaceDir: projectDir }), testOptions({ spawn }))
-    expect(capturedArgv).not.toContain('--append-system-prompt')
+    expect(capturedArgv).not.toContain('--append-system-prompt-file')
   })
 
-  it('omits --append-system-prompt when no workspace is open, even with a boundary marker present', async () => {
+  it('omits the system prompt when no workspace is open, even with a boundary marker present', async () => {
     let capturedArgv: string[] = []
     const spawn = fakeCliSpawn({
       stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
@@ -501,16 +419,17 @@ describe('streamClaudeCli — dynamic system-prompt suffix + turn write log (the
       baseRequest({ systemPrompt: ['prefix', '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__', 'suffix'] }),
       testOptions({ spawn }),
     )
-    expect(capturedArgv).not.toContain('--append-system-prompt')
+    expect(capturedArgv).not.toContain('--append-system-prompt-file')
   })
 
   it('resets the turn write log before spawning, so a stale entry from a previous turn never leaks into this one\'s Stop-hook gate', async () => {
     const { mkdirSync, writeFileSync, readFileSync } = await import('node:fs')
     const { join, dirname } = await import('node:path')
-    const { agentCacheDir, studioAgentUserKey } = await import('../../handlers/studio/agentUserScope')
+    const { agentCacheStoreDir, studioAgentUserKey } = await import('../../handlers/studio/agentUserScope')
+    const { studioStorePath } = await import('../../handlers/studio/studioStore')
     // The log is per (project, ACCOUNT) since W10 — `user-1` is the account
     // every `baseRequest()` in this file runs as.
-    const logPath = join(agentCacheDir(projectDir, studioAgentUserKey('user-1')), 'turnWrites.json')
+    const logPath = join(studioStorePath(projectDir, agentCacheStoreDir(studioAgentUserKey('user-1'))), 'turnWrites.json')
     mkdirSync(dirname(logPath), { recursive: true })
     writeFileSync(logPath, JSON.stringify([{ file: 'pages/Stale.tsx', atMs: 1 }]))
 
@@ -1264,7 +1183,7 @@ describe('streamClaudeCli — the warm session (W4-2B)', () => {
     await collect(withState('board: 1 page', 'two'), testOptions({ spawn }))
     await collect(withState('board: 2 pages', 'three'), testOptions({ spawn }))
 
-    // Turn 1 got it as `--append-system-prompt` at spawn, so it must not be
+    // Turn 1 got it in the `--append-system-prompt-file` text at spawn, so it must not be
     // duplicated into the message; turn 2's is unchanged, so nothing is sent;
     // turn 3's differs, so it rides along.
     expect(prompts[0]).toBe('one')

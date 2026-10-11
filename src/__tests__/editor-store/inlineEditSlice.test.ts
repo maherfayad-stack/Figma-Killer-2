@@ -1,8 +1,8 @@
 /**
- * Inline text edit slice tests — session lifecycle, live-commit coalescing
- * (one undo entry per burst), Escape-cancel via single undo, and start
+ * Inline text edit slice tests — session lifecycle, one-write-per-session
+ * commit (one undo entry), Escape-cancel writes nothing, and start
  * guards (non-editable modules, link-with-children, non-string props).
- * Spec: docs/superpowers/specs/2026-06-10-inline-text-editing-design.md
+ * Contract: docs/agent-refs/canvas-internals.md → "Inline text editing"
  */
 import { describe, it, expect, beforeEach, spyOn } from 'bun:test'
 import { useEditorStore } from '@site/store/store'
@@ -44,7 +44,6 @@ beforeEach(() => {
     canRedo: false,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     hasUnsavedChanges: false,
   })
 })
@@ -73,8 +72,14 @@ describe('startInlineEdit', () => {
       localeOverride: null,
       multiline: true,
       initialValue: 'Hello',
-      committed: false,
+      draft: 'Hello',
     })
+  })
+
+  it('a text tool session can open with its placeholder selected', () => {
+    const { nodeId } = setupSiteWithTextNode()
+    useEditorStore.getState().startInlineEdit(nodeId, 'bp-desktop', null, { selectAll: true })
+    expect(useEditorStore.getState().activeInlineEdit?.selectAll).toBe(true)
   })
 
   it('opens a single-line session for base.button on the label prop', () => {
@@ -135,96 +140,93 @@ describe('startInlineEdit', () => {
   })
 })
 
-describe('applyInlineEditValue — live commit, one undo entry per burst', () => {
-  it('commits every keystroke live and coalesces the burst into ONE history entry', () => {
+describe('one session = one write', () => {
+  function type5(): void {
+    for (const v of ['A', 'AB', 'ABC', 'ABCD', 'ABCDE']) useEditorStore.getState().applyInlineEditValue(v)
+  }
+
+  it('typing writes nothing to the tree and records no history', () => {
     const { nodeId } = setupSiteWithTextNode()
     useEditorStore.getState().startInlineEdit(nodeId, 'bp')
     const entriesBefore = useEditorStore.getState()._historyPast.length
-    useEditorStore.getState().applyInlineEditValue('HelloW')
-    useEditorStore.getState().applyInlineEditValue('HelloWo')
-    useEditorStore.getState().applyInlineEditValue('HelloWorld')
+    type5()
     const state = useEditorStore.getState()
-    expect(nodeText(nodeId)).toBe('HelloWorld')
-    expect(state._historyPast.length).toBe(entriesBefore + 1)
-    expect(state.activeInlineEdit?.committed).toBe(true)
+    expect(nodeText(nodeId)).toBe('Hello')
+    expect(state._historyPast.length).toBe(entriesBefore)
+    expect(state.activeInlineEdit?.draft).toBe('ABCDE')
   })
 
-  it('a single undo() reverts the whole burst to the initial value', () => {
+  it('Escape after typing writes nothing and leaves the original text', () => {
     const { nodeId } = setupSiteWithTextNode()
     useEditorStore.getState().startInlineEdit(nodeId, 'bp')
-    useEditorStore.getState().applyInlineEditValue('A')
-    useEditorStore.getState().applyInlineEditValue('AB')
+    const entriesBefore = useEditorStore.getState()._historyPast.length
+    type5()
+    useEditorStore.getState().cancelInlineEdit()
+    const state = useEditorStore.getState()
+    expect(state.activeInlineEdit).toBeNull()
+    expect(nodeText(nodeId)).toBe('Hello')
+    expect(state._historyPast.length).toBe(entriesBefore)
+  })
+
+  it('Enter after typing writes once: ONE undo entry that restores the original', () => {
+    const { nodeId } = setupSiteWithTextNode()
+    useEditorStore.getState().startInlineEdit(nodeId, 'bp')
+    const entriesBefore = useEditorStore.getState()._historyPast.length
+    type5()
+    useEditorStore.getState().endInlineEdit()
+    expect(nodeText(nodeId)).toBe('ABCDE')
+    expect(useEditorStore.getState()._historyPast.length).toBe(entriesBefore + 1)
     useEditorStore.getState().undo()
     expect(nodeText(nodeId)).toBe('Hello')
   })
 
-  it('does not flip committed when the applied value equals the stored value', () => {
+  it('Arabic text commits whole, once', () => {
+    const { nodeId } = setupSiteWithTextNode('مرحبا')
+    useEditorStore.getState().startInlineEdit(nodeId, 'bp')
+    const entriesBefore = useEditorStore.getState()._historyPast.length
+    for (const v of ['م', 'مر', 'مرح', 'مرحب', 'مرحبا بكم']) useEditorStore.getState().applyInlineEditValue(v)
+    useEditorStore.getState().endInlineEdit()
+    expect(nodeText(nodeId)).toBe('مرحبا بكم')
+    expect(useEditorStore.getState()._historyPast.length).toBe(entriesBefore + 1)
+  })
+
+  it('an unchanged draft commits no history entry', () => {
     const { nodeId } = setupSiteWithTextNode()
     useEditorStore.getState().startInlineEdit(nodeId, 'bp')
     const entriesBefore = useEditorStore.getState()._historyPast.length
     useEditorStore.getState().applyInlineEditValue('Hello')
-    const state = useEditorStore.getState()
-    expect(state.activeInlineEdit?.committed).toBe(false)
-    expect(state._historyPast.length).toBe(entriesBefore)
+    useEditorStore.getState().endInlineEdit()
+    expect(useEditorStore.getState()._historyPast.length).toBe(entriesBefore)
   })
 
-  it('isolates the session burst from a prior Properties-panel burst on the same prop', () => {
+  it('the commit does not fold into a prior Properties-panel burst on the same prop', () => {
     const { nodeId } = setupSiteWithTextNode()
-    // Simulate panel typing: same coalesce key the inline session will use.
     useEditorStore.getState().updateNodeProps(nodeId, { text: 'PanelTyped' })
     const entriesBefore = useEditorStore.getState()._historyPast.length
     useEditorStore.getState().startInlineEdit(nodeId, 'bp')
     useEditorStore.getState().applyInlineEditValue('PanelTypedX')
+    useEditorStore.getState().endInlineEdit()
     expect(useEditorStore.getState()._historyPast.length).toBe(entriesBefore + 1)
-    // Escape reverts ONLY the inline burst, not the panel typing.
-    useEditorStore.getState().cancelInlineEdit()
+    useEditorStore.getState().undo()
     expect(nodeText(nodeId)).toBe('PanelTyped')
   })
 
-  it('no-ops without an active session', () => {
+  it('apply / end / cancel no-op without an active session', () => {
     const { nodeId } = setupSiteWithTextNode()
     useEditorStore.getState().applyInlineEditValue('ignored')
+    useEditorStore.getState().endInlineEdit()
+    useEditorStore.getState().cancelInlineEdit()
     expect(nodeText(nodeId)).toBe('Hello')
   })
-})
 
-describe('endInlineEdit', () => {
-  it('closes the session and ends the burst so later edits undo separately', () => {
+  it('a later edit of the same prop starts a fresh undo entry after the commit', () => {
     const { nodeId } = setupSiteWithTextNode()
     useEditorStore.getState().startInlineEdit(nodeId, 'bp')
     useEditorStore.getState().applyInlineEditValue('HelloA')
-    const entriesAfterBurst = useEditorStore.getState()._historyPast.length
     useEditorStore.getState().endInlineEdit()
-    expect(useEditorStore.getState().activeInlineEdit).toBeNull()
-    expect(nodeText(nodeId)).toBe('HelloA')
-    // A later edit of the SAME prop starts a fresh undo entry.
+    const entries = useEditorStore.getState()._historyPast.length
     useEditorStore.getState().updateNodeProps(nodeId, { text: 'HelloB' })
-    expect(useEditorStore.getState()._historyPast.length).toBe(entriesAfterBurst + 1)
-  })
-})
-
-describe('cancelInlineEdit', () => {
-  it('reverts a committed session with exactly one undo', () => {
-    const { nodeId } = setupSiteWithTextNode()
-    useEditorStore.getState().startInlineEdit(nodeId, 'bp')
-    useEditorStore.getState().applyInlineEditValue('Mangled')
-    const entriesBefore = useEditorStore.getState()._historyPast.length
-    useEditorStore.getState().cancelInlineEdit()
-    const state = useEditorStore.getState()
-    expect(state.activeInlineEdit).toBeNull()
-    expect(nodeText(nodeId)).toBe('Hello')
-    expect(state._historyPast.length).toBe(entriesBefore - 1)
-  })
-
-  it('does NOT undo for an uncommitted session', () => {
-    const { nodeId } = setupSiteWithTextNode()
-    useEditorStore.getState().startInlineEdit(nodeId, 'bp')
-    const entriesBefore = useEditorStore.getState()._historyPast.length
-    useEditorStore.getState().cancelInlineEdit()
-    const state = useEditorStore.getState()
-    expect(state.activeInlineEdit).toBeNull()
-    expect(state._historyPast.length).toBe(entriesBefore)
-    expect(nodeText(nodeId)).toBe('Hello')
+    expect(useEditorStore.getState()._historyPast.length).toBe(entries + 1)
   })
 })
 
@@ -309,20 +311,19 @@ describe('locale-variant frame sessions (WS-10 §4.4)', () => {
     expect(session?.initialValue).toBe('مرحبا')
   })
 
-  it('applyInlineEditValue mutates ONLY localizedPages, and records no undo entry', () => {
+  it('typing touches nothing; the commit mutates ONLY localizedPages, with no undo entry', () => {
     const { nodeId } = setupLocalizedFrame()
     useEditorStore.getState().startInlineEdit(nodeId, 'studio', 'frame-ar')
     useEditorStore.getState().applyInlineEditValue('مرحبا جدا')
+    expect(useEditorStore.getState().localizedPages[LOCALE_KEY]?.nodes[nodeId]?.props.text).toBe('مرحبا')
+    useEditorStore.getState().endInlineEdit()
     expect(useEditorStore.getState().localizedPages[LOCALE_KEY]?.nodes[nodeId]?.props.text).toBe('مرحبا جدا')
-    // Deliberately undo-EXEMPT (see inlineEditSlice.ts's module doc). NOTE:
-    // the old "frame drags are the same precedent" justification no longer
-    // holds — `store-09` made board state undoable. A localized preview edit
-    // stays exempt on its own merits: it is a per-frame PREVIEW overlay, not
-    // the document, and `applyInlineEditValue` writes `localizedPages` only.
+    // Deliberately undo-EXEMPT: a localized preview edit is a per-frame
+    // PREVIEW overlay, not the document (see localizedPageSlice.ts).
     expect(useEditorStore.getState()._historyPast.length).toBe(0)
   })
 
-  it('cancelInlineEdit reverts the localized node directly, with no undo() call', () => {
+  it('cancelInlineEdit leaves the localized node untouched', () => {
     const { nodeId } = setupLocalizedFrame()
     useEditorStore.getState().startInlineEdit(nodeId, 'studio', 'frame-ar')
     useEditorStore.getState().applyInlineEditValue('مرحبا جدا')

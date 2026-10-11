@@ -46,7 +46,7 @@ import {
   type PreviewAxes,
 } from '@core/studio-board'
 import type { AiTool, ToolContext } from '../../../runtime/types'
-import { readBoardsFile, writeBoardsFile } from '../../../../handlers/studio/boardFrames'
+import { readBoardsFile, writeBoardsFile } from '../../../../handlers/studio/boardGeometry'
 import { pushStudioLiveReload } from './liveReloadPush'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 
@@ -86,10 +86,11 @@ const setFrameAxesTool: AiTool = {
   name: 'studio_set_frame_axes',
   scope: 'shared',
   execution: 'server',
-  mutates: true,
+  sideEffects: 'write',
+  requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
-    'Pin a PER-FRAME preview override for direction/colorScheme/locale — NOT the same control as the toolbar. The toolbar only sets the board-wide default axes; this override is scoped to ONE frame and always wins over the board/toolbar axes, whatever they are set to. It persists in .studio/boards.json until a user clears it from that frame\'s own right-click menu ("Follow board preview axes") — it does not expire or revert on its own, so a frame pinned this way stays pinned across later toolbar changes. Addressed by pageId (from studio_list_pages); when a page has more than one frame, the first one found is targeted unless frameId is given explicitly. A design-review turn should call this BEFORE studio_screenshot/studio_compare to check the RTL/dark rendering, not just the default one. Writes .studio/boards.json directly, so it needs NO Studio browser tab open — and a user who does have one open sees the same frame flip, because the board is nudged to re-read from disk. Requires studio.write.',
+    'Pin a per-frame preview override for direction, colorScheme and locale. Unlike the toolbar (the board-wide default), it applies to ONE frame, always wins, and persists in .studio/boards.json until the user clears it from that frame\'s menu ("Follow board preview axes"). Address it by pageId (from studio_list_pages); a page with several frames uses the first unless frameId is given. In a design review, call it before studio_screenshot or studio_compare to check RTL and dark, not only the default. Needs no open tab; an open board re-reads the change. Requires studio.write.',
   inputSchema: StudioSetFrameAxesInputSchema,
   handler: async (input, ctx: ToolContext) => {
     const args = input as { dir?: string; pageId: string; frameId?: string; axes: Partial<PreviewAxes> }
@@ -111,7 +112,8 @@ const duplicateFrameAsVariantTool: AiTool = {
   name: 'studio_duplicate_frame_as_variant',
   scope: 'shared',
   execution: 'server',
-  mutates: true,
+  sideEffects: 'write',
+  requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
     'Duplicate a board frame as a new, independently-addressable variant with its own axes override — the side-by-side comparison verb: the SAME page rendered twice on the board (e.g. LTR next to RTL) rather than one frame flipping back and forth. Addressed by pageId, same first-match rule as studio_set_frame_axes. Returns { frameId } for the new frame — pass it as frameId to a LATER studio_set_frame_axes call if you need to adjust it again. The new frame lands beside the source on the board. Writes .studio/boards.json directly, so it needs NO Studio browser tab open; an open board is nudged to re-read from disk. Requires studio.write.',

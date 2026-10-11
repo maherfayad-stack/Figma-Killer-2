@@ -154,7 +154,7 @@ describe('the cross-frame copy remedy', () => {
     })
   })
 
-  it('lands exactly one toast for the whole remedy, and it is the copy’s own', async () => {
+  it('lands no toast for the whole remedy — the copy on the destination frame is the answer (P3-A)', async () => {
     const seen: string[] = []
     const unsubscribe = subscribeToasts((items) => {
       for (const item of items) if (item.title && !seen.includes(item.title)) seen.push(item.title)
@@ -169,7 +169,7 @@ describe('the cross-frame copy remedy', () => {
       await Promise.resolve()
       await new Promise((resolve) => setTimeout(resolve, 0))
 
-      expect(seen).toEqual(['Copied into another frame'])
+      expect(seen).toEqual([])
     } finally {
       unsubscribe()
     }

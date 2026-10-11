@@ -21,6 +21,7 @@ import { beforeEach, describe, expect, it } from 'bun:test'
 import React from 'react'
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import { DndContext } from '@dnd-kit/core'
+import { getCanvasHover } from '@site/canvas/canvasHover'
 import { useEditorStore } from '@site/store/store'
 import { CanvasRoot } from '@site/canvas/CanvasRoot'
 import { registry } from '@core/module-engine'
@@ -107,7 +108,6 @@ beforeEach(() => {
     site: null,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     activeDocument: null,
     activePageId: null,
     activeBreakpointId: 'desktop',
@@ -267,6 +267,6 @@ describe('prototype player — a link on a component that has its own interactio
     await act(async () => {
       fireEvent.mouseEnter(inner)
     })
-    expect(state().hoveredNodeId).toBeNull()
+    expect(getCanvasHover()).toBeNull()
   })
 })

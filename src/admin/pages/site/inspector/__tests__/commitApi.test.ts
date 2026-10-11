@@ -15,6 +15,7 @@
 import { describe, it, expect, afterEach, beforeEach } from 'bun:test'
 import { act, cleanup, renderHook } from '@testing-library/react'
 import { registry } from '@core/module-engine'
+import { createStyleRuleCssEmitter } from '@core/publisher'
 import type { AnyModuleDefinition } from '@core/module-engine'
 import type { StyleRule } from '@core/page-tree'
 import { toOutboundEnvelope, type InboundEnvelope } from '@core/studio-runtime'
@@ -232,6 +233,64 @@ describe('useInspectorCommit — class target', () => {
     expect(cls?.styles.color).toBeUndefined()
     expect(cls?.contextStyles?.mobile?.color).toBeUndefined()
     expect(cls?.styles.fontSize).toBe('12px') // untouched property survives
+  })
+})
+
+describe('useInspectorCommit — canvas click activates the synthetic "studio" breakpoint', () => {
+  function loadPageWithClass() {
+    const nodeId = 'node-1'
+    const rootId = 'root'
+    const page = makePage({
+      id: 'page-1',
+      rootNodeId: rootId,
+      nodes: {
+        [rootId]: makeNode({ id: rootId, moduleId: 'base.body', children: [nodeId] }),
+        [nodeId]: makeNode({ id: nodeId, moduleId: 'base.div', classIds: ['class-1'] }),
+      },
+    })
+    useEditorStore.setState({
+      site: makeSite({ pages: [page], styleRules: { 'class-1': makeClass('class-1') } }),
+      activePageId: 'page-1',
+      selectedNodeId: nodeId,
+    } as Parameters<typeof useEditorStore.setState>[0])
+  }
+
+  it('a class edit after a canvas click lands where the CSS emitter paints it (P0-1)', () => {
+    loadPageWithClass()
+    // What `useCanvasNodeInteraction.onNodeClick` does for a board frame.
+    useEditorStore.getState().setActiveBreakpoint('studio')
+
+    const { result } = renderHook(() => useTestHook())
+    act(() => {
+      result.current.commit.commitStyle('opacity', '0.55')
+    })
+
+    const site = useEditorStore.getState().site!
+    const cls = site.styleRules['class-1']!
+    expect(cls.styles.opacity).toBe('0.55')
+    expect(cls.contextStyles.studio).toBeUndefined()
+    const css = createStyleRuleCssEmitter(site.breakpoints, site.conditions ?? [])(
+      '.card',
+      { styles: cls.styles, contextStyles: cls.contextStyles },
+    ).join('\n')
+    expect(css).toContain('opacity: 0.55')
+  })
+
+  it('the store refuses a class write under an unregistered context instead of filing invisible styles', () => {
+    loadPageWithClass()
+    useEditorStore.getState().setClassContextStyles('class-1', 'studio', { opacity: '0.5' })
+    expect(useEditorStore.getState().site!.styleRules['class-1']!.contextStyles.studio).toBeUndefined()
+  })
+
+  it('commitProp does not file a breakpoint override under "studio"', () => {
+    loadPageWithClass()
+    useEditorStore.getState().setActiveBreakpoint('studio')
+    const { result } = renderHook(() => useTestHook())
+    act(() => {
+      result.current.commit.commitProp('tag', 'section')
+    })
+    const node = useEditorStore.getState().site!.pages[0]!.nodes['node-1']!
+    expect(node.breakpointOverrides?.studio).toBeUndefined()
   })
 })
 
@@ -522,7 +581,7 @@ describe('useInspectorCommit — optimistic in-frame broadcast (`speed-01`)', ()
     }
   })
 
-  it('commitStyle(value=null) commits nothing to broadcast — a clear is not previewable as a positive override', () => {
+  it('commitStyle(value=null) (inline) broadcasts the clear as an empty patch value, so a bridge frame drops the inline value at once', () => {
     const nodeId = 'node-1'
     const rootId = 'root'
     const page = makePage({
@@ -546,7 +605,9 @@ describe('useInspectorCommit — optimistic in-frame broadcast (`speed-01`)', ()
         result.current.commit.commitStyle('color', null, { existing: true })
       })
 
-      expect(bridge.styleMessages()).toHaveLength(0)
+      expect(bridge.styleMessages()).toEqual([
+        { type: 'optimistic.style', ref: { nodeId, occurrenceIndex: 0 }, patch: { color: '' } },
+      ])
     } finally {
       bridge.dispose()
     }

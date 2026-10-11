@@ -6,7 +6,8 @@
  * identifier start — the character immediately after `<`.
  */
 import type { ValueOrigin } from './staticEvalTypes'
-import type { ArrowFunction, FunctionDeclaration, FunctionExpression } from 'ts-morph'
+import type { ListRowSource } from '@core/page-tree'
+import type { ArrowFunction, FunctionDeclaration, FunctionExpression, MethodDeclaration } from 'ts-morph'
 
 /**
  * A component's own function node — a `function Foo() {}` declaration, an
@@ -19,6 +20,19 @@ import type { ArrowFunction, FunctionDeclaration, FunctionExpression } from 'ts-
  * barrel).
  */
 export type FunctionLike = ArrowFunction | FunctionDeclaration | FunctionExpression
+
+/**
+ * The function whose `return`s ARE a component's JSX: a function component
+ * (`FunctionLike`), or a class component's `render()` method (P3-B, WB-5).
+ *
+ * Only the tree walk and the evaluator's scope accept the wider type
+ * (`parseJsxTree`, `getReturnedJsxRoots`, `createEvalScope`). Everything that
+ * reads a component's PROPS signature — substitution, detach, swap, slot
+ * codemods — keeps `FunctionLike`, because a class has no parameter list to
+ * substitute into: a class page renders, a class component used from another
+ * file is not inlined.
+ */
+export type ComponentBody = FunctionLike | MethodDeclaration
 
 /**
  * A value a prop can hold. Scalars are the whole story for an HTML element —
@@ -273,6 +287,26 @@ export interface ParsedNode {
    */
   resolvedProps?: Record<string, { source: string; note?: string; origin?: ValueOrigin }>
   /**
+   * P3-C (WB-6) — COMPONENT call sites only: where each prop written as a
+   * plain string-literal attribute (`title="Where to?"`, `title={"Where to?"}`)
+   * physically lives.
+   *
+   * Never a write target of its own — `setJsxProp` rewrites a literal attribute
+   * directly, and `instanceOf.callSiteProps` is how the panel edits it. It
+   * exists for the value that crosses INTO the component: `<h2>{title}</h2>`
+   * in the component's file is code (writing there would delete the binding for
+   * every instance), but the text it shows is this call site's literal, owned by
+   * this instance alone. `componentSubstitution.ts` hands this origin through
+   * with the value, and the inlined node records it as `textOrigin` /
+   * `resolvedProps[k].origin` exactly like a dictionary read.
+   *
+   * Absent on a call site inside a `.map` row: one piece of JSX renders every
+   * row's call site, so its literal is shared by N instances and is not one
+   * honest target. A value the call site RESOLVED (`title={c.key}`) needs no
+   * entry here — its origin is already `resolvedProps[k].origin`.
+   */
+  literalPropOrigins?: Record<string, ValueOrigin>
+  /**
    * Present on the node the parser SELECTED when a component had more than
    * one JSX-bearing `return`, or a JSX child was a ternary/`&&` — see
    * `getReturnedJsxRoots`/`selectJsxBranch` in `parsePageFile.ts`. Lists the
@@ -305,7 +339,15 @@ export interface ParsedNode {
    *
    * Absent when the text is computed rather than passed through (a template
    * literal, a concatenation, a function's return value): there is no single
-   * literal to rewrite. See `ValueOrigin`.
+   * literal to rewrite. See `ValueOrigin`. Absent, too, when the literal is
+   * not a STRING (`{PRICE}` over `const PRICE = 9`): the writer rewrites string
+   * literals, and offering an edit it would then refuse is the thing Phase 3
+   * removes.
+   *
+   * P3-C (WB-6) — also set on an INLINED node whose text a call site passed in
+   * (`<Header title="Where to?"/>` → `<h2>{title}</h2>`): the origin is the
+   * call site's own attribute literal (`literalPropOrigins`), or whatever that
+   * call site's value itself resolved through.
    */
   textOrigin?: ValueOrigin
   /**
@@ -329,6 +371,15 @@ export interface ParsedNode {
    */
   assetOrigin?: ValueOrigin
   /**
+   * P1-A — this element's identity as read: `<tag>#<hash>` over its opening
+   * tag and its own direct text (`./sourceFingerprint.ts`). Carried to the
+   * client as `PageNode.sourceFingerprint` and sent back with every write
+   * aimed at this node, so the server can refuse `element-moved` when the
+   * file changed and a different element now sits at `line:col`. Absent on a
+   * `.map` row: its id has no writable location to guard.
+   */
+  fingerprint?: string
+  /**
    * Set on every node produced by inlining a local component (§2), naming the
    * component it came from (`'SheetHeader'`). Provenance, NOT a lock: the node
    * is editable, and its writeback target is that component's own source
@@ -340,6 +391,38 @@ export interface ParsedNode {
    * INNERMOST component's name — that is the file an edit actually writes to.
    */
   fromComponent?: string
+  /**
+   * OD-19 — on an INLINED node: the value keys (`text`, an attribute name, or
+   * `style:<property>`) that are the BARE forward of one of the component's
+   * own destructured props (`<h2>{heading}</h2>`, `alt={altText}`,
+   * `style={{ width: widthValue }}`), each mapped to that prop's name. Only
+   * where the prop is read exactly once in the component, so setting it at the
+   * call site changes this one place; and only where no call-site literal is
+   * already behind the value (`textOrigin` / `resolvedProps[k].origin` cover
+   * that). Provenance for a write, not a value: the key stays in `codeProps`
+   * (the markup holds `{heading}`, never a literal), and the editor reads this
+   * to write the CALL SITE instead (`instanceOverridePlan.ts`). Never set
+   * where the value is computed (`{heading.toUpperCase()}`, a template).
+   */
+  propFeeds?: Record<string, string>
+  /**
+   * G-2b — on a component CALL SITE inside another component's markup that
+   * forwards that component's props with a spread (`<Inner {...props} />`, or
+   * `{...rest}`): its `props` hold what the OUTER instance was handed, merged in
+   * JSX order, so the inner component's elements read the page's values. Set
+   * only when the outer instance itself sits on the page (or is forwarded the
+   * same way), which is what keeps the page's call site the one honest target
+   * for a value that arrives through the spread.
+   */
+  spreadForwarded?: true
+  /**
+   * OD-8 — on a `.map` row's ROOT node only: the array literal element this
+   * row renders (the array's own `[` position, the index, the length, how the
+   * row's `key` reads its item), or why the array is not one Studio can edit
+   * here. Written by `staticLoopExpansion.ts`'s `listRowSourceFor`; what makes
+   * a row's reorder, delete and duplicate a write to the array.
+   */
+  listRow?: ListRowSource
   /**
    * WS-4.2 — present on a component CALL SITE that `inlineLocalComponents`
    * successfully expanded. Turns this node into the "instance" fragment
@@ -372,6 +455,15 @@ export interface ParsedNode {
      * `style:<property>`), without inventing a new predicate.
      */
     callSiteProps: Record<string, ParsedPropValue>
+    /**
+     * OD-22 - the id of the ONE inlined element that renders the component's
+     * `{children}` directly: where a call site's own children appear, and so
+     * where a drop into this instance can be written (between the call site's
+     * tags) without detaching it. Absent when the component renders no
+     * children, renders them in more than one place, or leaves the choice to a
+     * branch or a loop.
+     */
+    childrenHost?: string
   }
   /**
    * E2.3 — present when this node is the materialized container for a
@@ -515,4 +607,23 @@ export interface ParsedPage {
    * part of what the page renders as its own.
    */
   cssInJs?: CssInJsExtraction
+  /**
+   * P3-B (WB-5) — set by `parsePageFile` when the file has a default export
+   * the parser could not read a component out of (`lazy(…)`, a component
+   * imported from another file, a class with no JSX `render()`, …), so the
+   * page has no nodes for a reason other than "the component renders
+   * nothing". The load turns it into an `unreadable-page-export` warning and
+   * the frame names the shape instead of claiming the page is empty. Absent
+   * whenever a component WAS found, including one whose JSX is empty.
+   */
+  unreadableExport?: UnreadableExport
+}
+
+/** Where a page's unreadable default export is, and one sentence naming its shape. See `ParsedPage.unreadableExport`. */
+export interface UnreadableExport {
+  /** 1-based line and column of the default export's expression (or declaration). */
+  line: number
+  col: number
+  /** Names the shape, for a person: "its default export is a call to lazy(), which Studio would have to run to see". */
+  message: string
 }

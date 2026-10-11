@@ -435,22 +435,20 @@ describe('MeasuresSection — radius cluster (RadiusCluster)', () => {
     expect(radiusInput('BottomLeft').value).toBe('8px')
   })
 
-  it('unlinking a shorthand materialises all four longhands in ONE patch and drops the shorthand', () => {
+  it('editing one corner of a shorthand writes that corner only and leaves the shorthand alone', () => {
+    const singles: Array<[string, unknown]> = []
     const patches: Array<Record<string, unknown>> = []
-    renderRadius({ storedStyles: { borderRadius: '4px 8px' }, onChangeMany: (patch) => patches.push(patch) })
+    renderRadius({
+      storedStyles: { borderRadius: '4px 8px' },
+      onChange: (property, value) => singles.push([String(property), value]),
+      onChangeMany: (patch) => patches.push(patch),
+    })
     setRadiusExpanded(true)
 
     editRadius('TopLeft', '12px')
 
-    expect(patches).toEqual([
-      {
-        borderRadius: null,
-        borderTopLeftRadius: '12px',
-        borderTopRightRadius: '8px',
-        borderBottomRightRadius: '4px',
-        borderBottomLeftRadius: '8px',
-      },
-    ])
+    expect(singles).toEqual([['borderTopLeftRadius', '12px']])
+    expect(patches).toEqual([])
   })
 
   it('refuses to split an elliptical shorthand — the corner fields disable with the reason', () => {

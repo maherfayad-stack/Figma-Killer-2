@@ -2,9 +2,12 @@
  * selectionTraversalActions + nudgeSelectedFrames — unit tests (viewport-01).
  *
  * Covers the two store seams behind the new keyboard staples:
- *   - `selectParentNode` / `selectFirstChildNode` (⇧Enter / Enter, and the
- *     `layers.selectParent` / `layers.selectFirstChild` palette commands,
- *     which now call the same actions instead of walking the tree themselves)
+ *   - `selectParentNode` / `selectChildNodes` (⇧Enter / Enter, and the
+ *     `layers.selectParent` / `layers.selectChildren` palette commands,
+ *     which now call the same actions instead of walking the tree themselves).
+ *     P5-E (IX-7): both act on the WHOLE selection — Enter selects every
+ *     child, ⇧Enter every selected layer's parent (Penpot's
+ *     `data/workspace.cljs:891-947`)
  *   - `nudgeSelectedFrames` (arrow keys with board frames selected)
  *
  * The keyboard HOOKS that call these are DOM-level and live inside the canvas
@@ -90,32 +93,80 @@ describe('selectParentNode', () => {
   })
 })
 
-describe('selectFirstChildNode', () => {
-  it('steps into the first child, in child order', () => {
+describe('selectChildNodes (IX-7)', () => {
+  it('steps into EVERY child, in child order — not just the first', () => {
     seedThreeLevelPage()
     useEditorStore.getState().selectNode('root')
 
-    expect(useEditorStore.getState().selectFirstChildNode()).toBe(true)
-    expect(useEditorStore.getState().selectedNodeId).toBe('section')
+    expect(useEditorStore.getState().selectChildNodes()).toBe(true)
+    expect(useEditorStore.getState().selectedNodeIds).toEqual(['section'])
 
-    expect(useEditorStore.getState().selectFirstChildNode()).toBe(true)
-    // 'text' is first, 'image' second — never the other way round.
-    expect(useEditorStore.getState().selectedNodeId).toBe('text')
+    expect(useEditorStore.getState().selectChildNodes()).toBe(true)
+    // Both children, 'text' before 'image' — the pre-P5-E first-child walk
+    // stopped at 'text'.
+    expect(useEditorStore.getState().selectedNodeIds).toEqual(['text', 'image'])
   })
 
-  it('no-ops on a leaf', () => {
+  it('collects the children of every selected layer', () => {
+    const page = makePage({
+      id: 'page-1',
+      rootNodeId: 'root',
+      nodes: {
+        root: makeNode({ id: 'root', moduleId: 'base.body', children: ['a', 'b'] }),
+        a: makeNode({ id: 'a', moduleId: 'base.container', children: ['a1'] }),
+        b: makeNode({ id: 'b', moduleId: 'base.container', children: ['b1', 'b2'] }),
+        a1: makeNode({ id: 'a1', moduleId: 'base.text' }),
+        b1: makeNode({ id: 'b1', moduleId: 'base.text' }),
+        b2: makeNode({ id: 'b2', moduleId: 'base.text' }),
+      },
+    })
+    useEditorStore.setState({ site: makeSite({ pages: [page] }), activePageId: 'page-1' })
+    useEditorStore.getState().selectMany(['a', 'b'])
+
+    expect(useEditorStore.getState().selectChildNodes()).toBe(true)
+    expect(useEditorStore.getState().selectedNodeIds).toEqual(['a1', 'b1', 'b2'])
+  })
+
+  it('skips hidden and locked children, and no-ops on a leaf', () => {
     seedThreeLevelPage()
-    useEditorStore.getState().selectNode('image')
-    expect(useEditorStore.getState().selectFirstChildNode()).toBe(false)
-    expect(useEditorStore.getState().selectedNodeId).toBe('image')
+    useEditorStore.getState().setNodesHidden(['image'], true)
+    useEditorStore.getState().selectNode('section')
+    expect(useEditorStore.getState().selectChildNodes()).toBe(true)
+    expect(useEditorStore.getState().selectedNodeIds).toEqual(['text'])
+
+    expect(useEditorStore.getState().selectChildNodes()).toBe(false)
+    expect(useEditorStore.getState().selectedNodeId).toBe('text')
   })
 
   it('round-trips with selectParentNode', () => {
     seedThreeLevelPage()
     useEditorStore.getState().selectNode('section')
-    useEditorStore.getState().selectFirstChildNode()
+    useEditorStore.getState().selectChildNodes()
     useEditorStore.getState().selectParentNode()
-    expect(useEditorStore.getState().selectedNodeId).toBe('section')
+    expect(useEditorStore.getState().selectedNodeIds).toEqual(['section'])
+  })
+})
+
+describe('selectParentNode on a multi-selection (IX-7)', () => {
+  it('selects the parent of EVERY selected layer, once each', () => {
+    const page = makePage({
+      id: 'page-1',
+      rootNodeId: 'root',
+      nodes: {
+        root: makeNode({ id: 'root', moduleId: 'base.body', children: ['a', 'b'] }),
+        a: makeNode({ id: 'a', moduleId: 'base.container', children: ['a1', 'a2'] }),
+        b: makeNode({ id: 'b', moduleId: 'base.container', children: ['b1'] }),
+        a1: makeNode({ id: 'a1', moduleId: 'base.text' }),
+        a2: makeNode({ id: 'a2', moduleId: 'base.text' }),
+        b1: makeNode({ id: 'b1', moduleId: 'base.text' }),
+      },
+    })
+    useEditorStore.setState({ site: makeSite({ pages: [page] }), activePageId: 'page-1' })
+    useEditorStore.getState().selectMany(['a1', 'a2', 'b1'])
+
+    expect(useEditorStore.getState().selectParentNode()).toBe(true)
+    // Before P5-E only the ANCHOR's parent ('b') was selected.
+    expect(useEditorStore.getState().selectedNodeIds).toEqual(['a', 'b'])
   })
 })
 

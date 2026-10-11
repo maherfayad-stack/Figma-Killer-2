@@ -62,6 +62,7 @@ import {
 import { lineIndentAt, reindentBlock, resolveChildPlacement } from './jsxChildPlacement'
 import { createdJsxLocation, type CreatedJsxLocation } from './createdJsxLocation'
 import { freeVariablesOutOfScopeAt } from './subtreeFreeVariables'
+import { ELEMENT_GONE_MESSAGE, outOfScopeMessage, STALE_SOURCE_MESSAGE } from '@core/utils/refusalCopy'
 
 export interface DuplicateJsxElementParams {
   file: string
@@ -108,9 +109,6 @@ export type DuplicateJsxRefusalReason =
   | 'not-a-container'
   | 'into-own-descendant'
   | 'out-of-scope'
-  | 'binding-conflict'
-  | 'unsafe-tag'
-  | 'void-element-children'
   | 'not-siblings'
 
 export interface DuplicateJsxRefusal {
@@ -143,7 +141,7 @@ export function duplicateJsxElement(params: DuplicateJsxElementParams): Duplicat
   if (verbatim === null) {
     return refuseDuplicate(
       'stale-source',
-      'This file changed on disk since the canvas last read it. Reload the project and try again.',
+      STALE_SOURCE_MESSAGE,
     )
   }
 
@@ -193,7 +191,7 @@ function duplicateInto(
   if (!destination) {
     return refuseDuplicate(
       'not-found',
-      `No JSX element is written at line ${destinationLine}, column ${destinationCol} any more — the file changed since the canvas last read it. Reload and try again.`,
+      ELEMENT_GONE_MESSAGE,
     )
   }
 
@@ -206,16 +204,7 @@ function duplicateInto(
   if (destination.getStart() >= target.start && destination.getEnd() <= target.end) {
     return refuseDuplicate(
       'into-own-descendant',
-      'That container is inside the element being copied, so the copy would end up inside itself.',
-    )
-  }
-
-  const outOfScope = freeVariablesOutOfScopeAt(target.element, destination, sourceFile)
-  if (outOfScope.length > 0) {
-    const names = outOfScope.map((name) => `\`${name}\``).join(', ')
-    return refuseDuplicate(
-      'out-of-scope',
-      `This element reads ${names} from the code around it, and ${outOfScope.length === 1 ? 'that name is' : 'those names are'} not in scope where the copy would land — putting it there would break the file. Copy it somewhere inside the same component, or pass ${outOfScope.length === 1 ? 'the value' : 'those values'} through first.`,
+      'That container is inside the element being copied, so the copy would end up inside itself. Drop it into another container.',
     )
   }
 
@@ -232,10 +221,27 @@ function duplicateInto(
           ? { line: params.anchorLine, col: params.anchorCol }
           : null,
       ...(params.position ? { position: params.position } : {}),
+      // G-7 - an anchor the source nests elsewhere (inside a `<Fragment>` the
+      // canvas flattens) gets the copy beside it, where it renders.
+      besideAnchorInItsParent: true,
     },
     (indent) => reindentBlock(subtree, fromIndent, indent),
   )
   if (!placement.ok) return refuseDuplicate(placement.refusal.reason, placement.refusal.message)
+
+  // Where the copy LANDS is what the two checks above asked about the container
+  // - and it is the anchor's own parent when the anchor is not the container's
+  // child, which may be inside the thing being copied, or in another scope.
+  if (placement.landing.getStart() >= target.start && placement.landing.getEnd() <= target.end) {
+    return refuseDuplicate(
+      'into-own-descendant',
+      'The copy would land inside the element being copied. Drop it somewhere outside that element.',
+    )
+  }
+  const outOfScope = freeVariablesOutOfScopeAt(target.element, placement.landing, sourceFile)
+  if (outOfScope.length > 0) {
+    return refuseDuplicate('out-of-scope', outOfScopeMessage(outOfScope))
+  }
 
   const { start, end, text } = placement.edit
   writeVerbatimSource(sourceFile, file, verbatim.slice(0, start) + text + verbatim.slice(end))

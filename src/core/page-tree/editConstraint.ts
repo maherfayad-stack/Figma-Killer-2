@@ -38,12 +38,17 @@
  * re-reads it), so that sentence had become false — and a refusal that is no
  * longer true is worse than no refusal at all.
  */
-import { isPropWritableToSource, isStyleWritableToSource, styleValueKey, type SourceWritableNode } from './sourceWritability'
+import { canUnbindProp, isPropWritableToSource, isStyleWritableToSource, styleValueKey, type SourceWritableNode } from './sourceWritability'
 import {
   refusePlacement,
   type StructuralRefusalReason,
 } from './sourceStructure'
-import { bestEffortRowLocation, hasWritableSourceLocation } from './sourceNodeId'
+import { bestEffortRowLocation, hasWritableSourceLocation, loopTemplateNodeId } from './sourceNodeId'
+
+/** The one thing to do about a value the code decides, when typing over it is not on offer. */
+const CODE_REMEDY = 'Edit it in the code.'
+/** The same, when the field accepts a typed value in place of the binding (OD-20). */
+const UNBIND_REMEDY = 'Type a new value to replace the binding.'
 
 
 // ---------------------------------------------------------------------------
@@ -59,7 +64,7 @@ export type ConstraintScope = 'prop' | 'style-property' | 'node' | 'gesture'
  * (rows 7-18) is absorbed directly — see `sourceStructure.ts` for that union's
  * own doc. Everything else is this module's own vocabulary, one branch per
  * taxonomy row/family, or absorbed verbatim from a sibling track's own
- * refusal union (B2's `className` vocabulary, B1/B1b's CSS vocabulary,
+ * refusal union (B2's `className` vocabulary,
  * `detachComponent.ts`'s `DetachRefusalReason`) — named here as PLAIN STRING
  * LITERALS matching those unions' own values, not type-imported, because
  * importing from `@core/ast-codemods`/`@core/css-codemods` into `@core/page-tree`
@@ -91,45 +96,14 @@ export type ConstraintReason =
   | 'unsupported-params'
   | 'no-renderable-jsx'
   | 'name-collision'
+  // DET-1/DET-2 (audit 07 §B.7) — detach fails closed rather than writing
+  // code that reads the wrong binding or none at all.
+  | 'spread-ambiguous'
+  | 'body-local'
+  | 'unbound-reference'
   // Row 22 — Swap refusal (component shape mismatch, etc).
   | 'swap-refused'
-  // Row 23 — save-time prop/text/style edit reached no writable location, only
-  // ever known in aggregate today (`unexplainedSkips`) — see this module's
-  // `explainUnexplainedSkip` doc for why it stays informational-only.
-  | 'unexplained-skip'
-  // Row 25-26 — CSS class/breakpoint has no hand-editable source, absorbed
-  // from B1/B1b's `classifyStylesheetEditability` vocabulary.
-  | 'no-editable-stylesheet'
-  | 'ambiguous-stylesheet'
-  | 'stylesheet-import-shape-mismatch'
-  | 'breakpoint-override-unsupported'
-  // Row 27 — inline text edit blocked before it starts. RESERVED, not
-  // currently produced: text is an ordinary prop key to `explainPropConstraint`
-  // (its resolvedProps entry is keyed `'text'`, remapped to the module's own
-  // text prop by `parsedPageToSitePage`), so a caller wiring row 27's actual
-  // site (`inlineEditSlice.ts`'s pre-edit-mode check — store territory, not
-  // touched by this additive-wrapper track) gets `resolved-expression` or
-  // `list-row` from that same function, not a bespoke reason. Kept in the
-  // union as the taxonomy's own name for the row, not as a promise this
-  // module emits it.
-  | 'inline-text-locked'
-  // Row 28 — the whole `htmlAttributes` bag locked as one JSX prop/object.
-  // RESERVED for the same reason as row 27: `explainPropConstraint(node,
-  // 'htmlAttributes')` already answers this generically (today's real gate,
-  // `PropertiesPanelBody.tsx`'s `isPropWritableToSource(selectedNode,
-  // 'htmlAttributes')`, is untouched and correct — see R7 scope notes).
-  | 'html-attributes-locked'
-  // Row 29 — a branch the parser did not select. NOT produced by this module
-  // on purpose: `BranchChoiceNotice` is not a REFUSAL (nothing is blocked —
-  // the alternative is simply not the default view), so it is handled
-  // directly by that component (R6's switcher) rather than routed through
-  // `EditConstraint`, which exists for things an edit surface refuses.
-  | 'branch-not-shown'
-  // Row 30 — package-sourced instance: detach/swap/duplicate not offered yet.
-  // RESERVED: already correctly handled today, before interaction, by
-  // `InstanceCallSiteView.tsx`'s own `source === 'package'` check + `Button`
-  // `disabled`/`tooltip` (E2.5-owned, not touched by this track).
-  | 'package-component-locked'
+
   // B2's `className` vocabulary (`src/core/ast-codemods/setJsxClassName.ts`),
   // absorbed by string value for the same import-cycle reason as Detach above.
   | 'css-module-binding'
@@ -154,9 +128,7 @@ export interface EditConstraintAction {
     | 'extract'
     | 'select-container'
     | 'promote-tier1'
-    | 'style-inline-instead'
     | 'preview-branch'
-    | 'choose-stylesheet'
     /**
      * K6 — write `position: relative` onto the container the refusal names, so
      * a ⌘-drag can place its child by coordinates. The only action kind whose
@@ -181,6 +153,21 @@ export interface EditConstraintAction {
      * a node id.
      */
     | 'duplicate-into-frame'
+    /**
+     * G-9 (OD-24) — write the `.map` the refused row belongs to out as explicit
+     * elements, then run the refused gesture again on them. Only offered for a
+     * list whose array is a literal in the same file (`planUnrollList`). A
+     * write, so its handler is supplied by the surface that renders the button
+     * (or, from the refusal dialog, by the store action that refused — it holds
+     * the gesture to replay), like `position-parent-relative`.
+     */
+    | 'unroll-list'
+    /**
+     * G-8 — start the "Edit layout" mode for the layout file the refused node is
+     * written in, then run the refused gesture again. The mode is
+     * `mainEditMode.ts`'s, the same one "Edit main component" uses.
+     */
+    | 'edit-layout'
   /**
    * Where this action points, when it points at a file — `origin`'s own
    * shape, so a caller can wire `jump-to-source` without re-deriving it.
@@ -189,16 +176,6 @@ export interface EditConstraintAction {
    * (`detach`/`extract`/`preview-branch` all mutate editor state).
    */
   target?: { rel: string; line: number; col: number }
-  /**
-   * For `choose-stylesheet` (Z8) — the destination this remedy picks.
-   *
-   * A separate field from `target` because it is a FILE, not a position: an
-   * `ambiguous-stylesheet` refusal knows which stylesheets exist but nothing
-   * about where in them a rule would land (that is postcss's answer at write
-   * time, server-side), and inventing a `1:1` to fit `target`'s shape would
-   * claim a location this module cannot honestly name.
-   */
-  stylesheet?: { ruleId: string; file: string }
 }
 
 export interface EditConstraint {
@@ -210,6 +187,13 @@ export interface EditConstraint {
   origin?: { rel: string; line: number; col: number }
   /** Zero or more legitimate ways forward. An empty array is an honest terminal refusal, not a bug. */
   actions: EditConstraintAction[]
+  /**
+   * G-6 (OD-20) - the refused prop is code the user may TYPE OVER: committing a
+   * value replaces the code with the literal (the editor names what it replaced
+   * and offers Undo). Set only where `canUnbindProp` holds, so a field that
+   * offers to be typed into always has exactly one place to write.
+   */
+  unbindable?: true
 }
 
 // ---------------------------------------------------------------------------
@@ -246,7 +230,7 @@ export function explainPropConstraint(
   // structural. `node.id` is optional (a caller with only a bare prop bag has
   // no id to ask) — falls through to the ordinary value-shaped explanation.
   if (node.id !== undefined && !hasWritableSourceLocation(node.id)) {
-    const placement = refusePlacement({ id: node.id, lockReason: node.lockReason }, 'Edited')
+    const placement = refusePlacement({ id: node.id, lockReason: node.lockReason })
     if (placement) {
       // No `origin` — `decodeSourceNodeId` deliberately refuses to match a
       // `.map`-row id (that IS what "no writable source location" means), so
@@ -269,20 +253,22 @@ export function explainPropConstraint(
     return {
       reason: 'structured-value',
       scope: 'prop',
-      explanation: 'This value is an array or object set in code — there is no single line to write a scalar edit onto.',
+      explanation: 'This value is an array or object set in code, so a scalar edit has no line to write to. Edit it in the code.',
       actions: [],
     }
   }
 
   const resolved = node.resolvedProps?.[propKey]
   if (resolved) {
+    const unbindable = canUnbindProp(node, propKey)
     return {
       reason: 'resolved-expression',
       scope: 'prop',
       explanation: resolved.note
-        ? `Reads \`${resolved.source}\` — ${resolved.note}.`
-        : `Reads \`${resolved.source}\` from code. Writing here would replace the binding with a fixed value.`,
+        ? `Reads \`${resolved.source}\` — ${resolved.note}. ${unbindable ? UNBIND_REMEDY : CODE_REMEDY}`
+        : `Reads \`${resolved.source}\` from code, so a typed value would replace the binding. ${unbindable ? UNBIND_REMEDY : CODE_REMEDY}`,
       actions: [],
+      ...(unbindable ? { unbindable: true as const } : {}),
     }
   }
 
@@ -292,8 +278,11 @@ export function explainPropConstraint(
   return {
     reason: 'resolved-expression',
     scope: 'prop',
-    explanation: node.lockReason ? `The code decides this value (${node.lockReason}).` : 'Set in code.',
+    explanation: node.lockReason
+      ? `The code decides this value (${node.lockReason}). ${CODE_REMEDY}`
+      : `This value is set in code. ${CODE_REMEDY}`,
     actions: [],
+    ...(canUnbindProp(node, propKey) ? { unbindable: true as const } : {}),
   }
 }
 
@@ -320,12 +309,15 @@ export function explainPropConstraint(
 export function explainStyleConstraint(node: ConstraintPropSource, property: string): EditConstraint | null {
   if (isStyleWritableToSource(node, property)) return null
 
-  if (node.id !== undefined && !hasWritableSourceLocation(node.id)) {
+  // A `.map` row's literal style is writable — to the row template (P3-C,
+  // OD-8), so it never reaches here. What does is a node with no source
+  // location and no template either (a synthetic root).
+  if (node.id !== undefined && !hasWritableSourceLocation(node.id) && loopTemplateNodeId(node.id) === null) {
     return {
       reason: 'no-inline-style-target',
       scope: 'style-property',
       explanation:
-        'One piece of source renders every row of this list, so a style change here would apply to all of them. Assign a class instead.',
+        'This element has no place in the source to hold an inline style. Assign a class instead.',
       actions: [],
     }
   }
@@ -336,9 +328,9 @@ export function explainStyleConstraint(node: ConstraintPropSource, property: str
     scope: 'style-property',
     explanation: resolved
       ? resolved.note
-        ? `Reads \`${resolved.source}\` — ${resolved.note}.`
-        : `Reads \`${resolved.source}\` from code.`
-      : 'Set in code.',
+        ? `Reads \`${resolved.source}\` — ${resolved.note}. ${CODE_REMEDY}`
+        : `Reads \`${resolved.source}\` from code. ${CODE_REMEDY}`
+      : `This value is set in code. ${CODE_REMEDY}`,
     // Unlike the mirror-image prop-scope branch above (`explainPropConstraint`'s
     // `resolved-expression`, which can NEVER reach this point with a populated
     // `origin` — `isPropWritableToSource` returns early whenever one exists),
@@ -365,6 +357,12 @@ const DETACH_ACTIONS: ReadonlySet<string> = new Set([
   'maps-over-props',
   'unsupported-params',
   'no-renderable-jsx',
+  // Audit 07 §B.7: a copy of the component has none of these problems — it
+  // is repointed, never inlined, so nothing it reads has to rebind.
+  'spread-ambiguous',
+  'body-local',
+  'unbound-reference',
+  'name-collision',
 ])
 
 /**
@@ -419,67 +417,5 @@ export function explainClassNameConstraint(reason: string, message: string): Edi
       reason === 'css-module-binding'
         ? [{ label: 'Edit the class definition instead', kind: 'select-container' }]
         : [],
-  }
-}
-
-/**
- * Explains a CSS rule/breakpoint-override save-time refusal — B1/B1b's
- * `classifyStylesheetEditability` vocabulary, passed through by value.
- *
- * Z8 — `ambiguous-stylesheet` is the one refusal in this family that is a
- * QUESTION: N hand-editable stylesheets exist, every one of them is a real
- * write target, and Studio refuses to pick. Given the candidate list (and the
- * rule to write), it becomes one runnable remedy per file: the user names the
- * destination and the same write is re-issued against it. Without them the
- * function is unchanged and still offers only the inline hatch — a caller that
- * cannot supply a rule id (the `StyleTargetChip` preview, which is explaining
- * a class nobody has asked to write yet) gets exactly what it got before.
- */
-export function explainCssRuleConstraint(
-  reason: string,
-  message: string,
-  destination?: { ruleId: string; candidates: readonly string[] },
-): EditConstraint {
-  const chooseActions: EditConstraintAction[] =
-    reason === 'ambiguous-stylesheet' && destination
-      ? destination.candidates.map((file) => ({
-          label: `Write it into ${file}`,
-          kind: 'choose-stylesheet' as const,
-          stylesheet: { ruleId: destination.ruleId, file },
-        }))
-      : []
-  const inlineHatch: EditConstraintAction[] =
-    reason === 'no-editable-stylesheet' || reason === 'ambiguous-stylesheet' || reason === 'stylesheet-import-shape-mismatch'
-      ? [{ label: 'Style the element instead', kind: 'style-inline-instead' }]
-      : []
-  return {
-    reason: reason as ConstraintReason,
-    scope: 'node',
-    explanation: message,
-    actions: [...chooseActions, ...inlineHatch],
-  }
-}
-
-/**
- * Row 23 — `unexplainedSkips`: a save-time prop/text/style edit reached no
- * writable location, known server-side only as an AGGREGATE COUNT
- * (`fsCodemodAdapter.ts`'s `unexplainedSkips`, per `StudioSaveResponseSchema`
- * — `detach`/`swap`/`css` carry a per-node `refusals` entry, but the far more
- * common prop/text/style path does not). Deliberately NOT given a jump-to-
- * source action or a real `origin`: this track cannot manufacture per-node
- * identification the server response does not carry. Extending
- * `StudioSaveResponseSchema` to add `{nodeId, kind, reason}` for this path is
- * a SERVER change (`server/handlers/studioWriteback.ts` — E2.4's territory
- * this wave) — flagged in the handoff, not built here.
- */
-export function explainUnexplainedSkip(count: number): EditConstraint {
-  return {
-    reason: 'unexplained-skip',
-    scope: 'node',
-    explanation:
-      count === 1
-        ? '1 edit had no writable location in the code and was not saved.'
-        : `${count} edits had no writable location in the code and were not saved.`,
-    actions: [],
   }
 }

@@ -13,7 +13,7 @@ import { MIXED } from '@ui/components/MixedValue'
 import { resolveStyleFieldDisplay, roundDisplayNumber } from '@site/panels/PropertiesPanel/styleFieldDisplay'
 import { StackedPropertyGrid } from '@site/panels/PropertiesPanel/StackedPropertyGrid'
 import { SizeSection } from '@site/panels/PropertiesPanel/SizeSection'
-import type { SizingParentLayout } from '@site/panels/PropertiesPanel/elementSizing'
+import type { SizingParentLayout } from '@core/studio-runtime'
 
 /** Multi-property write channel — see `StyleSectionsEditor`'s `onChangeMany`. */
 function noopMany() {}

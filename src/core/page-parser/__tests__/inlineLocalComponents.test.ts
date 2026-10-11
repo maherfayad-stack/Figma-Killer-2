@@ -15,6 +15,7 @@ import * as path from 'node:path'
 import { parsePageFile } from '../parsePageFile'
 import { createWorkspaceProject, resolveComponentSources } from '../componentSources'
 import { inlineLocalComponents, INLINE_ID_SEPARATOR } from '../inlineLocalComponents'
+import { createPageEvalBudget } from '../staticEval'
 import type { ParsedNode, ParsedPage } from '../types'
 
 let tmpDir: string
@@ -656,8 +657,10 @@ describe('inlineLocalComponents — 2d: locking fidelity on variant branching / 
     const { expanded } = load(pageFile)
 
     expect(Object.keys(expanded.nodes).length).toBeGreaterThan(0)
-    const banner = Object.values(expanded.nodes).find((n) => n.name === 'div' && n.props.className === 'banner banner--')
-    expect(banner).toBeDefined() // static prefix of the template literal kept
+    // The template's static prefix, whole classes only (P3-C): `banner--` is
+    // the half of a token `${variant}` completes, not a class the div has.
+    const banner = Object.values(expanded.nodes).find((n) => n.name === 'div' && n.props.className === 'banner')
+    expect(banner).toBeDefined()
     // Editable: its writeback target is EsimStatusBanner's own source line.
     // `fromComponent` is what warns the user that the edit lands on every
     // instance of the component.
@@ -721,5 +724,37 @@ describe('inlineLocalComponents — cross-cutting (§2.8)', () => {
     const parsed = parsePageFile(pageFile, tmpDir, project)
     const sources = resolveComponentSources(project, pageFile, tmpDir, parsed)
     expect(() => inlineLocalComponents(parsed, sources, project, tmpDir)).not.toThrow()
+  })
+})
+
+describe('inlineLocalComponents: a call-site value outranks the dynamic-key guess (CV-2)', () => {
+  it('renders the member the call site names, not the first entry of the lookup', () => {
+    write(
+      'components/Tag.jsx',
+      [
+        "const CLASSES = { primary: 'tag-primary', ghost: 'tag-ghost' }",
+        "export default function Tag({ tone = 'primary' }) {",
+        '  return <span className={CLASSES[tone]}>x</span>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    const pageFile = write(
+      'pages/Home.jsx',
+      [
+        "import Tag from '../components/Tag'",
+        'export default function Home() {',
+        '  return <main><Tag tone="ghost" /><Tag /></main>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    const project = createWorkspaceProject(tmpDir)
+    const parsed = parsePageFile(pageFile, tmpDir, project)
+    const sources = resolveComponentSources(project, pageFile, tmpDir, parsed)
+    const evalOptions = { pageBudget: createPageEvalBudget(), workspaceRoot: tmpDir }
+    const expanded = inlineLocalComponents(parsed, sources, project, tmpDir, { evalOptions })
+    const spans = Object.values(expanded.nodes).filter((n) => n.name === 'span')
+    expect(spans.map((n) => n.props.className).sort()).toEqual(['tag-ghost', 'tag-primary'])
   })
 })

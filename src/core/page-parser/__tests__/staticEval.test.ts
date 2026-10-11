@@ -13,7 +13,8 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { Node, type Project, type SourceFile } from 'ts-morph'
 import { createWorkspaceProject } from '../componentSources'
-import { findComponentDeclaration, getFunctionLikeNode, parsePageFile } from '../parsePageFile'
+import { parsePageFile } from '../parsePageFile'
+import { findComponentDeclaration, getFunctionLikeNode } from '../componentDeclaration'
 import { createEvalScope, createPageEvalBudget, evaluateExpression, type StaticEvalOptions, type StaticValue } from '../staticEval'
 
 let tmpDir: string

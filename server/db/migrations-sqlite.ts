@@ -1188,4 +1188,12 @@ export const sqliteMigrations: Migration[] = [
         on git_credentials (user_id, provider);
     `,
   },
+  {
+    // AI-25 — see `migrations-pg.ts`'s copy of this migration for the
+    // reasoning. The DDL is dialect-identical.
+    id: '024_ai_conversation_model_source',
+    sql: `
+      alter table ai_conversations add column model_source text;
+    `,
+  },
 ]

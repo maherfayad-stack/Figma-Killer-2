@@ -63,9 +63,10 @@
  * ## Filesystem safety
  *
  * Every write target is derived server-side from the source tree's own layout
- * and containment-checked against `<project>/design-system/` on its REAL path
- * (`isRealpathContainedAllowingMissing`), so a planted symlink cannot carry a
- * write out of the folder. Every source file is containment-checked against
+ * and must be reached through plain directory entries only
+ * (`isUnlinkedWorkspacePath`): no symlink or junction on the way or at the
+ * name, dangling ones included — `existsSync` follows links, so a dangling
+ * one reads as "absent" and a write would land wherever it points. Every source file is containment-checked against
  * the vendored `src/` the same way before it is read. The ONLY paths this
  * module ever deletes are files it recorded writing itself, in that one
  * folder; a stale manifest entry that is a symlink, or that resolves outside
@@ -87,9 +88,10 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { dirname, join, posix } from 'node:path'
-import { listWorkspaceFiles } from '@core/page-parser'
+import { isUnlinkedWorkspacePath, listWorkspaceFiles } from '@core/page-parser'
 import { parseJsonWithFallback } from '@core/utils/jsonValidate'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
+import { readStudioStoreJson, writeStudioStoreJson } from './studioStore'
 import {
   BUILTIN_DESIGN_SYSTEM_DIR,
   PROJECT_DESIGN_SYSTEM_DIR,
@@ -99,7 +101,7 @@ import { readStudioMeta } from './studioMeta'
 import { isRealpathContained, isRealpathContainedAllowingMissing } from './workspacePackageResolve'
 
 /** Where the hash of the written folder lives. Inside `.studio/`, so it never ships in a download. */
-const MANIFEST_REL = '.studio/design-system.json'
+const MANIFEST_FILE = 'design-system.json'
 
 /** Bumped only if the manifest's own SHAPE changes — the source set's version rides in the hash, via `VERSION`. */
 const MANIFEST_VERSION = 1
@@ -401,20 +403,13 @@ function hashSourceSet(files: readonly SourceFile[]): string {
 }
 
 function readManifest(projectDir: string): DesignSystemManifest | null {
-  const file = join(projectDir, ...MANIFEST_REL.split('/'))
-  if (!existsSync(file)) return null
-  const parsed = parseJsonWithFallback(readFileOrEmpty(file), DesignSystemManifestSchema, {
-    version: 0,
-    hash: '',
-    files: [],
-  })
-  return parsed.hash.length > 0 ? parsed : null
+  const parsed = readStudioStoreJson(projectDir, MANIFEST_FILE, DesignSystemManifestSchema, null)
+  return parsed !== null && parsed.hash.length > 0 ? parsed : null
 }
 
 function writeManifest(projectDir: string, manifest: DesignSystemManifest): void {
-  const file = join(projectDir, ...MANIFEST_REL.split('/'))
-  mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+  // Studio's own record: never written through a link (`studioStore.ts` throws; the caller logs).
+  writeStudioStoreJson(projectDir, MANIFEST_FILE, manifest, { pretty: true, trailingNewline: true })
 }
 
 /**
@@ -452,7 +447,10 @@ export function ensureDesignSystemFiles(
     for (const file of files) {
       if (!isSafeRelPath(file.relPath)) continue
       const abs = join(dsRoot, ...file.relPath.split('/'))
-      if (!isRealpathContainedAllowingMissing(abs, dsRoot)) continue
+      // Studio owns this folder, and never writes it through a link: a
+      // dangling one at the name would carry the write out of the project,
+      // and `existsSync` below cannot see it (it follows links).
+      if (!isUnlinkedWorkspacePath(projectDir, abs)) continue
       if (existsSync(abs) && readFileBytesOrNull(abs)?.equals(file.contents)) continue
       mkdirSync(dirname(abs), { recursive: true })
       writeFileSync(abs, file.contents)

@@ -75,8 +75,9 @@ and has a one-line fix — fix that, then re-run and say you did.
   the change's fault. A baseline set fails on a clean tree — `standing-01` in
   `STATE.md` enumerates it and carries the current count. Diff against that set,
   never against zero.
-- **Do not run Playwright / browser tests to validate UI work.** UI is dogfooded
-  by the human (`standing-02`). Verify statically and say what needs a human eye.
+- **Browser runs follow `CLAUDE.md` → "Verification"**: run the e2e specs a
+  canvas, frame, overlay, geometry or panel-height change touches; for other UI
+  work verify statically and say what needs a human eye.
 - When piping test output, remember `bun test | tail` masks the exit code and
   discards failure detail. Redirect to a file and grep it instead.
 

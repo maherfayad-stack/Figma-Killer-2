@@ -16,14 +16,22 @@
  * a person editing that copy means. See `ParsedNode.textOrigin`, which is where
  * the (line, col) comes from.
  *
+ * COMPARE-AND-SWAP. `expected` is the value the caller read at this literal.
+ * When the file now holds something else (a hand edit, an agent, a script),
+ * the write is refused `literal-changed` rather than put over it: a caller whose
+ * picture of the file is old must not be able to undo a newer change by
+ * writing what it still remembers. A literal that already holds `value` is
+ * left alone (the write already happened).
+ *
  * FAILS CLOSED. The token at the location must actually be a string literal (or
  * a no-substitution template literal). Anything else — a number, an identifier, a
  * template with `${}` in it, or nothing at that position at all — throws rather
  * than guessing, because a mis-aimed write here corrupts a file the editor never
  * showed the user.
  */
-import { Node, Project } from 'ts-morph'
+import { Node, Project, type NoSubstitutionTemplateLiteral, type StringLiteral } from 'ts-morph'
 import { createProject, loadSourceFile } from './locateJsxElement'
+import { jsStringSpelling, jsxAttributeSpelling, quoteOf } from './stringSpelling'
 
 export interface SetStringLiteralParams {
   file: string
@@ -32,9 +40,13 @@ export interface SetStringLiteralParams {
   /** 1-based column of the literal's opening quote. */
   col: number
   value: string
+  /** The text the caller read at this literal. A literal that no longer holds it refuses `literal-changed`. */
+  expected: string
   /** Optional pre-existing project to reuse (e.g. across multiple edits). */
   project?: Project
 }
+
+export type StringLiteralRefusalReason = 'element-moved' | 'not-a-literal' | 'literal-changed'
 
 /**
  * Thrown when the token at the target location is not a rewritable string
@@ -42,16 +54,25 @@ export interface SetStringLiteralParams {
  */
 export class StringLiteralTargetError extends Error {
   readonly path: string
+  /**
+   * The stable refusal code the writeback batch reports (WB-12):
+   * `element-moved` — nothing is at that position any more (the file changed
+   * since it was read); `not-a-literal` — something is, and it is not a
+   * literal this codemod may rewrite; `literal-changed` — it is the literal, but
+   * it no longer holds the text the caller read.
+   */
+  readonly reason: StringLiteralRefusalReason
 
-  constructor(message: string, path: string) {
+  constructor(message: string, path: string, reason: StringLiteralRefusalReason = 'not-a-literal') {
     super(`[ast-codemods/setStringLiteral] ${path}: ${message}`)
     this.name = 'StringLiteralTargetError'
     this.path = path
+    this.reason = reason
   }
 }
 
 export function setStringLiteral(params: SetStringLiteralParams): void {
-  const { file, line, col, value } = params
+  const { file, line, col, value, expected } = params
   const project = params.project ?? createProject()
   const sourceFile = loadSourceFile(project, file)
   const path = `${file}:${line}:${col}`
@@ -60,18 +81,18 @@ export function setStringLiteral(params: SetStringLiteralParams): void {
   try {
     pos = sourceFile.compilerNode.getPositionOfLineAndCharacter(line - 1, col - 1)
   } catch {
-    throw new StringLiteralTargetError('line/column is outside the file', path)
+    throw new StringLiteralTargetError('line/column is outside the file', path, 'element-moved')
   }
 
   const token = sourceFile.getDescendantAtPos(pos)
-  if (!token) throw new StringLiteralTargetError('no node at this position', path)
+  if (!token) throw new StringLiteralTargetError('no node at this position', path, 'element-moved')
 
   // The position addresses the literal's own start. Accept the token itself or
   // its immediate parent (`getDescendantAtPos` can land on the token inside a
   // literal node depending on trivia), but never search wider than that — a
   // broader walk is how a write lands on the wrong string.
   const literal = [token, token.getParent()].find(
-    (candidate): candidate is Node =>
+    (candidate): candidate is StringLiteral | NoSubstitutionTemplateLiteral =>
       candidate !== undefined &&
       candidate.getStart() === pos &&
       (Node.isStringLiteral(candidate) || Node.isNoSubstitutionTemplateLiteral(candidate)),
@@ -83,15 +104,22 @@ export function setStringLiteral(params: SetStringLiteralParams): void {
     )
   }
 
-  // `JSON.stringify` for the escaping, then normalise to the quote style already
-  // in the file so a copy edit does not show up as a quote-style diff on every
-  // line it touches.
-  const usesSingleQuotes = literal.getText().startsWith("'")
-  const doubleQuoted = JSON.stringify(value)
-  const replacement = usesSingleQuotes
-    ? `'${doubleQuoted.slice(1, -1).replace(/\\"/g, '"').replace(/'/g, "\\'")}'`
-    : doubleQuoted
+  const current = literal.getLiteralValue()
+  if (current === value) return
+  if (current !== expected) {
+    throw new StringLiteralTargetError('the literal no longer holds the text the caller read', path, 'literal-changed')
+  }
 
-  literal.replaceWithText(replacement)
+  // Spelled in the quote the file already used, so a copy edit does not show
+  // up as a quote-style diff on every line it touches (`stringSpelling.ts`).
+  const quote = quoteOf(literal)
+  const replacement = Node.isJsxAttribute(literal.getParent())
+    ? jsxAttributeSpelling(value, quote)
+    : jsStringSpelling(value, quote)
+
+  // A text splice rather than `replaceWithText`: the JSX-attribute spelling may
+  // be an expression container, which is a different node kind than the
+  // literal it replaces.
+  sourceFile.replaceText([literal.getStart(), literal.getEnd()], replacement)
   sourceFile.saveSync()
 }

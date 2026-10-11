@@ -48,7 +48,7 @@ describe('mcp registry', () => {
     })
 
     it('the withheld set is non-empty and names the CMS write tools', () => {
-      // Guards against the whole rule passing vacuously if `mutates` stamping
+      // Guards against the whole rule passing vacuously if `requiresWrite` stamping
       // ever breaks in `tools/site/index.ts`.
       expect(CMS_SITE_WRITE_TOOLS_WITHHELD.size).toBeGreaterThan(20)
       for (const name of ['site_insert_html', 'site_replace_node_html', 'site_duplicate_node', 'site_delete_node', 'site_add_page', 'site_apply_css', 'site_set_color_tokens', 'site_write_code_asset']) {
@@ -60,7 +60,7 @@ describe('mcp registry', () => {
       const tools = mcpToolsForCapabilities(FULL)
       // `site_publish` is the one deliberate survivor: server-resolved (no
       // bridge, no page tree) and gated on `pages.publish` of its own.
-      expect(tools.filter((t) => t.name.startsWith('site_') && t.mutates).map((t) => t.name)).toEqual(['site_publish'])
+      expect(tools.filter((t) => t.name.startsWith('site_') && t.requiresWrite).map((t) => t.name)).toEqual(['site_publish'])
       for (const withheld of CMS_SITE_WRITE_TOOLS_WITHHELD) {
         expect(tools.map((t) => t.name)).not.toContain(withheld)
       }
@@ -68,7 +68,7 @@ describe('mcp registry', () => {
 
     it('withholds the writes without withholding the browser-backed site reads', () => {
       const names = mcpToolsForCapabilities(FULL).map((t) => t.name)
-      const siteReads = siteTools.filter((t) => !t.mutates && t.name !== 'site_list_tokens')
+      const siteReads = siteTools.filter((t) => !t.requiresWrite && t.name !== 'site_list_tokens')
       expect(siteReads.length).toBeGreaterThan(5)
       for (const read of siteReads) expect(names).toContain(read.name)
     })
@@ -103,7 +103,7 @@ describe('mcp registry', () => {
     const readOnly = FULL.filter((c) => c !== 'ai.tools.write')
     const tools = mcpToolsForCapabilities(readOnly)
     expect(tools.length).toBeGreaterThan(0)
-    expect(tools.some((t) => t.mutates)).toBe(false)
+    expect(tools.some((t) => t.requiresWrite)).toBe(false)
     expect(tools.some((t) => t.name === 'mutate_page_tree')).toBe(false)
     expect(tools.some((t) => t.name === 'studio_apply_edits')).toBe(false)
   })

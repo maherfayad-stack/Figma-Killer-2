@@ -24,14 +24,17 @@
  * VALUE edits (through `setStyledDeclaration`); a rule not in it is unmapped
  * exactly as before.
  *
- * ## Value edits, and nothing else
+ * ## Value edits that always land, and nothing else
  *
- * There is deliberately no insert, no unset, and no class-token spelling here.
+ * There is deliberately no unset and no class-token spelling here. A SET lands
+ * every time (G-5): rewritten where the template writes the value, appended to
+ * the same block as an override where it does not — `setStyledDeclaration`'s
+ * ladder.
  *
- *   - **Adding or removing a declaration** means adding or deleting a line in
- *     a template the user wrote, around interpolations whose position decides
- *     what the CSS means. That is a restructuring edit, not the value edit the
- *     inspector's controls make.
+ *   - **Removing a declaration** means deleting a line in a template the user
+ *     wrote, around interpolations whose position decides what the CSS means.
+ *     That is a restructuring edit, not the value edit the inspector's
+ *     controls make.
  *   - **A class token** does not exist at all. The synthetic class is a HASH
  *     Studio computed (`syntheticClassName`); styled-components generates its
  *     own name at runtime and there is no `className` attribute in the `.tsx`
@@ -68,7 +71,8 @@ export interface StyledEditPayload {
   nodeId: string
   className: string
   selector: string
-  atMedia?: string
+  /** `media (min-width: 700px)` / `container …` / `supports …` — see `@core/css-codemods`' `cssAtRuleScope.ts`. */
+  atRule?: string
   property: string
   value: string
 }
@@ -102,8 +106,6 @@ export function styledClassRefusal(componentName: string): { reason: string; mes
   return {
     reason: 'styled-component-class',
     message:
-      `This class is ${componentName}'s own styling — styled-components generates its class name at runtime, so ` +
-      'there is no class token in the source to add or remove. Edit the declarations inside the component instead, ' +
-      'or change which component the element renders.',
+      `This class is ${componentName}'s own styling, generated at runtime, so there is no class token to add or remove. Edit the declarations inside the component.`,
   }
 }

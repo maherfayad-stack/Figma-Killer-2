@@ -42,9 +42,9 @@
 /* ── No params placeholder ───────────────────────────────────────────────── */
 
 .noParams {
-  padding: var(--space-4xl) var(--inspector-pad-x);
+  padding: var(--inspector-space-xl) var(--inspector-pad-x);
   font-size: var(--text-xs);
-  color: var(--text-disabled);
+  color: var(--text-subtle);
   text-align: center;
   line-height: 1.6;
 }
@@ -52,7 +52,7 @@
 /* ── Unknown VC placeholder ──────────────────────────────────────────────── */
 
 .unknownVC {
-  padding: var(--space-2xl) var(--inspector-pad-x);
+  padding: var(--inspector-space-xl) var(--inspector-pad-x);
   font-size: var(--text-xs);
   color: var(--danger-light);
   text-align: center;

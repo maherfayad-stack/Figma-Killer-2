@@ -54,8 +54,6 @@ beforeEach(() => {
     runScripts: false,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
-    hoveredBreakpointId: null,
     previewClassAssignment: null,
     propertiesPanel: { collapsed: false, x: 0, y: 0, width: 360 },
     propertiesPanelMode: 'docked',

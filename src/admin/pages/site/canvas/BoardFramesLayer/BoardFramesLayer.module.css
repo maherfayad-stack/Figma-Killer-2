@@ -22,6 +22,10 @@
     width: max-content;
     border-radius: var(--radius);
     box-shadow: var(--shadow-panel-drop);
+    /* SB-1 — a frame's layout and counters cannot leak into, or be invalidated
+       by, its 100 siblings. NOT `paint`: the resize handles, the title and the
+       selection ring hang outside this box. */
+    contain: layout style;
 }
 
 /* Sized to the frame's OWN width/height (`--frame-w`/`--frame-h`, Phase
@@ -61,6 +65,14 @@
     height: auto;
     min-height: var(--frame-h);
     overflow: visible;
+}
+
+/* SB-5 - a poster of a frame that hugs its content is as tall as the live frame
+   was when it was photographed, so a frame does not change size when it is
+   promoted (the picture is the document's own aspect ratio at the frame's
+   width). A frame with a manual height keeps its fixed box and crops. */
+.frameBody[data-frame-auto-height='true'] > .offscreenPlaceholderImage:not(.mountOverlay) {
+    height: auto;
 }
 
 .header {
@@ -170,6 +182,10 @@
    dimensions) so the frame's footprint on the board doesn't visibly change
    when the real iframe mounts/unmounts as it crosses the viewport margin. */
 .offscreenPlaceholder {
+    /* SB-1 — a frame far off screen costs no layout or paint; the box keeps its
+       real size (`--frame-w`/`--frame-h` from `.frameBody`) so nothing shifts. */
+    content-visibility: auto;
+    contain-intrinsic-size: auto var(--frame-w) auto var(--frame-h);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -322,4 +338,32 @@
     position: absolute;
     inset: 0;
     z-index: 1;
+}
+
+/* P6-B — a frame whose page is still arriving (`PendingBoardFrame.tsx`). The
+   header wears the real one's geometry but is inert (no grab cursor: there is
+   nothing to drag yet), and the body is a flat surface the page replaces. */
+.pendingHeader {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-2xs) var(--space-s);
+    background: var(--bg-surface-2);
+    border-radius: var(--radius) var(--radius) 0 0;
+    user-select: none;
+}
+
+.pendingBody {
+    width: 100%;
+    height: 100%;
+    background: var(--bg-surface);
+    border-radius: 0 0 var(--radius) var(--radius);
+}
+
+/* Mode chip / "+ Mode" in a frame header (CT-4): the same quiet treatment as
+   `.axesBadge`, but pressable, so the header's other children keep their space. */
+.modeChip {
+    flex-shrink: 0;
+    color: var(--text-subtle);
+    white-space: nowrap;
 }

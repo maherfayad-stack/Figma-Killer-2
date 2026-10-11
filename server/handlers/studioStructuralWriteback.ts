@@ -2,8 +2,7 @@
  * studioStructuralWriteback — the studio edit kinds that change WHERE markup is
  * rather than what it says: `move`, `delete`, `insert` (`struct-01`,
  * `struct-02`), `duplicate`, `wrap` and `reparent` (W4-1), `group` /
- * `ungroup` (K3), `transplant` (D2 G3), and `reinsert-source` (`store-15`) —
- * `delete`'s own inverse. Their schemas and their dispatch into
+ * `ungroup` (K3), and `transplant` (D2 G3). Their schemas and their dispatch into
  * `@core/ast-codemods`, in one place.
  *
  * `transplant` is the one kind with its OWN entry point
@@ -41,17 +40,19 @@ import {
   duplicateJsxElement,
   insertJsxElement,
   moveJsxElement,
-  reinsertJsxSource,
   transplantJsxElement,
   unwrapJsxElement,
   wrapJsxElement,
   wrapJsxElements,
+  type CarriedDeclaration,
+  frameJsxElements,
   type CreatedJsxLocation,
-  type DeletedJsxText,
+  type RowRef,
 } from '@core/ast-codemods'
 import { designSystemImportSpecifier } from '@core/page-parser'
+import { isInlinedNodeId } from '@core/page-tree'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { DesignSystemImportSchema, InsertNodeSchema, InsertPropsSchema } from './studioInsertJsxSchemas'
+import { DesignSystemImportSchema, InsertNodeSchema, InsertPropsSchema, PastedHtmlSchema } from './studioInsertJsxSchemas'
 
 /**
  * One sibling reorder (`struct-01`) — `moveJsxElement`. `nodeId` is the moved
@@ -75,42 +76,12 @@ const MoveEditSchema = Type.Object({
  * rather than simply "no writable location". Not refused for orphaning an
  * import: the codemod removes any binding the deleted markup alone was using.
  *
- * `store-15` — the bytes this discards (and any import the batch's prune pass
- * takes with it) ride back through the batch result as `reinsert-source`'s
- * own `text`/`imports` — ⌘Z's only honest way to put the element back.
+ * Its ⌘Z is the undo journal's `restore` (P3-F, `studio/undoJournal.ts`): the
+ * editor's batch records what the file was before this ran.
  */
 const DeleteEditSchema = Type.Object({
   kind: Type.Literal('delete'),
   nodeId: Type.String(),
-})
-
-/**
- * `store-15` — one element PUT BACK where a `delete` removed it from —
- * `reinsertJsxSource`, ⌘Z's own write.
- *
- * `nodeId` is the PARENT's location, like `insert`'s. `index` counts the
- * parent's PLAIN JSX element children only, the same count
- * `captureDeleteOrigin` captured client-side at delete time, so the two agree
- * by construction — no `anchorNodeId`: the position is a fact recorded when
- * the element still existed, not a placement decision made now against a
- * possibly-reordered live sibling list.
- *
- * `text` is `deleteJsxElement`'s own `removed.text`, byte for byte, never
- * re-rendered. `imports` are the standalone declaration texts the delete's
- * own prune pass removed (`PrunedImportsResult.declarations`), re-added as
- * their own lines after the file's last import.
- *
- * `index` is a non-negative integer at the wire (`sec-22`): a negative or
- * fractional one is never something `captureDeleteOrigin` produces, and the
- * codemod would otherwise silently read it as "past the end" — a wrong
- * position is still a wrong write.
- */
-const ReinsertSourceEditSchema = Type.Object({
-  kind: Type.Literal('reinsert-source'),
-  nodeId: Type.String(),
-  index: Type.Integer({ minimum: 0 }),
-  text: Type.String(),
-  imports: Type.Optional(Type.Array(Type.String())),
 })
 
 /**
@@ -158,9 +129,27 @@ const InsertEditSchema = Type.Object({
   position: Type.Optional(Type.Union([Type.Literal('before'), Type.Literal('after')])),
   name: Type.String(),
   importSpecifier: Type.Optional(Type.String()),
+  /** `'default'` when `name` is the default export of `importSpecifier` (a project's own component). Omitted = named export. */
+  importStyle: Type.Optional(Type.Literal('default')),
   designSystemImport: Type.Optional(DesignSystemImportSchema),
   children: Type.Optional(Type.Union([Type.String(), Type.Array(InsertNodeSchema)])),
   props: Type.Optional(InsertPropsSchema),
+  /**
+   * P5-B (IMG-2) — more new elements written immediately AFTER this one, in
+   * order, in the same write: dropping three images is ONE insert of three
+   * siblings, one resync and one undo step, not three queued inserts. Each
+   * entry is the same node shape `children` carries. `createdNodeIds` reports
+   * every one of them, in order.
+   */
+  siblings: Type.Optional(Type.Array(InsertNodeSchema, { minItems: 1 })),
+  pastedHtml: Type.Optional(PastedHtmlSchema), // G-10 - see studioInsertHtml.ts
+  /**
+   * The editor's ⌘Z for this insert is the undo journal's `restore`, not a
+   * `delete` of what it made: the parent had no children, so the write may have
+   * expanded a self-closing `<X />`, and only the pre-image puts that back byte
+   * for byte. Honoured on the editor's journaled `/save` only (`studioBatchUndoJournal.ts`).
+   */
+  exactUndo: Type.Optional(Type.Literal(true)),
 })
 
 /**
@@ -186,6 +175,8 @@ const DuplicateEditSchema = Type.Object({
   parentNodeId: Type.Optional(Type.String()),
   anchorNodeId: Type.Optional(Type.String()),
   position: Type.Optional(Type.Union([Type.Literal('before'), Type.Literal('after')])),
+  /** As on `insert`: the copy lands in a childless parent, so the editor's undo is the journal's `restore`. */
+  exactUndo: Type.Optional(Type.Literal(true)),
 })
 
 /**
@@ -214,9 +205,10 @@ const WrapEditSchema = Type.Object({
  * in source order — not one `nodeIds` array, because every other part of the
  * save route (bottom-to-top ordering, the touched-file set, the containment
  * guard) is keyed on `nodeId` and a group must sort by the topmost position it
- * changes. The codemod re-derives the run from the AST and refuses
- * (`not-contiguous`) if anything unnamed sits between the ends, so a
- * hand-crafted batch cannot widen the span.
+ * changes. The codemod re-derives the run from the AST: an unbroken run is one
+ * span wrapped in place, and anything else is GATHERED (G-7,
+ * `gatherGroupRun.ts`) - only the named elements move, so a hand-crafted batch
+ * cannot widen what the container holds.
  *
  * ⌘G on ONE element is not this kind: it is the existing `wrap`, unchanged.
  *
@@ -226,10 +218,24 @@ const WrapEditSchema = Type.Object({
 const GroupEditSchema = Type.Object({
   kind: Type.Literal('group'),
   nodeId: Type.String(),
-  siblingNodeIds: Type.Array(Type.String(), { minItems: 1 }),
+  /** Empty for a frame around ONE element (PA-6); ⌘G on one element is the `wrap` kind. */
+  siblingNodeIds: Type.Array(Type.String()),
   name: Type.String(),
   importSpecifier: Type.Optional(Type.String()),
   designSystemImport: Type.Optional(DesignSystemImportSchema),
+  /**
+   * PA-6 — Frame selection: the container is SIZED AND PLACED. `wrapperStyle`
+   * is its inline style; `memberStyles` has one patch per member in the order
+   * `[nodeId, ...siblingNodeIds]` (`null` removes a key), the offsets each
+   * member needs inside the frame. The batch is journaled, so its undo is the
+   * pre-image (`frameJsxElements`).
+   */
+  frame: Type.Optional(
+    Type.Object({
+      wrapperStyle: Type.Record(Type.String(), Type.String()),
+      memberStyles: Type.Array(Type.Record(Type.String(), Type.Union([Type.String(), Type.Number(), Type.Null()]))),
+    }),
+  ),
 })
 
 /**
@@ -237,11 +243,10 @@ const GroupEditSchema = Type.Object({
  * children take its place at its own index, and the container's own bytes go.
  *
  * `nodeId` is the container, and it is the only field: everything else is
- * decided by what is written at that location. The codemod refuses
- * (`has-behaviour`) when the container carries anything but
- * `className`/`style`/`id`/`data-*`, because deleting an element that also
- * carries a handler, a ref, a `key` or a spread would drop behaviour no undo
- * in the editor can explain.
+ * decided by what is written at that location. A container carrying anything
+ * but `className`/`style`/`id`/`data-*` (a handler, a ref, a `key`, a spread,
+ * or a component tag) is KEPT, emptied (G-7) - deleting it would drop behaviour
+ * the code relies on.
  */
 const UngroupEditSchema = Type.Object({
   kind: Type.Literal('ungroup'),
@@ -297,13 +302,22 @@ const TransplantEditSchema = Type.Object({
   anchorNodeId: Type.Optional(Type.String()),
   position: Type.Optional(Type.Union([Type.Literal('before'), Type.Literal('after')])),
   copy: Type.Optional(Type.Boolean()),
+  /** G-1c - `nodeId` is a `.map` row's TEMPLATE; this names the row copied: the array's `[` (path-guarded, in `nodeId`'s file), its index and the length the board saw. The codemod re-derives the array from the AST (`stale-source` on a mismatch). Always a COPY. */
+  row: Type.Optional(
+    Type.Object({
+      array: Type.String(),
+      index: Type.Integer({ minimum: 0 }),
+      length: Type.Integer({ minimum: 1 }),
+    }),
+  ),
+  /** A COPY into a childless parent: as on `insert`, the editor's undo is the journal's `restore`. */
+  exactUndo: Type.Optional(Type.Literal(true)),
 })
 
 /** The structural edit kinds, folded into `StudioEditSchema` by `studioWriteback.ts`. */
 export const StructuralEditSchemas = [
   MoveEditSchema,
   DeleteEditSchema,
-  ReinsertSourceEditSchema,
   InsertEditSchema,
   DuplicateEditSchema,
   WrapEditSchema,
@@ -353,6 +367,7 @@ function resolveNodeImport(
 export interface ImportableJsxNode<TProps> {
   name: string
   importSpecifier?: string
+  importStyle?: 'default'
   designSystemImport?: true
   props?: TProps
   children?: string | ImportableJsxNode<TProps>[]
@@ -379,6 +394,7 @@ export function resolveDesignSystemImports<TProps>(
     return {
       name: node.name,
       ...(specifier === undefined ? {} : { importSpecifier: specifier }),
+      ...(node.importStyle === undefined ? {} : { importStyle: node.importStyle }),
       ...(node.props === undefined ? {} : { props: node.props }),
       ...(children === undefined
         ? {}
@@ -391,34 +407,40 @@ export function resolveDesignSystemImports<TProps>(
  * Applied, or refused with a reason the caller turns into a
  * `StudioEditRefusalError`.
  *
- * `created` (`store-13`) is the tag-name `line:col` of the element this write
- * brought into existence — an `insert`'s new child, a `duplicate`'s copy, a
- * `wrap`/`group`'s container. Absent for the kinds that create nothing
- * (`move`, `delete`, `reparent`, `ungroup`), and `null` when the codemod wrote
- * but could not confirm the position against the re-parsed file. The caller
- * mints the node id from it; see `createdJsxLocation.ts` for why it is never
- * guessed at.
+ * `created` (`store-13`) is the tag-name `line:col` of every element this
+ * write brought into existence, in source order — an `insert`'s new child (or
+ * its run of siblings, P5-B IMG-2), a `duplicate`'s copy, a `wrap`/`group`'s
+ * container. Absent for the kinds that create nothing (`move`, `delete`,
+ * `reparent`, `ungroup`), and empty when the codemod wrote but could not
+ * confirm the position against the re-parsed file. The caller mints the node
+ * ids from it; see `createdJsxLocation.ts` for why it is never guessed at.
  *
  * `relocated` (`store-14`) is the same coordinate for the elements this write
  * MOVED rather than made — a `move`/`reparent`'s element in its new slot, an
  * `ungroup`'s released children, a `transplant`'s element in the destination
  * file. Absent for the kinds that move nothing, and subject to the identical
  * never-guess rule.
- *
- * `removed` (`store-15`) is set only by a successful `delete` — the exact
- * bytes `deleteJsxElement` discarded, so the caller can report them through
- * the batch result for an undo to reinsert later.
  */
 export type StructuralEditOutcome =
-  | { ok: true; created?: CreatedJsxLocation | null; relocated?: readonly CreatedJsxLocation[]; removed?: DeletedJsxText }
+  | {
+      ok: true
+      created?: readonly CreatedJsxLocation[]
+      relocated?: readonly CreatedJsxLocation[]
+      /** G-1: what a `transplant` wrote into the destination besides the markup - see {@link CarriedDeclaration}. */
+      carried?: readonly CarriedDeclaration[]
+    }
   | { ok: false; reason: string; message: string }
+
+/** A single-element codemod's `created` in the outcome's list shape: its one location, or nothing when it could not confirm one. */
+function createdList(created: CreatedJsxLocation | null): CreatedJsxLocation[] {
+  return created ? [created] : []
+}
 
 /** The structural edit kinds, for the caller's `kind`-based branching. */
 export function isStructuralEditKind(kind: string): kind is StructuralEdit['kind'] {
   return (
     kind === 'move' ||
     kind === 'delete' ||
-    kind === 'reinsert-source' ||
     kind === 'insert' ||
     kind === 'duplicate' ||
     kind === 'wrap' ||
@@ -455,6 +477,8 @@ export function applyTransplantEdit(
   edit: Extract<StructuralEdit, { kind: 'transplant' }>,
   destination: ForeignJsxLocation | null,
   anchor: ForeignJsxLocation | null,
+  /** G-1c - the decoded, same-file `row` of the edit, or `null` when it carried none. */
+  row: RowRef | null,
 ): StructuralEditOutcome {
   if (!destination) {
     return {
@@ -473,6 +497,11 @@ export function applyTransplantEdit(
     destinationCol: destination.col,
     ...(anchor ? { anchorLine: anchor.line, anchorCol: anchor.col, position: edit.position } : {}),
     ...(edit.copy ? { copy: true } : {}),
+    ...(row ? { row } : {}),
+    // A default is the page's value only where nothing hands the component a
+    // different one: an element written in the page's own file, not one inlined
+    // out of a component (`pages/Home.tsx:4:5~components/Card.tsx:9:3`).
+    ...(isInlinedNodeId(edit.nodeId) ? {} : { propDefaults: true }),
   })
   if (!result.ok) return { ok: false, ...result.refusal }
   // `store-13`/`store-14` — the position is in the DESTINATION file, so
@@ -483,9 +512,11 @@ export function applyTransplantEdit(
   // through different fields because their undos differ — a copy is taken back
   // by deleting what it made, a move by transplanting the element home — and
   // `resolveStructuralInverse` reads exactly one of them per template.
-  return edit.copy
-    ? { ok: true, created: result.created }
-    : { ok: true, relocated: result.created ? [result.created] : [] }
+  // A row is copied whatever the gesture said, so it reports like a copy.
+  const carried = result.carriedDeclarations.filter((entry) => !entry.reused)
+  return edit.copy || row
+    ? { ok: true, created: createdList(result.created), carried }
+    : { ok: true, relocated: createdList(result.created), carried }
 }
 
 /**
@@ -538,7 +569,7 @@ export function applyStructuralEdit(
           ok: false,
           reason: 'cross-file',
           message:
-            'The element this move is written against is not in the same file, so there is no single place to write the new order.',
+            'That position is in a different file, so there is no single place to write the new order. Drop it next to an element from the same file.',
         }
       }
       const result = moveJsxElement({
@@ -553,11 +584,7 @@ export function applyStructuralEdit(
     }
     case 'delete': {
       const result = deleteJsxElement(loc)
-      return result.ok ? { ok: true, removed: result.removed } : { ok: false, ...result.refusal }
-    }
-    case 'reinsert-source': {
-      const result = reinsertJsxSource({ ...loc, index: edit.index, text: edit.text, imports: edit.imports ?? [] })
-      return result.ok ? { ok: true, created: result.created } : { ok: false, ...result.refusal }
+      return result.ok ? { ok: true } : { ok: false, ...result.refusal }
     }
     case 'insert': {
       // `importSpecifier`/`children` are spread conditionally rather than
@@ -570,13 +597,19 @@ export function applyStructuralEdit(
         edit.children === undefined || typeof edit.children === 'string'
           ? edit.children
           : resolveDesignSystemImports(edit.children, targetRel)
+      // P5-B (IMG-2) — the run's other elements resolve their design-system
+      // imports against the same file, through the same resolver `children`
+      // uses, because they are written into it in the same splice.
+      const siblings = edit.siblings ? resolveDesignSystemImports(edit.siblings, targetRel) : undefined
       const result = insertJsxElement({
         ...loc,
         ...(anchor ? { anchorLine: anchor.line, anchorCol: anchor.col, position: edit.position } : {}),
         name: edit.name,
         props: edit.props,
         ...(importSpecifier === undefined ? {} : { importSpecifier }),
+        ...(edit.importStyle === undefined ? {} : { importStyle: edit.importStyle }),
         ...(children === undefined ? {} : { children }),
+        ...(siblings === undefined ? {} : { siblings }),
       })
       return result.ok ? { ok: true, created: result.created } : { ok: false, ...result.refusal }
     }
@@ -592,7 +625,7 @@ export function applyStructuralEdit(
           ok: false,
           reason: 'cross-file',
           message:
-            'The container this copy would go into is in a different file. Studio can copy an element into a new parent within one file; across files the markup would land where the values it reads do not exist.',
+            'The container this copy would go into is in a different file. Copy it into a container from the same file.',
         }
       }
       const result = duplicateJsxElement({
@@ -600,7 +633,7 @@ export function applyStructuralEdit(
         ...(destination ? { destinationLine: destination.line, destinationCol: destination.col } : {}),
         ...(destination && anchor ? { anchorLine: anchor.line, anchorCol: anchor.col, position: edit.position } : {}),
       })
-      return result.ok ? { ok: true, created: result.created } : { ok: false, ...result.refusal }
+      return result.ok ? { ok: true, created: createdList(result.created) } : { ok: false, ...result.refusal }
     }
     case 'wrap': {
       const wrapperSpecifier = resolveNodeImport(edit, targetRel)
@@ -609,7 +642,7 @@ export function applyStructuralEdit(
         name: edit.name,
         ...(wrapperSpecifier === undefined ? {} : { importSpecifier: wrapperSpecifier }),
       })
-      return result.ok ? { ok: true, created: result.created } : { ok: false, ...result.refusal }
+      return result.ok ? { ok: true, created: createdList(result.created) } : { ok: false, ...result.refusal }
     }
     case 'group': {
       // The run's REST arrive as their own decoded locations (`siblings`) —
@@ -622,17 +655,20 @@ export function applyStructuralEdit(
           ok: false,
           reason: 'cross-file',
           message:
-            'Some of the elements in this group are written in a different file, so there is no single place to write one container around them.',
+            'Some of these elements are written in a different file, so one container cannot wrap them all. Group only the ones from a single file.',
         }
       }
       const wrapperSpecifier = resolveNodeImport(edit, targetRel)
-      const result = wrapJsxElements({
+      const groupParams = {
         file: loc.file,
         targets: [{ line: loc.line, col: loc.col }, ...siblings],
         name: edit.name,
         ...(wrapperSpecifier === undefined ? {} : { importSpecifier: wrapperSpecifier }),
-      })
-      return result.ok ? { ok: true, created: result.created } : { ok: false, ...result.refusal }
+      }
+      const result = edit.frame
+        ? frameJsxElements({ ...groupParams, wrapperStyle: edit.frame.wrapperStyle, memberStyles: edit.frame.memberStyles })
+        : wrapJsxElements(groupParams)
+      return result.ok ? { ok: true, created: createdList(result.created) } : { ok: false, ...result.refusal }
     }
     case 'ungroup': {
       const result = unwrapJsxElement(loc)
@@ -644,7 +680,7 @@ export function applyStructuralEdit(
           ok: false,
           reason: 'cross-file',
           message:
-            'The container this element would move into is in a different file. Studio can move an element to a new parent within one file; across files the markup would land where the values it reads do not exist.',
+            'The container this element would move into is in a different file. Drop it into a container from the same file.',
         }
       }
       const result = moveJsxElement({

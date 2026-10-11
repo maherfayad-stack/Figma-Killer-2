@@ -20,7 +20,7 @@
  * shared leaf sits in core rather than here.
  */
 
-import { HTML_TAG_NAME_PATTERN, UNSAFE_HTML_TAGS } from '@core/utils/htmlTags'
+import { HTML_TAG_NAME_PATTERN, UNSAFE_HTML_TAGS, VOID_HTML_ELEMENTS } from '@core/utils/htmlTags'
 import type { PropertyControl } from '@core/module-engine'
 
 const BUILTIN_HTML_TAGS = [
@@ -80,14 +80,11 @@ export function htmlTagControl(label: string = 'HTML tag'): PropertyControl {
 }
 
 /**
- * The tags `base.text` can render as. Distinct from `BUILTIN_HTML_TAGS`: these
- * are text-carrying elements (headings, inline emphasis) and there is no
- * `custom` escape hatch, because `base.text` is a leaf — a tag it cannot
- * represent has to become a `base.container` instead.
- *
- * Lives here rather than inline in `base.text` so the Studio import pipeline
- * can check "can `base.text` actually render this tag?" against the same list
- * the control offers, instead of duplicating it.
+ * The tags `base.text`'s select offers by name. Distinct from
+ * `BUILTIN_HTML_TAGS`: these are text-carrying elements (headings, inline
+ * emphasis). Any other element that can hold text is reached through the same
+ * `custom` escape hatch `base.container` has (`isTextHostTag`) — an imported
+ * `<li>Item</li>` is text in an `<li>`, and it has to stay both (P3-B, WB-3).
  */
 export const TEXT_HTML_TAGS = [
   'p', 'none', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
@@ -95,6 +92,43 @@ export const TEXT_HTML_TAGS = [
 ] as const
 
 export const TEXT_HTML_TAG_SET: ReadonlySet<string> = new Set(TEXT_HTML_TAGS)
+
+/**
+ * Elements whose text children are not rendered as the element's visible
+ * content — a form value (`<textarea>`, `<option>`), document metadata
+ * (`<title>`), or inert markup (`<template>`, `<noscript>`). `base.text` writes
+ * its text as the element's content, so none of these may be one.
+ */
+const NON_CONTENT_TEXT_TAGS: ReadonlySet<string> = new Set(['textarea', 'option', 'title', 'template', 'noscript'])
+
+/**
+ * Can `base.text` render its text inside `<tag>`? Any well-formed, safe,
+ * non-void element whose text children are its visible content — the one rule
+ * both the Studio import pipeline (`moduleMapping.ts`: is this text-only
+ * element a text node?) and `base.text`'s own renderer (`resolveTextTag`) ask,
+ * so what the import maps and what the canvas draws cannot disagree.
+ */
+export function isTextHostTag(tag: string): boolean {
+  if (!HTML_TAG_NAME_PATTERN.test(tag)) return false
+  const lower = tag.toLowerCase()
+  if (lower !== tag) return false
+  return !UNSAFE_HTML_TAGS.has(lower) && !VOID_HTML_ELEMENTS.has(lower) && !NON_CONTENT_TEXT_TAGS.has(lower)
+}
+
+/**
+ * The element `base.text` renders for its `tag` + `customTag` props: one of
+ * its named tags (`'none'` included), or — for `tag: 'custom'` — `customTag`
+ * when `isTextHostTag` accepts it. Anything else falls back to `'p'`, the
+ * module's default, never to an element the name did not ask for.
+ */
+export function resolveTextTag(tag: unknown, customTag: unknown): string {
+  if (tag === CUSTOM_HTML_TAG_VALUE) {
+    const custom = typeof customTag === 'string' ? customTag.trim().toLowerCase() : ''
+    return isTextHostTag(custom) ? custom : 'p'
+  }
+  const named = String(tag || 'p').toLowerCase()
+  return TEXT_HTML_TAG_SET.has(named) ? named : 'p'
+}
 
 /** The `tag` select for `base.text`. `category: 'content'` — a copy editor changing a heading from h2 to h3 is editorial, not structural. */
 export function textTagControl(label: string = 'Tag'): PropertyControl {
@@ -106,10 +140,13 @@ export function textTagControl(label: string = 'Tag'): PropertyControl {
     type: 'select',
     label,
     category: 'content',
-    options: TEXT_HTML_TAGS.map((t) => ({
-      label: LABELS[t] ?? `Heading ${t.slice(1)}`,
-      value: t,
-    })),
+    options: [
+      ...TEXT_HTML_TAGS.map((t) => ({
+        label: LABELS[t] ?? `Heading ${t.slice(1)}`,
+        value: t,
+      })),
+      { label: 'Custom…', value: CUSTOM_HTML_TAG_VALUE },
+    ],
   }
 }
 

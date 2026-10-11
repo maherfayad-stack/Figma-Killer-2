@@ -32,7 +32,7 @@ describe('getSiteImportCommands', () => {
     const [command] = getSiteImportCommands()
     expect(command).toMatchObject({
       id: 'editor.importSite',
-      title: 'Import Site',
+      title: 'Import project…',
       group: 'editor',
       workspaces: ['any'],
     })
@@ -45,7 +45,7 @@ describe('getSiteImportCommands', () => {
     ])
     expect(command.iconName).toBeTruthy()
     expect(command.keywords).toEqual(
-      expect.arrayContaining(['import', 'site', 'zip', 'folder', 'bundle', 'json', 'cms', 'html', 'css']),
+      expect.arrayContaining(['import', 'site', 'zip', 'folder', 'html', 'css']),
     )
   })
 

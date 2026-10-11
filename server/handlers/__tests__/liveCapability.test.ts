@@ -7,7 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { resolveLiveCapability } from '../studio/liveCapability'
+import { describeLiveRefusal, resolveLiveCapability } from '../studio/liveCapability'
 import { projectsRootDir } from '../studioProjects'
 import { tryServeStudioTrustTier } from '../studio/trustTier'
 
@@ -37,11 +37,17 @@ describe('resolveLiveCapability', () => {
     fs.rmSync(wsDir, { recursive: true, force: true })
   })
 
-  function makeVite(command = 'vite'): void {
+  function makeInstalled(): void {
+    fs.mkdirSync(path.join(wsDir, 'node_modules', 'vite'), { recursive: true })
+    fs.writeFileSync(path.join(wsDir, 'node_modules', 'vite', 'package.json'), '{"name":"vite"}')
+  }
+
+  function makeVite(command = 'vite', installed = true): void {
     fs.writeFileSync(path.join(wsDir, 'package.json'), JSON.stringify({ name: 'fixture', dependencies: { react: '19.0.0' }, scripts: { dev: command } }))
     fs.writeFileSync(path.join(wsDir, 'vite.config.js'), 'export default {}\n')
     fs.mkdirSync(path.join(wsDir, 'src'), { recursive: true })
     fs.writeFileSync(path.join(wsDir, 'src', 'main.jsx'), 'export {}\n')
+    if (installed) makeInstalled()
   }
 
   function makeLockfile(name = 'bun.lock'): void {
@@ -80,11 +86,35 @@ describe('resolveLiveCapability', () => {
     }
   })
 
-  it('accepts a Vite project whether or not it has a lockfile — an uninstalled one fails to boot, which the registry reports', () => {
+  it('refuses a Vite project with a lockfile but no node_modules — the dev server would die on boot, so the pill must not say Live', () => {
+    makeVite('vite', false)
+    makeLockfile()
+    expect(resolveLiveCapability(wsDir)).toEqual({ capable: false, reason: 'not-installed' })
+  })
+
+  it('accepts an installed Vite project whether or not it has a lockfile', () => {
     makeVite()
     expect(resolveLiveCapability(wsDir)).toEqual({ capable: true })
     makeLockfile()
     expect(resolveLiveCapability(wsDir)).toEqual({ capable: true })
+  })
+
+  it('says a different sentence for each refusal - a plain "vite" project with no node_modules is not blamed on its script', () => {
+    makeVite('vite', false)
+    const missingInstall = describeLiveRefusal(wsDir, 'not-installed')
+    expect(missingInstall).toContain('Vite is not installed')
+    expect(missingInstall).not.toContain('not a vite invocation')
+
+    makeVite('next dev')
+    expect(describeLiveRefusal(wsDir, 'not-vite')).toContain('not a vite invocation')
+
+    fs.writeFileSync(path.join(wsDir, 'package.json'), JSON.stringify({ name: 'fixture' }))
+    expect(describeLiveRefusal(wsDir, 'not-vite')).toContain('no "dev" or "start" script')
+
+    // These reach the client: no filesystem path.
+    for (const reason of ['not-vite', 'not-installed'] as const) {
+      expect(describeLiveRefusal(wsDir, reason)).not.toContain(wsDir)
+    }
   })
 
   it('GET reports the capability alongside the tier, so the pill never has to guess', async () => {

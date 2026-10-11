@@ -34,6 +34,19 @@
  * painted by `AdminCanvasLayout` ABOVE the lazy boundary that mounts the
  * canvas, so they are not descendants of `CanvasViewportActionsContext` — see
  * `canvas-internals.md`, "Chrome outside `CanvasRoot`".
+ *
+ * ## Two signals: the transitions, and every write
+ *
+ * `onCanvasViewportActivityChange` fires on the active↔idle EDGES — for work
+ * that only has to know a gesture is running (hold a measurement, settle once
+ * after). `onCanvasViewportTransform` fires on EVERY transform write, in the
+ * same task as the write — for the few things painted in the parent document
+ * that must move WITH the board rather than a frame later: the rulers, and the
+ * selection toolbar / in-place inspector (`selectionChromeViewportFollow.ts`,
+ * audit PERF-3/PERF-4). Both used to learn about a pan by polling
+ * `transformRef` every animation frame, forever (the rulers) or by freezing
+ * until the debounced store commit (the toolbar). Listeners read
+ * `transformRef` themselves; the write carries no payload.
  */
 
 /**
@@ -47,6 +60,7 @@ export const CANVAS_VIEWPORT_IDLE_MS = 150
 let active = false
 let idleTimer: ReturnType<typeof setTimeout> | null = null
 const listeners = new Set<(active: boolean) => void>()
+const transformListeners = new Set<() => void>()
 
 function emit(): void {
   for (const listener of listeners) listener(active)
@@ -71,9 +85,11 @@ export function markCanvasViewportActivity(holdMs = 0): void {
     emit()
   }, Math.max(holdMs, CANVAS_VIEWPORT_IDLE_MS))
 
-  if (active) return
-  active = true
-  emit()
+  if (!active) {
+    active = true
+    emit()
+  }
+  for (const listener of transformListeners) listener()
 }
 
 /** Whether a pan/zoom is in flight (or settled less than the idle window ago). */
@@ -86,5 +102,18 @@ export function onCanvasViewportActivityChange(listener: (active: boolean) => vo
   listeners.add(listener)
   return () => {
     listeners.delete(listener)
+  }
+}
+
+/**
+ * Subscribe to every pan/zoom transform write — called synchronously from
+ * `markCanvasViewportActivity`, after the new transform is on the DOM and in
+ * `transformRef`. Returns an unsubscribe. Keep listeners arithmetic-only: they
+ * run once per animation frame of a gesture.
+ */
+export function onCanvasViewportTransform(listener: () => void): () => void {
+  transformListeners.add(listener)
+  return () => {
+    transformListeners.delete(listener)
   }
 }

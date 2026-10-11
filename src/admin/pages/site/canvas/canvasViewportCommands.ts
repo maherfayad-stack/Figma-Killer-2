@@ -27,7 +27,7 @@
  * copy would compute the fit from a stale zoom. Only the DOM *measurement*
  * lives here, shared by the keyboard and toolbar paths alike.
  */
-import type { CanvasFitRect } from './canvasZoomFit'
+import { uniformInsets, type CanvasFitRect, type ZoomFitInsets } from './canvasZoomFit'
 
 /**
  * The imperative viewport gestures `CanvasRoot` publishes to the editor store
@@ -67,16 +67,57 @@ function toFitRect(rect: DOMRect, rootRect: DOMRect): CanvasFitRect {
  * siblings sharing the prefix, so a plain attribute-presence selector can't
  * accidentally pick up chrome buttons. Fully-unmeasured (0×0) frames are
  * dropped rather than fitted as points.
+ *
+ * On a board the unit is the whole frame card (`data-frame-mount`: title bar
+ * plus body), so the title strip above a frame is inside the fit instead of
+ * landing under the toolbar; sticky notes and docs (`data-annotation-id`) are
+ * board objects too and are fitted with the frames. Outside a board (no frame
+ * cards) it is each viewport wrapper.
  */
 export function measureCanvasFrameRects(root: HTMLElement, layer: HTMLElement): CanvasFitRect[] {
   const rootRect = root.getBoundingClientRect()
   const rects: CanvasFitRect[] = []
-  for (const frame of layer.querySelectorAll<HTMLElement>('[data-breakpoint-id]')) {
-    const r = frame.getBoundingClientRect()
+  const cards = layer.querySelectorAll<HTMLElement>('[data-frame-mount]')
+  const boxes = cards.length > 0
+    ? [...cards, ...layer.querySelectorAll<HTMLElement>('[data-annotation-id]')]
+    : [...layer.querySelectorAll<HTMLElement>('[data-breakpoint-id]')]
+  for (const box of boxes) {
+    const r = box.getBoundingClientRect()
     if (r.width === 0 && r.height === 0) continue
     rects.push(toFitRect(r, rootRect))
   }
   return rects
+}
+
+/** Breathing room kept between fitted content and floating chrome. */
+const CHROME_CLEARANCE_PX = 16
+
+/**
+ * The margins a fit leaves on each side: the edge padding, but never less than
+ * the floating notch (it overlays the canvas root's top edge) plus a little
+ * clearance, so a fitted frame's title bar is not hidden beneath it - and, on
+ * the right, the width the docked Properties sidebar WILL take.
+ *
+ * That sidebar is a flex sibling of the canvas root that opens on selection:
+ * a fit made while it is closed measures the full-width root, then the first
+ * selection narrows the root by the panel's width and the rightmost frame sits
+ * under the panel (clicks land in the inspector). Figma fits the viewport that
+ * is left once its docked panels are open, so a closed docked sidebar's
+ * layout width is reserved here. An open one has already shrunk the root.
+ */
+export function measureCanvasFitInsets(root: HTMLElement, padding: number): ZoomFitInsets {
+  const insets = uniformInsets(padding)
+  const sidebar = root.ownerDocument.querySelector<HTMLElement>('[data-testid="right-sidebar"]')
+  if (sidebar && sidebar.dataset.mode === 'docked' && sidebar.dataset.expanded === 'false') {
+    const reserved = Number.parseFloat(root.ownerDocument.defaultView?.getComputedStyle(sidebar).getPropertyValue('--right-sidebar-panel-layout-width') ?? '')
+    if (Number.isFinite(reserved) && reserved > 0) insets.right = Math.max(insets.right, reserved + padding)
+  }
+  const notch = root.querySelector<HTMLElement>('[data-testid="canvas-notch"]')
+  if (notch) {
+    const clearance = notch.getBoundingClientRect().bottom - root.getBoundingClientRect().top + CHROME_CLEARANCE_PX
+    insets.top = Math.max(insets.top, clearance)
+  }
+  return insets
 }
 
 /**

@@ -57,6 +57,50 @@ describe('parseTranslationReply — shapes it absorbs', () => {
   })
 })
 
+describe('parseTranslationReply — a reply cut off mid-object', () => {
+  it('salvages every complete pair before the cut, and reports truncated', () => {
+    // The closing brace, and the last value's closing quote, never arrived —
+    // realistic for a big batch hitting the driver's own output-token cap.
+    const reply = parseTranslationReply('{"home.from": "من", "home.searchFlights": "ابحث عن رحلات", "page.signOut": "تسجيل ال', WANTED)
+    expect(reply?.truncated).toBe(true)
+    expect(reply?.translations).toEqual({ 'home.from': 'من', 'home.searchFlights': 'ابحث عن رحلات' })
+    // The cut key is simply absent — never a half string written as if whole.
+    expect(reply?.translations['page.signOut']).toBeUndefined()
+  })
+
+  it('salvages a nested reply cut off after closing its second namespace', () => {
+    // Both `home` and `page` fully close before the cut (inside a THIRD,
+    // unrequested namespace) — two top-level keys survive, which is what
+    // keeps this from being mistaken for a single-key wrapper (`unwrap`'s
+    // own three-condition guard).
+    const reply = parseTranslationReply(
+      '{"home": {"from": "من", "searchFlights": "ابحث عن رحلات"}, "page": {"signOut": "تسجيل الخروج"}, "extra": "cut off he',
+      WANTED,
+    )
+    expect(reply?.truncated).toBe(true)
+    expect(reply?.translations).toEqual({
+      'home.from': 'من',
+      'home.searchFlights': 'ابحث عن رحلات',
+      'page.signOut': 'تسجيل الخروج',
+    })
+  })
+
+  it('is not fooled by a brace inside a salvaged string', () => {
+    const reply = parseTranslationReply('{"home.from": "{count} من", "home.searchFlights": "ابحث عن رحل', WANTED)
+    expect(reply?.truncated).toBe(true)
+    expect(reply?.translations).toEqual({ 'home.from': '{count} من' })
+  })
+
+  it('reports untruncated for an ordinary, fully-closed reply', () => {
+    const reply = parseTranslationReply('{"home.from": "من"}', WANTED)
+    expect(reply?.truncated).toBe(false)
+  })
+
+  it('returns undefined when the cut lands inside the very first value — nothing to salvage', () => {
+    expect(parseTranslationReply('{"home.from": "من witho', WANTED)).toBeUndefined()
+  })
+})
+
 describe('parseTranslationReply — content it refuses', () => {
   it('drops a key nobody asked for rather than writing it', () => {
     const reply = parseTranslationReply('{"home.from": "من", "home.invented": "خطأ"}', WANTED)

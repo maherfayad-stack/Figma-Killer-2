@@ -1,0 +1,20 @@
+.losses {
+    margin: 0;
+    padding-inline-start: var(--space-m);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    font-size: var(--text-s);
+    line-height: 1.5;
+    color: var(--text);
+}
+
+.loss {
+    margin: 0;
+}
+
+.undo {
+    margin: var(--space-xs) 0 0;
+    font-size: var(--text-2xs);
+    color: var(--text-muted);
+}

@@ -2,17 +2,37 @@
  * assetLanding — the single choke point that writes an image (or SVG) byte
  * buffer into a Studio project as a new, collision-safe file.
  *
- * Three callers converge here:
+ * Every caller converges here:
+ *   - `assetDrop.ts` (`POST /admin/api/studio/asset-drop`): a file dropped on
+ *     a frame or picked in the inspector, landed in the server-derived
+ *     `public/` so it can back a literal `src` — or, when the page it is
+ *     dropped into imports its images, beside them (IMG-10). Its twin
+ *     `assetDropUrl.ts` lands an image the server fetched from a URL dragged
+ *     out of another tab (IMG-5) through the same home.
  *   - `assetUpload.ts` (`POST /admin/api/studio/asset-upload`) — bytes come
  *     from a multipart upload the browser has already read into memory.
+ *   - `extractReferenceAsset.ts` (`studio_extract_reference_asset`): a crop of
+ *     a design reference, landed as an app asset.
  *   - `remoteAssetFetch.ts` (`studio_fetch_remote_asset`) — bytes come from a
  *     server-side fetch of a caller-supplied URL. Different transport, same
  *     destination, same threat model.
  *   - `designReferenceStore.ts` (`studio_register_design_reference`) — same
- *     sniff/sanitize/collision-safe write, but the ONE caller allowed to
- *     target `.studio/` (see `DESIGN_REFERENCE_ASSET_DIR`) instead of an
- *     app-code asset directory, because a design reference is Studio's own
- *     state, never an `<img>` import target.
+ *     sniff/sanitize/collision-safe write through its own entry,
+ *     `landDesignReferenceBytes`, into the one `.studio/` directory the
+ *     SERVER names (`DESIGN_REFERENCE_STORE_DIR`), because a design reference
+ *     is Studio's own state, never an `<img>` import target.
+ *
+ * A landing is idempotent by content (IMG-1): the same bytes landed twice in
+ * the same directory reuse the first file (`deduped: true`) instead of writing
+ * `photo-2.png`, which is also what makes a retried `asset-drop` safe to
+ * replay. A design reference never dedupes: its file NAME is its id
+ * (`readDesignReferenceBytes` re-derives it; removal deletes it), so two
+ * references must never share one file. Every success also reports the
+ * intrinsic `width` /
+ * `height` read from the header (`imageDimensions.ts`). Every file a landing
+ * CREATES (not a dedupe, not a design reference) is recorded in the asset
+ * ledger (`assetLedger.ts`, IMG-11), which is what lets an explicit "delete
+ * unused" offer it later — and only it.
  *
  * Every input here is adversarial regardless of caller: the target directory
  * may not exist yet, the declared filename is never trusted, and the actual
@@ -40,35 +60,60 @@
  * `<svg></svg>` wrapper). `svgSanitize.ts`'s own doc comment explains why a
  * targeted string sanitizer is the correct, dependency-free choice here.
  */
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs'
-import { EXCLUDED_WORKSPACE_DIR_NAMES } from '@core/page-parser'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { closeSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, writeFileSync } from 'node:fs'
+import { isWorkspaceWritablePath, pathEntryExists } from '@core/page-parser'
 import { sanitizeSvgBytes } from '../cms/svgSanitize'
+import { readImageDimensions } from './imageDimensions'
+import { recordLandedAsset } from './assetLedger'
+import { isStudioStorePathUnlinked, studioStorePath } from './studioStore'
 
 /** Where a bare (no `targetDir`) asset write lands — the conventional home for local images in a Vite/CRA-shaped repo. */
 export const DEFAULT_ASSET_TARGET_DIR = 'src/assets'
 
 /**
- * The ONE deliberate exception to the `.studio` entry in
- * `EXCLUDED_WORKSPACE_DIR_NAMES` below — see `resolveAssetWriteDir`. A design
- * reference (`server/handlers/studio/designReferenceStore.ts`) is Studio's
- * own state, not app code the parser would ever walk, so it belongs beside
- * `boards.json`/`meta.json` under `.studio/`, not under `src/assets` where an
- * ordinary upload lands to become an `<img>` import. Every OTHER `.studio`
- * target (and every other excluded dir name) stays refused exactly as before.
+ * The directory a design reference lands in (`designReferenceStore.ts`). It
+ * is Studio's own state, not app code, so it belongs beside
+ * `boards.json`/`meta.json` under `.studio/` rather than under `src/assets`
+ * where an ordinary upload lands to become an `<img>` import.
+ *
+ * Only {@link landDesignReferenceBytes} writes here, and the path is fixed on
+ * the server. It used to be an exception granted to a caller-supplied
+ * `targetDir` STRING equal to this value, so any upload route or MCP asset
+ * tool that forwarded a client's `targetDir` could land a file in `.studio/`.
  */
-export const DESIGN_REFERENCE_ASSET_DIR = '.studio/references'
+export const DESIGN_REFERENCE_STORE_DIR = 'references'
 
 export type LandAssetResult =
-  | { ok: true; relPath: string }
+  | {
+      ok: true
+      /** Project-relative POSIX path of the file the bytes now live in. */
+      relPath: string
+      /** True when an identical file already sat in the target directory and was reused — nothing was written. */
+      deduped: boolean
+      /** Intrinsic pixel size from the header bytes (`imageDimensions.ts`); `null` when the header does not say. */
+      width: number | null
+      height: number | null
+    }
   | { ok: false; error: string }
 
 // ---------------------------------------------------------------------------
 // Target-directory containment — the target directory may not exist yet (a
-// fresh `src/assets`), so containment is checked on the nearest EXISTING
-// ancestor's real path rather than the target's own.
+// fresh `src/assets`), so the shared write predicate resolves it through its
+// deepest EXISTING ancestor's real path.
 // ---------------------------------------------------------------------------
 
+/**
+ * The absolute directory a caller-supplied `targetDirRaw` names, or `null`
+ * when it may not be written: absolute/UNC/drive-letter forms, `..`/`.`
+ * segments on either separator, and — through the shared predicate every
+ * Studio writer consults (`isWorkspaceWritablePath`, `@core/page-parser`) —
+ * any directory Studio owns or that is not source (`.studio`, `.git`,
+ * `node_modules`, build output, `.claude`), checked on the spelling AND on
+ * the real path, so `src/assets -> ../.git/hooks` is refused for where it
+ * lands. There is no exception here, for `.studio/references` or anything
+ * else.
+ */
 export function resolveAssetWriteDir(dir: string, targetDirRaw: string | undefined): string | null {
   const rel = targetDirRaw && targetDirRaw.trim().length > 0 ? targetDirRaw.trim() : DEFAULT_ASSET_TARGET_DIR
   if (isAbsolute(rel)) return null
@@ -78,45 +123,19 @@ export function resolveAssetWriteDir(dir: string, targetDirRaw: string | undefin
   const segments = rel.split(/[\\/]+/).filter((segment) => segment.length > 0)
   if (segments.length === 0) return null
   if (segments.some((segment) => segment === '..' || segment === '.')) return null
-  // `.studio` is excluded for every OTHER target (it is editor-owned spatial
-  // metadata, never app code) — `DESIGN_REFERENCE_ASSET_DIR` is the one
-  // literal path allowed to land there. Matched on the whole normalized
-  // relative path, not just a segment name, so a caller can't smuggle an
-  // unrelated `.studio/<anything else>` write through this exception.
-  const isDesignReferenceTarget = segments.join('/') === DESIGN_REFERENCE_ASSET_DIR
-  if (!isDesignReferenceTarget && segments.some((segment) => EXCLUDED_WORKSPACE_DIR_NAMES.has(segment))) return null
 
-  const root = resolve(dir)
-  const target = resolve(join(dir, ...segments))
-  if (target !== root && !target.startsWith(root + sep)) return null
+  const target = join(dir, ...segments)
+  return isWorkspaceWritablePath(dir, target) ? resolve(target) : null
+}
 
-  let realRoot: string
-  try {
-    realRoot = realpathSync(root)
-  } catch {
-    return null // the project dir itself doesn't exist on disk
-  }
-
-  // Walk up to the nearest EXISTING ancestor (could be `dir` itself when
-  // `targetDir` is entirely new) and verify ITS real path is contained — this
-  // is what catches a symlinked intermediate directory (`src` -> outside the
-  // workspace) even though the leaf path itself has never been written.
-  let probe = target
-  for (;;) {
-    if (existsSync(probe)) break
-    const parent = dirname(probe)
-    if (parent === probe) return null // reached the filesystem root without finding an existing ancestor
-    probe = parent
-  }
-  let realProbe: string
-  try {
-    realProbe = realpathSync(probe)
-  } catch {
-    return null
-  }
-  if (realProbe !== realRoot && !realProbe.startsWith(realRoot + sep)) return null
-
-  return target
+/**
+ * {@link DESIGN_REFERENCE_STORE_DIR}, resolved — or `null` when anything from
+ * `.studio` down to it is a link (`studioStore.ts`'s rule). The source-writer
+ * predicate cannot be used: it refuses every `.studio` path by design, and
+ * this is the one server-derived directory Studio writes its own image state to.
+ */
+function resolveDesignReferenceDir(dir: string): string | null {
+  return isStudioStorePathUnlinked(dir, DESIGN_REFERENCE_STORE_DIR) ? studioStorePath(dir, DESIGN_REFERENCE_STORE_DIR) : null
 }
 
 // ---------------------------------------------------------------------------
@@ -196,21 +215,127 @@ export function sanitizeAssetBaseName(rawName: string): string {
   return truncated.length > 0 ? truncated : 'asset'
 }
 
-/** First non-colliding `<base>[-N].<ext>` inside `writeDir` — never silently overwrites an unrelated existing file. */
-function uniqueAssetPath(writeDir: string, base: string, ext: string): string {
-  let candidate = join(writeDir, `${base}.${ext}`)
-  for (let n = 2; existsSync(candidate); n += 1) {
-    candidate = join(writeDir, `${base}-${n}.${ext}`)
-    if (n > 1000) break // pathological — stop guessing rather than loop forever
+/** At most this many same-size candidates are compared per landing (security review F2). */
+export const MAX_DEDUPE_CANDIDATES = 16
+
+/** At most this many bytes are read from disk, across all candidates, per landing (security review F2). */
+export const MAX_DEDUPE_COMPARE_BYTES = 64 * 1024 * 1024
+
+const DEDUPE_CHUNK_BYTES = 64 * 1024
+
+/**
+ * Whether the file at `full` holds exactly `bytes`, read in chunks with an
+ * exit at the first differing chunk. Reads at most `budget` bytes; `null`
+ * when the budget ran out before an answer (treated as "not a match").
+ */
+function fileEquals(full: string, bytes: Uint8Array, budget: number): { equal: boolean | null; read: number } {
+  const fd = openSync(full, 'r')
+  try {
+    const chunk = Buffer.alloc(Math.min(DEDUPE_CHUNK_BYTES, Math.max(bytes.length, 1)))
+    let offset = 0
+    while (offset < bytes.length) {
+      if (offset >= budget) return { equal: null, read: offset }
+      const want = Math.min(chunk.length, bytes.length - offset)
+      const got = readSync(fd, chunk, 0, want, offset)
+      if (got !== want) return { equal: false, read: offset + got }
+      if (!chunk.subarray(0, got).equals(bytes.subarray(offset, offset + got))) return { equal: false, read: offset + got }
+      offset += got
+    }
+    return { equal: true, read: offset }
+  } finally {
+    closeSync(fd)
   }
-  return candidate
+}
+
+/**
+ * A file already in `writeDir` whose bytes equal `bytes`, or `null` (IMG-1,
+ * audit 07 §A.4).
+ *
+ * Bounded on purpose (security review F2): `writeDir`'s own entries only
+ * (never recursive), only regular files (a symlink is never followed, so this
+ * can never read a file outside the project), only the sniffed extension,
+ * only a file whose size matches, at most {@link MAX_DEDUPE_CANDIDATES} of
+ * those, and at most {@link MAX_DEDUPE_COMPARE_BYTES} read in total, each
+ * comparison chunked with an exit at the first difference. Running out of
+ * budget answers "no match", so the landing writes a new file: dedupe is an
+ * optimisation, never a reason to block.
+ *
+ * Only a name this module could itself have written (`<sanitized base>.<ext>`)
+ * is eligible. A repo can arrive from GitHub holding `a"onerror=….png`, and
+ * reusing it would hand that name to an `<img src>` literal, which is the one
+ * thing `sanitizeAssetBaseName` exists to prevent.
+ */
+function findIdenticalAsset(writeDir: string, ext: string, bytes: Uint8Array): string | null {
+  let names: string[]
+  try {
+    names = readdirSync(writeDir, { withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name)
+      .filter((name) => {
+        if (!name.endsWith(`.${ext}`)) return false
+        const base = name.slice(0, -(ext.length + 1))
+        return sanitizeAssetBaseName(base) === base
+      })
+      .sort()
+  } catch {
+    return null
+  }
+
+  let candidates = 0
+  let budget = MAX_DEDUPE_COMPARE_BYTES
+  for (const name of names) {
+    const full = join(writeDir, name)
+    try {
+      const stat = lstatSync(full)
+      if (!stat.isFile() || stat.size !== bytes.length) continue
+      if (candidates >= MAX_DEDUPE_CANDIDATES) return null
+      candidates += 1
+      const { equal, read } = fileEquals(full, bytes, budget)
+      if (equal === true) return full
+      budget -= read
+      if (equal === null || budget <= 0) return null
+    } catch {
+      // Removed or unreadable between the listing and the read: not a match.
+    }
+  }
+  return null
+}
+
+/**
+ * Create the first non-colliding `<base>[-N].<ext>` inside `writeDir` and
+ * write `bytes` to it, returning its path — or `null` when no free name was
+ * found. Never overwrites anything, and never writes THROUGH anything: a
+ * name is free only when no entry at all is there (`pathEntryExists`, links
+ * not followed). `existsSync` follows a link, so it called a DANGLING
+ * symlink planted at `hero.png` (a repository can carry one) free, and the
+ * write then created the file wherever the link pointed — outside the
+ * project included. The write itself is an exclusive create (`wx`) so a
+ * name taken between the probe and the write is skipped, not replaced.
+ */
+function createUniqueAssetFile(writeDir: string, base: string, ext: string, bytes: Uint8Array): string | null {
+  for (let n = 1; n <= 1000; n += 1) {
+    const candidate = join(writeDir, n === 1 ? `${base}.${ext}` : `${base}-${n}.${ext}`)
+    if (pathEntryExists(candidate)) continue
+    try {
+      writeFileSync(candidate, bytes, { flag: 'wx' })
+      return candidate
+    } catch (err) {
+      if (err instanceof Error && 'code' in err && err.code === 'EEXIST') continue
+      throw err
+    }
+  }
+  return null // pathological — stop guessing rather than loop forever
 }
 
 /**
  * Land `bytes` into `dir`/`targetDirRaw` (or the default asset dir) as a new,
- * collision-safe file. `declaredFilename` is used ONLY for its base name (a
- * hint for the written filename) — the actual bytes decide the extension,
- * and SVG bytes are sanitized before the write. Never throws.
+ * collision-safe file, or reuse a byte-identical file already there
+ * (`deduped: true`, see {@link findIdenticalAsset}). `declaredFilename` is
+ * used ONLY for its base name (a hint for the written filename): the actual
+ * bytes decide the extension, and SVG bytes are sanitized before the write
+ * and before the dedupe comparison, so what is compared is what would land on
+ * disk. `targetDirRaw` is caller-supplied and gets the full guard
+ * (`resolveAssetWriteDir`). Never throws.
  */
 export function landAssetBytes(
   dir: string,
@@ -220,7 +345,29 @@ export function landAssetBytes(
 ): LandAssetResult {
   const writeDir = resolveAssetWriteDir(dir, targetDirRaw)
   if (writeDir === null) return { ok: false, error: 'Invalid target directory.' }
+  return landIntoDir(dir, writeDir, bytes, declaredFilename, { dedupe: true })
+}
 
+/**
+ * Land a design reference's bytes into {@link DESIGN_REFERENCE_STORE_DIR} —
+ * the same sniff/sanitize/collision-safe pipeline as {@link landAssetBytes},
+ * into a directory the SERVER fixes. `designReferenceStore.ts` is its only
+ * caller; nothing that forwards a client's `targetDir` may reach it. Never
+ * dedupes: a reference's file name is its id (see the module doc).
+ */
+export function landDesignReferenceBytes(dir: string, bytes: Uint8Array, baseName: string): LandAssetResult {
+  const writeDir = resolveDesignReferenceDir(dir)
+  if (writeDir === null) return { ok: false, error: 'The design-reference directory is not writable.' }
+  return landIntoDir(dir, writeDir, bytes, baseName, { dedupe: false })
+}
+
+function landIntoDir(
+  dir: string,
+  writeDir: string,
+  bytes: Uint8Array,
+  declaredFilename: string,
+  options: { dedupe: boolean },
+): LandAssetResult {
   const ext = sniffImageExtension(bytes)
   if (ext === null) return { ok: false, error: 'The content is not a recognized image format.' }
 
@@ -233,10 +380,29 @@ export function landAssetBytes(
     finalBytes = sanitized
   }
 
-  mkdirSync(writeDir, { recursive: true })
-  const finalPath = uniqueAssetPath(writeDir, sanitizeAssetBaseName(declaredFilename), ext)
-  writeFileSync(finalPath, Buffer.from(finalBytes))
+  const dimensions = readImageDimensions(finalBytes, ext)
+  const width = dimensions?.width ?? null
+  const height = dimensions?.height ?? null
+  const toRelPath = (absolute: string) => relative(resolve(dir), absolute).split(sep).join('/')
 
-  const relPath = relative(resolve(dir), finalPath).split(sep).join('/')
-  return { ok: true, relPath }
+  let finalPath: string | null
+  try {
+    mkdirSync(writeDir, { recursive: true })
+    if (options.dedupe) {
+      const existing = findIdenticalAsset(writeDir, ext, finalBytes)
+      if (existing !== null) return { ok: true, relPath: toRelPath(existing), deduped: true, width, height }
+    }
+    finalPath = createUniqueAssetFile(writeDir, sanitizeAssetBaseName(declaredFilename), ext, finalBytes)
+  } catch (err) {
+    console.error('[studio/assetLanding] could not create the asset file:', err)
+    return { ok: false, error: 'Could not create the asset file.' }
+  }
+  if (finalPath === null) return { ok: false, error: 'No free file name is left for this asset.' }
+
+  const relPath = toRelPath(finalPath)
+  // IMG-11 — a file Studio CREATED goes in the ledger, which is what lets an
+  // explicit "delete unused" offer it later. A design reference is Studio's
+  // own state and is never offered; a dedupe above wrote nothing new.
+  if (options.dedupe) recordLandedAsset(dir, relPath, finalBytes)
+  return { ok: true, relPath, deduped: false, width, height }
 }

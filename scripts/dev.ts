@@ -282,6 +282,8 @@ const processes: DevProcess[] = [
     logPath: './.tmp/dev-cms.log',
     env: {
       PORT: String(CMS_PORT),
+      // Headless capture (share, thumbnails) loads the admin app from Vite.
+      VITE_PORT: String(VITE_PORT),
       DATABASE_URL,
       STATIC_DIR: process.env.STATIC_DIR ?? './dist',
       UPLOADS_DIR: process.env.UPLOADS_DIR ?? './uploads',
@@ -291,6 +293,9 @@ const processes: DevProcess[] = [
     name: 'vite',
     command: viteCommand('--host', '127.0.0.1', '--port', String(VITE_PORT), '--strictPort'),
     logPath: './.tmp/dev-vite.log',
+    // Vite's `/admin/api` proxy cannot carry the presence WebSocket under Bun,
+    // so the editor connects to the backend directly (studioLiveConnection.ts).
+    env: { VITE_STUDIO_LIVE_BACKEND_PORT: String(CMS_PORT) },
   },
 ]
 

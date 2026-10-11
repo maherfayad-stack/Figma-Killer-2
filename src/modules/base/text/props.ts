@@ -18,9 +18,12 @@ export const TextPropsSchema = Type.Object({
       Type.Literal('small'),
       Type.Literal('strong'),
       Type.Literal('em'),
+      // Any other element that shows its text — `customTag` names it (WB-3).
+      Type.Literal('custom'),
     ],
     { default: 'p' },
   ),
+  customTag: Type.String({ default: '' }),
   htmlAttributes: Type.Record(Type.String(), Type.String(), HtmlAttributesPropSchemaOptions),
 })
 

@@ -1,6 +1,6 @@
 /**
  * boxShadowLayers — exhaustive parse/serialise coverage
- * (docs/features/inspector-disclosure.md §4 G8).
+ * (docs/features/inspector.md §4 G8).
  *
  * The load-bearing property under test: `parseShadowValue` only ever
  * returns `'layers'` when `serializeBoxShadowLayers(layers)` reproduces the

@@ -12,10 +12,10 @@ import { describe, expect, it, beforeEach, afterEach } from 'bun:test'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { studioProjectMcpTools } from './projectTools'
+import { studioFileReadMcpTools } from './fileReadTools'
 
-const listFiles = studioProjectMcpTools.find((t) => t.name === 'studio_list_files')!
-const readFile = studioProjectMcpTools.find((t) => t.name === 'studio_read_file')!
+const listFiles = studioFileReadMcpTools.find((t) => t.name === 'studio_list_files')!
+const readFile = studioFileReadMcpTools.find((t) => t.name === 'studio_read_file')!
 
 let dir: string
 

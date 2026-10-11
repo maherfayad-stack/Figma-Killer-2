@@ -158,19 +158,20 @@ describe('DOMPanel DnD target resolution', () => {
   })
 
   it('previews a source-writeback refusal for a structurally valid tree-row target (G5)', () => {
-    const inlinedA = 'pages/Home.tsx:10:4~ui/Card.tsx:2:4'
-    const inlinedB = 'pages/Home.tsx:12:4~ui/Card.tsx:2:4'
+    // A `.map` row: one piece of source renders every row, so the WRITE refuses.
+    const rowA = 'pages/Home.tsx:10:4#0'
+    const rowB = 'pages/Home.tsx:10:4#1'
     const p = page({
       root: node('root', 'base.body', ['container']),
-      container: node('container', 'base.container', [inlinedA, inlinedB]),
-      [inlinedA]: node(inlinedA, 'base.text'),
-      [inlinedB]: node(inlinedB, 'base.text'),
+      container: node('container', 'base.container', [rowA, rowB]),
+      [rowA]: node(rowA, 'base.text'),
+      [rowB]: node(rowB, 'base.text'),
     })
 
     const target = resolveDomDropTarget({
       page: p,
-      draggedId: inlinedA,
-      overId: inlinedB,
+      draggedId: rowA,
+      overId: rowB,
       zone: 'after',
       canHaveChildren,
     })
@@ -179,8 +180,24 @@ describe('DOMPanel DnD target resolution', () => {
 
     const refusal = previewDomDropRefusal(p, target!)
     expect(refusal).not.toBeNull()
-    expect(refusal?.overId).toBe(inlinedB)
-    expect(refusal?.message).toContain('shared component')
+    expect(refusal?.overId).toBe(rowB)
+    expect(refusal?.message).toContain('row of a list')
+  })
+
+  // OD-7 (P3-D) — inside a shared component the move is written to THIS
+  // instance, so no refusal is previewed. It used to refuse `shared-component`.
+  it('previews no refusal for a move inside a shared component (OD-7)', () => {
+    const inlinedA = 'pages/Home.tsx:10:4~ui/Card.tsx:2:4'
+    const inlinedB = 'pages/Home.tsx:12:4~ui/Card.tsx:2:4'
+    const p = page({
+      root: node('root', 'base.body', ['container']),
+      container: node('container', 'base.container', [inlinedA, inlinedB]),
+      [inlinedA]: node(inlinedA, 'base.text'),
+      [inlinedB]: node(inlinedB, 'base.text'),
+    })
+    const target = resolveDomDropTarget({ page: p, draggedId: inlinedA, overId: inlinedB, zone: 'after', canHaveChildren })
+    expect(target).not.toBeNull()
+    expect(previewDomDropRefusal(p, target!)).toBeNull()
   })
 
   it('does not invent a refusal for an ordinary CMS (nanoid) tree', () => {

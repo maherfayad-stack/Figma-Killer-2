@@ -2,7 +2,7 @@
  * LayerNodeContextMenu — right-click menu for nodes in the DOM panel and
  * canvas. Hosts rename / duplicate / componentize / save-as-layout / cut /
  * copy / paste / wrap / delete
- * actions and an "Insert module here" `ContextMenuSubmenu` that shows the
+ * actions and an "Insert element here" `ContextMenuSubmenu` that shows the
  * shared `ModulePicker` (search + categorized module list, including site
  * Visual Components) as a true second-level dropdown — same primitive,
  * same styling, same hover/focus/colors as every other submenu.
@@ -23,7 +23,7 @@
  *   that selection, the menu acts on every selected node:
  *     - Rename → hidden (only meaningful for one node).
  *     - Duplicate / Copy / Cut / Wrap / Delete → multi-aware actions.
- *     - "Insert module here" → hidden (anchored to one parent).
+ *     - "Insert element here" → hidden (anchored to one parent).
  * - Wrap is now a SUBMENU with two choices: Container and Loop. The
  *   underlying action is `wrapNode` (single) or `wrapNodes` (multi, with
  *   closest-common-ancestor semantics).
@@ -50,6 +50,18 @@
  * (`ConstraintNotice`, `@site/ui/ConstraintNotice`) — the same component the
  * refusal toast and every other refusal surface share, so the wording and the
  * ways forward cannot drift between them.
+ *
+ * P5-C (DET-5) — "Detach instance" when every target is a component
+ * call site: the store's one `detachInstances` action, the same call as the
+ * Component section's button and ⌘⌥B. A design-system or package component's
+ * item is disabled with the reason (`instanceDetachability.ts`). The canvas's
+ * menu is this component too.
+ *
+ * P5-E (UX-22, IX-27) — every item with a key shows it, right-aligned, read
+ * from the keybinding registry (`shortcutLabelFor`), and the arrange block
+ * (`LayerArrangeMenuItems`: Group, Ungroup, Lock, front / back, flex layout,
+ * Align, copy / paste style, and the canvas's "Select layer" list) follows
+ * Wrap.
  */
 
 import { useEffect, useRef } from 'react'
@@ -67,7 +79,7 @@ import { resolveInsertLocation } from '@site/store/insertLocation'
 import { ModulePicker } from '@site/panels/AssetsPanel'
 import { canComponentizeNode } from '@site/componentization'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
-import { explainStructuralConstraint, type EditConstraint } from '@core/page-tree'
+import { explainStructuralConstraint, isResolvedByInstanceDetach, planUnrollList, type EditConstraint } from '@core/page-tree'
 import type { AnyModuleDefinition } from '@core/module-engine'
 import { PenSquareSolidIcon } from 'pixel-art-icons/icons/pen-square-solid'
 import { CopyPlusSolidIcon } from 'pixel-art-icons/icons/copy-plus-solid'
@@ -81,10 +93,14 @@ import { AppGridPlusGlyphIcon } from 'pixel-art-icons/icons/app-grid-plus-glyph'
 import { BoxStackSolidIcon } from 'pixel-art-icons/icons/box-stack-solid'
 import { CodeIcon } from 'pixel-art-icons/icons/code'
 import { BoxSolidIcon } from 'pixel-art-icons/icons/box-solid'
-import { LayoutSolidIcon } from 'pixel-art-icons/icons/layout-solid'
+import { Copy2SolidIcon } from 'pixel-art-icons/icons/copy-2-solid'
+import { BulletlistSolidIcon } from 'pixel-art-icons/icons/bulletlist-solid'
 import { EyeSolidIcon } from 'pixel-art-icons/icons/eye-solid'
 import { isNarrowEditorChromeViewport } from '@site/layout/responsiveChrome'
 import { ConstraintNotice } from '@site/ui/ConstraintNotice'
+import { shortcutLabelFor } from '@admin/spotlight/keybindings'
+import { detachRefusalFor, isDetachCandidate } from '@site/store/slices/site/instanceDetachability'
+import { LayerArrangeMenuItems } from './LayerArrangeMenuItems'
 import styles from './LayerNodeContextMenu.module.css'
 
 interface LayerNodeContextMenuProps {
@@ -113,6 +129,12 @@ interface LayerNodeContextMenuProps {
   onPasteHtml?: (nodeId: string) => void
   /** The node that was right-clicked. When omitted, falls back to selectedNodeId. */
   nodeId?: string
+  /**
+   * P5-E (IX-26) — every layer under the pointer, innermost first, for the
+   * "Select layer" submenu. The canvas passes it (`nodesUnderClientPoint`);
+   * the Layers panel has no pointer over the page and omits it.
+   */
+  layerIdsUnderPointer?: readonly string[]
 }
 
 export function LayerNodeContextMenu({
@@ -128,6 +150,7 @@ export function LayerNodeContextMenu({
   onPaste,
   onPasteHtml,
   nodeId: nodeIdProp,
+  layerIdsUnderPointer,
 }: LayerNodeContextMenuProps) {
   const firstItemRef = useRef<HTMLButtonElement>(null)
 
@@ -205,15 +228,13 @@ export function LayerNodeContextMenu({
   const structuralConstraints = ((): { duplicate: EditConstraint | null; wrap: EditConstraint | null; delete: EditConstraint | null } => {
     if (!activePage || targetIds.length === 0) return { duplicate: null, wrap: null, delete: null }
     const nodes = targetIds.map((id) => activePage.nodes[id]).filter((n) => n !== undefined)
-    // `multi` is what tells the rule a WRAP is being asked of several elements
-    // at once — one wrapper spanning N ranges, which W4-1's `wrapJsxElement`
-    // does not write. Duplicate and delete are safe in bulk (the save batch is
-    // ordered bottom-to-top), so they pass it through unchanged and are
-    // enabled for a multi-selection.
+    // P3-D — a multi-selection wrap is a group (one container around the
+    // run), and a gesture inside a shared component is written to THIS
+    // instance (OD-7): neither greys an item out any more.
     const firstRefusal = (kind: 'duplicate' | 'wrap' | 'delete'): EditConstraint | null => {
       for (const node of nodes) {
-        const constraint = explainStructuralConstraint({ kind, node, multi: nodes.length > 1 })
-        if (constraint) return constraint
+        const constraint = explainStructuralConstraint({ kind, node })
+        if (constraint && !isResolvedByInstanceDetach(constraint.reason)) return constraint
       }
       return null
     }
@@ -249,19 +270,22 @@ export function LayerNodeContextMenu({
     return canComponentizeNode(s.activeDocument, node)
   })
 
-  // "Save as layout" mirrors Componentize's mode gate (page mode, single
-  // selection) but stays VISIBLE on the page root — disabled with the reason
-  // inline, so authors learn why the whole body can't be a layout.
-  const isPageRoot = nodeId !== null && activePage?.rootNodeId === nodeId
-  const showSaveAsLayout = useEditorStore((s) => {
-    if (isMulti || !nodeId || lockedSlotInstance) return false
-    if (s.activeDocument?.kind === 'visualComponent') return false
-    return selectActiveCanvasPage(s)?.nodes[nodeId] !== undefined
-  })
+  // P5-C — offered only when every target is a component call site; a
+  // design-system or package one is shown greyed out WITH its reason, never
+  // hidden (hiding it is what read as "detach is broken").
+  const detachTargets = targetIds.map((id) => activePage?.nodes[id]).filter(isDetachCandidate)
+  const canDetach = !lockedSlotInstance && targetIds.length > 0 && detachTargets.length === targetIds.length
+  const detachRefusal = detachTargets.map(detachRefusalFor).find((reason) => reason !== null) ?? null
+  const dispatchDetach = () => {
+    void useEditorStore.getState().detachInstances(targetIds)
+    onClose()
+  }
 
-  const dispatchSaveAsLayout = () => {
-    if (!nodeId) return
-    useEditorStore.getState().openLayoutNameDialog({ mode: 'create', nodeId })
+  // G-9 (OD-24) — "Unroll list": offered on a row of a list whose array is a literal in
+  // this file (`planUnrollList`), never for a selection of several.
+  const unrollPlan = !isMulti && nodeId && activePage ? planUnrollList(activePage, nodeId) : null
+  const dispatchUnrollList = () => {
+    if (nodeId) void useEditorStore.getState().unrollList(nodeId)
     onClose()
   }
 
@@ -272,7 +296,7 @@ export function LayerNodeContextMenu({
     ? shouldHideSelection ? 'Hide selected' : 'Unhide selected'
     : shouldHideSelection ? 'Hide' : 'Unhide'
 
-  // "Insert module here" is hidden ONLY for multi-select (the new node has no
+  // "Insert element here" is hidden ONLY for multi-select (the new node has no
   // single anchor in that case) — for single-select every node is a legal
   // target because resolveInsertLocation handles container vs. leaf targets
   // uniformly (leaves land as sibling-after under their parent).
@@ -402,7 +426,7 @@ export function LayerNodeContextMenu({
 
       {canToggleHidden && (
         <>
-          <ContextMenuItem ref={firstItemRef} onClick={dispatchToggleHidden}>
+          <ContextMenuItem ref={firstItemRef} onClick={dispatchToggleHidden} shortcut={shortcutLabelFor('layers.toggleVisibility')}>
             <span aria-hidden="true"><EyeSolidIcon size={13} /></span>
             {hideActionLabel}
           </ContextMenuItem>
@@ -413,7 +437,7 @@ export function LayerNodeContextMenu({
       {/* Rename — hidden for slot-instance lockdown AND for multi-select
           (rename is single-node only). */}
       {!lockedSlotInstance && !isMulti && (
-        <ContextMenuItem ref={canToggleHidden ? undefined : firstItemRef} onClick={onRename}>
+        <ContextMenuItem ref={canToggleHidden ? undefined : firstItemRef} onClick={onRename} shortcut={shortcutLabelFor('layers.rename')}>
           <span aria-hidden="true"><PenSquareSolidIcon size={13} /></span>
           Rename
         </ContextMenuItem>
@@ -424,6 +448,7 @@ export function LayerNodeContextMenu({
           <ContextMenuItem
             ref={!canToggleHidden && isMulti ? firstItemRef : undefined}
             onClick={dispatchDuplicate}
+            shortcut={shortcutLabelFor('layers.duplicate')}
             disabled={structuralConstraints.duplicate !== null}
             tooltip={structuralConstraints.duplicate?.explanation}
           >
@@ -438,35 +463,53 @@ export function LayerNodeContextMenu({
             </ContextMenuItem>
           )}
 
-          {showSaveAsLayout && (
+          {canDetach && (
             <ContextMenuItem
-              onClick={dispatchSaveAsLayout}
-              disabled={isPageRoot}
-              title={isPageRoot ? 'The page body cannot be saved as a layout — save a section inside it instead.' : undefined}
+              onClick={dispatchDetach}
+              shortcut={shortcutLabelFor('layers.detachInstance')}
+              disabled={detachRefusal !== null}
+              tooltip={detachRefusal ?? undefined}
+              data-testid="layer-menu-detach-instance"
             >
-              <span aria-hidden="true"><LayoutSolidIcon size={13} /></span>
-              Save as layout…
+              <span aria-hidden="true"><Copy2SolidIcon size={13} /></span>
+              {isMulti ? 'Detach instances' : 'Detach instance'}
+            </ContextMenuItem>
+          )}
+
+          {unrollPlan && (
+            <ContextMenuItem
+              onClick={dispatchUnrollList}
+              tooltip={`Write ${unrollPlan.source} out as ${unrollPlan.rowRootIds.length} separate elements. The list stops being drawn from its array.`}
+              data-testid="layer-menu-unroll-list"
+            >
+              <span aria-hidden="true"><BulletlistSolidIcon size={13} /></span>
+              Unroll list
             </ContextMenuItem>
           )}
 
           <ContextMenuSeparator />
 
-          <ContextMenuItem onClick={dispatchCopy}>
+          <ContextMenuItem onClick={dispatchCopy} shortcut={shortcutLabelFor('layers.copy')}>
             <span aria-hidden="true"><CopySolidIcon size={13} /></span>
             Copy
           </ContextMenuItem>
 
-          <ContextMenuItem onClick={dispatchCut}>
+          <ContextMenuItem onClick={dispatchCut} shortcut={shortcutLabelFor('layers.cut')}>
             <span aria-hidden="true"><CopyXSolidIcon size={13} /></span>
             Cut
           </ContextMenuItem>
 
-          {canPaste && (
-            <ContextMenuItem onClick={onPaste}>
-              <span aria-hidden="true"><FilesStack2SolidIcon size={13} /></span>
-              Paste
-            </ContextMenuItem>
-          )}
+          {/* Always offered, greyed out while the clipboard is empty - a menu
+              with no Paste reads as "paste is not a thing here". */}
+          <ContextMenuItem
+            onClick={onPaste}
+            shortcut={shortcutLabelFor('layers.paste')}
+            disabled={!canPaste}
+            tooltip={canPaste ? undefined : 'Copy or cut a layer first.'}
+          >
+            <span aria-hidden="true"><FilesStack2SolidIcon size={13} /></span>
+            Paste
+          </ContextMenuItem>
 
           {!isMulti && isContainer && onPasteHtml && nodeId && (
             <ContextMenuItem onClick={() => { onPasteHtml(nodeId); onClose() }}>
@@ -509,11 +552,17 @@ export function LayerNodeContextMenu({
               Loop
             </ContextMenuItem>
           </ContextMenuSubmenu>
+
+          <LayerArrangeMenuItems
+            targetIds={targetIds}
+            layerIdsUnderPointer={layerIdsUnderPointer ?? []}
+            onClose={onClose}
+          />
         </>
       )}
 
       {/*
-        "Insert module here" is hidden only for multi-select (the new node has
+        "Insert element here" is hidden only for multi-select (the new node has
         no single anchor when 2+ layers are selected). For single-select it is
         always offered: container targets receive the new node as a last child,
         leaf targets (Text, Button, Image, etc.) receive a sibling-after under
@@ -521,7 +570,7 @@ export function LayerNodeContextMenu({
       */}
       {showInsertHere && (
         <ContextMenuSubmenu
-          label="Insert module here"
+          label="Insert element here"
           icon={<AppGridPlusGlyphIcon size={13} />}
           onClose={onClose}
           width={280}
@@ -545,6 +594,7 @@ export function LayerNodeContextMenu({
           <ContextMenuItem
             danger
             onClick={dispatchDelete}
+            shortcut={shortcutLabelFor('layers.delete')}
             disabled={structuralConstraints.delete !== null}
             tooltip={structuralConstraints.delete?.explanation}
           >

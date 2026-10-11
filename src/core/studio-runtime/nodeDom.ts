@@ -48,3 +48,24 @@ export function presentedElementOf(view: Window, own: Element): HTMLElement {
   }
   return element
 }
+
+/** How many stamped ancestors a `pointer` or `text:editStart` message carries — deeper than any real component nesting, small enough to never matter on the wire. */
+const MAX_ANCESTORS = 32
+
+/**
+ * Every stamped ancestor of `el` (inclusive), innermost first, each with its
+ * own occurrence index. The runtime stamps by SOURCE position, so the
+ * innermost stamp under a gesture can be a package's own internal element;
+ * the parent walks this chain to the first node its tree knows
+ * (`BridgeFrameAdapter`'s `nearestKnownNodeId`).
+ */
+export function stampedAncestors(doc: Document, el: Element | null): { nodeId: string; occurrenceIndex: number }[] {
+  const chain: { nodeId: string; occurrenceIndex: number }[] = []
+  let current = el?.closest(`[${NODE_ID_ATTR}]`) ?? null
+  while (current && chain.length < MAX_ANCESTORS) {
+    const occurrence = occurrenceIndexOf(doc, current)
+    if (occurrence) chain.push(occurrence)
+    current = current.parentElement?.closest(`[${NODE_ID_ATTR}]`) ?? null
+  }
+  return chain
+}

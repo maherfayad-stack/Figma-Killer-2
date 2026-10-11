@@ -1,0 +1,91 @@
+/**
+ * Layer arrange commands (P5-E) — align, bring to front / send to back, flex
+ * layout, copy / paste style — and P5-C's detach instance, in the palette.
+ *
+ * Each runs the SAME function its key and its right-click item run
+ * (`canvas/layerAlign.ts`, `canvas/layerCommands.ts`), imported lazily like
+ * every other editor command so the palette does not pull the canvas into
+ * its own chunk. The keys are component-owned (`shortcutDispatch.ts`), so a
+ * press never runs these AND the canvas handler.
+ */
+import type { Command } from '../types'
+import { ALIGN_COMMANDS } from '../keybindingLayerCommands'
+
+const hasSelection = (ctx: { editor?: { selectedNodeIds: ReadonlyArray<string> } }) =>
+  (ctx.editor?.selectedNodeIds.length ?? 0) > 0
+
+function layerCommand(
+  id: string,
+  title: string,
+  subtitle: string,
+  keywords: string[],
+  run: () => Promise<void>,
+): Command {
+  return {
+    id,
+    title,
+    subtitle,
+    group: 'editor',
+    keywords: ['layer', ...keywords],
+    workspaces: ['site'],
+    capability: 'site.structure.edit',
+    when: hasSelection,
+    run: async (ctx) => {
+      ctx.closeSpotlight()
+      try {
+        await run()
+      } catch (err) {
+        console.error(`[spotlight] ${id} failed:`, err)
+      }
+    },
+  }
+}
+
+export function getLayerArrangeCommands(): Command[] {
+  return [
+    ...ALIGN_COMMANDS.map(({ commandId, edge, label }) =>
+      layerCommand(commandId, label, 'Align the selected layers', ['align', edge], async () => {
+        const { alignSelection } = await import('@site/canvas/layerAlign')
+        await alignSelection(edge)
+      }),
+    ),
+    layerCommand('layers.bringToFront', 'Bring to front', 'Move the layer last in its parent — it paints on top', ['front', 'z-order', 'arrange', 'top'], async () => {
+      const { moveSelectionToEnd } = await import('@site/canvas/layerCommands')
+      moveSelectionToEnd('front')
+    }),
+    layerCommand('layers.sendToBack', 'Send to back', 'Move the layer first in its parent — it paints underneath', ['back', 'z-order', 'arrange', 'bottom'], async () => {
+      const { moveSelectionToEnd } = await import('@site/canvas/layerCommands')
+      moveSelectionToEnd('back')
+    }),
+    layerCommand('layers.frameSelection', 'Frame selection', 'Put the selected layers in a frame sized to their bounds, each keeping its place', ['frame', 'wrap', 'container', 'group', 'selection'], async () => {
+      const { frameSelection } = await import('@site/canvas/canvasFrameSelection')
+      await frameSelection()
+    }),
+    layerCommand('layers.toggleFlexLayout', 'Add auto layout', 'Lay the container out as flex, inferred from where its layers are (again removes it, keeping every layer in place)', ['flex', 'auto layout', 'layout', 'row', 'column'], async () => {
+      const { toggleFlexLayout } = await import('@site/canvas/layerCommands')
+      await toggleFlexLayout()
+    }),
+    layerCommand('layers.copyStyle', 'Copy style', 'Copy the layer’s style and classes', ['copy', 'style', 'properties'], async () => {
+      const { copySelectionStyle } = await import('@site/canvas/layerCommands')
+      copySelectionStyle()
+    }),
+    layerCommand('layers.pasteStyle', 'Paste style', 'Paste the copied style onto the selected layers', ['paste', 'style', 'properties'], async () => {
+      const { pasteSelectionStyle } = await import('@site/canvas/layerCommands')
+      pasteSelectionStyle()
+    }),
+    // P5-C (DET-5) — the store's one Detach action, the same call ⌘⌥B makes.
+    layerCommand('layers.detachInstance', 'Detach instance', 'Write the component’s markup in place of the selected instances', ['detach', 'component', 'instance', 'unlink', 'inline'], async () => {
+      const { useEditorStore } = await import('@site/store/store')
+      const state = useEditorStore.getState()
+      await state.detachInstances(state.selectedNodeIds)
+    }),
+    // G-9 (OD-24) — the same store action the Layers menu item and the refusal dialog call. A selection that is
+    // not in a list written out in this file does nothing (`planUnrollList` is the one place that decides).
+    layerCommand('layers.unrollList', 'Unroll list', 'Write the selected row’s list out as separate elements; it stops being drawn from its array', ['unroll', 'list', 'map', 'rows', 'repeat', 'expand'], async () => {
+      const { useEditorStore } = await import('@site/store/store')
+      const state = useEditorStore.getState()
+      const [nodeId] = state.selectedNodeIds
+      if (nodeId !== undefined) await state.unrollList(nodeId)
+    }),
+  ]
+}

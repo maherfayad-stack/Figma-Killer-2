@@ -44,8 +44,8 @@ describe('notifyClassAssignmentUnsaved', () => {
     // existed; `setJsxClassName` now writes those to disk. What survives is the
     // genuinely-unwritable residue — a `.map` row, a node with no source
     // location — so the message must name that cause, not the old blanket one.
-    expect(toasts[0].body).toMatch(/no single place in your source/)
-    expect(toasts[0].body).toMatch(/revert the next time this page loads/)
+    expect(toasts[0].body).toMatch(/no place in your source for a class change/)
+    expect(toasts[0].body).toMatch(/reverts on reload/)
   })
 
   it('describes a removal and a reorder distinctly from an addition', () => {

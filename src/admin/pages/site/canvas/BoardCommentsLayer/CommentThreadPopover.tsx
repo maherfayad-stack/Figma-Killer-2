@@ -103,7 +103,7 @@ export function CommentThreadPopover({ thread }: CommentThreadPopoverProps) {
       // inside the canvas during React's dispatch. That is not theoretical: it
       // shipped, and it made Reply, Resolve, Cancel and the kebab completely
       // dead to a real mouse while still working for a synthetic `.click()`.
-      // Nothing needed the swallow — `handleCanvasClick` already ignores
+      // Nothing needed the swallow — `useEmptyBoardDeselect` already ignores
       // anything that is not the canvas root or transform layer, and
       // `useMarqueeSelection` already ignores any target but the canvas root.
       onClick={(event) => event.stopPropagation()}
@@ -119,21 +119,21 @@ export function CommentThreadPopover({ thread }: CommentThreadPopoverProps) {
         >
           {thread.resolved ? 'Reopen' : 'Resolve'}
         </Button>
-        {startedByMe ? (
-          <CommentKebab ariaLabel={`Thread ${thread.seq} actions`} onOpenChange={setMenuOpen}>
-            {(close) => (
-              <ContextMenuItem
-                danger
-                onClick={() => {
-                  close()
-                  void deleteThreadById(thread.id)
-                }}
-              >
-                Delete thread
-              </ContextMenuItem>
-            )}
-          </CommentKebab>
-        ) : null}
+        <CommentKebab ariaLabel={`Thread ${thread.seq} actions`} onOpenChange={setMenuOpen}>
+          {(close) => (
+            <ContextMenuItem
+              danger
+              disabled={!startedByMe}
+              tooltip={startedByMe ? undefined : 'Only the person who started this thread can delete it.'}
+              onClick={() => {
+                close()
+                void deleteThreadById(thread.id)
+              }}
+            >
+              Delete thread
+            </ContextMenuItem>
+          )}
+        </CommentKebab>
         <Button
           variant="ghost"
           size="sm"

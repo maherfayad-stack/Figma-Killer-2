@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import type { Project } from 'ts-morph'
 import { createWorkspaceProject } from '@core/page-parser'
 import { cachedRouteDependencies, clearPageParseCache } from '../pageParseCache'
 import { discoverStories, storyFilesIn, type StoryRefusalReason } from '../storyDiscovery'
@@ -25,6 +26,16 @@ import { buildStoryRouteEntries, STORY_CALL_SITE_LOCK_REASON, storyPageIdFromRou
 
 /** Stands in for `loadStudioPages`' real workspace-config hash — these tests vary files, never framework/locale/class maps. */
 const CONFIG_HASH = 'story-tests'
+
+/** `buildStoryRouteEntries` over a bare `Project`: a cache scope whose work began after every fixture was written, and a handle whose `Project` is never behind the disk. */
+function buildStories(dir: string, project: Project, stories: Parameters<typeof buildStoryRouteEntries>[2]) {
+  return buildStoryRouteEntries(
+    { dir, configHash: CONFIG_HASH, preferredKey: undefined, startedAt: Date.now() + 60_000, projectStamp: () => undefined },
+    { project, warnings: [], resyncStale: () => false, recordedStamp: () => undefined },
+    stories,
+    undefined,
+  )
+}
 
 let tmpDir: string
 
@@ -330,7 +341,7 @@ export const Critical = { args: { label: 'Danger', tone: 'critical' } }
 
     const project = createWorkspaceProject(tmpDir)
     const { stories } = discoverStories(tmpDir, project)
-    const entries = buildStoryRouteEntries(tmpDir, project, stories, undefined, undefined, CONFIG_HASH)
+    const entries = buildStories(tmpDir, project, stories)
 
     expect(entries).toHaveLength(1)
     const entry = entries[0]!
@@ -376,7 +387,7 @@ export const Declared = () => <Chip label="declared" />
 
     const project = createWorkspaceProject(tmpDir)
     const { stories } = discoverStories(tmpDir, project)
-    const entries = buildStoryRouteEntries(tmpDir, project, stories, undefined, undefined, CONFIG_HASH)
+    const entries = buildStories(tmpDir, project, stories)
 
     const entry = entries[0]!
     const rootId = entry.expanded.rootIds[0]!
@@ -403,7 +414,7 @@ export const Critical = { args: { label: 'Danger' } }
 
     const project = createWorkspaceProject(tmpDir)
     const { stories } = discoverStories(tmpDir, project)
-    const entries = buildStoryRouteEntries(tmpDir, project, stories, undefined, undefined, CONFIG_HASH)
+    const entries = buildStories(tmpDir, project, stories)
 
     const deps = cachedRouteDependencies(tmpDir)!
     const routePath = [...deps.keys()].find((key) => storyPageIdFromRoutePath(key) === entries[0]!.pageId)!
@@ -426,7 +437,7 @@ export const Critical = { args: { label: 'Before' } }
     const build = () => {
       const project = createWorkspaceProject(tmpDir)
       const { stories } = discoverStories(tmpDir, project)
-      return buildStoryRouteEntries(tmpDir, project, stories, undefined, undefined, CONFIG_HASH)[0]!
+      return buildStories(tmpDir, project, stories)[0]!
     }
     const first = build()
     expect(build().expanded).toBe(first.expanded) // same object — the cache answered

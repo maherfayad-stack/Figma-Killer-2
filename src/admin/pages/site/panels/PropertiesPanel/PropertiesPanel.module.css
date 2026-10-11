@@ -74,17 +74,6 @@
     overflow: hidden;
 }
 
-/* ── Nothing-selected column — the frame's own size strip above the empty
-   state. A flex column that fills the tab so `EmptyState variant="centered"`
-   still centres in whatever room is left below the strip. */
-.emptySelection {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-}
-
 /* ── Node inspector container — holds ClassPicker + StyleSurface (no overflow) */
 .nodeArea {
     flex: 1;
@@ -92,6 +81,22 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+}
+
+/* The node-level notices (shared component, slot fill, source constraint,
+   branch choice) — one band on the panel gutter, so each tinted card sits
+   on the same 12px inset as the ClassPicker below it instead of running
+   edge to edge (P2-H, UX-25). `:empty` because every notice renders null
+   when it has nothing to say: an empty band must cost no height. */
+.nodeNotices {
+    flex-shrink: 0;
+    display: grid;
+    gap: var(--inspector-space-2xs);
+    padding: var(--inspector-space-m) var(--inspector-pad-x) 0;
+}
+
+.nodeNotices:empty {
+    display: none;
 }
 
 /*  `position: relative` + `z-index: 1` make this the containing block AND
@@ -107,7 +112,13 @@
 
 /*  Soft fade just below the ClassPicker — mirrors the bottom search bar's
     gradient so content scrolling up under the picker fades out instead of
-    snapping to a hard color edge. */
+    snapping to a hard color edge.
+
+    Only while something HAS scrolled under it (P2-F, UX-6). At rest there is
+    nothing above the first section to fade, and the gradient simply dimmed
+    the Module block's title sitting inside its 16px. `StyleSurface` sets
+    `data-scrolled` on its own scroll container (a later sibling of this
+    element) once `scrollTop > 0`. */
 .headerClassPicker::after {
     content: '';
     position: absolute;
@@ -116,6 +127,12 @@
     height: 16px;
     pointer-events: none;
     background: linear-gradient(180deg, var(--panel-fade-bg) 0%, transparent);
+    opacity: 0;
+    transition: opacity 120ms ease;
+}
+
+.headerClassPicker:has(~ [data-scrolled='true'])::after {
+    opacity: 1;
 }
 
 .headerNodeTitle {

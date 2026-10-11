@@ -21,11 +21,20 @@
  * shapes and why loop-bearing transforms stay unresolved.
  */
 import { Node, SyntaxKind, type JsxElement, type JsxSelfClosingElement, type SourceFile } from 'ts-morph'
-import { extractInlineStyles, extractProps, extractSingleText, rawHtmlValueExpression, resolveRawSvgMarkup } from './jsxAttributeReaders'
-import { tryResolveExpression, type PageEvalContext } from './nodeResolution'
-import { createEvalScope, type LocalBinding, type StaticValue } from './staticEval'
-import type { ReturnedJsx } from './parsePageFile'
-import type { FunctionLike, ParsedPage, ParsedPropValue } from './types'
+import { styleValueKey } from '@core/page-tree'
+import {
+  extractInlineStyles,
+  extractProps,
+  extractSingleText,
+  rawHtmlValueExpression,
+  resolveRawSvgMarkup,
+  templateHeadClassNames,
+} from './jsxAttributeReaders'
+import { paramReadCount } from './paramReads'
+import { shortenSource, tryResolveExpression, type PageEvalContext, type Resolution } from './nodeResolution'
+import { createEvalScope, type LocalBinding, type StaticValue, type ValueOrigin } from './staticEval'
+import type { ReturnedJsx } from './branchSelection'
+import type { FunctionLike, ParsedNode, ParsedPage, ParsedPropValue } from './types'
 import type { StaticEvalOptions } from './staticEval'
 
 /** `extractInlineStyles` takes a full `ParseContext`; the image-import map is only consulted by `extractProps`, never on the style path. */
@@ -36,8 +45,36 @@ type JsxOpeningLike = JsxElement | JsxSelfClosingElement
  * What `buildSubstitutionEnv` resolved a destructured prop param to: a value the
  * call site passed (scalar, or a structured one for a component prop — see
  * `ParsedPropValue`), or its `{children}`.
+ *
+ * `origin` (P3-C, WB-6) is where a STRING value the call site passed
+ * physically lives — its own attribute literal (`ParsedNode.literalPropOrigins`)
+ * or the literal its expression resolved through (`resolvedProps[k].origin`).
+ * It travels with the value into the component, so an inlined node that renders
+ * it records the call site's literal as its write target instead of the
+ * component's `{param}` (which is code, and shared by every instance). Never
+ * set for a component's own destructure DEFAULT: that literal feeds every call
+ * site that omits the prop, so an edit there would change instances the user
+ * did not touch.
+ *
+ * `prop` is the name the CALL SITE passes it under (`ParsedNode.propFeeds`'s
+ * value), and `fromDefault` marks a value the call site did NOT pass, so the
+ * component's destructure default fed it. Neither changes what renders; they
+ * are what lets the editor write the call site for a value that has no literal
+ * of its own (OD-19). `untraceable` marks a value that is not the INSTANCE's to
+ * set: the call site passes the prop as an expression the parser could not
+ * trace to one literal (or could not resolve at all, so the default stands in),
+ * or the call site sits inside another component, so a literal there (or the
+ * inner component's default) is shared by every instance of the outer one. The
+ * one exception is a value the outer component itself forwards from its own
+ * prop (`ParsedNode.propFeeds` on the call site), which keeps that prop's name
+ * and is still the page instance's to set.
  */
-export type Substitution = { kind: 'value'; value: ParsedPropValue } | { kind: 'children' }
+export type Substitution =
+  | { kind: 'value'; value: ParsedPropValue; prop: string; origin?: ValueOrigin; fromDefault?: true; untraceable?: true }
+  | { kind: 'children' }
+
+/** The call-site facts `buildSubstitutionEnv` reads. */
+export type SubstitutionCallSite = Pick<ParsedNode, 'props' | 'literalPropOrigins' | 'resolvedProps' | 'codeProps' | 'propFeeds'>
 
 /**
  * Lifts a call site's already-captured prop value back into a `StaticValue`, so
@@ -45,12 +82,17 @@ export type Substitution = { kind: 'value'; value: ParsedPropValue } | { kind: '
  * (`<Row item={pkg}/>` → `{item.gb}`). The round trip through
  * `ParsedPropValue` is lossless for everything the parser kept — the entries it
  * dropped (functions, unresolved values) were never representable anyway.
+ *
+ * A top-level string carries its `origin` as the literal it is (P3-C): the
+ * evaluator hands a bound value through unchanged, so `{title}` and
+ * `{title || 'Untitled'}` resolve WITH it and `{`${title}!`}` — a computed
+ * value — without it, by the evaluator's own existing rule.
  */
-function toStaticValue(value: ParsedPropValue): StaticValue {
+function toStaticValue(value: ParsedPropValue, origin?: ValueOrigin): StaticValue {
   // `complete: true` on both: this is a plain JS value the parser already
   // finished reading, so its keys and its length ARE what they are — there is
   // no unread spread or computed key left to surprise `pluck`.
-  if (Array.isArray(value)) return { kind: 'array', items: value.map(toStaticValue), complete: true }
+  if (Array.isArray(value)) return { kind: 'array', items: value.map((item) => toStaticValue(item)), complete: true }
   if (typeof value === 'object') {
     return {
       kind: 'object',
@@ -58,7 +100,13 @@ function toStaticValue(value: ParsedPropValue): StaticValue {
       complete: true,
     }
   }
-  return { kind: 'literal', value }
+  return origin && typeof value === 'string' ? { kind: 'literal', value, origin } : { kind: 'literal', value }
+}
+
+/** Where the call site's value for `attrName` is written, when it is a string with one literal behind it. */
+function callSiteOrigin(callSite: SubstitutionCallSite, attrName: string, value: ParsedPropValue): ValueOrigin | undefined {
+  if (typeof value !== 'string') return undefined
+  return callSite.literalPropOrigins?.[attrName] ?? callSite.resolvedProps?.[attrName]?.origin
 }
 
 /**
@@ -70,7 +118,8 @@ function toStaticValue(value: ParsedPropValue): StaticValue {
  * yields no entry for that param, so any `{paramName}` reference to it is
  * simply left unresolved (existing lock/drop path), never guessed at.
  */
-export function buildSubstitutionEnv(fn: FunctionLike, callSiteProps: Record<string, ParsedPropValue>): Map<string, Substitution> {
+export function buildSubstitutionEnv(fn: FunctionLike, callSite: SubstitutionCallSite, atPage: boolean): Map<string, Substitution> {
+  const callSiteProps = callSite.props
   const env = new Map<string, Substitution>()
   const first = fn.getParameters()[0]
   if (!first) return env
@@ -93,23 +142,122 @@ export function buildSubstitutionEnv(fn: FunctionLike, callSiteProps: Record<str
       continue
     }
 
+    const passedAsCode = callSite.codeProps?.includes(attrName) === true
+    // A call site inside another component: its value is the page instance's to set only if the outer component forwarded one of its own props.
+    const inherited = callSite.propFeeds?.[attrName]
     if (Object.hasOwn(callSiteProps, attrName)) {
-      env.set(paramName, { kind: 'value', value: callSiteProps[attrName]! })
+      const value = callSiteProps[attrName]!
+      const origin = callSiteOrigin(callSite, attrName, value)
+      const untraceable = !origin && inherited === undefined && (passedAsCode || !atPage)
+      env.set(paramName, { kind: 'value', value, prop: inherited ?? attrName, ...(untraceable ? { untraceable: true as const } : {}) , ...(origin ? { origin } : {}) })
       continue
     }
 
+    // A destructure DEFAULT carries no origin — see `Substitution`.
     const initializer = element.getInitializer()
     if (!initializer) continue
     if (Node.isStringLiteral(initializer) || Node.isNumericLiteral(initializer)) {
-      env.set(paramName, { kind: 'value', value: initializer.getLiteralValue() })
+      env.set(paramName, { kind: 'value', value: initializer.getLiteralValue(), prop: attrName, fromDefault: true, ...(passedAsCode || !atPage ? { untraceable: true as const } : {}) })
     } else if (initializer.getKind() === SyntaxKind.TrueKeyword || initializer.getKind() === SyntaxKind.FalseKeyword) {
-      env.set(paramName, { kind: 'value', value: initializer.getKind() === SyntaxKind.TrueKeyword })
+      env.set(paramName, { kind: 'value', value: initializer.getKind() === SyntaxKind.TrueKeyword, prop: attrName, fromDefault: true, ...(passedAsCode || !atPage ? { untraceable: true as const } : {}) })
     }
     // Any other default (a call, a template literal, …) is not a literal —
     // intentionally left unresolved, same policy as `extractProps`.
   }
 
   return env
+}
+
+/**
+ * G-2b — what a component hands on when it spreads its own props into a
+ * component it renders: `<Inner {...props} />`, or `{...rest}` after a
+ * destructure. The page's call site passed these, so the inner call site has
+ * them too, in JSX order, and the inner component's elements read the page's
+ * values (`applySubstitutions` merges them onto the inner call-site node).
+ */
+export interface SpreadForward {
+  /** The identifiers that stand for the forwarded object: the undestructured `props` parameter, or the `...rest` binding. */
+  names: ReadonlySet<string>
+  /** What this component's own call site passed. */
+  callSite: SubstitutionCallSite
+  /** The attributes the component destructures by name: they are not in `rest`. Empty for an undestructured parameter. */
+  omit: ReadonlySet<string>
+  /** The component's own call site is on the page, or is itself forwarded that way: the page stays the one honest target. */
+  atPage: boolean
+}
+
+export function buildSpreadForward(fn: FunctionLike, callSite: SubstitutionCallSite, atPage: boolean): SpreadForward | undefined {
+  const first = fn.getParameters()[0]
+  if (!first) return undefined
+  const pattern = first.getNameNode()
+  if (Node.isIdentifier(pattern)) return { names: new Set([pattern.getText()]), callSite, omit: new Set(), atPage }
+  if (!Node.isObjectBindingPattern(pattern)) return undefined
+  const elements = pattern.getElements()
+  const rest = elements.find((element) => element.getDotDotDotToken() !== undefined)
+  const restName = rest?.getNameNode()
+  if (!restName || !Node.isIdentifier(restName)) return undefined
+  const omit = new Set(elements.filter((element) => element !== rest).map((element) => element.getPropertyNameNode()?.getText() ?? element.getName()))
+  return { names: new Set([restName.getText()]), callSite, omit, atPage }
+}
+
+/**
+ * The props a call site gets from spreading the enclosing component's own props,
+ * in JSX order: a later explicit attribute wins over the spread, a spread wins
+ * over an earlier one, and an attribute whose value could not be read removes
+ * the spread's value for its name (it is code the spread no longer decides).
+ * `undefined` when there is no such spread, or when ANOTHER spread sits on the
+ * call site (it could set any name, so nothing is merged).
+ */
+function forwardedProps(
+  attributes: readonly Node[],
+  existing: Pick<ParsedNode, 'props'>,
+  forward: SpreadForward,
+): { values: Map<string, ParsedPropValue>; code: string[] } | undefined {
+  let sawForward = false
+  const merged = new Map<string, { value: ParsedPropValue; fromSpread: boolean }>()
+  for (const attr of attributes) {
+    if (Node.isJsxSpreadAttribute(attr)) {
+      const expr = attr.getExpression()
+      if (!Node.isIdentifier(expr) || !forward.names.has(expr.getText())) return undefined
+      sawForward = true
+      for (const [key, value] of Object.entries(forward.callSite.props)) {
+        if (key !== 'children' && !forward.omit.has(key)) merged.set(key, { value, fromSpread: true })
+      }
+      continue
+    }
+    if (!Node.isJsxAttribute(attr)) continue
+    const name = attr.getNameNode().getText()
+    if (Object.hasOwn(existing.props, name)) merged.set(name, { value: existing.props[name]!, fromSpread: false })
+    else merged.delete(name)
+  }
+  if (!sawForward) return undefined
+  const values = new Map<string, ParsedPropValue>()
+  for (const [key, entry] of merged) if (entry.fromSpread) values.set(key, entry.value)
+  const code = (forward.callSite.codeProps ?? []).filter((key) => key !== 'children' && !forward.omit.has(key))
+  return { values, code }
+}
+
+/**
+ * Whether `el` is in the component's output no matter what its props are: no
+ * branch (`? :`, `&&`, `||`, `??`, an `if` or `switch` around the `return`) and
+ * no callback (a `.map` row) stands between it and the function. An element
+ * that may not be there is not a place a call site can name.
+ */
+function isRenderedUnconditionally(el: Node, fn: FunctionLike): boolean {
+  for (const ancestor of el.getAncestors()) {
+    if (ancestor === fn) return true
+    if (
+      Node.isConditionalExpression(ancestor) ||
+      Node.isIfStatement(ancestor) ||
+      Node.isSwitchStatement(ancestor) ||
+      Node.isArrowFunction(ancestor) ||
+      Node.isFunctionExpression(ancestor) ||
+      (Node.isBinaryExpression(ancestor) && ['&&', '||', '??'].includes(ancestor.getOperatorToken().getText()))
+    ) {
+      return false
+    }
+  }
+  return true
 }
 
 /**
@@ -137,8 +285,17 @@ export function applySubstitutions(
   relFile: string,
   fn: FunctionLike,
   evalOptions: StaticEvalOptions | undefined,
+  forward?: SpreadForward,
+  /**
+   * G-3 / OD-22 - collects the id of every plain element that renders the
+   * component's `{children}` directly (`<div className="body">{children}</div>`).
+   * One id is the instance's children slot: the place a call site's own
+   * children are written, so a drop there needs no detach. An element a branch
+   * or a loop decides is left out - it is not a place the call site can name.
+   */
+  childrenHosts?: string[],
 ): ParsedPage {
-  if (env.size === 0) return subPage
+  if (env.size === 0 && !forward) return subPage
   const nodes = { ...subPage.nodes }
 
   const idFor = (el: Node): string => {
@@ -164,7 +321,7 @@ export function applySubstitutions(
       locals: new Map<string, LocalBinding>([
         ...createEvalScope(sourceFile, fn).locals,
         ...[...env].flatMap(([name, sub]): [string, LocalBinding][] =>
-          sub.kind === 'value' ? [[name, { kind: 'resolved', value: toStaticValue(sub.value) }]] : [],
+          sub.kind === 'value' ? [[name, { kind: 'resolved', value: toStaticValue(sub.value, sub.origin) }]] : [],
         ),
       ]),
     },
@@ -176,6 +333,17 @@ export function applySubstitutions(
    */
   const readerCtx = { sourceFile, relFile, nodes }
 
+  /** Does `fn` read this param in exactly one place? Asked at most once per param. */
+  const readOnce = new Map<string, boolean>()
+  const readsOnce = (paramName: string): boolean => {
+    let answer = readOnce.get(paramName)
+    if (answer === undefined) {
+      answer = paramReadCount(fn, paramName) === 1
+      readOnce.set(paramName, answer)
+    }
+    return answer
+  }
+
   const patchElement = (el: JsxOpeningLike): void => {
     const isElement = Node.isJsxElement(el)
     const tagNameNode = isElement ? el.getOpeningElement().getTagNameNode() : el.getTagNameNode()
@@ -185,6 +353,65 @@ export function applySubstitutions(
       const attributes = isElement ? el.getOpeningElement().getAttributes() : el.getAttributes()
 
       let patchedProps: Record<string, ParsedPropValue> | undefined
+      // P3-C (WB-6) — where each value filled in below physically lives, when a
+      // call site's literal is behind it. The attribute in THIS file stays code
+      // (`codeProps`, from `parseJsxTree`'s catch-all), and the origin is what
+      // makes it writable — at the call site, never over `{param}`.
+      let patchedResolved: Record<string, Resolution> | undefined
+      let patchedCodeProps: string[] | undefined
+      // OD-19 — the value keys that are the bare forward of one prop. See `ParsedNode.propFeeds`.
+      let patchedFeeds: Record<string, string> | undefined
+      const recordFeed = (key: string, paramName: string): void => {
+        const sub = env.get(paramName)
+        // A call-site LITERAL string already has its own write target (`origin`); a children slot is not a value.
+        if (sub?.kind !== 'value' || sub.origin || sub.untraceable || typeof sub.value === 'object' || !readsOnce(paramName)) return
+        patchedFeeds ??= { ...existing.propFeeds }
+        patchedFeeds[key] = sub.prop
+      }
+      const recordOrigin = (key: string, resolution: Resolution): void => {
+        if (!resolution.origin) return
+        patchedResolved ??= { ...existing.resolvedProps }
+        patchedResolved[key] = {
+          source: shortenSource(resolution.source),
+          ...(resolution.note ? { note: resolution.note } : {}),
+          origin: resolution.origin,
+        }
+        if (key === 'text') return // text's code-ness is `codeText`, not a `codeProps` entry
+        const codeProps = patchedCodeProps ?? existing.codeProps ?? []
+        if (!codeProps.includes(key)) patchedCodeProps = [...codeProps, key]
+      }
+
+      // G-2b — a call site that spreads this component's own props forwards what the
+      // page passed: the inner component reads the page's values, not nothing.
+      let patchedOrigins: Record<string, ValueOrigin> | undefined
+      let spreadForwarded = false
+      const forwarded = forward && existing.kind === 'component' ? forwardedProps(attributes, existing, forward) : undefined
+      if (forward && forwarded) {
+        spreadForwarded = forward.atPage
+        for (const [key, value] of forwarded.values) {
+          patchedProps ??= { ...existing.props }
+          patchedProps[key] = value
+          const origin = forward.callSite.literalPropOrigins?.[key]
+          if (origin) {
+            patchedOrigins ??= { ...existing.literalPropOrigins }
+            patchedOrigins[key] = origin
+          }
+          const resolution = forward.callSite.resolvedProps?.[key]
+          if (resolution) {
+            patchedResolved ??= { ...existing.resolvedProps }
+            patchedResolved[key] = resolution
+          }
+          const feed = forward.callSite.propFeeds?.[key]
+          if (feed !== undefined) {
+            patchedFeeds ??= { ...existing.propFeeds }
+            patchedFeeds[key] = feed
+          }
+        }
+        // The values are the outer instance's, never this call site's own: they are code here.
+        const codeProps = new Set(patchedCodeProps ?? existing.codeProps ?? [])
+        for (const key of [...forwarded.values.keys(), ...forwarded.code]) codeProps.add(key)
+        patchedCodeProps = [...codeProps]
+      }
 
       // Re-read EVERY attribute against the param-bound scope, filling only the
       // gaps `parseJsxTree` left. The loop below handles a param forwarded as a
@@ -194,11 +421,23 @@ export function applySubstitutions(
       // typed React component, and none of it resolved: the component's own file
       // sees `plan` as a parameter with no value anywhere in it.
       if (paramEvalContext) {
-        const { props: reread } = extractProps(attributes, { ...readerCtx, eval: paramEvalContext }, existing.kind)
+        const { props: reread, resolutionsByKey } = extractProps(
+          attributes,
+          { ...readerCtx, eval: paramEvalContext },
+          existing.kind,
+        )
         for (const [key, value] of Object.entries(reread)) {
-          if (key in existing.props) continue
+          // A value the evaluator resolved while parsing the component ALONE can
+          // be a guess: `styles[variant]` with `variant` unbound picks the map's
+          // first entry (`staticEval.ts`'s dynamic-key rule). The param-bound
+          // scope knows what this call site passed, so it outranks that guess —
+          // otherwise every instance of a component shows its first variant.
+          // A literal attribute has no `resolvedProps` entry and is never replaced.
+          if (key in existing.props && (!existing.resolvedProps?.[key] || Object.is(existing.props[key], value))) continue
           patchedProps ??= { ...existing.props }
           patchedProps[key] = value
+          const resolution = resolutionsByKey[key]
+          if (resolution) recordOrigin(key, resolution)
         }
       }
 
@@ -217,6 +456,8 @@ export function applySubstitutions(
         if (typeof sub.value === 'object' && existing.kind !== 'component') continue
         patchedProps ??= { ...existing.props }
         patchedProps[attrName] = sub.value
+        if (sub.origin) recordOrigin(attrName, { source: expr.getText(), origin: sub.origin })
+        else if (attrName !== 'className') recordFeed(attrName, expr.getText())
       }
 
       // `<Icon svg={checkSvg}/>` → `<span dangerouslySetInnerHTML={{__html: svg}}/>`:
@@ -246,7 +487,11 @@ export function applySubstitutions(
       // No lock/resolution is recorded for either: `parsedPageToSitePage` turns
       // className into `classIds` and deletes the prop, so this value is never a
       // writeback target that could bake over the expression.
-      if (!('className' in (patchedProps ?? existing.props))) {
+      // The same outranking applies to a className the parse-time evaluator
+      // resolved without the call site's values (`styles[variant]`, above), so
+      // an expression is re-read whenever the call site passed a value at all.
+      const passesValues = [...env.values()].some((sub) => sub.kind === 'value')
+      if (passesValues || !('className' in (patchedProps ?? existing.props))) {
         const classNameAttr = attributes.find(
           (a): a is typeof attributes[number] & { getNameNode(): Node } =>
             Node.isJsxAttribute(a) && a.getNameNode().getText() === 'className',
@@ -256,11 +501,13 @@ export function applySubstitutions(
           const expr = classInitializer.getExpression()
           const resolved = expr ? tryResolveExpression(expr, paramEvalContext)?.value : undefined
           if (typeof resolved === 'string' && resolved.trim().length > 0) {
-            patchedProps ??= { ...existing.props }
-            patchedProps.className = resolved.trim()
-          } else if (expr && Node.isTemplateExpression(expr)) {
-            const head = expr.getHead().getLiteralText().trim()
-            if (head.length > 0) {
+            if (resolved.trim() !== existing.props.className) {
+              patchedProps ??= { ...existing.props }
+              patchedProps.className = resolved.trim()
+            }
+          } else if (expr && Node.isTemplateExpression(expr) && !('className' in (patchedProps ?? existing.props))) {
+            const head = templateHeadClassNames(expr)
+            if (head !== undefined) {
               patchedProps ??= { ...existing.props }
               patchedProps.className = head
             }
@@ -279,9 +526,23 @@ export function applySubstitutions(
       if (paramEvalContext) {
         const { styles } = extractInlineStyles(attributes, { ...readerCtx, eval: paramEvalContext })
         if (styles) patchedStyles = { ...existing.inlineStyles, ...styles }
+        // `style={{ width: widthValue }}` / `{ width }`: a property that IS a param.
+        const styleAttr = attributes.find((a) => Node.isJsxAttribute(a) && a.getNameNode().getText() === 'style')
+        const styleInit = Node.isJsxAttribute(styleAttr) ? styleAttr.getInitializer() : undefined
+        const styleObject = styleInit && Node.isJsxExpression(styleInit) ? styleInit.getExpression() : undefined
+        if (styleObject && Node.isObjectLiteralExpression(styleObject)) {
+          for (const property of styleObject.getProperties()) {
+            if (!Node.isPropertyAssignment(property) && !Node.isShorthandPropertyAssignment(property)) continue
+            const nameNode = property.getNameNode()
+            const key = Node.isIdentifier(nameNode) ? nameNode.getText() : Node.isStringLiteral(nameNode) ? nameNode.getLiteralValue() : null
+            const value = Node.isShorthandPropertyAssignment(property) ? nameNode : property.getInitializer()
+            if (key !== null && value !== undefined && Node.isIdentifier(value)) recordFeed(styleValueKey(key), value.getText())
+          }
+        }
       }
 
       let patchedText = existing.text
+      let patchedTextOrigin = existing.textOrigin
       if (existing.text === undefined && existing.children.length === 0 && isElement) {
         const meaningful = el
           .getJsxChildren()
@@ -292,15 +553,30 @@ export function applySubstitutions(
             const sub = env.get(expr.getText())
             // Only a scalar has a text form. `String({…})` is `[object Object]`,
             // which is worse than leaving the element empty.
-            if (sub?.kind === 'value' && typeof sub.value !== 'object') patchedText = String(sub.value)
+            if (sub?.kind === 'value' && typeof sub.value !== 'object') {
+              patchedText = String(sub.value)
+              if (sub.origin) {
+                patchedTextOrigin = sub.origin
+                recordOrigin('text', { source: expr.getText(), origin: sub.origin })
+              } else {
+                recordFeed('text', expr.getText())
+              }
+            }
           }
         }
         // Same story as the props re-read: the text is commonly not the param
         // itself but something read off it (`{plan.name}`,
         // `{seatLabel(plan.seats)}`). Reusing `extractSingleText` keeps one
-        // reader for "what counts as a text-only leaf".
+        // reader for "what counts as a text-only leaf". Its `origin` is the
+        // call site's literal whenever the value passed through unchanged
+        // (`{plan.name}` off a `plan` the call site read from a data module).
         if (patchedText === undefined && paramEvalContext) {
-          patchedText = extractSingleText(meaningful, { ...readerCtx, eval: paramEvalContext }).text
+          const reread = extractSingleText(meaningful, { ...readerCtx, eval: paramEvalContext })
+          patchedText = reread.text
+          if (reread.origin && reread.resolution) {
+            patchedTextOrigin = reread.origin
+            recordOrigin('text', { ...reread.resolution, origin: reread.origin })
+          }
         }
       }
 
@@ -316,6 +592,7 @@ export function applySubstitutions(
           if (Node.isJsxExpression(child)) {
             const expr = child.getExpression()
             if (expr && Node.isIdentifier(expr) && env.get(expr.getText())?.kind === 'children') {
+              if (!existing.locked && isRenderedUnconditionally(el, fn)) childrenHosts?.push(id)
               patchedChildren = [
                 ...existing.children.slice(0, insertAt),
                 ...callSiteChildrenIds,
@@ -328,6 +605,8 @@ export function applySubstitutions(
 
       if (
         patchedProps ||
+        patchedFeeds ||
+        spreadForwarded ||
         patchedStyles !== existing.inlineStyles ||
         patchedText !== existing.text ||
         patchedChildren !== existing.children
@@ -337,6 +616,15 @@ export function applySubstitutions(
           ...(patchedProps ? { props: patchedProps } : {}),
           ...(patchedStyles ? { inlineStyles: patchedStyles } : {}),
           ...(patchedText !== undefined ? { text: patchedText } : {}),
+          // Substituted text came from a parameter: it is code in this file
+          // whether or not an origin was found for it (`codeText`'s contract).
+          ...(patchedText !== undefined && patchedText !== existing.text ? { codeText: true } : {}),
+          ...(patchedTextOrigin ? { textOrigin: patchedTextOrigin } : {}),
+          ...(patchedResolved ? { resolvedProps: patchedResolved } : {}),
+          ...(patchedCodeProps ? { codeProps: patchedCodeProps } : {}),
+          ...(patchedFeeds ? { propFeeds: patchedFeeds } : {}),
+          ...(patchedOrigins ? { literalPropOrigins: patchedOrigins } : {}),
+          ...(spreadForwarded ? { spreadForwarded: true as const } : {}),
           children: patchedChildren,
         }
       }

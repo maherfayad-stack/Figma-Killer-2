@@ -20,6 +20,7 @@ import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test'
 import type { AiToolOutput } from '@core/ai'
 import type { AiBrowserBridge } from '../../runtime/types'
 
+let headlessInputs: unknown[] = []
 let headlessImpl: () => Promise<unknown> = async () => ({
   ok: false,
   code: 'headless-browser-unavailable',
@@ -39,7 +40,10 @@ const realLiveReloadPush = { ...(await import('../tools/studio/liveReloadPush'))
 
 mock.module('./headlessCapture', () => ({
   ...realHeadlessCapture,
-  captureFramesHeadless: async () => headlessImpl(),
+  captureFramesHeadless: async (input: unknown) => {
+    headlessInputs.push(input)
+    return headlessImpl()
+  },
 }))
 
 let reloadCalls: Array<Record<string, unknown>> = []
@@ -91,6 +95,7 @@ function request(source?: 'auto' | 'headless' | 'live') {
 beforeEach(() => {
   bridgeCalls = []
   reloadCalls = []
+  headlessInputs = []
   clearLaunchFailureMemo()
   headlessImpl = async () => ({ ok: false, code: 'headless-browser-unavailable', error: 'no browser' })
 })
@@ -222,5 +227,38 @@ describe('captureFrames routing', () => {
     expect(message).toContain('did not report every frame settled')
     expect(message).toContain('no Studio board is connected')
     expect(result.headlessFailure?.code).toBe('headless-not-ready')
+  })
+})
+
+describe('captureFrames at another width (AI-16) — headless only, never a substituted width', () => {
+  const noBridge = {
+    awaitBridge: async (): Promise<AiBrowserBridge | null> => {
+      throw new Error('a width-override capture must never reach the live tab')
+    },
+  }
+
+  it('hands the width to the headless renderer', async () => {
+    headlessImpl = async () => ({ ok: true, output: headlessOk })
+    const result = await captureFrames({ ...request(), frameWidth: 768 }, noBridge)
+    expect(result.source).toBe('headless')
+    expect(headlessInputs).toEqual([{ userId: 'u1', dir: '/workspace/p', pageIds: ['p1'], frameWidth: 768 }])
+  })
+
+  it('does not fall back to the live tab, which could only photograph the board width', async () => {
+    const result = await captureFrames({ ...request(), frameWidth: 1280 }, noBridge)
+    expect(result.source).toBe('none')
+    expect(result.output.ok).toBe(false)
+    expect(result.output.error).toContain('1280px')
+    expect(result.output.error).toContain('no other width was substituted')
+    expect(bridgeCalls).toHaveLength(0)
+  })
+
+  it('refuses source:"live" with a width outright', async () => {
+    headlessImpl = async () => {
+      throw new Error('headless must not run either')
+    }
+    const result = await captureFrames({ ...request('live'), frameWidth: 375 }, noBridge)
+    expect(result.output.ok).toBe(false)
+    expect(result.output.error).toContain('runs headlessly only')
   })
 })

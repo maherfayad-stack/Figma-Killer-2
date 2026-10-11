@@ -53,10 +53,10 @@ function stubLoadStream(pages: unknown[], meta: MetaOverrides = {}): void {
     authoredCss: '',
     trust: 'static',
     paletteHiddenModuleIds: [],
-    pageCount: pages.length,
+    pageList: pages.map(({ id, slug, title }) => ({ id, slug, title })),
     ...meta,
   }
-  const body = [line, ...pages.map((page) => ({ kind: 'page', page }))]
+  const body = [line, ...pages.map((page, index) => ({ kind: 'page', page, index }))]
     .map((l) => JSON.stringify(l))
     .join('\n') + '\n'
   globalThis.fetch = (async () => new Response(body, { status: 200 })) as typeof fetch

@@ -454,6 +454,7 @@ describe('ensurePrototypeShell — refusals', () => {
       created: [],
       regenerated: [],
       viteConfigEditedByUser: false,
+      inputsUnchanged: false,
     })
   })
 

@@ -3,6 +3,7 @@ import React from 'react'
 import { act, fireEvent, render, cleanup, waitFor } from '@testing-library/react'
 import { readFileSync } from 'fs'
 import { useEditorStore } from '@site/store/store'
+import { getCanvasHover } from '@site/canvas/canvasHover'
 import { BreakpointFrame } from '@site/canvas/BreakpointFrame'
 import { CanvasRoot } from '@site/canvas/CanvasRoot'
 import {
@@ -32,7 +33,6 @@ beforeEach(() => {
     canRedo: false,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     activeDocument: null,
     activePageId: null,
     activeBreakpointId: 'desktop',
@@ -118,16 +118,14 @@ describe('canvas breakpoint rendering', () => {
       fireEvent.mouseEnter(mobileNode)
     })
 
-    expect(mobileNode.getAttribute('data-hovered')).toBe('true')
-    expect(desktopNode.hasAttribute('data-hovered')).toBe(false)
+    expect(getCanvasHover()).toEqual({ nodeId: textId, breakpointId: 'mobile', frameId: null })
 
     act(() => {
       fireEvent.mouseLeave(mobileNode)
       fireEvent.mouseEnter(desktopNode)
     })
 
-    expect(mobileNode.hasAttribute('data-hovered')).toBe(false)
-    expect(desktopNode.getAttribute('data-hovered')).toBe('true')
+    expect(getCanvasHover()).toEqual({ nodeId: textId, breakpointId: 'desktop', frameId: null })
   })
 
   it('dims inactive breakpoint frames only while editing a selected node in the open properties panel', async () => {

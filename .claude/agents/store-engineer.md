@@ -15,7 +15,7 @@ everywhere at once; a wrong mutation costs the user their work.
 1. `docs/agent-refs/editor-store.md`
 2. `docs/reference/page-tree.md` and `docs/reference/editor-history.md`
 3. `docs/agent-refs/conventions-quickref.md` §7
-4. `STATE.md` → `standing-03`
+4. `ROADMAP.md` → your bundle's row and the audit IDs it closes
 
 ## The mutation contract
 

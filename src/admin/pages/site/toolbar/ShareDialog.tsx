@@ -34,8 +34,17 @@ import styles from './ShareDialog.module.css'
 export function ShareDialog({ onClose }: { onClose: () => void }) {
   const activeBoardId = useEditorStore((s) => s.activeBoardId)
   const [shares, setShares] = useState<ShareSummary[] | null>(null)
+  /** P3-A — the list could not be read: said inside the dialog, where the list would be, not in a toast. */
+  const [loadFailed, setLoadFailed] = useState(false)
   /** The token currently being captured, `'new'` while minting, or null. */
   const [busyToken, setBusyToken] = useState<string | null>(null)
+  /**
+   * Why the last attempt failed, shown inside the dialog next to the button that
+   * was pressed. The toast says it too, but a toast is a bystander of a modal
+   * dialog: a failure after a 60 s wait must still be readable where the person
+   * is looking.
+   */
+  const [captureError, setCaptureError] = useState<string | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -46,11 +55,7 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
         if (isAbortError(err)) return
         console.error('[ShareDialog] could not list shares:', err)
         setShares([])
-        pushToast({
-          kind: 'error',
-          title: 'Could not load shares',
-          body: getErrorMessage(err, 'Unknown error reading this project’s share links'),
-        })
+        setLoadFailed(true)
       }
     })()
     return () => controller.abort()
@@ -73,6 +78,7 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
 
   async function capture(token?: string) {
     setBusyToken(token ?? 'new')
+    setCaptureError(null)
     try {
       const result = await createShare(activeBoardId, token)
       setShares(result.shares)
@@ -83,10 +89,12 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
       }
     } catch (err) {
       console.error('[ShareDialog] could not capture the board:', err)
+      const message = getErrorMessage(err, 'Unknown error photographing the board')
+      setCaptureError(message)
       pushToast({
         kind: 'error',
         title: token ? 'Could not update the share' : 'Could not share this board',
-        body: getErrorMessage(err, 'Unknown error photographing the board'),
+        body: message,
       })
     } finally {
       setBusyToken(null)
@@ -143,11 +151,19 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
         A share is a snapshot: update it to re-capture, revoke it to turn it off.
       </p>
 
+      {captureError && (
+        <p className={styles.captureError} role="alert" data-testid="share-capture-error">
+          {captureError}
+        </p>
+      )}
+
       {shares === null && <p className={styles.empty}>Loading…</p>}
 
       {shares !== null && live.length === 0 && (
-        <p className={styles.empty}>
-          No live links yet. “Share current board” photographs it and copies the link.
+        <p className={styles.empty} role={loadFailed ? 'status' : undefined}>
+          {loadFailed
+            ? 'Studio could not read this project’s existing links. “Share current board” still makes a new one.'
+            : 'No live links yet. “Share current board” photographs it and copies the link.'}
         </p>
       )}
 

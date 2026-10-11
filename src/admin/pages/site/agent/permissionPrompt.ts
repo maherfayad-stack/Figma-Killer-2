@@ -32,6 +32,30 @@ export interface AgentPermissionRequest {
   readonly toolName: string
   readonly title: string
   readonly detail: string | null
+  /**
+   * AI-22 — set when the question is "approve this plan?": the CLI's
+   * `ExitPlanMode` in plan permission mode, or the HTTP agent's
+   * `studio_propose_plan`. The steps render as a checklist the user can trim
+   * before approving.
+   */
+  readonly plan?: string[]
+}
+
+/** The HTTP agent's plan-mode tool (`server/ai/mcp/tools/studio/proposePlanTool.ts`) — relayed to the browser like a permission prompt. */
+export const PROPOSE_PLAN_TOOL = 'studio_propose_plan'
+
+/** A plan's steps: an array given as such, or the list items of a markdown plan (numbered, bulleted or checkbox), else its non-empty lines. */
+export function planSteps(input: unknown): string[] {
+  const params = input && typeof input === 'object' ? (input as Record<string, unknown>) : {}
+  if (Array.isArray(params.steps)) {
+    return params.steps.filter((step): step is string => typeof step === 'string' && step.trim().length > 0).map((step) => step.trim()).slice(0, 30)
+  }
+  const plan = typeof params.plan === 'string' ? params.plan : ''
+  const lines = plan.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  const items = lines
+    .map((line) => /^(?:[-*+]\s+(?:\[[ xX]\]\s+)?|\d+[.)]\s+)(.+)$/.exec(line)?.[1])
+    .filter((item): item is string => typeof item === 'string')
+  return (items.length > 0 ? items : lines.filter((line) => !line.startsWith('#'))).slice(0, 30)
 }
 
 const DecisionSchema = Type.Object({
@@ -89,6 +113,9 @@ export function describePermissionRequest(toolName: string, input: unknown): Age
   const str = (key: string): string | null => (typeof params[key] === 'string' ? (params[key] as string) : null)
 
   switch (toolName.toLowerCase()) {
+    case 'exitplanmode':
+    case PROPOSE_PLAN_TOOL:
+      return { ...build(toolName, 'Approve this plan?', null), plan: planSteps(input) }
     case 'read':
       return build(toolName, 'Read a file outside this project', str('file_path'))
     case 'write':

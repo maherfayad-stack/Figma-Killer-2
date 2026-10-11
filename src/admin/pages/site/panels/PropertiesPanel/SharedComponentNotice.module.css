@@ -13,9 +13,9 @@
 /* Info tone as STATE: `SourceConstraintNotice`'s third variant states a fact
    about where a VALUE came from — nothing is blocked and nothing needs
    weighing, so it must not shout in warning amber the way a real structural
-   lock does. Same `--info-text` mix the dependencies/script panels use. */
+   lock does. The info tone's own surface tint, `--info-10`. */
 .noticeInfo {
-  background: color-mix(in srgb, var(--info-text) 12%, transparent);
+  background: var(--info-10);
   color: var(--info-text);
 }
 

@@ -1,4 +1,5 @@
 # Penpot inspector baseline (P0)
+> **Trust:** historical, dated 2026-09-09. Paths may be wrong. Never act on it.
 
 Measured baseline of a self-hosted Penpot `2.17.2`'s Design/Prototype/Inspect
 panel, for `STUDIO-LIVE-CANVAS-PLAN.md` Track P (P1 onward) to build against.

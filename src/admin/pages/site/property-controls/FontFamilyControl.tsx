@@ -4,6 +4,7 @@ import type { ControlProps } from './shared'
 import { Input } from '@ui/components/Input'
 import { ControlRow } from '@ui/components/ControlRow'
 import { ContextMenu, ContextMenuItem } from '@ui/components/ContextMenu'
+import { FONT_FAMILY_VARIABLE_KINDS, useVariableAffordance } from '@ui/components/VariableField'
 import { useEditorStore } from '@site/store/store'
 import { useEditorPreference } from '@site/preferences/editorPreferences'
 import { generateSiteFontsCss } from '@core/fonts'
@@ -75,6 +76,17 @@ export function FontFamilyControl({
     onPreview(nextValue)
   }
 
+  // A font stack held in a project variable (`--font-body`): the field keeps
+  // showing the `var(--x)` text; the trailing button changes or detaches it.
+  const variable = useVariableAffordance({
+    value,
+    accept: FONT_FAMILY_VARIABLE_KINDS,
+    onCommit: commit,
+    fieldLabel: label ?? propKey,
+    disabled,
+    editing: open,
+  })
+
   return (
     <ControlRow
       propKey={propKey}
@@ -83,7 +95,8 @@ export function FontFamilyControl({
       isOverride={isOverride}
       disabled={disabled}
     >
-      <div className={styles.wrapper}>
+      <div className={styles.wrapper} data-variable-host="">
+        {variable.trigger}
         <Input
           ref={inputRef}
           id={`ctrl-${propKey}`}

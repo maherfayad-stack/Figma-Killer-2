@@ -14,6 +14,8 @@ import { isSafeIntrinsicTagName, VOID_HTML_ELEMENTS } from '@core/utils/htmlTags
 import type { JsonDataValue } from '@core/utils/jsonData'
 import type { JsxChildRangeReason } from './jsxChildRange'
 import type { ImportRequirement } from './jsxImportEdits'
+import { BoundAssetImport, isAssetImportRef, type AssetImportRef } from './jsxAssetImports'
+import { ClassNameTokens } from './jsxClassTokens'
 
 /**
  * A prop written onto the new element.
@@ -41,7 +43,14 @@ import type { ImportRequirement } from './jsxImportEdits'
  * the same `validateSubtree` tag-safety gate — so nothing here can splice
  * arbitrary text into a user's file.
  */
-export type InsertableJsxPropValue = JsonDataValue | JsxPropElement | InsertableJsxPropValue[] | { [key: string]: InsertableJsxPropValue }
+export type InsertableJsxPropValue =
+  | JsonDataValue
+  | JsxPropElement
+  | AssetImportRef
+  | BoundAssetImport
+  | ClassNameTokens
+  | InsertableJsxPropValue[]
+  | { [key: string]: InsertableJsxPropValue }
 
 /**
  * A React element in PROP position, tagged so it cannot be confused with the
@@ -88,6 +97,13 @@ export interface InsertJsxNode {
   name: string
   props?: Record<string, InsertableJsxPropValue | undefined>
   importSpecifier?: string
+  /**
+   * How `name` is exported from `importSpecifier`: omitted means a NAMED export
+   * (`import { Button } from …`), `'default'` a default export (`import Card from …`).
+   * A project's own components are usually default exports, so a named-only
+   * insert could not place most of them. Meaningless without `importSpecifier`.
+   */
+  importStyle?: 'default'
   children?: InsertJsxChildren
 }
 
@@ -108,14 +124,37 @@ export type InsertJsxRefusalReason =
   | JsxChildRangeReason
   | 'not-a-container'
   | 'not-siblings'
-  | 'binding-conflict'
+
   | 'unsafe-tag'
   | 'void-element-children'
+  | 'asset-import'
 
 export interface InsertJsxRefusal {
   reason: InsertJsxRefusalReason
   /** Human-readable, suitable for a toast. */
   message: string
+}
+
+/**
+ * G-7 - a void element (`<img>`, `<input>`) cannot hold children, so nested
+ * elements asked of one have nowhere to go inside it. The nearest honest place
+ * is right after it, at the same level: the void element is written bare and its
+ * children follow as siblings (all of it still one splice). Text has no such
+ * place - a bare text node beside an element is the mixed content `InsertJsxChildren`
+ * rules out - so a void element asked to hold TEXT still refuses, in
+ * {@link validateSubtree}. Applies to intrinsic tags only; a component named like
+ * a void element is a component.
+ */
+export function liftVoidChildren(nodes: readonly InsertJsxNode[]): InsertJsxNode[] {
+  return nodes.flatMap((node): InsertJsxNode[] => {
+    // Deepest first: a void element nested in a container lifts within that container.
+    const children = Array.isArray(node.children) ? liftVoidChildren(node.children) : node.children
+    const lifted: InsertJsxNode = children === node.children ? node : { ...node, ...(children === undefined ? {} : { children }) }
+    if (node.importSpecifier !== undefined || !VOID_HTML_ELEMENTS.has(node.name.toLowerCase())) return [lifted]
+    if (!Array.isArray(children) || children.length === 0) return [lifted]
+    const { children: _held, ...bare } = lifted
+    return [bare, ...children]
+  })
 }
 
 /** One refusal, in the shape both codemods return it. */
@@ -142,6 +181,14 @@ const PLAIN_OBJECT_KEY = /^[A-Za-z_$][\w$]*$/
  * escaping, which is the part that must not be hand-rolled.
  */
 function jsxExpressionLiteral(value: InsertableJsxPropValue, unit: string): string {
+  if (value instanceof BoundAssetImport) return value.local
+  if (value instanceof ClassNameTokens) return value.expression()
+  if (isAssetImportRef(value)) {
+    // `validateSubtree` refuses an unbound ref before any render; reaching
+    // here means a caller skipped it, and writing the object literal would
+    // put `{ __assetImport: … }` into someone's file.
+    throw new Error('An image import reached the renderer without being bound to a name. Reload the project and try again.')
+  }
   if (isJsxPropElement(value)) return renderJsxNode(value.__jsx, unit)
   if (Array.isArray(value)) {
     const items = value.map((item) => jsxExpressionLiteral(item, unit))
@@ -179,6 +226,27 @@ function isTooLongToInline(rendered: string): boolean {
   return rendered.includes('\n') || rendered.length > 72
 }
 
+/**
+ * Characters a JSX attribute STRING cannot carry as itself. JSX string
+ * attributes have no backslash escapes (a quote preceded by a backslash still
+ * ends the string) and they decode HTML entities (`"a&amp;b"` means `a&b`), so
+ * a value holding either, a control character or a line separator is written as
+ * an expression container around a JS string literal instead, where
+ * `JSON.stringify`'s escaping IS the language's.
+ */
+function needsExpressionAttribute(value: string): boolean {
+  for (const char of value) {
+    const code = char.codePointAt(0)!
+    if (char === '"' || char === '\\' || char === '&' || code < 0x20 || code === 0x2028 || code === 0x2029) return true
+  }
+  return false
+}
+
+/** `"value"`, or `{"value"}` when the value cannot sit in a JSX string attribute as written. */
+function jsxAttributeString(value: string): string {
+  return needsExpressionAttribute(value) ? `{${JSON.stringify(value)}}` : `"${value}"`
+}
+
 export function renderJsxNode(node: InsertJsxNode, unit: string): string {
   const parts: string[] = []
   for (const [key, value] of Object.entries(node.props ?? {})) {
@@ -190,7 +258,7 @@ export function renderJsxNode(node: InsertJsxNode, unit: string): string {
       continue
     }
     if (typeof value === 'string') {
-      parts.push(`${key}=${JSON.stringify(value)}`)
+      parts.push(`${key}=${jsxAttributeString(value)}`)
       continue
     }
     // Numbers, `null`, and every structured value are JSX EXPRESSIONS, not
@@ -226,6 +294,7 @@ function* walkSubtree(node: InsertJsxNode): Generator<InsertJsxNode> {
 
 /** Every {@link JsxPropElement} nested anywhere inside one prop value. */
 function* walkPropElements(value: InsertableJsxPropValue): Generator<InsertJsxNode> {
+  if (value instanceof BoundAssetImport || value instanceof ClassNameTokens || isAssetImportRef(value)) return
   if (isJsxPropElement(value)) {
     yield* walkSubtree(value.__jsx)
     return
@@ -254,9 +323,29 @@ function* walkPropElements(value: InsertableJsxPropValue): Generator<InsertJsxNo
 export function collectSubtreeImports(root: InsertJsxNode): Map<string, ImportRequirement> {
   const required = new Map<string, ImportRequirement>()
   for (const node of walkSubtree(root)) {
-    if (node.importSpecifier !== undefined) required.set(node.name, { specifier: node.importSpecifier })
+    if (node.importSpecifier !== undefined) {
+      required.set(node.name, {
+        specifier: node.importSpecifier,
+        ...(node.importStyle === undefined ? {} : { style: node.importStyle }),
+      })
+    }
   }
   return required
+}
+
+/**
+ * P3-C (WB-19) — the subtree with every COMPONENT tag spelled by the local name
+ * `planImportBindings` bound it to (`Button` → `Button2` when the file already
+ * uses `Button` for something else). Intrinsic tags and prop elements are
+ * untouched: neither names a binding.
+ */
+export function renameSubtreeComponents(node: InsertJsxNode, localName: (name: string) => string): InsertJsxNode {
+  const { children } = node
+  return {
+    ...node,
+    ...(node.importSpecifier !== undefined ? { name: localName(node.name) } : {}),
+    ...(Array.isArray(children) ? { children: children.map((child) => renameSubtreeComponents(child, localName)) } : {}),
+  }
 }
 
 /**
@@ -279,8 +368,19 @@ export function validateSubtree(root: InsertJsxNode): { ok: false; refusal: Inse
       return refuse(
         'unsafe-tag',
         /^[A-Z]/.test(name)
-          ? `"${name}" starts with a capital letter, so JSX reads it as a component, not an HTML tag — pass importSpecifier to say where it is imported from.`
-          : `"${name}" is not a tag Studio will write: it must be a well-formed HTML element name and must not be one that executes script or loads external resources.`,
+          ? `"${name}" starts with a capital letter, so JSX reads it as a component, not an HTML tag. Pass importSpecifier to say where it is imported from.`
+          : `"${name}" is not a tag Studio will write, because it must be a plain HTML element name. Use a tag like div or span.`,
+      )
+    }
+
+    // IMG-10 — an image import is written only by `insertJsxElement`, which
+    // binds every direct-prop ref before it validates. One still unbound here
+    // is nested where no import can be spelled, or was sent to a codemod that
+    // writes no imports for it.
+    if (Object.values(node.props ?? {}).some((value) => value !== undefined && containsUnboundAssetImport(value))) {
+      return refuse(
+        'asset-import',
+        'An image import can only be written as a prop of an element being inserted. Insert the image as an element.',
       )
     }
 
@@ -288,11 +388,21 @@ export function validateSubtree(root: InsertJsxNode): { ok: false; refusal: Inse
     if (hasContent && VOID_HTML_ELEMENTS.has(name.toLowerCase())) {
       return refuse(
         'void-element-children',
-        `<${name}> is a void element and cannot hold children, so there is nowhere to write this content.`,
+        `<${name}> is a void element and cannot hold children. Insert the content next to it instead.`,
       )
     }
   }
   return undefined
+}
+
+/** Whether an unbound {@link AssetImportRef} sits anywhere inside one prop value. */
+function containsUnboundAssetImport(value: InsertableJsxPropValue): boolean {
+  if (value instanceof BoundAssetImport || value instanceof ClassNameTokens) return false
+  if (isAssetImportRef(value)) return true
+  if (isJsxPropElement(value)) return false // its own props are walked as a node of the subtree
+  if (Array.isArray(value)) return value.some(containsUnboundAssetImport)
+  if (value !== null && typeof value === 'object') return Object.values(value).some(containsUnboundAssetImport)
+  return false
 }
 
 /**

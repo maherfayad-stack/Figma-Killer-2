@@ -84,7 +84,8 @@ export const studioImportMcpTools: AiTool[] = [
       'Import a GitHub React app into its own studio workspace directory (studio-workspace/<owner>-<repo>) so it can be opened as a multi-file studio workspace and edited live by the connector owner. Reuses the exact fetch-and-write engine behind the admin "Import from GitHub" dialog. Writes files to disk only — never publishes, and never edits the live page-tree editor directly. After importing, open the Studio UI (Site editor, studio mode) pointed at the returned dir to browse and edit it. Requires site.structure.edit.',
     scope: 'site',
     execution: 'server',
-    mutates: true,
+    sideEffects: 'write',
+    requiresWrite: true,
     requiredCapabilities: ['site.structure.edit'],
     inputSchema: StudioImportInputSchema,
     handler: async (input, _ctx: ToolContext) => {

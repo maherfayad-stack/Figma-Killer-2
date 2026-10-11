@@ -28,14 +28,6 @@ export interface StructuralRefusalDialogState {
   /** The node the refusal is about, when the plan had one in hand. */
   nodeId?: string
   /**
-   * Re-run the gesture this refusal blocked, against the node that replaces
-   * `nodeId` once a detach/extract's board reload lands. Present only for the
-   * two remedies that invalidate `nodeId` itself (`detach` / `extract`) —
-   * every other runnable remedy (`edit-component`, `jump-to-source`,
-   * `edit-array`) just opens a file and needs no re-issue.
-   */
-  retry?: (newNodeId: string) => void
-  /**
    * D2 G3 — run the refused cross-frame drop again as a COPY.
    *
    * A closure rather than an id because the gesture's destination (which page,
@@ -46,4 +38,11 @@ export interface StructuralRefusalDialogState {
    * — see `duplicate-into-frame` in `editConstraint.ts`.
    */
   duplicateIntoFrame?: () => void
+  /**
+   * G-9 / G-8 — the remedies that END with the refused gesture running again,
+   * built by the store action that refused (it alone holds the gesture): write
+   * the list out and replay (`unrollList`), or start "Edit layout" and replay
+   * (`editLayout`). Present only when the remedy applies to this refusal.
+   */
+  replayRemedies?: { unrollList?: () => void; editLayout?: () => void }
 }

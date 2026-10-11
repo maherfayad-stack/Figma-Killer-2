@@ -14,7 +14,6 @@
  *
  * @see server/handlers/cms/importPreview.ts
  * @see src/core/data/bundleSchema.ts
- * @see docs/plans/2026-05-19-site-transfer-ux.md
  */
 
 import { describe, test, expect } from 'bun:test'

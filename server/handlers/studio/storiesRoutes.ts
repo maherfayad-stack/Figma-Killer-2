@@ -28,7 +28,7 @@
  */
 import { createWorkspaceProject } from '@core/page-parser'
 import { Type } from '@core/utils/typeboxHelpers'
-import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { mergeStudioMeta, readStudioMeta } from './studioMeta'
 import { discoverStories, storyFilesIn } from './storyDiscovery'
@@ -56,8 +56,7 @@ export async function tryServeStudioStories(req: Request, url: URL, pathname: st
       return jsonResponse({ enabled, files, stories: stories.map((story) => story.summary), refusals })
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio:stories]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio:stories]', err)
     }
   }
 
@@ -72,8 +71,7 @@ export async function tryServeStudioStories(req: Request, url: URL, pathname: st
       return jsonResponse({ ok: true, enabled: body.enabled })
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio:stories]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio:stories]', err)
     }
   }
 

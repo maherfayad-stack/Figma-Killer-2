@@ -3,7 +3,8 @@
  * two constructors every tier builds one with.
  *
  * A pure leaf, like `./staticEvalTypes` and `./staticEvalOperators`: it imports
- * ts-morph and the value types, and nothing else in this package imports back
+ * ts-morph, the value types and the `./sourceFingerprint` leaf (an origin
+ * records its literal's identity), and nothing else in this package imports back
  * into it. That is what lets `staticEvalCore` (the walker), `staticEvalCalls`
  * (Tier B/C) and `staticEvalOperators` (arithmetic/logical) all share ONE
  * `unresolved`/`withNote`/`pluck` without a cycle — `staticEvalOperators` used
@@ -16,6 +17,7 @@
  */
 import { Node } from 'ts-morph'
 import * as path from 'node:path'
+import { literalFingerprint } from './sourceFingerprint'
 import type { StaticValue, ValueOrigin } from './staticEvalTypes'
 
 export function unresolved(reason: string, partial?: string): StaticValue {
@@ -39,7 +41,9 @@ export function originOf(literal: Node, workspaceRoot: string | undefined): { or
   const rel = path.relative(path.resolve(workspaceRoot), path.resolve(sourceFile.getFilePath()))
   if (rel.length === 0 || rel.startsWith('..') || path.isAbsolute(rel)) return {}
   const { line, column } = sourceFile.getLineAndColumnAtPos(literal.getStart())
-  return { origin: { rel: rel.split(path.sep).join('/'), line, col: column } }
+  return {
+    origin: { rel: rel.split(path.sep).join('/'), line, col: column, fingerprint: literalFingerprint(literal) },
+  }
 }
 
 /** Propagates a Tier B.4 branch-pick note onto a value, without ever overwriting a MORE specific (deeper) note already attached. */

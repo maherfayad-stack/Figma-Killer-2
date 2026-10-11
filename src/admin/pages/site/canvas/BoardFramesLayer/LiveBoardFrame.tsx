@@ -3,12 +3,21 @@
  * `BoardFrameView`'s render fork (the other half stays today's unmodified
  * portal `BreakpointFrame`, for Tier 0/1).
  *
- * Mounts BOTH subtrees at once — a Tier-0 fallback (a cached poster, or a
- * plain portal `BreakpointFrame` over the SAME page tree the store already
- * holds — the static parse is trust-tier-independent) and the real bridge
- * iframe — so the bridge's cold boot runs CONCURRENTLY with showing the
- * fallback instead of paying that cost serially after the fallback is
- * already on screen. Swaps to the bridge iframe the instant its adapter
+ * Mounts a Tier-0 fallback (a plain portal `BreakpointFrame` over the SAME
+ * page tree the store already holds — the static parse is trust-tier-independent)
+ * and, from the moment the dev server is READY, the real bridge iframe next to
+ * it — so the bridge's cold boot runs CONCURRENTLY with showing the fallback
+ * instead of paying that cost serially after the fallback is already on screen.
+ * Until the server is ready the bridge has no document to load, so it is not
+ * mounted at all (an `src`-less iframe per frame doubled the board's documents).
+ *
+ * The fallback is always the real, clickable frame. A cached poster is only
+ * painted OVER it until its node tree has committed — the same overlay a
+ * Tier 0/1 frame gets in `BoardFrameView` — and never INSTEAD of it. It used
+ * to replace it: a frame whose poster had been captured came back as a
+ * picture with nothing under it, so on a board whose dev server was booting,
+ * failed, or could not start at all, a frame the user had panned away from
+ * and back to could no longer be selected (P6-C). Swaps to the bridge iframe the instant its adapter
  * fires `ready` (`live-05`'s own signal, already built and tested on both
  * `PortalFrameAdapter` and `BridgeFrameAdapter` — no new "ready" concept
  * needed here).
@@ -40,8 +49,8 @@ import { useLiveOrigin } from '@site/studio/useLiveOrigin'
 import { useDevServerReadiness } from '@site/studio/useDevServerReadiness'
 import { getStudioProjectKey, subscribeStudioProjectKey } from '@site/studio/studioProjectTrust'
 import { FramePosterPlaceholder } from './FramePosterPlaceholder'
-import { getFramePoster } from './frameSnapshotCache'
 import { useAdapterReady } from './useAdapterReady'
+import { useFramesHeldStatic } from './staticFrameHold'
 import { useBridgeFrameDiagnostics } from '../useBridgeFrameDiagnostics'
 import { useBridgeFrameInteraction } from './useBridgeFrameInteraction'
 
@@ -52,8 +61,8 @@ interface LiveBoardFrameProps {
   onActivate: (breakpointId: string) => void
   frameId: string
   axesOverride?: Partial<PreviewAxes>
-  /** This frame's own board-space width — same value `getFramePoster` keys the poster cache on. */
-  width: number
+  /** The frame's current picture (`framePosters`), painted over the fallback until it has content. */
+  posterUrl: string | undefined
 }
 
 export function LiveBoardFrame({
@@ -63,7 +72,7 @@ export function LiveBoardFrame({
   onActivate,
   frameId,
   axesOverride,
-  width,
+  posterUrl,
 }: LiveBoardFrameProps) {
   const projectDir = useAdminUi((s) => s.studioProject?.dir ?? null)
   const bareLiveOrigin = useLiveOrigin()
@@ -72,7 +81,13 @@ export function LiveBoardFrame({
   const axes = useResolvedFrameAxes(axesOverride)
 
   const [adapter, setAdapter] = useState<FrameDocumentAdapter | null>(null)
-  const ready = useAdapterReady(adapter)
+  // Held static while a capture needs to read this frame's pixels - a cross-origin
+  // live iframe cannot be photographed from here (see `staticFrameHold.ts`).
+  const heldStatic = useFramesHeldStatic()
+  const ready = useAdapterReady(adapter) && !heldStatic
+  // The fallback's node tree has committed (`IframeFrameSurface`'s stage 3);
+  // until then its poster, if one is cached, stays painted over it.
+  const [fallbackContentReady, setFallbackContentReady] = useState(false)
 
   // Z5 — a crash inside this cross-origin frame is posted over the bridge as
   // an `error` message and reaches nothing unless somebody records it. The
@@ -82,7 +97,7 @@ export function LiveBoardFrame({
   useBridgeFrameDiagnostics(adapter, frameId)
   // `live-12` — clicks and wheel forwarded out of the cross-origin frame
   // reach selection and zoom; without this they reached nothing.
-  useBridgeFrameInteraction(adapter, { breakpointId: breakpoint.id, frameId, isActive, onActivate })
+  useBridgeFrameInteraction(adapter, { breakpointId: breakpoint.id, frameId, pageId: page.id, isActive, onActivate })
 
   // `server/liveOrigin.ts` (L2) routes on the `/p/<projectKey>` path
   // segment — `useLiveOrigin` only knows the bare server-topology origin
@@ -127,26 +142,9 @@ export function LiveBoardFrame({
     }
   }, [attemptLive, liveOrigin, page, axes])
 
-  const posterUrl = getFramePoster(page, width)
-
   return (
     <>
       {!ready && (
-        posterUrl ? (
-          <FramePosterPlaceholder title={page.title} posterUrl={posterUrl} />
-        ) : (
-          <BreakpointFrame
-            page={page}
-            breakpoint={breakpoint}
-            isActive={isActive}
-            onActivate={onActivate}
-            frameId={frameId}
-            axesOverride={axesOverride}
-            showBreakpointChrome={false}
-          />
-        )
-      )}
-      <div hidden={!ready} data-testid="live-board-frame-bridge">
         <BreakpointFrame
           page={page}
           breakpoint={breakpoint}
@@ -155,17 +153,38 @@ export function LiveBoardFrame({
           frameId={frameId}
           axesOverride={axesOverride}
           showBreakpointChrome={false}
-          documentMode="bridge"
-          liveFrame={liveFrame}
-          onAdapterChange={setAdapter}
-          // `speed-04` (STATE.md) — the bridge overlay has nothing to do
-          // until this frame is ready (see `overlayEnabled`'s own doc on
-          // `BreakpointFrame`): the Tier-0 fallback above is the ONLY active
-          // selection chrome for this board frame while `!ready`, and it
-          // unmounts the instant this flips, so the two are never both live.
-          overlayEnabled={ready}
+          onContentReadyChange={setFallbackContentReady}
         />
-      </div>
+      )}
+      {!ready && !fallbackContentReady && (
+        <FramePosterPlaceholder title={page.title} posterUrl={posterUrl} overlay />
+      )}
+      {/* Mounted only once there is a document to load (`attemptLive`). Before that it was an
+          `<iframe>` with no `src` per frame - an empty document, its adapter and its listeners,
+          doubling what a board with a dev server that is booting, failed or absent holds
+          mounted (measured: 20 iframes for 4 visible frames). */}
+      {attemptLive && (
+        <div hidden={!ready} data-testid="live-board-frame-bridge">
+          <BreakpointFrame
+            page={page}
+            breakpoint={breakpoint}
+            isActive={isActive}
+            onActivate={onActivate}
+            frameId={frameId}
+            axesOverride={axesOverride}
+            showBreakpointChrome={false}
+            documentMode="bridge"
+            liveFrame={liveFrame}
+            onAdapterChange={setAdapter}
+            // `speed-04` (STATE.md) — the bridge overlay has nothing to do
+            // until this frame is ready (see `overlayEnabled`'s own doc on
+            // `BreakpointFrame`): the Tier-0 fallback above is the ONLY active
+            // selection chrome for this board frame while `!ready`, and it
+            // unmounts the instant this flips, so the two are never both live.
+            overlayEnabled={ready}
+          />
+        </div>
+      )}
     </>
   )
 }

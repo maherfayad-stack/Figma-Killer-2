@@ -42,10 +42,11 @@ const measureElementTool: AiTool = {
   name: 'studio_measure_element',
   scope: 'shared',
   execution: 'server',
-  mutates: true,
+  sideEffects: 'cache',
+  requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
-    'Measure what a screen ACTUALLY laid out to, in px: for each element, its frame-local x/y/width/height, its own padding/margin/border, and the measured gap to the elements before and after it — alongside the parent container\'s display, flex-direction, declared row-gap/column-gap and padding. Use it instead of estimating spacing from a screenshot: when the measured gap and the parent\'s declared gap disagree, a margin is in play and editing the gap will never close the difference; when they agree, the gap value itself is what is wrong. Address elements by node id (from studio_screenshot\'s nodeRects), by a CSS selector evaluated inside the rendered frame, or omit both to measure every authored node. Coordinates share studio_screenshot\'s origin (the frame\'s top-left), so a rect from a capture and a rect from here are directly comparable. Needs no Studio browser tab open — the screen is rendered in a headless browser on the server against what is on disk, so it measures the files you just wrote.',
+    'Measure what a screen actually laid out to, in px: per element, frame-local x/y/width/height, its padding, margin and border, and the measured gap to its neighbours, beside the parent\'s display, flex-direction, declared row-gap/column-gap and padding. Use it instead of estimating spacing from a picture: when the measured gap and the declared gap disagree, a margin is in play and editing the gap will not close it. Address elements by node id (from studio_screenshot\'s nodeRects), by a CSS selector inside the frame, or neither to measure every authored node. Coordinates share studio_screenshot\'s origin. Renders headless on the server from what is on disk.',
   inputSchema: StudioMeasureElementInputSchema,
   handler: async (input, ctx: ToolContext) => {
     const args = input as {

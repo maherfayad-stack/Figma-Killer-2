@@ -190,6 +190,10 @@ export const STUDIO_ROUTE_CAPABILITIES: readonly StudioRouteDeclaration[] = [
   { path: '/admin/api/studio/project-assets', read: 'site.read', mutate: null },
   { path: '/admin/api/studio/localized-page', read: 'site.read', mutate: null },
   { path: '/admin/api/studio/live-origin', read: 'site.read', mutate: null },
+  // The presence WebSocket (`studio/live/upgrade.ts`). A GET handshake, so the
+  // gate's CSRF rule does not cover it - the upgrade checks `Origin` itself.
+  // Viewers hold `site.read` and get presence (provisional, owner to confirm).
+  { path: '/admin/api/studio/live', read: 'site.read', mutate: null },
   // The GET serves an already-built `.studio/cache/bundle-<hash>.js`; the
   // POST is the half that spawns `Bun.build` in a subprocess, and it is a
   // `studio.write` — `sec-16`'s note that this route spawns at `site.read`
@@ -198,6 +202,9 @@ export const STUDIO_ROUTE_CAPABILITIES: readonly StudioRouteDeclaration[] = [
   { path: '/admin/api/studio/component-bundle', read: 'site.read', mutate: 'studio.write' },
   { path: '/admin/api/studio/preview-axes', read: 'site.read', mutate: 'studio.write' },
   { path: '/admin/api/studio/tokens', read: 'site.read', mutate: 'studio.write' },
+  // The token catalog (modes + usage) and the editor's write path for it. The GET
+  // reads the stylesheets the canvas loads; the POST edits a project stylesheet.
+  { path: '/admin/api/studio/token-catalog', read: 'site.read', mutate: 'studio.write' },
   { path: '/admin/api/studio/translations', read: 'site.read', mutate: 'studio.write' },
   { path: '/admin/api/studio/stories', read: 'site.read', mutate: 'studio.write' },
   { path: '/admin/api/studio/design-system/migrate', read: 'site.read', mutate: 'studio.write' },
@@ -211,6 +218,16 @@ export const STUDIO_ROUTE_CAPABILITIES: readonly StudioRouteDeclaration[] = [
   // pair against a base that had no table, and the two would have been two
   // policies the moment one of them moved.
   { path: '/admin/api/studio/asset-drop', read: null, mutate: 'studio.write' },
+  // `asset-drop-url` (P5-B3, IMG-5) makes the SERVER fetch a URL and write
+  // the bytes into the repository — the SSRF-sensitive one. A write for the
+  // same reason `asset-drop` is, and the gate's CSRF check is what keeps a
+  // page on the internet from asking for a fetch through it.
+  { path: '/admin/api/studio/asset-drop-url', read: null, mutate: 'studio.write' },
+  // IMG-11 — the unused-image report is a read of the project's own files;
+  // the prune DELETES files a drop created, so it is a write, and it only ever
+  // runs behind the Assets panel's confirmation (`assetPrune.ts`).
+  { path: '/admin/api/studio/asset-ledger', read: 'site.read', mutate: null },
+  { path: '/admin/api/studio/asset-prune', read: null, mutate: 'studio.write' },
   { path: '/admin/api/studio/reference-upload', read: 'site.read', mutate: 'studio.write' },
   { path: '/admin/api/studio/extract-component', read: null, mutate: 'studio.write' },
   { path: '/admin/api/studio/i18n-setup', read: null, mutate: 'studio.write' },

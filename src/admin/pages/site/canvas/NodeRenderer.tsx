@@ -7,22 +7,33 @@
  * - Per-node Zustand selector: subscribes ONLY to the specific node's data.
  *   Editing node A never re-renders NodeRenderer for node B.
  * - Selection/hover handled via CanvasSelectionContext (no DOM event bubbling).
- * - selectedNodeId / hoveredNodeId are NOT in context (Perf fix #495): each
- *   NodeRenderer subscribes directly to its own boolean — only the 2 affected
- *   nodes re-render per selection/hover event (O(2) not O(N)).
- * - Zustand re-runs EVERY subscriber's selector on EVERY store set, so the
- *   per-node selectors below must be O(1)-ish per sweep: the active-page
- *   resolution is single-slot memoized in `selectActivePage`, the
- *   form-preview helpers cache their parent index per tree identity, and
- *   `getCanvasNodeClassIds` passes the node's own array through untouched
- *   when no preview applies — selector outputs stay referentially stable.
+ * - The selection is NOT in context (Perf fix #495), and not a store selector
+ *   either (P2-I): `useIsNodeSelected` is a KEYED read — one store listener
+ *   diffs the old and new selection and wakes only the nodes whose answer
+ *   changed (`canvasNodeSelection.ts`).
+ * - Hover is not read here at all. It lives off the store (`canvasHover.ts`)
+ *   and its ring is the overlay's, drawn inside the frame; the per-node hover
+ *   subscription this used to carry fed a `data-hovered` attribute that no
+ *   stylesheet read.
+ * - Zustand re-runs EVERY subscriber's selector on EVERY store set, and this
+ *   component is mounted once per node per mounted frame, so each store
+ *   subscription below is a multiplier on every keystroke, click and
+ *   pan commit (`per-node-selector-budget.test.ts` counts them; the sweep in
+ *   `scripts/bench/lib/canvasSubscriberSweep.ts` times them). They return
+ *   primitives or existing references — never a fresh object — and must stay
+ *   O(1)-ish: the active-page resolution is single-slot memoized in
+ *   `selectActivePage`, the form-preview helpers cache their parent index per
+ *   tree identity, and `getCanvasNodeClassIds` passes the node's own array
+ *   through untouched when no preview applies. Store ACTIONS are read through
+ *   `getState()` in the handlers that call them, which subscribes to nothing.
  */
 
 import { memo, use, useLayoutEffect, useRef, useSyncExternalStore } from 'react'
-import { useShallow } from 'zustand/react/shallow'
 import type { InlineEditBinding } from '@core/module-engine'
-import { readInlineEditableText, seedInlineEditableContent } from '@modules/base/shared/inlineText'
+import { enterCommitsInlineEdit, readInlineEditableText, seedInlineEditableContent } from '@modules/base/shared/inlineText'
+import { withPreviewedProps } from './previewedNodeProps'
 import { useEditorStore, selectCanvasPageFor } from '@site/store/store'
+import { isInlineEditSessionFor } from '@site/store/slices/inlineEditSlice'
 import { resolveProps } from '@core/page-tree'
 import { registry } from '@core/module-engine'
 import type { NodeWrapperProps as NodeWrapperPropsType } from '@core/module-engine'
@@ -32,11 +43,13 @@ import { WarningDiamondSolidIcon } from 'pixel-art-icons/icons/warning-diamond-s
 import { ErrorBoundary } from '@ui/components/ErrorBoundary'
 import { ModuleSandboxFrame } from './ModuleSandboxFrame'
 import {
+  canvasPressBecameDrag,
+  claimSuppressedPointerActivation,
+  takeCanvasPressDrag,
   isSuppressedPointerTarget,
   markClickActivated,
   setSuppressedPointerTarget,
   takeActivatedClick,
-  takeSuppressedPointerTarget,
 } from './canvasNodeGestureLatch'
 import {
   focusNodeWithoutScrolling,
@@ -47,6 +60,7 @@ import {
   shouldSuppressAuthoredFormControlEvent,
 } from './canvasEventTargets'
 import { PackageComponentPlaceholder } from './PackageComponentPlaceholder'
+import { canvasProjectAssetScope, projectAssetProps, projectAssetStyle } from './canvasProjectAssetUrl'
 import {
   CanvasBreakpointContext,
   CanvasFrameContext,
@@ -62,8 +76,15 @@ import {
 } from './canvasFormPreview'
 import { useResponsiveBackgroundStyle } from '@admin/shared/media/hooks/useResponsiveBackgroundStyle'
 import { getCanvasNodeClassIds, getCanvasNodeClassName } from './canvasNodeClassName'
+import { useIsNodeSelected } from './canvasNodeSelection'
+import { nodeRenderKey } from './nodeRenderKeys'
 import { mergePreviewedInlineStyles } from './canvasNodeInlineStyle'
-import { findEnclosingComponentRef, findEnclosingInstance, type AnnotatedPageNode } from './canvasSelectionUtils'
+import { resolveInstanceEntry } from './canvasSelectionUtils'
+import { canvasPressContext, resolveCanvasDrillTarget, resolveCanvasPressTarget } from './canvasPressTarget'
+import { canvasNodeIdEnteredOnLeave } from './canvasHoverHandoff'
+import { useCanvasNodeData } from './canvasNodeData'
+import { resolvePressSelection } from './canvasPressSelect'
+import { NO_MODIFIERS, ringOnPress, selectOnPress } from './pressRing'
 import { useLoopPreviewItems } from './useLoopPreviewItems'
 import styles from './NodeRenderer.module.css'
 
@@ -75,13 +96,11 @@ interface NodeRendererProps {
   nodeId: string
 }
 
-// React Compiler exception #2: memo() re-render bailout on a hot, recursive
-// per-node canvas renderer (O(N) critical path) — kept intentionally.
-export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererProps) {
-  // The page this frame renders. `null` (no CanvasPageContext provider) means
-  // "the active canvas document" — every CMS/VC frame. Board frames provide a
-  // page id so this NodeRenderer resolves against that frame's own page.
+function NodeRenderer({ nodeId }: NodeRendererProps) {
+  // The page this frame renders. `null` (no provider) means "the active canvas
+  // document" — every CMS/VC frame; board frames provide their own page id.
   const contextPageId = use(CanvasPageContext)
+  const pageScoped = contextPageId !== null
   const breakpointId = use(CanvasBreakpointContext)
   // WS-10 Phase 2 — owning BoardFrame id (`null` outside board context). NOT
   // `breakpointId` — see `CanvasFrameContext`'s doc. Declared before `node`
@@ -112,172 +131,119 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
   // Per-node subscription — editing this node's props only re-renders THIS
   // component. `frameId` (§4.4/Phase 4) lets a locale-variant frame read
   // `localizedPageSlice.ts`'s tree instead of `site.pages` — see
-  // `selectCanvasPageFor`'s own doc.
-  const node = useEditorStore((s) => selectCanvasPageFor(s, contextPageId, frameId)?.nodes[nodeId] ?? null)
+  // `selectCanvasPageFor`'s own doc. An inspector field's uncommitted text is
+  // laid over the stored props here (`previewedNodeProps.ts`).
+  const node = useCanvasNodeData((s) => withPreviewedProps(selectCanvasPageFor(s, contextPageId, frameId)?.nodes[nodeId], s.previewNodeProps), pageScoped)
   const templateContext = use(CanvasTemplateContext)
 
-  // Per-node selection/hover subscriptions (Perf fix — Contribution #495).
-  // Only the 2 nodes whose boolean flips will re-render on any selection/hover
-  // event. Context carries only stable callbacks — no context-driven re-renders.
-  //
-  // Multi-select: this checks `selectedNodeIds.includes(nodeId)` so every node
-  // in a multi-selection shows the selection ring. The selector still resolves
-  // to a boolean, so per-node memoization isn't disturbed — only rows whose
-  // `includes(nodeId)` result flips will re-render.
-  //
-  // WS-10 Phase 2 — `selectedNodeFrameId`/`hoveredFrameId` scope to the
-  // originating BoardFrame ("null means global", mirroring `hoveredBreakpointId`)
-  // so a "duplicate as variant" sibling (same node ids, trap #2) doesn't light up.
-  const isSelected = useEditorStore(
-    (s) =>
-      s.selectedNodeIds.includes(nodeId) &&
-      (!s.selectedNodeFrameId || s.selectedNodeFrameId === frameId),
-  )
-  const isHovered = useEditorStore(
-    (s) =>
-      s.hoveredNodeId === nodeId &&
-      (!s.hoveredBreakpointId || s.hoveredBreakpointId === breakpointId) &&
-      (!s.hoveredFrameId || s.hoveredFrameId === frameId),
-  )
+  // Keyed selection read (P2-I) — see the module doc. Multi-select: every node
+  // in the set shows the ring. WS-10 Phase 2 — scoped to the originating
+  // BoardFrame (`selectedNodeFrameId`, "null means global") so a "duplicate as
+  // variant" sibling (same node ids, trap #2) doesn't light up.
+  const isSelected = useIsNodeSelected(nodeId, frameId)
   // Inline text edit session — matched only in the SESSION'S frame. Gated on
   // `frameId` too, not just `breakpointId` (every board frame shares ONE
   // synthetic breakpoint id, `'studio'`) — without it, a "duplicate as
   // variant" sibling sharing this node id (trap #2) would ALSO show the
-  // contentEditable surface. Closes `canvas-08`'s "Known gap" note — Phase 4
-  // needs this correct, not just untested.
+  // contentEditable surface. Closes `canvas-08`'s "Known gap" note.
   //
-  // ONE subscription, not three: these were three separate `useEditorStore`
-  // calls running the SAME three-field match, so every mounted node paid for
-  // it three times on every store commit. `useShallow` keeps the per-node
-  // memoization exactly as clean as three primitive selectors did — all three
-  // fields are primitives, so the returned object is referentially stable
-  // whenever they are.
-  const { isInlineEditing, inlineEditInitialValue, inlineEditMultiline } = useEditorStore(
-    useShallow((s) => {
-      const session = s.activeInlineEdit
-      const isThisNode =
-        session !== null &&
-        session.nodeId === nodeId &&
-        session.breakpointId === breakpointId &&
-        session.frameId === frameId
-      return {
-        isInlineEditing: isThisNode,
-        // Both are constant for the whole session (initialValue seeds the
-        // frozen content; multiline decides Enter's behaviour).
-        inlineEditInitialValue: isThisNode ? session.initialValue : null,
-        inlineEditMultiline: isThisNode ? session.multiline : false,
-      }
-    }),
-  )
-  const applyInlineEditValue = useEditorStore((s) => s.applyInlineEditValue)
-  const endInlineEdit = useEditorStore((s) => s.endInlineEdit)
-  const cancelInlineEdit = useEditorStore((s) => s.cancelInlineEdit)
+  // A primitive, not the `useShallow` object this used to be (P2-I): that
+  // selector allocated an object per node per store change and then
+  // shallow-compared it — with the preview pair below, ~45% of the whole
+  // canvas sweep. The session's `initialValue` and `multiline` are constant for
+  // its whole life, so they are read through `getState()` exactly where they
+  // are used (the seeding effect, the Enter handler).
+  const isInlineEditing = useCanvasNodeData((s) => isInlineEditSessionFor(s.activeInlineEdit, nodeId, breakpointId, frameId), pageScoped)
   const editableRef = useRef<HTMLElement | null>(null)
-  // Canvas preview state for THIS node — the class-target hover preview
-  // (`previewClassAssignment`) and its Rule 7 (panel-22) Element-target
-  // mirror (`previewNodeStyles`), collapsed into one `useShallow`
-  // subscription for the same reason the `activeInlineEdit` triple above is
-  // one: a new per-node preview fact rides an EXISTING subscription instead
-  // of costing another entry against `per-node-selector-budget.test.ts`'s
-  // budget. Both are filtered to this node's id so unrelated nodes never
-  // re-render while a preview is live elsewhere.
-  const { previewClassAssignment, previewNodeStyles } = useEditorStore(
-    useShallow((s) => ({
-      previewClassAssignment: s.previewClassAssignment?.nodeId === nodeId ? s.previewClassAssignment : null,
-      previewNodeStyles: s.previewNodeStyles?.nodeIds.includes(nodeId) ? s.previewNodeStyles : null,
-    })),
-  )
-  const editorFormPreviewState = useEditorStore((s) => resolveEditorFormPreviewState(s, nodeId))
-  const editorFormPreviewSuccessMessage = useEditorStore((s) => resolveEditorFormPreviewSuccessMessage(s, nodeId))
-  const mcClassName = useEditorStore((s) => {
+  // Canvas preview state for THIS node: the class-target hover preview
+  // (`previewClassAssignment`) and its Element-target mirror
+  // (`previewNodeStyles`). Plain selectors returning the store's own object or
+  // `null` (P2-I), filtered to this node's id so others never re-render.
+  const previewClassAssignment = useCanvasNodeData((s) => (s.previewClassAssignment?.nodeId === nodeId ? s.previewClassAssignment : null), pageScoped)
+  const previewNodeStyles = useCanvasNodeData((s) => (s.previewNodeStyles?.nodeIds.includes(nodeId) ? s.previewNodeStyles : null), pageScoped)
+  const editorFormPreviewState = useCanvasNodeData((s) => resolveEditorFormPreviewState(s, nodeId), pageScoped)
+  const editorFormPreviewSuccessMessage = useCanvasNodeData((s) => resolveEditorFormPreviewSuccessMessage(s, nodeId), pageScoped)
+  const mcClassName = useCanvasNodeData((s) => {
     const canvasNode = selectCanvasPageFor(s, contextPageId, frameId)?.nodes[nodeId]
     const preview = s.previewClassAssignment?.nodeId === nodeId ? s.previewClassAssignment : null
     return getCanvasNodeClassName(canvasNode?.classIds, preview, nodeId, s.site?.styleRules)
-  })
-  const { onNodeClick, onNodeHover, onNodeContextMenu, onNodeDoubleClick, onNodePointerDown, onNodePointerUp } =
+  }, pageScoped)
+  const { onNodeClick, onFrameNodeClick, onFrameBackgroundClick, onNodeHover, onNodeContextMenu, onNodeDoubleClick, onNodePointerDown, onNodePointerUp } =
     use(CanvasSelectionContext)
 
-  const handleNodeClick = (clickedNodeId: string, e: React.MouseEvent) => {
-    // Imperative store access is correct here (event handler, not render path).
+  /**
+   * The layer a press on `hitId` means (`canvasPressTarget.ts`): Figma's
+   * selection depth, a closed instance or an inlined VC body as one layer, and
+   * ⌘/Ctrl (`deep`) for the innermost. Depth is an EDITING rule: a live frame
+   * is the page as a visitor gets it, and its clicks (and the prototype
+   * player's links) land on the element actually pressed. `null` is the
+   * frame's own empty background.
+   */
+  const resolvePressTarget = (hitId: string, deep: boolean): string | null => {
     const state = useEditorStore.getState()
     const page = selectCanvasPageFor(state, contextPageId, frameId)
-
-    // instance-ui-01 — Figma's nesting model for `studio.instance` (WS-4.2): a
-    // click anywhere inside a not-yet-entered instance's subtree selects the
-    // INSTANCE, not the descendant. Checked before the VC lock-down below —
-    // independent mechanisms, a click resolves to at most one in practice.
-    if (page) {
-      const enclosingInstance = findEnclosingInstance(page, clickedNodeId, state.enteredInstanceIds)
-      if (enclosingInstance !== null) {
-        onNodeClick(enclosingInstance, e, breakpointId, frameId)
-        return
-      }
-    }
-
-    // B3 — VC lock-down: redirect clicks inside inlined VC bodies to the ref node.
-    if (state.activeDocument?.kind !== 'visualComponent' && page) {
-      const enclosing = findEnclosingComponentRef(page.nodes as Record<string, AnnotatedPageNode>, clickedNodeId)
-      if (enclosing !== null && !enclosing.isInsideSlotContent) {
-        // Clicked inside a VC body (not slot content) — route to the ref.
-        onNodeClick(enclosing.refId, e, breakpointId, frameId)
-        return
-      }
-    }
-    onNodeClick(clickedNodeId, e, breakpointId, frameId)
+    const context = canvasPressContext(state, frameId)
+    return page ? resolveCanvasPressTarget(page, hitId, context, { deep: deep || !ownsAuthoredEvents }) : hitId
   }
 
+  /**
+   * A click: deep (the innermost layer) when ⌘/Ctrl is held. The keyboard's
+   * Enter/Space passes `focusedNode` — it activates the node that HAS focus,
+   * which is exactly the one it names. A click on the frame's own empty
+   * background selects nothing and lets go of everything.
+   */
+  const handleNodeClick = (clickedNodeId: string, e: React.MouseEvent, focusedNode?: boolean) => {
+    const target = resolvePressTarget(clickedNodeId, focusedNode === true || e.metaKey || e.ctrlKey)
+    if (target !== null) {
+      onNodeClick(target, e, breakpointId, frameId)
+      return
+    }
+    // The design canvas owns its clicks outright, as `onNodeClick` does.
+    e.stopPropagation()
+    onFrameBackgroundClick(breakpointId, frameId)
+  }
+
+  // A right-click is ABOUT the same layer a click would be: a right-click that
+  // skipped this opened the menu on a component's inner element instead of the
+  // instance the user had selected — so the menu never offered "Detach
+  // instance", and the right-click itself replaced the selection with that
+  // inner element. Only ⌘ is deep here: ⌃-click IS the right-click on macOS.
+  // On the frame's own background the menu is the page root's — the one
+  // layer that is there.
   const handleNodeContextMenu = (clickedNodeId: string, e: React.MouseEvent) => {
-    onNodeContextMenu(clickedNodeId, e, breakpointId, frameId)
+    onNodeContextMenu(resolvePressTarget(clickedNodeId, e.metaKey) ?? clickedNodeId, e, breakpointId, frameId)
   }
 
-  // instance-ui-01 — Figma's "Enter / double-click enters it and selects the
-  // inner node under the cursor": a double-click inside a not-yet-entered
-  // instance enters it (pushes `enteredInstanceIds`) and selects the EXACT
-  // descendant, bypassing `handleNodeClick`'s redirect and the module's
-  // ordinary double-click (inline edit). Already-entered instance: falls
-  // through to ordinary behaviour unchanged.
+  // A double-click steps ONE container level down from what its clicks
+  // selected, toward the element under the cursor — or, on a leaf, straight to
+  // it and on into its edit (`resolveCanvasDrillTarget`, Figma's "select
+  // inside"). Once the clicks already reached the innermost layer it means what
+  // it always did: inside a not-yet-entered instance it opens ONE level
+  // (instance-ui-01, `resolveInstanceEntry`) and selects what is under the
+  // cursor at the next level; otherwise the module's own double-click (an
+  // inline text edit, vector edit).
   const handleNodeDoubleClick = (clickedNodeId: string, e: React.MouseEvent) => {
     const state = useEditorStore.getState()
     const page = selectCanvasPageFor(state, contextPageId, frameId)
-    if (page) {
-      const enclosingInstance = findEnclosingInstance(page, clickedNodeId, state.enteredInstanceIds)
-      if (enclosingInstance !== null) {
-        state.enterInstance(enclosingInstance)
-        onNodeClick(clickedNodeId, e, breakpointId, frameId)
-        return
-      }
+    const drill = page && ownsAuthoredEvents ? resolveCanvasDrillTarget(page, clickedNodeId, canvasPressContext(state, frameId)) : null
+    if (drill) {
+      onNodeClick(drill.select, e, breakpointId, frameId)
+      if (!drill.thenEdit) return
+    }
+    const entry = page ? resolveInstanceEntry(page, clickedNodeId, state.enteredInstanceIds) : null
+    if (entry) {
+      state.enterInstance(entry.enter)
+      onNodeClick(entry.select, e, breakpointId, frameId)
+      return
     }
     onNodeDoubleClick(clickedNodeId, e, breakpointId, frameId)
   }
 
-  const handleNodeHover = (hoveredNodeId: string | null) => {
-    if (hoveredNodeId !== null) {
-      const state = useEditorStore.getState()
-      const page = selectCanvasPageFor(state, contextPageId, frameId)
-
-      // instance-ui-01 — clamp the hover ring to the enclosing not-yet-
-      // entered instance, same redirect as click above.
-      if (page) {
-        const enclosingInstance = findEnclosingInstance(page, hoveredNodeId, state.enteredInstanceIds)
-        if (enclosingInstance !== null) {
-          onNodeHover(enclosingInstance, breakpointId, frameId)
-          return
-        }
-      }
-
-      // B3 — VC lock-down: clamp hover ring to the ref node for VC body nodes.
-      if (state.activeDocument?.kind !== 'visualComponent' && page) {
-        const enclosing = findEnclosingComponentRef(
-          page.nodes as Record<string, AnnotatedPageNode>,
-          hoveredNodeId,
-        )
-        if (enclosing !== null && !enclosing.isInsideSlotContent) {
-          onNodeHover(enclosing.refId, breakpointId, frameId)
-          return
-        }
-      }
-    }
-    onNodeHover(hoveredNodeId, breakpointId, frameId)
+  // The hover ring shows what a click WOULD select, so it follows the same
+  // resolution (⌘/Ctrl held shows the innermost layer) — and nothing over the
+  // frame's own empty background.
+  const handleNodeHover = (hoveredNodeId: string | null, deep: boolean) => {
+    onNodeHover(hoveredNodeId === null ? null : resolvePressTarget(hoveredNodeId, deep), breakpointId, frameId)
   }
 
   // Subscribe to module registry changes so plugin module packs that activate
@@ -304,20 +270,29 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
     if (!isInlineEditing) return
     const el = editableRef.current
     if (!el) return
-    seedInlineEditableContent(el, inlineEditInitialValue ?? '')
+    seedInlineEditableContent(el, useEditorStore.getState().activeInlineEdit?.initialValue ?? '')
     el.focus()
     const doc = el.ownerDocument
     const sel = doc.defaultView?.getSelection()
     if (!sel) return
     const range = doc.createRange()
     range.selectNodeContents(el)
-    range.collapse(false)
+    // A freshly drawn text opens with its placeholder selected, so the first
+    // keystroke replaces it; every other session drops the caret at the end.
+    if (useEditorStore.getState().activeInlineEdit?.selectAll !== true) range.collapse(false)
     sel.removeAllRanges()
     sel.addRange(range)
-  }, [isInlineEditing, inlineEditInitialValue])
+  }, [isInlineEditing])
 
-  const inlineStyle = useResponsiveBackgroundStyle(
-    mergePreviewedInlineStyles(node?.inlineStyles, previewNodeStyles, nodeId),
+  // A portal frame lives on the admin origin, so a site-root `url('/bg.png')`
+  // in the node's own style resolves to the project asset route here — the
+  // same resolution the props below and every CSS injector get
+  // (`canvasProjectAssetUrl.ts`, P5-B2). Render-time only; the store keeps
+  // what the source says.
+  const assetScope = canvasProjectAssetScope()
+  const inlineStyle = projectAssetStyle(
+    useResponsiveBackgroundStyle(mergePreviewedInlineStyles(node?.inlineStyles, previewNodeStyles, nodeId)),
+    assetScope,
   )
 
   if (!node) return null
@@ -356,7 +331,10 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
     node.moduleId === 'base.loop' && node.children.length > 0 ? (
       <LoopIterationsPreview node={node} baseTemplateContext={templateContext} />
     ) : (
-      node.children.map((childId) => <NodeRenderer key={childId} nodeId={childId} />)
+      // PERF-6 — keyed by the node's CARRIED render key, not its id: a write
+      // that renumbered this child's `rel:line:col` re-renders it in place
+      // rather than remounting it (`nodeRenderKeys.ts`).
+      node.children.map((childId) => <MemoNodeRenderer key={nodeRenderKey(contextPageId, childId)} nodeId={childId} />)
     )
 
   const ComponentType = definition.component
@@ -364,51 +342,57 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
   // Pass the module schema so resolveProps drops breakpoint overrides for
   // non-responsive (content) keys — text/tag/src etc. must look identical
   // across every breakpoint frame, since published HTML is one document.
-  const effectiveProps = addEditorFormPreviewProps(
-    node.moduleId,
-    resolveDynamicProps(
-    resolveProps(node, breakpointId, definition.schema),
-    effectiveNodeBindings(node),
-    templateContext,
+  //
+  // Resource URLs (`src`, `srcSet`, `poster`) resolve last, for every module
+  // at once: a site-root `src="/hero.png"` would otherwise load from the
+  // admin origin and show broken (P5-B2, `canvasProjectAssetUrl.ts`).
+  const effectiveProps = projectAssetProps(
+    addEditorFormPreviewProps(
+      node.moduleId,
+      resolveDynamicProps(
+      resolveProps(node, breakpointId, definition.schema),
+      effectiveNodeBindings(node),
+      templateContext,
+      ),
+      editorFormPreviewState,
+      editorFormPreviewSuccessMessage,
     ),
-    editorFormPreviewState,
-    editorFormPreviewSuccessMessage,
+    assetScope,
   )
 
   // Build className from classIds using the user-facing class names.
   const effectiveClassIds = getCanvasNodeClassIds(node.classIds, previewClassAssignment, nodeId)
 
-  // Editor attributes + event handlers the module spreads onto its root
-  // element. Previously this was a wrapping `<div class="nodeWrapper">`
-  // around every node — that wrapper broke CSS combinators (`body > nav`,
-  // `:nth-child()`, etc.) because it sat between every authored element.
-  // Moving the bag onto the module's own root removes the wrapper entirely
-  // and the canvas DOM matches the published DOM exactly.
+  // Editor attributes + handlers the module spreads onto its own root element
+  // — never a wrapper `<div>`, which would break CSS combinators (`body > nav`,
+  // `:nth-child()`) and make the canvas DOM differ from the published DOM.
   const nodeWrapperProps: NodeWrapperPropsType = {
     'data-node-id': nodeId,
     'data-module-id': node.moduleId,
     tabIndex: 0,
     ...(isSelected ? { 'data-canvas-selected': 'true' as const } : {}),
     ...(inlineStyle ? { style: inlineStyle } : {}),
-    ...(isHovered && !isSelected ? { 'data-hovered': 'true' as const } : {}),
     onPointerDownCapture: (e) => {
       focusNodeWithoutScrolling(e.currentTarget, e.target, isInlineEditing)
-      // The press half of the player's gesture. Guarded by the same
-      // "innermost node wins" predicate the click handlers use, so exactly one
-      // node in the path latches it — the one the pointer is actually on.
+      // The press half of the player's gesture; the innermost node wins.
       if (isClosestCanvasNodeTarget(e.target, e.currentTarget) && !isCanvasEditorControlTarget(e.target, e.currentTarget)) {
         onNodePointerDown(nodeId)
       }
-      if (!suppressesFormControls || !shouldSuppressAuthoredFormControlEvent(e.target, e.currentTarget)) {
-        // A press this node does not suppress still STARTS a new gesture, so
-        // whatever the last one latched is over.
-        setSuppressedPointerTarget(null)
-        return
-      }
+      const suppressed = suppressesFormControls && shouldSuppressAuthoredFormControlEvent(e.target, e.currentTarget)
+      // A press this node does not suppress still STARTS a new gesture, so
+      // whatever the last one latched is over.
+      if (!suppressed) setSuppressedPointerTarget(null)
+      const pressed = ownsAuthoredEvents && !isInlineEditing ? resolvePressSelection(useEditorStore.getState(), contextPageId, frameId, nodeId, e) : null
+      // A control's press rings the layer it means but selects nothing: the press
+      // may still become a drag, so the RELEASE decides (a ring that waited for
+      // the release was the last thing to show up on a press).
+      if (pressed !== null && suppressed) ringOnPress(e.currentTarget as Element, pressed)
+      else if (pressed !== null) selectOnPress(e.currentTarget as Element, pressed, () => onFrameNodeClick(pressed, NO_MODIFIERS, breakpointId, frameId))
+      if (!suppressed) return
+      // Cancel the control's own activation (focus, a picker) now; SELECT on release.
       e.preventDefault()
       e.stopPropagation()
       setSuppressedPointerTarget(e.currentTarget)
-      handleNodeClick(nodeId, e as unknown as React.MouseEvent)
     },
     onMouseDownCapture: (e) => {
       if (!suppressesFormControls || !shouldSuppressAuthoredFormControlEvent(e.target, e.currentTarget)) {
@@ -418,11 +402,10 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
       e.preventDefault()
       e.stopPropagation()
       // The compatibility mousedown for a pointerdown this gesture already
-      // acted on. Deliberately does NOT clear the latch: the click still to
+      // latched. Deliberately does NOT reopen the latch: the release still to
       // come belongs to the same gesture.
       if (isSuppressedPointerTarget(e.currentTarget)) return
       setSuppressedPointerTarget(e.currentTarget)
-      handleNodeClick(nodeId, e as unknown as React.MouseEvent)
     },
     onPointerUpCapture: (e) => {
       // The release half. Reported against THIS node whatever the component
@@ -431,6 +414,12 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
       if (!isClosestCanvasNodeTarget(e.target, e.currentTarget)) return
       if (isCanvasEditorControlTarget(e.target, e.currentTarget)) return
       onNodePointerUp(nodeId)
+      // A suppressed control is activated HERE, once: a disabled control never
+      // raises the `click` that would otherwise do it. Not when the press
+      // turned into a drag — the drag already selected what it moved.
+      if (claimSuppressedPointerActivation(e.currentTarget) && !canvasPressBecameDrag()) {
+        handleNodeClick(nodeId, e as unknown as React.MouseEvent)
+      }
     },
     onFocusCapture: (e) => {
       // A live frame is the page as a visitor gets it: blurring every field
@@ -446,8 +435,17 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
       e.preventDefault()
       // Only on an EDITING surface — see `ownsAuthoredEvents`.
       if (ownsAuthoredEvents) e.stopPropagation()
-      // CLOSES the gesture a suppressed pointerdown opened.
-      if (takeSuppressedPointerTarget(e.currentTarget)) return
+      // The click that ends a DRAG is not a click: it lands on the common
+      // ancestor of where the press started and ended, and would replace the
+      // layer just moved with that ancestor.
+      if (ownsAuthoredEvents && takeCanvasPressDrag()) return
+      // A click CLOSES whatever gesture a suppressed press opened — this node's
+      // was already activated at release, unless the click is the only release
+      // there was.
+      const latched = isSuppressedPointerTarget(e.currentTarget)
+      const unactivated = latched && claimSuppressedPointerActivation(e.currentTarget)
+      setSuppressedPointerTarget(null)
+      if (latched && !unactivated) return
       // The bubble-phase twin below sees the same native event a moment later
       // whenever propagation was left alive — see `canvasNodeGestureLatch`.
       markClickActivated(ownsAuthoredEvents ? null : (e as unknown as React.MouseEvent).nativeEvent)
@@ -522,19 +520,21 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
       // was entered and the following Escape had nothing to step out of.
       // Yielding here cannot strand the keystroke: `useCanvasSelectionKeyboard`
       // is unconditionally mounted for the same editable, non-live canvas.
-      if (e.key === 'Enter') {
-        const state = useEditorStore.getState()
-        const selectedId = state.selectedNodeId
-        const selected = selectedId ? selectCanvasPageFor(state, contextPageId, frameId)?.nodes[selectedId] : null
-        if (selected?.moduleId === 'studio.instance') return
-      }
+      //
+      // So does every Enter while something is selected, and any modified one:
+      // DOM focus after a click sits on the iframe `<body>` (a canvas node with
+      // this handler), so "click the focused node" turned Shift+Enter (select
+      // parent) and Enter (select children) into "select the page root".
+      if (e.key === 'Enter' && (e.shiftKey || e.altKey || e.metaKey || e.ctrlKey || useEditorStore.getState().selectedNodeId !== null)) return
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault()
-        handleNodeClick(nodeId, e as unknown as React.MouseEvent)
+        handleNodeClick(nodeId, e as unknown as React.MouseEvent, true)
       }
     },
-    onMouseEnter: () => handleNodeHover(nodeId),
-    onMouseLeave: () => handleNodeHover(null),
+    onMouseEnter: (e) => handleNodeHover(nodeId, e.metaKey || e.ctrlKey),
+    // Hand the hover to the node the pointer went INTO — a leave into the
+    // parent brings the parent no `mouseenter` (`canvasHoverHandoff.ts`).
+    onMouseLeave: (e) => handleNodeHover(canvasNodeIdEnteredOnLeave(e.relatedTarget), e.metaKey || e.ctrlKey),
   }
 
   // Inline editing: this node's element becomes the contentEditable surface.
@@ -547,25 +547,28 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
   const inlineEditBinding: InlineEditBinding | undefined = isInlineEditing
     ? {
         ref: editableRef,
-        onInput: (e) => applyInlineEditValue(readInlineEditableText(e.currentTarget as HTMLElement)),
+        onInput: (e) =>
+          useEditorStore.getState().applyInlineEditValue(readInlineEditableText(e.currentTarget as HTMLElement)),
         onKeyDown: (e) => {
+          const state = useEditorStore.getState()
           if (e.key === 'Escape') {
             e.preventDefault()
             e.stopPropagation()
-            cancelInlineEdit()
+            state.cancelInlineEdit()
             return
           }
           if (e.key === 'Enter') {
-            // Cmd/Ctrl+Enter always commits. Plain Enter commits for
-            // single-line modules; for multiline it falls through so the
-            // browser inserts the hard break the author wants.
-            if (e.metaKey || e.ctrlKey || !inlineEditMultiline) {
+            // Enter commits (Figma, and the live-frame editor in
+            // `studio-runtime/inlineTextEdit.ts`). Shift+Enter is the hard
+            // break in a multiline module; a plain Enter that fell through to
+            // the browser wrote a doubled newline into the source.
+            if (enterCommitsInlineEdit(e, state.activeInlineEdit?.multiline === true)) {
               e.preventDefault()
-              endInlineEdit()
+              state.endInlineEdit()
             }
           }
         },
-        onBlur: () => endInlineEdit(),
+        onBlur: () => useEditorStore.getState().endInlineEdit(),
       }
     : undefined
 
@@ -612,7 +615,19 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
       )}
     </ErrorBoundary>
   )
-})
+}
+
+// React Compiler exception #2: memo() re-render bailout on a hot, recursive
+// per-node canvas renderer (O(N) critical path) — kept intentionally.
+//
+// A plain declaration wrapped here, not `memo(function NodeRenderer …)`: inside
+// a named function expression its own name binds to the UNWRAPPED function, so
+// the recursion above rendered every child without the bailout, and the React
+// Compiler (which cannot resolve that binding — "Expected a node for all
+// identifiers") skipped the whole renderer. The inner name stays
+// `NodeRenderer`: `reactRenderCounter.ts` counts renders by it.
+const MemoNodeRenderer = memo(NodeRenderer)
+export { MemoNodeRenderer as NodeRenderer }
 
 // ---------------------------------------------------------------------------
 // Loop iteration preview
@@ -663,7 +678,7 @@ function LoopIterationsPreview({ node, baseTemplateContext }: LoopIterationsPrev
             key={`${variantId}-${i}-${item.id}`}
             value={augmentedContext}
           >
-            <NodeRenderer nodeId={variantId} />
+            <MemoNodeRenderer nodeId={variantId} />
           </CanvasTemplateContext.Provider>
         )
       })}

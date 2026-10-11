@@ -4,7 +4,7 @@
  * The runtime owns the agent loop and the bridge; drivers own one SDK each
  * and one or more `AiAuthMode`s.
  *
- * @see docs/plans/2026-05-26-ai-runtime-rewrite.md → "Drivers"
+ * @see docs/features/agent.md → "Providers"
  */
 
 import type { CoreCapability } from '@core/capabilities'
@@ -16,6 +16,7 @@ import type {
   AiProviderId,
   AiStreamEvent,
   AiTool,
+  DelegateRunner,
 } from '../runtime/types'
 
 // ---------------------------------------------------------------------------
@@ -135,12 +136,16 @@ export interface AiStreamRequest {
    */
   readonly workspaceDir?: string
   /**
-   * WS-12 §5 session controls — `claudeCli` only, every other driver ignores
-   * both. Map 1:1 onto the CLI's own confirmed `--effort`/`--permission-mode`
-   * flags. `permissionMode === 'bypassPermissions'` IS forwarded — but only
-   * when the caller explicitly set this field to that value; `claudeCli.ts`'s
-   * own default never resolves to it. See that file's `resolvePermissionMode`
-   * doc comment for the full D5 §11.5 guard-rail reasoning.
+   * WS-12 §5 session controls. `effort` maps onto the CLI's own `--effort`
+   * flag, and — since P4-C (AI-11) — onto each HTTP provider's reasoning
+   * control: Anthropic extended thinking (`anthropicModelProfile.ts`), OpenAI-
+   * shaped `reasoning.effort` / `reasoning_effort` (`openAiReasoning.ts`).
+   * Undefined sends no reasoning parameter at all. `permissionMode` is
+   * `claudeCli`-only. `permissionMode === 'bypassPermissions'` IS forwarded —
+   * but only when the caller explicitly set this field to that value;
+   * `claudeCli.ts`'s own default never resolves to it. See that file's
+   * `resolvePermissionMode` doc comment for the full D5 §11.5 guard-rail
+   * reasoning.
    */
   readonly effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   readonly permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions'
@@ -233,6 +238,30 @@ export interface ToolContextBase {
    * not come from a chat turn, which simply starts the chain one tier lower.
    */
   readonly designPolicy?: import('../../handlers/studio/designPolicy').DesignPolicy
+  /**
+   * Every http(s) URL the USER typed or pasted into this conversation
+   * (`collectUserSuppliedUrls`), normalised. The only hosts outside a short
+   * fixed list an agent may make Studio fetch from — see
+   * `server/ai/mcp/tools/studio/remoteFetchPolicy.ts`. `undefined` for a call
+   * with no chat behind it (an external MCP client), which gets the fixed
+   * list only.
+   */
+  readonly userSuppliedUrls?: readonly string[]
+  /**
+   * The persisted id of the user message that opened this turn — the key the
+   * turn's file checkpoint is stored under (AI-7, `agentCheckpoints.ts`) and
+   * the id the panel shows "Changed N files" against. `undefined` for a call
+   * with no chat turn behind it (an external MCP client), which takes no
+   * checkpoint.
+   */
+  readonly turnId?: string
+  /**
+   * Runs `studio_delegate`'s subagents (AI-23): built by the chat handler for
+   * an HTTP-driver turn that was offered the tool, with the turn's driver,
+   * credential, prompt and tools. `undefined` otherwise — for an external MCP
+   * client, and inside a subagent, which therefore cannot delegate again.
+   */
+  readonly delegate?: DelegateRunner
   /**
    * The live editor snapshot for read tools. Mutable across a turn: the
    * browser bridge refreshes it after each mutating tool (via createBridge's

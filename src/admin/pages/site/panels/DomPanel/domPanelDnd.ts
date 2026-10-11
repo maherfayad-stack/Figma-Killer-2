@@ -1,14 +1,21 @@
-import type { Page } from '@core/page-tree'
+import { isResolvedByInstanceDetach, type Page } from '@core/page-tree'
 import {
   previewStructuralMove,
   resolvePageTreeDropTarget,
   type PageTreeDropPosition,
   type PageTreeDropTarget,
 } from '@core/page-tree'
+import { resolveTransplantDropOver } from '@site/canvas/canvasTransplantDrop'
 
 type DomDropZone = PageTreeDropPosition
 
-export type DomDropTarget = PageTreeDropTarget
+/**
+ * A resolved Layers-panel drop. `foreignPageId` is set when the row under the
+ * pointer belongs to ANOTHER page's tree: `parentId` / `index` / `overId` are
+ * then positions in THAT page, and the drop is a transplant (the same store
+ * action the canvas cross-frame drag commits), not a reparent.
+ */
+export type DomDropTarget = PageTreeDropTarget & { foreignPageId?: string }
 
 /**
  * G5 — the outcome of resolving a tree-row drop when the position is
@@ -31,6 +38,8 @@ interface DomDropRowRect {
 
 export interface DomDropRowMeta {
   nodeId: string
+  /** The page whose tree this row belongs to, when it is not the dragged page's own. */
+  pageId?: string
   rect: DomDropRowRect
 }
 
@@ -103,6 +112,64 @@ export function resolveDomDropTarget({
  */
 export function previewDomDropRefusal(page: Page, target: DomDropTarget): DomDropRefusal | null {
   const preview = previewStructuralMove(page, target.draggedIds, target.parentId, target.index)
-  if (preview.ok) return null
+  // OD-7 — written to THIS instance of a shared component, not refused.
+  if (preview.ok || isResolvedByInstanceDetach(preview.refusal.reason)) return null
   return { overId: target.overId, message: preview.refusal.message }
+}
+
+interface ResolveDomTransplantDropInput {
+  originPage: Page
+  destinationPage: Page
+  draggedId: string
+  draggedIds: string[]
+  overId: string
+  zone: DomDropZone
+  canHaveChildren: (moduleId: string) => boolean
+}
+
+/**
+ * A row of ANOTHER page's tree under the pointer: where in that page the
+ * dragged layer(s) would land, and the store gate's verdict on it.
+ *
+ * Resolved by the canvas's own cross-frame resolver (`resolveTransplantDropOver`),
+ * so the panel and the board cannot disagree about which container a drop on a
+ * given element means, or about whether it is allowed. `refusal` is returned
+ * ALONGSIDE the target rather than instead of it: the row shows the sentence
+ * while the pointer is down, and a release on it re-issues the drop through
+ * `transplantNodes`, which presents the refusal with its remedy.
+ */
+export function resolveDomTransplantDrop({
+  originPage,
+  destinationPage,
+  draggedId,
+  draggedIds,
+  overId,
+  zone,
+  canHaveChildren,
+}: ResolveDomTransplantDropInput): { target: DomDropTarget | null; refusal: DomDropRefusal | null } {
+  const verdict = resolveTransplantDropOver({
+    originTree: originPage,
+    destinationTree: destinationPage,
+    draggedIds,
+    overId,
+    zone,
+    canHaveChildren,
+    copy: false,
+  })
+  if (!verdict.target) return { target: null, refusal: null }
+  const target: DomDropTarget = {
+    draggedId,
+    draggedIds,
+    parentId: verdict.target.parentId,
+    index: verdict.target.index,
+    position: verdict.target.position,
+    slot: 'default',
+    overId: verdict.target.overId,
+    foreignPageId: destinationPage.id,
+  }
+  const preview = verdict.preview
+  return {
+    target,
+    refusal: preview && !preview.ok ? { overId, message: preview.refusal.message } : null,
+  }
 }

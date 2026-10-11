@@ -1,6 +1,6 @@
 /**
  * backgroundLayers — the `background-image` layer stack
- * (docs/features/inspector-disclosure.md §4 G6.5).
+ * (docs/features/inspector.md §4 G6.5).
  *
  * The contract under test is the one that makes the Fill section honest:
  * a value is only restructured into rows when parse → serialise reproduces it

@@ -131,6 +131,11 @@ export function SettingsModal() {
   // Focus trap + Esc handler
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'Escape') {
+      // React bubbles a keydown from a PORTALED child (a nested dialog, a menu)
+      // up through this handler even though its DOM is elsewhere. Esc closes
+      // only the top-most layer: the nested one handles its own press, so a
+      // key whose target is outside this modal's DOM is not ours to act on.
+      if (!dialogRef.current?.contains(e.target as Node)) return
       e.preventDefault()
       handleClose()
       return

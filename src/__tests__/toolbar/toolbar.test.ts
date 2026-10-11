@@ -323,8 +323,7 @@ describe('Toolbar — structural requirements', () => {
 
   it('Toolbar is a prop-driven shell — EDITOR-only buttons live in AdminCanvasLayout, global trailer lives in the shell', () => {
     // The Toolbar shell owns the GLOBAL trailer (SettingsButton +
-    // OpenLivePageButton + AccountMenuButton) so the settings cog, live-page
-    // link, and account menu are identical on every admin route. SettingsButton
+    // AccountMenuButton) so the settings cog and account menu are identical on every admin route. SettingsButton
     // reads the tiny `adminUi` store, so hosting it in the shell does NOT drag
     // the editor store into non-editor bundles.
     //

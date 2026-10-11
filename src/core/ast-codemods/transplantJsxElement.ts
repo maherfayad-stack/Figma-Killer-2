@@ -9,11 +9,15 @@
  * cross-file move would MEAN, not of the splice": the markup would land in a
  * different module, where the bindings it reads do not exist. That sentence is
  * still exactly right — and it is also the specification of this codemod. A
- * cross-file move is honest precisely when every name the subtree reads is
- * either resolvable at the ORIGIN file's module scope (so it can be CARRIED as
- * an import) or already bound at the DESTINATION's. Anything else — a prop, a
- * hook result, a `.map` row's parameter — is body-local to the origin's
- * component and cannot travel, so the gesture refuses and names it.
+ * cross-file move is honest precisely when every name the subtree reads
+ * either travels with it or is already bound at the DESTINATION's. What
+ * travels (`transplantBindings.ts` decides, name by name): an import, a
+ * context-hook read, and the plain constants and handlers the element reads
+ * (G-1a - COPIED into the destination, transitively), the state it uses (G-1b -
+ * the destination gets its OWN copy of the statement), and the values a `.map`
+ * row or a prop default hands it (G-1c - written down as constants). What the
+ * component owns beyond that - a prop nothing gives a value to, a custom hook's
+ * result, a `let` - cannot travel, so the gesture refuses and names it.
  *
  * So the difference from a reparent is not the splice; it is one extra
  * question (which bindings travel) and one extra write (the destination's
@@ -62,7 +66,7 @@
  */
 import { realpathSync } from 'node:fs'
 import * as path from 'node:path'
-import { Project, type Node, type SourceFile } from 'ts-morph'
+import { Node, Project, SyntaxKind, type SourceFile } from 'ts-morph'
 import { createProject, findJsxElementAtLocation, loadSourceFile } from './locateJsxElement'
 import {
   applyTextEdits,
@@ -72,11 +76,16 @@ import {
   type TextEdit,
 } from './jsxChildRange'
 import { lineIndentAt, reindentBlock, resolveChildPlacement } from './jsxChildPlacement'
-import { conflictingBinding, resolveImportEdits, type ImportRequirement } from './jsxImportEdits'
+import { resolveImportEdits } from './jsxImportEdits'
 import { createdJsxLocation, offsetAfterEdits, type CreatedJsxLocation } from './createdJsxLocation'
 import type { InsertJsxRefusalReason } from './jsxSubtree'
-import { relativeSpecifier } from './importReconcile'
-import { analyzeFreeVariables } from './subtreeFreeVariables'
+import { buildCanvasLayerModule } from './canvasLayerModule'
+import { enclosingFunctionComponent } from './detachHooks'
+import { applySubtreeRenames } from './transplantCarry'
+import { resolveCarriedBindings, type CarriedDeclaration, type CarryOrigin } from './transplantBindings'
+import { hookInsertionAnchor, stateHookRefusal } from './transplantStateCarry'
+import type { RowRef } from './transplantPropBake'
+import { ELEMENT_GONE_MESSAGE, STALE_SOURCE_MESSAGE } from '@core/utils/refusalCopy'
 
 export interface TransplantJsxElementParams {
   /** Absolute path to the file the element is written in today. */
@@ -103,6 +112,18 @@ export interface TransplantJsxElementParams {
   position?: 'before' | 'after'
   /** K2 across frames: write the destination half and leave the origin untouched. */
   copy?: boolean
+  /**
+   * G-1c - the element is part of a `.map` row of an array literal written in
+   * `file`: the move is then a COPY of that row (the template and the array stay
+   * as they are), and the row's item and index become `const`s at the
+   * destination. `file`/`line`/`col` name the row's template element.
+   */
+  row?: RowRef
+  /**
+   * G-1c - read a destructured prop's own default as its value. Honest only when
+   * `file` is the file the page renders, not a component inlined into it.
+   */
+  propDefaults?: boolean
   /** Optional pre-existing project to reuse (both files are loaded into it). */
   project?: Project
 }
@@ -131,13 +152,13 @@ export interface TransplantJsxRefusal {
  * does not confirm an element there; never a guess.
  */
 export type TransplantJsxElementResult =
-  | { ok: true; carriedImports: string[]; created: CreatedJsxLocation | null }
+  | { ok: true; carriedImports: string[]; carriedDeclarations: CarriedDeclaration[]; created: CreatedJsxLocation | null }
   | { ok: false; refusal: TransplantJsxRefusal }
 
 function refuseTransplant(
   reason: TransplantJsxRefusalReason,
   message: string,
-): TransplantJsxElementResult {
+): { ok: false; refusal: TransplantJsxRefusal } {
   return { ok: false, refusal: { reason, message } }
 }
 
@@ -159,7 +180,7 @@ function fileIdentity(file: string): string {
 }
 
 export function transplantJsxElement(params: TransplantJsxElementParams): TransplantJsxElementResult {
-  const { file, line, col, destinationFile, destinationLine, destinationCol } = params
+  const { file, line, col, destinationFile } = params
 
   // Compared on the REAL path, never on the two strings. A same-file gesture
   // that slips through here is not a no-op: both ends load as SEPARATE ts-morph
@@ -173,7 +194,7 @@ export function transplantJsxElement(params: TransplantJsxElementParams): Transp
   if (fileIdentity(file) === fileIdentity(destinationFile)) {
     return refuseTransplant(
       'same-file',
-      'Both ends of this move are in the same file, which is an ordinary reparent — this write exists only for the cross-file case.',
+      'Both ends of this move are in the same file, which is an ordinary reparent. Drag it within the frame instead.',
     )
   }
 
@@ -181,208 +202,369 @@ export function transplantJsxElement(params: TransplantJsxElementParams): Transp
   const originSource = loadSourceFile(project, file)
   const destinationSource = loadSourceFile(project, destinationFile)
 
-  const target = resolveJsxChildRange(originSource, line, col)
-  if (!target.ok) return refuseTransplant(target.reason, target.message)
+  // WB-20 — a MOVE of `{cond && <X/>}` carries the condition with it, exactly
+  // as a same-file move does. A copy stays element-only, like ⌘D.
+  //
+  // A `.map` row (G-1c) is COPIED, never cut: one piece of JSX renders every
+  // row, so removing it would remove it from all of them. It has no child range
+  // to resolve either (its parent is the callback, not a JSX element), so the
+  // element is read where it stands.
+  let element: Node
+  let removal: TextEdit | null = null
+  if (params.row) {
+    const opening = findJsxElementAtLocation(originSource, line, col)
+    if (!opening) {
+      return refuseTransplant('not-found', 'The row this element came from is no longer written there. Reload the project and try again.')
+    }
+    element = Node.isJsxSelfClosingElement(opening) ? opening : opening.getParentOrThrow()
+  } else {
+    const target = resolveJsxChildRange(originSource, line, col, params.copy ? 'element' : 'conditional')
+    if (!target.ok) return refuseTransplant(target.reason, target.message)
+    element = target.range.element
+    if (!params.copy) removal = { start: target.range.start, end: target.range.end, text: '' }
+  }
 
   const originText = verbatimSourceText(originSource, file)
   const destinationText = verbatimSourceText(destinationSource, destinationFile)
   if (originText === null || destinationText === null) {
     return refuseTransplant(
       'stale-source',
-      'One of these files changed on disk since the canvas last read it. Reload the project and try again.',
+      STALE_SOURCE_MESSAGE,
     )
   }
 
-  const destination = findJsxElementAtLocation(destinationSource, destinationLine, destinationCol)
-  if (!destination) {
-    return refuseTransplant(
-      'not-found',
-      `No JSX element is written at line ${destinationLine}, column ${destinationCol} of the destination file any more — it changed since the canvas last read it. Reload and try again.`,
-    )
-  }
-
-  // ── The scope question, and the only one that makes a cross-file move
-  //    different from a same-file one ────────────────────────────────────
-  const carried = resolveCarriedBindings(target.range.element, originSource, destinationSource, destinationFile)
-  if (!carried.ok) return carried
-
-  // ── Every byte both files will contain, computed before either is written ──
-  const subtree = originText.slice(target.range.element.getStart(), target.range.element.getEnd())
-  const fromIndent = lineIndentAt(originText, target.range.element.getStart())
-
-  const placement = resolveChildPlacement(
-    destinationSource,
-    destinationText,
-    destination,
+  const landed = landInDestination(
     {
-      anchor:
-        params.anchorLine !== undefined && params.anchorCol !== undefined
-          ? { line: params.anchorLine, col: params.anchorCol }
-          : null,
-      ...(params.position ? { position: params.position } : {}),
+      element,
+      source: originSource,
+      text: originText,
+      carry: { ...(params.row ? { row: params.row } : {}), ...(params.propDefaults ? { propDefaults: true } : {}) },
     },
-    (indent) => reindentBlock(subtree, fromIndent, indent),
+    { ...params, source: destinationSource, text: destinationText },
   )
-  if (!placement.ok) return refuseTransplant(placement.refusal.reason, placement.refusal.message)
-
-  const importEdits = resolveImportEdits(destinationSource, destinationText, carried.requirements)
-  const nextDestination = applyTextEdits(destinationText, [placement.edit, ...importEdits])
-  const nextOrigin = params.copy
-    ? null
-    : applyTextEdits(originText, [{ start: target.range.start, end: target.range.end, text: '' } satisfies TextEdit])
+  if (!landed.ok) return landed
+  const nextOrigin = removal ? applyTextEdits(originText, [removal]) : null
 
   // ── Writes ──────────────────────────────────────────────────────────────
   // The destination first: it is the half that has to exist for the gesture
   // to have produced anything at all. A move whose second write is lost by
   // the OS leaves the element in both files — visible, recoverable, and
   // reported by the parse — where the reverse order would lose it entirely.
-  writeVerbatimSource(destinationSource, destinationFile, nextDestination)
+  const created = landed.write()
   if (nextOrigin !== null) writeVerbatimSource(originSource, file, nextOrigin)
+
+  return { ok: true, carriedImports: landed.carriedImports, carriedDeclarations: landed.carriedDeclarations, created }
+}
+
+/** The element being carried, and the file it is written in. */
+interface TransplantOrigin {
+  element: Node
+  source: SourceFile
+  text: string
+  /** G-1c: where the values the element reads come from. */
+  carry?: CarryOrigin
+  /** Set when state may not follow the element to this destination - the sentence saying why. */
+  noState?: string
+}
+
+/** Where it lands: a container (and optionally a sibling) in another, already-read file. */
+interface TransplantDestination {
+  destinationFile: string
+  destinationLine: number
+  destinationCol: number
+  anchorLine?: number
+  anchorCol?: number
+  position?: 'before' | 'after'
+  source: SourceFile
+  text: string
+}
+
+/**
+ * The DESTINATION half every cross-file write shares — a frame-to-frame move
+ * (`transplantJsxElement`) and a loose layer placed into a frame
+ * (`placeCanvasLayerRoot`): the scope question, the placement and the import
+ * carry, all decided before anything is written. `write` then puts the
+ * destination on disk and reports where the element landed.
+ */
+function landInDestination(
+  origin: TransplantOrigin,
+  destination: TransplantDestination,
+):
+  | { ok: true; carriedImports: string[]; carriedDeclarations: CarriedDeclaration[]; write: () => CreatedJsxLocation | null }
+  | { ok: false; refusal: TransplantJsxRefusal } {
+  const container = findJsxElementAtLocation(destination.source, destination.destinationLine, destination.destinationCol)
+  if (!container) {
+    return refuseTransplant(
+      'not-found',
+      ELEMENT_GONE_MESSAGE,
+    )
+  }
+
+  // ── The scope question, and the only one that makes a cross-file move
+  //    different from a same-file one ────────────────────────────────────
+  const destinationComponent = enclosingFunctionComponent(container)
+  const componentBody = destinationComponent?.getBody()
+  const destinationBody = componentBody && Node.isBlock(componentBody) ? componentBody : undefined
+  // Where copied declarations are written: a component-body one goes right
+  // before the statement of the body that holds the container, a module-level
+  // one right before the top-level statement that holds it.
+  const bodyAnchor = destinationBody ? container.getAncestors().find((ancestor) => ancestor.getParent() === destinationBody) : undefined
+  const moduleAnchor = container.getAncestors().find((ancestor) => Node.isSourceFile(ancestor.getParent()))
+  const bodyIndent = bodyAnchor ? lineIndentAt(destination.text, bodyAnchor.getStart()) : '  '
+  const hooksRefusal = origin.noState ?? (destinationComponent ? stateHookRefusal(destinationComponent, origin.source) : undefined)
+  const carried = resolveCarriedBindings(
+    origin.element,
+    origin.source,
+    origin.text,
+    {
+      source: destination.source,
+      file: destination.destinationFile,
+      bodyIndent,
+      ...(destinationBody && bodyAnchor ? { body: destinationBody } : {}),
+      ...(hooksRefusal ? { hooksRefusal } : {}),
+    },
+    origin.carry,
+  )
+  if (!carried.ok) return refuseTransplant(carried.refusal.reason, carried.refusal.message)
+  // A copied hook goes above any early return of the destination (rules of
+  // hooks); plain copies keep going right before the statement holding the container.
+  const carryAnchor = carried.hasState && destinationBody && bodyAnchor ? hookInsertionAnchor(destinationBody, bodyAnchor) : bodyAnchor
+
+  const rawSubtree = origin.text.slice(origin.element.getStart(), origin.element.getEnd())
+  const subtree = applySubtreeRenames(rawSubtree, origin.element.getStart(), origin.element, carried.renames)
+  const fromIndent = lineIndentAt(origin.text, origin.element.getStart())
+
+  const placement = resolveChildPlacement(
+    destination.source,
+    destination.text,
+    container,
+    {
+      anchor:
+        destination.anchorLine !== undefined && destination.anchorCol !== undefined
+          ? { line: destination.anchorLine, col: destination.anchorCol }
+          : null,
+      ...(destination.position ? { position: destination.position } : {}),
+    },
+    (indent) => reindentBlock(subtree, fromIndent, indent),
+  )
+  if (!placement.ok) {
+    return refuseTransplant(placement.refusal.reason, placement.refusal.message)
+  }
+
+  const importEdits = resolveImportEdits(destination.source, destination.text, carried.requirements)
+  // Order matters at an equal offset (`applyTextEdits` lands a LATER entry first):
+  // an import above a copied module declaration, a hook above a copied body one.
+  const carryEdits: TextEdit[] = []
+  if (carried.moduleStatements.length > 0 && moduleAnchor) {
+    const at = moduleAnchor.getStart(true)
+    carryEdits.push({ start: at, end: at, text: carried.moduleStatements.map((statement) => `${statement}\n\n`).join('') })
+  }
+  if (carried.bodyStatements.length > 0 && carryAnchor) {
+    const at = carryAnchor.getStart()
+    carryEdits.push({ start: at, end: at, text: carried.bodyStatements.map((statement) => `${statement}\n${bodyIndent}`).join('') })
+  }
+  const priorEdits = [...carryEdits, ...importEdits, ...carried.hookEdits]
+  const nextDestination = applyTextEdits(destination.text, [placement.edit, ...priorEdits])
 
   return {
     ok: true,
     carriedImports: [...carried.requirements.keys()],
-    // Measured against the DESTINATION, which `writeVerbatimSource` has just
-    // re-read, and shifted past the import lines this write added above the
-    // JSX — the same arithmetic `insertJsxElement` performs for its own copy.
-    created: createdJsxLocation(
-      destinationSource,
-      offsetAfterEdits(importEdits, placement.edit.start),
-      placement.edit.text,
-    ),
+    carriedDeclarations: carried.carried,
+    write: () => {
+      writeVerbatimSource(destination.source, destination.destinationFile, nextDestination)
+      // Measured against the DESTINATION, which `writeVerbatimSource` has just
+      // re-read, and shifted past the import lines and re-established hook
+      // call this write added above the JSX — the same arithmetic
+      // `insertJsxElement` performs for its own copy.
+      return createdJsxLocation(destination.source, offsetAfterEdits(priorEdits, placement.edit.start), placement.edit.text)
+    },
   }
 }
 
+// ---------------------------------------------------------------------------
+// The free canvas's two endpoints (P5-G, FC-2)
+// ---------------------------------------------------------------------------
+
 /**
- * Which of the subtree's free names travel with it, and whether any of them
- * cannot.
+ * The element a free-canvas layer module returns — the loose layer's root.
  *
- * Three buckets, and the partition is `analyzeFreeVariables`'s:
- *
- *  - **`kind: 'prop'`** — body-local to the origin's component (a destructured
- *    prop, a hook's binding, a `.map` row's parameter, a `const` in the
- *    component body). It has no module to be imported from, so the markup
- *    cannot resolve it anywhere else. Refused, by name — "some binding" is not
- *    something a person can act on.
- *  - **`kind: 'import'`, already bound at the destination's top level** —
- *    nothing to write. Left alone rather than re-imported, the same posture
- *    `addReconciledImports` takes: a real collision against a DIFFERENT source
- *    is caught below by `conflictingBinding`.
- *  - **`kind: 'import'`, not bound at the destination** — carried, either by
- *    mirroring the origin's own import declaration (following a relative
- *    specifier to the file it actually names and re-resolving it against the
- *    destination's location) or, for a helper the origin file declares itself,
- *    by importing it FROM the origin file.
+ * Found STRUCTURALLY (the default export's returned JSX), never from a caller's
+ * `line:col`: the layer's identity is its file, and this is the one element a
+ * layer module is allowed to contain at the top. `undefined` when the module
+ * is not in that shape (edited outside Studio into something else).
  */
-function resolveCarriedBindings(
-  subtree: Node,
-  originSource: SourceFile,
-  destinationSource: SourceFile,
-  destinationFile: string,
-):
-  | { ok: true; requirements: Map<string, ImportRequirement> }
-  | { ok: false; refusal: TransplantJsxRefusal } {
-  const free = analyzeFreeVariables(subtree, originSource)
-
-  const captured = free.filter((variable) => variable.kind === 'prop').map((variable) => variable.name)
-  if (captured.length > 0) {
-    const names = captured.map((name) => `\`${name}\``).join(', ')
-    const isOne = captured.length === 1
-    return {
-      ok: false,
-      refusal: {
-        reason: 'captured-scope',
-        message:
-          `This element reads ${names} from the component it is written in, and ${isOne ? 'that name belongs' : 'those names belong'} to that component's own body — there is no module the other file could import ${isOne ? 'it' : 'them'} from. ` +
-          `Move it within its own frame, or lift ${isOne ? 'the value' : 'those values'} into a shared module first.`,
-      },
-    }
-  }
-
-  const requirements = new Map<string, ImportRequirement>()
-  for (const variable of free) {
-    const requirement = resolveCarriedBinding(variable.name, originSource, destinationFile)
-    if (requirement === UNEXPORTED) {
-      return {
-        ok: false,
-        refusal: {
-          reason: 'unexported-binding',
-          message:
-            `This element reads "${variable.name}", which the file it is leaving declares but does not export — so the other file has no way to import it, and writing the move anyway would leave that file with an import of a name that is not there. ` +
-            `Export "${variable.name}" from its own file first, then drag again.`,
-        },
-      }
-    }
-    if (!requirement) continue // a global, or a name nothing here can trace — left to the compiler to report
-    const binding = conflictingBinding(destinationSource, variable.name, requirement.specifier)
-    if (binding) {
-      return {
-        ok: false,
-        refusal: {
-          reason: 'binding-conflict',
-          message: `The file this element would move into already uses the name "${variable.name}" for something else (${binding}), so carrying its import would shadow that. Rename one of them in the file first.`,
-        },
-      }
-    }
-    requirements.set(variable.name, requirement)
-  }
-
-  return { ok: true, requirements }
+export function canvasLayerModuleRoot(source: SourceFile): Node | undefined {
+  const declaration = source.getDefaultExportSymbol()?.getDeclarations()[0]
+  if (!declaration) return undefined
+  const body = Node.isFunctionDeclaration(declaration) || Node.isArrowFunction(declaration) || Node.isFunctionExpression(declaration)
+    ? declaration.getBody()
+    : undefined
+  if (!body) return undefined
+  const expression = Node.isBlock(body)
+    ? body.getStatements().find((statement) => Node.isReturnStatement(statement))?.asKind(SyntaxKind.ReturnStatement)?.getExpression()
+    : body
+  let root = expression
+  while (root && Node.isParenthesizedExpression(root)) root = root.getExpression()
+  if (!root) return undefined
+  return Node.isJsxElement(root) || Node.isJsxSelfClosingElement(root) || Node.isJsxFragment(root) ? root : undefined
 }
 
 /**
- * The origin declares this name but keeps it to itself — see
- * {@link resolveCarriedBinding}.
+ * Why a COPY of a layer into a frame cannot carry state: the copy's undo deletes
+ * the element it wrote, which would leave the state's hook behind. A MOVE of the
+ * layer (or a lift either way) is undone by the journal's `restore`, so it can.
  */
-const UNEXPORTED = Symbol('unexported')
+const PLACE_COPY_STATE_REFUSAL = 'A copy of a canvas layer is taken back by deleting the element, which would leave its state behind. Move the layer into the frame instead.'
+
+export interface PlaceCanvasLayerRootParams {
+  /** Absolute path of the layer module (`.studio/canvas/<id>.tsx`). */
+  moduleFile: string
+  destinationFile: string
+  destinationLine: number
+  destinationCol: number
+  anchorLine?: number
+  anchorCol?: number
+  position?: 'before' | 'after'
+  /** A copy leaves the layer: its undo deletes the element, so state cannot travel with it. */
+  copy?: boolean
+  project?: Project
+}
 
 /**
- * Where `name` comes from, expressed as an import the DESTINATION file can
- * carry — or `undefined` when the origin file neither imports nor declares it
- * (a global, or a name this walk cannot trace, which `analyzeFreeVariables`
- * has already narrowed to almost nothing), or {@link UNEXPORTED} when the
- * origin declares it but does not export it.
+ * PLACE — a loose layer dropped into a frame: the module's root element is
+ * written into a container in the page, carrying its imports, exactly as a
+ * frame-to-frame move writes its destination half.
  *
- * The same resolution `addReconciledImports` performs, expressed as a
- * REQUIREMENT rather than applied as a ts-morph mutation: this codemod writes
- * byte splices, and a ts-morph `addImportDeclaration` would reprint offsets the
- * splices were measured against.
+ * The module itself is left untouched here. It is the caller's to delete once
+ * this has written (a move) or to keep (Alt: a copy) — the module is Studio's
+ * own file under `.studio/canvas/`, and removing it is `canvasLayerFiles.ts`'s
+ * job, the one place allowed to touch that directory.
  */
-function resolveCarriedBinding(
-  name: string,
-  originSource: SourceFile,
-  destinationFile: string,
-): ImportRequirement | typeof UNEXPORTED | undefined {
-  for (const declaration of originSource.getImportDeclarations()) {
-    const specifierText = declaration.getModuleSpecifierValue()
-    const specifier = specifierText.startsWith('.')
-      ? relativeSpecifier(destinationFile, path.resolve(path.dirname(originSource.getFilePath()), specifierText))
-      : specifierText
+export function placeCanvasLayerRoot(params: PlaceCanvasLayerRootParams): TransplantJsxElementResult {
+  if (fileIdentity(params.moduleFile) === fileIdentity(params.destinationFile)) {
+    return refuseTransplant('same-file', 'A canvas layer cannot be placed into its own module. Drop it onto a page frame.')
+  }
+  const project = params.project ?? createProject()
+  const moduleSource = loadSourceFile(project, params.moduleFile)
+  const destinationSource = loadSourceFile(project, params.destinationFile)
+  const moduleText = verbatimSourceText(moduleSource, params.moduleFile)
+  const destinationText = verbatimSourceText(destinationSource, params.destinationFile)
+  if (moduleText === null || destinationText === null) {
+    return refuseTransplant(
+      'stale-source',
+      STALE_SOURCE_MESSAGE,
+    )
+  }
+  const root = canvasLayerModuleRoot(moduleSource)
+  if (!root) {
+    return refuseTransplant(
+      'not-found',
+      'This canvas layer no longer returns a single element, so Studio has nothing to place. Give it one root element in the code.',
+    )
+  }
+  const landed = landInDestination(
+    { element: root, source: moduleSource, text: moduleText, ...(params.copy ? { noState: PLACE_COPY_STATE_REFUSAL } : {}) },
+    { ...params, source: destinationSource, text: destinationText },
+  )
+  if (!landed.ok) return landed
+  const created = landed.write()
+  return { ok: true, carriedImports: landed.carriedImports, carriedDeclarations: landed.carriedDeclarations, created }
+}
 
-    if (declaration.getDefaultImport()?.getText() === name) return { specifier, style: 'default' }
-    if (declaration.getNamespaceImport()?.getText() === name) return { specifier, style: 'namespace' }
-    const named = declaration
-      .getNamedImports()
-      .some((entry) => (entry.getAliasNode() ?? entry.getNameNode()).getText() === name)
-    if (named) return { specifier, style: 'named' }
+export interface LiftJsxElementParams {
+  /** Absolute path of the page file the element is written in. */
+  file: string
+  line: number
+  col: number
+  /** Absolute path of the NEW layer module (it must not exist yet). */
+  moduleFile: string
+  /** Alt: leave the element in the page and put a copy on the canvas. */
+  copy?: boolean
+  /**
+   * Writes the new module's text — exclusively, refusing if the name exists.
+   * The caller's, because it is `.studio/canvas/` and only
+   * `canvasLayerFiles.ts` writes there. Called BEFORE the page is touched: if
+   * it throws, nothing has been written anywhere.
+   */
+  writeModule: (text: string) => void
+  project?: Project
+}
+
+export type LiftJsxElementResult =
+  | { ok: true; carriedImports: string[]; carriedDeclarations: CarriedDeclaration[]; root: CreatedJsxLocation }
+  | { ok: false; refusal: TransplantJsxRefusal }
+
+/**
+ * LIFT — an element dragged out of a frame onto the empty board becomes a new
+ * loose layer: its bytes, verbatim and re-indented to column 0, become the
+ * root of a new layer module, with every binding it reads carried as an
+ * import resolved from the module's own location. A move then cuts it out of
+ * the page; a copy leaves the page alone.
+ *
+ * The same scope rule as a frame-to-frame move, for the same reason: a
+ * context-hook read (`t` from `useLanguage()`) re-establishes its call in the
+ * layer component, and markup that reads a prop, any other hook result or a
+ * `.map` row's parameter refuses `captured-scope` by name. (Design §7 turns that
+ * refusal into an automatic copy with the values baked in; that needs the
+ * substitution engine P1-E/P5-C build and is not in this change.)
+ */
+export function liftJsxElementToCanvasModule(params: LiftJsxElementParams): LiftJsxElementResult {
+  const project = params.project ?? createProject()
+  const originSource = loadSourceFile(project, params.file)
+  const originText = verbatimSourceText(originSource, params.file)
+  if (originText === null) {
+    return refuseTransplant('stale-source', STALE_SOURCE_MESSAGE)
   }
 
-  // A helper the origin file declares itself: the destination imports it FROM
-  // the origin. That only works when the origin EXPORTS it, and `sec-17` is
-  // where this stopped being "the compiler will say so loudly". By the time
-  // the compiler says anything the gesture has already written both files:
-  // the markup is gone from the origin, the destination has an import of a
-  // name that is not there, neither is undoable with ⌘Z (this whole edit
-  // family mints no history entry), and the user's repo does not build. A
-  // write that cannot land honestly in both files refuses — which is the
-  // invariant, and the refusal names the one-line remedy.
-  const declaration =
-    originSource.getFunction(name) ?? originSource.getVariableDeclaration(name) ?? originSource.getClass(name)
-  if (declaration) {
-    return declaration.isExported()
-      ? { specifier: relativeSpecifier(destinationFile, originSource.getFilePath()), style: 'named' }
-      : UNEXPORTED
+  const target = resolveJsxChildRange(originSource, params.line, params.col)
+  let element: Node
+  let removal: TextEdit | null = null
+  if (target.ok) {
+    element = target.range.element
+    if (!params.copy) removal = { start: target.range.start, end: target.range.end, text: '' }
+  } else {
+    // A COPY reads the element and writes nothing back, so the outermost
+    // element of a page is as copyable as any other; a MOVE of it would leave
+    // the component returning nothing.
+    const opening = params.copy && target.reason === 'no-jsx-parent'
+      ? findJsxElementAtLocation(originSource, params.line, params.col)
+      : undefined
+    if (!opening) return refuseTransplant(target.reason, target.message)
+    element = Node.isJsxSelfClosingElement(opening) ? opening : opening.getParentOrThrow()
   }
 
-  return undefined
+  // The module does not exist yet, so nothing in it can conflict: an empty
+  // component answers `conflictingBinding` honestly, and is the body a
+  // context hook the element reads (`const { t } = useLanguage()`) is
+  // re-established in — the SAME carry a frame-to-frame move makes, so a lift
+  // refuses and succeeds for exactly the reasons that move does.
+  const emptyLayer = new Project({ useInMemoryFileSystem: true }).createSourceFile(
+    '/layer.tsx',
+    'export default function CanvasLayer() {}\n',
+  )
+  const carried = resolveCarriedBindings(element, originSource, originText, {
+    source: emptyLayer,
+    file: params.moduleFile,
+    bodyIndent: '  ',
+    body: emptyLayer.getFunctionOrThrow('CanvasLayer').getBodyOrThrow().asKindOrThrow(SyntaxKind.Block),
+  })
+  if (!carried.ok) return refuseTransplant(carried.refusal.reason, carried.refusal.message)
+
+  const subtree = applySubtreeRenames(
+    originText.slice(element.getStart(), element.getEnd()),
+    element.getStart(),
+    element,
+    carried.renames,
+  )
+  const built = buildCanvasLayerModule(
+    reindentBlock(subtree, lineIndentAt(originText, element.getStart()), ''),
+    carried.requirements,
+    [...carried.hookStatements, ...carried.bodyStatements],
+    carried.moduleStatements,
+  )
+
+  params.writeModule(built.text)
+  if (removal) writeVerbatimSource(originSource, params.file, applyTextEdits(originText, [removal]))
+
+  return { ok: true, carriedImports: [...carried.requirements.keys()], carriedDeclarations: carried.carried, root: built.root }
 }

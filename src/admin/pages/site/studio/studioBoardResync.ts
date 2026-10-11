@@ -91,10 +91,22 @@
  * failure than the one it would fix. The reason a rule stays unwritten is
  * itself always reported (`reportUnmappedStyleRules` / the refusal toasts),
  * so this is never the user's first notice that something did not land.
+ *
+ * ## The returned promise means "the board has caught up" (ERR-10)
+ *
+ * On BOTH paths. The narrow patch is applied synchronously inside the event
+ * dispatch; the full reload is awaited through `requestCmsSiteReload()`'s own
+ * promise, which settles only once `loadSite` has run on a document fetched
+ * after this write and the write's `structuralOutcome` has been applied to it.
+ * `commitStructural` holds `structuralCommitQueue.ts` across this await, so a
+ * gesture parked behind the write re-plans against the ids the write produced
+ * — the full-reload fallback used to return at dispatch time and release the
+ * queue against the pre-write tree.
  */
 import { apiRequest } from '@core/http'
 import { Type } from '@core/utils/typeboxHelpers'
 import { dispatchCmsSitePagesPatch, requestCmsSiteReload } from '@admin/state/adminEvents'
+import type { PendingStructuralOutcome } from './pendingStructuralOutcome'
 import { studioWriteDir } from './studioWorkspaceDir'
 import { fetchStudioPagesById } from './studioLiveReloadFetch'
 
@@ -113,6 +125,11 @@ export interface BoardResyncOptions {
    * never attempted a second time.
    */
   refusedRuleIds?: ReadonlySet<string>
+  /**
+   * What the structural write being resynced means for the board — applied by
+   * the re-read this call triggers and by no other (`pendingStructuralOutcome.ts`).
+   */
+  structuralOutcome?: PendingStructuralOutcome
 }
 
 /**
@@ -134,8 +151,9 @@ export async function resyncBoardAfterWrite(
   // least one location (see `applyStudioEditBatch`), so this is defensive,
   // not a real path; skip the round trip rather than ask a question with no
   // honest answer.
+  const fullReload = { ...(options.structuralOutcome ? { structuralOutcome: options.structuralOutcome } : {}) }
   if (touchedFiles.length === 0) {
-    requestCmsSiteReload()
+    await requestCmsSiteReload(fullReload)
     return
   }
   try {
@@ -145,14 +163,21 @@ export async function resyncBoardAfterWrite(
       schema: StudioReloadScopeResponseSchema,
     })
     if (scope.narrow && scope.pageIds.length > 0) {
-      const { pages, missingPageIds, styleRules, conditions } = await fetchStudioPagesById(scope.pageIds, {
+      const { pages, missingPageIds, styleRules, conditions, canvasLayers } = await fetchStudioPagesById(scope.pageIds, {
         refusedRuleIds: options.refusedRuleIds,
       })
-      dispatchCmsSitePagesPatch({ pages, removedPageIds: missingPageIds, styleRules, conditions })
+      dispatchCmsSitePagesPatch({
+        pages,
+        removedPageIds: missingPageIds,
+        styleRules,
+        conditions,
+        canvasLayers,
+        ...(options.structuralOutcome ? { structuralOutcome: options.structuralOutcome } : {}),
+      })
       return
     }
   } catch (err) {
     console.error('[studioBoardResync] reload-scope check failed, widening to a full reload:', err)
   }
-  requestCmsSiteReload()
+  await requestCmsSiteReload(fullReload)
 }

@@ -23,6 +23,18 @@ export interface CanvasFitRect {
 /** Screen-space margin kept between the fitted content and the viewport edge. */
 export const DEFAULT_ZOOM_FIT_PADDING_PX = 64
 
+/** Per-side screen-space margin: floating chrome over the canvas (the notch) takes more than the edge padding. */
+export interface ZoomFitInsets {
+  top: number
+  right: number
+  bottom: number
+  left: number
+}
+
+export function uniformInsets(padding: number): ZoomFitInsets {
+  return { top: padding, right: padding, bottom: padding, left: padding }
+}
+
 /**
  * How the union of `targetRects` is scaled into the viewport.
  *
@@ -58,7 +70,7 @@ export function computeZoomToFitTransform(
   rootRect: { width: number; height: number },
   targetRects: readonly CanvasFitRect[],
   current: CanvasTransform,
-  padding: number = DEFAULT_ZOOM_FIT_PADDING_PX,
+  padding: number | ZoomFitInsets = DEFAULT_ZOOM_FIT_PADDING_PX,
   mode: ZoomFitMode = 'contain',
 ): CanvasTransform | null {
   if (targetRects.length === 0) return null
@@ -84,8 +96,9 @@ export function computeZoomToFitTransform(
   const boardHeight = maxY - minY
   if (boardWidth <= 0 && boardHeight <= 0) return null
 
-  const availableWidth = Math.max(1, rootRect.width - padding * 2)
-  const availableHeight = Math.max(1, rootRect.height - padding * 2)
+  const insets = typeof padding === 'number' ? uniformInsets(padding) : padding
+  const availableWidth = Math.max(1, rootRect.width - insets.left - insets.right)
+  const availableHeight = Math.max(1, rootRect.height - insets.top - insets.bottom)
 
   // A rect degenerate on exactly one axis (e.g. an unmeasured 0-height frame)
   // must not force zoom to infinity on that axis alone — fall back to the
@@ -103,8 +116,8 @@ export function computeZoomToFitTransform(
 
   const boardCenterX = minX + boardWidth / 2
   const boardCenterY = minY + boardHeight / 2
-  const panX = clampPan(rootRect.width / 2 - boardCenterX * zoom)
-  const panY = clampPan(rootRect.height / 2 - boardCenterY * zoom)
+  const panX = clampPan(insets.left + availableWidth / 2 - boardCenterX * zoom)
+  const panY = clampPan(insets.top + availableHeight / 2 - boardCenterY * zoom)
 
   return { zoom, panX, panY }
 }

@@ -310,7 +310,7 @@ export async function acceptUploadedMedia(
     externallyHosted: dispatched.externallyHosted,
   })
 
-  // Responsive pipeline (docs/features/media.md). Raster-only for v1:
+  // Responsive pipeline (`mediaVariants.ts`). Raster-only for v1:
   // SVGs already scale without a bitmap ladder, and GIF conversion would
   // collapse animation to a still. Failure inside the pipeline is
   // non-fatal: the asset row is already written; the worst case is the row

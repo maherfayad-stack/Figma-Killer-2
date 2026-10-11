@@ -29,6 +29,7 @@ import { TextareaControl } from './TextareaControl'
 import { NumberControl } from './NumberControl'
 import { ColorControl } from './ColorControl'
 import { SelectControl } from './SelectControl'
+import { SegmentedSelectControl } from './SegmentedSelectControl'
 import { ToggleControl } from './ToggleControl'
 import { ImageControl } from './ImageControl'
 import { MediaLibraryControl } from './MediaLibraryControl'
@@ -68,6 +69,11 @@ interface RenderControlOptions {
    * entry of `items`. Only that control reads it.
    */
   siblingProps?: Record<string, unknown>
+  /**
+   * Whether a text area may hold a line break (Shift+Enter). False when the text
+   * lands in a JSX attribute or a string literal elsewhere. Only `textarea` reads it.
+   */
+  multiline?: boolean
 }
 
 /**
@@ -133,6 +139,17 @@ function collectionEntryLabel(item: unknown, index: number): string {
 }
 
 /**
+ * G-6 - a code-bound value may be typed over only through a free-text field. A
+ * select, a number or a toggle bound to code stays the read-only stand-in:
+ * typing a string into one would invent a value the control could not show.
+ */
+function onlyTypeableConstraint(control: PropertyControl, constraint: EditConstraint | undefined): EditConstraint | undefined {
+  if (!constraint?.unbindable || control.type === 'text' || control.type === 'textarea') return constraint
+  const { unbindable: _unbindable, ...rest } = constraint
+  return rest
+}
+
+/**
  * Render a single property control wrapped in the test/accessibility shell.
  * Returns null for unknown or unimplemented control types.
  */
@@ -146,6 +163,7 @@ export function PropertyControlRenderer({
   constraint,
   ownerNodeId,
   siblingProps,
+  multiline,
 }: RenderControlOptions) {
   const layout = resolveControlLayout(control)
 
@@ -195,7 +213,7 @@ export function PropertyControlRenderer({
         data-category={category}
         data-layout={layout}
       >
-        <CodeValueControl {...shared} value={value} constraint={constraint} />
+        <CodeValueControl {...shared} value={value} constraint={onlyTypeableConstraint(control, constraint)} />
       </div>
     )
   }
@@ -221,6 +239,7 @@ export function PropertyControlRenderer({
           value={String(value ?? '')}
           rows={control.rows}
           placeholder={control.placeholder}
+          multiline={multiline}
         />
       )
       break
@@ -243,7 +262,12 @@ export function PropertyControlRenderer({
       break
 
     case 'select':
-      inner = <SelectControl {...shared} options={control.options} />
+      inner =
+        control.display === 'segmented' ? (
+          <SegmentedSelectControl {...shared} options={control.options} />
+        ) : (
+          <SelectControl {...shared} options={control.options} />
+        )
       break
 
     case 'collection-index': {

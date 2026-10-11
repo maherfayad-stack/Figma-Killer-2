@@ -16,6 +16,7 @@ import {
   resetLocalizedTextBaseline,
   watchLocalizedPagesForBaseline,
 } from '../localizedPageWriteback'
+import { resetLoadedValues } from '../loadedValuesBaseline'
 import { makeNode, makePage, makeSite } from '../../../../../__tests__/fixtures'
 // Side-effect import: registers `base.text`'s `inlineTextEdit.prop` ('text')
 // into the global registry — both the default-tree AND locale-variant
@@ -28,13 +29,14 @@ const originalFetch = globalThis.fetch
 const EN_ORIGIN = { rel: 'i18n/translations.js', line: 2, col: 7 }
 const AR_ORIGIN = { rel: 'i18n/translations.js', line: 2, col: 25 }
 
-function stubFetch(saveCalls: Array<{ body: unknown }>) {
+/** `duringSave` runs while the save POST is in flight — the window ERR-17 is about. */
+function stubFetch(saveCalls: Array<{ body: unknown }>, duringSave?: () => void) {
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString()
     const path = url.split('?')[0]
     if (path === '/admin/api/studio/load') {
       const lines = [
-        { kind: 'meta', dir: '/tmp/studio-test', projectName: 'studio-test', componentSources: {}, styleRules: {}, styleRuleSources: {}, styledStyleRuleSources: {}, conditions: [], vendorCss: '', authoredCss: '', trust: 'static', paletteHiddenModuleIds: [], pageCount: 0 },
+        { kind: 'meta', dir: '/tmp/studio-test', projectName: 'studio-test', componentSources: {}, styleRules: {}, styleRuleSources: {}, styledStyleRuleSources: {}, conditions: [], vendorCss: '', authoredCss: '', trust: 'static', paletteHiddenModuleIds: [], pageList: [] },
       ]
       return new Response(lines.map((l) => JSON.stringify(l)).join('\n') + '\n', {
         status: 200,
@@ -47,6 +49,7 @@ function stubFetch(saveCalls: Array<{ body: unknown }>) {
     if (path === '/admin/api/studio/save') {
       const body = init?.body ? JSON.parse(String(init.body)) : {}
       saveCalls.push({ body })
+      duringSave?.()
       return new Response(
         JSON.stringify({ ok: true, written: body.edits?.length ?? 0, skipped: 0, shifted: false, sharedComponents: false }),
         { status: 200 },
@@ -78,6 +81,13 @@ describe('a same-node-id edit in the en (default) frame and the ar (variant) fra
 
     // --- default (en) tree, loaded the normal way ---
     await fsCodemodAdapter.loadSite()
+    // What that load read at the `en` literal — the baseline its edit is sent
+    // against (`expected`). A literal with no baseline is never written.
+    const enLoadedNode = makeNode({ id: 'headline', moduleId: 'base.text', props: { text: 'Hi' }, textOrigin: EN_ORIGIN })
+    const enLoadedRoot = makeNode({ id: 'page-root', moduleId: 'base.body', children: [enLoadedNode.id] })
+    resetLoadedValues([
+      makePage({ id: 'home', rootNodeId: enLoadedRoot.id, nodes: { [enLoadedRoot.id]: enLoadedRoot, [enLoadedNode.id]: enLoadedNode } }),
+    ])
 
     // --- locale-variant (ar) tree: simulates `loadStudioPageInLocale`'s
     // output landing in the store via `ensureLocalizedPage` — the fetch
@@ -104,7 +114,7 @@ describe('a same-node-id edit in the en (default) frame and the ar (variant) fra
     })
 
     // ar: through the REAL store mutation a locale-variant inline-edit
-    // session uses (`inlineEditSlice.ts`'s `applyInlineEditValue` calls
+    // session uses (`inlineEditSlice.ts`'s `endInlineEdit` calls
     // exactly this action for a `localeOverride` session).
     useEditorStore.getState().updateLocalizedNodeText('home', 'ar', 'headline', 'text', 'مرحبا جدًا')
 
@@ -167,5 +177,66 @@ describe('a same-node-id edit in the en (default) frame and the ar (variant) fra
 
     await fsCodemodAdapter.saveSite(makeSite())
     expect(saveCalls).toHaveLength(0)
+  })
+})
+
+describe('ERR-17 — the baseline advances to what was SENT, never to what the store holds after the POST', () => {
+  const FR_ORIGIN = { rel: 'i18n/translations.js', line: 3, col: 7 }
+
+  function frPage(text: string) {
+    const node = makeNode({ id: 'headline', moduleId: 'base.text', props: { text }, textOrigin: FR_ORIGIN })
+    const root = makeNode({ id: 'page-root', moduleId: 'base.body', children: [node.id] })
+    return makePage({ id: 'home', rootNodeId: root.id, nodes: { [root.id]: root, [node.id]: node } })
+  }
+
+  it('text typed while a save is in flight is sent by the NEXT save', async () => {
+    const saveCalls: Array<{ body: unknown }> = []
+    let typedMidSave = false
+    stubFetch(saveCalls, () => {
+      if (typedMidSave) return
+      typedMidSave = true
+      useEditorStore.getState().updateLocalizedNodeText('home', 'fr', 'headline', 'text', 'Bonjour encore')
+    })
+    await fsCodemodAdapter.loadSite()
+    useEditorStore.setState({
+      localizedPages: { 'home::fr': frPage('Bonjour') },
+      localizedPageStatus: { 'home::fr': 'ready' },
+    } as Parameters<typeof useEditorStore.setState>[0])
+    useEditorStore.getState().updateLocalizedNodeText('home', 'fr', 'headline', 'text', 'Bonjour tout le monde')
+
+    await fsCodemodAdapter.saveSite(makeSite())
+    await fsCodemodAdapter.saveSite(makeSite())
+
+    const sentTexts = saveCalls.flatMap((call) => (call.body as { edits: Array<{ text?: string }> }).edits.map((edit) => edit.text))
+    expect(sentTexts).toEqual(['Bonjour tout le monde', 'Bonjour encore'])
+  })
+
+  it('a locale page fetched while a save is in flight keeps its baseline, so its later edits still save', async () => {
+    const saveCalls: Array<{ body: unknown }> = []
+    stubFetch(saveCalls, () => {
+      // The `ar` fetch lands mid-save: `watchLocalizedPagesForBaseline` seeds it now.
+      const current = useEditorStore.getState().localizedPages
+      if (current['home::ar']) return
+      const arNode = makeNode({ id: 'headline', moduleId: 'base.text', props: { text: 'Marhaba' }, textOrigin: AR_ORIGIN })
+      const arRoot = makeNode({ id: 'page-root', moduleId: 'base.body', children: [arNode.id] })
+      useEditorStore.setState({
+        localizedPages: { ...current, 'home::ar': makePage({ id: 'home', rootNodeId: arRoot.id, nodes: { [arRoot.id]: arRoot, [arNode.id]: arNode } }) },
+      } as Parameters<typeof useEditorStore.setState>[0])
+    })
+    await fsCodemodAdapter.loadSite()
+    useEditorStore.setState({
+      localizedPages: { 'home::fr': frPage('Bonjour') },
+      localizedPageStatus: { 'home::fr': 'ready' },
+    } as Parameters<typeof useEditorStore.setState>[0])
+    useEditorStore.getState().updateLocalizedNodeText('home', 'fr', 'headline', 'text', 'Salut')
+    await fsCodemodAdapter.saveSite(makeSite())
+
+    useEditorStore.getState().updateLocalizedNodeText('home', 'ar', 'headline', 'text', 'Ahlan')
+    await fsCodemodAdapter.saveSite(makeSite())
+
+    const second = (saveCalls[1]?.body as { edits: Array<{ nodeId: string; text?: string }> } | undefined)?.edits ?? []
+    expect(second).toEqual([
+      { kind: 'literal', nodeId: `${AR_ORIGIN.rel}:${AR_ORIGIN.line}:${AR_ORIGIN.col}`, text: 'Ahlan', expected: 'Marhaba' },
+    ])
   })
 })

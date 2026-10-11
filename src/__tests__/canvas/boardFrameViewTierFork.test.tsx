@@ -34,7 +34,6 @@ function resetStore() {
     boardSnapGuides: [],
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     _historyPast: [],
     _historyFuture: [],
     canUndo: false,
@@ -79,7 +78,7 @@ function renderFrame() {
       hasManualHeight={false}
       isActive={false}
       isSelected={false}
-      isOnScreen
+      isLive
     />,
   )
 }
@@ -100,10 +99,16 @@ describe('BoardFrameView — Tier 0/1 is byte-for-byte unaffected', () => {
 })
 
 describe('BoardFrameView — Tier 2 routes to LiveBoardFrame', () => {
-  it('mounts LiveBoardFrame (bridge container present) once trust === "run-project"', () => {
+  it('a frame whose dev server is not ready holds ONE iframe - the fallback - not a second, empty bridge one', () => {
+    // Tier 2 with no dev server answering (the test's fetch stub says there is
+    // no live origin): the bridge would have no document to load, so it is not
+    // mounted. It used to be, as an `src`-less <iframe> per frame - the
+    // "20 iframes for 4 visible frames" the 2026-10-10 audit counted.
     setStudioTrustTier('run-project')
     const { container } = renderFrame()
 
-    expect(container.querySelector('[data-testid="live-board-frame-bridge"]')).not.toBeNull()
+    expect(container.querySelectorAll('iframe')).toHaveLength(1)
+    expect(container.querySelector('iframe')?.hasAttribute('srcdoc')).toBe(true)
+    expect(container.querySelector('[data-testid="live-board-frame-bridge"]')).toBeNull()
   })
 })

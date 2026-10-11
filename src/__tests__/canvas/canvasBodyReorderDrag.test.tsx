@@ -346,3 +346,27 @@ describe('useCanvasReorderDrag — pressing the element body', () => {
     expect(useEditorStore.getState().selectedNodeId).toBeNull()
   })
 })
+
+describe('useCanvasReorderDrag — a release nobody heard (ERR-12)', () => {
+  /** A move as a real browser delivers it: into the parent DOCUMENT, with the held buttons. */
+  function documentMove(x: number, y: number, buttons: number) {
+    const event = new Event('pointermove', { bubbles: true, cancelable: true })
+    Object.assign(event, { clientX: x, clientY: y, pointerId: 7, button: 0, buttons })
+    document.body.dispatchEvent(event)
+  }
+
+  it('ends the drag and drops the relay when a move arrives with the button already up', () => {
+    const { result } = renderDrag()
+    act(() => {
+      pressInFrame(harness.nodes.a!, 20, 20)
+    })
+    act(() => documentMove(160, 70, 1))
+    expect(result.current.dragging).toBe(true)
+    expect(document.documentElement.dataset.studioCanvasDragging).toBe('1')
+
+    // Released outside every document the session listens to.
+    act(() => documentMove(170, 90, 0))
+    expect(result.current.dragging).toBe(false)
+    expect(document.documentElement.dataset.studioCanvasDragging).toBeUndefined()
+  })
+})

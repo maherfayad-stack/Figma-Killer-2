@@ -11,11 +11,11 @@
  */
 import type { AiChatRequestBody, AiUserContentBlock } from '@core/ai'
 import type { AgentSlice, EditorStoreSet } from './agentSliceTypes'
-import type { AgentRoutedTurn } from './types'
+import type { AgentRoutedModel, AgentRoutedTurn } from './types'
 
 export type AgentSessionControlsState = Pick<
   AgentSlice,
-  'agentEffort' | 'agentPermissionMode' | 'agentRoutedTurn' | 'agentFidelityMode' | 'agentDesignPolicy'
+  'agentEffort' | 'agentPermissionMode' | 'agentRoutedTurn' | 'agentRoutedModel' | 'agentFidelityMode' | 'agentDesignPolicy'
 >
 export type AgentSessionControlsActions = Pick<
   AgentSlice,
@@ -38,6 +38,8 @@ export function agentSessionControlsInitialState(): AgentSessionControlsState {
     // Read-only, server-reported, and null until a routing-capable driver
     // reports one — see `AgentSlice.agentRoutedTurn`.
     agentRoutedTurn: null,
+    // Same: null until the server names the model a turn ran on (AI-25).
+    agentRoutedModel: null,
     // Bypass is the working default. Studio's entire purpose is the agent
     // editing the user's source; every prompt on that path asks a question
     // whose answer is always yes, and 'acceptEdits' only silenced the FILE-edit
@@ -139,4 +141,20 @@ export function routedTurnLabel(routed: AgentRoutedTurn | null): string | null {
 export function routedTurnTitle(routed: AgentRoutedTurn | null): string | null {
   if (!routed) return null
   return routed.shape ? `${routed.shape}: ${routed.reason}` : routed.reason
+}
+
+/**
+ * The model half of the chip (AI-25): shown only when the last turn ran on a
+ * different model than the one the picker shows — a routed turn. A pinned or
+ * default turn ran on the picker's own model, which the trigger already names.
+ */
+export function routedModelLabel(routed: AgentRoutedModel | null): string | null {
+  if (!routed || routed.mode !== 'routed') return null
+  return `turn · ${routed.modelId}`
+}
+
+/** The model half's tooltip: the router's own reason. */
+export function routedModelTitle(routed: AgentRoutedModel | null): string | null {
+  if (!routed || routed.mode !== 'routed') return null
+  return routed.reason
 }

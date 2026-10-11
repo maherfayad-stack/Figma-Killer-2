@@ -1,13 +1,13 @@
 /**
- * setStyledDeclaration — W4-4 Phase B: rewrites ONE declaration's value inside
- * a `styled-components`/emotion tagged template, in place, in the user's own
- * `.tsx`.
+ * setStyledDeclaration — W4-4 Phase B (rewritten for G-5): writes ONE
+ * declaration into a `styled-components`/emotion tagged template, in place, in
+ * the user's own `.tsx`, and always lands it.
  *
  * Phase A (`@core/page-parser`'s `cssInJsExtract`/`cssInJsTemplate`) made
  * `const Card = styled.div\`…\`` render: the template's CSS is flattened under
- * a synthetic class and registered read-only. This is the write half of the
- * same pair — the inspector's ordinary "type a value into a class declaration"
- * gesture, landing on the template line the value was actually written on.
+ * a synthetic class and registered. This is the write half of the same pair —
+ * the inspector's ordinary "type a value into a class declaration" gesture,
+ * landing on the template line the value was actually written on, or after it.
  *
  * ## Why the target is a SPAN and not a codemod on a CSS file
  *
@@ -26,36 +26,45 @@
  *     declaration style", and the day the two disagreed the editor would write
  *     a value into a rule the user was never looking at.
  *
- * The mapping between the two is one array of quasi segments. A value span
- * that lies entirely inside ONE quasi is writable; anything else touches an
- * interpolation and is refused.
+ * The mapping between the two is one array of quasi segments. A position that
+ * lies inside ONE quasi (or on the edge of one) is writable; the bytes of an
+ * interpolation never are.
  *
- * ## Every interpolation is a hole here, even the ones Phase A resolved
+ * ## The ladder: the first honest rung wins (G-5)
  *
- * Phase A RESOLVES what it can through the static evaluator: `${SPACING.md}`
- * becomes `8px` in the registry, so the canvas shows the real value. This
- * module deliberately does NOT resolve anything — every `${…}` is substituted
- * with the same sentinel Phase A uses for an unreadable one.
+ * This module used to refuse an interpolated value, a declaration the template
+ * does not write, a covering shorthand, `!important`, a doubled declaration.
+ * Each of those is a rung now, in this order:
  *
- * That is not a shortcut, it is the honest-target rule. `padding: ${SPACING.md}`
- * has no value written in this template: the bytes live in `SPACING`'s own
- * file, and rewriting them there would change every other template that reads
- * the token. `setStringLiteral`'s discipline, one layer up — the write goes
- * where the value IS, or it refuses and says so.
+ *   1. **The winning declaration.** The one the cascade reads (the last
+ *      `!important`, else the last, a covering shorthand counting as declaring
+ *      each of its longhands) is rewritten in place when it is a literal wholly
+ *      inside one quasi. A covering `!important` shorthand is rewritten with
+ *      that one side changed (`expandShorthandSide`).
+ *   2. **An override.** Anything else — the winner is a `${…}`, or half of one,
+ *      or a covering shorthand, or the template never writes the property — gets
+ *      a NEW declaration appended at the end of the same block, where it comes
+ *      last and wins (carrying its own `!important` when it must beat one). The
+ *      interpolation is untouched: the bytes behind it live in another file and
+ *      rewriting them would change every other template that reads them
+ *      (`setStringLiteral`'s discipline, one layer up) — the override is the one
+ *      honest target inside THIS template.
+ *   3. **Inline** is the CALLER's rung: a value that cannot be spelled in a
+ *      template literal at all (`isStyledWritableValue`) is refused
+ *      `unwritable-value`, and the client, which asks `isStyledWritableValue`
+ *      first, never sends it here — it styles the element instead.
  *
- * ## FAILS CLOSED, and says why
+ * `landing` reports the rung for the inspector's chip: `'rule'` is rung 1 (or a
+ * declaration added to a block that did not write the property), `'expanded'`
+ * a covering shorthand rewritten with one side changed, `'override'` an
+ * appended line that shadows another.
  *
- * Every decline is a NAMED refusal with a sentence for the user, never a
- * silent no-op and never an exception the caller has to classify. The
- * duplicate/shorthand/`!important` hazards are not re-invented either — the
- * flattened CSS is handed to `@core/css-codemods`' `analyzeDeclarationTarget`,
- * the same gate `server/handlers/studioCssWriteback.ts` runs before touching a
- * real stylesheet, so a styled rule and a `.css` rule refuse for the same
- * reasons in the same words.
- *
- * Out of scope by design, refused by name: adding a NEW declaration, removing
- * one, renaming a property, and anything inside emotion's OBJECT styles
- * (W4-4 Phase C).
+ * Still refused by name, because they are the file being unreadable and not a
+ * style edit that cannot land: `template-not-found` (nothing starts there any
+ * more) and `declaration-not-in-template` (the selector or condition is not
+ * written in this template — an interpolated selector, a stale target).
+ * Removing a declaration, renaming one, and emotion's OBJECT styles are other
+ * edits (W4-4 Phase C).
  */
 import { Node, Project, type SourceFile } from 'ts-morph'
 import {
@@ -67,7 +76,7 @@ import {
   type TemplateDeclarationSpan,
   type TemplateSentinel,
 } from '@core/page-parser'
-import { analyzeDeclarationTarget } from '@core/css-codemods'
+import { expandShorthandSide, isStyledWritableValue, shorthandCovers } from '@core/css-codemods'
 import { createProject, loadSourceFile } from './locateJsxElement'
 
 export interface SetStyledDeclarationParams {
@@ -81,8 +90,14 @@ export interface SetStyledDeclarationParams {
   className: string
   /** The flattened selector the declaration lives under, e.g. `.Card_sc__a1b2c3` or `.Card_sc__a1b2c3:hover`. */
   selector: string
-  /** The media QUERY (without the `@media` keyword) when the declaration sits inside a nested `@media` block. */
-  atMedia?: string
+  /**
+   * The conditional block the declaration sits inside, as `name params`
+   * (`media (min-width: 700px)`, `container (min-width: 400px)`,
+   * `supports (display: grid)` — `@core/css-codemods`' `cssAtRuleScope.ts`),
+   * when it is nested one level in a template's `@media`/`@container`/
+   * `@supports` block (P3-C, WB-31: `@media` used to be the only one).
+   */
+  atRule?: string
   property: string
   value: string
   /** Optional pre-existing project to reuse across several edits in one batch. */
@@ -93,39 +108,27 @@ export interface SetStyledDeclarationParams {
 export type StyledDeclarationRefusalReason =
   /** No `styled`/`css` tagged template starts at the recorded location any more. */
   | 'template-not-found'
-  /** The template's CSS did not parse, or the declaration is not written in it (it arrives via an interpolated mixin, or under an interpolated selector). */
+  /** The template's CSS did not parse, or the selector/condition is not written in it (an interpolated selector, a stale target). */
   | 'declaration-not-in-template'
-  /** The value is (or touches) a `${…}` — the bytes live somewhere else. */
-  | 'interpolated-value'
   /** The new value cannot be written into a template literal without changing what the template means. */
   | 'unwritable-value'
-  /** `analyzeDeclarationTarget`'s verdicts, forwarded verbatim. */
-  | 'duplicate-selector'
-  | 'duplicate-declaration'
-  | 'shorthand-override'
-  | 'important-override'
+
+/** Which rung took the value — see this module's doc, "The ladder". */
+export type StyledDeclarationLanding = 'rule' | 'expanded' | 'override'
 
 export type SetStyledDeclarationResult =
-  | { ok: true; changed: boolean }
+  | { ok: true; changed: boolean; landing: StyledDeclarationLanding }
   | { ok: false; reason: StyledDeclarationRefusalReason; message: string }
 
-/**
- * A character that would end the declaration, end the template, or start an
- * interpolation. Any of them turns "set this value" into "restructure this
- * template", which is a different edit than the one the user made.
- */
-const UNWRITABLE_VALUE_RE = /[`;{}\\\n\r]|\$\{/
-
 export function setStyledDeclaration(params: SetStyledDeclarationParams): SetStyledDeclarationResult {
-  const { file, line, col, className, selector, property, value, atMedia } = params
+  const { file, line, col, className, selector, property, value, atRule } = params
 
-  if (UNWRITABLE_VALUE_RE.test(value)) {
+  if (!isStyledWritableValue(value)) {
     return {
       ok: false,
       reason: 'unwritable-value',
       message:
-        `“${value}” cannot be written into a styled-component template — it contains a character that would end the ` +
-        'declaration or the template itself (a backtick, a semicolon, a brace, a backslash, a newline, or `${`).',
+        `"${value}" cannot be written into a styled-component template, because it contains a character that would end it. Remove the backtick, semicolon, brace or backslash.`,
     }
   }
 
@@ -138,93 +141,113 @@ export function setStyledDeclaration(params: SetStyledDeclarationParams): SetSty
       ok: false,
       reason: 'template-not-found',
       message:
-        `Studio expected a styled-component template at ${file}:${line}:${col} and no longer finds one. Reload the ` +
-        'project so it can re-read the file, then try again.',
+        `Studio expected a styled-component template at ${file}:${line}:${col} and no longer finds one. Reload the project and try again.`,
     }
   }
 
   const assembled = assembleRawBody(template)
   if (!assembled) {
-    return { ok: false, reason: 'template-not-found', message: 'This styled template has a shape Studio cannot read back.' }
+    return { ok: false, reason: 'template-not-found', message: 'This styled template has a shape Studio cannot read back. Edit the template in the code.' }
   }
 
   const spans = flattenTemplateDeclarations(className, assembled.body, assembled.sentinels)
-  const matches = spans.filter(
-    (span) =>
-      normalizeSelector(span.selector) === normalizeSelector(selector) &&
-      span.property.toLowerCase() === property.toLowerCase() &&
-      matchesMedia(span, atMedia),
+  // Every declaration of the block the caller named, in source order. The LAST
+  // one's append point is the end of the block (every span of a rule shares it).
+  const block = spans.filter(
+    (span) => normalizeSelector(span.selector) === normalizeSelector(selector) && matchesScope(span, atRule),
   )
-
-  if (matches.length === 0) {
+  const anchor = block[block.length - 1]
+  if (!anchor) {
     return {
       ok: false,
       reason: 'declaration-not-in-template',
       message:
-        `“${property}” is not written in ${templateLabel(template)}'s own template. It comes from an interpolated ` +
-        'block (a shared mixin, a theme helper) or from a rule whose selector is interpolated, so there is no single ' +
-        'line here to change — edit it where it is written.',
+        `"${selector}" is not written in ${templateLabel(template)}'s own template, since it comes from an interpolation. Edit it where it is written.`,
     }
   }
-  if (matches.length > 1) {
+
+  // The declaration the cascade reads: the last `!important`, else the last,
+  // where a covering shorthand counts as declaring each of its longhands.
+  const prop = property.toLowerCase()
+  const relevant = block.filter((span) => {
+    const spanProp = span.property.toLowerCase()
+    return spanProp === prop || shorthandCovers(spanProp, prop)
+  })
+  const winner = [...relevant].reverse().find((span) => span.important) ?? relevant[relevant.length - 1]
+
+  const write = createWriter(sourceFile, assembled.segments)
+
+  if (!winner) return append(write, anchor, property, value, false, 'rule')
+
+  const writtenHere = !winner.interpolated && !containsUnresolvedSentinel(winner.value)
+  if (winner.property.toLowerCase() === prop) {
+    if (!writtenHere) return append(write, anchor, property, value, winner.important, 'override')
+    if (winner.value.trim() === value.trim()) return { ok: true, changed: false, landing: 'rule' }
+    return write.replaceValue(winner, value) ? { ok: true, changed: true, landing: 'rule' } : append(write, anchor, property, value, winner.important, 'override')
+  }
+
+  // A covering shorthand has the last word. `!important` can only be beaten by
+  // the same shorthand with this side changed, or by an `!important` longhand.
+  if (winner.important && writtenHere) {
+    const expanded = expandShorthandSide(winner.property, winner.value, prop, value)
+    if (expanded !== null && write.replaceValue(winner, expanded)) return { ok: true, changed: true, landing: 'expanded' }
+  }
+  return append(write, anchor, property, value, winner.important, 'override')
+}
+
+/** Appends `property: value;` at the end of `anchor`'s block, which comes last there and so wins among equals. */
+function append(
+  write: TemplateWriter,
+  anchor: TemplateDeclarationSpan,
+  property: string,
+  value: string,
+  important: boolean,
+  landing: StyledDeclarationLanding,
+): SetStyledDeclarationResult {
+  const text = `${anchor.appendNeedsSemicolon ? ';' : ''}${anchor.appendLead}${property}: ${value}${important ? ' !important' : ''};`
+  if (!write.insertAt(anchor.appendAt, text)) {
     return {
       ok: false,
-      reason: 'duplicate-declaration',
+      reason: 'declaration-not-in-template',
       message:
-        `“${property}” is declared more than once under “${selector}” in this template. The later one is the one ` +
-        'taking effect, so Studio will not guess which line you meant — remove the duplicate and try again.',
+        `The end of ${anchor.selector}'s block sits inside an interpolation, so there is no place to put the declaration. Edit it where it is written.`,
     }
   }
+  return { ok: true, changed: true, landing }
+}
 
-  const match = matches[0]!
+/** The two byte-level moves a rung makes, both through the quasi segment map and both saving the file. */
+interface TemplateWriter {
+  /** Replaces a declaration's VALUE when it lies wholly inside one quasi (an interpolation never does). */
+  replaceValue(span: TemplateDeclarationSpan, value: string): boolean
+  /** Inserts `text` at a body offset that sits inside, or on the edge of, one quasi. */
+  insertAt(bodyOffset: number, text: string): boolean
+}
 
-  // The walk reports an interpolated declaration rather than hiding it, so
-  // "set from a `${…}`" gets its own sentence instead of the much less useful
-  // "not written here". `containsUnresolvedSentinel` is the second half of the
-  // same question for a value that is only PARTLY a hole.
-  if (match.interpolated || containsUnresolvedSentinel(match.value)) {
-    return {
-      ok: false,
-      reason: 'interpolated-value',
-      message:
-        `“${property}” is set from an interpolation in ${templateLabel(template)}'s template, so its value is not ` +
-        'written there — it is computed from a prop, a theme value, or a constant in another file. Change it at ' +
-        'its source.',
-    }
+function createWriter(sourceFile: SourceFile, segments: readonly QuasiSegment[]): TemplateWriter {
+  const eol = sourceFile.getFullText().includes('\r\n') ? '\r\n' : '\n'
+  return {
+    replaceValue(span, value) {
+      const range = toSourceRange(segments, span)
+      if (!range) return false
+      // Preserve the author's own leading whitespace between the colon and the
+      // value: postcss counts it as part of `raws.between`, not the value, so a
+      // span never includes it — but a trailing run can, and replacing it would
+      // reflow the line for no reason.
+      const trailing = span.value.length - span.value.trimEnd().length
+      sourceFile.replaceText([range.start, range.end - trailing], value)
+      sourceFile.saveSync()
+      return true
+    },
+    insertAt(bodyOffset, text) {
+      const segment = segments.find((s) => bodyOffset >= s.bodyStart && bodyOffset <= s.bodyEnd)
+      if (!segment) return false
+      const at = segment.sourceStart + (bodyOffset - segment.bodyStart)
+      sourceFile.replaceText([at, at], eol === '\n' ? text : text.replace(/\n/g, eol))
+      sourceFile.saveSync()
+      return true
+    },
   }
-
-  // The same honest-target gate a real stylesheet gets, run on this template's
-  // own flattened CSS: a covering shorthand or an `!important` sibling makes
-  // the write invisible whether the bytes live in a `.css` file or a quasi.
-  const analysis = analyzeDeclarationTarget(
-    serializeSpans(spans),
-    match.selector,
-    property,
-    match.conditions.length === 1 ? { atMedia: mediaParams(match.conditions[0]!) } : {},
-  )
-  if (!analysis.ok) return { ok: false, reason: analysis.refusal.reason, message: analysis.refusal.message }
-
-  const source = toSourceRange(assembled.segments, match)
-  if (!source) {
-    return {
-      ok: false,
-      reason: 'interpolated-value',
-      message:
-        `“${property}”'s value spans an interpolation in this template, so only part of it is written here. ` +
-        'Studio will not rewrite half a value.',
-    }
-  }
-
-  if (match.value.trim() === value.trim()) return { ok: true, changed: false }
-
-  // Preserve the author's own leading whitespace between the colon and the
-  // value: postcss counts it as part of `raws.between`, not the value, so a
-  // span never includes it — but a trailing run can, and replacing it would
-  // reflow the line for no reason.
-  const trailing = match.value.length - match.value.trimEnd().length
-  sourceFile.replaceText([source.start, source.end - trailing], value)
-  sourceFile.saveSync()
-  return { ok: true, changed: true }
 }
 
 /**
@@ -329,7 +352,7 @@ function shortenExpression(text: string): string {
  * The declaration value's absolute range in the file, or `undefined` when the
  * span is not wholly inside a single quasi — i.e. when the value is partly
  * written here and partly interpolated (`margin: ${gap} auto`), which has no
- * single honest target.
+ * single honest target for a rewrite (the override rung takes it instead).
  */
 function toSourceRange(
   segments: readonly QuasiSegment[],
@@ -341,48 +364,23 @@ function toSourceRange(
   return { start: span.valueStart + offset, end: span.valueEnd + offset }
 }
 
-/** The flattened CSS `analyzeDeclarationTarget` reads — rebuilt from the spans so both halves see exactly one text. */
-function serializeSpans(spans: readonly TemplateDeclarationSpan[]): string {
-  const blocks: string[] = []
-  let current: { selector: string; conditions: string[]; declarations: string[] } | undefined
-  for (const span of spans) {
-    const declaration = `${span.property}: ${span.value.trim()}${span.important ? ' !important' : ''}`
-    if (current && current.selector === span.selector && sameConditions(current.conditions, span.conditions)) {
-      current.declarations.push(declaration)
-      continue
-    }
-    if (current) blocks.push(wrapConditions(current.conditions, `${current.selector} { ${current.declarations.join('; ')}; }`))
-    current = { selector: span.selector, conditions: [...span.conditions], declarations: [declaration] }
-  }
-  if (current) blocks.push(wrapConditions(current.conditions, `${current.selector} { ${current.declarations.join('; ')}; }`))
-  return blocks.join('\n')
-}
-
-function wrapConditions(conditions: readonly string[], block: string): string {
-  return conditions.reduceRight((inner, condition) => `${condition} { ${inner} }`, block)
-}
-
-function sameConditions(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every((value, i) => value === b[i])
-}
-
 /**
- * Whether a span sits under the media query the caller named. A caller with no
- * `atMedia` means the template's UNCONDITIONAL declarations, so a span inside
- * any `@media` is a different target; a caller with one matches a span nested
- * exactly one level deep, because a doubly-nested query is a condition pair
- * this edit shape cannot name.
+ * Whether a span sits under the conditional block the caller named. A caller
+ * with no `atRule` means the template's UNCONDITIONAL declarations, so a span
+ * inside any block is a different target; a caller with one matches a span
+ * nested exactly one level deep, because a doubly-nested condition is a pair
+ * this edit shape cannot name. The at-rule NAME is compared too: a
+ * `@container (min-width: 400px)` is not a `@media (min-width: 400px)`.
  */
-function matchesMedia(span: TemplateDeclarationSpan, atMedia: string | undefined): boolean {
-  if (!atMedia) return span.conditions.length === 0
+function matchesScope(span: TemplateDeclarationSpan, atRule: string | undefined): boolean {
+  if (!atRule) return span.conditions.length === 0
   if (span.conditions.length !== 1) return false
-  return normalizeQuery(mediaParams(span.conditions[0]!)) === normalizeQuery(atMedia)
+  return normalizeQuery(conditionScope(span.conditions[0]!)) === normalizeQuery(atRule)
 }
 
-/** `@media (min-width: 700px)` -> `(min-width: 700px)`. Anything that is not an `@media` keeps its whole text, so it can never match a media query. */
-function mediaParams(condition: string): string {
-  const match = /^@media\s+(.*)$/i.exec(condition.trim())
-  return match ? match[1]!.trim() : condition.trim()
+/** `@media (min-width: 700px)` -> `media (min-width: 700px)` — a flattened condition as the `name params` scope `atRule` spells. */
+function conditionScope(condition: string): string {
+  return condition.trim().replace(/^@/, '')
 }
 
 function normalizeQuery(query: string): string {

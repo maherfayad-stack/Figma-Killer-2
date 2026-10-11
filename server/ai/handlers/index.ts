@@ -21,6 +21,7 @@ import { tryHandleAiModels } from './models'
 import { tryHandleAiClaudeCliStatus } from './claudeCliStatus'
 import { tryHandleAiClaudeCliLoginTerminal } from './claudeCliLoginTerminal'
 import { tryHandleAiStudioAgentSession } from './studioAgentSession'
+import { tryHandleAiAgentCheckpoints } from './agentCheckpoints'
 import { tryHandleAiMcpConnectors } from '../mcp/handlers/connectors'
 import { tryHandleAiMcpProjectServers } from '../mcp/handlers/registeredServers'
 import { tryHandleAiMcpOAuth } from '../mcp/handlers/oauth'
@@ -59,6 +60,7 @@ export function tryHandleAi(
     tryHandleAiClaudeCliStatus(req, db, pathname) ??
     tryHandleAiClaudeCliLoginTerminal(req, db, pathname) ??
     tryHandleAiStudioAgentSession(req, db, pathname) ??
+    tryHandleAiAgentCheckpoints(req, db, url, pathname) ??
     tryHandleAiModels(req, db, url, pathname)
   )
 }

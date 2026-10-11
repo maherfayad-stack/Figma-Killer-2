@@ -19,6 +19,7 @@ import * as path from 'node:path'
 import type { DbClient } from '../../../db/client'
 import { readOnboardingFacts } from '../onboardingFacts'
 import { writeStudioMeta } from '../studioMeta'
+import { studioAgentUserKey } from '../agentUserScope'
 
 let root: string
 let originalWorkspaceDir: string | undefined
@@ -105,7 +106,8 @@ describe('readOnboardingFacts', () => {
     // The per-user location W10 moves it to. Both are globbed, so the step
     // does not silently un-tick the day that move lands.
     fs.rmSync(path.join(cacheDir, 'pageVerification.json'))
-    const agentDir = path.join(cacheDir, 'agent', 'abc123')
+    // A key Studio actually mints (`studioAgentUserKey`): the listing reads no other name.
+    const agentDir = path.join(cacheDir, 'agent', studioAgentUserKey('user-1'))
     fs.mkdirSync(agentDir, { recursive: true })
     fs.writeFileSync(path.join(agentDir, 'pageVerification.json'), '{"version":1,"pages":{}}')
     expect((await readOnboardingFacts(stubDb([]), 'user-1')).styleEdited).toBe(true)

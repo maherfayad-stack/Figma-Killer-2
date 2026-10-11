@@ -66,6 +66,7 @@ import { bunCommand, viteCommand } from './lib/bunCommand'
 import {
   E2E_ADMIN_ORIGIN,
   E2E_CMS_PORT,
+  E2E_VITE_MODE,
   E2E_VITE_PORT,
   E2E_WORKSPACE_DIR,
   E2E_WORKSPACE_SOURCE_DIR,
@@ -93,8 +94,8 @@ const viteLogFor = (attempt: number): string =>
 const VITE_BOOT_CEILING_MS = existsSync('node_modules/.vite/deps/_metadata.json')
   ? 60_000
   : 180_000
-/** How long a LISTENING Vite may go without answering before it counts as stuck. */
-const VITE_ANSWER_GRACE_MS = 30_000
+/** How long a LISTENING Vite may go without answering before it counts as stuck. `E2E_VITE_ANSWER_GRACE_MS` raises it on a loaded machine, where the first `/admin` (dependency optimisation) has been measured at 64 s. */
+const VITE_ANSWER_GRACE_MS = Number(process.env.E2E_VITE_ANSWER_GRACE_MS ?? 30_000)
 /** Worst case 3 × the ceiling above, which stays inside `playwright.config.ts`'s `webServer.timeout`. */
 const VITE_BOOT_ATTEMPTS = 3
 const VITE_PROBE_INTERVAL_MS = 500
@@ -152,9 +153,13 @@ for (let attempt = 1; attempt <= VITE_BOOT_ATTEMPTS; attempt += 1) {
 const sharedEnv = {
   ...process.env,
   PORT: E2E_CMS_PORT,
+  VITE_PORT: E2E_VITE_PORT,
   DATABASE_URL: `sqlite:${DATABASE_PATH}`,
   UPLOADS_DIR,
   STUDIO_WORKSPACE_DIR: E2E_WORKSPACE_DIR,
+  // Vite's proxy cannot carry the presence WebSocket under Bun; the editor
+  // connects to the backend directly (studioLiveConnection.ts).
+  VITE_STUDIO_LIVE_BACKEND_PORT: E2E_CMS_PORT,
 }
 
 const children: StackChild[] = []
@@ -261,7 +266,21 @@ const cms = spawnStackChild(bunCommand('server/index.ts'), sharedEnv, CMS_LOG)
 children.push(cms)
 superviseExit(cms)
 
-const viteCmd = viteCommand('--host', '127.0.0.1', '--port', E2E_VITE_PORT, '--strictPort')
+// `E2E_VITE_MODE=preview` (see `e2eStack.ts`): the production bundle, built
+// once here, then served by `vite preview`, which reuses `server.proxy`.
+if (E2E_VITE_MODE === 'preview') {
+  logSupervisor('[e2e-dev] E2E_VITE_MODE=preview: building the admin bundle (vite build)…')
+  const build = Bun.spawnSync(viteCommand('build'), { env: sharedEnv, stdout: 'inherit', stderr: 'inherit' })
+  if (build.exitCode !== 0) {
+    logSupervisor(`[e2e-dev] vite build failed (exit ${build.exitCode}); not starting the stack.`)
+    stopChildren()
+    process.exit(1)
+  }
+}
+const viteCmd =
+  E2E_VITE_MODE === 'preview'
+    ? viteCommand('preview', '--host', '127.0.0.1', '--port', E2E_VITE_PORT, '--strictPort')
+    : viteCommand('--host', '127.0.0.1', '--port', E2E_VITE_PORT, '--strictPort')
 let vite: StackChild | null = null
 
 const BOOT_OUTCOME_REASON: Record<Exclude<ViteBootOutcome, 'ready'>, string> = {

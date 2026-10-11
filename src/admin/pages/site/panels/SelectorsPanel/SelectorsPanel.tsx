@@ -19,6 +19,7 @@ import { Skeleton } from '@ui/components/Skeleton'
 import { PaintBucketSolidIcon } from 'pixel-art-icons/icons/paint-bucket-solid'
 import { PlusIcon } from 'pixel-art-icons/icons/plus'
 import { Panel } from '@admin/shared/Panel'
+import { getStudioStyleRuleSources } from '@site/studio/styleRuleWriteback'
 import { cn } from '@ui/cn'
 import { DeleteSelectorDialog, SelectorNameDialog } from '../SelectorDialogs'
 import { SelectorContextMenu } from './SelectorContextMenu'
@@ -61,6 +62,10 @@ interface ContextMenuState {
   x: number
   y: number
   classId: string
+}
+
+function fileBaseName(file: string): string {
+  return file.slice(file.lastIndexOf('/') + 1)
 }
 
 function keyboardMenuPosition(element: HTMLElement) {
@@ -132,6 +137,7 @@ export function SelectorsPanel({ variant = 'docked' }: SelectorsPanelProps) {
   // only when provably dead (anchored on a class nothing uses) instead of the
   // blanket "Unused" the per-id tally produced for every ambient rule.
   const classTokenUsage = buildClassTokenUsageMap(site?.styleRules ?? {}, usageMap)
+  const ruleSources = getStudioStyleRuleSources()
   const normalizedQuery = normalizeSelectorQuery(query)
   const selectedIdSet = new Set(selectedSelectorClassIds)
   const selecting = selectedSelectorClassIds.length > 0
@@ -362,6 +368,7 @@ export function SelectorsPanel({ variant = 'docked' }: SelectorsPanelProps) {
                   selecting={selecting}
                   usage={resolveSelectorUsage(cls, usageMap, classTokenUsage).label}
                   summary={getSelectorStyleSummary(cls)}
+                  sourceFile={ruleSources[cls.id]?.file}
                   onSelect={() => openSelectorInProperties(cls.id)}
                   onToggleSelect={() => handleToggleSelect(cls.id)}
                   onContextMenu={(event) => openContextMenu(cls.id, event)}
@@ -469,6 +476,8 @@ interface SelectorRowProps {
   /** Usage badge text, or `null` to render no badge (unassessable ambient rule). */
   usage: string | null
   summary: string
+  /** The stylesheet the rule is written in — what tells two same-named classes apart. */
+  sourceFile: string | undefined
   onSelect: () => void
   onToggleSelect: () => void
   onContextMenu: (event: MouseEvent<HTMLButtonElement>) => void
@@ -486,6 +495,7 @@ function SelectorRow({
   selecting,
   usage,
   summary,
+  sourceFile,
   onSelect,
   onToggleSelect,
   onContextMenu,
@@ -544,7 +554,11 @@ function SelectorRow({
       >
         <span className={styles.rowText}>
           <span className={styles.rowLabel}>{selectorLabel}</span>
-          <span className={styles.rowMeta}>{summary}</span>
+          {/* The stylesheet is the line's identity (two `.time` rules in two
+              files must read differently); the style count moves to the title. */}
+          <span className={styles.rowMeta} title={sourceFile ? `${sourceFile} · ${summary}` : summary}>
+            {sourceFile ? fileBaseName(sourceFile) : summary}
+          </span>
         </span>
         <span className={styles.rowAside}>
           {kindLabel && <span className={styles.utilityBadge}>{kindLabel}</span>}

@@ -161,7 +161,7 @@ describe('a declaration VALUE change becomes a kind: styled edit', () => {
       { breakpoints: [{ id: 'mobile', label: 'Mobile', width: 480, mediaQuery: '(max-width: 480px)' }] },
     )
 
-    expect(plan.edits[0]).toMatchObject({ kind: 'styled', property: 'width', value: '90%', atMedia: '(max-width: 480px)' })
+    expect(plan.edits[0]).toMatchObject({ kind: 'styled', property: 'width', value: '90%', atRule: 'media (max-width: 480px)' })
   })
 
   it('REPORTS a cleared declaration instead of emitting one — deleting a line is not a value edit', () => {

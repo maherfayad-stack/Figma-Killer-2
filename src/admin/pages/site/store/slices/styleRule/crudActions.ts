@@ -15,7 +15,7 @@ import type { NewStyleRule } from '@core/siteImport'
 import { isValidCssSelector } from '../../styleRuleRename'
 import type { SiteSliceHelpers } from '../site/types'
 import type { StyleRuleSlice } from './types'
-import { nextRuleOrder, hasStylePatchChanges } from './helpers'
+import { nextRuleOrder, hasStylePatchChanges, isRegisteredStyleContext } from './helpers'
 import { coalesceKeyForPatch } from '../../historyCoalesce'
 
 type CrudActions = Pick<
@@ -407,6 +407,14 @@ export function createCrudActions({ get, mutateSite }: SiteSliceHelpers): CrudAc
       const cls = site?.styleRules[classId]
       if (!cls) return
       if (isGeneratedClassLocked(cls)) return
+      // The CSS emitter drops a context key that is neither a registered
+      // breakpoint nor a condition, so a write under one would reach disk and
+      // never paint. Refuse it whole (like a half-applied patch, it would
+      // leave the canvas disagreeing with the file).
+      if (!isRegisteredStyleContext(site, contextId)) {
+        console.warn('[styleRule] setClassContextStyles refused unregistered context:', contextId)
+        return
+      }
       const currentStyles = cls.contextStyles[contextId] ?? {}
       if (!hasStylePatchChanges(currentStyles, patch)) return
 

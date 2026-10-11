@@ -1,8 +1,8 @@
 /**
  * mapping.test.ts — Unit tests for src/core/htmlImport/
  *
- * Tests every rule + behavior described in the 'Test bar' of the spec
- * (docs/plans/2026-05-29-html-pipeline.md).
+ * Tests every rule + behavior described in the mapping rules
+ * (docs/features/html-import.md → "Mapping rules").
  *
  * Structure:
  *   - Base module registration side-effect (import '@modules/base')

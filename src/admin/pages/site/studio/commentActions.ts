@@ -7,7 +7,7 @@
  * `boardSlice`'s doc prescribes for `frameDefaults`.
  *
  * FAILURE POSTURE: a failed write leaves store state exactly as it was and
- * raises a toast. There is deliberately no optimistic insert-then-roll-back.
+ * raises a toast (a failed READ does not — see `reloadComments`). There is deliberately no optimistic insert-then-roll-back.
  * A comment that appears, then vanishes a moment later, is worse than one that
  * takes 40 ms to appear — the author cannot tell whether it was sent, and the
  * whole value of a review thread is that what you can see is what everybody
@@ -17,6 +17,7 @@ import { useEditorStore } from '@site/store/store'
 import { getStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
+import { retryWhileUnreachable } from '@core/http'
 import type { CommentAnchor } from '@core/studio-comments'
 import { applyCommentOp, fetchComments, type CommentOp } from './commentsApi'
 
@@ -36,19 +37,21 @@ async function run(op: CommentOp, failureTitle: string): Promise<boolean> {
   }
 }
 
-/** Re-read the whole file — after a load, a project switch, or an agent push. */
+/**
+ * Re-read the whole file — after a load, a project switch, or an agent push.
+ *
+ * P3-A — retried quietly while the server is unreachable; a failure that
+ * outlives the ladder is the Comments panel's own empty state
+ * (`markCommentsLoadFailed`), never a toast over a board that works.
+ */
 export async function reloadComments(): Promise<void> {
   try {
-    const file = await fetchComments(getStudioWorkspaceDir())
+    const dir = getStudioWorkspaceDir()
+    const file = await retryWhileUnreachable(() => fetchComments(dir))
     useEditorStore.getState().loadComments(file)
   } catch (err) {
     console.error('[commentActions] failed to load comments:', err)
     useEditorStore.getState().markCommentsLoadFailed()
-    pushToast({
-      kind: 'error',
-      title: 'Failed to load comments',
-      body: getErrorMessage(err, 'Unknown error loading studio comments'),
-    })
   }
 }
 
@@ -84,6 +87,13 @@ export async function editCommentBody(
 }
 
 export async function deleteCommentById(threadId: string, commentId: string): Promise<void> {
+  // The only comment of a thread: the server drops the whole thread with it, so
+  // this IS a thread delete and gets the same "Thread deleted - Undo" toast.
+  const thread = useEditorStore.getState().comments.threads.find((t) => t.id === threadId)
+  if (thread && thread.comments.length === 1 && thread.comments[0]?.id === commentId) {
+    await deleteThreadById(threadId)
+    return
+  }
   await run({ kind: 'delete-comment', threadId, commentId }, 'Failed to delete comment')
 }
 
@@ -104,7 +114,35 @@ export async function moveThreadPin(threadId: string, anchor: CommentAnchor): Pr
   await run({ kind: 'move', threadId, anchor }, 'Failed to move comment')
 }
 
-export async function deleteThreadById(threadId: string): Promise<void> {
+/**
+ * Delete a thread, then offer to take it back. Deleting a review thread used to
+ * be immediate and final — one mis-click on the menu item lost the whole
+ * conversation. The toast's Undo restores the thread the server just removed
+ * (`restore-thread`: by id, within a few minutes — the server keeps the copy,
+ * never the browser). `announce: false` is for a caller deleting several at once
+ * that raises one toast for the lot (`deleteThreadsById`).
+ */
+export async function deleteThreadById(threadId: string, options?: { announce?: boolean }): Promise<boolean> {
   const ok = await run({ kind: 'delete-thread', threadId }, 'Failed to delete thread')
-  if (ok) useEditorStore.getState().setActiveCommentThread(null)
+  if (!ok) return false
+  useEditorStore.getState().setActiveCommentThread(null)
+  if (options?.announce !== false) announceDeletedThreads([threadId])
+  return true
+}
+
+/** The "Deleted — Undo" toast for threads that were just removed. */
+export function announceDeletedThreads(threadIds: readonly string[]): void {
+  if (threadIds.length === 0) return
+  pushToast({
+    kind: 'info',
+    title: threadIds.length === 1 ? 'Thread deleted' : `${threadIds.length} threads deleted`,
+    action: { label: 'Undo', onSelect: () => void restoreThreadsById(threadIds) },
+    durationMs: 8000,
+  })
+}
+
+export async function restoreThreadsById(threadIds: readonly string[]): Promise<void> {
+  for (const threadId of threadIds) {
+    await run({ kind: 'restore-thread', threadId }, 'Failed to restore thread')
+  }
 }

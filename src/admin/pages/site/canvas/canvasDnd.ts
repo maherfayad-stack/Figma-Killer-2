@@ -3,15 +3,15 @@ import type { NodeTree } from '@core/page-tree'
 import {
   explainGestureConstraint,
   getParent,
+  isResolvedByInstanceDetach,
   previewStructuralMove,
-  previewStructuralTransplant,
   resolvePageTreeDropTarget,
   type EditConstraint,
   type PageTreeDropPosition,
   type PageTreeDropTarget,
 } from '@core/page-tree'
 
-interface CanvasPoint {
+export interface CanvasPoint {
   x: number
   y: number
 }
@@ -76,6 +76,15 @@ export interface CanvasInsertionTarget {
   overId: string
   rect: CanvasRect
   axis: CanvasDropAxis
+  /** The candidate's flow runs against child order (`row-reverse`, rtl): `before` is its visually-far edge. */
+  reversed?: boolean
+  /**
+   * Set when the drop lands in a flow container's own space at a child index
+   * (`position: 'inside'` over the container itself): the line where the
+   * element will sit among its children, in the same space as `rect`. The
+   * painter draws THIS instead of outlining the whole container.
+   */
+  gap?: { rect: CanvasRect; axis: CanvasDropAxis }
 }
 
 export interface CanvasInvalidDropTarget {
@@ -112,42 +121,6 @@ interface ResolveCanvasDropTargetInput {
   candidates: CanvasDropCandidate[]
   point: CanvasPoint
   canHaveChildren: (moduleId: string) => boolean
-  /** Live canvas zoom (1 = 100%). See `getCanvasDropZone`. Defaults to 1. */
-  zoom?: number
-}
-
-/**
- * Where a cross-frame drop would land, in the DESTINATION tree's own terms.
- * Structurally identical to {@link CanvasInsertionTarget} because the question
- * is the same one — see `resolveCanvasTransplantTarget` — and named separately
- * because a reader tracing a DRAG should not have to know that.
- */
-export interface CanvasTransplantTarget {
-  parentId: string
-  index: number
-  position: PageTreeDropPosition
-  overId: string
-  rect: CanvasRect
-  axis: CanvasDropAxis
-}
-
-export interface CanvasTransplantResolution {
-  target: CanvasTransplantTarget | null
-  invalid: CanvasInvalidDropTarget | null
-}
-
-interface ResolveCanvasTransplantTargetInput {
-  /** The tree the dragged element is written in. */
-  originTree: NodeTree<PageNode>
-  /** The tree the pointer is currently over — a DIFFERENT page. */
-  destinationTree: NodeTree<PageNode>
-  /** The dragged selection, in the origin tree's terms. */
-  draggedIds: readonly string[]
-  candidates: CanvasDropCandidate[]
-  point: CanvasPoint
-  canHaveChildren: (moduleId: string) => boolean
-  /** Alt held: the drop copies across frames instead of moving. */
-  copy: boolean
   /** Live canvas zoom (1 = 100%). See `getCanvasDropZone`. Defaults to 1. */
   zoom?: number
 }
@@ -264,7 +237,9 @@ export function resolveCanvasDropTarget({
   // remains the sole COMMIT-time authority; this is a preview, never a
   // replacement — see `previewStructuralMove`'s own doc.
   const preview = previewStructuralMove(tree, target.draggedIds, target.parentId, target.index)
-  if (!preview.ok) {
+  // OD-7 — a move inside a shared component is written to THIS instance
+  // (detach, then move) — a drop line, not a refusal.
+  if (!preview.ok && !isResolvedByInstanceDetach(preview.refusal.reason)) {
     // The refusal is about the DRAGGED element, not the candidate under the
     // pointer — that is whose source position the explanation names and whose
     // `rel:line:col` a jump would open.
@@ -291,80 +266,6 @@ export function resolveCanvasDropTarget({
   }
 }
 
-/**
- * D2 G3 — where a drag that crossed into ANOTHER frame would land, and
- * whether it would be refused.
- *
- * **Resolution is an INSERT's question, not a move's.** The dragged element is
- * not in this tree at all, so `resolvePageTreeDropTarget`'s cycle and
- * self-drop guards have nothing to check and its `draggedIds` have no meaning
- * here. What the destination is being asked is exactly what the picker asks —
- * "which container, and where among its children" — which is
- * `resolveCanvasInsertionTarget`, already built for that question.
- *
- * **The verdict is `previewStructuralTransplant`'s**, and it is asked WHILE
- * THE POINTER IS STILL DOWN for the reason `resolveCanvasDropTarget` documents
- * for its own preview: a refusal that only arrives as a toast after release
- * reaches the user once they have let go and moved on. The store's own gate
- * (`transplantNodes`) remains the sole commit-time authority; this is a
- * preview of it, never a replacement.
- */
-export function resolveCanvasTransplantTarget({
-  originTree,
-  destinationTree,
-  draggedIds,
-  candidates,
-  point,
-  canHaveChildren,
-  copy,
-  zoom = 1,
-}: ResolveCanvasTransplantTargetInput): CanvasTransplantResolution {
-  const candidate = findCanvasDropCandidate(candidates, point)
-  if (!candidate) return { target: null, invalid: null }
-
-  const zone = getCanvasDropZone(candidate, point, zoom)
-  const target = resolvePageTreeInsertionTarget({
-    tree: destinationTree,
-    overId: candidate.nodeId,
-    zone,
-    canHaveChildren,
-  })
-  if (!target) {
-    return { target: null, invalid: { overId: candidate.nodeId, rect: candidate.rect, axis: candidate.axis } }
-  }
-
-  const preview = previewStructuralTransplant({
-    originTree,
-    nodeIds: draggedIds,
-    destinationTree,
-    newParentId: target.parentId,
-    newIndex: target.index,
-    copy,
-  })
-  if (!preview.ok) {
-    // The refusal names one end of the gesture; the chip is rendered beside
-    // the pointer either way, so the node it is dressed against is whichever
-    // `previewStructuralTransplant` says it is about.
-    const about =
-      (preview.nodeId === undefined
-        ? undefined
-        : (originTree.nodes[preview.nodeId] ?? destinationTree.nodes[preview.nodeId])) ??
-      originTree.nodes[draggedIds[0] ?? ''] ?? { id: draggedIds[0] ?? '' }
-    const constraint = explainGestureConstraint(preview, about)
-    return {
-      target: null,
-      invalid: {
-        overId: candidate.nodeId,
-        rect: candidate.rect,
-        axis: candidate.axis,
-        ...(constraint ? { constraint } : {}),
-      },
-    }
-  }
-
-  return { target: { ...target, rect: candidate.rect, axis: candidate.axis }, invalid: null }
-}
-
 export function resolveCanvasInsertionTarget({
   tree,
   candidates,
@@ -380,28 +281,158 @@ export function resolveCanvasInsertionTarget({
     tree,
     overId: candidate.nodeId,
     zone,
+    nearerSide: nearerSiblingSide(candidate, point),
     canHaveChildren,
   })
   if (!target) return null
 
+  // A press in a container's own empty space lands among its children where
+  // the pointer is, not always at the end (Figma's auto-layout insert).
+  const index =
+    target.position === 'inside' && target.overId === target.parentId
+      ? nearestFlowIndex(tree, target.parentId, candidates, point)
+      : target.index
+
+  const gap =
+    target.position === 'inside' && target.overId === target.parentId && index !== null
+      ? flowGapLine(tree, target.parentId, candidates, index, candidate)
+      : null
+
   return {
     ...target,
+    index: index ?? target.index,
     rect: candidate.rect,
     axis: candidate.axis,
+    ...(candidate.reversed ? { reversed: true } : {}),
+    ...(gap ? { gap } : {}),
   }
+}
+
+/**
+ * The insertion line for child index `index` of a flow container: across the
+ * container for stacked children, down the row for side-by-side ones, centred
+ * in the space between the neighbours it falls between (or at the edge of the
+ * only neighbour for the first and last slots). `null` when no neighbour was
+ * measured — there is no gap to point at, and the container outline stays.
+ */
+export function flowGapLine(
+  tree: NodeTree<PageNode>,
+  containerId: string,
+  candidates: readonly CanvasDropCandidate[],
+  index: number,
+  container: CanvasDropCandidate,
+): { rect: CanvasRect; axis: CanvasDropAxis } | null {
+  const children = tree.nodes[containerId]?.children ?? []
+  const byId = new Map(candidates.map((candidate) => [candidate.nodeId, candidate]))
+  const before = index > 0 ? byId.get(children[index - 1]!) : undefined
+  const after = byId.get(children[index] ?? '')
+  const neighbours = [before, after].filter((candidate): candidate is CanvasDropCandidate => candidate !== undefined)
+  const axis = neighbours[0]?.axis
+  if (!axis) return null
+  const reversed = neighbours[0]?.reversed === true
+  // Visual order along the axis: a reversed flow puts the later child first.
+  const [first, second] = reversed ? [after, before] : [before, after]
+  const edge = (candidate: CanvasDropCandidate | undefined, side: 'start' | 'end'): number | null => {
+    if (!candidate) return null
+    const { rect } = candidate
+    if (axis === 'vertical') return side === 'start' ? rect.top : rect.bottom
+    return side === 'start' ? rect.left : rect.right
+  }
+  const lead = edge(first, 'end')
+  const trail = edge(second, 'start')
+  const at = lead !== null && trail !== null ? (lead + trail) / 2 : (lead ?? trail)
+  if (at === null) return null
+
+  if (axis === 'vertical') {
+    const { left, right } = container.rect
+    return { axis, rect: { left, right, top: at, bottom: at, width: right - left, height: 0 } }
+  }
+  const top = Math.min(...neighbours.map((candidate) => candidate.rect.top))
+  const bottom = Math.max(...neighbours.map((candidate) => candidate.rect.bottom))
+  return { axis, rect: { left: at, right: at, top, bottom, width: 0, height: bottom - top } }
+}
+
+/**
+ * The child index a point inside a flow container nearest belongs at: before
+ * the first child that comes AFTER the point in reading order, else the end.
+ * `null` when none of the container's children were measured (nothing to
+ * compare against — the caller keeps the append).
+ *
+ * Vertical flow compares centre-y. Horizontal flow compares rows first (a
+ * child wholly above the point is earlier; wholly below it is later) so a
+ * wrapped row resolves in its own row, then centre-x. A reversed flow
+ * (`row-reverse`, rtl) counts a child as later when it sits visually before the
+ * point.
+ */
+export function nearestFlowIndex(
+  tree: NodeTree<PageNode>,
+  containerId: string,
+  candidates: readonly CanvasDropCandidate[],
+  point: CanvasPoint,
+): number | null {
+  const children = tree.nodes[containerId]?.children
+  if (!children || children.length === 0) return null
+  const byId = new Map(candidates.map((candidate) => [candidate.nodeId, candidate]))
+  let measured = false
+  for (let index = 0; index < children.length; index += 1) {
+    const candidate = byId.get(children[index]!)
+    if (!candidate) continue
+    measured = true
+    const { rect, axis, reversed } = candidate
+    const centreX = rect.left + rect.width / 2
+    const centreY = rect.top + rect.height / 2
+    let after: boolean
+    if (axis === 'vertical') {
+      after = reversed ? centreY < point.y : centreY > point.y
+    } else if (rect.bottom < point.y) {
+      after = false
+    } else if (rect.top > point.y) {
+      after = true
+    } else {
+      after = reversed ? centreX < point.x : centreX > point.x
+    }
+    if (after) return index
+  }
+  return measured ? children.length : null
+}
+
+/**
+ * Which side of `candidate` the point is nearer to, in child-list order: the
+ * answer for a press in the MIDDLE of an element that cannot hold the new one
+ * (a Label, an image, a locked box). The edge bands of `getCanvasDropZone`
+ * only cover the outer ~26 % of the box; the rest is `inside`, which has no
+ * meaning for a leaf. Resolving that remainder as a fixed `after` put a drop
+ * on the upper half of Label 3 AFTER Label 3 - one slot past where the drop
+ * line and the pointer were. A tie goes to `after`, the side the append
+ * convention already uses.
+ */
+export function nearerSiblingSide(candidate: CanvasDropCandidate, point: CanvasPoint): 'before' | 'after' {
+  const { rect, axis, reversed } = candidate
+  const offset = axis === 'horizontal' ? point.x - rect.left : point.y - rect.top
+  const size = axis === 'horizontal' ? rect.width : rect.height
+  const inNearHalf = offset < size / 2
+  if (!inNearHalf) return reversed ? 'before' : 'after'
+  return reversed ? 'after' : 'before'
 }
 
 interface ResolvePageTreeInsertionTargetInput {
   tree: NodeTree<PageNode>
   overId: string
   zone: PageTreeDropPosition
+  /**
+   * Where a drop lands beside `overId` when `zone` is `inside` but `overId`
+   * cannot take it. A caller with pointer geometry passes the nearer side; a
+   * Layers-panel row has none and keeps the append convention (`after`).
+   */
+  nearerSide?: 'before' | 'after'
   canHaveChildren: (moduleId: string) => boolean
 }
 
-function resolvePageTreeInsertionTarget({
+export function resolvePageTreeInsertionTarget({
   tree,
   overId,
   zone,
+  nearerSide = 'after',
   canHaveChildren,
 }: ResolvePageTreeInsertionTargetInput): Omit<CanvasInsertionTarget, 'rect' | 'axis'> | null {
   const over = tree.nodes[overId]
@@ -435,7 +466,7 @@ function resolvePageTreeInsertionTarget({
           overId,
         }
       }
-      return siblingInsertionTarget(tree, overId, 'after')
+      return siblingInsertionTarget(tree, overId, nearerSide)
     }
 
     return {
@@ -446,7 +477,7 @@ function resolvePageTreeInsertionTarget({
     }
   }
 
-  return siblingInsertionTarget(tree, overId, zone === 'before' ? 'before' : 'after')
+  return siblingInsertionTarget(tree, overId, zone === 'inside' ? nearerSide : zone)
 }
 
 function siblingInsertionTarget(
@@ -471,7 +502,7 @@ function siblingInsertionTarget(
   }
 }
 
-function findCanvasDropCandidate(
+export function findCanvasDropCandidate(
   candidates: CanvasDropCandidate[],
   point: CanvasPoint,
 ): CanvasDropCandidate | null {

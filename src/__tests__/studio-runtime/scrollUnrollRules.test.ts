@@ -18,6 +18,7 @@ import {
   SCROLL_UNROLL_MIN_HEIGHT_VAR,
   runUnrollPasses,
   startScrollUnroll,
+  SELECTION_OVERLAY_ROOT_ID,
 } from '@core/studio-runtime'
 
 describe('classifyUnrollElement', () => {
@@ -272,6 +273,46 @@ describe('startScrollUnroll — DOM lifecycle (shared by the portal injector and
       expect(nav.hasAttribute(SCROLL_UNROLL_ATTR)).toBe(false)
     } finally {
       nav.remove()
+    }
+  })
+})
+
+describe('startScrollUnroll — selection chrome is not page content (PERF-2)', () => {
+  const STYLE_ID = 'test-scroll-unroll-chrome'
+
+  it('a ring mounting in the overlay root schedules no unroll pass; real content still does', async () => {
+    const realRaf = window.requestAnimationFrame
+    const requested: FrameRequestCallback[] = []
+    window.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+      requested.push(callback)
+      return requested.length
+    }) as typeof window.requestAnimationFrame
+    const root = document.createElement('div')
+    root.id = SELECTION_OVERLAY_ROOT_ID
+    document.body.appendChild(root)
+    const controller = startScrollUnroll(document, STYLE_ID)
+    const drainMutations = () => new Promise((resolve) => setTimeout(resolve, 0))
+    try {
+      // The start-up pass, then nothing pending.
+      expect(requested.length).toBe(1)
+      requested.shift()!(0)
+
+      const ring = document.createElement('div')
+      ring.setAttribute('data-canvas-hover-ring', 'true')
+      root.appendChild(ring)
+      ring.remove()
+      await drainMutations()
+      expect(requested.length).toBe(0)
+
+      const section = document.createElement('section')
+      document.body.appendChild(section)
+      await drainMutations()
+      expect(requested.length).toBe(1)
+      section.remove()
+    } finally {
+      controller.dispose()
+      root.remove()
+      window.requestAnimationFrame = realRaf
     }
   })
 })

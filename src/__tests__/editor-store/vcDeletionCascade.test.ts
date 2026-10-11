@@ -22,7 +22,6 @@ function freshStore() {
     activeDocument: null,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     propertiesPanel: { collapsed: true, x: 0, y: 0, width: 360 },
     packageJson: {},
     _historyPast: [],

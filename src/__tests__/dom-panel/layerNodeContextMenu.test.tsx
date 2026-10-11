@@ -1,7 +1,7 @@
 /**
  * layerNodeContextMenu.test.tsx
  *
- * Tests for the LayerNodeContextMenu "Insert module here" submenu:
+ * Tests for the LayerNodeContextMenu "Insert element here" submenu:
  * - The submenu trigger is always present.
  * - Hovering it opens a `ContextMenuSubmenu` containing the shared ModulePicker
  *   (search + module/VC list).
@@ -69,7 +69,6 @@ function resetStore(vcs: VisualComponent[] = []) {
     site: makeSite({ pages: [home], files: [], visualComponents: vcs }),
     activePageId: 'page-home',
     selectedNodeId: 'container-node',
-    hoveredNodeId: null,
     activeDocument: null,
     _historyPast: [],
     _historyFuture: [],
@@ -102,17 +101,17 @@ function renderMenu(nodeId = 'container-node', vcs: VisualComponent[] = []) {
 
 function openInsertSubmenu() {
   // ContextMenuSubmenu opens on mouseEnter — fire that to open the panel.
-  const trigger = screen.getByRole('menuitem', { name: /insert module here/i })
+  const trigger = screen.getByRole('menuitem', { name: /insert element here/i })
   fireEvent.mouseEnter(trigger)
   return trigger
 }
 
 beforeEach(() => resetStore())
 
-describe('LayerNodeContextMenu — Insert module here', () => {
-  it('renders the "Insert module here" submenu trigger', () => {
+describe('LayerNodeContextMenu — Insert element here', () => {
+  it('renders the "Insert element here" submenu trigger', () => {
     renderMenu()
-    expect(screen.getByRole('menuitem', { name: /insert module here/i })).toBeDefined()
+    expect(screen.getByRole('menuitem', { name: /insert element here/i })).toBeDefined()
   })
 
   it('opens the module picker submenu on hover', () => {
@@ -121,7 +120,7 @@ describe('LayerNodeContextMenu — Insert module here', () => {
 
     // ContextMenuSubmenu renders a panel with role="menu" and aria-label
     // matching the trigger label. The picker's search input lives inside.
-    expect(screen.getByRole('menu', { name: 'Insert module here' })).toBeDefined()
+    expect(screen.getByRole('menu', { name: 'Insert element here' })).toBeDefined()
     expect(screen.getByRole('searchbox', { name: 'Search modules' })).toBeDefined()
   })
 
@@ -129,7 +128,7 @@ describe('LayerNodeContextMenu — Insert module here', () => {
     renderMenu('container-node')
     openInsertSubmenu()
 
-    const submenu = screen.getByRole('menu', { name: 'Insert module here' })
+    const submenu = screen.getByRole('menu', { name: 'Insert element here' })
     const textOption = within(submenu).getAllByRole('menuitem').find(
       (el) => el.getAttribute('data-module-id') === 'base.text',
     )
@@ -151,7 +150,7 @@ describe('LayerNodeContextMenu — Insert module here', () => {
     renderMenu('container-node', [vc])
     openInsertSubmenu()
 
-    const submenu = screen.getByRole('menu', { name: 'Insert module here' })
+    const submenu = screen.getByRole('menu', { name: 'Insert element here' })
     const vcItem = submenu.querySelector('[data-vc-id="vc-abc"]') as HTMLElement
     expect(vcItem).not.toBeNull()
     fireEvent.click(vcItem)
@@ -188,7 +187,7 @@ describe('LayerNodeContextMenu — Insert module here', () => {
 
     openInsertSubmenu()
 
-    const submenu = screen.getByRole('menu', { name: 'Insert module here' })
+    const submenu = screen.getByRole('menu', { name: 'Insert element here' })
     const vcItem = submenu.querySelector('[data-vc-id="vc-1"]') as HTMLElement
     fireEvent.click(vcItem)
 
@@ -278,7 +277,6 @@ function resetStoreWithSlotInstance() {
     site: makeSite({ pages: [home], files: [], visualComponents: [] }),
     activePageId: 'page-home',
     selectedNodeId: 'slot-inst',
-    hoveredNodeId: null,
     activeDocument: null,
     _historyPast: [],
     _historyFuture: [],
@@ -335,16 +333,16 @@ describe('LayerNodeContextMenu — slot-instance lock-down', () => {
     expect(screen.queryByRole('menuitem', { name: /^rename$/i })).toBeNull()
   })
 
-  it('C6: "Insert module here" IS present for a slot-instance node', () => {
+  it('C6: "Insert element here" IS present for a slot-instance node', () => {
     renderSlotInstanceMenu()
-    expect(screen.getByRole('menuitem', { name: /insert module here/i })).toBeDefined()
+    expect(screen.getByRole('menuitem', { name: /insert element here/i })).toBeDefined()
   })
 
   it('C7: picking a base module from the submenu inserts it INSIDE the slot-instance', () => {
     renderSlotInstanceMenu()
     openInsertSubmenu()
 
-    const submenu = screen.getByRole('menu', { name: 'Insert module here' })
+    const submenu = screen.getByRole('menu', { name: 'Insert element here' })
     const textOption = within(submenu).getAllByRole('menuitem').find(
       (el) => el.getAttribute('data-module-id') === 'base.text',
     )
@@ -392,7 +390,6 @@ describe('LayerNodeContextMenu — orphan slot-instance is NOT locked', () => {
       site: makeSite({ pages: [home], files: [], visualComponents: [] }),
       activePageId: 'page-home',
       selectedNodeId: 'orphan-slot',
-      hoveredNodeId: null,
       activeDocument: null,
       _historyPast: [],
       _historyFuture: [],
@@ -434,7 +431,7 @@ describe('LayerNodeContextMenu — orphan slot-instance is NOT locked', () => {
 })
 
 /**
- * "Insert module here" is offered for every single-select target — container
+ * "Insert element here" is offered for every single-select target — container
  * AND leaf alike. Right-clicking a leaf (Text, Button, Image, etc.) and
  * inserting must land the new node as the next sibling under the leaf's
  * parent; the shared `resolveInsertLocation` helper handles that fallback
@@ -442,7 +439,7 @@ describe('LayerNodeContextMenu — orphan slot-instance is NOT locked', () => {
  * old bug — see the right-click "place doesn't do anything on non-container"
  * report that motivated this gate.
  */
-describe('LayerNodeContextMenu — "Insert module here" sibling fallback on leaf targets', () => {
+describe('LayerNodeContextMenu — "Insert element here" sibling fallback on leaf targets', () => {
   function setupPageWithMixedNodes() {
     localStorage.clear()
     const home = makePage({
@@ -462,7 +459,6 @@ describe('LayerNodeContextMenu — "Insert module here" sibling fallback on leaf
       activePageId: 'page-mixed',
       selectedNodeId: null,
       selectedNodeIds: [],
-      hoveredNodeId: null,
       activeDocument: null,
       _historyPast: [],
       _historyFuture: [],
@@ -491,33 +487,33 @@ describe('LayerNodeContextMenu — "Insert module here" sibling fallback on leaf
     )
   }
 
-  it('"Insert module here" IS shown for a base.container node', () => {
+  it('"Insert element here" IS shown for a base.container node', () => {
     renderMenuFor('ctr')
     expect(
-      screen.getByRole('menuitem', { name: /insert module here/i }),
+      screen.getByRole('menuitem', { name: /insert element here/i }),
     ).toBeDefined()
   })
 
-  it('"Insert module here" IS shown for a base.text node (leaf — places as sibling)', () => {
+  it('"Insert element here" IS shown for a base.text node (leaf — places as sibling)', () => {
     renderMenuFor('txt')
     expect(
-      screen.getByRole('menuitem', { name: /insert module here/i }),
+      screen.getByRole('menuitem', { name: /insert element here/i }),
     ).toBeDefined()
   })
 
-  it('"Insert module here" IS shown for a base.button node (leaf — places as sibling)', () => {
+  it('"Insert element here" IS shown for a base.button node (leaf — places as sibling)', () => {
     renderMenuFor('btn')
     expect(
-      screen.getByRole('menuitem', { name: /insert module here/i }),
+      screen.getByRole('menuitem', { name: /insert element here/i }),
     ).toBeDefined()
   })
 
   it('inserts a module as the NEXT SIBLING when the target is a leaf', () => {
     renderMenuFor('txt')
-    const trigger = screen.getByRole('menuitem', { name: /insert module here/i })
+    const trigger = screen.getByRole('menuitem', { name: /insert element here/i })
     fireEvent.mouseEnter(trigger)
 
-    const submenu = screen.getByRole('menu', { name: 'Insert module here' })
+    const submenu = screen.getByRole('menu', { name: 'Insert element here' })
     // `base.container` — not `base.button` (no `sourceIntrinsic` of its
     // own, so `moduleAvailability`'s intrinsic-element gate hides it from
     // every picker now that Studio is the only editor mode; only
@@ -569,9 +565,9 @@ describe('LayerNodeContextMenu — "Insert module here" sibling fallback on leaf
         onPaste={noop}
       />,
     )
-    const trigger = screen.getByRole('menuitem', { name: /insert module here/i })
+    const trigger = screen.getByRole('menuitem', { name: /insert element here/i })
     fireEvent.mouseEnter(trigger)
-    const submenu = screen.getByRole('menu', { name: 'Insert module here' })
+    const submenu = screen.getByRole('menu', { name: 'Insert element here' })
     const vcItem = submenu.querySelector('[data-vc-id="vc-sibling"]') as HTMLElement
     expect(vcItem).not.toBeNull()
     fireEvent.click(vcItem)
@@ -623,7 +619,6 @@ describe('LayerNodeContextMenu — "Insert module here" sibling fallback on leaf
       activePageId: 'page-slotless-vc',
       selectedNodeId: null,
       selectedNodeIds: [],
-      hoveredNodeId: null,
       activeDocument: null,
       _historyPast: [],
       _historyFuture: [],
@@ -647,10 +642,10 @@ describe('LayerNodeContextMenu — "Insert module here" sibling fallback on leaf
         onPaste={noop}
       />,
     )
-    const trigger = screen.getByRole('menuitem', { name: /insert module here/i })
+    const trigger = screen.getByRole('menuitem', { name: /insert element here/i })
     fireEvent.mouseEnter(trigger)
 
-    const submenu = screen.getByRole('menu', { name: 'Insert module here' })
+    const submenu = screen.getByRole('menu', { name: 'Insert element here' })
     const textOption = within(submenu).getAllByRole('menuitem').find(
       (el) => el.getAttribute('data-module-id') === 'base.text',
     )
@@ -690,7 +685,6 @@ describe('LayerNodeContextMenu — Hide / Unhide', () => {
       activePageId: 'page-hide',
       selectedNodeId: 'a',
       selectedNodeIds: [],
-      hoveredNodeId: null,
       activeDocument: null,
       _historyPast: [],
       _historyFuture: [],
@@ -734,9 +728,16 @@ describe('LayerNodeContextMenu — Hide / Unhide', () => {
     const menu = screen.getByRole('menu', { name: 'Node options' })
     const children = Array.from(menu.children)
 
-    expect(children[0].textContent).toBe('Hide')
+    // The label, without the item's shortcut keycaps (P5-E, UX-22): those are
+    // `aria-hidden` and read from the keybinding registry.
+    const label = (element: Element) => {
+      const copy = element.cloneNode(true) as Element
+      for (const hidden of copy.querySelectorAll('[aria-hidden="true"]')) hidden.remove()
+      return copy.textContent
+    }
+    expect(label(children[0])).toBe('Hide')
     expect(children[1].getAttribute('aria-hidden')).toBe('true')
-    expect(children[2].textContent).toBe('Rename')
+    expect(label(children[2])).toBe('Rename')
   })
 
   it('shows Unhide for a hidden node and marks it visible when clicked', () => {
@@ -819,7 +820,6 @@ describe('LayerNodeContextMenu — multi-delete confirmation', () => {
       activePageId: 'page-multi',
       selectedNodeId: 'b',
       selectedNodeIds: ['a', 'b'],
-      hoveredNodeId: null,
       activeDocument: null,
       _historyPast: [],
       _historyFuture: [],
@@ -898,7 +898,6 @@ function renderMenuForNode(
     activePageId: page.id,
     selectedNodeId: nodeId,
     selectedNodeIds,
-    hoveredNodeId: null,
     activeDocument: null,
     _historyPast: [],
     _historyFuture: [],
@@ -1018,7 +1017,9 @@ describe('LayerNodeContextMenu — R4 pre-disabled structural gestures', () => {
   // The multi-select half of the same rule: several elements can be duplicated
   // or deleted in one batch (ordered bottom-to-top), but ONE wrapper around
   // several ranges is not a write `wrapJsxElement` makes.
-  it('a multi-selection can be duplicated but not wrapped', () => {
+  // P3-D — a wrap of several elements is a group now (one container around
+  // their run), so the item is enabled. It used to be refused `multi-select`.
+  it('a multi-selection can be duplicated AND wrapped', () => {
     const page = makePage({
       id: 'page-multi',
       rootNodeId: 'root',
@@ -1033,7 +1034,7 @@ describe('LayerNodeContextMenu — R4 pre-disabled structural gestures', () => {
     expect(screen.getByRole('menuitem', { name: /duplicate/i }).getAttribute('aria-disabled')).toBeNull()
     fireEvent.mouseEnter(screen.getByRole('menuitem', { name: /wrap in/i }))
     const containerItem = within(screen.getByRole('menu', { name: 'Wrap in' })).getByRole('menuitem', { name: /container/i })
-    expect(containerItem.getAttribute('aria-disabled')).toBe('true')
+    expect(containerItem.getAttribute('aria-disabled')).toBeNull()
   })
 })
 
@@ -1088,7 +1089,10 @@ describe('LayerNodeContextMenu — refusal footer', () => {
     expect(screen.queryByTestId('constraint-notice')).toBeNull()
   })
 
-  it('explains a shared-component refusal and names where the markup really lives', () => {
+  // OD-7 (P3-D) — a gesture inside a shared component is written to THIS
+  // instance (detach, then the gesture), so nothing is refused and no footer
+  // shows. The footer used to explain a `shared-component` refusal here.
+  it('refuses nothing inside a shared component — it applies to this instance (OD-7)', () => {
     const shared = 'src/screens/Home.jsx:9:1~src/ui/Icon.jsx:3:4'
     const page = makePage({
       id: 'page-shared',
@@ -1100,17 +1104,37 @@ describe('LayerNodeContextMenu — refusal footer', () => {
     })
     renderMenuForNode(shared, page)
 
-    const notice = screen.getByTestId('constraint-notice')
-    expect(notice.getAttribute('data-constraint-reason')).toBe('shared-component')
-    // R1 (`STATE.md`'s `refusal-01`) gave `shared-component` a real targeted
-    // `edit-component` action — `ConstraintNotice`'s own de-dup rule
-    // ("origin is offered on its own only when no action already points at a
-    // file") now correctly suppresses the separate `constraint-origin` badge
-    // this test used to assert on, since the action button below points at
-    // the same file. The button's own label doesn't name the file the way
-    // the old badge did — a real, minor precision loss worth a follow-up,
-    // not a bug this test should paper over.
-    expect(screen.queryByTestId('constraint-origin')).toBeNull()
-    expect(screen.getByTestId('constraint-action-edit-component').textContent).toContain('Open the component definition')
+    expect(screen.queryByTestId('constraint-notice')).toBeNull()
+    expect(screen.getByRole('menuitem', { name: /delete/i }).getAttribute('aria-disabled')).toBeNull()
+  })
+})
+
+describe('LayerNodeContextMenu — arrange block (Figma parity)', () => {
+  it('always offers Paste, disabled while the clipboard is empty', () => {
+    renderMenu()
+    act(() => { useEditorStore.setState({ clipboardEntry: null } as Parameters<typeof useEditorStore.setState>[0]) })
+    const paste = screen.getByRole('menuitem', { name: /^paste$/i })
+    expect((paste as HTMLButtonElement).disabled || paste.getAttribute('aria-disabled') === 'true').toBe(true)
+  })
+
+  it('offers Group on a single element', () => {
+    renderMenu()
+    expect(screen.getByRole('menuitem', { name: /^group/i })).toBeDefined()
+  })
+
+  it('does not offer Ungroup on a container that is not a bare group', () => {
+    resetStore()
+    const state = useEditorStore.getState()
+    const page = state.site!.pages[0]!
+    const styled = { ...page.nodes['container-node']!, classIds: ['card'], children: ['kid'] }
+    const kid = makeNode({ id: 'kid', moduleId: 'base.text', parentId: 'container-node' })
+    useEditorStore.setState({
+      site: { ...state.site!, pages: [{ ...page, nodes: { ...page.nodes, 'container-node': styled, kid } }] },
+    } as Parameters<typeof useEditorStore.setState>[0])
+    render(
+      <LayerNodeContextMenu x={1} y={1} nodeId="container-node" onClose={noop} onDelete={noop} onDuplicate={noop}
+        onRename={noop} onWrapInContainer={noop} onCopy={noop} onCut={noop} onPaste={noop} />,
+    )
+    expect(screen.queryByRole('menuitem', { name: /^ungroup/i })).toBeNull()
   })
 })

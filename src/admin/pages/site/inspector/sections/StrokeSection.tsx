@@ -63,15 +63,11 @@
  * collapsed-empty convention (`02-measurements.md`: "one `32px` row: title +
  * trailing `+`, no chevron"). Per `03-operating-behaviors.md`'s own explicit
  * note, clicking Penpot's own Stroke `+` writes a real default stroke
- * immediately — Studio's existing `AddablePropertyField` contract (Law 3,
- * `docs/features/inspector-disclosure.md`) deliberately does NOT copy that:
- * writing a value from a bare reveal click would show up as an unexplained
- * diff in the user's real source file. Clicking "+" here only REVEALS the
- * resident Row 2 (position/weight/settings/sides) — exactly the pre-
- * migration file's own contract, where Row 2 is "what a totally-empty
- * Stroke section shows the instant the header's + reveals the body." No
- * value is written until the user actually edits a field. Once anything IS
- * set (or once revealed), this section passes `forceOpen` — no manual
+ * immediately, and so does this one: `DEFAULT_STROKE_PATCH` (`1px solid
+ * #000000`, every side, ONE history entry). A reveal-only "+" used to leave a
+ * half-built row (no colour entry, nothing in the source) because the colour
+ * row is derived from what is stored. Once anything IS set (or once
+ * revealed), this section passes `forceOpen` — no manual
  * collapse of a populated section (`STATE.md` `panel-25`'s Rule-2 gap, the
  * same posture every migrated section takes).
  *
@@ -117,6 +113,7 @@ import { hasStyleValue, pickMixedString, plainString } from '../../panels/Proper
 import { resolveStyleFieldDisplay } from '../../panels/PropertiesPanel/styleFieldDisplay'
 import { isMixed, type Mixed } from '@ui/components/MixedValue'
 import { ColorOpacityField } from './FillSectionParts'
+import { withBorderShorthandExpanded } from './borderShorthand'
 import { useSelectionModel } from '../selectionModel'
 import { useInspectorCommit } from '../commitApi'
 import { buildContextOnlyClassChain, buildCollapsedCurrentStyles, buildCollapsedStoredStyles } from '../collapsedStyleBag'
@@ -200,6 +197,24 @@ const STROKE_PROPERTIES: ReadonlyArray<keyof CSSPropertyBag> = [
   ...SETTINGS_PROPERTIES,
 ]
 
+/** Mid grey: readable on a light and on a dark canvas (black vanished on dark). */
+const DEFAULT_STROKE_COLOR = '#808080'
+
+/**
+ * What "+" writes: a real, visible `1px solid #808080` stroke on every side,
+ * in one history entry (the writeback collapses the twelve longhands to one
+ * `border` declaration). The earlier "reveal only,
+ * write nothing" contract produced a half-built row (a truncated weight, no
+ * colour entry, nothing in the source) because the colour row is derived from
+ * what is stored; a stroke that does not exist cannot be edited.
+ */
+const DEFAULT_STROKE_PATCH: Partial<Record<keyof CSSPropertyBag, string>> = {}
+for (const side of SIDES) {
+  DEFAULT_STROKE_PATCH[sideKey(side, 'Width')] = '1px'
+  DEFAULT_STROKE_PATCH[sideKey(side, 'Style')] = 'solid'
+  DEFAULT_STROKE_PATCH[sideKey(side, 'Color')] = DEFAULT_STROKE_COLOR
+}
+
 // Stroke position — only the two CSS-honest values. See the file doc for why
 // "Center" is omitted rather than faked.
 const POSITION_OPTIONS = [
@@ -249,11 +264,14 @@ export function StrokeSection() {
   // (`collapsedStyleBag.ts`), scoped to Stroke's own claimed properties.
   const inlineStyles = selectedNode.inlineStyles ?? {}
   const contextOnlyClassChain = buildContextOnlyClassChain(assignedClassRules, activeContextId)
-  const { storedStyles } = buildCollapsedStoredStyles(STROKE_PROPERTIES, contextOnlyClassChain, inlineStyles)
+  const { storedStyles: declaredStyles } = buildCollapsedStoredStyles(STROKE_PROPERTIES, contextOnlyClassChain, inlineStyles)
+  // `border: 1px solid #808080` (what "+" writes, and what hand-written source
+  // uses) is read back onto the per-side fields the rows edit.
+  const storedStyles = withBorderShorthandExpanded(declaredStyles)
   const effectiveClassChain = buildClassChain(assignedClassRules, activeContextId)
   const currentStyles = buildCollapsedCurrentStyles(computedValues, effectiveClassChain, inlineStyles, storedStyles)
 
-  // Law 1 (`docs/features/inspector-disclosure.md` §4 G1): whether ANYTHING
+  // Law 1 (`docs/features/inspector.md` §4 G1): whether ANYTHING
   // Stroke claims is set, on the active tab OR any other breakpoint/
   // condition — mirrors every other migrated section's own
   // `crossContextStyles` construction. This drives the SECTION's own empty
@@ -335,7 +353,10 @@ export function StrokeSection() {
             iconOnly
             aria-label="Add stroke"
             tooltip="Add stroke"
-            onClick={() => setRevealedFor(selectedNodeId)}
+            onClick={() => {
+              setRevealedFor(selectedNodeId)
+              commit.commitStyleMany(DEFAULT_STROKE_PATCH)
+            }}
             data-testid="stroke-section-add"
           >
             <PlusIcon size={12} aria-hidden="true" />
@@ -373,6 +394,7 @@ export function StrokeSection() {
   }
 
   function clearStroke() {
+    onClearProperty('border')
     for (const side of SIDES) {
       for (const field of ['Width', 'Style', 'Color'] as SideField[]) {
         onClearProperty(sideKey(side, field))

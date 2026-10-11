@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { probeProject, tryServeStudioProbe } from '../studio/projectProbe'
+import { probeProject, reprobeProjectProfile, tryServeStudioProbe } from '../studio/projectProbe'
 import { detectLocales } from '../studio/localeProbe'
 import { PROBE_VERSION, type ProjectProfile } from '../studio/projectProfileSchema'
 import { mergeStudioMeta, readStudioMeta, writeStudioMeta } from '../studio/studioMeta'
@@ -541,6 +541,89 @@ describe('detectLocales', () => {
 
     const withoutDict = probeProject(fs.mkdtempSync(path.join(os.tmpdir(), 'project-probe-nolocale-')))
     expect('locales' in withoutDict).toBe(false)
+  })
+
+  // -------------------------------------------------------------------------
+  // Regression: a vendored design system must never be read as the project's
+  // locale dictionary (the `test4` dogfood bug — see fix/locales-never-touch-
+  // the-design-system's STATE.md entry). `Expander.jsx` is a generic-repo-shape
+  // fixture, not the real ALM source: a direction map, dynamically indexed
+  // exactly like a real dictionary, is the whole reproduction.
+  // -------------------------------------------------------------------------
+
+  it('never detects a locale dictionary inside the vendored design-system folder', () => {
+    write(
+      'design-system/components/Expander.jsx',
+      "const paddingByDirection = {\n  ltr: '0 0 0 8px',\n  rtl: '0 8px 0 0',\n}\nexport function Expander({ dir }) {\n  return paddingByDirection[dir]\n}\n",
+    )
+    expect(detectLocales(tmpDir)).toBeNull()
+  })
+
+  it('prefers a real i18n/translations.ts dictionary over a design-system direction map with the same shape', () => {
+    write(
+      'design-system/components/Expander.jsx',
+      "const paddingByDirection = {\n  ltr: '0 0 0 8px',\n  rtl: '0 8px 0 0',\n}\nexport function Expander({ dir }) {\n  return paddingByDirection[dir]\n}\n",
+    )
+    write(
+      'i18n/translations.ts',
+      "export const translations = {\n  en: {},\n  ar: {},\n}\n",
+    )
+    write(
+      'i18n/LanguageContext.tsx',
+      "import { translations } from './translations'\nexport function useLanguage(lang) {\n  return translations[lang]\n}\n",
+    )
+    expect(detectLocales(tmpDir)).toEqual({ keys: ['en', 'ar'], defaultKey: 'en', source: 'i18n/translations.ts' })
+  })
+
+  it('rejects a bare {ltr, rtl} direction map anywhere, not just in the design system — direction keys are never locale keys', () => {
+    write(
+      'src/layout.js',
+      "const spacing = {\n  ltr: 1,\n  rtl: 2,\n}\nconst x = spacing[dir]\n",
+    )
+    expect(detectLocales(tmpDir)).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// reprobeProjectProfile must not let a wrong locale detection overwrite a
+// previously-known-good one (defense in depth alongside the design-system
+// exclusion above — a shape-alike anywhere else in the tree must not silently
+// flip an already-established locale axis).
+// ---------------------------------------------------------------------------
+
+describe('reprobeProjectProfile — locale axis stability', () => {
+  it('refuses to swap a known locale source for a different one found on a later probe', () => {
+    write(
+      'i18n/translations.ts',
+      "export const translations = {\n  en: {},\n  ar: {},\n}\n",
+    )
+    write(
+      'i18n/LanguageContext.tsx',
+      "import { translations } from './translations'\nexport function useLanguage(lang) {\n  return translations[lang]\n}\n",
+    )
+    const first = reprobeProjectProfile(tmpDir)
+    expect(first.locales).toEqual({ keys: ['en', 'ar'], defaultKey: 'en', source: 'i18n/translations.ts' })
+
+    // Simulates a later scan finding an unrelated shape-alike FIRST in file
+    // order (`src/` sorts before the workspace root's own `i18n/`) — same
+    // failure mode the design-system exclusion fixes for that one folder, here
+    // reproduced generically so the reconcile guard is proven independently of
+    // it. `xx`/`yy` are not real language codes but pass the same permissive
+    // shape check `ltr`/`rtl` did.
+    write(
+      'src/aaa-fake-axis.js',
+      "const byMode = {\n  xx: 1,\n  yy: 2,\n}\nconst x = byMode[mode]\n",
+    )
+    fs.rmSync(path.join(tmpDir, 'i18n'), { recursive: true, force: true })
+
+    const second = reprobeProjectProfile(tmpDir)
+    expect(second.locales).toEqual(first.locales)
+  })
+
+  it('accepts a fresh detection when nothing was known before', () => {
+    write('src/dict.js', "export const dict = {\n  en: {},\n  ar: {},\n}\nconst x = dict[lang]\n")
+    const profile = reprobeProjectProfile(tmpDir)
+    expect(profile.locales).toEqual({ keys: ['en', 'ar'], defaultKey: 'en', source: 'src/dict.js' })
   })
 })
 

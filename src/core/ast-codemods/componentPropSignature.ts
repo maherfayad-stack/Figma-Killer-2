@@ -1,0 +1,203 @@
+/**
+ * componentPropSignature — adding one OPTIONAL prop to an existing
+ * component's signature: the binding in its destructured first parameter, and
+ * the property on whichever type surface that parameter uses. The one
+ * implementation behind `addSlotPropToComponent` (a new slot, E2.2) and
+ * `exposeLiteralAsProp` (an instance override, P5-C DET-7).
+ *
+ * Optional, always: N existing call sites already render the component
+ * without passing it, and a REQUIRED prop would stop every one of them
+ * compiling.
+ *
+ * The binding goes in front of a `...rest` element (a rest element must be
+ * last — appending after it wrote a file that does not parse), and keeps every
+ * existing element's own text verbatim.
+ *
+ * The type surface:
+ *   - an inline type literal (`{ title }: { title: string }`) or a same-file
+ *     `interface` / object `type` alias it references gains `name?: T`;
+ *   - an untyped parameter gains nothing (a JS file, or TS that infers from a
+ *     default) — "honest for JS": no guessed type;
+ *   - a component with NO parameter gets a fresh destructured one, typed by a
+ *     new `<Name>Props` interface in a TypeScript file;
+ *   - anything else (a type from another file, an intersection, a generic)
+ *     refuses: the caller reports `unsupported-props-type`.
+ */
+import { Node, type InterfaceDeclaration, type ParameterDeclaration, type SourceFile, type TypeLiteralNode } from 'ts-morph'
+import type { FunctionLike } from '@core/page-parser'
+
+export interface OptionalProp {
+  /** The prop's name — its key in the props object. */
+  name: string
+  /** The destructured binding, verbatim: `name`, or `name = 'default'`. */
+  binding: string
+  /** The TypeScript type written for it: `ReactNode`, `string`, … */
+  type: string
+  /**
+   * Add the property to the props TYPE only, leaving the destructure alone: a
+   * component that spreads its props on (`{...rest}`) must keep the prop in
+   * `rest`, but a caller passing it still has to type-check. A property the
+   * type already declares is left as it is.
+   */
+  typeOnly?: boolean
+  /** A type-only import the type needs (`ReactNode` from `react`) — added only when a type is actually written. */
+  typeImport?: { name: string; module: string }
+}
+
+export type SignatureEditOutcome = { ok: true } | { ok: false; message: string }
+
+function ensureTypeImport(sourceFile: SourceFile, typeImport: OptionalProp['typeImport']): void {
+  if (!typeImport) return
+  const already = sourceFile
+    .getImportDeclarations()
+    .some((d) => d.getModuleSpecifierValue() === typeImport.module && d.getNamedImports().some((n) => (n.getAliasNode() ?? n.getNameNode()).getText() === typeImport.name))
+  if (already) return
+  sourceFile.addImportDeclaration({ moduleSpecifier: typeImport.module, namedImports: [typeImport.name], isTypeOnly: true })
+}
+
+function pascalCaseFromFileBase(base: string): string {
+  return base
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join('')
+}
+
+/** `fn`'s own name when it has one (`FunctionDeclaration`), else the file base — an arrow function assigned to a `const` carries no name of its own to recover. */
+function deriveComponentTypeName(sourceFile: SourceFile, fn: FunctionLike): string {
+  const named = Node.hasName(fn) ? fn.getName() : undefined
+  const base = named ?? pascalCaseFromFileBase(sourceFile.getBaseNameWithoutExtension())
+  return `${base}Props`
+}
+
+function addFreshParameter(sourceFile: SourceFile, fn: FunctionLike, prop: OptionalProp): SignatureEditOutcome {
+  if (!/\.tsx?$/.test(sourceFile.getFilePath())) {
+    fn.addParameter({ name: `{ ${prop.binding} }` })
+    return { ok: true }
+  }
+  const typeName = deriveComponentTypeName(sourceFile, fn)
+  ensureTypeImport(sourceFile, prop.typeImport)
+  sourceFile.addInterface({ isExported: true, name: typeName, properties: [{ name: prop.name, type: prop.type, hasQuestionToken: true }] })
+  fn.addParameter({ name: `{ ${prop.binding} }`, type: typeName })
+  return { ok: true }
+}
+
+/**
+ * `name?: T` on an object type. A body written on ONE line stays on one line
+ * (`{ title: string; heading?: string }`) — ts-morph's `addProperty` would
+ * break it across lines; a body written one member per line gets its new
+ * member on a line of its own, in the indent and separator the last one uses.
+ */
+function addMember(sourceFile: SourceFile, shape: TypeLiteralNode | InterfaceDeclaration, member: { name: string; type: string }): void {
+  const members = shape.getMembers()
+  const body = Node.isInterfaceDeclaration(shape) ? sourceFile.getFullText().slice(members[0]?.getStart() ?? shape.getEnd(), shape.getEnd()) : shape.getText()
+  const oneLine = !/[\r\n]/.test(body)
+  const last = members.at(-1)
+  if (!oneLine && !last) {
+    shape.addProperty({ name: member.name, type: member.type, hasQuestionToken: true })
+    return
+  }
+  const text = `${member.name}?: ${member.type}`
+  // Rewrite the shape's own text only: every node outside it stays valid for
+  // the caller (a whole-file `insertText` would forget them all).
+  const own = shape.getText()
+  const at = (offset: number) => offset - shape.getStart()
+  if (!oneLine && last) {
+    // A body written one member per line: the new member goes on its own line
+    // in the file's own indent and separator (`addProperty` would re-indent
+    // with its own four spaces), after any comment trailing the last member.
+    const indent = /[ \t]*$/.exec(own.slice(0, at(last.getStart())))?.[0] ?? ''
+    const terminator = /[;,]$/.exec(last.getText())?.[0] ?? ''
+    const lineEnd = own.indexOf('\n', at(last.getEnd()))
+    const tail = own.slice(at(last.getEnd()), lineEnd === -1 ? own.length : lineEnd)
+    const split = /^[ \t]*\/\/.*$/.test(tail) ? at(last.getEnd()) + tail.length : at(last.getEnd())
+    shape.replaceWithText(`${own.slice(0, split)}\n${indent}${text}${terminator}${own.slice(split)}`)
+    return
+  }
+  if (!last) {
+    const close = own.lastIndexOf('}')
+    shape.replaceWithText(`${own.slice(0, close)} ${text} ${own.slice(close)}`)
+    return
+  }
+  const lastText = last.getText()
+  const addition = lastText.endsWith(';') || lastText.endsWith(',') ? ` ${text}${lastText.slice(-1)}` : `; ${text}`
+  const split = at(last.getEnd())
+  shape.replaceWithText(own.slice(0, split) + addition + own.slice(split))
+}
+
+function addToExistingParameter(sourceFile: SourceFile, first: ParameterDeclaration, prop: OptionalProp): SignatureEditOutcome {
+  const pattern = first.getNameNode()
+  if (Node.isObjectBindingPattern(pattern) && !prop.typeOnly) {
+    const elements = pattern.getElements().map((element) => ({ text: element.getText(), rest: element.getDotDotDotToken() !== undefined }))
+    const rest = elements.findIndex((element) => element.rest)
+    const texts = elements.map((element) => element.text)
+    texts.splice(rest < 0 ? texts.length : rest, 0, prop.binding)
+    pattern.replaceWithText(`{ ${texts.join(', ')} }`)
+  }
+
+  const typeNode = first.getTypeNode()
+  if (!typeNode) return { ok: true }
+
+  const shape = resolvePropsShape(sourceFile, typeNode)
+  if (!shape.ok) return { ok: false, message: shape.message.replace('<name>', prop.name) }
+  if (prop.typeOnly && shape.shape.getMembers().some((member) => Node.isPropertySignature(member) && member.getName() === prop.name)) return { ok: true }
+  ensureTypeImport(sourceFile, prop.typeImport)
+  addMember(sourceFile, shape.shape, { name: prop.name, type: prop.type })
+  return { ok: true }
+}
+
+/** The object shape a props type names: an inline type literal, or a same-file `interface` / object `type` alias. */
+function resolvePropsShape(sourceFile: SourceFile, typeNode: Node): { ok: true; shape: TypeLiteralNode | InterfaceDeclaration } | { ok: false; message: string } {
+  if (Node.isTypeLiteral(typeNode)) return { ok: true, shape: typeNode }
+  if (Node.isTypeReference(typeNode)) {
+    const typeName = typeNode.getTypeName().getText()
+    const iface = sourceFile.getInterface(typeName)
+    if (iface) return { ok: true, shape: iface }
+    const aliasType = sourceFile.getTypeAlias(typeName)?.getTypeNode()
+    if (aliasType && Node.isTypeLiteral(aliasType)) return { ok: true, shape: aliasType }
+    return { ok: false, message: `The declaration of "${typeName}" is not in this file, so a "<name>" property cannot be added to it. Add the property in the code.` }
+  }
+  return { ok: false, message: "This component's props type is not a plain object shape. Add the property in the code." }
+}
+
+/** Types that already accept any of the primitives a call site may hand a prop. */
+const ACCEPTS_ANY_PRIMITIVE = new Set(['any', 'unknown', 'ReactNode', 'React.ReactNode'])
+const PRIMITIVE_KEYWORDS = new Set(['string', 'number', 'boolean', 'undefined', 'null'])
+
+/**
+ * Widens the declared type of an EXISTING prop so a call site may pass a value
+ * of another primitive (`padding?: number` handed `'12px'` becomes
+ * `number | string`). Nothing changes when the type already accepts it, when
+ * the parameter is untyped (a JS file, or TS inferring from a default — no type
+ * is guessed), or when the property has no written type. Refuses when the type
+ * is something Studio will not rewrite: a fixed set of values (`'sm' | 'md'`),
+ * a type from another file, a property it cannot find.
+ */
+export function widenPropType(sourceFile: SourceFile, fn: FunctionLike, name: string, add: 'string' | 'number' | 'boolean'): SignatureEditOutcome {
+  const typeNode = fn.getParameters()[0]?.getTypeNode()
+  if (!typeNode) return { ok: true }
+  const resolved = resolvePropsShape(sourceFile, typeNode)
+  if (!resolved.ok) return { ok: false, message: resolved.message.replace('<name>', name) }
+  const member = resolved.shape.getMembers().find((candidate) => Node.isPropertySignature(candidate) && candidate.getName() === name)
+  if (!member || !Node.isPropertySignature(member)) return { ok: false, message: `The props type has no "${name}" property. Add the property in the code.` }
+  const declared = member.getTypeNode()
+  if (!declared) return { ok: true }
+  const parts = (Node.isUnionTypeNode(declared) ? declared.getTypeNodes() : [declared]).map((part) => part.getText().trim())
+  if (parts.includes(add) || parts.some((part) => ACCEPTS_ANY_PRIMITIVE.has(part))) return { ok: true }
+  if (!parts.every((part) => PRIMITIVE_KEYWORDS.has(part))) {
+    return { ok: false, message: `"${name}" is typed ${declared.getText()}, which does not accept a ${add} value. Widen the type in the code.` }
+  }
+  member.setType(`${declared.getText()} | ${add}`)
+  return { ok: true }
+}
+
+/**
+ * Adds `prop` to `fn`'s signature — a fresh parameter when it has none, or a
+ * new binding (and type property) on its existing destructured one. The
+ * caller has already refused an undestructured `props` parameter.
+ */
+export function addOptionalPropToSignature(sourceFile: SourceFile, fn: FunctionLike, prop: OptionalProp): SignatureEditOutcome {
+  const first = fn.getParameters()[0]
+  if (!first) return addFreshParameter(sourceFile, fn, prop)
+  return addToExistingParameter(sourceFile, first, prop)
+}

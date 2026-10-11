@@ -31,6 +31,8 @@ import { useShallow } from 'zustand/react/shallow'
 import { useEditorStore, selectActiveCanvasPage, selectSelectedNode } from '@site/store/store'
 import { registry } from '@core/module-engine'
 import { resolveProps } from '@core/page-tree'
+import { commitUnbindIfCodeBound } from '../../inspector/commitUnbind'
+import { getActiveStyleTab } from './classStyleSections'
 import { NO_CLASS_TOKEN_USAGE, buildClassTokenUsageMap, resolveSelectorUsage } from '../selectorUsage'
 import type {
   AnyModuleDefinition,
@@ -107,6 +109,7 @@ export function usePropertiesPanelData(): PropertiesPanelData {
   const renameClass = useEditorStore((s) => s.renameClass)
   const deleteClass = useEditorStore((s) => s.deleteClass)
   const activeBreakpointId = useEditorStore((s) => s.activeBreakpointId)
+  const siteBreakpoints = useEditorStore((s) => s.site?.breakpoints)
   const renameNode = useEditorStore((s) => s.renameNode)
   const activeClassId = useEditorStore((s) => s.activeClassId)
   const selectedSelectorClassId = useEditorStore((s) => s.selectedSelectorClassId)
@@ -152,13 +155,17 @@ export function usePropertiesPanelData(): PropertiesPanelData {
   // the row instead of its checkbox.
   const isSelectorMultiSelect = selectedSelectorClassIds.length > 1
 
+  // The breakpoint a prop edit lands in: a REGISTERED breakpoint, else 'base'. A
+  // board frame's synthetic 'studio' viewport is not an override target.
+  const editingBreakpointId = getActiveStyleTab(activeBreakpointId, siteBreakpoints)
+
   const definition: AnyModuleDefinition | null = selectedNode
     ? registry.get(selectedNode.moduleId) ?? null
     : null
   const resolvedPropsForBreakpoint = selectedNode
     ? resolveProps(
         selectedNode,
-        activeBreakpointId !== 'desktop' ? activeBreakpointId : undefined,
+        editingBreakpointId !== 'base' ? editingBreakpointId : undefined,
         definition?.schema,
       )
     : null
@@ -168,7 +175,7 @@ export function usePropertiesPanelData(): PropertiesPanelData {
   // all breakpoints). Filter the override-indicator set the same way so the
   // UI never claims a content prop has a per-breakpoint variant — even if
   // stale data on disk technically does.
-  const overrideKeys = resolveOverrideKeys(selectedNode, definition, activeBreakpointId)
+  const overrideKeys = resolveOverrideKeys(selectedNode, definition, editingBreakpointId)
 
   // `toggleSelectorMultiSelect` clears `selectedSelectorClassId` when it
   // checks a box, so the lone checked selector has to resolve from the
@@ -221,9 +228,10 @@ export function usePropertiesPanelData(): PropertiesPanelData {
     if (!selectedNodeId) return
     const def = moduleId ? registry.get(moduleId) : null
     const isOverridable = def?.schema[propKey]?.breakpointOverridable === true
-    if (activeBreakpointId && activeBreakpointId !== 'desktop' && isOverridable) {
-      setBreakpointOverride(selectedNodeId, activeBreakpointId, { [propKey]: value })
-    } else {
+    if (editingBreakpointId !== 'base' && isOverridable) {
+      setBreakpointOverride(selectedNodeId, editingBreakpointId, { [propKey]: value })
+    } else if (!commitUnbindIfCodeBound(selectedNode, propKey, value)) {
+      // G-6 - the branch above: typing over code-bound text or an attribute.
       updateNodeProps(selectedNodeId, { [propKey]: value })
     }
     setStatusMessage(`${propKey} updated`)
@@ -289,12 +297,12 @@ export function usePropertiesPanelData(): PropertiesPanelData {
 function resolveOverrideKeys(
   selectedNode: PageNode | null,
   definition: AnyModuleDefinition | null,
-  activeBreakpointId: string | undefined,
+  editingBreakpointId: string,
 ): Set<string> {
-  if (!selectedNode || !definition || !activeBreakpointId || activeBreakpointId === 'desktop') {
+  if (!selectedNode || !definition || editingBreakpointId === 'base') {
     return new Set()
   }
-  const overrides = selectedNode.breakpointOverrides[activeBreakpointId] ?? {}
+  const overrides = selectedNode.breakpointOverrides[editingBreakpointId] ?? {}
   return new Set(
     Object.keys(overrides).filter(
       (key) => definition.schema[key]?.breakpointOverridable === true,

@@ -8,6 +8,7 @@
  *
  * Exposed via the plugin SDK as `Bars`.
  */
+import type { CSSProperties } from 'react'
 import styles from './charts.module.css'
 
 export interface BarsProps {
@@ -60,12 +61,14 @@ export function Bars({
   return (
     <div
       className={styles.bars}
-      style={{
-        ['--bars-cols' as string]: String(data.length),
-        ['--bars-height' as string]: `${height}px`,
-        ['--bars-gap' as string]: `${gap}px`,
-        ['--bars-tint' as string]: tintValue,
-      }}
+      style={
+        {
+          '--bars-cols': String(data.length),
+          '--bars-height': `${height}px`,
+          '--bars-gap': `${gap}px`,
+          '--bars-tint': tintValue,
+        } as CSSProperties
+      }
       aria-hidden="true"
     >
       {data.map((v, i) => {

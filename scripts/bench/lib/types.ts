@@ -37,6 +37,14 @@ export interface BenchResult {
   sections: BenchSection[]
   /** Time spent in this bench (orchestrator fills this in). */
   durationMs?: number
+  /**
+   * Budgets this run breached. A bench that COMPLETED but measured a number
+   * over its budget returns its rows AND this list, rather than throwing —
+   * a throw would discard every measurement the report exists to keep. The
+   * orchestrator fails the run (exit 1) when this is non-empty, exactly as it
+   * does for a bench that threw.
+   */
+  budgetFailures?: string[]
 }
 
 export interface BenchContext {

@@ -38,9 +38,10 @@ export interface ToastInput {
   /** Optional detail body — wraps to ~3 lines before truncation. */
   body?: string
   /**
-   * Free-form location tag (e.g. "error-boundary:canvas") — surfaced in dev
-   * builds and copy-to-clipboard payloads so a screenshot tells you where the
-   * failure came from without diving into devtools.
+   * Free-form location tag (e.g. "error-boundary:canvas") — carried on the
+   * toast element as `data-toast-location` and in copy-to-clipboard payloads so
+   * a bug report says where the failure came from. It is never drawn: a mono
+   * "site-editor" under every message told the person nothing.
    */
   location?: string
   /**

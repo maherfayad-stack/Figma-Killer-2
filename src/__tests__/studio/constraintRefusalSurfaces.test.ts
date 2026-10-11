@@ -106,9 +106,11 @@ describe('resolveConstraintAction', () => {
     expect(resolveConstraintAction(MULTI_SELECT.actions[0]!)).toBeNull()
   })
 
-  it('will not detach without the node the refusal is about', () => {
-    expect(resolveConstraintAction({ label: 'Detach', kind: 'detach' })).toBeNull()
-    expect(resolveConstraintAction({ label: 'Detach', kind: 'detach' }, { nodeId: 'a.tsx:1:1' })).toBeInstanceOf(Function)
+  it('will not detach without the node the refusal is about, nor without the one detachInstances action (P5-C)', () => {
+    const detachInstances = () => Promise.resolve('detached' as const)
+    expect(resolveConstraintAction({ label: 'Detach', kind: 'detach' }, { detachInstances })).toBeNull()
+    expect(resolveConstraintAction({ label: 'Detach', kind: 'detach' }, { nodeId: 'a.tsx:1:1' })).toBeNull()
+    expect(resolveConstraintAction({ label: 'Detach', kind: 'detach' }, { nodeId: 'a.tsx:1:1', detachInstances })).toBeInstanceOf(Function)
   })
 })
 
@@ -204,12 +206,15 @@ describe('presentStructuralRefusal — dialog path (constraint.actions is non-em
     })
   })
 
-  it('carries a retry closure through to the dialog state untouched', () => {
+  // P3-D — the dialog no longer re-issues gestures (its call-site guess could
+  // land on the wrong element); OD-7's detach-and-replay owns the retry.
+  it('does not hand a retry closure to the dialog', () => {
     const { set, dialog } = fakeDialogSetter()
-    const retry = (_newNodeId: string) => {}
+    const retry = () => {}
     presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.delete, LIST_ROW, { nodeId: 'a.tsx:1:1', retry, set })
 
-    expect(dialog()?.retry).toBe(retry)
+    expect(dialog()).not.toBeNull()
+    expect(dialog() && 'retry' in dialog()!).toBe(false)
   })
 
   it('opens the dialog for shared-component, R2s own motivating case', () => {

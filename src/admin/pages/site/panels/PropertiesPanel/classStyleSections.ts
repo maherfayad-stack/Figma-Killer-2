@@ -46,7 +46,7 @@ export interface ClassStyleSectionDefinition {
   icon: IconComponent
   defaultOpen?: boolean
   /**
-   * Figma's Fill/Stroke/Effects list law (docs/features/inspector-disclosure.md
+   * Figma's Fill/Stroke/Effects list law (docs/features/inspector.md
    * §1 Law 1 / §4 G1): when nothing in this section is set — on the active
    * tab OR any other breakpoint/condition — it renders as a single header
    * line with a "+", not its full property grid. `StyleSectionGroup` in
@@ -56,9 +56,10 @@ export interface ClassStyleSectionDefinition {
    * `effects`/`typography` used to be in this registry; all nine migrated
    * out to their own `INSPECTOR_SECTIONS` manifest entries (`LayerSection`/
    * `AlignSection`/`MeasuresSection`/`LayoutSection.tsx`/`FillSection.tsx`/
-   * `StrokeSection.tsx`/`ShadowSection.tsx`/`BlurSection.tsx`/
-   * `TextSection.tsx` — `STATE.md` `panel-25`, P3 items 1-9). `FillSection.tsx`/
-   * `StrokeSection.tsx`/`ShadowSection.tsx`/`BlurSection.tsx` keep their own
+   * `StrokeSection.tsx`/`EffectsSection.tsx`/
+   * `TextSection.tsx` — `STATE.md` `panel-25`, P3 items 1-9; P2-F merged
+   * Shadow + Blur into Effects). `FillSection.tsx`/
+   * `StrokeSection.tsx`/`EffectsSection.tsx` keep their own
    * Law-1 empty-header/`forceOpen` disclosure locally (their own
    * `setAnywhere` check + `Section`'s `empty` prop), same as `LayerSection`/
    * `AlignSection`/`MeasuresSection`/`TextSection` — none of the nine has a
@@ -215,21 +216,18 @@ export const MIGRATED_SECTION_PROPERTIES: ReadonlyArray<keyof CSSPropertyBag> = 
   'borderColor',
   'borderRadius',
   'appearance',
-  // Shadow (P3 item 7) — src/admin/pages/site/inspector/sections/ShadowSection.tsx.
-  // Text shadow moved onto the same section as box shadow in G9's completion
-  // (a text shadow is a shadow) — unioned here in one step, same pattern
-  // every migrated section established.
+  // Effects (P2-F) — src/admin/pages/site/inspector/sections/EffectsSection.tsx.
+  // Shadows: text shadow moved onto the same rows as box shadow in G9's
+  // completion (a text shadow is a shadow). Blurs: `filter: blur()` ("Layer
+  // blur") + `backdrop-filter: blur()` ("Background blur").
   'boxShadow',
   'textShadow',
-  // Blur (P3 item 8) — src/admin/pages/site/inspector/sections/BlurSection.tsx.
-  // `filter: blur()` ("Layer blur") + `backdrop-filter: blur()` ("Background
-  // blur") — the other half of the old `effects` entry's claim.
   'filter',
   'backdropFilter',
   // Text (P3 item 9) — src/admin/pages/site/inspector/sections/TextSection.tsx.
   // Every property the old `typography` entry claimed, unioned here in one
   // step, same pattern every migrated section established. `color`/
-  // `textShadow` stay claimed by Fill/Shadow (G9.4, W8-1) — this section
+  // `textShadow` stay claimed by Fill/Effects (G9.4, W8-1) — this section
   // doesn't touch either. `alignItems` (the vertical-align convenience
   // write TextSection's own doc describes) stays credited to Layout below,
   // NOT unioned here — a property is claimed by exactly one section.
@@ -306,7 +304,18 @@ export function getClassStyleSectionSetCounts(
 /**
  * Returns the active breakpoint tab id for class style reads/writes.
  * 'base' when desktop (or no breakpoint); otherwise the breakpoint id.
+ *
+ * Only a breakpoint that is in the site's registry is an editing context. A
+ * canvas click on a board frame activates that frame's SYNTHETIC `'studio'`
+ * breakpoint (see `BoardFramesLayer`), which is a viewport, not a registered
+ * context: the CSS emitter drops any `contextStyles` key that is neither a
+ * registry breakpoint nor a condition, so an edit filed under it would be
+ * written to disk and never painted. Such an id is the base layer.
  */
-export function getActiveStyleTab(activeBreakpointId: string | undefined): string {
-  return activeBreakpointId && activeBreakpointId !== 'desktop' ? activeBreakpointId : 'base'
+export function getActiveStyleTab(
+  activeBreakpointId: string | undefined,
+  breakpoints: ReadonlyArray<{ readonly id: string }> | undefined,
+): string {
+  if (!activeBreakpointId || activeBreakpointId === 'desktop') return 'base'
+  return breakpoints?.some((bp) => bp.id === activeBreakpointId) ? activeBreakpointId : 'base'
 }

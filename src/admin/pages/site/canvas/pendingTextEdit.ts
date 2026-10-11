@@ -44,6 +44,16 @@ let installed = false
 /** The element the user has typed into and not yet committed or left. */
 let pendingElement: EventTarget | null = null
 
+/** What the focused field held when it gained focus — see the `input` listener. */
+let textAtFocus = ''
+
+/** A field's text: an input's value, else (contentEditable) its text content. */
+function fieldText(target: EventTarget | null): string {
+  if (typeof target !== 'object' || target === null) return ''
+  const field = target as { value?: unknown; textContent?: string | null }
+  return typeof field.value === 'string' ? field.value : (field.textContent ?? '')
+}
+
 function isTextArea(target: EventTarget | null): boolean {
   return (
     typeof target === 'object' &&
@@ -69,15 +79,22 @@ function install(): void {
   document.addEventListener(
     'input',
     (event) => {
-      pendingElement = event.target
+      // A native undo that walked the field back to what it held when focus
+      // arrived has consumed the whole draft: there is nothing left for the
+      // browser's undo to do, so the NEXT ⌘Z is the editor's (a note typed
+      // into right after it was created, then undone, reaches its creation).
+      const walkedBackToStart =
+        (event as InputEvent).inputType === 'historyUndo' && fieldText(event.target) === textAtFocus
+      pendingElement = walkedBackToStart ? null : event.target
     },
     true,
   )
 
   document.addEventListener(
     'focusin',
-    () => {
+    (event) => {
       pendingElement = null
+      textAtFocus = fieldText(event.target)
     },
     true,
   )
@@ -106,7 +123,25 @@ function install(): void {
  */
 export function hasPendingTextEdit(target: EventTarget | null): boolean {
   if (typeof document !== 'undefined') install()
-  return target !== null && target === pendingElement
+  return target !== null && target === pendingElement && isTextEntry(target)
+}
+
+/** `<input>` types that take typed text; every other type (checkbox, range, color, button...) has no text undo of its own. */
+const TEXT_INPUT_TYPES: ReadonlySet<string> = new Set(['text', 'search', 'url', 'tel', 'email', 'password', 'number', ''])
+
+/**
+ * Whether `target` is a surface with a native text undo: a text-like `<input>`,
+ * a `<textarea>`, or contentEditable. A button, a checkbox, a range or a
+ * `<select>` fires `input` events too, and holding the editor's undo hostage to
+ * one of those would leave Ctrl+Z dead for as long as the control keeps focus,
+ * which is exactly where focus stays after clicking one.
+ */
+function isTextEntry(target: EventTarget): boolean {
+  const element = target as Partial<HTMLElement> & { type?: string }
+  if (element.isContentEditable === true) return true
+  if (element.tagName === 'TEXTAREA') return true
+  if (element.tagName === 'INPUT') return TEXT_INPUT_TYPES.has((element.type ?? '').toLowerCase())
+  return false
 }
 
 /** Test seam — drops the tracked draft without waiting for a focus change. */

@@ -1,5 +1,4 @@
 import { useEffect } from 'react'
-import { useEditorStore } from '@site/store/store'
 import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
 import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
 
@@ -8,62 +7,42 @@ const CANVAS_EDITOR_CONTROL_SELECTOR = '[data-canvas-interactive="true"]'
 const CANVAS_FORM_CONTROL_SELECTOR = 'input, textarea, select, button'
 
 interface CanvasFormControlSuppressionOptions {
-  breakpointId: string
   enabled: boolean
 }
 
 /**
  * Canvas design mode renders real authored form controls, but they are still
- * canvas nodes. Suppress native activation before browser autofill/select UI
- * appears, while preserving canvas selection.
+ * canvas nodes. Suppress their NATIVE activation — focus, autofill, a
+ * `<select>`'s picker — before the browser can show any of it.
+ *
+ * This hook only cancels. It never selects: which layer a press on a control
+ * selects, and whether it selects anything at all (a press can still become a
+ * drag), is decided on RELEASE by `NodeRenderer`, through the same
+ * `canvasPressTarget.ts` resolution every other press uses. It used to select
+ * a `<select>`'s node on `pointerdown`, and the cancellation it made there
+ * also turned away the body-drag trigger, which is why a component rendering
+ * a real `<button>` could never be dragged by its body — its "click state"
+ * always won. (`useCanvasBodyDragTrigger` no longer reads `defaultPrevented`.)
  *
  * Portal mode only (`live-05`, STATE.md, Batch 3) — reads the frame's
- * `Document` through `PortalFrameAdapter`'s escape hatch. Bridge mode is a
- * documented gap, not a silent one: suppressing a native control's default
- * activation (`preventDefault`/`stopPropagation`/`blur()`) has to run INSIDE
- * the cross-origin frame, which means it needs a real `runtime.ts` behavior
- * analogous to `hoverSuppressionRules.ts` — a new capability, not a message
- * translation, and out of this batch's scope. `interaction='canvas'` (design
- * mode) against a bridge frame currently leaves native form controls
- * un-suppressed; flag this to whoever wires up `documentMode==='bridge'` for
- * real.
+ * `Document` through `PortalFrameAdapter`'s escape hatch. A bridge frame's
+ * runtime cancels every design-mode press in its own document
+ * (`gestureForwarding.ts`'s `editorOwnsGesture`), which stops the focus a
+ * press would give a control; a bridge frame has no equivalent of the
+ * `focusin` blur below.
  */
 export function useCanvasFormControlSuppression(
   adapter: FrameDocumentAdapter | null,
-  { breakpointId, enabled }: CanvasFormControlSuppressionOptions,
+  { enabled }: CanvasFormControlSuppressionOptions,
 ): void {
   useEffect(() => {
     if (!enabled) return
     if (!isPortalFrameAdapter(adapter)) return
     const iframeDoc = adapter.getPortalWindow()?.document
     if (!iframeDoc) return
-    let latestPointerActivatedSelect: Element | null = null
-    let latestActivatedSelectForClick: Element | null = null
 
     const suppressPointerActivation = (event: Event) => {
-      const control = getAuthoredFormControlEventTarget(event.target)
-      if (!control) return
-      event.preventDefault()
-      if (control.tagName !== 'SELECT') return
-      if (event.type === 'mousedown' && latestPointerActivatedSelect === control) {
-        latestPointerActivatedSelect = null
-        return
-      }
-      if (event.type === 'pointerdown') latestPointerActivatedSelect = control
-      latestActivatedSelectForClick = control
-      activateCanvasNodeFromNativeControlEvent(event, breakpointId)
-    }
-
-    const suppressClickActivation = (event: Event) => {
-      const control = getAuthoredFormControlEventTarget(event.target)
-      if (!control || control.tagName !== 'SELECT') return
-      event.preventDefault()
-      event.stopPropagation()
-      if (latestActivatedSelectForClick === control) {
-        latestActivatedSelectForClick = null
-        return
-      }
-      activateCanvasNodeFromNativeControlEvent(event, breakpointId)
+      if (getAuthoredFormControlEventTarget(event.target)) event.preventDefault()
     }
 
     const suppressFocus = (event: Event) => {
@@ -74,15 +53,13 @@ export function useCanvasFormControlSuppression(
 
     iframeDoc.addEventListener('pointerdown', suppressPointerActivation, { capture: true, passive: false })
     iframeDoc.addEventListener('mousedown', suppressPointerActivation, { capture: true, passive: false })
-    iframeDoc.addEventListener('click', suppressClickActivation, { capture: true })
     iframeDoc.addEventListener('focusin', suppressFocus, { capture: true })
     return () => {
       iframeDoc.removeEventListener('pointerdown', suppressPointerActivation, { capture: true })
       iframeDoc.removeEventListener('mousedown', suppressPointerActivation, { capture: true })
-      iframeDoc.removeEventListener('click', suppressClickActivation, { capture: true })
       iframeDoc.removeEventListener('focusin', suppressFocus, { capture: true })
     }
-  }, [breakpointId, enabled, adapter])
+  }, [enabled, adapter])
 }
 
 function isElementLike(value: EventTarget | null): value is Element {
@@ -99,21 +76,4 @@ function getAuthoredFormControlEventTarget(target: EventTarget | null): Element 
 
 function isFocusableElement(target: EventTarget | null): target is HTMLElement {
   return isElementLike(target) && typeof (target as HTMLElement).blur === 'function'
-}
-
-function activateCanvasNodeFromNativeControlEvent(event: Event, breakpointId: string): void {
-  if (!isElementLike(event.target)) return
-  const node = event.target.closest(CANVAS_NODE_SELECTOR)
-  const nodeId = node?.getAttribute('data-node-id')
-  if (!nodeId) return
-  const state = useEditorStore.getState()
-  if (breakpointId !== state.activeBreakpointId) state.setActiveBreakpoint(breakpointId)
-  const pointerEvent = event as MouseEvent
-  const mode = pointerEvent.shiftKey
-    ? 'range'
-    : pointerEvent.metaKey || pointerEvent.ctrlKey
-      ? 'toggle'
-      : 'replace'
-  state.selectNode(nodeId, mode)
-  state.setFocusedPanel('canvas')
 }

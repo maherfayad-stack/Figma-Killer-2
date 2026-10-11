@@ -3,7 +3,7 @@ src/admin/ai/ModelPicker/ModelPicker.tsx diff
 # --- line endings -----------------------------------------------------------
 # Windows checkouts default to `core.autocrlf=true`, which rewrites every text
 # file to CRLF in the working tree. Three things in this repo read bytes, not
-# lines, and all three were silently broken by that (STUDIO-FIGMA-FEEL-PLAN.md
+# lines, and all three were silently broken by that (docs/archive/plans/STUDIO-FIGMA-FEEL-PLAN.md
 # §0 "repo health", work order Z7):
 #
 #  1. `src/core/design-system-manifest/vendorDocs.ts` parses the vendored

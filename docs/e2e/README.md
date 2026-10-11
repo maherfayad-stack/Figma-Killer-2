@@ -1,11 +1,12 @@
 # User E2E Testing
+> **Purpose:** the Playwright e2e suite: the fourth gate, the disposable stack, authoring rules, coverage · **Read when:** writing or running an e2e spec · **Trust:** current · **Owner:** test-engineer · **Verified:** not yet
 
 This folder defines the agent-run browser testing workflow for Studio.
 
 - `protocol.md` explains how an agent should run user-facing E2E audits.
 - `run-log-template.md` is copied into `runs/` for each audit (created on first
   use — this repo does not check in past run logs).
-- `agent-upgrade-dogfood.md` is the human test plan for the 2026-08-03
+- [`docs/archive/e2e/agent-upgrade-dogfood.md`](../archive/e2e/agent-upgrade-dogfood.md) is the human test plan for the 2026-08-03
   five-workstream agent upgrade (live canvas reload, component awareness, turn
   latency, visual measurement, Figma MCP). Everything in it passed unit,
   integration, and static gates but was **never driven through a browser** — the
@@ -56,18 +57,37 @@ bun run test:e2e           # starts its own stack — do not hand-start one firs
 `build`, `test`, and `lint` are the three gates every change runs. **A change
 that touches the canvas, a frame, an overlay, geometry, or a panel's height
 runs `bun run test:e2e` as well** — it is the fourth gate, not an optional
-extra. `standing-02` says why: happy-dom has no layout engine, so a unit test
+extra. The reason: happy-dom has no layout engine, so a unit test
 on those surfaces structurally cannot fail on the thing it is named after
 (WS-8.2 shipped a real frame-height defect behind a green one). Assert on
 *computed* layout — measured rects, `scrollHeight`, computed styles after
 layout.
 
-Running the four budget specs by path is usually enough and takes a few
+Running the budget specs by path is usually enough and takes a few
 minutes:
 
 ```sh
-npx playwright test tests/e2e/studio-board-perf.e2e.ts   tests/e2e/inspector-panel-measurement.e2e.ts   tests/e2e/inspector-height.e2e.ts tests/e2e/studio-feel.e2e.ts
+npx playwright test tests/e2e/studio-board-perf.e2e.ts tests/e2e/canvas-feel-budgets.e2e.ts tests/e2e/canvas-edit-budgets.e2e.ts tests/e2e/live-frame-budgets.e2e.ts tests/e2e/inspector-panel-measurement.e2e.ts tests/e2e/inspector-height.e2e.ts tests/e2e/studio-feel.e2e.ts
 ```
+
+### The production bundle (`E2E_VITE_MODE=preview`)
+
+Some budgets are stated for a production build — WS-5.6's selection → ring
+< 32 ms, WS-5.5's first frame interactive < 2 s warm. Development React
+renders several times slower (dev-only element validation, owner stacks) and
+the dev server loads the editor as ~2,000 separate modules, so on the default
+stack those budgets can only be ratchets. `E2E_VITE_MODE=preview` makes
+`scripts/e2e-dev.ts` build the admin with `vite build` and serve it with
+`vite preview` (which reuses `server.proxy`, so everything else is the same
+stack). The tests whose target is a production number are tagged
+`@production-bundle` and read the mode to pick their budget:
+
+```sh
+E2E_VITE_MODE=preview npx playwright test tests/e2e/canvas-feel-budgets.e2e.ts tests/e2e/canvas-edit-budgets.e2e.ts tests/e2e/studio-board-perf.e2e.ts --grep @production-bundle
+```
+
+Component names are minified in that bundle, so a budget that counts renders
+by name (`helpers/reactRenderCounter.ts`) asserts on the dev pass only.
 
 ### In CI
 
@@ -85,9 +105,12 @@ cold whole-suite run anyone had ever done (`verify-2`) reported **23 passed /
 "The full-suite baseline" below for what those 64 turned out to be.
 
 `e2e-budgets` runs the narrow budget slice — `studio-board-perf`,
+`canvas-feel-budgets`, `canvas-edit-budgets`, `live-frame-budgets`,
 `inspector-panel-measurement`, `inspector-height`, `studio-feel` — because
-those four measure **computed layout and frame time**, the one class of
-question happy-dom structurally cannot answer (`standing-02`). It stays its own
+those measure **computed layout and frame time**, the one class of
+question happy-dom structurally cannot answer — and then runs the
+`@production-bundle` tests a second time against the production build (see
+above). It stays its own
 job so a 40 ms regression is visible in ten minutes instead of at the end of an
 hour-long run, and so the two kinds of failure get the triage they each need.
 
@@ -230,6 +253,50 @@ first retry automatically.
 - **Isolation.** With `workers: 1` all specs share one database; each spec works
   on its own uniquely-named page/fixture rather than sharing mutable state.
 
+### Authoring rules
+
+Learned from the 2026-09-19 cold-suite triage (`e2e-1`); each one caused real red specs.
+
+1. **Open the board with `openFixtureBoard`, never a spec's own `goto`**
+   (`tests/e2e/helpers/studioFixtureProject.ts`). The canvas has no scroll
+   container, and where a frame lands is decided by a "center on open" pass that
+   races the page documents it centres on. On a cold load the board can settle
+   with no frame in view, and a click at the frame's box centre lands on empty
+   canvas: the failure then reads like a product bug. `openFixtureBoard` presses
+   the product's own **Ctrl+0**; `panIntoView` puts the target under the pointer.
+2. **The single-selection write target is the ClassPicker pill.** Use
+   `class-chip-<name>` (`SelectorPillStack.tsx`) and read writability from the
+   enclosing `write-target-chip-<classId>`'s `data-locked`. `StyleTargetChip`
+   renders only for a multi-selection.
+3. **Size lives in Measures.** `MeasuresSection` renders `SizeSection` and is
+   always mounted; width is `css-size-input-width` (`textbox[name="Width"]`).
+4. **A same-file reparent is a write, not a refusal** (`moveJsxElement.ts`), and
+   a cross-file one goes through `transplantJsxElement.ts`. The refusal that
+   remains is about scope (`freeVariablesOutOfScopeAt`); no e2e covers it yet.
+5. **Reach into a canvas iframe through `helpers/canvasIframe.ts`, never a
+   bare `frameLocator('iframe[title^="Canvas frame"]')`.** Every fixture is at
+   Tier 2 by default, so each board frame is a `LiveBoardFrame`: it holds the
+   portal fallback AND a hidden bridge iframe until the live frame is ready,
+   which in a fixture without `node_modules` is never. A bare `frameLocator`
+   then matches two iframes (a strict-mode violation), and waiting for one
+   iframe never ends. `canvasContentFrame(boardFrame)` and
+   `visibleCanvasIframe(boardFrame)` pick the one that is displayed;
+   `liveBridgeIframe(boardFrame)` is for a case that must measure the live frame
+   itself. Counting frames goes per board frame too (`readBoardCounts`'
+   `mountedFrames`), not per iframe element.
+6. **Fixed-name fixtures are overwritten in place** (`createFixtureProject`,
+   `createAuthoredFixtureProject`). Opening a Tier-2 fixture starts its own Vite
+   dev server with the fixture as its working directory, and the server watches
+   an open project for 15 s after its last tab closes (`outsideEditReload.ts`'s
+   `LINGER_MS`). Both outlive the worker, so deleting the fixture in a restarted
+   worker's `beforeAll` failed with `EPERM` on Windows (reproduced with
+   `--repeat-each=2`). The helpers empty the directory instead, and wait out a
+   delete-pending one. Do not `rmSync` + `cpSync` a fixture yourself.
+
+The CMS half of the suite drives UIs PR #18 deleted (an Explorer tab row, a
+name-and-slug page dialog, a toolbar Publish action). Whether to re-point or
+delete those specs is an open row in `ROADMAP.md` §13.
+
 ### Automated coverage map
 
 **This map was written before PR #18 deleted the standalone Content, Data,
@@ -280,7 +347,7 @@ work that was never folded into that matrix at all — each spec below cites the
 | `panel-02` (WS-6.3) | A Figma-inspector value edit lands in the project's real `.css` file, or refuses | `css-writeback.e2e.ts` |
 | WS-2.3 (canvas-03) | `@layer vendor, user-authored;` actually resolves the way `canvasCssLayers.ts` assumes, in a real browser | `vendor-css-cascade.e2e.ts` |
 | design-system insert | Adding a design-system component renders with its own package CSS instead of unstyled text | `design-system-insert.e2e.ts` |
-| board-02 (WS-7.1) | `selectedFrameIds`, marquee selection, `FrameBulkInspector`, `board.selectAllFrames` | `board-frame-bulk-selection.e2e.ts` |
+| board-02 (WS-7.1) | `selectedFrameIds`, marquee selection, `FrameBulkInspector`, `canvas.selectAll` (was `board.selectAllFrames`) | `board-frame-bulk-selection.e2e.ts` |
 | canvas-02 → test-01 → canvas-04 | Frame "fit height to content" | `frame-fit-height.e2e.ts` |
 | canvas-06 | Overlay/bottom-sheet screens render as the real app renders them | `canvas-06-sheet-render-fidelity.e2e.ts` |
 | select-01 | Escape always gets you back to nothing selected | `canvas-deselect.e2e.ts` |
@@ -293,6 +360,14 @@ work that was never folded into that matrix at all — each spec below cites the
 | `perf-01` (WS-5.3/5.4) | Board pan/zoom frame time and iframe virtualization against the real eSIM corpus. **Self-skips on a clean checkout** — `studio-workspace/maherfayad-stack-eSIM` is not tracked by git | `studio-board-perf.e2e.ts`; `_perf-diagnostic-studioboard.e2e.ts` is the underlying diagnostic, explicitly not a permanent spec |
 | V1 (`STUDIO-FIGMA-FEEL-PLAN.md`) | Toast de-duplication under a hammered ⌘D, the Escape ladder terminating at nothing selected, the zoom frame budget on the **tracked** `test4` corpus, and (skipped until K2 lands) Alt+drag duplicating a board frame | `studio-feel.e2e.ts` |
 | Phase 0 exit dogfood (`STUDIO-FIGMA-FEEL-PLAN.md` §8, `meta-14`) | The seven claims wave 1 could not close from a unit test: ⌘D ×5 inside 300 ms, Alt-hover measurement against real `getBoundingClientRect` geometry, Alt+drag duplicate, ⌘G/⌘⇧G/⌘Z, a panel that throws, the save chip's Saving→Saved and its Retry, and zero unexplained `console.error` across the whole file | `studio-feel-phase0.e2e.ts` (+ `helpers/studioFixtureProject.ts`) |
+| `parser-p1a` (P1-A, WB-1) | A Delete on an element whose line moved under the board (an outside write the board was not told about) is refused `element-moved`, re-read and re-planned, and deletes the element the user pointed at — nothing else | `element-identity-guard.e2e.ts` |
+| `store-16` (P1-B, ERR-5) | The selection follows its ELEMENT, not its `line:col`, when a write above it shifts the line | `selection-follows-element.e2e.ts` |
+| `mcp-31` (P4-F, AI-7) | An agent turn (a local fake model behind an Ollama credential, the real HTTP tool loop and file tools — no provider key) writes two files; "Revert turn" restores both byte for byte; after the user edits one, "Revert turn" is refused naming it and the other still reverts on its own | `agent-turn-revert.e2e.ts` |
+| `server-29` (P1-D, ERR-19) | A file edited outside Studio mid-session reaches the canvas with no gesture (the project watcher), and a later Delete lands on the right element | `outside-edit-live-reload.e2e.ts` |
+| `store-17` (P1-F, ERR-1) | A width typed, entered and undone is not written back when the parked field blurs | `undo-tells-the-truth.e2e.ts` |
+| `canvas-23` (P2-D, IX-6a/6b/6d) | A real handle drag, measured as COMPUTED layout: a border-box and a content-box element each grow by exactly the drag (mid-drag too) with the CSS width in the source and one undo entry; a `flex: 1` item renders at the dragged width; an absolute element's W/N handles keep the opposite edge | `element-resize.e2e.ts` |
+| `panel-45` (P2-H, UX-11/20/21/25) | A hovered inspector field is lighter than its resting fill in both themes; a keyboard-focused Layers row draws a ring and a clicked one does not; the selected and a hovered Layers row paint different fills; a node-level notice sits on the 12px panel gutter | `inspector-panel-polish.e2e.ts` |
+| Phase 1 exit gate (`ROADMAP.md` §5, `test-06`) | An outside edit mid-session, then a canvas text edit, a Delete and an undo change the file exactly where intended, byte for byte. Three race cases make the outside write while a text edit is PENDING, or a text edit or a Delete is IN FLIGHT (held by `page.route`): each lands on the element the user pointed at or is refused, never on a neighbour. With the server's identity check disabled, all three race cases fail on a wrong-element write | `phase-1-exit-gate.e2e.ts` (+ `sourceNodeId` in `helpers/studioFixtureProject.ts`) |
 | G8 dogfood (`STUDIO-FIGMA-FEEL-PLAN.md` §3 G8, `git-21`/`git-22`) | The twelve claims no local bare repository can settle: paste-a-token sign-in, *Keep history* clone of a PRIVATE repo, branching over a dirty tree, commit + push landing on GitHub, a real pull request, `1↓` → Pull, `1↑ 1↓` → rebase-or-merge, a same-line conflict, Abort, the write lock's `busy` refusal, commit-and-switch, and sign-out actually deleting the credential. **Self-skips without `gh auth token`** | `github-sync.e2e.ts` (+ `helpers/githubScratchRepo.ts`) |
 
 | A9 (`STUDIO-FIGMA-FEEL-PLAN.md`, `mcp-25`) | **ONE real agent turn**, wall-clocked: the warm `claude` CLI on a throwaway copy of `__canonical-fixture`, `balanced` fidelity — one write batch, zero tool refusals, the activity line on screen, telemetry in `.studio/agent-turns.jsonl`, and every changed file the hero's own. **Self-skips** without the `claude` binary, without Studio's CLI probe answering, or without a `claudeCli` credential on the account | `agent-turn.e2e.ts` |

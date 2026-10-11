@@ -703,6 +703,9 @@ describe('tryServeStudioInstall', () => {
         hasNodeModules: false,
         dependencyCount: 0,
         packageManager: 'bun',
+        dependencies: {},
+        devDependencies: {},
+        installedPackages: [],
         job: null,
       })
     } finally {

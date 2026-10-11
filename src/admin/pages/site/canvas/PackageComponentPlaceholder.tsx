@@ -69,9 +69,8 @@ export function PackageComponentPlaceholder({ moduleId }: PackageComponentPlaceh
         title: 'Could not promote project',
         body: getErrorMessage(err, 'Unknown error promoting this project'),
       })
-    } finally {
-      setPromoting(false)
     }
+    setPromoting(false)
   }
 
   if (trust === 'static') {

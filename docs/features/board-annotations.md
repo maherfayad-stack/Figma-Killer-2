@@ -1,4 +1,5 @@
 # Board annotations — sticky notes and doc cards
+> **Purpose:** sticky notes and rich-text doc cards on the board · **Read when:** touching board notes or doc cards · **Trust:** current · **Owner:** canvas-engineer · **Verified:** not yet
 
 The non-code furniture on a Studio board: **sticky notes** (small, coloured,
 text-only) and **doc cards** (larger, rich-text). They live in

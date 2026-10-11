@@ -6,17 +6,20 @@
  * whole block is unlabeled — there is no "MEASURES" header text in the real
  * panel, matching Layer's own template.
  *
- * `.measures`'s own gap sits BETWEEN three distinct groups — the W/H size
- * block, the position row, and the rotation/radius row — not within one, so
- * it uses `--inspector-space-m` (the panel's between-group step), not the
- * within-group `--inspector-gap-tight` it used to share with the tightly-
- * paired fields inside each of those groups (`.positionBlock` below).
+ * `.measures`'s own gap is the within-group 4px (P2-F, UX-3). The baseline
+ * above measures Δ4 between W/H and X/Y and between X/Y and rotation, and
+ * Penpot's `menus/measures.scss` `.element-set` is `gap: var(--sp-xs)`:
+ * size, position and rotation are facets of ONE block — where the layer is
+ * and how big — and the 12px between-section gap is what separates that
+ * block from Layer above and Layout below. `fix/inspector-spacing-audit` had
+ * set it to the 8px between-group step, which left the block's inner rows as
+ * far apart as the section boundary around it.
  */
 
 .measures {
     display: flex;
     flex-direction: column;
-    gap: var(--inspector-space-m);
+    gap: var(--inspector-space-2xs);
     padding-inline: var(--inspector-pad-x);
     padding-block: var(--inspector-space-2xs);
 }

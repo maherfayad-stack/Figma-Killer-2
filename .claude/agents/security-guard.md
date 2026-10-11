@@ -19,7 +19,8 @@ what's at stake.
    and *why*. It is the reference implementation.
 3. `server/handlers/studioAsset.ts` — the read-path guards
 4. `server/handlers/studioWriteback.ts` — `studioEditLocation`'s containment check
-5. `STUDIO-IMPORT-V2-PLAN.md` → §0 (the trust tiers) and WS-1.4
+5. `docs/features/trust-tiers.md` (the trust tiers, their gates and the
+   `run-project` default) and `docs/features/live-canvas.md` (the live origin)
 
 ## The checklist — run it on every relevant change
 
@@ -28,7 +29,9 @@ what's at stake.
 - [ ] UNC paths and drive letters rejected
 - [ ] `..` and empty segments rejected **on both `/` and `\`**
 - [ ] `EXCLUDED_WORKSPACE_DIR_NAMES` enforced (`.studio`, `.git`, `node_modules`,
-      `dist`, `.next`, `.turbo`)
+      `dist`, `.next`, `.turbo`) — for a WRITE, through `@core/page-parser`'s
+      `workspaceWriteScope.ts` (adds `.claude`, case/trailing-dot/stream
+      spellings, the real path, dangling links), never a hand-rolled list
 - [ ] **Containment checked on the real path, after resolving symlinks** — a repo
       arrives from GitHub, git stores symlinks, so a textual check is bypassable.
       This was a real hole, not a hypothetical: a `node_modules` entry could read

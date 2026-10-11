@@ -45,7 +45,7 @@ describe('studio_quality_check', () => {
   })
 
   it('is not mutating and needs no requiredCapabilities (a headless read)', () => {
-    expect(tool('studio_quality_check').mutates).toBeFalsy()
+    expect(tool('studio_quality_check').requiresWrite).toBeFalsy()
     expect(tool('studio_quality_check').requiredCapabilities ?? []).toEqual([])
   })
 

@@ -52,7 +52,7 @@ import {
   RenderSnapshotInputSchema,
 } from '@core/ai'
 import type { CoreCapability } from '@core/capabilities'
-import type { AiTool } from '../types'
+import type { SiteToolDefinition } from '../types'
 
 // ---------------------------------------------------------------------------
 // Capability requirements (ANY-OF) — mirror the editor's change-class model
@@ -79,17 +79,17 @@ const SITE_STYLE_CAPS: readonly CoreCapability[] = ['site.style.edit']
 // HTML-native write tools
 // ---------------------------------------------------------------------------
 
-const insertHtmlTool: AiTool = {
+const insertHtmlTool: SiteToolDefinition = {
   name: 'site_insert_html',
   scope: 'site',
   execution: 'bridge',
   requiredCapabilities: SITE_STRUCTURE_CAPS,
   description:
-    'Insert semantic HTML as a subtree of editable nodes under an existing parent. Write structure as HTML (<section>, <h1>, <a>, <button>, <img>, <ul>, ...) and style it with CSS in the same call: put a <style> block in the HTML and/or class= attributes. Custom importer markers: <studio-loop data-source-id="…" ...> creates a real Loop node (call site_list_loop_sources first for source/table ids and {currentEntry.*} tokens); <studio-outlet> creates a template content outlet. The importer parses every rule — a bare `.foo {}` selector becomes a reusable Selectors-panel class bound to class="foo"; any other selector (`.hero a`, `a:hover`, `nav > li`) becomes an ambient rule. Inline style= attributes land on the node\'s inline styles. To author or edit CSS on its own — pseudo/hover/descendant selectors, or restyling existing rules — use the dedicated site_apply_css tool instead (site_insert_html is for inserting structure). Returns `nodeIds` (the inserted roots) and `created` — every inserted node as { id, moduleId, classes } — so you can target a nested node (e.g. the wrapper you just added) without re-reading the whole tree.',
+    'Insert semantic HTML as editable nodes under an existing parent, styled in the same call with a <style> block and class= attributes. A bare \'.foo {}\' rule becomes a reusable class bound to class="foo"; any other selector becomes an ambient rule; style= lands on the node\'s inline styles. Markers: <studio-loop data-source-id="…"> makes a Loop node (site_list_loop_sources gives source ids and {currentEntry.*} tokens); <studio-outlet> makes a template content outlet. For CSS on its own (hover, descendant selectors, restyling), use site_apply_css. Returns nodeIds (the inserted roots) and created, every inserted node as { id, moduleId, classes }, so you can target a nested node without re-reading the tree.',
   inputSchema: InsertHtmlInputSchema,
 }
 
-const getNodeHtmlTool: AiTool = {
+const getNodeHtmlTool: SiteToolDefinition = {
   name: 'site_get_node_html',
   scope: 'site',
   execution: 'bridge',
@@ -98,7 +98,7 @@ const getNodeHtmlTool: AiTool = {
   inputSchema: GetNodeHtmlInputSchema,
 }
 
-const readDocumentTool: AiTool = {
+const readDocumentTool: SiteToolDefinition = {
   name: 'site_read_document',
   scope: 'site',
   execution: 'bridge',
@@ -108,7 +108,7 @@ const readDocumentTool: AiTool = {
   inputSchema: ReadDocumentInputSchema,
 }
 
-const openDocumentTool: AiTool = {
+const openDocumentTool: SiteToolDefinition = {
   name: 'site_open_document',
   scope: 'site',
   execution: 'bridge',
@@ -118,7 +118,7 @@ const openDocumentTool: AiTool = {
   inputSchema: OpenDocumentInputSchema,
 }
 
-const replaceNodeHtmlTool: AiTool = {
+const replaceNodeHtmlTool: SiteToolDefinition = {
   name: 'site_replace_node_html',
   scope: 'site',
   execution: 'bridge',
@@ -132,7 +132,7 @@ const replaceNodeHtmlTool: AiTool = {
 // Node-level write tools
 // ---------------------------------------------------------------------------
 
-const deleteNodeTool: AiTool = {
+const deleteNodeTool: SiteToolDefinition = {
   name: 'site_delete_node',
   scope: 'site',
   execution: 'bridge',
@@ -142,7 +142,7 @@ const deleteNodeTool: AiTool = {
   inputSchema: DeleteNodeInputSchema,
 }
 
-const updateNodePropsTool: AiTool = {
+const updateNodePropsTool: SiteToolDefinition = {
   name: 'site_update_node_props',
   scope: 'site',
   execution: 'bridge',
@@ -152,7 +152,7 @@ const updateNodePropsTool: AiTool = {
   inputSchema: UpdateNodePropsInputSchema,
 }
 
-const moveNodeTool: AiTool = {
+const moveNodeTool: SiteToolDefinition = {
   name: 'site_move_node',
   scope: 'site',
   execution: 'bridge',
@@ -162,7 +162,7 @@ const moveNodeTool: AiTool = {
   inputSchema: MoveNodeInputSchema,
 }
 
-const renameNodeTool: AiTool = {
+const renameNodeTool: SiteToolDefinition = {
   name: 'site_rename_node',
   scope: 'site',
   execution: 'bridge',
@@ -172,7 +172,7 @@ const renameNodeTool: AiTool = {
   inputSchema: RenameNodeInputSchema,
 }
 
-const duplicateNodeTool: AiTool = {
+const duplicateNodeTool: SiteToolDefinition = {
   name: 'site_duplicate_node',
   scope: 'site',
   execution: 'bridge',
@@ -186,17 +186,17 @@ const duplicateNodeTool: AiTool = {
 // CSS + class-assignment write tools
 // ---------------------------------------------------------------------------
 
-const applyCssTool: AiTool = {
+const applyCssTool: SiteToolDefinition = {
   name: 'site_apply_css',
   scope: 'site',
   execution: 'bridge',
   requiredCapabilities: SITE_STYLE_CAPS,
   description:
-    'Author, repair, or delete CSS rules. `operation:"merge"` plus real CSS creates missing selectors and patches only authored declarations/contexts; use it for normal additive edits. `operation:"replace"` makes each supplied selector\'s COMPLETE CSS payload authoritative, removing omitted base/context declarations while preserving rule identity, cascade order, and class assignments. `operation:"remove-properties"` removes named CSS properties from base and every context without disturbing other declarations. `operation:"delete"` removes whole rules by exact emitted selector and detaches deleted classes. Selector identity is exact: `.grad`, `.hero .grad`, and `.grad, .hero .grad` are different rules; copy the full selector from site_read_document before destructive operations. Bare `.foo` rules are reusable classes; descendant/pseudo/element/grouped selectors are ambient rules. `@media`/`@supports`/`@container`, vendor properties, custom properties, and `!important` round-trip. Reference design tokens rather than repeated literals. Success data uses `cssRulesCreated`, `cssRulesUpdated`, `cssRulesDeleted`, and/or `cssPropertiesRemoved`.',
+    'Author, repair or delete CSS rules. operation \'merge\' with real CSS creates missing selectors and patches only the declarations given (normal edits). \'replace\' makes each selector\'s supplied CSS complete, removing omitted declarations while keeping rule identity, order and class assignments. \'remove-properties\' removes named properties from base and every context. \'delete\' removes whole rules by exact selector and detaches deleted classes. Selectors are exact: \'.grad\', \'.hero .grad\' and \'.grad, .hero .grad\' are three rules, so copy it from site_read_document before a destructive operation. A bare \'.foo\' is a reusable class; other selectors are ambient rules. @media, @supports, @container, vendor and custom properties and !important round-trip. Prefer tokens to repeated literals. Returns cssRulesCreated, cssRulesUpdated, cssRulesDeleted and/or cssPropertiesRemoved.',
   inputSchema: ApplyCssInputSchema,
 }
 
-const assignClassTool: AiTool = {
+const assignClassTool: SiteToolDefinition = {
   name: 'site_assign_class',
   scope: 'site',
   execution: 'bridge',
@@ -206,7 +206,7 @@ const assignClassTool: AiTool = {
   inputSchema: AssignClassInputSchema,
 }
 
-const removeClassTool: AiTool = {
+const removeClassTool: SiteToolDefinition = {
   name: 'site_remove_class',
   scope: 'site',
   execution: 'bridge',
@@ -220,7 +220,7 @@ const removeClassTool: AiTool = {
 // Code asset tools — scripts and user stylesheets in site.files + site.runtime
 // ---------------------------------------------------------------------------
 
-const listCodeAssetsTool: AiTool = {
+const listCodeAssetsTool: SiteToolDefinition = {
   name: 'site_list_code_assets',
   scope: 'site',
   execution: 'bridge',
@@ -230,7 +230,7 @@ const listCodeAssetsTool: AiTool = {
   inputSchema: ListCodeAssetsInputSchema,
 }
 
-const readCodeAssetTool: AiTool = {
+const readCodeAssetTool: SiteToolDefinition = {
   name: 'site_read_code_asset',
   scope: 'site',
   execution: 'bridge',
@@ -240,7 +240,7 @@ const readCodeAssetTool: AiTool = {
   inputSchema: ReadCodeAssetInputSchema,
 }
 
-const writeCodeAssetTool: AiTool = {
+const writeCodeAssetTool: SiteToolDefinition = {
   name: 'site_write_code_asset',
   scope: 'site',
   execution: 'bridge',
@@ -250,7 +250,7 @@ const writeCodeAssetTool: AiTool = {
   inputSchema: WriteCodeAssetInputSchema,
 }
 
-const patchCodeAssetTool: AiTool = {
+const patchCodeAssetTool: SiteToolDefinition = {
   name: 'site_patch_code_asset',
   scope: 'site',
   execution: 'bridge',
@@ -260,7 +260,7 @@ const patchCodeAssetTool: AiTool = {
   inputSchema: PatchCodeAssetInputSchema,
 }
 
-const inspectCodeRuntimeTool: AiTool = {
+const inspectCodeRuntimeTool: SiteToolDefinition = {
   name: 'site_inspect_code_runtime',
   scope: 'site',
   execution: 'bridge',
@@ -274,7 +274,7 @@ const inspectCodeRuntimeTool: AiTool = {
 // Page-level write tools
 // ---------------------------------------------------------------------------
 
-const addPageTool: AiTool = {
+const addPageTool: SiteToolDefinition = {
   name: 'site_add_page',
   scope: 'site',
   execution: 'bridge',
@@ -284,7 +284,7 @@ const addPageTool: AiTool = {
   inputSchema: AddPageInputSchema,
 }
 
-const deletePageTool: AiTool = {
+const deletePageTool: SiteToolDefinition = {
   name: 'site_delete_page',
   scope: 'site',
   execution: 'bridge',
@@ -294,7 +294,7 @@ const deletePageTool: AiTool = {
   inputSchema: DeletePageInputSchema,
 }
 
-const renamePageTool: AiTool = {
+const renamePageTool: SiteToolDefinition = {
   name: 'site_rename_page',
   scope: 'site',
   execution: 'bridge',
@@ -304,7 +304,7 @@ const renamePageTool: AiTool = {
   inputSchema: RenamePageInputSchema,
 }
 
-const duplicatePageTool: AiTool = {
+const duplicatePageTool: SiteToolDefinition = {
   name: 'site_duplicate_page',
   scope: 'site',
   execution: 'bridge',
@@ -324,7 +324,7 @@ const duplicatePageTool: AiTool = {
 // in `@core/page-tree`.
 // ---------------------------------------------------------------------------
 
-const setPageTemplateTool: AiTool = {
+const setPageTemplateTool: SiteToolDefinition = {
   name: 'site_set_page_template',
   scope: 'site',
   execution: 'bridge',
@@ -334,7 +334,7 @@ const setPageTemplateTool: AiTool = {
   inputSchema: SetPageTemplateInputSchema,
 }
 
-const clearPageTemplateTool: AiTool = {
+const clearPageTemplateTool: SiteToolDefinition = {
   name: 'site_clear_page_template',
   scope: 'site',
   execution: 'bridge',
@@ -352,7 +352,7 @@ const clearPageTemplateTool: AiTool = {
 // per-step values).
 // ---------------------------------------------------------------------------
 
-const setColorTokensTool: AiTool = {
+const setColorTokensTool: SiteToolDefinition = {
   name: 'site_set_color_tokens',
   scope: 'site',
   execution: 'bridge',
@@ -362,7 +362,7 @@ const setColorTokensTool: AiTool = {
   inputSchema: SetColorTokensInputSchema,
 }
 
-const setFontTokensTool: AiTool = {
+const setFontTokensTool: SiteToolDefinition = {
   name: 'site_set_font_tokens',
   scope: 'site',
   execution: 'bridge',
@@ -372,7 +372,7 @@ const setFontTokensTool: AiTool = {
   inputSchema: SetFontTokensInputSchema,
 }
 
-const setTypeScaleTool: AiTool = {
+const setTypeScaleTool: SiteToolDefinition = {
   name: 'site_set_type_scale',
   scope: 'site',
   execution: 'bridge',
@@ -382,7 +382,7 @@ const setTypeScaleTool: AiTool = {
   inputSchema: SetTypeScaleInputSchema,
 }
 
-const setSpacingScaleTool: AiTool = {
+const setSpacingScaleTool: SiteToolDefinition = {
   name: 'site_set_spacing_scale',
   scope: 'site',
   execution: 'bridge',
@@ -396,7 +396,7 @@ const setSpacingScaleTool: AiTool = {
 // site_render_snapshot — browser-bridged, returns a special payload
 // ---------------------------------------------------------------------------
 
-const renderSnapshotTool: AiTool = {
+const renderSnapshotTool: SiteToolDefinition = {
   name: 'site_render_snapshot',
   scope: 'site',
   execution: 'bridge',
@@ -409,7 +409,7 @@ const renderSnapshotTool: AiTool = {
 // All write tools — convenient barrel for the registry
 // ---------------------------------------------------------------------------
 
-export const siteWriteTools: AiTool[] = [
+export const siteWriteTools: SiteToolDefinition[] = [
   insertHtmlTool,
   getNodeHtmlTool,
   readDocumentTool,

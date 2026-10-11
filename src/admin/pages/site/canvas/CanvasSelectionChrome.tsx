@@ -17,17 +17,18 @@
  */
 import type { RefObject } from 'react'
 import { cn } from '@ui/cn'
-import { CanvasResizeHandles } from './CanvasResizeHandles'
+import { CanvasGroupResizeHandles, CanvasResizeHandles } from './CanvasResizeHandles'
 import styles from './BreakpointSelectionOverlay.module.css'
 
 interface CanvasSelectionChromeProps {
   selectedNodeIds: readonly string[]
-  showHover: boolean
+  /** The node the hover ring tracks, or `null` — the ring stays mounted either way (PERF-2). */
   hoverRingNodeId: string | null
   showSelectorHighlight: boolean
   usingIframeOverlay: boolean
   toolbarMode: 'scoped' | 'fixed'
-  resizeNodeId: string | null
+  /** The selected layers that get resize handles: one gets its own, several get a group box (IX-6g). */
+  resizeNodeIds: readonly string[]
   overlayRoot: HTMLElement | null
   selectorHighlightRef: RefObject<HTMLDivElement | null>
   hoverRef: RefObject<HTMLDivElement | null>
@@ -44,12 +45,11 @@ interface CanvasSelectionChromeProps {
 
 export function CanvasSelectionChrome({
   selectedNodeIds,
-  showHover,
   hoverRingNodeId,
   showSelectorHighlight,
   usingIframeOverlay,
   toolbarMode,
-  resizeNodeId,
+  resizeNodeIds,
   overlayRoot,
   selectorHighlightRef,
   hoverRef,
@@ -108,20 +108,31 @@ export function CanvasSelectionChrome({
           data-canvas-overlay-node-id={id}
         />
       ))}
-      {showHover && hoverRingNodeId && (
-        <div
-          ref={hoverRef}
-          className={legacyRingClassName('hover')}
-          data-canvas-ring-mode={legacyRingMode}
-          data-canvas-hover-ring="true"
-          data-canvas-overlay-node-id={hoverRingNodeId}
-        />
-      )}
+      {/* ALWAYS mounted (PERF-2): a hover starting or ending is a style
+          write on this element (the overlay hides it with
+          `hideOverlayElement`), never a `childList` mutation under the
+          frame's observed `<body>`. Hover is continuous in normal use, and
+          every mount used to re-run the frame's two full-document layout
+          passes. */}
+      <div
+        ref={hoverRef}
+        className={legacyRingClassName('hover')}
+        data-canvas-ring-mode={legacyRingMode}
+        data-canvas-hover-ring="true"
+        data-canvas-overlay-node-id={hoverRingNodeId ?? undefined}
+      />
       {/* The one interactive thing in this click-through overlay — see
           `CanvasResizeHandles`. */}
-      {resizeNodeId && (
+      {resizeNodeIds.length === 1 && (
         <CanvasResizeHandles
-          nodeId={resizeNodeId}
+          nodeId={resizeNodeIds[0]!}
+          iframeDoc={overlayRoot?.ownerDocument ?? null}
+          onFrameReady={onResizeFrameReady}
+        />
+      )}
+      {resizeNodeIds.length > 1 && (
+        <CanvasGroupResizeHandles
+          nodeIds={resizeNodeIds}
           iframeDoc={overlayRoot?.ownerDocument ?? null}
           onFrameReady={onResizeFrameReady}
         />

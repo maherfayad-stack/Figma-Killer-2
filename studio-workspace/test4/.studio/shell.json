@@ -3,7 +3,7 @@
   "files": {
     "index.html": "7983490ee9cea5c9d1951cd40eba678b98346642c1b440bdd5ac80c5e51739dd",
     "vite.config.js": "4a3df68590ee03d7434139fcc248c042df852aa7a7e1376d070fa2d4ca4a27a9",
-    "prototype/main.jsx": "aa3d5119abbc407056a7b1773e1748272581b8f737635edcee6291cfb3d515b2",
+    "prototype/main.jsx": "30f8bd142e04ba6a7ce9bd8dd4744b00256ea73f02eac26fd6ce52055fe4957f",
     "prototype/App.jsx": "27f2f7abaae6244460d6a97a3d113209afaccfdd0355640ea80564fcf57f5145",
     "prototype/ScreenFrame.jsx": "8365e53ddad6bc75252d0a6ffc017ee8602a009889ccc1916db18fa35d8ba4e8",
     "prototype/CanvasPanel.jsx": "1d7e3c441c856d8c7e8ca0b4c22436b522a3705109d58e2acea8d3f03db05c7c",

@@ -28,13 +28,17 @@
  * `private` because the image is a picture of the user's own unpublished work
  * and must not land in a shared proxy cache.
  */
-import { readFileSync } from 'node:fs'
 import { badRequest, jsonResponse } from '../../http'
 import { projectsRootDir } from '../studioProjects'
 import { resolveWorkspaceProjectDir } from './projectDirGuard'
-import { projectThumbnailFile, readProjectThumbnailStat } from './projectThumbnailFile'
+import { readProjectThumbnailBytes, readProjectThumbnailStat } from './projectThumbnailFile'
 
 const CACHE_CONTROL = 'private, max-age=0, must-revalidate'
+
+/** The expected "not photographed yet" answer — see {@link serveProjectThumbnail}. */
+function noThumbnailYet(): Response {
+  return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } })
+}
 
 /** Weak-free ETag over the two facts that change when the image does. */
 function thumbnailEtag(mtimeMs: number, size: number): string {
@@ -73,9 +77,13 @@ function isFresh(req: Request, etag: string, lastModified: Date): boolean {
  * routes — a caller naming a path that was never a project has a different bug
  * from one naming a project that has since been deleted.
  *
- * A project with no thumbnail YET is a 404 with `no-store`, not a cached
- * empty: the queue is very likely producing one right now, and a browser that
- * cached the miss would keep showing the folder glyph after it lands.
+ * A project with no thumbnail YET is a 204 with `no-store`, not a 404 and not
+ * a cached empty. "Not photographed yet" is an expected state, not an error —
+ * a 404 put one red console line per probe on every launcher render for every
+ * new project. 204 carries the same message to the `<img>` (it fires `error`
+ * and the card keeps its glyph) without the noise. `no-store` because the
+ * queue is very likely producing one right now, and a browser that cached the
+ * miss would keep showing the folder glyph after it lands.
  */
 export function serveProjectThumbnail(req: Request, requestedDir: string | null): Response {
   const requested = requestedDir?.trim()
@@ -91,10 +99,7 @@ export function serveProjectThumbnail(req: Request, requestedDir: string | null)
 
   const stat = readProjectThumbnailStat(resolved.dir)
   if (!stat) {
-    return jsonResponse(
-      { error: 'This project has no preview yet.' },
-      { status: 404, headers: { 'cache-control': 'no-store' } },
-    )
+    return noThumbnailYet()
   }
 
   const etag = thumbnailEtag(stat.mtimeMs, stat.size)
@@ -109,16 +114,14 @@ export function serveProjectThumbnail(req: Request, requestedDir: string | null)
   }
 
   try {
-    const bytes = readFileSync(projectThumbnailFile(resolved.dir))
+    const bytes = readProjectThumbnailBytes(resolved.dir)
+    if (!bytes) throw new Error('The thumbnail disappeared between the stat and the read.')
     return new Response(bytes, {
       headers: { ...validators, 'content-type': 'image/png', 'content-length': String(bytes.byteLength) },
     })
   } catch (err) {
     // Raced with a rewrite or a project delete between the stat and the read.
     console.error('[studio:thumbnail]', err)
-    return jsonResponse(
-      { error: 'This project has no preview yet.' },
-      { status: 404, headers: { 'cache-control': 'no-store' } },
-    )
+    return noThumbnailYet()
   }
 }

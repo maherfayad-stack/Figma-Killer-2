@@ -3,10 +3,12 @@ import type { Page, PageNode } from '@core/page-tree'
 import { reindexNodeParents } from '@core/page-tree'
 import {
   getCanvasDropZone,
+  nearerSiblingSide,
   resolveCanvasInsertionTarget,
   resolveCanvasDropTarget,
   type CanvasDropCandidate,
 } from '@admin/pages/site/canvas/canvasDnd'
+import { resolveCanvasTransplantTarget } from '@admin/pages/site/canvas/canvasTransplantDrop'
 
 function node(id: string, moduleId: string, children: string[] = [], locked = false): PageNode {
   return {
@@ -129,6 +131,32 @@ describe('canvasDnd', () => {
     })
   })
 
+  it('never resolves a drop into the dragged element own descendant, in any zone - the write could not honour it (G-7)', () => {
+    const tree = page({
+      root: node('root', 'base.body', ['dragged']),
+      dragged: node('dragged', 'base.container', ['child']),
+      child: node('child', 'base.container', ['grandchild']),
+      grandchild: node('grandchild', 'base.container'),
+    })
+    const over = (id: string, depth: number) => candidate(id, depth, { left: 0, top: 0, width: 100, height: 100 })
+
+    // Near the top edge (before), the middle (inside), the bottom edge (after).
+    for (const y of [4, 50, 96]) {
+      for (const id of ['child', 'grandchild']) {
+        const result = resolveCanvasDropTarget({
+          tree,
+          draggedId: 'dragged',
+          draggedIds: ['dragged'],
+          candidates: [over(id, 2)],
+          point: { x: 50, y },
+          canHaveChildren,
+        })
+        expect(result.target).toBeNull()
+        expect(result.invalid?.overId).toBe(id)
+      }
+    }
+  })
+
   it('scales the edge-hit band by the live zoom (0.8 — collapsed drop-edge hit zones)', () => {
     // `candidate.rect` is frame-space (unscaled) — the same space at every
     // zoom level. The edge band is authored in SCREEN pixels
@@ -206,10 +234,10 @@ describe('canvasDnd', () => {
     expect(atLowZoom.target?.position).toBe('before')
   })
 
-  it('previews a source-writeback refusal WHILE the pointer is still down (G5) — a shared-component reorder', () => {
-    // Two shared-component (inlined) siblings under a plain container — a
-    // structurally VALID drop position (real container, real index), but the
-    // WRITE would refuse: an inlined node's markup lives in another file.
+  // OD-7 (P3-D) — a reorder inside a shared component is written to THIS
+  // instance (detach, then move), so the preview shows a drop line. It used to
+  // refuse `shared-component` here.
+  it('shows a drop line for a reorder inside a shared component — it applies to this instance (OD-7)', () => {
     const inlinedA = 'pages/Home.tsx:10:4~ui/Card.tsx:2:4'
     const inlinedB = 'pages/Home.tsx:12:4~ui/Card.tsx:2:4'
     const tree = page({
@@ -219,33 +247,44 @@ describe('canvasDnd', () => {
       [inlinedB]: node(inlinedB, 'base.text'),
     })
     const overB = candidate(inlinedB, 1, { left: 0, top: 0, width: 100, height: 100 })
-
     const result = resolveCanvasDropTarget({
       tree,
       draggedId: inlinedA,
       draggedIds: [inlinedA],
       candidates: [overB],
-      // Bottom of the rect -> 'after' zone -> a real, non-no-op reorder target.
+      point: { x: 50, y: 96 },
+      canHaveChildren,
+    })
+    expect(result.invalid).toBeNull()
+    expect(result.target).not.toBeNull()
+  })
+
+  it('previews a source-writeback refusal WHILE the pointer is still down (G5) — a .map row', () => {
+    // A `.map` row: a structurally VALID drop position (real container, real
+    // index), but the WRITE would refuse — one piece of source renders every row.
+    const rowA = 'pages/Home.tsx:10:4#0'
+    const rowB = 'pages/Home.tsx:10:4#1'
+    const tree = page({
+      root: node('root', 'base.body', ['container']),
+      container: node('container', 'base.container', [rowA, rowB]),
+      [rowA]: node(rowA, 'base.text'),
+      [rowB]: node(rowB, 'base.text'),
+    })
+    const overB = candidate(rowB, 1, { left: 0, top: 0, width: 100, height: 100 })
+
+    const result = resolveCanvasDropTarget({
+      tree,
+      draggedId: rowA,
+      draggedIds: [rowA],
+      candidates: [overB],
       point: { x: 50, y: 96 },
       canHaveChildren,
     })
 
-    // The tree-shape resolver alone would have returned a valid target here
-    // (real container, real index) — the refusal only appears once
-    // `previewStructuralMove` is consulted.
     expect(result.target).toBeNull()
-    expect(result.invalid?.overId).toBe(inlinedB)
-    expect(result.invalid?.constraint?.explanation).toContain('shared component')
-    // The whole constraint, not just its sentence: the overlay shows the
-    // reason during the drag, and `origin`/`actions` are what any surface
-    // AFTER the drop needs to offer a way forward. Both trace to the DRAGGED
-    // element, not the candidate under the pointer — and for an inlined node
-    // that is the COMPONENT'S own file (`decodeSourceNodeId` reads a composite
-    // id's last segment), which is exactly where the user has to go to move
-    // this markup.
+    expect(result.invalid?.overId).toBe(rowB)
     expect(result.invalid?.constraint?.scope).toBe('gesture')
-    expect(result.invalid?.constraint?.reason).toBe('shared-component')
-    expect(result.invalid?.constraint?.origin?.rel).toBe('ui/Card.tsx')
+    expect(result.invalid?.constraint?.reason).toBe('list-row')
   })
 
   it('does not invent a refusal for an ordinary CMS (nanoid) node — refusal previews are studio-only', () => {
@@ -300,5 +339,218 @@ describe('canvasDnd', () => {
     expect(afterLeaf?.parentId).toBe('root')
     expect(afterLeaf?.index).toBe(2)
     expect(afterLeaf?.position).toBe('after')
+  })
+
+  describe('a press in a container empty space lands where the pointer is, not at the end', () => {
+    const tree = page({
+      root: node('root', 'base.body', ['main']),
+      main: node('main', 'base.container', ['a', 'b', 'c']),
+      a: node('a', 'base.text'),
+      b: node('b', 'base.text'),
+      c: node('c', 'base.text'),
+    })
+    const stack = [
+      candidate('main', 1, { left: 0, top: 0, width: 200, height: 600 }),
+      candidate('a', 2, { left: 0, top: 0, width: 200, height: 50 }),
+      candidate('b', 2, { left: 0, top: 200, width: 200, height: 50 }),
+      candidate('c', 2, { left: 0, top: 400, width: 200, height: 50 }),
+    ]
+
+    it('vertical flow: between the children inserts before the next child', () => {
+      const target = resolveCanvasInsertionTarget({ tree, candidates: stack, point: { x: 100, y: 120 }, canHaveChildren })
+      expect(target).toMatchObject({ parentId: 'main', index: 1, position: 'inside' })
+    })
+
+    it('below the last child still appends', () => {
+      const target = resolveCanvasInsertionTarget({ tree, candidates: stack, point: { x: 100, y: 550 }, canHaveChildren })
+      expect(target).toMatchObject({ parentId: 'main', index: 3 })
+    })
+
+    it('above the first child lands first', () => {
+      const target = resolveCanvasInsertionTarget({
+        tree,
+        candidates: [candidate('main', 1, { left: 0, top: 0, width: 200, height: 600 }), ...stack.slice(1).map((c) => ({ ...c, rect: { ...c.rect, top: c.rect.top + 100, bottom: c.rect.bottom + 100 } }))],
+        point: { x: 100, y: 40 },
+        canHaveChildren,
+      })
+      expect(target).toMatchObject({ parentId: 'main', index: 0 })
+    })
+
+    it('horizontal flow compares x inside the pointer row, and reversed flow flips it', () => {
+      const row = [
+        candidate('main', 1, { left: 0, top: 0, width: 600, height: 100 }),
+        candidate('a', 2, { left: 0, top: 0, width: 100, height: 50 }, 'horizontal'),
+        candidate('b', 2, { left: 200, top: 0, width: 100, height: 50 }, 'horizontal'),
+        candidate('c', 2, { left: 400, top: 0, width: 100, height: 50 }, 'horizontal'),
+      ]
+      expect(resolveCanvasInsertionTarget({ tree, candidates: row, point: { x: 320, y: 30 }, canHaveChildren })).toMatchObject({ index: 2 })
+      const reversed = row.map((c, i) => (i === 0 ? c : { ...c, reversed: true }))
+      expect(resolveCanvasInsertionTarget({ tree, candidates: reversed, point: { x: 320, y: 30 }, canHaveChildren })).toMatchObject({ index: 0 })
+    })
+
+    it('gives the drop line at the gap between the neighbours, not the container outline', () => {
+      const target = resolveCanvasInsertionTarget({ tree, candidates: stack, point: { x: 100, y: 120 }, canHaveChildren })
+      // a ends at 50, b starts at 200: the line sits at the middle of that space, across the container.
+      expect(target?.gap).toEqual({
+        axis: 'vertical',
+        rect: { left: 0, right: 200, top: 125, bottom: 125, width: 200, height: 0 },
+      })
+    })
+
+    it('the first slot is at the first child top and the append at the last child bottom', () => {
+      const first = resolveCanvasInsertionTarget({
+        tree,
+        candidates: [candidate('main', 1, { left: 0, top: 0, width: 200, height: 600 }), ...stack.slice(1).map((c) => ({ ...c, rect: { ...c.rect, top: c.rect.top + 100, bottom: c.rect.bottom + 100 } }))],
+        point: { x: 100, y: 40 },
+        canHaveChildren,
+      })
+      expect(first?.gap?.rect).toMatchObject({ top: 100, height: 0 })
+      const append = resolveCanvasInsertionTarget({ tree, candidates: stack, point: { x: 100, y: 550 }, canHaveChildren })
+      expect(append?.gap?.rect).toMatchObject({ top: 450, height: 0 })
+    })
+
+    it('horizontal flow draws a vertical line down the row, between the neighbours', () => {
+      const row = [
+        candidate('main', 1, { left: 0, top: 0, width: 600, height: 100 }),
+        candidate('a', 2, { left: 0, top: 0, width: 100, height: 50 }, 'horizontal'),
+        candidate('b', 2, { left: 200, top: 10, width: 100, height: 50 }, 'horizontal'),
+        candidate('c', 2, { left: 400, top: 0, width: 100, height: 50 }, 'horizontal'),
+      ]
+      const target = resolveCanvasInsertionTarget({ tree, candidates: row, point: { x: 320, y: 30 }, canHaveChildren })
+      // index 2: between b (right edge 300) and c (left edge 400).
+      expect(target?.gap).toMatchObject({ axis: 'horizontal', rect: { left: 350, right: 350, width: 0, top: 0, bottom: 60 } })
+    })
+
+    it('a drop beside a sibling keeps its own line and carries no gap', () => {
+      const target = resolveCanvasInsertionTarget({ tree, candidates: stack, point: { x: 100, y: 5 }, canHaveChildren })
+      expect(target?.gap).toBeUndefined()
+    })
+
+    it('with no child measured it keeps the append', () => {
+      const target = resolveCanvasInsertionTarget({ tree, candidates: [stack[0]!], point: { x: 100, y: 120 }, canHaveChildren })
+      expect(target).toMatchObject({ parentId: 'main', index: 3 })
+    })
+  })
+
+  describe('a press on the middle of a leaf lands on the side it is nearer to (Label 2/3 off by one)', () => {
+    const tree = page({
+      root: node('root', 'base.body', ['main']),
+      main: node('main', 'base.container', ['l1', 'l2', 'l3', 'l4']),
+      l1: node('l1', 'base.text'),
+      l2: node('l2', 'base.text'),
+      l3: node('l3', 'base.text'),
+      l4: node('l4', 'base.text'),
+    })
+    // Four 40px labels with a 10px gap: l3 spans y 100..140.
+    const column = (axis: 'vertical' | 'horizontal', extra: Partial<CanvasDropCandidate> = {}) => {
+      const at = (i: number) => (axis === 'vertical' ? { left: 0, top: i * 50, width: 200, height: 40 } : { left: i * 110, top: 0, width: 100, height: 40 })
+      return [
+        candidate('main', 1, { left: 0, top: 0, width: 440, height: 200 }),
+        ...['l1', 'l2', 'l3', 'l4'].map((id, i) => ({ ...candidate(id, 2, at(i), axis), ...extra })),
+      ]
+    }
+
+    it('the upper half of Label 3 (outside the edge band) lands BEFORE Label 3, not after it', () => {
+      const target = resolveCanvasInsertionTarget({ tree, candidates: column('vertical'), point: { x: 100, y: 114 }, canHaveChildren })
+      expect(target).toMatchObject({ parentId: 'main', index: 2, position: 'before', overId: 'l3' })
+    })
+
+    it('the lower half of Label 3 lands after it', () => {
+      const target = resolveCanvasInsertionTarget({ tree, candidates: column('vertical'), point: { x: 100, y: 126 }, canHaveChildren })
+      expect(target).toMatchObject({ parentId: 'main', index: 3, position: 'after', overId: 'l3' })
+    })
+
+    it('the exact middle goes after (the append convention)', () => {
+      const target = resolveCanvasInsertionTarget({ tree, candidates: column('vertical'), point: { x: 100, y: 120 }, canHaveChildren })
+      expect(target).toMatchObject({ index: 3, position: 'after' })
+    })
+
+    it('side by side: the left half of Label 3 is before, the right half after', () => {
+      const row = column('horizontal')
+      expect(resolveCanvasInsertionTarget({ tree, candidates: row, point: { x: 232, y: 20 }, canHaveChildren })).toMatchObject({ index: 2, position: 'before' })
+      expect(resolveCanvasInsertionTarget({ tree, candidates: row, point: { x: 288, y: 20 }, canHaveChildren })).toMatchObject({ index: 3, position: 'after' })
+    })
+
+    it('a reversed flow flips the halves: the visually-near half is the later slot', () => {
+      const row = column('horizontal', { reversed: true })
+      const nearHalf = resolveCanvasInsertionTarget({ tree, candidates: row, point: { x: 232, y: 20 }, canHaveChildren })
+      expect(nearHalf).toMatchObject({ index: 3, position: 'after', reversed: true })
+      const farHalf = resolveCanvasInsertionTarget({ tree, candidates: row, point: { x: 288, y: 20 }, canHaveChildren })
+      expect(farHalf).toMatchObject({ index: 2, position: 'before' })
+    })
+
+    it('the gap BETWEEN Label 2 and Label 3 (container space) is slot 2, with margins and without', () => {
+      for (const gap of [0, 10, 36]) {
+        const stack = [
+          candidate('main', 1, { left: 0, top: 0, width: 200, height: 400 }),
+          candidate('l1', 2, { left: 0, top: 0, width: 200, height: 40 }),
+          candidate('l2', 2, { left: 0, top: 40 + gap, width: 200, height: 40 }),
+          candidate('l3', 2, { left: 0, top: 80 + gap * 2, width: 200, height: 40 }),
+          candidate('l4', 2, { left: 0, top: 120 + gap * 3, width: 200, height: 40 }),
+        ]
+        // The middle of the l2 | l3 gap (or, with no gap, the seam itself).
+        const seam = 80 + gap * 1.5
+        const target = resolveCanvasInsertionTarget({ tree, candidates: stack, point: { x: 100, y: seam }, canHaveChildren })
+        expect(target?.index, `gap ${gap}`).toBe(2)
+      }
+    })
+
+    it('nearerSiblingSide agrees with the target it feeds', () => {
+      const [, , , l3] = column('vertical')
+      expect(nearerSiblingSide(l3!, { x: 0, y: 101 })).toBe('before')
+      expect(nearerSiblingSide(l3!, { x: 0, y: 139 })).toBe('after')
+    })
+  })
+})
+
+describe('a cross-frame drop lands where the pointer is, with its line', () => {
+  // Source-derived ids (`file:line:col`): a transplant is a source write, so the
+  // store's own gate refuses a node that exists only on the canvas.
+  const id = (name: string) => `pages/${name}.tsx:1:1`
+  const origin = page({
+    [id('root')]: node(id('root'), 'base.body', [id('moved')]),
+    [id('moved')]: node(id('moved'), 'base.text'),
+  }, id('root'))
+  const destination = page({
+    [id('droot')]: node(id('droot'), 'base.body', [id('main')]),
+    [id('main')]: node(id('main'), 'base.container', [id('a'), id('b'), id('c')]),
+    [id('a')]: node(id('a'), 'base.text'),
+    [id('b')]: node(id('b'), 'base.text'),
+    [id('c')]: node(id('c'), 'base.text'),
+  }, id('droot'))
+  const stack = [
+    candidate(id('main'), 1, { left: 0, top: 0, width: 200, height: 600 }),
+    candidate(id('a'), 2, { left: 0, top: 0, width: 200, height: 50 }),
+    candidate(id('b'), 2, { left: 0, top: 200, width: 200, height: 50 }),
+    candidate(id('c'), 2, { left: 0, top: 400, width: 200, height: 50 }),
+  ]
+  const resolve = (point: { x: number; y: number }) =>
+    resolveCanvasTransplantTarget({
+      originTree: origin,
+      destinationTree: destination,
+      draggedIds: [id('moved')],
+      candidates: stack,
+      point,
+      canHaveChildren,
+      copy: false,
+    })
+
+  it('released in the gap between two siblings it goes between them, not at the end', () => {
+    const { target } = resolve({ x: 100, y: 120 })
+    expect(target).toMatchObject({ parentId: id('main'), index: 1, position: 'inside' })
+    // The line sits in the middle of the gap: between a's bottom (50) and b's top (200).
+    expect(target?.gap?.axis).toBe('vertical')
+    expect(target?.gap?.rect.top).toBe(125)
+  })
+
+  it('released below the last child it still appends, and the line sits under it', () => {
+    const { target } = resolve({ x: 100, y: 550 })
+    expect(target).toMatchObject({ parentId: id('main'), index: 3 })
+    expect(target?.gap?.rect.top).toBe(450)
+  })
+
+  it('released on the near half of a leaf it lands on that side of the leaf', () => {
+    expect(resolve({ x: 100, y: 410 }).target).toMatchObject({ parentId: id('main'), index: 2, position: 'before' })
+    expect(resolve({ x: 100, y: 440 }).target).toMatchObject({ parentId: id('main'), index: 3, position: 'after' })
   })
 })

@@ -20,53 +20,25 @@
  * screens ten to one, and why it places each story exactly once instead of
  * reconciling.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync } from 'node:fs'
 import {
   createBoard,
-  createBoardsFile,
   defaultFramePosition,
-  parseBoardsFile,
-  serializeBoardsFile,
   upsertBoard,
   upsertFrame,
   FRAME_GAP,
   FRAME_HEIGHT,
   FRAME_WIDTH,
   type Board,
+  type BoardFramePlacement,
   type BoardsFile,
 } from '@core/studio-board'
 import { discoverPageFiles, projectPagesDir } from '../studioProjects'
 import { pageIdFromRelPath } from '../studioPageIds'
-import { mergeStudioMeta, readStudioMeta } from './studioMeta'
+import { mergeStudioMeta, readStudioMeta, type StudioMeta } from './studioMeta'
 import type { StorySummary } from './storyDiscovery'
-
-export function boardsFilePath(dir: string): string {
-  return join(dir, '.studio', 'boards.json')
-}
-
-/** Read the project's boards, or a fresh empty file when none exists yet. */
-export function readBoardsFile(dir: string): BoardsFile {
-  const file = boardsFilePath(dir)
-  return existsSync(file) ? parseBoardsFile(readFileSync(file, 'utf8')) : createBoardsFile()
-}
-
-/**
- * Persist a boards file, creating `.studio/` if this is the project's first
- * board write.
- *
- * Exported alongside {@link readBoardsFile} for the board-mutating MCP tools
- * (`studio_set_frames`, `studio_set_frame_axes`,
- * `studio_duplicate_frame_as_variant`), which had each grown their own copy of
- * these four lines. This module's whole reason to exist is that every
- * server-side write to the board's frame list has one owner — a private write
- * helper here plus two more elsewhere was that ownership in name only.
- */
-export function writeBoardsFile(dir: string, next: BoardsFile): void {
-  const file = boardsFilePath(dir)
-  mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, serializeBoardsFile(next))
-}
+import type { GallerySummary } from './componentGallery'
+import { readBoardsFile, writeBoardsFile } from './boardGeometry'
 
 /**
  * Places `pageId` on the project's board at the next free grid slot
@@ -92,7 +64,12 @@ export function writeBoardsFile(dir: string, next: BoardsFile): void {
  * or re-positioned — a scaffolded screen gets exactly one frame, never a
  * second "variant" of itself.
  */
-export function autoPlaceBoardFrame(dir: string, pageId: string, boardId?: string): void {
+export function autoPlaceBoardFrame(
+  dir: string,
+  pageId: string,
+  boardId?: string,
+  placement?: BoardFramePlacement,
+): void {
   const existing = readBoardsFile(dir)
   // The board the author had OPEN wins over "the first one". Boards curate
   // subsets of the project's pages on purpose, so a page created while looking
@@ -106,14 +83,18 @@ export function autoPlaceBoardFrame(dir: string, pageId: string, boardId?: strin
   const board = requested ?? existing.boards[0] ?? createBoard(crypto.randomUUID(), 'Board 1')
   if (board.frames.some((f) => f.pageId === pageId)) return
 
-  const { x, y } = defaultFramePosition(board.frames.length)
+  // P5-F / IX-13 — a frame DRAWN with the board tool lands where it was
+  // drawn, at the drawn size; anything else takes the next grid slot.
+  const { x, y } = placement ?? defaultFramePosition(board.frames.length)
   // WS-7.2 — a page scaffolded after "apply to all pages" inherits the
   // project's own frame default instead of the hardcoded FRAME_WIDTH/HEIGHT,
-  // same precedent `boardSlice.ts`'s `addFrame` follows.
+  // same precedent `boardSlice.ts`'s `addFrame` follows. A drawn size wins.
   const frameDefaults = readStudioMeta(dir).frameDefaults ?? {}
   const frame: Parameters<typeof upsertFrame>[1] = { id: crypto.randomUUID(), pageId, x, y }
-  if (frameDefaults.width) frame.width = frameDefaults.width
-  if (frameDefaults.height) frame.height = frameDefaults.height
+  const width = placement?.width ?? frameDefaults.width
+  const height = placement?.height ?? frameDefaults.height
+  if (width) frame.width = width
+  if (height) frame.height = height
 
   writeBoardsFile(dir, upsertBoard(existing, upsertFrame(board, frame)))
 }
@@ -136,7 +117,6 @@ export function autoPlaceBoardFrame(dir: string, pageId: string, boardId?: strin
  * leaves `boards.json`'s mtime alone (`compareVerdictCache.ts` keys on it).
  */
 export function removeBoardFramesForPage(dir: string, pageId: string): number {
-  if (!existsSync(boardsFilePath(dir))) return 0
   const existing = readBoardsFile(dir)
   let removed = 0
   const boards = existing.boards.map((board) => {
@@ -221,65 +201,134 @@ export function syncStoryBoardFrames(dir: string, stories: readonly StorySummary
   const meta = readStudioMeta(dir)
   if (meta.stories?.enabled === false) return
 
-  const placed = new Set(meta.stories?.placedPageIds ?? [])
-  const pending = stories.filter((story) => !placed.has(story.pageId))
-  if (pending.length === 0) return
+  const ledger = placeOnDerivedBoard(
+    dir,
+    STORIES_BOARD_NAME,
+    meta.stories,
+    stories.map((story) => ({ pageId: story.pageId, rowKey: story.title })),
+  )
+  if (ledger) mergeStudioMeta(dir, { stories: { ...meta.stories, ...ledger } })
+}
 
+/** The board a project's component variant galleries live on. */
+const COMPONENTS_BOARD_NAME = 'Components'
+
+/**
+ * Places a frame for every component variants gallery that has never had one,
+ * on a board of its own named "Components" — CV-2. Same one-time, never
+ * reconciled contract as {@link syncStoryBoardFrames} (a deleted frame stays
+ * deleted, a deleted board is a decision), recorded in `.studio/meta.json`'s
+ * `components` ledger. Rows are the component's folder, so
+ * `src/ui/Button.tsx` and `src/ui/Badge.tsx` sit side by side.
+ *
+ * What is persisted is only WHERE each gallery frame sits. The gallery pages
+ * themselves are derived on every load from the component's source and are
+ * never stored (`componentGallery.ts`).
+ */
+export function syncComponentBoardFrames(dir: string, galleries: readonly GallerySummary[]): void {
+  if (galleries.length === 0) return
+  const meta = readStudioMeta(dir)
+  const ledger = placeOnDerivedBoard(
+    dir,
+    COMPONENTS_BOARD_NAME,
+    meta.components,
+    galleries.map((gallery) => ({ pageId: gallery.pageId, rowKey: gallery.rowKey })),
+  )
+  if (ledger) mergeStudioMeta(dir, { components: { ...meta.components, ...ledger } })
+}
+
+/**
+ * A save that leaves out a derived board the editor knew about is the author
+ * deleting it: forget its id in the ledger so the next load does not make it
+ * again (`placeOnDerivedBoard` makes a LOST board again, and a dismissed one is
+ * not lost). `knownBoardIds` absent means the save carried no such claim.
+ */
+export function forgetRemovedDerivedBoards(dir: string, knownBoardIds: readonly string[] | undefined, saved: BoardsFile): void {
+  if (!knownBoardIds) return
+  const meta = readStudioMeta(dir)
+  const removed = (boardId: string | undefined) =>
+    boardId !== undefined && knownBoardIds.includes(boardId) && !saved.boards.some((b) => b.id === boardId)
+  const patch: Partial<StudioMeta> = {}
+  if (removed(meta.stories?.boardId)) patch.stories = { ...meta.stories, boardId: undefined }
+  if (removed(meta.components?.boardId)) patch.components = { ...meta.components, boardId: undefined }
+  if (Object.keys(patch).length > 0) mergeStudioMeta(dir, patch)
+}
+
+/** One derived frame to place: the page it renders and the row it belongs on. */
+interface DerivedFrame {
+  pageId: string
+  rowKey: string
+}
+
+/**
+ * The shared body of the two derived boards (Stories, Components): put every
+ * frame in `items` that the ledger has not placed before onto the board the
+ * ledger names (creating `boardName` the first time), one ROW per `rowKey`,
+ * and return the updated ledger — or `null` when nothing was written.
+ *
+ * Rows are keyed across the WHOLE item set, not just the pending slice, so
+ * an item added later lands in its row's existing line instead of starting a
+ * second one. Writes nothing when there is nothing to place, so
+ * `boards.json`'s mtime (which `compareVerdictCache.ts` keys on) is left alone
+ * on every load after the first.
+ */
+function placeOnDerivedBoard(
+  dir: string,
+  boardName: string,
+  ledger: { boardId?: string; placedPageIds?: string[] } | undefined,
+  items: readonly DerivedFrame[],
+): { boardId: string; placedPageIds: string[] } | null {
   const existing = readBoardsFile(dir)
-  const recordedBoardId = meta.stories?.boardId
-  // A recorded id that no longer resolves means the user deleted the Stories
-  // board. Honour that: place nothing, and leave the ledger as it is so a
-  // later re-enable starts from a clean slate rather than half a board.
-  if (recordedBoardId !== undefined && !existing.boards.some((b) => b.id === recordedBoardId)) return
+  const recordedBoardId = ledger?.boardId
+  // A recorded id that no longer resolves means the board was lost, not
+  // dismissed: removing one on purpose clears the ledger's id on the way out
+  // (`forgetRemovedDerivedBoards`), so what is left here is a board the editor
+  // overwrote or a file edited by hand. Make it again and place every frame on
+  // it, the way the first load did, rather than leaving the galleries
+  // reachable only through Add page.
+  const boardLost = recordedBoardId !== undefined && !existing.boards.some((b) => b.id === recordedBoardId)
+  const placed = new Set(boardLost ? [] : (ledger?.placedPageIds ?? []))
+  const pending = items.filter((item) => !placed.has(item.pageId))
+  if (pending.length === 0) return null
 
-  const board = recordedBoardId
+  const board = recordedBoardId && !boardLost
     ? existing.boards.find((b) => b.id === recordedBoardId)!
-    : createBoard(crypto.randomUUID(), STORIES_BOARD_NAME)
+    : createBoard(crypto.randomUUID(), boardName)
 
   const frameDefaults = readStudioMeta(dir).frameDefaults ?? {}
   const width = frameDefaults.width ?? FRAME_WIDTH
   const height = frameDefaults.height ?? FRAME_HEIGHT
-  // Rows are keyed by title across the WHOLE story set, not just the pending
-  // slice, so a story added later lands in its component's existing row
-  // instead of starting a second one.
   const rowIndex = new Map<string, number>()
   const columnsUsed = new Map<string, number>()
-  const pendingPageIds = new Set(pending.map((story) => story.pageId))
-  for (const story of stories) {
-    if (!rowIndex.has(story.title)) rowIndex.set(story.title, rowIndex.size)
+  const pendingPageIds = new Set(pending.map((item) => item.pageId))
+  for (const item of items) {
+    if (!rowIndex.has(item.rowKey)) rowIndex.set(item.rowKey, rowIndex.size)
     // Already-placed siblings hold the leading columns of their row, so a
-    // newly-written story lands after them rather than on top of one.
-    if (!pendingPageIds.has(story.pageId)) {
-      columnsUsed.set(story.title, (columnsUsed.get(story.title) ?? 0) + 1)
+    // newly-written item lands after them rather than on top of one.
+    if (!pendingPageIds.has(item.pageId)) {
+      columnsUsed.set(item.rowKey, (columnsUsed.get(item.rowKey) ?? 0) + 1)
     }
   }
 
   let next: Board = board
-  for (const story of pending) {
-    const column = columnsUsed.get(story.title) ?? 0
-    columnsUsed.set(story.title, column + 1)
+  for (const item of pending) {
+    const column = columnsUsed.get(item.rowKey) ?? 0
+    columnsUsed.set(item.rowKey, column + 1)
     next = upsertFrame(next, {
       id: crypto.randomUUID(),
-      pageId: story.pageId,
+      pageId: item.pageId,
       x: column * (width + FRAME_GAP),
-      y: (rowIndex.get(story.title) ?? 0) * (height + FRAME_GAP),
+      y: (rowIndex.get(item.rowKey) ?? 0) * (height + FRAME_GAP),
       width,
       height,
     })
   }
 
   writeBoardsFile(dir, upsertBoard(existing, next))
-  mergeStudioMeta(dir, {
-    stories: {
-      ...meta.stories,
-      boardId: next.id,
-      placedPageIds: [...placed, ...pending.map((story) => story.pageId)],
-    },
-  })
+  return { boardId: next.id, placedPageIds: [...placed, ...pending.map((item) => item.pageId)] }
 }
 
 /** Whether `.studio/boards.json` already carries a frame for `pageId` on any board. */
 function boardHasFrameForPage(dir: string, pageId: string): boolean {
-  if (!existsSync(boardsFilePath(dir))) return false
   return readBoardsFile(dir).boards.some((board) => board.frames.some((frame) => frame.pageId === pageId))
 }

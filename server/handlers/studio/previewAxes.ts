@@ -43,7 +43,7 @@
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { DEFAULT_PREVIEW_AXES, type PreviewAxes } from '@core/studio-board'
-import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { mergeStudioMeta, readStudioMeta } from './studioMeta'
 
@@ -53,6 +53,7 @@ const PreviewAxesPatchSchema = Type.Object({
   direction: Type.Optional(Type.Union([Type.Literal('ltr'), Type.Literal('rtl')])),
   colorScheme: Type.Optional(Type.Union([Type.Literal('light'), Type.Literal('dark')])),
   locale: Type.Optional(Type.String({ minLength: 1 })),
+  modes: Type.Optional(Type.Record(Type.String({ minLength: 1, maxLength: 80 }), Type.String({ minLength: 1, maxLength: 200 }))),
 })
 
 const PreviewAxesPostBodySchema = Type.Object({
@@ -93,8 +94,7 @@ export async function tryServeStudioPreviewAxes(req: Request, url: URL, pathname
       return jsonResponse({ ok: true, previewAxes: resolvePreviewAxes(dir) })
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio:previewAxes]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio:previewAxes]', err)
     }
   }
 

@@ -161,14 +161,13 @@ describe('the structural family undoes itself through ordinary edit kinds', () =
   })
 
   /**
-   * Why `dissolveWrapperTemplate` records `unsupported` for a COMPONENT
-   * wrapper rather than an `ungroup`: this is what would happen if it did not.
-   * `unwrapJsxElement` refuses a component tag by name (`has-behaviour`) —
-   * removing the call site is deleting a component usage, not ungrouping — so
-   * the undo would post a write the server refuses, with a sentence about
-   * behaviour the user never mentioned. The refusal is made at ⌘Z instead.
+   * A COMPONENT wrapper has no plain inverse: ungrouping `<Card>` keeps the
+   * call site (G-7) - `<Card />` with its children beside it - so a re-group's
+   * "ungroup what it created" would leave a husk, not the original file. The
+   * group's undo is therefore the journal's pre-image (`restore`), which brings
+   * every byte back whatever the wrapper was.
    */
-  it('refuses to dissolve a COMPONENT wrapper, which is why that group has no canvas undo', () => {
+  it('a group into a COMPONENT wrapper is undone by the journal, not by an ungroup that would leave a husk', () => {
     const source = `export default function Page() {
   return (
     <section>
@@ -181,20 +180,41 @@ describe('the structural family undoes itself through ordinary edit kinds', () =
     write(REL, source)
     write('src/ui/Card.tsx', 'export function Card(props: { children?: unknown }) { return null }\n')
 
-    const grouped = applyStudioEditBatch(tmpDir, [
-      {
-        kind: 'group',
-        nodeId: idIn(REL, source, 'p'),
-        siblingNodeIds: [idIn(REL, source, 'b')],
-        name: 'Card',
-        importSpecifier: '../ui/Card',
-      },
-    ])
+    const EDITOR = { journal: true } as const
+    const grouped = applyStudioEditBatch(
+      tmpDir,
+      [
+        {
+          kind: 'group',
+          nodeId: idIn(REL, source, 'p'),
+          siblingNodeIds: [idIn(REL, source, 'b')],
+          name: 'Card',
+          importSpecifier: '../ui/Card',
+        },
+      ],
+      {},
+      EDITOR,
+    )
     expect(grouped.createdNodeIds).toHaveLength(1)
+    expect(grouped.undoToken).toMatch(/^[0-9a-f]{32}$/)
+    const afterGroup = read(REL)
 
-    const undone = applyStudioEditBatch(tmpDir, [{ kind: 'ungroup', nodeId: grouped.createdNodeIds[0]! }])
-    expect(undone.written).toBe(0)
-    expect(undone.refusals.map((r) => r.reason)).toEqual(['has-behaviour'])
+    // Ungrouping it keeps the call site (a usage is not a group)...
+    const dissolved = applyStudioEditBatch(tmpDir, [{ kind: 'ungroup', nodeId: grouped.createdNodeIds[0]! }])
+    expect(dissolved.refusals).toEqual([])
+    expect(read(REL)).toContain('<Card />')
+    expect(read(REL)).toContain('<p>first</p>')
+    write(REL, afterGroup)
+
+    // ...so the group's own undo is the pre-image, which is exact.
+    const undone = applyStudioEditBatch(
+      tmpDir,
+      [{ kind: 'restore', nodeId: `undo-journal:${grouped.undoToken}`, token: grouped.undoToken! }],
+      {},
+      EDITOR,
+    )
+    expect(undone.refusals).toEqual([])
+    expect(read(REL)).toBe(source)
   })
 
   it('insert → delete gives the file back byte for byte', () => {

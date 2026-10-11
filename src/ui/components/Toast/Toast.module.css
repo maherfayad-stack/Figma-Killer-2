@@ -12,13 +12,15 @@
 
 .stack {
     position: fixed;
-    right: 16px;
+    /* Set by ToastProvider: how far the inspector reaches in from the right edge, so the stack sits beside it, never on it. */
+    --toast-clear-right: 0px;
+    right: calc(16px + var(--toast-clear-right));
     bottom: 16px;
     z-index: var(--toast-z-index);
     display: flex;
     flex-direction: column-reverse;
     gap: var(--space-s);
-    max-width: min(420px, calc(100vw - 32px));
+    max-width: min(420px, calc(100vw - 32px - var(--toast-clear-right)));
     pointer-events: none;
 }
 
@@ -130,26 +132,12 @@
     font-size: var(--text-xs);
     line-height: 1.45;
     overflow-wrap: anywhere;
-    /* Cap to ~3 lines so a noisy stack trace can't fill the viewport. */
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-}
-
-.location {
-    margin: var(--space-4xs) 0 0;
-    color: var(--text-subtle);
-    font-family:
-        ui-monospace,
-        SFMono-Regular,
-        SF Mono,
-        Menlo,
-        Consolas,
-        "Liberation Mono",
-        monospace;
-    font-size: var(--text-2xs);
-    letter-spacing: 0.01em;
+    /* Cap the height so a noisy stack trace can't fill the viewport, but
+       scroll rather than clip: a refusal's reason and its next step are the
+       whole point of the toast, and a clamp cut them off mid-sentence. */
+    max-height: calc(1.45em * 8);
+    overflow-y: auto;
+    overscroll-behavior: contain;
 }
 
 .actions {

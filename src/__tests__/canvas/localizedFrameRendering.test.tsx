@@ -76,9 +76,6 @@ beforeEach(() => {
     selectedNodeId: null,
     selectedNodeIds: [],
     selectedNodeFrameId: null,
-    hoveredNodeId: null,
-    hoveredBreakpointId: null,
-    hoveredFrameId: null,
     localizedPages: {},
     localizedPageStatus: {},
     _historyPast: [],
@@ -137,10 +134,12 @@ describe('a locale-variant board frame renders its OWN (pageId, locale) tree', (
     const enDoc = await waitForFrameDocument('frame-en')
     const arDoc = await waitForFrameDocument('frame-ar')
 
+    await waitFor(() => {
+      expect(enDoc.querySelector('[data-node-id="headline"]')).toBeTruthy()
+      expect(arDoc.querySelector('[data-node-id="headline"]')).toBeTruthy()
+    })
     const enNode = enDoc.querySelector('[data-node-id="headline"]') as HTMLElement
     const arNode = arDoc.querySelector('[data-node-id="headline"]') as HTMLElement
-    expect(enNode).toBeTruthy()
-    expect(arNode).toBeTruthy()
 
     // Same node id (trap #2), different rendered text — proving the AR
     // frame reads `localizedPages['home::ar']`, not `site.pages`.

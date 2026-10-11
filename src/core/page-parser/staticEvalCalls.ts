@@ -28,6 +28,7 @@ import {
 } from 'ts-morph'
 import type { FunctionLike } from './types'
 import { enclosingFunctionLike } from './defaultLiteralBindings'
+import { collectReads, recordReadFile, recordReadFiles } from './evalReadFiles'
 import {
   createEvalScope,
   evaluateCondition,
@@ -41,6 +42,7 @@ import {
   type LocalBinding,
   type StaticValue,
 } from './staticEvalCore'
+import type { MemoizedValue } from './staticEvalTypes'
 import { unresolved, unwrapParens, withNote } from './staticEvalValues'
 
 const WHITELISTED_COERCIONS: ReadonlySet<string> = new Set(['String', 'Number'])
@@ -104,7 +106,7 @@ export function evaluateCall(expr: CallExpression, scope: EvalScope, budget: Bud
  * caching `{ t: <the "en" branch> }` and then handing it back to a page loaded
  * with `previewLocale: "ar"` would silently serve the wrong copy.
  */
-let providerTraceCache = new WeakMap<Node, Map<string, StaticValue>>()
+let providerTraceCache = new WeakMap<Node, Map<string, MemoizedValue>>()
 
 /** Drops every memoized provider trace — a traced `value` may have been read through any file in the workspace, so a kept `Project` resets this whenever one changes (`./parserCaches`). */
 export function forgetProviderTraceCache(): void {
@@ -119,7 +121,10 @@ function tryProviderTraceCached(fn: ArrowFunctionOrDecl, budget: Budget, depth: 
   const cacheKey = budget.preferredKey ?? ''
   let byKey = providerTraceCache.get(fn)
   const cached = byKey?.get(cacheKey)
-  if (cached) return cached
+  if (cached) {
+    recordReadFiles(budget.readFiles, cached.files)
+    return cached.value
+  }
 
   // A provider whose own `value` reads the same hook would recurse forever;
   // `budget.cycle` is the same guard `evaluateModuleConst` uses for consts.
@@ -129,7 +134,15 @@ function tryProviderTraceCached(fn: ArrowFunctionOrDecl, budget: Budget, depth: 
     return unresolved('cyclic provider trace')
   }
   budget.cycle.add(cycleKey)
-  const { result, truncated } = trackTruncation(budget, () => traceProvider(ctxExpr, fn.getProject(), budget, depth))
+  // WB-2 — the hook's own file, the context's, the provider's: every file
+  // the traced value was read through, replayed on every later memo hit.
+  const {
+    result: { result, truncated },
+    files,
+  } = collectReads(budget, () => {
+    recordReadFile(budget.readFiles, fn.getSourceFile())
+    return trackTruncation(budget, () => traceProvider(ctxExpr, fn.getProject(), budget, depth))
+  })
   budget.cycle.delete(cycleKey)
 
   // Same rule as `evaluateModuleConst`: a guard-truncated trace is a fact
@@ -139,7 +152,7 @@ function tryProviderTraceCached(fn: ArrowFunctionOrDecl, budget: Budget, depth: 
       byKey = new Map()
       providerTraceCache.set(fn, byKey)
     }
-    byKey.set(cacheKey, result)
+    byKey.set(cacheKey, { value: result, files })
   }
   return result
 }
@@ -147,6 +160,7 @@ function tryProviderTraceCached(fn: ArrowFunctionOrDecl, budget: Budget, depth: 
 function traceProvider(ctxExpr: Node, project: Project, budget: Budget, depth: number): StaticValue {
   const ctxDecl = resolveContextDeclaration(ctxExpr)
   if (!ctxDecl) return unresolved('context declaration could not be resolved')
+  recordReadFile(budget.readFiles, ctxDecl.getSourceFile())
 
   const providers = findProviders(project, ctxDecl)
   if (providers.length === 0) return unresolved('no <Context.Provider> found for this context')
@@ -154,6 +168,7 @@ function traceProvider(ctxExpr: Node, project: Project, budget: Budget, depth: n
 
   const valueExpr = providerValueExpression(providers[0]!)
   if (!valueExpr) return unresolved('provider has no `value` attribute')
+  recordReadFile(budget.readFiles, valueExpr.getSourceFile())
 
   // The value is almost never a literal sitting in the attribute — the corpus
   // shape is `value={value}` referring to a `const` in the provider
@@ -191,6 +206,36 @@ function extractUseContextArg(expr: Node): Node | undefined {
   const callee = n.getExpression()
   if (!Node.isIdentifier(callee) || callee.getText() !== 'useContext') return undefined
   return n.getArguments()[0]
+}
+
+/** A hook-shaped callee name: `useX`, `React.useX`. */
+const HOOK_NAME_RE = /^use[A-Z0-9]/
+
+/** The hooks a context reader's body may call besides the `useContext` it reads: `useMemo` of what it read (Tier B unwraps exactly that). */
+const CONTEXT_READER_HOOKS: ReadonlySet<string> = new Set(['useContext', 'useMemo'])
+
+/**
+ * DET-3 — whether `fn` is a CONTEXT READER: a custom hook whose value is what
+ * a `useContext` returns, the shape Tier B's provider trace already recognises
+ * (`findUseContextArgument`: `useContext(Ctx)` as a `const` initializer or the
+ * returned expression), asked one question more strictly — no hook besides
+ * `useContext` and a `useMemo` of it is called anywhere in its body.
+ *
+ * A context reader returns the same value to every component under one
+ * provider, so the detach codemod may move its call from a component into the
+ * component that encloses the call site without changing what renders. Any
+ * other hook holds state or runs effects, and moving it would change
+ * behaviour — this answers `false` for all of them. Nothing is called; this
+ * reads the body's call shapes.
+ */
+export function isContextReaderHook(fn: FunctionLike): boolean {
+  if (!findUseContextArgument(fn)) return false
+  for (const call of fn.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+    const callee = call.getExpression()
+    const name = Node.isIdentifier(callee) ? callee.getText() : Node.isPropertyAccessExpression(callee) ? callee.getName() : undefined
+    if (name !== undefined && HOOK_NAME_RE.test(name) && !CONTEXT_READER_HOOKS.has(name)) return false
+  }
+  return true
 }
 
 function resolveContextDeclaration(ctxExpr: Node): Node | undefined {

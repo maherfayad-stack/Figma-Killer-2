@@ -32,6 +32,7 @@ import {
   getStudioStyleRuleSources,
   recordCreatedStylesheet,
   ruleIdFromCssCreateNodeId,
+  resetCssDestinationMemory,
   setOpenPageFile,
   setStudioStyleRuleSources,
 } from '@site/studio/styleRuleWriteback'
@@ -44,6 +45,7 @@ beforeEach(() => {
   // Z8's open-page anchor is module state: every case here states the world
   // it wants, and none of these is about a page being open.
   setOpenPageFile(null)
+  resetCssDestinationMemory()
 })
 
 afterEach(() => {
@@ -173,29 +175,46 @@ describe('Track B1 integration — a class created in the editor reaches disk en
     )
   })
 
-  it('refuses honestly, with no write and no fabricated source, when zero stylesheets are known', () => {
+  it('P3-C (ERR-15) — with zero stylesheets and no page, creates studio.css beside the app entry and imports it there', () => {
+    write('src/main.tsx', "import { App } from './App'\n\nrender(App)\n")
     setStudioStyleRuleSources({}, {})
     const styled = newClassRule({ contextStyles: { [STUDIO_BREAKPOINT_ID]: { color: 'blue' } } })
 
     const plan = collectStyleRuleEdits({ [NEW_CLASS_ID]: styled })
+    expect(plan.unmapped).toEqual([])
+    expect(plan.edits).toEqual([
+      {
+        kind: 'css',
+        op: 'create',
+        nodeId: `css:create:${NEW_CLASS_ID}`,
+        selector: '.brand-new',
+        declarations: { color: 'blue' },
+      },
+    ])
 
-    expect(plan.edits).toHaveLength(0)
-    // Z8 — a destination refusal has its own list; `unmapped` is reserved for
-    // a class that can never be written at all (a Tailwind utility, a build
-    // artefact), which this one is not.
-    expect(plan.destinationRefusals[0]!.label).toBe('.brand-new')
-    expect(plan.destinationRefusals[0]!.message).toContain('could not find a hand-editable .css file')
-
-    // Nothing to send — applying an empty batch is a no-op, proving there is
-    // no silent write happening anywhere in this path.
     const result = applyStudioEditBatch(tmpDir, plan.edits)
+    expect(result.refusals).toEqual([])
+    expect(result.written).toBe(1)
+    expect(result.createdStylesheets).toEqual([{ nodeId: `css:create:${NEW_CLASS_ID}`, file: 'src/studio.css' }])
+    expect(read('src/studio.css')).toBe('.brand-new {\n  color: blue;\n}')
+    expect(read('src/main.tsx')).toBe("import { App } from './App'\nimport './studio.css';\n\nrender(App)\n")
+  })
+
+  it('P3-C (ERR-15) — refuses by name, writing nothing, when the project has no entry module either', () => {
+    setStudioStyleRuleSources({}, {})
+    const styled = newClassRule({ contextStyles: { [STUDIO_BREAKPOINT_ID]: { color: 'blue' } } })
+
+    const result = applyStudioEditBatch(tmpDir, collectStyleRuleEdits({ [NEW_CLASS_ID]: styled }).edits)
+
     expect(result.written).toBe(0)
+    expect(result.refusals.map((refusal) => refusal.reason)).toEqual(['no-app-entry'])
+    expect(fs.readdirSync(tmpDir)).toEqual([])
 
     commitBaseline({ [NEW_CLASS_ID]: styled })
     expect(getStudioStyleRuleSources()[NEW_CLASS_ID]).toBeUndefined()
   })
 
-  it('refuses honestly, naming both candidates, when the destination is ambiguous', () => {
+  it('P3-C (ERR-14) — with two candidate stylesheets, writes into the one Studio chose and leaves the other alone', () => {
     write('src/screens/A.css', '.a {\n  color: red;\n}\n')
     write('src/screens/B.css', '.b {\n  color: red;\n}\n')
     setStudioStyleRuleSources(
@@ -208,15 +227,17 @@ describe('Track B1 integration — a class created in the editor reaches disk en
     const styled = newClassRule({ contextStyles: { [STUDIO_BREAKPOINT_ID]: { color: 'blue' } } })
 
     const plan = collectStyleRuleEdits({ [NEW_CLASS_ID]: styled })
+    const result = applyStudioEditBatch(tmpDir, plan.edits)
 
-    expect(plan.edits).toHaveLength(0)
-    expect(plan.destinationRefusals[0]!.message).toContain('src/screens/A.css')
-    expect(plan.destinationRefusals[0]!.message).toContain('src/screens/B.css')
-    // Z8 — and the same two files come back as a CHOICE the user can act on.
-    expect(plan.destinationRefusals[0]!.candidates).toEqual(['src/screens/A.css', 'src/screens/B.css'])
-    // Neither file is touched — an ambiguous destination is a refusal, never a guess.
-    expect(read('src/screens/A.css')).toBe('.a {\n  color: red;\n}\n')
+    expect(result.refusals).toEqual([])
+    expect(result.written).toBe(1)
+    expect(read('src/screens/A.css')).toBe('.a {\n  color: red;\n}\n\n.brand-new {\n  color: blue;\n}\n')
     expect(read('src/screens/B.css')).toBe('.b {\n  color: red;\n}\n')
+
+    // The same rule is editable through the ordinary `set` path next time,
+    // in the SAME file — the choice is remembered, not re-made.
+    commitBaseline({ [NEW_CLASS_ID]: styled })
+    expect(getStudioStyleRuleSources()[NEW_CLASS_ID]).toEqual({ file: 'src/screens/A.css', selector: '.brand-new' })
   })
 })
 
@@ -381,7 +402,10 @@ describe('Track B1 integration — create branch: zero stylesheets, but a real p
     ])
 
     expect(result.written).toBe(0)
-    expect(result.refusals).toHaveLength(0) // not a NAMED refusal — an attack, not a sentence to show a user
+    // WB-12 — every edit that does not write is named; a hand-crafted escape is
+    // told only that there was nowhere to write, never where it tried.
+    expect(result.refusals).toEqual([expect.objectContaining({ reason: 'stylesheet-unavailable' })])
+    expect(result.refusals[0]!.message).not.toContain('outside.css')
     expect(result.createdStylesheets).toHaveLength(0)
     expect(fs.existsSync(path.join(path.dirname(tmpDir), 'outside.css'))).toBe(false)
   })

@@ -67,11 +67,11 @@ export function classifyStylesheetEditability(filePath: string): StylesheetEdita
   const normalized = normalizePath(filePath).toLowerCase()
 
   if (normalized.endsWith('.min.css')) {
-    return { kind: 'compiled', reason: 'This is a minified build artefact, not hand-authored source.' }
+    return { kind: 'compiled', reason: 'This is a minified build artefact, not hand-authored source. Edit the source it was built from.' }
   }
 
   if (COMPILED_DIR_SEGMENTS.some((segment) => normalized.includes(segment))) {
-    return { kind: 'compiled', reason: "This file lives in a build/output directory, not the project's own source." }
+    return { kind: 'compiled', reason: "This file lives in a build or output folder, not the project's own source. Edit the source file it is built from." }
   }
 
   return { kind: 'plain-css' }

@@ -10,12 +10,25 @@
  * be read as a set, not hunted for between route branches.
  */
 import { Type } from '@core/utils/typeboxHelpers'
+import { SourceFingerprintExpectationsSchema } from '@core/page-tree'
 import { StudioEditSchema } from '../studioWriteback'
 
 /** Body of POST /admin/api/studio/save — a batch of typed source writebacks. */
 export const SaveBodySchema = Type.Object({
   dir: Type.Optional(Type.String()),
   edits: Type.Optional(Type.Array(StudioEditSchema)),
+  /**
+   * P1-A — the identity (`<tag>#<hash>`) the client recorded for each node id
+   * its edits name. An edit whose position now holds something else refuses
+   * `element-moved` instead of writing to a neighbour. See `studioEditIdentity.ts`.
+   */
+  expect: Type.Optional(SourceFingerprintExpectationsSchema),
+  /**
+   * P3-D — apply `edits` IN ORDER, each against the files the previous ones
+   * left, all or nothing (`studioEditSequence.ts`). Absent: an ordinary batch,
+   * ordered bottom-to-top, whose edits must be independent.
+   */
+  sequence: Type.Optional(Type.Literal(true)),
 })
 
 /**
@@ -27,6 +40,13 @@ export const SaveBodySchema = Type.Object({
 export const BoardsPostBodySchema = Type.Object({
   dir: Type.Optional(Type.String()),
   boards: Type.Unknown(),
+  /**
+   * Every board id the editor has read or written so far. A board on disk that
+   * is in neither this list nor `boards` was made by someone else since (the
+   * server's Components board) and survives the save; one that IS listed and
+   * absent from `boards` was removed on purpose. Absent: a plain overwrite.
+   */
+  knownBoardIds: Type.Optional(Type.Array(Type.String())),
 })
 
 /**

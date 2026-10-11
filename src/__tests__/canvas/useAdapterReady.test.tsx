@@ -29,7 +29,7 @@ function makeStubAdapter(): { adapter: FrameDocumentAdapter; fireReady: () => vo
     measure: async () => [],
     setAxes: () => {},
     setInteractionMode: () => {},
-    optimistic: { insert: () => {}, delete: () => {}, move: () => {}, text: () => {} },
+    optimistic: { insert: () => {}, delete: () => {}, move: () => {} },
     on: (event, handler): Unsubscribe => {
       if (event !== 'ready') return () => {}
       const readyHandler = handler as ReadyHandler

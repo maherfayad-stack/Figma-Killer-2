@@ -51,7 +51,7 @@ export type AddPageChoice =
   | { kind: 'existing'; pageId: string }
 
 /** Project-relative source file for a page, or `''` when its id is not source-derived. */
-export function pageRelPath(page: Page): string {
+export function pageRelPath(page: Pick<Page, 'rootNodeId'>): string {
   return decodeSourceNodeId(page.rootNodeId)?.rel ?? ''
 }
 
@@ -69,7 +69,7 @@ export function buildAddPageOptions({
   boards,
   activeBoard,
 }: {
-  pages: readonly Page[]
+  pages: readonly Pick<Page, 'id' | 'title' | 'rootNodeId'>[]
   boards: readonly Board[]
   activeBoard: Board | null
 }): AddPageOptions {

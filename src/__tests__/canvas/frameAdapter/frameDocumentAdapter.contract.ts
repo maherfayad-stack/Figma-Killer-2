@@ -91,6 +91,41 @@ export function runFrameDocumentAdapterContract(name: string, makeHarness: () =>
       }
     })
 
+    // SB-3
+    it('measureAll returns a promise resolving to a well-formed snapshot: finite rects, every parent an earlier entry', async () => {
+      const { adapter, cleanup } = makeHarness()
+      try {
+        const result = adapter.measureAll()
+        expect(result).toBeInstanceOf(Promise)
+        const snapshot = await result
+        expect(Number.isFinite(snapshot.origin.x) && Number.isFinite(snapshot.origin.y)).toBe(true)
+        expect(typeof snapshot.truncated).toBe('boolean')
+        snapshot.nodes.forEach((node, i) => {
+          expect(node.nodeId.length).toBeGreaterThan(0)
+          expect([node.rect.x, node.rect.y, node.rect.width, node.rect.height].every(Number.isFinite)).toBe(true)
+          expect(node.parent).toBeGreaterThanOrEqual(-1)
+          expect(node.parent).toBeLessThan(i)
+        })
+      } finally {
+        cleanup()
+      }
+    })
+
+    it('geometry:dirty can be subscribed to, and is silent until a measureAll has been asked for', async () => {
+      const { adapter, cleanup } = makeHarness()
+      try {
+        let fired = 0
+        const unsubscribe = adapter.on('geometry:dirty', () => {
+          fired += 1
+        })
+        await Promise.resolve()
+        expect(fired).toBe(0)
+        expect(() => unsubscribe()).not.toThrow()
+      } finally {
+        cleanup()
+      }
+    })
+
     it('setAxes does not throw for both directions and both color schemes', () => {
       const { adapter, cleanup } = makeHarness()
       try {
@@ -112,6 +147,15 @@ export function runFrameDocumentAdapterContract(name: string, makeHarness: () =>
       }
     })
 
+    it('beginTextEdit does not throw', () => {
+      const { adapter, existingRef, cleanup } = makeHarness()
+      try {
+        expect(() => adapter.beginTextEdit(existingRef.nodeId, 'seed text')).not.toThrow()
+      } finally {
+        cleanup()
+      }
+    })
+
     // `live-18`
     it('startTextEdit does not throw for an allowed or a refused reply', () => {
       const { adapter, existingRef, cleanup } = makeHarness()
@@ -127,13 +171,14 @@ export function runFrameDocumentAdapterContract(name: string, makeHarness: () =>
       const { adapter, existingRef, cleanup } = makeHarness()
       try {
         expect(() => adapter.optimistic.insert('contract-new', existingRef.nodeId, 0, 'div', 'hi')).not.toThrow()
-        expect(() => adapter.optimistic.text('contract-new', 'updated')).not.toThrow()
         // Moves the newly-inserted node back under the SAME parent — moving a
         // node to be its own child (`existingRef` as both mover and target)
         // is nonsensical and correctly throws in a real DOM; this exercises
         // the real "move within a valid, distinct parent" case instead.
         expect(() => adapter.optimistic.move('contract-new', existingRef.nodeId, 0)).not.toThrow()
         expect(() => adapter.optimistic.delete('contract-new')).not.toThrow()
+        // store-17 — a rollback's revert.
+        expect(() => adapter.optimistic.revert(['contract-new'])).not.toThrow()
       } finally {
         cleanup()
       }

@@ -1341,11 +1341,17 @@ async function dragTreeRowBefore(
 
 async function openCustomPropertiesSection(page: Page): Promise<void> {
   const propertiesPanel = page.getByTestId('properties-panel')
-  const sectionToggle = propertiesPanel.getByRole('button', { name: /Custom properties/ })
-  await sectionToggle.scrollIntoViewIfNeeded()
-  if ((await sectionToggle.getAttribute('aria-expanded')) !== 'true') {
-    await sectionToggle.click()
+  // Custom properties lives behind the Design tab's one More disclosure.
+  const moreToggle = propertiesPanel
+    .getByTestId('inspector-more-disclosure')
+    .getByRole('button', { name: /^More/ })
+  await moreToggle.scrollIntoViewIfNeeded()
+  if ((await moreToggle.getAttribute('aria-expanded')) !== 'true') {
+    await moreToggle.click()
   }
+  // The section itself is `forceOpen`: a static header over its body, with
+  // no toggle to click (P2-H).
+  await propertiesPanel.getByText('Custom properties', { exact: true }).scrollIntoViewIfNeeded()
 }
 
 async function expectComputedCustomProperty(

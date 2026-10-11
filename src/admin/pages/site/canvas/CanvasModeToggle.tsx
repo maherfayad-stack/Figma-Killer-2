@@ -52,6 +52,7 @@ import { TvSolidIcon } from 'pixel-art-icons/icons/tv-solid'
 import { cn } from '@ui/cn'
 import { Tooltip } from '@ui/components/Tooltip'
 import { LiveRuntimePill } from './LiveRuntimePill'
+import { liveEntryBreakpointId } from './liveEntryBreakpoint'
 import styles from './CanvasModeToggle.module.css'
 
 const EMPTY_BREAKPOINTS: Breakpoint[] = []
@@ -61,16 +62,9 @@ interface CanvasModeToggleProps {
   scriptStatus: RuntimeScriptStatus
   /** Force a rebuild + re-run of the runtime scripts. */
   onRefreshScripts: () => void
-  /**
-   * Auto-hide the switcher until hovered/focused, rolling it down from the top
-   * edge. Used in live mode, where the frame is flush with the top of the
-   * surface and a pinned switcher would overlay the page's header. A slim
-   * handle stays visible as the hover affordance. Mirrors `CanvasNotch`'s peek.
-   */
-  peek?: boolean
 }
 
-export function CanvasModeToggle({ scriptStatus, onRefreshScripts, peek = false }: CanvasModeToggleProps) {
+export function CanvasModeToggle({ scriptStatus, onRefreshScripts }: CanvasModeToggleProps) {
   const view = useEditorStore((s) => s.canvasView)
   const setView = useEditorStore((s) => s.setCanvasView)
   const breakpoints = useEditorStore((s) => s.site?.breakpoints ?? EMPTY_BREAKPOINTS)
@@ -81,6 +75,7 @@ export function CanvasModeToggle({ scriptStatus, onRefreshScripts, peek = false 
   const hasBoard = useEditorStore(selectHasActiveBoard)
   const boardMode = useEditorStore((s) => s.boardMode)
   const setBoardMode = useEditorStore((s) => s.setBoardMode)
+  const frameDefaultWidth = useEditorStore((s) => s.frameDefaults.width)
   const playMode = useEditorStore((s) => s.playMode)
   const setPlayMode = useEditorStore((s) => s.setPlayMode)
 
@@ -92,8 +87,7 @@ export function CanvasModeToggle({ scriptStatus, onRefreshScripts, peek = false 
   }
 
   return (
-    <div className={cn(styles.shell, peek && styles.shellPeek)}>
-      {peek && <div aria-hidden="true" className={styles.peekHandle} />}
+    <div className={styles.shell}>
       <div className={styles.roller}>
         <div
           className={styles.pill}
@@ -124,7 +118,13 @@ export function CanvasModeToggle({ scriptStatus, onRefreshScripts, peek = false 
             aria-label="Live"
             data-testid="canvas-mode-toggle-live"
             className={cn(styles.tab, view === 'live' && styles.tabActive)}
-            onClick={() => setView('live')}
+            onClick={() => {
+              // Open Live at the width the project was designed for (a Mobile
+              // project at 393, not the store's 1440 default).
+              const entry = view === 'live' ? null : liveEntryBreakpointId(breakpoints, frameDefaultWidth)
+              if (entry) setActiveBreakpoint(entry)
+              setView('live')
+            }}
           >
             <EyeSolidIcon size={14} aria-hidden="true" />
           </button>

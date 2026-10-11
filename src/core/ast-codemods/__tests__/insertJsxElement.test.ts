@@ -375,8 +375,8 @@ export default function Page() {
   })
 })
 
-describe('insertJsxElement — refusals leave the file byte-identical', () => {
-  it('refuses when the name is already bound to a different import', () => {
+describe('insertJsxElement — refusals leave the file byte-identical (and P3-C WB-19 name clashes that no longer refuse)', () => {
+  it('P3-C (WB-19) — imports under an alias when the name is already bound to a different import', () => {
     const source = `import { Button } from './ui/Button'
 
 export default function Page() {
@@ -391,15 +391,40 @@ export default function Page() {
     const at = locateTag(source, 'div')
 
     const result = insertJsxElement({ file, ...at, name: 'Button', importSpecifier: DS })
-    expect(result.ok).toBe(false)
-    if (!result.ok) {
-      expect(result.refusal.reason).toBe('binding-conflict')
-      expect(result.refusal.message).toContain('./ui/Button')
-    }
-    expect(fs.readFileSync(file, 'utf8')).toBe(source)
+    expect(result.ok).toBe(true)
+    expect(fs.readFileSync(file, 'utf8')).toBe(`import { Button } from './ui/Button'
+import { Button as Button2 } from '${DS}'
+
+export default function Page() {
+  return (
+    <div>
+      <Button />
+      <Button2 />
+    </div>
+  )
+}
+`)
   })
 
-  it('refuses when the name is a locally declared component', () => {
+  it('P3-C (WB-19) — reuses an alias the file already gives that export, adding no import', () => {
+    const source = `import { Button as DSButton } from '${DS}'
+
+export default function Page() {
+  return (
+    <div>
+      <DSButton />
+    </div>
+  )
+}
+`
+    const file = writeFixture(source)
+    const at = locateTag(source, 'div')
+
+    expect(insertJsxElement({ file, ...at, name: 'Button', importSpecifier: DS }).ok).toBe(true)
+    expect(fs.readFileSync(file, 'utf8')).toBe(source.replace('      <DSButton />\n', '      <DSButton />\n      <DSButton />\n'))
+  })
+
+  it('P3-C (WB-19) — a locally declared component of the same name gets an aliased import, never shadowed', () => {
     const source = `function Button() {
   return <button />
 }
@@ -416,9 +441,9 @@ export default function Page() {
     const at = locateTag(source, 'div')
 
     const result = insertJsxElement({ file, ...at, name: 'Button', importSpecifier: DS })
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.refusal.reason).toBe('binding-conflict')
-    expect(fs.readFileSync(file, 'utf8')).toBe(source)
+    expect(result.ok).toBe(true)
+    expect(fs.readFileSync(file, 'utf8')).toBe(`import { Button as Button2 } from '${DS}'
+${source.replace('      <Button />\n', '      <Button />\n      <Button2 />\n')}`)
   })
 
   it('refuses when the parent location does not name a JSX element', () => {
@@ -429,37 +454,6 @@ export default function Page() {
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.refusal.reason).toBe('not-found')
     expect(fs.readFileSync(file, 'utf8')).toBe(PAGE)
-  })
-
-  it('refuses when the anchor is not a child of the container', () => {
-    const source = `export default function Page() {
-  return (
-    <section>
-      <div className="a">
-        <span>inner</span>
-      </div>
-      <p>outer</p>
-    </section>
-  )
-}
-`
-    const file = writeFixture(source)
-    const parent = locateTag(source, 'div')
-    const anchor = locateTag(source, 'p')
-
-    const result = insertJsxElement({
-      file,
-      ...parent,
-      anchorLine: anchor.line,
-      anchorCol: anchor.col,
-      position: 'after',
-      name: 'Button',
-      importSpecifier: DS,
-    })
-
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.refusal.reason).toBe('not-siblings')
-    expect(fs.readFileSync(file, 'utf8')).toBe(source)
   })
 
   it('measures its splice against the file on disk, not a stale parsed copy', () => {
@@ -769,17 +763,6 @@ export default function Page() {
     expect(fs.readFileSync(file, 'utf8')).toContain('<div />')
   })
 
-  it('refuses a void element given nested children', () => {
-    const file = writeFixture(PAGE)
-    const at = locateTag(PAGE, 'section')
-
-    const result = insertJsxElement({ file, ...at, name: 'img', children: [{ name: 'span' }] })
-    expect(result.ok).toBe(false)
-    if (result.ok) throw new Error('unreachable')
-    expect(result.refusal.reason).toBe('void-element-children')
-    expect(fs.readFileSync(file, 'utf8')).toBe(PAGE)
-  })
-
   it('escapes text inside nested levels too', () => {
     const file = writeFixture(PAGE)
     const at = locateTag(PAGE, 'section')
@@ -981,5 +964,50 @@ describe('insertJsxElement — a React element inside a prop', () => {
     const written = fs.readFileSync(file, 'utf8')
     expect(written).toContain("import { Chip, TabBar } from '@alm-design/design-system'")
     expect(written).not.toContain('svg }')
+  })
+})
+
+describe('insertJsxElement — a project component exported as default', () => {
+  it('writes a default import (`import Card from …`), not a named one', () => {
+    const source = `export default function Page() {
+  return (
+    <section>
+      <p>hi</p>
+    </section>
+  )
+}
+`
+    const file = writeFixture(source)
+    const at = locateTag(source, 'section')
+
+    const result = insertJsxElement({ file, ...at, name: 'Card', importSpecifier: '../components/Card', importStyle: 'default' })
+
+    expect(result).toMatchObject({ ok: true })
+    const written = fs.readFileSync(file, 'utf8')
+    expect(written).toContain("import Card from '../components/Card'")
+    expect(written).not.toContain('{ Card }')
+    expect(written).toContain('<Card />')
+    // The undo of the insert deletes what was created: it must be addressable,
+    // or Ctrl+Z has nothing to point at (a project component insert once could
+    // not be undone).
+    expect(result.ok && result.created).toHaveLength(1)
+  })
+
+  it('reuses the default import the file already has instead of adding a second', () => {
+    const source = `import Card from '../components/Card'
+
+export default function Page() {
+  return (
+    <section>
+      <Card />
+    </section>
+  )
+}
+`
+    const file = writeFixture(source)
+    const at = locateTag(source, 'section')
+
+    expect(insertJsxElement({ file, ...at, name: 'Card', importSpecifier: '../components/Card', importStyle: 'default' })).toMatchObject({ ok: true })
+    expect(fs.readFileSync(file, 'utf8').match(/import Card from/g)).toHaveLength(1)
   })
 })

@@ -14,6 +14,7 @@ import { sanitizeSvg } from '@core/sanitize'
 import { CanvasModulePlaceholder } from '@ui/components/CanvasModulePlaceholder'
 import { ImageSolidIcon } from 'pixel-art-icons/icons/image-solid'
 import { resolveSvgHostTag } from './hostTag'
+import { splitSvgRoot } from './splitSvgRoot'
 import type { SvgStoredProps } from './props'
 
 export const SvgEditor: React.FC<ModuleComponentProps<SvgStoredProps>> = ({
@@ -21,7 +22,8 @@ export const SvgEditor: React.FC<ModuleComponentProps<SvgStoredProps>> = ({
   mcClassName,
   nodeWrapperProps,
 }) => {
-  const markup = sanitizeSvg(props.svg)
+  // The canvas keeps the SVG part stamps: vector edit mode addresses its writes by them (P5-D).
+  const markup = sanitizeSvg(props.svg, { keepPartStamps: true })
 
   if (!markup) {
     return (
@@ -59,28 +61,37 @@ export const SvgEditor: React.FC<ModuleComponentProps<SvgStoredProps>> = ({
     })
   }
 
-  // No authored wrapper: the source wrote a bare `<svg>`, so this span is
-  // Studio's own, mounted only to carry selection/hover wiring.
+  // No authored wrapper: the source wrote a bare `<svg>`, and the node IS that
+  // `<svg>`. It is rendered as itself — its own attributes, the node's editor
+  // props, and its children as `__html` — so the canvas DOM is the app's DOM:
+  // `.row > svg`, `svg:first-child` and `svg + span` match here exactly as they
+  // do in the user's app, and the element has a box the resize offer can size.
   //
-  // `display: contents` because a raw `<svg>` reached through an inline
-  // JSX-element prop (`<Cell icon={<svg .../>}/>`, and the identical case
-  // one level inside a fragment slot, `icon={<><A/><svg/></>}`) is meant
-  // to sit as a DIRECT child of its parent in the rendered design — the
-  // source never wrote a wrapping element around it. Before this, the
-  // plain (block-default-inline) `<span>` this element mounts under DID
-  // generate its own box: an inline element's line box is taller than a
-  // same-height block child sized purely by content, so every cell using
-  // this shape rendered 20px taller on the canvas than in a real browser
-  // (measured: two `.cell__visual--icon` cells on a real board, [24,44]
-  // instead of [24,24]). `nodeVisualRect` already falls back to the union
-  // of a box-less node's children for exactly this shape (the design-system
-  // host div in `src/modules/alm/register.tsx` uses the identical pattern),
-  // so selection/hover geometry is unaffected.
-  const style: React.CSSProperties = { ...nodeStyle, display: 'contents' }
+  // The class and inline style are the NODE's (`mcClassName`, `nodeStyle`),
+  // which is where an optimistic edit lands before the reparse; the markup's
+  // own copy is only the fallback for a node that has none.
+  const root = splitSvgRoot(markup)
+  if (root) {
+    const style = root.style || nodeStyle ? { ...root.style, ...nodeStyle } : undefined
+    return React.createElement('svg', {
+      ...root.attributes,
+      ...editorProps,
+      ...(style ? { style } : {}),
+      className: mcClassName || root.className,
+      ...labelProps,
+      dangerouslySetInnerHTML: { __html: root.inner },
+    })
+  }
+
+  // Markup that is not one `<svg>` element — two graphics, or loose text, which
+  // only a hand-entered CMS `svg` prop can hold; a parsed `<svg>` always has one
+  // root. There is no element to render as, so a box-less span carries the
+  // editor wiring instead. `display: contents` keeps it from adding a line box
+  // of its own around the graphics (`board-27f`, [24,44] instead of [24,24]).
   return (
     <span
       {...editorProps}
-      style={style}
+      style={{ ...nodeStyle, display: 'contents' }}
       className={mcClassName}
       {...labelProps}
       dangerouslySetInnerHTML={{ __html: markup }}

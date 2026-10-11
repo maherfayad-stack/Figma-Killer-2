@@ -8,7 +8,7 @@
 
 import { createPortal } from 'react-dom'
 import { LayerNodeContextMenu } from '@site/panels/DomPanel/LayerNodeContextMenu'
-import type { CanvasContextMenuPosition } from './useCanvasLayerContextMenu'
+import type { CanvasContextMenuState } from './useCanvasLayerContextMenu'
 
 interface CanvasLayerContextMenuActions {
   requestDeleteNode: (nodeId: string) => void
@@ -22,7 +22,7 @@ interface CanvasLayerContextMenuActions {
 }
 
 interface CanvasLayerContextMenuProps {
-  position: CanvasContextMenuPosition
+  position: CanvasContextMenuState
   onClose: () => void
   actions: CanvasLayerContextMenuActions
 }
@@ -37,6 +37,7 @@ export function CanvasLayerContextMenu({
       x={position.x}
       y={position.y}
       nodeId={position.nodeId}
+      layerIdsUnderPointer={position.layerIdsUnderPointer}
       onClose={onClose}
       onDelete={() => {
         const id = position.nodeId

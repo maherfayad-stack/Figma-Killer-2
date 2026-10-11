@@ -3,11 +3,12 @@
  * refuses on the page it is looking at.
  *
  * `store-13` shipped the refusal: `site_insert_html` / `site_replace_node_html`
- * on a studio-imported tree return `HTML_IMPORT_ON_SOURCE_REFUSAL`, because an
- * HTML fragment has no honest single source form in the user's `.tsx`. The
+ * on a studio-imported tree could not return the ids the CMS prompt tells the
+ * model to address nodes by. G-10 made `site_insert_html` write the HTML as JSX
+ * (no ids until the re-read) while `site_replace_node_html` still refuses. The
  * prompt's opening instruction was still "Insert structure as semantic HTML
- * with site_insert_html", so the model's first tool call on such a page was
- * guaranteed to fail and no tool that COULD work was named anywhere.
+ * with site_insert_html", so the model went after ids it could not have and no
+ * tool that gives them was named anywhere.
  *
  * `buildSiteSystemPrompt` now picks its building block from the snapshot's own
  * node ids. These tests pin both branches and the one thing that makes the
@@ -64,9 +65,10 @@ describe('buildSiteSystemPrompt — the building block follows the page source o
     expect(prefix).toContain('studio_apply_edits')
   })
 
-  it('the studio block says the HTML write tools refuse, rather than leaving the model to discover it', () => {
+  it('the studio block says what the HTML tools do there, rather than leaving the model to discover it', () => {
     const prefix = staticPrefix(snapshot('p1:body', ['p1:body']))
-    expect(prefix).toContain('site_insert_html and site_replace_node_html REFUSE')
+    expect(prefix).toContain('site_replace_node_html REFUSES')
+    expect(prefix).toContain('site_insert_html converts the HTML to JSX')
     // …and still points at the reads, which do work and carry the source ids.
     expect(prefix).toContain('site_read_document')
   })

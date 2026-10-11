@@ -19,6 +19,11 @@
  * bridge on a guessed project: a stream registered under the wrong scope is
  * worse than no stream, because tool calls would silently reach the wrong
  * editor. The client simply retries once a project is open.
+ *
+ * P1-D — an open bridge is also Studio's definition of "this project is open
+ * in a tab", so it is what keeps the project's file watcher running
+ * (`outsideEditReload.ts`): an edit made outside Studio reaches the board for
+ * as long as the stream is up.
  */
 import { Type, safeParseValue } from '@core/utils/typeboxHelpers'
 import { jsonResponse } from '../../../http'
@@ -33,6 +38,7 @@ import {
   editorBridgeScope,
   type EditorBridgeScope,
 } from '../editorBridge'
+import { retainOutsideEditReload } from '../outsideEditReload'
 
 const PATH = '/admin/api/ai/editor-bridge'
 /** The workspace KIND. The project half of the scope comes from `dir`, never from the client's own spelling of a key. */
@@ -81,7 +87,8 @@ async function handle(req: Request, db: DbClient): Promise<Response> {
     return jsonResponse({ error: 'Forbidden' }, { status: 403 })
   }
 
-  const stream = createEditorBridgeStream(userOrResponse.id, scope, req.signal)
+  const releaseWatch = retainOutsideEditReload(projectDir)
+  const stream = createEditorBridgeStream(userOrResponse.id, scope, req.signal, releaseWatch)
   return new Response(stream, {
     status: 200,
     headers: {

@@ -2,19 +2,20 @@ import { expect, test, type FrameLocator, type Locator, type Page } from '@playw
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
-  CANVAS_FRAME_IFRAME_SELECTOR,
-  clickInFrame,
+  selectInFrame,
   createAuthoredFixtureProject,
   openFixtureBoard,
   panIntoView,
   removeFixtureProject,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * `panel-02` (WS-6.3) — real-browser proof that changing a value in the Figma
- * inspector lands in the project's actual `.css` file on disk, and that an
- * edit which could NOT land honestly refuses instead.
+ * inspector lands in the project's actual `.css` file on disk, and (G-5) that
+ * an edit which could not land in the declaration the user pointed at lands
+ * on the next honest rung instead of refusing — and the inspector says where.
  *
  * Why this spec has to exist: `src/core/css-codemods/` was byte-exact unit
  * tested and reached nothing for an entire work order. A green `bun test` says
@@ -28,12 +29,14 @@ import {
  *
  *   1. **It writes.** Typing a width for a class-styled element updates that
  *      declaration in the source `.css`, leaving every other byte of the file
- *      alone (comments, formatting, unrelated rules).
- *   2. **It refuses.** A selector declared twice, where the LATER block also
- *      sets the property being edited, cannot land on one honest target —
- *      `setDeclaration` writes the first match while the cascade honours the
- *      last, so the write would change the file and change nothing on screen.
- *      The user gets a readable reason and the file is untouched.
+ *      alone (comments, formatting, unrelated rules). The chip says
+ *      "Saved in Home.css".
+ *   2. **It lands, it does not refuse.** A selector declared twice, where the
+ *      LATER block also sets the property being edited, used to refuse
+ *      (the cascade honours the last block, the first match was invisible).
+ *      The declaration the canvas shows is a real line — the later one — so
+ *      that line is rewritten, the earlier block is left alone, no alert is
+ *      raised, and the chip names the file.
  *
  * SAFETY — this spec WRITES, so it must never point at real user data. The
  * fixture is created fresh under this RUN's THROWAWAY COPY of
@@ -130,10 +133,10 @@ async function openStudioBoard(page: Page): Promise<{ canvasRoot: Locator; conte
   const frame = page.locator('[data-page-id]').first()
   await panIntoView(page, canvasRoot, frame)
   await expect(
-    frame.locator(CANVAS_FRAME_IFRAME_SELECTOR),
+    visibleCanvasIframe(frame),
     'the fixture frame never mounted a live canvas iframe after being panned into view',
   ).toBeVisible({ timeout: 60_000 })
-  return { canvasRoot, contentFrame: frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR) }
+  return { canvasRoot, contentFrame: canvasContentFrame(frame) }
 }
 
 /** Select an element on the canvas and wait for the Style panel to bind to its class. */
@@ -146,7 +149,7 @@ async function selectAndOpenSizeSection(
 ) {
   const target = contentFrame.locator(selector).first()
   await panIntoView(page, canvasRoot, target, 80)
-  await clickInFrame(page, target)
+  await selectInFrame(page, target)
 
   // The write target used to be `StyleTargetChip`'s own Element/Class pair.
   // Wave 3's inspector-density work deleted that row as a duplicate of the
@@ -215,7 +218,7 @@ test.describe('panel-02 — CSS write-back reaches disk, and refuses when it can
     expect(readCss()).toBe(FIXTURE_CSS.replace('width: 120px', 'width: 321px'))
   })
 
-  test('a selector declared twice REFUSES with a readable reason and leaves the file untouched', async ({ page }) => {
+  test('a selector declared twice LANDS in the block taking effect, says where, and raises no alert', async ({ page }) => {
     const { canvasRoot, contentFrame } = await openStudioBoard(page)
 
     const before = readCss()
@@ -223,13 +226,18 @@ test.describe('panel-02 — CSS write-back reaches disk, and refuses when it can
 
     await setWidth(field, '999px')
 
-    // The refusal surfaces through the global toast bus, which renders with
-    // role="alert" — the same channel every other studio refusal uses.
-    const alert = page.locator('[role="alert"]', { hasText: /declared more than once/i })
-    await expect(alert, 'editing a doubly-declared selector did not surface a refusal').toBeVisible({ timeout: 30_000 })
+    // The declaration the canvas shows is the LATER block's (the cascade honours
+    // the last), so that line is the one written; the earlier block is untouched.
+    await expect
+      .poll(() => readCss(), {
+        message: 'the edit to a doubly-declared selector never reached pages/Home.css',
+        timeout: 30_000,
+      })
+      .toContain('width: 999px')
+    expect(readCss(), 'only the block taking effect may change').toBe(before.replace('width: 70px', 'width: 999px'))
 
-    // The file is the real assertion: a refusal that still wrote would be
-    // worse than no refusal at all.
-    expect(readCss(), 'a refused CSS edit still modified the stylesheet').toBe(before)
+    // And the inspector says where it went.
+    await expect(page.getByTestId('style-landing-chip')).toHaveText('Saved in Home.css')
+    await expect(page.locator('[role="alert"]', { hasText: /declared more than once|not saved/i })).toHaveCount(0)
   })
 })

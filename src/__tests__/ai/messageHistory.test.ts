@@ -264,13 +264,13 @@ describe('user-image history projection', () => {
         role: 'user',
         content: [
           { kind: 'text', text: 'First' },
-          { kind: 'text', text: NON_VISION_USER_IMAGE_OMITTED },
+          { kind: 'text', text: NON_VISION_USER_IMAGE_OMITTED, origin: 'studio' },
         ],
       },
       { role: 'assistant', content: [{ kind: 'text', text: 'answer' }] },
       {
         role: 'user',
-        content: [{ kind: 'text', text: NON_VISION_USER_IMAGE_OMITTED }],
+        content: [{ kind: 'text', text: NON_VISION_USER_IMAGE_OMITTED, origin: 'studio' }],
       },
     ])
     expect(JSON.stringify(history)).toBe(original)

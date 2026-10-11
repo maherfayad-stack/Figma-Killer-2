@@ -119,6 +119,34 @@ describe('ownership', () => {
       .toMatchObject({ ok: true, changed: true })
   })
 
+  it('restores a thread the server just deleted — whole, with its replies — for its owner only', () => {
+    const started = withThread()
+    const threadId = started.threads[0]!.id
+    const replied = applyCommentOp(started, { kind: 'reply', threadId, body: 'On it' }, sam, NOW)
+    if (!replied.ok) throw new Error('fixture failed')
+    const deleted = applyCommentOp(replied.file, { kind: 'delete-thread', threadId }, maher, NOW)
+    if (!deleted.ok) throw new Error('expected ok')
+    expect(deleted.file.threads).toHaveLength(0)
+
+    // Someone else cannot bring it back, and a refusal does not consume it.
+    expect(applyCommentOp(deleted.file, { kind: 'restore-thread', threadId }, sam, NOW))
+      .toMatchObject({ ok: false, status: 403 })
+
+    const restored = applyCommentOp(deleted.file, { kind: 'restore-thread', threadId }, maher, NOW)
+    if (!restored.ok) throw new Error('expected ok')
+    expect(restored.file.threads[0]).toEqual(replied.file.threads[0]!)
+    expect(restored.file.threads[0]!.comments).toHaveLength(2)
+
+    // Once restored it is gone from the undo buffer: a second restore is a 404.
+    expect(applyCommentOp(restored.file, { kind: 'restore-thread', threadId }, maher, NOW))
+      .toMatchObject({ ok: false, status: 404 })
+  })
+
+  it('cannot restore a thread that was never deleted', () => {
+    expect(applyCommentOp(createCommentsFile(), { kind: 'restore-thread', threadId: 'nope' }, maher, NOW))
+      .toMatchObject({ ok: false, status: 404 })
+  })
+
   it('lets ANYONE resolve — deliberately not ownership-gated', () => {
     // Gating resolve to the author leaves threads open forever once the
     // author moves on. It is reversible and the thread keeps its number.

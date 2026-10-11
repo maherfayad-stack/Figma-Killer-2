@@ -61,7 +61,8 @@ skips `studio-verifier` or the `STATE.md` handoff.
 - **The pre-existing full-suite failures are enumerated in `standing-01`.** Read
   the current count and set there — do not trust a number quoted anywhere else.
   Triage against `git diff`; never "fix" what isn't yours.
-- **UI is dogfooded by the human** (`standing-02`). No browser or Playwright
-  passes for visual work — finish with a concrete "Human action needed" line.
+- **Browser runs follow `CLAUDE.md` → "Verification"**: canvas, frame, overlay,
+  geometry and panel-height changes also run their e2e specs; other UI work stops
+  at static gates. Always finish with a concrete "Human action needed" line.
 - **Bun**, never npm/pnpm/yarn.
 - **Never delete or clear anything under `studio-workspace/`** — that is user data.

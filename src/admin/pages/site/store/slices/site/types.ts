@@ -21,7 +21,7 @@ import type {
   SiteSettings,
   PageTemplateConfig,
   ConditionDef,
-  StyleRule,
+  SequencedMove,
   StructuralExplorerRowOrder,
   StructuralSiteExplorerSectionId,
 } from '@core/page-tree'
@@ -30,37 +30,22 @@ import type { ImportFragment } from '@core/htmlImport'
 import type { NewStyleRule, SiteImportTransaction } from '@core/siteImport'
 import type { FrameworkChangeImpact, FrameworkPreset } from '@core/framework'
 import type { EditorStore } from '@site/store/types'
+import type { LocalComponentSpec } from '@site/property-controls/componentPropKind'
+import type { FrameRequest } from './frameRequest'
 import type { PendingStructuralHistory } from '@site/studio/pendingStructuralOutcome'
+import type { StructuralSourceGesture } from '@site/studio/structuralUndoPlan'
 import type { SlotOwnerEntry } from './nodeIndex'
 import type { ImportedNodesResult } from './importedNodesResult'
-
+import type { HtmlSourceWriteResult, PasteHtmlOptions } from './htmlSourceWriteResult'
+import type { ImageDropRequest, LandableImageSource, SubtreeInsertRequest, UploadProgressPainter } from './imageDropShapes'
 
 // ---------------------------------------------------------------------------
 // Public action surface — every method below appears as a top-level entry on
 // the EditorStore.
 // ---------------------------------------------------------------------------
 
-/** Input to `SiteSlice.patchPages` — see that method's doc for the full contract. */
-export interface PatchPagesInput {
-  /** Freshly re-parsed pages that still exist — upserted by id, appended if new. */
-  pages: Page[]
-  /** Ids that were part of the touched set but no longer resolve to a page. */
-  removedPageIds?: string[]
-  /**
-   * The project-wide style registry the same reload recomputed.
-   *
-   * NOT optional-because-nice-to-have: a re-parsed page's `classIds` name
-   * rules from the registry that was computed WITH it, and rendering it
-   * against the previous one resolves those nodes to no class at all — an
-   * unstyled, collapsed page that looks broken until a manual refresh.
-   * Omitted only by a caller that genuinely has no fresher registry (a test,
-   * or a patch that never re-read the project), in which case the current one
-   * stands.
-   */
-  styleRules?: Record<string, StyleRule>
-  /** The project-wide condition set from the same reload — same contract as `styleRules`. */
-  conditions?: ConditionDef[]
-}
+import type { PatchPagesInput } from './patchPagesInput'
+export type { PatchPagesInput }
 
 /**
  * The framework and font token action inputs. They live in
@@ -91,14 +76,16 @@ import type {
  * door — every consumer already imports them from `./types`.
  */
 import type { HistoryEntry } from './historyTypes'
+import type { LayoutConversionRequest } from './layoutConversionPlan'
+import type { TransplantDestination } from './transplantDestination'
 
 export type {
   HistoryEntry,
   BoardHistorySnapshot,
   BoardHistory,
-  StructuralHistoryMove,
   StructuralHistory,
   StructuralSourceHistory,
+  PendingStructuralCommit,
 } from './historyTypes'
 
 export interface SiteSlice {
@@ -201,6 +188,14 @@ export interface SiteSlice {
     index?: number,
     inlineStyles?: Record<string, string>,
   ) => string
+  /** Writes `<Card />` + its import for a component the project declares itself; `false` on a CMS tree (no source). */
+  insertProjectComponent: (
+    component: LocalComponentSpec,
+    parentId: string,
+    index?: number,
+    /** PA-3 — inline styles written as the call site's `style` prop (a layer dropped into a free frame). */
+    style?: Record<string, string>,
+  ) => boolean
 
   /**
    * Insert a fragment of imported HTML nodes into the active tree under `parentId`.
@@ -208,8 +203,8 @@ export interface SiteSlice {
    * of `parentId` at `opts.index` (appended when omitted). One undo step.
    * `ok: false` when nothing was inserted, carrying the reason — the parent
    * does not accept children, or (`mcp-21`) this is a studio-imported tree,
-   * where a block of HTML has no honest source form and a merged fragment
-   * would be deleted by the next parse. See `refuseImportedNodesInto`.
+   * where a merged fragment would be deleted by the next parse. HTML for such a
+   * tree goes through `writeHtmlToSource` instead.
    *
    * `opts.styleRules` / `opts.conditions` are rules parsed from `<style>` blocks
    * in the imported HTML (via `cssToStyleRules`); they are committed into the
@@ -223,17 +218,12 @@ export interface SiteSlice {
   ) => ImportedNodesResult
 
   /**
-   * `mcp-21` — why an HTML import cannot land under `parentId`, or `null` when
-   * it can. Presents the refusal as it answers, exactly as `insertImportedNodes`
-   * does, so asking first costs the user nothing extra.
-   *
-   * Exists because `site_replace_node_html` DELETES the target's existing
-   * children before inserting: without a way to ask first, a refused replace
-   * on a studio-imported tree emptied the node and then wrote nothing — the
-   * half-applied outcome this store refuses everywhere else. Every other
-   * caller can simply read `insertImportedNodes`' own result.
+   * G-10 — paste a block of HTML under `parentId` on a studio-imported tree:
+   * converted to JSX and written as one insert, its CSS into the page's own
+   * stylesheet. `{ kind: 'cms' }` for an ordinary tree (the caller imports the
+   * HTML into the tree as before). See `studioHtmlWrites.ts`.
    */
-  refuseImportedNodesInto: (parentId: string) => string | null
+  writeHtmlToSource: (html: string, parentId: string, options?: PasteHtmlOptions) => HtmlSourceWriteResult
 
   /**
    * Insert a `base.visual-component-ref` node into the active document.
@@ -252,6 +242,8 @@ export interface SiteSlice {
   /** Multi-delete: removes every id and its descendants in one undo step. */
   deleteNodes: (nodeIds: string[]) => void
   updateNodeProps: (nodeId: string, patch: Record<string, unknown>) => void
+  /** G-6: the user typed over code-bound text/attr; one journaled write with a notice and Undo (`unbindActions.ts`). `false` when nothing started. */
+  unbindNodeValue: (nodeId: string, prop: string, value: string) => boolean
   /**
    * instance-ui-01 — write ONE call-site prop on a `studio.instance` node
    * (`props.callSiteProps.<propName>`), the WS-4.2/4.3 instance model's
@@ -270,6 +262,16 @@ export interface SiteSlice {
    * HTML inline styles.
    */
   setNodeInlineStyles: (nodeId: string, patch: Record<string, string | number | null | undefined>) => void
+  /**
+   * `setNodeInlineStyles` for a canvas GESTURE (a resize, a Hug double-click)
+   * on the element the user pointed at. On markup that lives in a shared
+   * component's own file the plain write would silently restyle every
+   * instance, so it takes the same road a structural gesture does: this
+   * instance is detached, the write replayed on it, one undo
+   * (`instanceOnlyGesture.ts`), with the refusal dialog only when that cannot
+   * happen. Anywhere else it is exactly `setNodeInlineStyles`.
+   */
+  setNodeInlineStylesFromGesture: (nodeId: string, patch: Record<string, string | number | null | undefined>) => void
   /**
    * Bulk sibling of `setNodeInlineStyles` — applies ONE patch to every id in
    * `nodeIds` within a single history transaction, so an inspector edit made
@@ -303,6 +305,24 @@ export interface SiteSlice {
   removeNodeInlineStyleProperty: (nodeId: string, propKey: string) => void
   /** Remove ALL inline styles from a node (clears the `inlineStyles` field). */
   clearNodeInlineStyles: (nodeId: string) => void
+  /**
+   * PA-4 — Figma's "Ignore auto layout". `ignore: true` takes an in-flow child
+   * of a flex / grid container out of the flow (`position: absolute` at the
+   * place it already is, plus `position: relative` on the container when it
+   * does not yet contain it); `ignore: false` returns it to flow. The writes
+   * to the child and the container are ONE undo step. `refused` means a
+   * dialog explained why (a shared container, a position set in code); the
+   * tree is untouched. `offsets` are measured by the caller against the box
+   * that will contain the child (`containingBlockOffsets`).
+   */
+  setIgnoreAutoLayout: (
+    nodeId: string,
+    request:
+      | { ignore: true; parentContains: boolean; offsets: { left: number; top: number } }
+      | { ignore: false; releaseParent: boolean },
+  ) => 'applied' | 'refused' | 'noop'
+  /** PA-7 / PA-8 — Add / Remove auto layout: the container and every child in ONE undo step, all or nothing (`layoutConversionActions.ts`). */
+  convertLayout: (request: LayoutConversionRequest) => 'applied' | 'refused' | 'noop'
   setBreakpointOverride: (nodeId: string, breakpointId: string, patch: Record<string, unknown>) => void
   clearBreakpointOverride: (nodeId: string, breakpointId: string) => void
   renameNode: (nodeId: string, label: string) => void
@@ -318,6 +338,9 @@ export interface SiteSlice {
   moveNode: (nodeId: string, newParentId: string, newIndex: number) => void
   /** Multi-move: moves every top-level id into newParent at newIndex (single undo step). */
   moveNodes: (nodeIds: string[], newParentId: string, newIndex: number) => void
+  /** P2-C2 — step every layer `steps[parentId]` places among its siblings / P3-D: apply moves IN ORDER — one entry, one write. `moveSequenceActions.ts`. */
+  stepSiblings: (nodeIds: string[], steps: Readonly<Record<string, number>>) => void
+  moveNodesInSequence: (moves: SequencedMove[]) => void
   duplicateNode: (nodeId: string) => string
   /** Multi-duplicate: duplicates every id in place (single undo step). Returns the new ids. */
   duplicateNodes: (nodeIds: string[]) => string[]
@@ -349,20 +372,19 @@ export interface SiteSlice {
    */
   transplantNodes: (nodeIds: string[], destination: TransplantDestination) => void
   /**
-   * D2 G15 — the `<img src alt>` a file dropped from the operating system
-   * becomes, written into the page the drop landed on.
-   *
-   * Names its page rather than using the active one: a dropped file lands
-   * wherever the pointer was, and the frame under a drop was never activated
-   * by a pointerdown because there was no pointerdown. See
-   * `imageDropActions.ts`.
+   * D2 G15 / P5-B — dropped images (P5-B3: any `ImageDropSource` — a file,
+   * a URL from another tab, a project file from the Assets panel): every one
+   * landed, then ONE insert of N `<img>` siblings (one write, one undo step),
+   * a ghost per image while it lands. Names its page and activates it
+   * (`gesturePage.ts`).
    */
-  insertImageIntoPage: (
-    pageId: string,
-    parentId: string,
-    index: number,
-    image: { src: string; alt: string },
-  ) => void
+  dropImagesIntoPage: (drop: ImageDropRequest) => void
+  /** P5-B (IMG-3) — a file dropped onto an `<img>` replaces its source: the import it reads, or its literal `src`. */
+  replaceImageInPage: (pageId: string, nodeId: string, source: LandableImageSource, paintProgress?: UploadProgressPainter) => void
+  /** P5-B (IMG-7) — ⇧-drop: the file becomes the element's top background layer, written to its own inline style. */
+  setBackgroundImageInPage: (pageId: string, nodeId: string, source: LandableImageSource) => void
+  /** P5-A — a pasted SVG's converted subtree: ONE `insert`, one undo step. See `subtreeInsertActions.ts`. */
+  insertJsxSubtreeIntoPage: (request: SubtreeInsertRequest) => void
   wrapNode: (nodeId: string, containerModuleId: string, defaults?: Record<string, unknown>) => string
   /**
    * Wrap a multi-selection inside one new container with closest-common-ancestor
@@ -376,7 +398,8 @@ export interface SiteSlice {
    * produces. Refuses out loud unless the selection is a contiguous run of
    * siblings in the code. See `groupActions.ts`.
    */
-  groupNodes: (nodeIds: string[], containerModuleId?: string, defaults?: Record<string, unknown>) => string | null
+  /** `frame` (PA-6, Frame selection): the container is sized and placed and the members rebased, in this same write. */
+  groupNodes: (nodeIds: string[], containerModuleId?: string, defaults?: Record<string, unknown>, frame?: FrameRequest) => string | null
   /**
    * K3 — ⌘⇧G. The container goes; its children take its place at its own index.
    * On a studio tree that is `unwrapJsxElement`, which refuses a container
@@ -527,11 +550,13 @@ export interface SiteSlice {
   /**
    * `store-14` — apply what a landed STRUCTURAL SOURCE write means for the undo
    * stack: push the gesture's own entry, or refresh the one an undo/redo just
-   * moved. Called by `usePersistence.ts` when it drains
-   * `pendingStructuralOutcome.ts`, which is the first moment the board holds
+   * moved. Called by `siteReloadApply.ts` with the
+   * `pendingStructuralOutcome.ts` value that rode the re-read — the first moment the board holds
    * the nodes the write made — see `structuralSourceHistory.ts`.
    */
   recordStructuralSourceWrite: (history: PendingStructuralHistory) => void
+  /** A style write ⌘Z cannot undo by value (override, expanded shorthand) becomes a journaled entry — `studio/styleWriteJournal.ts`. */
+  journalStyleWrite: (target: { index: number; entry: HistoryEntry }, gesture: StructuralSourceGesture) => void
 
   // ─── Node-lookup indexes (WS-5.2) ────────────────────────────────────────
   /**
@@ -590,28 +615,6 @@ export type SiteMutationResult = void | boolean
  * one function it takes.
  */
 export type EditorStoreSetter = (recipe: SiteSliceRecipe) => void
-
-/**
- * Where a cross-frame drop landed, and where it came from — the argument
- * `transplantNodes` takes.
- *
- * `originPageId` is named explicitly rather than derived from the active
- * document: a cross-frame drag ACTIVATES the destination frame on the way
- * (`openPageInCanvas` fires from `onPointerDownCapture`), so by the time the
- * drop commits, "the active page" is already the wrong end of the gesture.
- */
-export interface TransplantDestination {
-  /** The page the dragged element is written in. */
-  originPageId: string
-  /** The page the drop landed in — a DIFFERENT page. */
-  pageId: string
-  /** The container the drop resolved to, in `pageId`'s tree. */
-  parentId: string
-  /** Where among that container's canvas children the drop landed. */
-  index: number
-  /** Alt held: copy across frames instead of moving. */
-  copy?: boolean
-}
 
 export interface SiteSliceHelpers {
   /** Raw set/get from the slice creator. Use only when no helper covers the case. */

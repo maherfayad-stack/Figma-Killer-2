@@ -50,11 +50,13 @@ const CANVAS_DIR = join(REPO_ROOT, 'src/admin/pages/site/canvas')
  *
  *   - `PortalFrameAdapter.ts` + its own test file: the portal adapter's
  *     literal implementation.
- *   - `IframeFrameSurface.tsx`: the actual origin point. It reads the
- *     iframe's `srcDoc` document/window to CONSTRUCT the `PortalFrameAdapter`
- *     and the `iframeDoc.body` `createPortal` target in the first place —
- *     every other file's `Document` traces back to this one having already
- *     done the reach-in.
+ *   - `IframeFrameSurface.tsx` + `attachIframeDocument.ts`: the actual origin
+ *     point. The ref callback that reads the iframe's `srcDoc`
+ *     document/window to CONSTRUCT the `PortalFrameAdapter` and the
+ *     `iframeDoc.body` `createPortal` target in the first place was split out
+ *     of `IframeFrameSurface.tsx` into its own module at that file's
+ *     size cap — every other file's `Document` traces back to one of these
+ *     two having already done the reach-in.
  *   - `iframeFrameObservers.ts`: `useIframeFrameAutoHeight.ts`'s own
  *     portal-mode-only observer wiring needs live `ResizeObserver`/
  *     `MutationObserver` constructors from the FRAME's window specifically
@@ -88,6 +90,7 @@ const ALLOWLIST = new Set([
   'src/admin/pages/site/canvas/frameAdapter/PortalFrameAdapter.ts',
   'src/__tests__/canvas/frameAdapter/PortalFrameAdapter.test.ts',
   'src/admin/pages/site/canvas/IframeFrameSurface.tsx',
+  'src/admin/pages/site/canvas/attachIframeDocument.ts',
   'src/admin/pages/site/canvas/iframeFrameSurfaceContract.ts',
   'src/admin/pages/site/canvas/iframeFrameObservers.ts',
   'src/admin/pages/site/canvas/ModuleSandboxFrame.tsx',

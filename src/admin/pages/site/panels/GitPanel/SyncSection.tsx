@@ -180,7 +180,7 @@ export function SyncSection({
     })
 
   return (
-    <Section title="Sync" defaultOpen meta={conflict ? 'Conflict' : divergenceMeta(ahead, behind)}>
+    <Section title="Sync" defaultOpen status={conflict ? 'Conflict' : divergenceMeta(ahead, behind)}>
       {!hasOrigin ? (
         <p className={styles.hint}>
           This project has no <code>origin</code> remote, so there is nothing to fetch, pull, or push to yet.

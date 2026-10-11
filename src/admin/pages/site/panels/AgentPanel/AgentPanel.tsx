@@ -21,7 +21,7 @@
  * @see Guideline #410 — 3 Self-Contained Independent Panels
  */
 
-import { useRef, useEffect, useState } from 'react'
+import { Fragment, useRef, useEffect, useState } from 'react'
 import { useAgentStore, useAgentStoreApi } from '@admin/ai/useAgentStore'
 import { useAsyncResource } from '@admin/lib/useAsyncResource'
 import { useAdminUi } from '@admin/state/adminUi'
@@ -44,10 +44,21 @@ import { MessageBubble } from './MessageBubble'
 import { AgentActivity } from './AgentActivity'
 import { AgentPermissionCard } from './AgentPermissionCard'
 import { groupConsecutiveMessages } from './conversationGroups'
+import { TurnChangesCard } from './TurnChangesCard'
+import { AgentContextBar } from './AgentContextBar'
+import { AgentSuggestionChips } from './AgentSuggestionChips'
+import { useAgentLiveContext } from './useAgentLiveContext'
+import type { AgentLiveContext } from './agentContext'
 import styles from './AgentPanel.module.css'
 
 const PANEL_WIDTH = 320
 const PANEL_HEIGHT = 480
+/**
+ * `docked` (the default, AI-28): the panel fills its sidebar column, full
+ * height — a conversation that builds screens needs the room, and a 320×480
+ * box over the canvas hid the board it was describing. `floating` stays for a
+ * host that wants the draggable overlay.
+ */
 type PanelVariant = 'floating' | 'docked'
 
 // ---------------------------------------------------------------------------
@@ -61,7 +72,7 @@ type PanelVariant = 'floating' | 'docked'
  * (`.floatPanelClosed`) to preserve Zustand conversation state across open/close cycles.
  * Agent routes via Vite proxy `/admin/api/agent` → local Bun server → Claude SDK.
  */
-export function AgentPanel({ variant = 'floating' }: { variant?: PanelVariant }) {
+export function AgentPanel({ variant = 'docked' }: { variant?: PanelVariant }) {
   const agentStore = useAgentStoreApi()
   const isOpen = useAgentStore((s) => s.isAgentOpen)
   const isStreaming = useAgentStore((s) => s.isAgentStreaming)
@@ -77,6 +88,8 @@ export function AgentPanel({ variant = 'floating' }: { variant?: PanelVariant })
   const resolvePermission = useAgentStore((s) => s.resolveAgentPermission)
   const activeCredentialId = useAgentStore((s) => s.agentActiveCredentialId)
   const activeModelId = useAgentStore((s) => s.agentActiveModelId)
+  const turnChanges = useAgentStore((s) => s.agentTurnChanges)
+  const liveContext = useAgentLiveContext()
   const [previewImage, setPreviewImage] = useState<AgentPreviewImage | null>(null)
   const [imageMenu, setImageMenu] = useState<AgentImageMenuRequest | null>(null)
   const credentialsResource = useAsyncResource(
@@ -276,18 +289,34 @@ export function AgentPanel({ variant = 'floating' }: { variant?: PanelVariant })
         className={styles.thread}
       >
         {messages.length === 0 ? (
-          <AgentEmptyState mode={lockReason ?? 'prompt'} claudeCliLoggedIn={claudeCliLoggedIn} />
+          <AgentEmptyState
+            mode={lockReason ?? 'prompt'}
+            claudeCliLoggedIn={claudeCliLoggedIn}
+            liveContext={liveContext}
+            suggestionsDisabled={isStreaming || conversationPending || providerPending}
+          />
         ) : (
           <>
             {lockReason && <AgentCredentialAlert mode={lockReason} claudeCliLoggedIn={claudeCliLoggedIn} />}
-            {groupConsecutiveMessages(messages).map((group) => (
-              <MessageBubble
-                key={group.id}
-                group={group}
-                onOpenImage={openImagePreview}
-                onOpenImageMenu={openImageMenu}
-              />
-            ))}
+            {groupConsecutiveMessages(messages).map((group, index, groups) => {
+              // The assistant turn still streaming: its failures may yet be
+              // recovered from, and its file list is not final.
+              const turnActive = isStreaming && index === groups.length - 1
+              // A turn's id is the user message that opened it (AI-7).
+              const turnId = group.role === 'assistant' ? groups[index - 1]?.messages.at(-1)?.turnId : undefined
+              const changes = turnId ? turnChanges[turnId] : undefined
+              return (
+                <Fragment key={group.id}>
+                  <MessageBubble
+                    group={group}
+                    turnActive={turnActive}
+                    onOpenImage={openImagePreview}
+                    onOpenImageMenu={openImageMenu}
+                  />
+                  {changes && !turnActive && <TurnChangesCard changes={changes} disabled={isStreaming} />}
+                </Fragment>
+              )
+            })}
             {/* Live "what am I doing" strip, under the turn it describes. The
                 streaming turn is always the last message — the store pushes
                 the assistant placeholder with the user's message and fills it
@@ -310,6 +339,7 @@ export function AgentPanel({ variant = 'floating' }: { variant?: PanelVariant })
         )}
       </div>
 
+      <AgentContextBar context={liveContext} />
       <AgentComposer
         key={composerEpoch}
         composerLocked={composerLocked}
@@ -342,10 +372,15 @@ export function AgentPanel({ variant = 'floating' }: { variant?: PanelVariant })
 function AgentEmptyState({
   mode,
   claudeCliLoggedIn = false,
+  liveContext,
+  suggestionsDisabled,
 }: {
   mode: ComposerLockReason | 'prompt'
   /** Claude Code is logged in on this host but has no stored credential yet — a specific, one-step-away state, not a dead end. See `AgentPanel`'s own doc comment on the `claudeCliStatus` fetch. */
   claudeCliLoggedIn?: boolean
+  /** What is on screen — the suggestion chips are built from it (AI-28). */
+  liveContext: AgentLiveContext
+  suggestionsDisabled: boolean
 }) {
   if (mode === 'setup') {
     return (
@@ -382,8 +417,8 @@ function AgentEmptyState({
       variant="centered"
       size="large"
       icon={<AiBoxSolidIcon size={28} color="var(--text-disabled)" />}
-      title="Describe what you want to build and I'll do it for you."
-      description={'Try: "Add a hero section with a heading and button"'}
+      title="What should we design?"
+      action={<AgentSuggestionChips context={liveContext} disabled={suggestionsDisabled} />}
     />
   )
 }

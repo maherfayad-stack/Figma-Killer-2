@@ -31,8 +31,10 @@
  *   call a hook, and hoisting it into one would move code the user wrote.
  * - **A literal whose text no longer matches the scan.** The file changed
  *   under us; rewriting the wrong node is worse than doing nothing.
- * - **A file that already binds `t`.** Studio would be shadowing a name that
- *   already means something here.
+ *
+ * A file that already binds `t` is NOT a refusal: Studio binds the dictionary
+ * under a free name instead (`const { t: t2 } = useLanguage()`, read as
+ * `t2.page.key`) and reuses that binding on later runs.
  *
  * A refusal is per string and named; the other strings in the same file still
  * land.
@@ -50,6 +52,7 @@ import {
   type JsxAttribute,
   type SourceFile,
 } from 'ts-morph'
+import { freshName } from './freshName'
 import { applyLineEnding, detectLineEnding, toLf } from '@core/utils/lineEndings'
 
 /** One literal to replace, as `findHardcodedStrings` reported it plus the key it was assigned. */
@@ -68,7 +71,6 @@ export type ExtractionRefusalReason =
   | 'not-found'
   | 'text-changed'
   | 'outside-component'
-  | 'name-taken'
   | 'invalid-key'
 
 export interface ExtractionRefusal {
@@ -96,9 +98,9 @@ export interface ExtractStringsParams {
   hookName: string
 }
 
-/** The accessor expression a key reads as: `t.page.profileVerified` for a dotted key. */
-function accessorFor(key: string): string {
-  return `t.${key}`
+/** The accessor expression a key reads as: `t.page.profileVerified` for a dotted key (`t` is the file's translator binding). */
+function accessorFor(translator: string, key: string): string {
+  return `${translator}.${key}`
 }
 
 /**
@@ -157,8 +159,8 @@ function owningAttribute(literal: Node): JsxAttribute | undefined {
 }
 
 /** Rewrites one located node in place. Returns `false` when the node's shape is one this codemod does not write. */
-function replaceWithAccessor(node: Node, key: string): boolean {
-  const accessor = accessorFor(key)
+function replaceWithAccessor(node: Node, translator: string, key: string): boolean {
+  const accessor = accessorFor(translator, key)
 
   if (Node.isJsxText(node)) {
     // The surrounding whitespace is layout, not copy — the scan trimmed the
@@ -225,10 +227,35 @@ function bindsNameElsewhere(sourceFile: SourceFile, name: string, hookName: stri
 }
 
 /** Adds `const { t } = useLanguage()` as the first statement of a component body that has not got it yet. */
-function ensureHookCall(body: Block, hookName: string): void {
-  const already = body.getStatements().some((statement) => statement.getText().includes(`${hookName}()`))
+function ensureHookCall(body: Block, hookName: string, translator: string): void {
+  const already = body.getStatements().some((statement) => statement.getText().includes(`${hookName}()`) && declaresTranslator(statement, translator))
   if (already) return
-  body.insertStatements(0, `const { t } = ${hookName}()`)
+  body.insertStatements(0, `const { ${translator === 't' ? 't' : `t: ${translator}`} } = ${hookName}()`)
+}
+
+/** Whether a hook statement binds the dictionary as `translator`. */
+function declaresTranslator(statement: Node, translator: string): boolean {
+  return statement.getDescendantsOfKind(SyntaxKind.BindingElement).some((element) => element.getName() === translator && (element.getPropertyNameNode()?.getText() ?? element.getName()) === 't')
+}
+
+/**
+ * The name the dictionary is bound to in this file: `t` when nothing else
+ * means `t` here, else the alias an earlier run already gave it, else the
+ * first free `t2`, `t3`, ...
+ */
+function chooseTranslatorName(sourceFile: SourceFile, hookName: string): string {
+  if (!bindsNameElsewhere(sourceFile, 't', hookName)) return 't'
+  const used = new Set(sourceFile.getDescendantsOfKind(SyntaxKind.Identifier).map((identifier) => identifier.getText()))
+  for (const call of sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+    if (call.getExpression().getText() !== hookName) continue
+    const declaration = call.getParent()
+    if (!Node.isVariableDeclaration(declaration)) continue
+    const pattern = declaration.getNameNode()
+    if (!Node.isObjectBindingPattern(pattern)) continue
+    const element = pattern.getElements().find((candidate) => (candidate.getPropertyNameNode()?.getText() ?? candidate.getName()) === 't')
+    if (element && element.getName() !== 't') return element.getName()
+  }
+  return freshName('t', (candidate) => used.has(candidate))
 }
 
 /**
@@ -271,17 +298,7 @@ export function extractStringsToDictionary(params: ExtractStringsParams): Extrac
   const eol = detectLineEnding(params.sourceText)
   const sourceFile = project.createSourceFile(params.fileName, toLf(params.sourceText))
 
-  if (bindsNameElsewhere(sourceFile, 't', params.hookName)) {
-    return {
-      text: params.sourceText,
-      applied: [],
-      refused: params.extractions.map((extraction) => ({
-        key: extraction.key,
-        reason: 'name-taken' as const,
-        message: `${params.fileName} already binds "t", so Studio won't shadow it.`,
-      })),
-    }
-  }
+  const translator = chooseTranslatorName(sourceFile, params.hookName)
 
   const semicolons = usesSemicolons(sourceFile)
   const applied: string[] = []
@@ -296,13 +313,13 @@ export function extractStringsToDictionary(params: ExtractStringsParams): Extrac
       refused.push({
         key: extraction.key,
         reason: 'invalid-key',
-        message: `"${extraction.key}" is not a valid property path, so Studio won't write it into the source.`,
+        message: `"${extraction.key}" is not a valid property path. Use letters, digits and dots, like nav.title.`,
       })
       continue
     }
     const node = nodeAt(sourceFile, extraction.line, extraction.col)
     if (!node) {
-      refused.push({ key: extraction.key, reason: 'not-found', message: `No string literal at ${params.fileName}:${extraction.line}.` })
+      refused.push({ key: extraction.key, reason: 'not-found', message: `No string literal at ${params.fileName}:${extraction.line}. Run the scan again.` })
       continue
     }
     const current = Node.isJsxText(node)
@@ -311,17 +328,21 @@ export function extractStringsToDictionary(params: ExtractStringsParams): Extrac
         ? node.getLiteralValue()
         : undefined
     if (current !== extraction.text) {
-      refused.push({ key: extraction.key, reason: 'text-changed', message: `The text at ${params.fileName}:${extraction.line} changed since it was scanned.` })
+      refused.push({ key: extraction.key, reason: 'text-changed', message: `The text at ${params.fileName}:${extraction.line} changed since it was scanned. Run the scan again.` })
       continue
     }
     const body = enclosingComponentBody(node)
     if (!body) {
-      refused.push({ key: extraction.key, reason: 'outside-component', message: `"${extraction.text}" is outside any component, so it cannot read a hook.` })
+      refused.push({
+        key: extraction.key,
+        reason: 'outside-component',
+        message: `"${extraction.text}" sits outside any component (a shared constant or a list built once), so it stays plain text. Move it inside the component that renders it.`,
+      })
       continue
     }
     const bodyStart = body.getStart()
-    if (!replaceWithAccessor(node, extraction.key)) {
-      refused.push({ key: extraction.key, reason: 'not-found', message: `Studio does not know how to rewrite the literal at ${params.fileName}:${extraction.line}.` })
+    if (!replaceWithAccessor(node, translator, extraction.key)) {
+      refused.push({ key: extraction.key, reason: 'not-found', message: `Studio cannot rewrite the literal at ${params.fileName}:${extraction.line}. Change it in the code.` })
       continue
     }
     componentBodyStarts.add(bodyStart)
@@ -333,7 +354,7 @@ export function extractStringsToDictionary(params: ExtractStringsParams): Extrac
   // Same descending discipline: inserting a statement moves everything after it.
   for (const start of [...componentBodyStarts].sort((a, b) => b - a)) {
     const block = sourceFile.getDescendantsOfKind(SyntaxKind.Block).find((candidate) => candidate.getStart() === start)
-    if (block) ensureHookCall(block, params.hookName)
+    if (block) ensureHookCall(block, params.hookName, translator)
   }
 
   ensureImport(sourceFile, params.importSpecifier, params.hookName, semicolons)

@@ -1,6 +1,7 @@
 # React Compiler and memoization
+> **Purpose:** the React Compiler memoization rule and its three exceptions · **Read when:** tempted to write useMemo, useCallback or memo · **Trust:** rule · **Owner:** panel-designer · **Verified:** not yet
 
-The **React Compiler is enabled** for the whole app (`babel({ presets: [reactCompilerPreset()] })` in `vite.config.ts`). It auto-memoizes every component and hook at build time, so hand-written memoization is **noise** — it adds clutter without improving performance.
+The **React Compiler is enabled** for the whole app (`reactCompiler()` in `vite.config.ts`, from `scripts/vite/reactCompilerPlugin.ts`). It auto-memoizes every component and hook it can compile, so hand-written memoization is **noise** — it adds clutter without improving performance. **"It can compile" is the catch:** a function it cannot lower is emitted unmemoized, silently — see "The gate".
 
 ---
 
@@ -8,7 +9,8 @@ The **React Compiler is enabled** for the whole app (`babel({ presets: [reactCom
 
 - Don't write `useMemo`, `useCallback`, or `memo()` — the compiler handles it.
 - Three exceptions exist (dep-array functions, hot-list `React.memo`, lint escape hatches); add a comment on each.
-- **Enforcement gate:** `eslint-plugin-react-compiler` in `bun run lint` / CI.
+- **Enforcement gates:** `eslint-plugin-react-compiler` in `bun run lint` / CI, and `react-compiler-bailouts.test.ts` (every function in the canvas, `src/ui/components` and the inspector must actually compile).
+- `bun run compiler:bailouts [dir…]` lists every function the compiler skips, with its reason.
 - `react-doctor` surfaces violations as **warnings** only (`react-doctor.config.json`); it cannot distinguish the three legitimate exceptions.
 
 ## The rule
@@ -28,12 +30,16 @@ Memoization legitimately stays in exactly three cases. **Keep it, and add a one-
    - **`react-hooks/refs`**: a render-scoped event handler that reads/writes a ref (`someRef.current = …`) trips "Cannot access refs during render" when written as a bare function, because the linter can't tell the closure only runs at event time. Wrapping it in `useCallback` satisfies the rule. (See `CanvasLiveSurface`'s pointer handlers.)
    - **Compiler bail-out**: when the compiler genuinely cannot compile a function, add the `"use no memo"` directive (or the existing `eslint-disable react-compiler/react-compiler` pattern) and keep the manual memoization it needs.
 
+## The toolchain
+
+`babel-plugin-react-compiler` 1.0 is built against Babel 7 and asks the host's `NodePath`s questions such as `isLVal()`. The repo's root `@babel/core` is 8 (the studio runtime's `idStamp` needs it), and Babel 8 dropped `AssignmentPattern` from `LVal` — so under the root Babel the compiler skipped **every function with a destructured default** (`{ size = 'md' }`), `Button` and `Tooltip` among them. No compiler release supports Babel 8. The compiler therefore runs on its own Babel 7: `babel-core-7` (an npm alias of `@babel/core@7`), driven by `scripts/vite/reactCompilerPlugin.ts`, which replaced `@rolldown/plugin-babel` with the same file selection. Do not put the compiler back on the root Babel.
+
 ## The gate
 
-Enforcement is **`eslint-plugin-react-compiler` + `eslint-plugin-react-hooks`**, run in `bun run lint` / CI — that is the authoritative gate:
+Two gates, because they catch different things:
 
-- `eslint-plugin-react-compiler` flags functions the compiler had to bail out on.
-- `react-hooks/exhaustive-deps` and `react-hooks/refs` enforce exceptions (1) and (3).
+- **`eslint-plugin-react-compiler` + `eslint-plugin-react-hooks`** in `bun run lint` / CI. They flag rule violations (`react-hooks/exhaustive-deps` and `react-hooks/refs` enforce exceptions (1) and (3)). They run their **own** Babel, so they do not see what Vite's compile skips.
+- **`src/__tests__/architecture/react-compiler-bailouts.test.ts`** compiles every file in `canvas/`, `src/ui/components`, `inspector/`, `panels/PropertiesPanel` and `property-controls/` through the exact transform Vite ships and fails naming each skipped function and the compiler's reason. Its header lists the rewrites that compile (a `finally` moved after a non-rethrowing `catch`, a value block inside `try` moved to a module function, `x = x ?? y` for `??=`, `(n += 1)` for `++n` on a captured variable, a module-level loader for `import()`, state or `useEffectEvent` for a ref touched in render). An entry in its `ALLOWED` list needs a real reason; it is empty today.
 
 `react-doctor`'s `react-compiler-no-manual-memoization` rule *also* flags manual memoization, but it cannot recognize the three exceptions above, so it false-positives on them. It is therefore configured as an **advisory warning** (`react-doctor.config.json`), not an error gate — it surfaces genuinely-gratuitous memoization on new code without blocking on the legitimate exceptions. Treat a new `useMemo`/`useCallback`/`memo()` outside the three exceptions as drift and remove it.
 
@@ -42,6 +48,7 @@ Enforcement is **`eslint-plugin-react-compiler` + `eslint-plugin-react-hooks`**,
 ## Related
 
 - `CLAUDE.md` → "React Compiler and memoization" — the rule summary with direct agent instructions
-- `vite.config.ts` — compiler setup (`reactCompilerPreset`)
+- `vite.config.ts` + `scripts/vite/reactCompilerPlugin.ts` — compiler setup (the compiler on its own Babel 7)
+- `scripts/react-compiler-bailouts.ts` — the inventory (`bun run compiler:bailouts`)
 - `eslint.config.js` — `eslint-plugin-react-compiler` and `react-hooks` configuration
 - `react-doctor.config.json` — advisory downgrade for `react-compiler-no-manual-memoization`

@@ -5,6 +5,7 @@
  * collisions refuse instead of overwriting somebody's value.
  */
 import { describe, it, expect } from 'bun:test'
+import { currentSizingMode } from '@core/studio-runtime'
 import {
   AXIS_PROPERTIES,
   constraintRefusal,
@@ -286,5 +287,27 @@ describe('nextModeForEdgeToggle', () => {
   it('any edge replaces centring — an axis cannot be centred and anchored at once', () => {
     expect(nextModeForEdgeToggle('center', 'start')).toBe('start')
     expect(nextModeForEdgeToggle('scale', 'end')).toBe('end')
+  })
+})
+
+describe('Fill on an absolute axis is the stretch constraint (PA-5)', () => {
+  it('the stretch plan reads back as Fill in the sizing model, on both axes, from a sized start', () => {
+    for (const [axis, size, start, end] of [
+      ['x', 'width', 'left', 'right'],
+      ['y', 'height', 'top', 'bottom'],
+    ] as const) {
+      const stored: Record<string, unknown> = { [size]: '120px', [start]: '10px' }
+      const plan = planConstraintChange(axis, 'stretch', ctx({ stored, geometry: GEOMETRY }))
+      if (!plan.ok) throw new Error(plan.reason)
+      const next = { ...stored }
+      for (const [key, value] of Object.entries(plan.patch)) {
+        if (value === null) delete next[key]
+        else next[key] = value
+      }
+      expect(currentSizingMode(size, { display: 'flex', flexDirection: 'row', childPosition: 'absolute' }, next)).toBe('fill')
+      expect(readConstraintMode(axis, ctx({ stored: next }))).toBe('stretch')
+      expect(next[start]).toBeDefined()
+      expect(next[end]).toBeDefined()
+    }
   })
 })

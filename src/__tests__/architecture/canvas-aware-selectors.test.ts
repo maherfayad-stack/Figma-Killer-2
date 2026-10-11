@@ -101,21 +101,6 @@ const SELECT_ACTIVE_PAGE_ALLOWLIST = new Set<string>([
   //   no-vc-mode-branches-in-mutations gate.
   'admin/pages/site/store/store.ts',
 
-  // §A.7 — useActiveLivePath: resolves the toolbar's "Open live page" deep
-  //   link. A Visual Component is never independently routable/publishable
-  //   (no slug, no permalink — the same "VCs are
-  //   embedded in pages, not standalone routes" reasoning). `activePageId`
-  //   is deliberately NOT cleared when entering VC
-  //   edit mode (see uiSlice.ts's `setActiveDocument`/`previousActivePageId`),
-  //   so `selectActivePage` here keeps resolving the underlying page the
-  //   author was on before opening the VC — exactly the fallback this hook's
-  //   own module doc already describes for templates ("a template's own slug
-  //   has no public route ... open the page it's being previewed against").
-  //   Switching to `selectActiveCanvasPage` would be actively wrong: it
-  //   would resolve a virtual Page for the VC (slug `components/<Name>`) and
-  //   compute a live path that 404s, instead of falling back to a real page.
-  'admin/pages/site/hooks/useActiveLivePath.ts',
-
   // §A.8 — PrototypePanel: a prototype link is anchored to a `pageId`
   //   (`PrototypeSource.pageId`, `@core/studio-prototype`) and a flow runs
   //   between two SCREENS on a board. A Visual Component is neither: it is a

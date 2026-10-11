@@ -9,6 +9,7 @@
  * One-way dependency: this module imports nothing from
  * `studioStructuralWriteback.ts`, which imports these back.
  */
+import { MAX_PASTED_CSS_CHARS, MAX_PROP_TEXT_CHARS } from '@core/utils/pastedHtmlLimits'
 import { Type } from '@core/utils/typeboxHelpers'
 
 /**
@@ -32,7 +33,7 @@ export const DesignSystemImportSchema = Type.Literal(true, {
  * platform="ios" value={0}/>` and reloaded from source as an empty bar.
  */
 export const JsonDataValueSchema = Type.Recursive((Self) =>
-  Type.Union([Type.String(), Type.Number(), Type.Boolean(), Type.Null(), Type.Array(Self), Type.Record(Type.String(), Self)]),
+  Type.Union([Type.String({ maxLength: MAX_PROP_TEXT_CHARS }), Type.Number(), Type.Boolean(), Type.Null(), Type.Array(Self), Type.Record(Type.String(), Self)]),
 )
 
 /**
@@ -57,13 +58,29 @@ const JsxPropElementNodeSchema = Type.Recursive((Self) =>
   }),
 )
 
+/**
+ * P5-B3 (IMG-10) — an image IMPORT in prop position: the WORKSPACE-relative
+ * path of an image file the new element reads through an import. The server
+ * guards the path and spells the specifier from the file being written
+ * (`studioInsertAssetImports.ts`); the codemod writes the default import and
+ * `prop={name}` in the same splice. Honoured on an `insert`'s direct props
+ * only — anywhere else `validateSubtree` refuses it.
+ */
+const AssetImportPropSchema = Type.Object({
+  __assetImport: Type.String({
+    maxLength: 1024,
+    description: 'Workspace-relative path of an image file in this project, written as a default import plus prop={name}.',
+  }),
+})
+
 const JsxPropValueSchema = Type.Recursive((Self) =>
   Type.Union([
-    Type.String(),
+    Type.String({ maxLength: MAX_PROP_TEXT_CHARS }),
     Type.Number(),
     Type.Boolean(),
     Type.Null(),
     Type.Object({ __jsx: JsxPropElementNodeSchema }),
+    AssetImportPropSchema,
     Type.Array(Self),
     Type.Record(Type.String(), Self),
   ]),
@@ -90,3 +107,17 @@ export const InsertNodeSchema = Type.Recursive((Self) =>
     children: Type.Optional(Type.Union([Type.String(), Type.Array(Self)])),
   }),
 )
+
+/**
+ * G-10 - marks an `insert` as a PASTED HTML fragment. The elements are the
+ * insert's own `name`/`props`/`children`/`siblings`; this carries what cannot be
+ * an element: the `<style>` text that came with them. Its presence changes how
+ * the insert is written (`studioInsertHtml.ts`): the tree is validated as a
+ * paste (no handlers, no unsafe URLs), the CSS is scoped and written into the
+ * page's own stylesheet - or resolved onto the elements when the page imports
+ * none - and the write is one journaled step covering both files. Honoured on
+ * an `insert` only, and never with a component import.
+ */
+export const PastedHtmlSchema = Type.Object({
+  css: Type.Optional(Type.String({ maxLength: MAX_PASTED_CSS_CHARS, description: 'The text of the <style> blocks that came with the pasted markup. Optional.' })),
+})

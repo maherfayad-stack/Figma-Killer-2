@@ -81,6 +81,14 @@ export function shortenSource(text: string): string {
  * caller opted in (`evalCtx` present). Returns `undefined` on any miss
  * (unresolved, or opted out) so callers keep falling through to their
  * existing "skip it" behaviour unchanged.
+ *
+ * `origin` is handed on only for a STRING value. Every origin this returns
+ * becomes a write target (`textOrigin`, `resolvedProps[k].origin`), and the
+ * writer behind them — `setStringLiteral` — rewrites string literals and
+ * refuses anything else. The evaluator still records a numeric literal's
+ * position (`staticEvalCore`), but offering `{PRICE}` over `const PRICE = 9`
+ * as editable copy would only end in that refusal: an edit the editor could
+ * not keep (P3-C).
  */
 export function tryResolveExpression(
   expr: Node,
@@ -89,7 +97,11 @@ export function tryResolveExpression(
   if (!evalCtx) return undefined
   const result: StaticValue = evaluateExpression(expr, evalCtx.scope, evalCtx.options)
   if (result.kind !== 'literal' || result.value === null) return undefined
-  return { value: result.value, note: result.note, origin: result.origin }
+  return {
+    value: result.value,
+    note: result.note,
+    ...(typeof result.value === 'string' && result.origin ? { origin: result.origin } : {}),
+  }
 }
 
 /**

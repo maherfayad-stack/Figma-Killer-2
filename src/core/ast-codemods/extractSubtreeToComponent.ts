@@ -58,11 +58,10 @@
  *      contains, so the new component's `interface` would be asserting a
  *      shape the user never chose (§2's invariant) — refuse rather than
  *      guess at a prop list.
- *   6. `name-taken` — the chosen component name collides with the new
- *      file's own path, a binding already in scope in the page file, or
- *      (Track E1's catalog) an existing component elsewhere in the project.
- *      Checked last because it is the only one that touches the filesystem
- *      and (in the fallback path) scans the whole workspace `Project`.
+ *   6. (no longer a refusal) a taken component name - the new file's own
+ *      path, a binding in scope in the page file, or (Track E1's catalog) an
+ *      existing component elsewhere in the project - resolves to `Name2`,
+ *      `Name3`, ... and is reported as the result's `componentName`.
  *   7. `slot-name-conflict` (E2.2) — two `slotChildren` decisions name the
  *      same slot, or a slot name collides with a forwarded free-variable
  *      prop of the same name. Checked twice, at the only two points either
@@ -97,9 +96,10 @@ import * as path from 'node:path'
 import { existsSync } from 'node:fs'
 import { Node, Project, QuoteKind, SyntaxKind, type SourceFile } from 'ts-morph'
 import { LOOP_ID_SEPARATOR, refusePlacement, type StructuralRefusalReason } from '@core/page-tree'
-import { createWorkspaceProject, eolFileSystemOf } from '@core/page-parser'
+import { createWorkspaceProject, eolFileSystemOf, isWorkspaceWritablePath } from '@core/page-parser'
 import { findJsxElementAtLocationOrThrow, loadSourceFile, resolveJsxWholeElement } from './locateJsxElement'
 import { addReconciledImports, relativeSpecifier, removeImportIfLastUsage, topLevelBindingNames } from './importReconcile'
+import { freshName } from './freshName'
 import { analyzeFreeVariables, type FreeVariable } from './subtreeFreeVariables'
 import { collectSlotChildCandidates } from './subtreeSlotChildren'
 
@@ -166,11 +166,15 @@ export interface SlotChildDecision {
  * reused, not reinvented, per this module's own doc — even though this
  * codemod only ever RETURNS that subset of the wider type (a reorder/delete/
  * insert-only reason like `multi-select` can never come out of
- * `refusePlacement`, which this file is the only caller of here). Three
- * reasons are genuinely new here: `spread-props`, `name-taken`, and (E2.2)
- * `slot-name-conflict`.
+ * `refusePlacement`, which this file is the only caller of here). Four
+ * reasons are genuinely new here: `spread-props`, (E2.2)
+ * `slot-name-conflict`, and (P1-G) `unwritable-target`.
  */
-export type ExtractSubtreeRefusalReason = StructuralRefusalReason | 'spread-props' | 'name-taken' | 'slot-name-conflict'
+export type ExtractSubtreeRefusalReason =
+  | StructuralRefusalReason
+  | 'spread-props'
+  | 'slot-name-conflict'
+  | 'unwritable-target'
 
 export interface ExtractSubtreeRefusal {
   reason: ExtractSubtreeRefusalReason
@@ -294,22 +298,28 @@ function workspaceHasComponentNamed(project: Project, name: string): boolean {
   return false
 }
 
-function nameTakenMessage(
+/**
+ * The component name actually used: the one asked for when it is free, else
+ * `Name2`, `Name3`, ... A name can be taken three ways - a file beside the
+ * page, a binding the page already declares or imports, a component elsewhere
+ * in the project - and none of them is worth stopping the gesture for. The
+ * resolved name is reported back as `componentName`.
+ */
+function resolveComponentName(
   project: Project,
   pageFile: SourceFile,
-  newPath: string,
-  componentName: string,
+  dir: string,
+  requested: string,
   existingComponentNames: ReadonlySet<string> | undefined,
-): string | undefined {
-  if (existsSync(newPath)) {
-    return `${path.basename(newPath)} already exists next to ${path.basename(pageFile.getFilePath())} — pick a different name.`
-  }
-  if (topLevelBindingNames(pageFile).has(componentName)) {
-    return `"${componentName}" is already used by an import or declaration in ${path.basename(pageFile.getFilePath())} — pick a different name.`
-  }
-  const taken = existingComponentNames ? existingComponentNames.has(componentName) : workspaceHasComponentNamed(project, componentName)
-  if (taken) return `A component named "${componentName}" already exists in this project — pick a different name.`
-  return undefined
+): string {
+  const topLevel = topLevelBindingNames(pageFile)
+  return freshName(
+    requested,
+    (candidate) =>
+      existsSync(path.join(dir, `${candidate}.tsx`)) ||
+      topLevel.has(candidate) ||
+      (existingComponentNames ? existingComponentNames.has(candidate) : workspaceHasComponentNamed(project, candidate)),
+  )
 }
 
 /**
@@ -319,13 +329,14 @@ function nameTakenMessage(
  * for the refusal order and the free-variable model.
  */
 export function extractSubtreeToComponent(params: ExtractSubtreeToComponentParams): ExtractSubtreeToComponentResult {
-  const { file, line, col, workspaceRoot, componentName } = params
-  if (!COMPONENT_NAME_RE.test(componentName)) {
+  const { file, line, col, workspaceRoot } = params
+  const requestedName = params.componentName
+  if (!COMPONENT_NAME_RE.test(requestedName)) {
     // A caller-contract violation, not a legitimate refusal a user needs
     // explained — the picker UI is responsible for only ever offering a
     // valid PascalCase name, the same trust level `findJsxElementAtLocationOrThrow`
     // extends to its own (file, line, col) inputs.
-    throw new Error(`extractSubtreeToComponent: "${componentName}" is not a valid component name (must start with an uppercase letter).`)
+    throw new Error(`extractSubtreeToComponent: "${requestedName}" is not a valid component name (must start with an uppercase letter).`)
   }
 
   const project = params.project ?? createWorkspaceProject(workspaceRoot)
@@ -348,11 +359,11 @@ export function extractSubtreeToComponent(params: ExtractSubtreeToComponentParam
 
   // Refuse FIRST — reasons 1-4, the vocabulary the user already sees on a
   // failed move/delete.
-  const placementRefusal = refusePlacement({ id: effectiveNodeId, lockReason: params.lockReason }, 'Extracted')
+  const placementRefusal = refusePlacement({ id: effectiveNodeId, lockReason: params.lockReason })
   if (placementRefusal) return refuse(placementRefusal.reason, placementRefusal.message)
 
   if (isInsideMapCallback(root)) {
-    const asLoopRow = refusePlacement({ id: `${effectiveNodeId}${LOOP_ID_SEPARATOR}0` }, 'Extracted')
+    const asLoopRow = refusePlacement({ id: `${effectiveNodeId}${LOOP_ID_SEPARATOR}0` })
     if (asLoopRow) return refuse(asLoopRow.reason, asLoopRow.message)
   }
 
@@ -392,21 +403,30 @@ export function extractSubtreeToComponent(params: ExtractSubtreeToComponentParam
   if (spreadsInKeptContent.length > 0) {
     return refuse(
       'spread-props',
-      "This element spreads an arbitrary prop bag ({...props}) — Studio can't read what it contains, so the new component's interface would be asserting a shape you didn't choose. Replace the spread with explicit props first.",
+      "This element spreads an arbitrary prop bag ({...props}), so the new component's interface would guess a shape. Replace the spread with explicit props first.",
     )
   }
 
   const dir = path.dirname(file)
+  // Reason 6 no longer refuses: a taken name resolves to the next free one.
+  const componentName = resolveComponentName(project, pageFile, dir, requestedName, params.existingComponentNames)
   const newPath = path.join(dir, `${componentName}.tsx`)
 
-  // Reason 6.
-  const nameTaken = nameTakenMessage(project, pageFile, newPath, componentName, params.existingComponentNames)
-  if (nameTaken) return refuse('name-taken', nameTaken)
+  // P1-G — the new file must be one Studio may write (`@core/page-parser`'s
+  // shared write scope). The page itself passed the writeback guard, but the
+  // file created beside it is a second target: a DANGLING link already named
+  // `<componentName>.tsx` would carry the write wherever it points.
+  if (!isWorkspaceWritablePath(workspaceRoot, newPath)) {
+    return refuse(
+      'unwritable-target',
+      `${componentName}.tsx cannot be created next to this page, because that path is a link or sits in a folder Studio does not write. Create the component in the code instead.`,
+    )
+  }
 
   // Reason 7a — two slot decisions naming the same slot.
   const duplicateSlotName = findDuplicate(resolvedSlots.map((s) => s.slotName))
   if (duplicateSlotName) {
-    return refuse('slot-name-conflict', `Two selected children both want the slot name "${duplicateSlotName}" — give each a distinct name.`)
+    return refuse('slot-name-conflict', `Two selected children both want the slot name "${duplicateSlotName}". Give each a distinct name.`)
   }
 
   // --- Analysis — no writes yet -----------------------------------------
@@ -424,7 +444,7 @@ export function extractSubtreeToComponent(params: ExtractSubtreeToComponentParam
   if (slotVsProp) {
     return refuse(
       'slot-name-conflict',
-      `The slot name "${slotVsProp.slotName}" collides with a forwarded prop of the same name — rename one.`,
+      `The slot name "${slotVsProp.slotName}" collides with a forwarded prop of the same name. Rename one of them.`,
     )
   }
 

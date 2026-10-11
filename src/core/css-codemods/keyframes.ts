@@ -2,15 +2,14 @@
  * keyframes — the `@keyframes`-scoped half of the plain-CSS write-back tier
  * (W5-5, animation editing).
  *
- * `setDeclaration` addresses `<selector> { … }` at a file's top level and
- * `setDeclarationAtMedia` addresses the same rule one nesting level down,
- * inside `@media <query>`. Neither can reach a keyframe step: a step lives
- * inside an AT-RULE that is matched by NAME rather than by query, and its own
- * "selector" (`from`, `to`, `50%`) is a keyframe offset, not a CSS selector —
- * `findRule` would happily match the string `50%` but only ever at the scope
- * it was handed, and the at-rule name/params pair has no counterpart in the
- * `@media` matcher. So this module is the third scope, built to
- * `setDeclarationAtMedia`'s shape on purpose: same postcss CST round-trip,
+ * `setDeclaration` addresses `<selector> { … }` at a file's top level, or one
+ * nesting level down inside a `@media`/`@container`/`@supports` block. None of
+ * those reaches a keyframe step: its own "selector" (`from`, `to`, `50%`) is
+ * a keyframe offset, not a CSS selector, and a second `@keyframes` block of
+ * the same name REPLACES the first rather than cascading with it — so the
+ * class writer's "write the declaration the cascade reads" rule does not
+ * apply. So this module is the keyframes scope, built to the at-rule write's
+ * shape on purpose: same postcss CST round-trip,
  * same "create the container if it is missing" behaviour, same
  * formatting-preservation guarantee (every byte this codemod did not touch
  * round-trips verbatim through postcss's `raws`).
@@ -21,7 +20,7 @@
  *                                no other codemod provides (a `@keyframes`
  *                                block reaches the editor as an opaque
  *                                `StyleRule.rawCss` string).
- *   - `setDeclarationAtKeyframe`    ← `setDeclarationAtMedia`
+ *   - `setDeclarationAtKeyframe`    ← `setDeclaration` with an `atRule`
  *   - `removeDeclarationAtKeyframe` ← `removeDeclaration`
  *   - `insertKeyframes`             ← `insertRule`, for a WHOLE new block.
  *
@@ -50,8 +49,7 @@
  * trimmed, matching every other matcher in this module family. The FIRST
  * match in source order is the write target, exactly as `findRule` takes the
  * first selector match; when a file holds more than one,
- * `analyzeKeyframesTarget` refuses BEFORE any of these writers run, the same
- * way `analyzeDeclarationTarget` gates `setDeclaration`.
+ * `analyzeKeyframesTarget` refuses BEFORE any of these writers run.
  *
  * A step is matched by its keyText, normalised only for whitespace and case
  * (`FROM` and `from` are the same step; `0%` and `from` are NOT — they are
@@ -60,18 +58,9 @@
  */
 import postcss, { type AtRule, type Root, type Rule } from 'postcss'
 import { applyDeclaration } from './setDeclaration'
-import { preservingLineEndings } from './preserveLineEndings'
-import type { SetDeclarationResult } from './setDeclaration'
-import type { RemoveDeclarationResult } from './removeDeclaration'
+import { preservingLineEndings, type CssRewrite } from './preserveLineEndings'
 import type { InsertRuleResult } from './insertRule'
-
-/** One step of an `@keyframes` block, as authored. */
-export interface KeyframeStep {
-  /** The offset exactly as written — `from`, `to`, `0%`, or a list like `0%, 100%`. */
-  keyText: string
-  /** kebab-cased property → value, in source order. */
-  declarations: Record<string, string>
-}
+import { KEYFRAMES_AT_RULE_RE, keyframesBlockText, type KeyframeStep } from './keyframesText'
 
 /** A named, user-readable reason a keyframes write refused — same shape as `DeclarationTargetRefusal`. */
 export interface KeyframesTargetRefusal {
@@ -80,29 +69,6 @@ export interface KeyframesTargetRefusal {
 }
 
 export type KeyframesTargetAnalysis = { ok: true } | { ok: false; refusal: KeyframesTargetRefusal }
-
-/** `@keyframes`, `@-webkit-keyframes`, `@-moz-keyframes`, … — see this module's "Matching". */
-const KEYFRAMES_AT_RULE_RE = /^(?:-[a-z]+-)?keyframes$/i
-
-/** The same at-rule name family, written as a whole prelude: `@keyframes fade-in`. */
-const KEYFRAMES_PRELUDE_RE = /^@(?:-[a-z]+-)?keyframes\s+(.+)$/i
-
-/**
- * The animation name in a `@keyframes fade-in` prelude, or `null` when the
- * text is not one.
- *
- * Studio stores a keyframes block as a `StyleRule` whose `selector` IS that
- * prelude (`siteImport/keyframesToStyleRule.ts`), so this is how both the
- * inspector and the save path get from a rule to the `name` every function
- * above matches on. It lives here, with the matcher it has to agree with,
- * rather than beside either caller — the two would otherwise each own a copy
- * of the vendor-prefix spelling, and a copy that drifts is a copy that writes
- * to the wrong block.
- */
-export function keyframesNameFromSelector(selector: string): string | null {
-  const match = KEYFRAMES_PRELUDE_RE.exec(selector.trim())
-  return match ? match[1]!.trim() : null
-}
 
 function isKeyframesAtRule(node: Root['nodes'][number], name: string): node is AtRule {
   return (
@@ -144,8 +110,9 @@ function findStep(atRule: AtRule, keyText: string): Rule | undefined {
 /**
  * Would a write to `@keyframes <name>` land on exactly one honest target?
  *
- * The `@keyframes`-shaped counterpart of `analyzeDeclarationTarget`, and it
- * needs exactly one rule where that one needs four: a second block with the
+ * The honest-target gate for `@keyframes`. A class declaration no longer needs
+ * one (a doubled selector or a covering shorthand is written where it takes
+ * effect — `setDeclaration`), but a second block with the
  * same name does not merge with the first, it REPLACES it wholesale, so
  * writing the first when a second exists changes the file and changes nothing
  * on screen. Run by the server immediately before any writer below, on the
@@ -164,51 +131,9 @@ export function analyzeKeyframesTarget(cssText: string, name: string): Keyframes
     refusal: {
       reason: 'duplicate-keyframes',
       message:
-        `This file declares @keyframes ${name} ${matches.length} times. The last one wins entirely, ` +
-        'so editing any single block would change the file without changing the animation. ' +
-        'Remove the duplicates and Studio can edit it.',
+        `This file declares @keyframes ${name} ${matches.length} times, and the last one wins entirely. Remove the duplicates and try again.`,
     },
   }
-}
-
-/**
- * The steps of `@keyframes <name>` in `cssText`, in source order, or `null`
- * when the file declares no such block.
- *
- * The read side of this module, and the reason it exists at all: a
- * `@keyframes` block reaches the editor as one opaque `StyleRule.rawCss`
- * string (`siteImport/keyframesToStyleRule.ts`), so the inspector has no way
- * to show a step, let alone edit one, without parsing it back. Declarations
- * keep their authored kebab-case names — this is a view of CSS text, not of a
- * `CSSPropertyBag`, and the caller converts if it needs the editor's camelCase
- * convention.
- *
- * A step whose block holds only comments contributes an empty `declarations`
- * rather than being dropped: it is a step the user wrote, and the editor must
- * be able to see it to add the first declaration to it.
- */
-export function readKeyframeSteps(cssText: string, name: string): KeyframeStep[] | null {
-  let root: Root
-  try {
-    root = postcss.parse(cssText)
-  } catch (_err) {
-    // Unparseable text is "no block here", not a crash — the caller is often
-    // rendering a panel for CSS that arrived from an arbitrary repository.
-    return null
-  }
-  const atRule = findKeyframesAtRules(root, name)[0]
-  if (!atRule) return null
-
-  const steps: KeyframeStep[] = []
-  atRule.each((node) => {
-    if (node.type !== 'rule') return
-    const declarations: Record<string, string> = {}
-    node.each((child) => {
-      if (child.type === 'decl') declarations[child.prop.trim()] = child.value.trim()
-    })
-    steps.push({ keyText: node.selector.trim(), declarations })
-  })
-  return steps
 }
 
 /** Build a fresh step node via a literal-fragment parse — `setDeclaration`'s `buildRule` technique, indented one level inside the at-rule. */
@@ -224,22 +149,9 @@ function buildStep(keyText: string, declarations: Readonly<Record<string, string
   return rule
 }
 
-/** The literal CSS text of a whole `@keyframes` block — the one reliable way to get correct nested indentation (see `setDeclarationAtMedia`'s note). */
-function keyframesFragment(name: string, steps: readonly KeyframeStep[]): string {
-  const body = steps
-    .map((step) => {
-      const decls = Object.entries(step.declarations)
-        .map(([property, value]) => `    ${property}: ${value};`)
-        .join('\n')
-      return `  ${step.keyText} {\n${decls}\n  }`
-    })
-    .join('\n')
-  return `@keyframes ${name} {\n${body}\n}`
-}
-
 /** Append a parsed `@keyframes` fragment to `root`, separated from whatever precedes it. */
 function appendKeyframes(root: Root, name: string, steps: readonly KeyframeStep[]): void {
-  const fragment = postcss.parse(keyframesFragment(name, steps))
+  const fragment = postcss.parse(keyframesBlockText(name, steps))
   const atRule = fragment.first
   if (!atRule || atRule.type !== 'atrule') {
     throw new Error('[css-codemods] unreachable: parsed fragment did not yield an at-rule node')
@@ -251,7 +163,7 @@ function appendKeyframes(root: Root, name: string, steps: readonly KeyframeStep[
 /**
  * Set one declaration inside one step of `@keyframes <name>`, creating the
  * step — and the whole block — at the end of the file if either is missing.
- * The exact `setDeclarationAtMedia` contract, one scope over.
+ * `setDeclaration`'s at-rule contract, one scope over.
  */
 export function setDeclarationAtKeyframe(
   cssText: string,
@@ -259,7 +171,7 @@ export function setDeclarationAtKeyframe(
   keyText: string,
   property: string,
   value: string,
-): SetDeclarationResult {
+): CssRewrite {
   return preservingLineEndings(cssText, (source) => {
     const root: Root = postcss.parse(source)
     const atRule = findKeyframesAtRules(root, name)[0]
@@ -295,7 +207,7 @@ export function removeDeclarationAtKeyframe(
   name: string,
   keyText: string,
   property: string,
-): RemoveDeclarationResult {
+): CssRewrite {
   return preservingLineEndings(cssText, (source) => {
     const root: Root = postcss.parse(source)
     const atRule = findKeyframesAtRules(root, name)[0]

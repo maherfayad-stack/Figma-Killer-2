@@ -18,7 +18,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { probeProject } from '../studio/projectProbe'
-import { compileProjectStyles, transformCssModuleText } from '../studio/styleCompile'
+import { compileProjectStyles, splitCompiledStyleChunks, transformCssModuleText } from '../studio/styleCompile'
 import { mergeStudioMeta } from '../studio/studioMeta'
 import type { SpawnedProcessLike, SubprocessSpawnFn } from '../studio/subprocessRunner'
 
@@ -149,6 +149,11 @@ describe('Sass — Tier 1, gated on trust', () => {
     expect(styles.css).toContain('color: hotpink')
     expect(styles.css).not.toContain('$primary')
     expect(warnings.some((w) => w.code === 'style-toolchain-requires-trust-promotion')).toBe(false)
+    // The compiled chunk is marked, so a token declared in it is attributed
+    // to the compiler's output rather than to whatever chunk came before.
+    const compiled = splitCompiledStyleChunks(styles.css).filter((chunk) => chunk.kind === 'compiled')
+    expect(compiled.map((chunk) => chunk.label)).toEqual(['sass'])
+    expect(compiled[0]!.css).toContain('color: hotpink')
   })
 })
 

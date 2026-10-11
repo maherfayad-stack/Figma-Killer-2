@@ -14,8 +14,7 @@
  *     explicitly wants the live tab's own unsaved state. They never REQUIRE
  *     a board;
  *   - `bridge` tools (structure edits, HTML/CSS authoring, design tokens,
- *     page lifecycle, code assets, live-frame reads, the session-authenticated
- *     asset upload) need the connector owner's open Site workspace via the
+ *     page lifecycle, code assets, live-frame reads) need the connector owner's open Site workspace via the
  *     live editor bridge (`./editorBridge`). If that workspace is not
  *     connected, the call returns a clear scope-specific error.
  *
@@ -31,8 +30,8 @@
  *
  * Capability filtering reuses the SAME gate the built-in agent uses
  * (`toolAllowedForCapabilities`): a connector without `ai.tools.write` never
- * sees a mutating tool, and a tool's `requiredCapabilities` (ANY-OF) must be
- * held. An MCP caller can never invoke a tool the granting capabilities
+ * sees a `requiresWrite` tool, and a tool's `requiredCapabilities` (ANY-OF)
+ * must be held. An MCP caller can never invoke a tool the granting capabilities
  * couldn't authorize over HTTP.
  *
  * ## Why no CMS `site_*` WRITE tool is in this catalog
@@ -71,11 +70,11 @@ const MCP_EXCLUDED_TOOLS = new Set<string>(['site_list_tokens'])
  *
  * Derived from `siteTools` rather than spelled out, so a tool renamed or
  * added in `../tools/site/writeTools.ts` cannot re-enter this catalog by
- * escaping a hand-maintained name list. `mutates` is the exact predicate:
- * `site/index.ts` stamps it, and the seven browser-backed READS that live in
- * `writeTools.ts` for bridge-dispatch reasons are stamped `false` there — so
- * `site_read_document`, `site_get_node_html`, `site_render_snapshot` and
- * their siblings are unaffected. `site_publish` is not in `siteTools` at all
+ * escaping a hand-maintained name list. `sideEffects === 'write'` is the
+ * exact predicate: `site/index.ts` stamps it, and the seven browser-backed
+ * READS that live in `writeTools.ts` for bridge-dispatch reasons are stamped
+ * `'none'` there — so `site_read_document`, `site_get_node_html`,
+ * `site_render_snapshot` and their siblings are unaffected. `site_publish` is not in `siteTools` at all
  * (it is `createPublishMcpTool`, server-resolved and separately gated by
  * `pages.publish`), so it is unaffected too.
  *
@@ -89,10 +88,11 @@ const MCP_EXCLUDED_TOOLS = new Set<string>(['site_list_tokens'])
  * IS `` `site:${string}` ``. So the only tree an MCP write can ever reach is a
  * studio-imported one, whose source of truth is `.tsx` on disk:
  *
- *   - `site_insert_html` / `site_replace_node_html` already REFUSE there by
- *     name (`HTML_IMPORT_ON_SOURCE_REFUSAL`, `store-13`): an HTML fragment has
- *     no honest single source form, and half of it is a `<style>` block that
- *     targets a stylesheet rather than the `.tsx`.
+ *   - `site_insert_html` writes the HTML there as JSX (G-10) but cannot return
+ *     the ids it created, since they do not exist until the file is re-read;
+ *     `site_replace_node_html` REFUSES by name (a replace is a delete plus an
+ *     insert, two writes). `studio_apply_edits`' `insert` edit takes the same
+ *     pasted HTML (`pastedHtml`) and answers with the new node ids.
  *   - `site_add_page` / `site_duplicate_page` / `site_delete_page` /
  *     `site_rename_page` and the two template verbs address `data_rows`
  *     pages, which no file in the user's repository describes.
@@ -111,7 +111,7 @@ const MCP_EXCLUDED_TOOLS = new Set<string>(['site_list_tokens'])
  * rule, which drops the CMS reads and publish as well.
  */
 export const CMS_SITE_WRITE_TOOLS_WITHHELD: ReadonlySet<string> = new Set(
-  siteTools.filter((tool) => tool.mutates).map((tool) => tool.name),
+  siteTools.filter((tool) => tool.sideEffects === 'write').map((tool) => tool.name),
 )
 
 function allMcpTools(runtime?: McpPublishRuntime): AiTool[] {

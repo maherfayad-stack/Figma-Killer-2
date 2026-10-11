@@ -17,9 +17,9 @@
  * here only because `collectStyleRuleEdits`'s return type includes all
  * three. `create`'s "which file was created" surfacing is wired: `saveSite`
  * calls `notifyCreatedStylesheets` (`studioSaveRequests.ts`) once the save
- * response arrives, alongside the `unexplainedSkips` handling.
+ * response arrives, alongside the refusal handling.
  *
- * Track B2 — `class` (`server/handlers/studioEditSchemas.ts`'s
+ * Track B2 — `class` (`server/handlers/studioClassEditSchema.ts`'s
  * `ClassEditSchema`, matching `classNameWriteback.ts`'s `ClassNameEditPayload`)
  * replaces Phase 0 item 0.6's honesty-only stopgap: a `node.classIds` add/
  * remove now reaches disk via `setJsxClassName` instead of only ever warning
@@ -40,13 +40,16 @@ export type StudioEditPayload =
   | { kind: 'text'; nodeId: string; text: string }
   | { kind: 'style'; nodeId: string; style: Record<string, string | number> }
   | { kind: 'class'; nodeId: string; add: StudioClassToken[]; remove: StudioClassToken[] }
-  | { kind: 'literal'; nodeId: string; text: string }
+  // `expected` — the text this board read at the literal (its save-diff
+  // baseline); the server refuses `literal-changed` when the file holds anything
+  // else, so an old read can never be written back over a newer file.
+  | { kind: 'literal'; nodeId: string; text: string; expected: string }
   | { kind: 'tag'; nodeId: string; tag: string }
   | { kind: 'asset'; nodeId: string; assetPath: string }
-  | { kind: 'css'; op: 'set'; nodeId: string; file: string; selector: string; property: string; value: string; atMedia?: string }
-  | { kind: 'css'; op: 'unset'; nodeId: string; file: string; selector: string; property: string; atMedia?: string }
-  | { kind: 'css'; op: 'insert'; nodeId: string; file: string; selector: string; declarations: Record<string, string>; atMedia?: string }
-  | { kind: 'css'; op: 'create'; nodeId: string; pageFile: string; selector: string; declarations: Record<string, string>; atMedia?: string }
+  | { kind: 'css'; op: 'set'; nodeId: string; file: string; selector: string; property: string; value: string; atRule?: string }
+  | { kind: 'css'; op: 'unset'; nodeId: string; file: string; selector: string; property: string; atRule?: string }
+  | { kind: 'css'; op: 'insert'; nodeId: string; file: string; selector: string; declarations: Record<string, string>; atRule?: string }
+  | { kind: 'css'; op: 'create'; nodeId: string; pageFile?: string; selector: string; declarations: Record<string, string>; atRule?: string }
   // W5-5 — the same three moves inside a `@keyframes` block. A keyframes
   // target is a FILE + ANIMATION NAME + STEP rather than a file + selector,
   // which is why these are their own variants rather than a widened `set`:
@@ -62,4 +65,4 @@ export type StudioEditPayload =
   // batch ordering unchanged. There is no `op`: a styled edit only ever sets
   // an existing declaration's value, and `styleRuleWriteback.ts` refuses the
   // add/remove cases client-side before one is built.
-  | { kind: 'styled'; nodeId: string; className: string; selector: string; property: string; value: string; atMedia?: string }
+  | { kind: 'styled'; nodeId: string; className: string; selector: string; property: string; value: string; atRule?: string }

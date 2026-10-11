@@ -106,6 +106,29 @@ describe('parsePageFile', () => {
     expect(div.inlineStyles).toEqual({ display: 'flex', flexDirection: 'column', marginTop: 40 })
   })
 
+  it('reads an inline padding / margin shorthand back into the four per-side keys', () => {
+    const file = writeFixture(
+      'inline-shorthand.tsx',
+      [
+        'export default function Page() {',
+        '  return <div style={{ padding: "12px 20px", margin: 8, marginLeft: "auto", display: "flex" }}>hi</div>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    expect(byName(parsePageFile(file, tmpDir), 'div').inlineStyles).toEqual({
+      paddingTop: '12px',
+      paddingRight: '20px',
+      paddingBottom: '12px',
+      paddingLeft: '20px',
+      marginTop: 8,
+      marginRight: 8,
+      marginBottom: 8,
+      marginLeft: 'auto',
+      display: 'flex',
+    })
+  })
+
   it('leaves inlineStyles absent for an element with no style attribute', () => {
     const file = writeFixture(
       'no-style.tsx',
@@ -392,7 +415,12 @@ describe('parsePageFile', () => {
     // A `{...}` anywhere used to blank the whole graphic. Now each attribute is
     // resolved on its own: `r`/`strokeWidth` are knowable, and the React-ism
     // becomes the real dashed attribute name.
-    expect(svg.props.svg).toBe('<svg viewBox="0 0 24 24"><circle r="17" stroke-width="2"/></svg>')
+    // SVG-3 — the stamp names the circle's own location, and lists the
+    // attributes that are code (`r={R}` too: a write would delete the binding).
+    expect(svg.props.svg).toBe(
+      '<svg viewBox="0 0 24 24"><circle data-studio-svg-part="5:8" data-studio-svg-code="r,strokeDashoffset"'
+      + ' r="17" stroke-width="2"/></svg>',
+    )
     // `strokeDashoffset` depends on a component PARAM, which has no static
     // value — the one attribute is omitted rather than the whole SVG.
     expect(svg.props.svg).not.toContain('stroke-dashoffset')
@@ -517,12 +545,22 @@ describe('parsePageFile', () => {
     expect(img.props.src).toBeUndefined()
   })
 
-  it('returns an empty page for a file with no component/JSX', () => {
+  it('returns an empty page for a file with no component/JSX — and says why (P3-B, WB-5)', () => {
     const file = writeFixture('no-component.tsx', 'export const x = 1\n')
 
     const page = parsePageFile(file, tmpDir)
 
-    expect(page).toEqual({ rootIds: [], nodes: {} })
+    // No nodes, as before; the frame is told the file has no component rather
+    // than being left to claim "this page is empty".
+    expect(page).toEqual({
+      rootIds: [],
+      nodes: {},
+      unreadableExport: {
+        line: 1,
+        col: 1,
+        message: 'The default export of no-component.tsx is missing — the file exports no React component Studio can read.',
+      },
+    })
   })
 
   it('CROSS-CHECK: locations from parsePageFile are valid setJsxProp targets', () => {

@@ -50,6 +50,8 @@
  * feedback loop" for the full pin/unroll contract.
  */
 
+import { isSelectionChromeMutation } from './selectionChromeMutation'
+
 /** The tag `startScrollUnroll` writes onto elements it has adjusted. */
 export const SCROLL_UNROLL_ATTR = 'data-studio-unroll'
 
@@ -419,7 +421,13 @@ export function startScrollUnroll(
     schedulePass()
     const MutationObserverCtor = view?.MutationObserver ?? MutationObserver
     try {
-      observer = new MutationObserverCtor(() => schedulePass())
+      observer = new MutationObserverCtor((records) => {
+        // The editor's selection chrome (a ring or badge mounting in the
+        // overlay root) is not page content — re-running the unroll pass for
+        // it was a full-document forced layout per hover crossing (PERF-2).
+        if (records.every(isSelectionChromeMutation)) return
+        schedulePass()
+      })
       // childList/subtree only — deliberately NOT observing `attributes`:
       // this pass's own writes (the data-* tag, the custom property) are
       // attribute mutations, and watching them would self-trigger forever.

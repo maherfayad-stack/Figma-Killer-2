@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'bun:test'
 import {
   KEYBINDINGS,
-  frameNudgeDelta,
+  nudgeDelta,
   getKeybindingForCommand,
-  FRAME_NUDGE_STEP,
-  FRAME_NUDGE_STEP_LARGE,
+  NUDGE_STEP,
+  NUDGE_STEP_LARGE,
   type KeyEventLike,
 } from '../keybindings'
 
@@ -46,10 +46,9 @@ describe('D2/D3 keybindings — canvas.zoomToFit / canvas.zoomToSelection / laye
     expect(up!.match(key({ key: 'ArrowDown', altKey: true }))).toBe(false)
     expect(down!.match(key({ key: 'ArrowUp', altKey: true }))).toBe(false)
 
-    // A bare arrow (no Alt) must NOT match. It now belongs to
-    // `board.nudgeFrames` while board frames are selected (viewport-01), and
-    // is still free for a future sibling-navigation shortcut with a NODE
-    // selected — either way this binding must not claim it.
+    // A bare arrow (no Alt) must NOT match. It belongs to
+    // `canvas.moveSelection`: selected frames nudge (viewport-01), and a
+    // selected node nudges or reorders (P2-C) — this binding must not claim it.
     expect(up!.match(key({ key: 'ArrowUp' }))).toBe(false)
 
     // Meta/Ctrl/Shift combined with Alt+Arrow must not match — keeps this
@@ -76,8 +75,8 @@ describe('viewport-01 keybindings', () => {
     expect(binding.match(key({ key: '0', metaKey: true, altKey: true }))).toBe(false)
   })
 
-  it('Enter selects the first child, Shift+Enter the parent — never each other', () => {
-    const child = getKeybindingForCommand('layers.selectFirstChild')!
+  it('Enter selects the children, Shift+Enter the parent — never each other', () => {
+    const child = getKeybindingForCommand('layers.selectChildren')!
     const parent = getKeybindingForCommand('layers.selectParent')!
 
     expect(child.match(key({ key: 'Enter' }))).toBe(true)
@@ -118,8 +117,8 @@ describe('viewport-01 keybindings', () => {
     expect(hide.match(key({ key: 'h', metaKey: true }))).toBe(false)
   })
 
-  it('board.nudgeFrames claims bare arrows (and Shift+arrows), never Alt+arrows', () => {
-    const nudge = getKeybindingForCommand('board.nudgeFrames')!
+  it('canvas.moveSelection claims bare arrows (and Shift+arrows), never Alt+arrows', () => {
+    const nudge = getKeybindingForCommand('canvas.moveSelection')!
     for (const k of ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']) {
       expect(nudge.match(key({ key: k }))).toBe(true)
       expect(nudge.match(key({ key: k, shiftKey: true }))).toBe(true)
@@ -131,15 +130,15 @@ describe('viewport-01 keybindings', () => {
     expect(nudge.match(key({ key: 'Enter' }))).toBe(false)
   })
 
-  it('frameNudgeDelta decodes direction and the Shift step', () => {
-    expect(frameNudgeDelta(key({ key: 'ArrowLeft' }))).toEqual({ dx: -FRAME_NUDGE_STEP, dy: 0 })
-    expect(frameNudgeDelta(key({ key: 'ArrowRight' }))).toEqual({ dx: FRAME_NUDGE_STEP, dy: 0 })
-    expect(frameNudgeDelta(key({ key: 'ArrowUp' }))).toEqual({ dx: 0, dy: -FRAME_NUDGE_STEP })
-    expect(frameNudgeDelta(key({ key: 'ArrowDown' }))).toEqual({ dx: 0, dy: FRAME_NUDGE_STEP })
+  it('nudgeDelta decodes direction and the Shift step', () => {
+    expect(nudgeDelta(key({ key: 'ArrowLeft' }))).toEqual({ dx: -NUDGE_STEP, dy: 0 })
+    expect(nudgeDelta(key({ key: 'ArrowRight' }))).toEqual({ dx: NUDGE_STEP, dy: 0 })
+    expect(nudgeDelta(key({ key: 'ArrowUp' }))).toEqual({ dx: 0, dy: -NUDGE_STEP })
+    expect(nudgeDelta(key({ key: 'ArrowDown' }))).toEqual({ dx: 0, dy: NUDGE_STEP })
 
-    expect(frameNudgeDelta(key({ key: 'ArrowDown', shiftKey: true })))
-      .toEqual({ dx: 0, dy: FRAME_NUDGE_STEP_LARGE })
-    expect(frameNudgeDelta(key({ key: 'Enter' }))).toBeNull()
+    expect(nudgeDelta(key({ key: 'ArrowDown', shiftKey: true })))
+      .toEqual({ dx: 0, dy: NUDGE_STEP_LARGE })
+    expect(nudgeDelta(key({ key: 'Enter' }))).toBeNull()
   })
 
   it('every registry entry is unique by commandId — the lookup map keys on it', () => {

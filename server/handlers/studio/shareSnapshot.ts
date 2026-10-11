@@ -35,16 +35,15 @@
  * stale frame.
  */
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { FRAME_HEIGHT, FRAME_WIDTH, type Board } from '@core/studio-board'
 import { Type, safeParseValue } from '@core/utils/typeboxHelpers'
-import type { SharedBoard, SharedFrame } from '@core/studio-share'
+import { isShareTokenShape, type SharedBoard, type SharedFrame } from '@core/studio-share'
 import { captureFrames } from '../../ai/mcp/capture/captureFrames'
-import { readBoardsFileOrEmpty } from './boardGeometry'
+import { DeadlineExceededError, withDeadline } from '../../ai/mcp/capture/withDeadline'
+import { readBoardsFile } from './boardGeometry'
 import { loadStudioPages } from '../studioPageLoad'
 import { projectDisplayName } from '../studioProjects'
-import { deleteShareSnapshot, shareSnapshotDir } from './shareStore'
+import { replaceShareSnapshot } from './shareStore'
 
 /**
  * The per-frame entries `studio_export_frames` returns, whichever capture
@@ -74,6 +73,15 @@ export interface ShareSnapshotInput {
 }
 
 /**
+ * The most a share will wait for its photograph. The capture queues behind the
+ * single warm Chromium (thumbnail captures included), launches it, loads the
+ * capture page and may fall back to the open tab; each step has its own bound
+ * and this is the ceiling over all of them. A share the user is watching must
+ * end in a link or a reason, never in an endless "Photographing the board...".
+ */
+export const SHARE_CAPTURE_DEADLINE_MS = 120_000
+
+/**
  * Injectable seams for tests — never passed by the route. Mirrors
  * `HeadlessCaptureOverrides`: a share test must be able to assert what is
  * WRITTEN without launching Chromium, and the thing worth asserting (that the
@@ -82,6 +90,8 @@ export interface ShareSnapshotInput {
  */
 export interface ShareSnapshotOverrides {
   captureFrames?: typeof captureFrames
+  /** Overrides {@link SHARE_CAPTURE_DEADLINE_MS}. Tests only. */
+  captureDeadlineMs?: number
   /** Page id → display title. Stands in for the parse when a fixture has no real pages. */
   titles?: Map<string, string>
 }
@@ -104,8 +114,7 @@ export async function writeShareSnapshot(
   input: ShareSnapshotInput,
   overrides: ShareSnapshotOverrides = {},
 ): Promise<ShareSnapshotResult> {
-  const snapshotDir = shareSnapshotDir(input.dir, input.token)
-  if (!snapshotDir) return { ok: false, error: 'Invalid share token.' }
+  if (!isShareTokenShape(input.token)) return { ok: false, error: 'Invalid share token.' }
 
   const frames = input.board.frames
   if (frames.length === 0) {
@@ -122,7 +131,21 @@ export async function writeShareSnapshot(
   // render for identical bytes. Both frames reference the one image.
   const pageIds = [...new Set(frames.map((frame) => frame.pageId))]
   const capture = overrides.captureFrames ?? captureFrames
-  const outcome = await capture({ userId: input.userId, dir: input.dir, pageIds })
+  let outcome: Awaited<ReturnType<typeof captureFrames>>
+  try {
+    outcome = await withDeadline(
+      capture({ userId: input.userId, dir: input.dir, pageIds }),
+      overrides.captureDeadlineMs ?? SHARE_CAPTURE_DEADLINE_MS,
+      'Photographing the board',
+    )
+  } catch (err) {
+    if (!(err instanceof DeadlineExceededError)) throw err
+    console.error('[studio-share]', err.message)
+    return {
+      ok: false,
+      error: `${err.message} The capture browser is not responding. Try again in a moment; if it keeps happening, check that Chromium is installed for playwright-core.`,
+    }
+  }
   if (!outcome.output.ok) {
     return { ok: false, error: outcome.output.error ?? 'The board could not be photographed.' }
   }
@@ -166,7 +189,14 @@ export async function writeShareSnapshot(
   }
 
   if (sharedFrames.length === 0) {
-    return { ok: false, error: 'None of this board’s frames could be photographed, so there is nothing to share yet.' }
+    // Say why. The bare sentence sent people looking for a problem with the board
+    // when the cause was the capture (a browser that would not start, a frame the
+    // open tab could not photograph).
+    const reasons = [...new Set(parsed.value.frames.filter((frame) => !frame.ok && frame.error).map((frame) => frame.error as string))]
+      .slice(0, 2)
+      .map((reason) => reason.slice(0, 240))
+    const detail = reasons.length > 0 ? ` Reason: ${reasons.join(' / ')}` : ''
+    return { ok: false, error: `None of this board’s frames could be photographed, so there is nothing to share yet.${detail}` }
   }
 
   const snapshot: SharedBoard = {
@@ -177,20 +207,15 @@ export async function writeShareSnapshot(
     frames: sharedFrames,
   }
 
-  // Wipe first: an update must not leave the previous capture's PNGs behind,
-  // where they would be unreferenced bytes of someone's design sitting in a
-  // directory the public route can reach.
-  deleteShareSnapshot(input.dir, input.token)
-  mkdirSync(snapshotDir, { recursive: true })
-  for (const entry of written) writeFileSync(join(snapshotDir, entry.file), entry.bytes)
-  writeFileSync(join(snapshotDir, 'board.json'), `${JSON.stringify(snapshot, null, 2)}\n`)
+  // A full replace, never a merge (`replaceShareSnapshot` wipes first).
+  replaceShareSnapshot(input.dir, input.token, [...written, { file: 'board.json', bytes: `${JSON.stringify(snapshot, null, 2)}\n` }])
 
   return { ok: true, snapshot }
 }
 
 /** The board a share targets, or `null` when the id names no board in this project. */
 export function findBoard(dir: string, boardId: string | undefined): Board | null {
-  const file = readBoardsFileOrEmpty(dir)
+  const file = readBoardsFile(dir)
   if (!boardId) return file.boards[0] ?? null
   return file.boards.find((board) => board.id === boardId) ?? null
 }

@@ -28,10 +28,10 @@ describe('studio_page_diagnostics registration', () => {
     expect(STUDIO_AGENT_TOOL_NAMES).toContain('studio_page_diagnostics')
   })
 
-  it('is a pure read: no mutates, no required capabilities', () => {
+  it('is a pure read: no requiresWrite, no required capabilities', () => {
     // Consequences, both deliberate: an `ai.chat`-only connector can call it,
     // and PR #9's parallel dispatch may batch it with other reads.
-    expect(studioPageDiagnosticsTool.mutates).toBeUndefined()
+    expect(studioPageDiagnosticsTool.requiresWrite).toBeUndefined()
     expect(studioPageDiagnosticsTool.requiredCapabilities ?? []).toEqual([])
   })
 

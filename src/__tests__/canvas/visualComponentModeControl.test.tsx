@@ -28,7 +28,6 @@ function resetStore() {
     previousActivePageId: null,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     _historyPast: [],
     _historyFuture: [],
     canUndo: false,

@@ -51,6 +51,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { lookupCanvasPageById, selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 import { measureBoardDropSurfaces } from './canvasDragBoard'
+import { resolveCanvasLiftDrop } from './BoardCanvasLayer/canvasLayerLift'
 import { commitCanvasDrag } from './canvasDragCommit'
 import {
   DRAG_ACTIVATE_PX,
@@ -58,6 +59,8 @@ import {
   EMPTY_RESOLUTION,
   EMPTY_TRANSPLANT_RESOLUTION,
   dragLabel,
+  dropRefusal,
+  followDragSessionThroughReparse,
   resolveDraggedIds,
   runCanvasDragFrame,
   type DragSession,
@@ -67,7 +70,14 @@ import { paintCanvasDrag } from './canvasDragPainter'
 import { clearFreeMovePreview } from './canvasFreeMove'
 import { beginCanvasGesture, endCanvasGesture } from './canvasGesture'
 import { useCanvasBodyDragTrigger } from './useCanvasBodyDragTrigger'
+import { useBridgeBodyDragTrigger } from './useBridgeBodyDragTrigger'
+import { markCanvasPressDragged } from './canvasNodeGestureLatch'
+import { flushPressQueue } from './pressRing'
+import { useInFrameMarquee } from './useInFrameMarquee'
+import { useBridgeFrameMarquee } from './useBridgeFrameMarquee'
+import { subscribeReparseFollow, type NodeIdFollower } from '@site/store/slices/site/reparseNodeFollow'
 import { clearCanvasPointerRelay, markCanvasPointerRelay } from './canvasPointerRelay'
+import { guardDragSession } from '@core/studio-runtime'
 import { resolvePortalDocument } from './frameAdapter/resolvePortalDocument'
 import type { CanvasTransform } from './math'
 
@@ -191,7 +201,7 @@ export function useCanvasReorderDrag({
   }
 
   const scheduleFrame = () => {
-    frameRef.current ??= requestAnimationFrame(runFrame)
+    frameRef.current = frameRef.current ?? requestAnimationFrame(runFrame)
   }
 
   // Exception #1: referenced in the `useEffect(() => resetDrag, [resetDrag])` dep array below.
@@ -257,6 +267,12 @@ export function useCanvasReorderDrag({
       const dy = event.clientY - session.origin.y
       if (Math.hypot(dx, dy) < DRAG_ACTIVATE_PX) return
       session.active = true
+      // The press is a drag now: the click its release raises in the frame
+      // must not select anything (`canvasPressBecameDrag`).
+      markCanvasPressDragged()
+      // What the press queued (its frame's page activation, its selection)
+      // is owed before the drag reads either - `pressRing.ts`.
+      flushPressQueue()
       // The single React commit of the whole gesture — see `dragging`.
       setDragging(true)
       // A body drag that started on an UNSELECTED element selects it now, at
@@ -302,7 +318,9 @@ export function useCanvasReorderDrag({
     const commit = {
       draggedId: session.draggedId,
       resolution: session.resolution,
-      free: session.free,
+      // Over another screen the free-move answer is stale (and its step with it):
+      // that gesture is a transplant, or a refused one - never an offset.
+      free: session.foreign ? null : session.free,
       freeStep: session.freeStep,
       // K2 — the modifier state at RELEASE decides, which is the only reading
       // that matches what the ghost was showing the instant before.
@@ -317,6 +335,11 @@ export function useCanvasReorderDrag({
               target: session.foreignResolution.target,
             }
           : null,
+      // P5-G — over no frame at all: the element leaves for the free canvas.
+      refusal: dropRefusal(session),
+      lift: session.free || session.foreign
+        ? null
+        : resolveCanvasLiftDrop({ ...session, canvasRoot: canvasRootRef?.current ?? null }),
     }
     resetDrag()
 
@@ -330,6 +353,32 @@ export function useCanvasReorderDrag({
   const handleWindowPointerCancel = () => {
     if (!sessionRef.current) return
     resetDrag()
+  }
+
+  /**
+   * ERR-23 — the board was re-read under the gesture. Follow every id the
+   * session holds to the element's new address (`followDragSessionThroughReparse`),
+   * or end the gesture when the dragged element is gone: a release against the
+   * pre-write ids would move nothing, or move whatever inherited the address.
+   * Read from the ORIGIN page when the frame has one — a cross-frame drag has
+   * already activated the destination, so the active page is the wrong end.
+   */
+  const handleReparse = (follow: NodeIdFollower) => {
+    const session = sessionRef.current
+    if (!session) return
+    // The free-move preview is written on the OLD element; drop it before the
+    // plan that names it goes.
+    if (session.free?.ok) clearFreeMovePreview(session.free.plan)
+    const state = useEditorStore.getState()
+    const tree =
+      session.originPageId && state.site
+        ? lookupCanvasPageById(state.site, session.originPageId)
+        : selectActiveCanvasPage(state)
+    if (!followDragSessionThroughReparse(session, follow, tree)) {
+      resetDrag()
+      return
+    }
+    if (session.active) scheduleFrame()
   }
 
   /**
@@ -382,7 +431,10 @@ export function useCanvasReorderDrag({
       tree,
       // The one expensive measurement of the whole gesture (G6): every
       // `[data-node-id]` in the frame, translated into frame space, once.
-      index: buildFrameCandidateIndex(viewport, tree, iframeElement, transformRef?.current ?? null),
+      // A bridge frame answers a round trip later; repaint when it does.
+      index: buildFrameCandidateIndex(viewport, tree, iframeElement, transformRef?.current ?? null, () => {
+        if (sessionRef.current?.active) scheduleFrame()
+      }),
       origin: point,
       point,
       axisLocked: false,
@@ -449,13 +501,27 @@ export function useCanvasReorderDrag({
       observer.observe(frameBody)
     }
 
+    // ERR-12 — a move with the button up means the release landed somewhere
+    // no relay heard (outside the window, the browser chrome): drop at the
+    // last resolved target, exactly as a heard release would. A window blur
+    // abandons the drag. Every move reaches the PARENT document, natively or
+    // through the iframe relay, so that is the one document to watch.
+    const disposeGuard = guardDragSession({
+      documents: [document],
+      focusWindow: window,
+      onReleaseLost: handleWindowPointerUp,
+      onAbandon: handleWindowPointerCancel,
+    })
     window.addEventListener('pointermove', handleWindowPointerMove)
     window.addEventListener('pointerup', handleWindowPointerUp)
     window.addEventListener('pointercancel', handleWindowPointerCancel)
     window.addEventListener('keydown', handleKeyDown, true)
     frameDoc?.addEventListener('keydown', handleKeyDown, true)
+    const unsubscribeReparse = subscribeReparseFollow(handleReparse)
     teardownRef.current = () => {
+      disposeGuard()
       observer?.disconnect()
+      unsubscribeReparse()
       window.removeEventListener('pointermove', handleWindowPointerMove)
       window.removeEventListener('pointerup', handleWindowPointerUp)
       window.removeEventListener('pointercancel', handleWindowPointerCancel)
@@ -509,9 +575,24 @@ export function useCanvasReorderDrag({
     enabled: bodyDragEnabled,
     iframeElement,
     overlayRoot,
+    pageId,
     frameId,
     beginDrag,
   })
+  // The same entry point for a Tier 2 BRIDGE frame, whose press arrives as a
+  // runtime `pointer` message instead of a DOM event — same plan, same session.
+  useBridgeBodyDragTrigger({
+    enabled: bodyDragEnabled,
+    iframeElement,
+    pageId,
+    frameId,
+    beginDrag,
+  })
+  // P5-E (IX-16, OD-6) — a press on the page ROOT that travels is a marquee,
+  // not a drag (the root never moves). Same document, same gate.
+  useInFrameMarquee({ enabled: bodyDragEnabled, overlayRoot, frameId })
+  // The same sweep in a Tier 2 BRIDGE frame, drawn in the parent over the iframe.
+  useBridgeFrameMarquee({ enabled: bodyDragEnabled, iframeElement, pageId, frameId })
 
   useEffect(() => resetDrag, [resetDrag])
 

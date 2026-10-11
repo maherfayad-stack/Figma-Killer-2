@@ -140,3 +140,43 @@ describe('TokenAwareInput — commit guard', () => {
     expect(onCommit).not.toHaveBeenCalled()
   })
 })
+
+describe('TokenAwareInput — focus selects the value', () => {
+  it('selects the whole value on focus, so the first keystroke replaces it instead of appending (`0px` + `16` -> `0px16`)', async () => {
+    render(<TokenAwareInput aria-label="Padding" value="0px" tokens={[]} onCommit={() => {}} />)
+    const input = screen.getByLabelText('Padding') as HTMLInputElement
+    fireEvent.focus(input)
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(null)))
+    expect(input.selectionStart).toBe(0)
+    expect(input.selectionEnd).toBe(3)
+  })
+})
+
+describe('TokenAwareInput — Escape discards the preview too', () => {
+  it('clears the as-you-type canvas preview and commits nothing', () => {
+    const onCommit = mock(() => {})
+    const onPreview = mock((_resolved: string | undefined) => {})
+    const onClearPreview = mock(() => {})
+    render(
+      <TokenAwareInput
+        aria-label="Padding left"
+        value="16px"
+        tokens={[]}
+        onCommit={onCommit}
+        onPreview={onPreview}
+        onClearPreview={onClearPreview}
+      />,
+    )
+    const input = screen.getByLabelText('Padding left')
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: '40px' } })
+    expect(onPreview).toHaveBeenCalledWith('40px')
+    expect(onClearPreview).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    expect(onClearPreview).toHaveBeenCalled()
+    expect(onCommit).not.toHaveBeenCalled()
+    expect((input as HTMLInputElement).value).toBe('16px')
+  })
+})

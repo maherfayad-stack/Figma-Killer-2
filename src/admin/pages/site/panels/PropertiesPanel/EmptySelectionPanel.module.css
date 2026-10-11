@@ -1,0 +1,46 @@
+/* EmptySelectionPanel — the nothing-selected Properties panel (P5-F, UX-9).
+   Sections are the shared `Section` primitive; this file only lays out their
+   bodies and the closing hint, on the inspector's frozen spacing scale. */
+
+.panel {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+}
+
+.body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-space-s);
+    padding: 0 var(--inspector-pad-x) var(--inspector-space-m);
+}
+
+.screenName {
+    margin: 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+}
+
+.switchRow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--inspector-space-s);
+    min-height: var(--inspector-row-h);
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    cursor: pointer;
+}
+
+.hint {
+    margin: 0;
+    padding: var(--inspector-space-m) var(--inspector-pad-x);
+    color: var(--text-subtle);
+    font-size: var(--text-xs);
+}

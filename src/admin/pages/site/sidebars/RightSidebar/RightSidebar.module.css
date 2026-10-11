@@ -12,13 +12,13 @@
     min-height: 0;
     overflow: hidden;
     background: var(--bg-body);
-    /* Width transition for user-driven open/close — same model as the
-       left sidebar. The transition only fires when the user toggles
-       collapsed/expanded; it does NOT fire on page load because the
-       sidebar's width is derived from synchronous site editor state. */
-    transition:
-        flex-basis 180ms ease,
-        width 180ms ease;
+    /* NO width transition. This sidebar opens and closes on SELECTION, not
+       only on a user toggle, and an animated `width` re-lays-out the canvas
+       beside it on every frame of the animation: each frame resizes the
+       canvas root, which re-renders the board's frame layer
+       (`BoardFramesLayer`'s viewport observer) and repaints both rulers
+       (`useRulerCanvasPaint`'s ResizeObserver) - 180 ms of hitch on the first
+       click. Figma's panel never animates either; it is just there. */
 }
 
 /*
@@ -26,7 +26,7 @@
  * panel.
  *
  * The absolute positioning is what keeps the PANEL at its full layout width
- * while the sidebar's own width animates open and closed — it used to live on
+ * while the sidebar's own width changes as a selection opens and closes it — it used to live on
  * `.panelSlot` itself, which is why a tab strip added as a flex sibling simply
  * drew on top of the panel. One positioned container, its children in normal
  * flow, and the two stack.
@@ -47,12 +47,6 @@
     flex: 1 1 auto;
     min-height: 0;
     overflow: hidden;
-}
-
-@media (prefers-reduced-motion: reduce) {
-    .sidebar {
-        transition: none;
-    }
 }
 
 @media (max-width: 760px) {

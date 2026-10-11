@@ -3,7 +3,7 @@
  * coordinator asked for by name: selecting/hovering a node in one
  * "duplicate as variant" frame must NOT also ring it in a sibling frame of
  * the SAME page — the two frames share every node id (trap #2), so without
- * `selectedNodeFrameId`/`hoveredFrameId` scoping (`CanvasFrameContext`,
+ * `selectedNodeFrameId`/`canvasHover` frame scoping (`CanvasFrameContext`,
  * `NodeRenderer.tsx`, `BreakpointSelectionOverlay.tsx`) a click in either
  * frame would ring both.
  *
@@ -15,6 +15,7 @@ import React from 'react'
 import { act, cleanup, render, waitFor } from '@testing-library/react'
 import { DndContext } from '@dnd-kit/core'
 import { createBoard, type BoardsFile } from '@core/studio-board'
+import { getCanvasHover } from '@site/canvas/canvasHover'
 import { useEditorStore } from '@site/store/store'
 import { CanvasRoot } from '@site/canvas/CanvasRoot'
 import { makeNode, makePage, makeSite } from '../fixtures'
@@ -33,7 +34,8 @@ async function waitForFrameDocument(frameId: string): Promise<Document> {
     const frameEl = document.querySelector(`[data-frame-id="${frameId}"]`)
     const iframe = frameEl?.querySelector('iframe') as HTMLIFrameElement | null
     doc = iframe?.contentDocument ?? null
-    expect(doc?.body).toBeTruthy()
+    // The tree is a staged mount (`IframeFrameSurface`): wait for it, not just for the empty document.
+    expect(doc?.body?.querySelector('[data-node-id]')).toBeTruthy()
   })
   return doc!
 }
@@ -52,12 +54,13 @@ beforeEach(() => {
     boardsDirty: false,
     selectedFrameIds: [],
     frameDefaults: {},
+    // Frames are live only while in view at a readable zoom (SB-5): a neighbouring file's zoom must not leak in (0.5 is INITIAL_ZOOM, and keeps the second frame in the happy-dom window).
+    zoom: 0.5,
+    panX: 0,
+    panY: 0,
     selectedNodeId: null,
     selectedNodeIds: [],
     selectedNodeFrameId: null,
-    hoveredNodeId: null,
-    hoveredBreakpointId: null,
-    hoveredFrameId: null,
     _historyPast: [],
     _historyFuture: [],
     canUndo: false,
@@ -100,10 +103,20 @@ describe('selection does not leak between two board frames of the same page', ()
     const sourceDoc = await waitForFrameDocument('frame-source')
     const variantDoc = await waitForFrameDocument('frame-variant')
 
-    const sourceButton = sourceDoc.querySelector('[data-node-id="cta-button"]') as HTMLElement
-    const variantButton = variantDoc.querySelector('[data-node-id="cta-button"]') as HTMLElement
-    expect(sourceButton).toBeTruthy()
-    expect(variantButton).toBeTruthy()
+    // A frame's document exists before its page tree has portalled in; wait for the node itself.
+    const findButton = async (doc: Document) => {
+      let button: HTMLElement | null = null
+      await waitFor(
+        () => {
+          button = doc.querySelector<HTMLElement>('[data-node-id="cta-button"]')
+          expect(button).toBeTruthy()
+        },
+        { timeout: 5000 },
+      )
+      return button as unknown as HTMLElement
+    }
+    const sourceButton = await findButton(sourceDoc)
+    const variantButton = await findButton(variantDoc)
 
     // Click the button inside the SOURCE frame.
     act(() => {
@@ -164,8 +177,8 @@ describe('selection does not leak between two board frames of the same page', ()
     })
 
     await waitFor(() => {
-      expect(useEditorStore.getState().hoveredNodeId).toBe('headline')
+      expect(getCanvasHover()?.nodeId).toBe('headline')
     })
-    expect(useEditorStore.getState().hoveredFrameId).toBe('frame-source')
+    expect(getCanvasHover()?.frameId).toBe('frame-source')
   })
 })

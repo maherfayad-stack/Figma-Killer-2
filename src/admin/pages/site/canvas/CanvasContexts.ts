@@ -29,6 +29,8 @@ interface CanvasSelectionContextValue {
     breakpointId?: string,
     frameId?: string | null,
   ) => void
+  /** A click on a frame's own empty background (`canvasPressTarget.ts` resolved it to `null`) — portal or bridge frame alike. */
+  onFrameBackgroundClick: (breakpointId?: string, frameId?: string | null) => void
   onNodeHover: (nodeId: string | null, breakpointId?: string, frameId?: string | null) => void
   onNodeContextMenu: (nodeId: string, e: MouseEvent, breakpointId?: string, frameId?: string | null) => void
   onNodeDoubleClick: (nodeId: string, e: MouseEvent, breakpointId?: string, frameId?: string | null) => void
@@ -45,6 +47,7 @@ interface CanvasSelectionContextValue {
 export const CanvasSelectionContext = createContext<CanvasSelectionContextValue>({
   onNodeClick: () => {},
   onFrameNodeClick: () => {},
+  onFrameBackgroundClick: () => {},
   onNodeHover: () => {},
   onNodeContextMenu: () => {},
   onNodeDoubleClick: () => {},

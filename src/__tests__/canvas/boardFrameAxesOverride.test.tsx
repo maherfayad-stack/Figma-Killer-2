@@ -35,7 +35,6 @@ function resetStore() {
     previewAxes: { direction: 'ltr', colorScheme: 'light' },
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     _historyPast: [],
     _historyFuture: [],
     canUndo: false,
@@ -104,7 +103,7 @@ function renderFrame(axes?: Partial<PreviewAxes>) {
       hasManualHeight={false}
       isActive={false}
       isSelected={false}
-      isOnScreen
+      isLive
     />,
   )
 }

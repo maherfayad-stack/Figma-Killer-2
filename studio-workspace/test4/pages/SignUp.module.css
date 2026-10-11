@@ -24,7 +24,7 @@
   width: 100%;
   margin: 0;
   font-family: var(--type-headline-family);
-  font-size: var(--type-headline-size);
+  font-size: 30px;
   font-weight: var(--type-headline-weight);
   line-height: 36px;
   letter-spacing: -0.5px;

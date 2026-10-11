@@ -27,7 +27,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.11
+          bun-version-file: package.json
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -46,7 +46,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.11
+          bun-version-file: package.json
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -54,9 +54,38 @@ jobs:
       - name: Lint
         run: bun run lint
 
+  # `bun run test` — NOT a bare `bun test`. The script is `bun test
+  # --parallel=4`, and `--parallel` implies `--isolate`: worker processes with
+  # a fresh global per file, instead of all ~1400 test files sharing one
+  # process, one happy-dom `document` and one module registry. That is the
+  # correctness model the suite is written against (`bunfig.toml`,
+  # `docs/architecture.md` → "Run the suite as `bun run test`"); bare
+  # `bun test` is the form in which a timed-out `act()` or a process-global
+  # `mock.module` poisons every later file.
+  #
+  # The flag only exists from Bun 1.3.13 on — 1.3.6 and 1.3.11 accept it and
+  # silently ignore it — which is one of the two reasons Bun is pinned EXACTLY
+  # by `engines.bun`, and every `setup-bun` step here reads it from
+  # package.json instead of naming a version (gated by
+  # `architecture/bun-version-pinned.test.ts`).
+  #
+  # Sharded, because memory accumulates across the files a worker runs: one
+  # process over `server/handlers` alone (148 files) peaked above 10 GB even
+  # with `--parallel=4`, and a hosted runner has 16 GB. `--shard` splits the
+  # FILE LIST, so every shard still runs through `bun run test` and still
+  # gets `--parallel=4`. No path filter, deliberately: bun discovers the files
+  # and deals them out, so every test — including every new architecture gate
+  # a work order adds — lands in some shard automatically. A gate that has to
+  # be named here to run is a gate that will be forgotten. To change the
+  # shard count, change the matrix; `strategy.job-total` follows it.
   test:
-    name: Test
+    name: Test (shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -64,17 +93,68 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.11
+          bun-version-file: package.json
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      # No path filter, deliberately: every architecture gate under
-      # `src/__tests__/architecture/` — including every new one a work order
-      # adds — is picked up by this job automatically. A gate that has to be
-      # named here to run is a gate that will be forgotten.
       - name: Test
-        run: bun test
+        run: bun run test --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+
+  # Regenerates the committed `Bun.build` artefacts on Linux and fails if the
+  # result differs from what is committed. The `*-fresh` gates in the test job
+  # already fail on drift; what this job adds is the FIX. On failure it uploads
+  # the regenerated files as the `regenerated-bundles` artefact — the
+  # canonical, LF, pinned-Bun output — so nobody has to regenerate on a Windows
+  # checkout, where CRLF sources and a different local Bun both produce
+  # different bytes. Download the artefact and commit its files as-is.
+  #
+  # Only the two `Bun.build`-based generators run here: their output is what
+  # varies with the Bun version. `alm:sync` and `icons:sync` are covered by
+  # their freshness gates in the test job.
+  generated-fresh:
+    name: Generated bundles are fresh
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Regenerate
+        run: |
+          bun run studio-runtime:sync
+          bun run bootstrap:sync
+
+      # `git status`, not `git diff`: a generator that starts emitting a NEW
+      # file must fail this job too, and `git diff` does not see untracked files.
+      - name: Fail on drift
+        run: |
+          changed="$(git status --porcelain -- src/core/studio-runtime/generated server/plugins/quickjs/bootstrap/generated)"
+          if [ -n "$changed" ]; then
+            echo "::error::committed generated bundles differ from a fresh build; download the regenerated-bundles artifact and commit it"
+            echo "$changed"
+            git diff --stat -- src/core/studio-runtime/generated server/plugins/quickjs/bootstrap/generated
+            exit 1
+          fi
+
+      - name: Upload the regenerated bundles
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regenerated-bundles
+          path: |
+            src/core/studio-runtime/generated
+            server/plugins/quickjs/bootstrap/generated
+          retention-days: 7
+          if-no-files-found: warn
 
   # The FULL Playwright suite.
   #
@@ -108,7 +188,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.11
+          bun-version-file: package.json
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -144,7 +224,7 @@ jobs:
   e2e-budgets:
     name: Browser budgets (canvas + inspector)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -152,7 +232,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.11
+          bun-version-file: package.json
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -183,7 +263,7 @@ jobs:
       - name: Run the budget specs
         run: |
           specs=""
-          for spec in tests/e2e/studio-board-perf.e2e.ts tests/e2e/inspector-panel-measurement.e2e.ts tests/e2e/inspector-height.e2e.ts tests/e2e/studio-feel.e2e.ts; do
+          for spec in tests/e2e/studio-board-perf.e2e.ts tests/e2e/studio-board-load.e2e.ts tests/e2e/canvas-feel-budgets.e2e.ts tests/e2e/canvas-edit-budgets.e2e.ts tests/e2e/live-frame-budgets.e2e.ts tests/e2e/inspector-panel-measurement.e2e.ts tests/e2e/inspector-height.e2e.ts tests/e2e/studio-feel.e2e.ts tests/e2e/studio-vector.e2e.ts; do
             if [ -f "$spec" ]; then
               specs="$specs $spec"
             else
@@ -196,6 +276,18 @@ jobs:
           fi
           echo "running:$specs"
           bunx playwright test $specs
+
+      # The budgets whose TARGET is stated for a production build (WS-5.6's
+      # selection -> ring < 32 ms, WS-5.5's first frame interactive < 2 s
+      # warm), against the production bundle: `E2E_VITE_MODE=preview` makes
+      # `scripts/e2e-dev.ts` run `vite build` and serve it with `vite
+      # preview` (`scripts/lib/e2eStack.ts`). Development React renders
+      # several times slower, so the step above can only ratchet these; this
+      # one holds them to the product's own numbers. Only the tests tagged
+      # `@production-bundle` run here — each reads the mode and asserts the
+      # production budget.
+      - name: Run the production-bundle budgets
+        run: E2E_VITE_MODE=preview bunx playwright test tests/e2e/canvas-feel-budgets.e2e.ts tests/e2e/canvas-edit-budgets.e2e.ts tests/e2e/studio-board-perf.e2e.ts --grep @production-bundle
 
       # ONE upload, not two. There used to be an `if: failure()` step and an
       # `if: always()` step that both uploaded an artifact called

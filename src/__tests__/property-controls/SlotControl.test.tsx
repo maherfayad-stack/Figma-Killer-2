@@ -129,7 +129,7 @@ describe('SlotControl', () => {
         return new Response(
           JSON.stringify({
             components: [
-              { name: 'Icon', file: 'src/components/Icon.tsx', exportName: 'default', isDefaultExport: true, props: [] },
+              { name: 'Icon', file: 'src/components/Icon.tsx', exportName: 'default', isDefaultExport: true, line: 1, column: 1, role: 'component', props: [] },
             ],
           }),
           { status: 200 },
@@ -164,6 +164,86 @@ describe('SlotControl', () => {
       // An EMPTY slot's "Add" appends — there is nothing to replace. The
       // "Replace" affordance only exists once the slot is filled.
       mode: 'append',
+    })
+  })
+
+  describe('Swap (instance-swap property)', () => {
+    function seedSlot(slotModule: string) {
+      const slot = makeNode({
+        id: 'src/pages/Home.tsx:5:20',
+        moduleId: slotModule,
+        props: { componentName: 'Heart', source: 'local', sourceFile: 'src/components/Heart.tsx', callSiteProps: {} },
+      })
+      const owner = makeNode({
+        id: 'src/pages/Home.tsx:5:3',
+        moduleId: 'studio.instance',
+        props: { componentName: 'Cell', source: 'local', sourceFile: 'src/components/Cell.tsx', callSiteProps: {} },
+      })
+      const root = makeNode({ id: 'root', moduleId: 'base.body', children: [owner.id] })
+      const page = makePage({ nodes: { root, [owner.id]: owner, [slot.id]: slot } })
+      const site = makeSite({ pages: [page] })
+      const indexes = emptyNodeIndexes()
+      rebuildNodeIndexes(indexes, site)
+      useEditorStore.setState({ site, ...nodeIndexState(indexes) } as Parameters<typeof useEditorStore.setState>[0])
+      return { slot, owner }
+    }
+
+    it('offers Swap when the slot holds exactly one local component', () => {
+      const { slot, owner } = seedSlot('studio.instance')
+      render(<SlotControl propKey="icon" value={studioSlotValue(slot.id)} label="Icon" onChange={() => {}} ownerNodeId={owner.id} />)
+      expect(screen.getByTestId('slot-control-icon-swap')).toBeTruthy()
+    })
+
+    it('offers no Swap when the slot holds a plain element (no component to swap)', () => {
+      const { slot, owner } = seedSlot('base.container')
+      render(<SlotControl propKey="icon" value={studioSlotValue(slot.id)} label="Icon" onChange={() => {}} ownerNodeId={owner.id} />)
+      expect(screen.queryByTestId('slot-control-icon-swap')).toBeNull()
+      expect(screen.getByTestId('slot-control-icon-replace')).toBeTruthy()
+    })
+
+    it('offers no Swap for an empty slot', () => {
+      const { owner } = seedSlot('studio.instance')
+      render(<SlotControl propKey="icon" value={undefined} label="Icon" onChange={() => {}} ownerNodeId={owner.id} />)
+      expect(screen.queryByTestId('slot-control-icon-swap')).toBeNull()
+    })
+
+    it('writes a swap edit at the SLOT CONTENT node, not the owner call site', async () => {
+      const { slot, owner } = seedSlot('studio.instance')
+      const saveBodies: Record<string, unknown>[] = []
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        if (url.includes('/admin/api/studio/components')) {
+          return new Response(
+            JSON.stringify({
+              components: [
+                { name: 'Heart', file: 'src/components/Heart.tsx', exportName: 'default', isDefaultExport: true, line: 1, column: 1, role: 'component', props: [] },
+                { name: 'Star', file: 'src/components/Star.tsx', exportName: 'default', isDefaultExport: true, line: 1, column: 1, role: 'component', props: [] },
+              ],
+            }),
+            { status: 200 },
+          )
+        }
+        if (url.includes('/admin/api/studio/save')) {
+          if (init?.body) saveBodies.push(JSON.parse(String(init.body)))
+          return new Response(JSON.stringify({ ok: true, written: 0, skipped: 0, shifted: false, sharedComponents: false }), {
+            status: 200,
+          })
+        }
+        return new Response(JSON.stringify({ error: 'not found' }), { status: 404 })
+      }) as typeof fetch
+
+      const user = userEvent.setup()
+      render(<SlotControl propKey="icon" value={studioSlotValue(slot.id)} label="Icon" onChange={() => {}} ownerNodeId={owner.id} />)
+      await user.click(screen.getByTestId('slot-control-icon-swap'))
+      // The current component is not offered as its own replacement.
+      await waitFor(() => expect(screen.getByTestId('instance-swap-candidate-Star')).toBeTruthy())
+      expect(screen.queryByTestId('instance-swap-candidate-Heart')).toBeNull()
+      await user.click(screen.getByTestId('instance-swap-candidate-Star'))
+
+      await waitFor(() => expect(saveBodies.length).toBeGreaterThan(0))
+      const body = saveBodies[0] as { edits: { kind: string; nodeId: string; newComponentName: string }[] }
+      expect(body.edits).toHaveLength(1)
+      expect(body.edits[0]).toMatchObject({ kind: 'swap', nodeId: slot.id, newComponentName: 'Star' })
     })
   })
 })

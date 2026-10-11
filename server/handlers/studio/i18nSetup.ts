@@ -12,8 +12,14 @@
  *      scanner learned to see later, is still inline and still needs moving.
  *   2. **Mint a key per string** the scanner found ({@link mintKeys}).
  *   3. **Rewrite the JSX**, one file at a time (`extractStringsToDictionary`).
- *   4. **Write the English value** for every key that actually landed, through
- *      the same `writeTranslationEntry` a hand edit in the panel uses.
+ *   4. **Write the source-locale value** (the dictionary's `defaultKey`,
+ *      `en` for Studio's scaffold) for every key that actually landed, through
+ *      the same `writeTranslationEntry` a hand edit in the panel uses. The
+ *      value is the JSX literal the scanner read out of the SOURCE file —
+ *      never text the canvas rendered, which under an `ar` preview is Arabic —
+ *      and it is written as a CREATE (`expected: null`): a key that already
+ *      holds different text is refused, never overwritten. No other locale is
+ *      written; filling `ar` is the translate action's job.
  *
  * Step 4 is deliberately last and deliberately keyed off step 3's REPORT: a key
  * whose JSX rewrite was refused must not appear in the dictionary, or the panel
@@ -37,12 +43,12 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { extractStringsToDictionary, relativeSpecifier, type StringExtraction } from '@core/ast-codemods'
 import { Type } from '@core/utils/typeboxHelpers'
-import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { resolveAppRoot } from './appRoot'
-import { findHardcodedStrings, type HardcodedString } from './hardcodedStrings'
+import { countDesignSystemHardcodedStrings, findHardcodedStrings, type HardcodedString } from './hardcodedStrings'
 import { findScaffoldedI18n, scaffoldProjectI18n, SCAFFOLD_HOOK_NAME, SCAFFOLD_LOCALES } from './i18nScaffold'
-import { readTranslationCatalog } from './translationCatalog'
+import { readTranslationCatalog, type TranslationCatalog } from './translationCatalog'
 import { reprobeProjectProfile } from './projectProbe'
 import { writeTranslationEntry } from './translationWrite'
 
@@ -102,8 +108,20 @@ export interface MintedKey extends HardcodedString {
  *
  * A collision on the minted NAME (different text that shortens to the same
  * words) takes a numeric suffix rather than silently merging two strings.
+ *
+ * `dictionary` is the dictionary as it already is — key to its
+ * source-locale value (`null` when only another locale has it). A key that
+ * already holds THIS text is reused (the string was extracted before; the JSX
+ * should read the same entry). A key that holds
+ * DIFFERENT text is taken: minting it again would point a second string at
+ * the first one's entry and overwrite its source-locale copy, which is how a
+ * re-run of "Make translatable" silently rewrote English that was already
+ * there.
  */
-export function mintKeys(strings: readonly HardcodedString[]): MintedKey[] {
+export function mintKeys(
+  strings: readonly HardcodedString[],
+  dictionary: ReadonlyMap<string, string | null> = new Map(),
+): MintedKey[] {
   const byText = new Map<string, string>()
   const taken = new Set<string>()
   const out: MintedKey[] = []
@@ -118,8 +136,10 @@ export function mintKeys(strings: readonly HardcodedString[]): MintedKey[] {
     }
     const leaf = leafFor(item.text)
     if (!leaf) continue
+    const unavailable = (candidate: string) =>
+      taken.has(candidate) || (dictionary.has(candidate) && dictionary.get(candidate) !== item.text)
     let key = `${namespace}.${leaf}`
-    for (let n = 2; taken.has(key); n++) key = `${namespace}.${leaf}${n}`
+    for (let n = 2; unavailable(key); n++) key = `${namespace}.${leaf}${n}`
     taken.add(key)
     byText.set(textKey, key)
     out.push({ ...item, key })
@@ -175,6 +195,19 @@ function rewriteFile(
   return result.applied
 }
 
+/** Every existing key's value in the dictionary's source (default) locale — what `mintKeys` must not mint over. */
+function sourceLocaleValues(catalog: TranslationCatalog | null): Map<string, string | null> {
+  const values = new Map<string, string | null>()
+  if (!catalog) return values
+  const sourceLocale = catalog.capability.defaultKey ?? catalog.capability.keys[0]
+  for (const entry of catalog.entries) {
+    // A key present only in another locale (`null`) is still taken: its
+    // source entry would be created next to a translation of other text.
+    values.set(entry.key, (sourceLocale ? entry.values[sourceLocale] : undefined) ?? null)
+  }
+  return values
+}
+
 /**
  * Scaffolds the dictionary and moves every scanned string into it. Never
  * throws — a per-string refusal is reported, not raised.
@@ -208,7 +241,7 @@ export function setUpProjectI18n(dir: string): I18nSetupReport | { ok: false; me
 
   // Scanned AFTER the scaffold but BEFORE any rewrite: the scaffold does not
   // touch the JSX, and the positions must be the ones the panel showed.
-  const minted = mintKeys(findHardcodedStrings(dir))
+  const minted = mintKeys(findHardcodedStrings(dir), sourceLocaleValues(existing))
 
   const byFile = new Map<string, MintedKey[]>()
   for (const item of minted) {
@@ -217,8 +250,9 @@ export function setUpProjectI18n(dir: string): I18nSetupReport | { ok: false; me
     else byFile.set(item.file, [item])
   }
 
-  const englishByKey = new Map<string, string>()
-  for (const item of minted) englishByKey.set(item.key, item.text)
+  // The SOURCE literal's own text, per key — see this module's step 4.
+  const sourceTextByKey = new Map<string, string>()
+  for (const item of minted) sourceTextByKey.set(item.key, item.text)
 
   const landed = new Set<string>()
   let filesChanged = 0
@@ -238,9 +272,28 @@ export function setUpProjectI18n(dir: string): I18nSetupReport | { ok: false; me
   // which reads the profile.
   reprobeProjectProfile(dir)
 
+  const sourceLocale = readTranslationCatalog(dir)?.capability.defaultKey ?? SCAFFOLD_LOCALES[0]
   for (const key of landed) {
-    const result = writeTranslationEntry(dir, { locale: 'en', key, value: englishByKey.get(key) ?? '' })
+    const result = writeTranslationEntry(dir, {
+      locale: sourceLocale,
+      key,
+      value: sourceTextByKey.get(key) ?? '',
+      expected: null,
+    })
     if (!result.ok) failures.push({ key, message: result.message })
+  }
+
+  // One summary line, not a refusal per string: `findHardcodedStrings` already
+  // excludes the vendored design system entirely, so those strings never got
+  // a key or a rewrite attempt above. Reported here so the panel doesn't read
+  // the silence as "the design system has no copy" — it has copy, Studio just
+  // never touches a library.
+  const designSystemCopyCount = countDesignSystemHardcodedStrings(dir)
+  if (designSystemCopyCount > 0) {
+    failures.push({
+      key: 'design-system',
+      message: `${designSystemCopyCount} ${designSystemCopyCount === 1 ? 'string' : 'strings'} in design-system text is left to the library.`,
+    })
   }
 
   return {
@@ -263,7 +316,6 @@ export async function tryServeStudioI18nSetup(req: Request, _url: URL, pathname:
     return jsonResponse(setUpProjectI18n(dir))
   } catch (err) {
     rethrowProjectDirRefusal(err)
-    console.error('[studio:i18nSetup]', err)
-    return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    return internalServerError('[studio:i18nSetup]', err)
   }
 }

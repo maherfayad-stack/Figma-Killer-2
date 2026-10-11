@@ -154,11 +154,48 @@ describe('setJsxClassName', () => {
       const file = writeFixture('template-remove.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      const result = setJsxClassName({ file, line, col, add: t(), remove: t('a') })
+      // `b` is not written in the template, so it could be anything `${x}` produces.
+      const result = setJsxClassName({ file, line, col, add: t(), remove: t('b') })
 
       expect(result.ok).toBe(false)
       if (!result.ok) expect(result.refusal.reason).toBe('template-dynamic')
       expect(fs.readFileSync(file, 'utf8')).toBe(source)
+    })
+  })
+
+  describe('a template that is a plain class list - className={`${styles.a} ${styles.b} c`}', () => {
+    const file = (source: string, name: string) => writeFixture(name, source)
+    const page = (value: string) =>
+      ["import styles from './Card.module.css'", 'export function Card() {', `  return <div className=${value}>Hi</div>`, '}', ''].join('\n')
+
+    it('removes a module token that is one whole span and keeps the rest', () => {
+      const source = page('{`${styles.a} ${styles.b} c`}')
+      const path = file(source, 'tpl-list-1.tsx')
+      const { line, col } = locateTag(source, 'div')
+      expect(setJsxClassName({ file: path, line, col, add: [], remove: [mod('./Card.module.css', 'a')] }).ok).toBe(true)
+      expect(fs.readFileSync(path, 'utf8')).toBe(page('{`${styles.b} c`}'))
+    })
+
+    it('collapses to the bare binding or a plain string when one kind of token is left', () => {
+      const source = page('{`${styles.a} ${styles.b}`}')
+      const path = file(source, 'tpl-list-2.tsx')
+      const { line, col } = locateTag(source, 'div')
+      expect(setJsxClassName({ file: path, line, col, add: [], remove: [mod('./Card.module.css', 'a')] }).ok).toBe(true)
+      expect(fs.readFileSync(path, 'utf8')).toBe(page('{styles.b}'))
+
+      const source2 = page('{`${styles.a} c`}')
+      const path2 = file(source2, 'tpl-list-3.tsx')
+      expect(setJsxClassName({ file: path2, line, col, add: [], remove: [mod('./Card.module.css', 'a')] }).ok).toBe(true)
+      expect(fs.readFileSync(path2, 'utf8')).toBe(page('"c"'))
+    })
+
+    it('refuses a span glued to text, which is not a token list', () => {
+      const source = page('{`btn-${size} ${styles.a}`}')
+      const path = file(source, 'tpl-list-4.tsx')
+      const { line, col } = locateTag(source, 'div')
+      const result = setJsxClassName({ file: path, line, col, add: [], remove: [mod('./Card.module.css', 'a')] })
+      expect(result.ok).toBe(false)
+      expect(fs.readFileSync(path, 'utf8')).toBe(source)
     })
   })
 
@@ -222,18 +259,20 @@ describe('setJsxClassName', () => {
       expect(written).not.toContain('only')
     })
 
-    it('refuses unsupported-call for a function call not in the class-name-join whitelist', () => {
+    it('P3-C (WB-18) — an ADD wraps a call it does not recognise; a REMOVE still refuses unsupported-call', () => {
       const source = ['export function App() {', "  return <div className={someFn('a')}>Hi</div>", '}', ''].join(
         '\n',
       )
       const file = writeFixture('unsupported-call.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      const result = setJsxClassName({ file, line, col, add: t('b'), remove: t() })
-
-      expect(result.ok).toBe(false)
-      if (!result.ok) expect(result.refusal.reason).toBe('unsupported-call')
+      const removal = setJsxClassName({ file, line, col, add: t(), remove: t('a') })
+      expect(removal.ok).toBe(false)
+      if (!removal.ok) expect(removal.refusal.reason).toBe('unsupported-call')
       expect(fs.readFileSync(file, 'utf8')).toBe(source)
+
+      expect(setJsxClassName({ file, line, col, add: t('b'), remove: t() }).ok).toBe(true)
+      expect(fs.readFileSync(file, 'utf8')).toBe(source.replace("{someFn('a')}", "{`b ${someFn('a') || ''}`}"))
     })
   })
 
@@ -278,6 +317,38 @@ describe('setJsxClassName', () => {
       expect(written.split('\n').length).toBe(source.split('\n').length)
     })
 
+    it('SWAPS the binding for another module class: remove + add in one write', () => {
+      const source = [
+        "import styles from './Card.module.css'",
+        'export function Card() {',
+        '  return <div className={styles.greet}>Hi</div>',
+        '}',
+        '',
+      ].join('\n')
+      const file = writeFixture('css-module-swap.tsx', source)
+      const { line, col } = locateTag(source, 'div')
+
+      const result = setJsxClassName({ file, line, col, add: [mod('./Card.module.css', 'counter')], remove: [mod('./Card.module.css', 'greet')] })
+
+      expect(result.ok).toBe(true)
+      expect(fs.readFileSync(file, 'utf8')).toBe(source.replace('{styles.greet}', '{styles.counter}'))
+    })
+
+    it('SWAPS the binding for a literal class too', () => {
+      const source = [
+        "import styles from './Card.module.css'",
+        'export function Card() {',
+        '  return <div className={styles.greet}>Hi</div>',
+        '}',
+        '',
+      ].join('\n')
+      const file = writeFixture('css-module-swap-literal.tsx', source)
+      const { line, col } = locateTag(source, 'div')
+
+      expect(setJsxClassName({ file, line, col, add: t('display'), remove: [mod('./Card.module.css', 'greet')] }).ok).toBe(true)
+      expect(fs.readFileSync(file, 'utf8')).toContain('className="display"')
+    })
+
     it('still refuses to REMOVE a token the module produces', () => {
       const source = [
         "import styles from './Card.module.css'",
@@ -311,7 +382,7 @@ describe('setJsxClassName', () => {
       expect(fs.readFileSync(file, 'utf8')).toBe(source)
     })
 
-    it('falls back to the generic refusal for a member access that is NOT a CSS Modules import', () => {
+    it('P3-C (WB-18) — wraps a member access that is NOT a CSS Modules import, rather than refusing', () => {
       const source = [
         'export function Card({ theme }) {',
         '  return <div className={theme.card}>Hi</div>',
@@ -323,13 +394,13 @@ describe('setJsxClassName', () => {
 
       const result = setJsxClassName({ file, line, col, add: t('x'), remove: t() })
 
-      expect(result.ok).toBe(false)
-      if (!result.ok) expect(result.refusal.reason).toBe('unsupported-expression')
+      expect(result.ok).toBe(true)
+      expect(fs.readFileSync(file, 'utf8')).toBe(source.replace('{theme.card}', "{`x ${theme.card || ''}`}"))
     })
   })
 
   describe('other unsupported expressions', () => {
-    it('refuses unsupported-expression for a bare identifier', () => {
+    it('P3-C (WB-18) — wraps a bare identifier on ADD, and still refuses a REMOVE', () => {
       const source = [
         'export function App({ dynamicClass }) {',
         '  return <div className={dynamicClass}>Hi</div>',
@@ -339,14 +410,16 @@ describe('setJsxClassName', () => {
       const file = writeFixture('identifier.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      const result = setJsxClassName({ file, line, col, add: t('x'), remove: t() })
-
-      expect(result.ok).toBe(false)
-      if (!result.ok) expect(result.refusal.reason).toBe('unsupported-expression')
+      const removal = setJsxClassName({ file, line, col, add: t(), remove: t('x') })
+      expect(removal.ok).toBe(false)
+      if (!removal.ok) expect(removal.refusal.reason).toBe('unsupported-expression')
       expect(fs.readFileSync(file, 'utf8')).toBe(source)
+
+      expect(setJsxClassName({ file, line, col, add: t('x'), remove: t() }).ok).toBe(true)
+      expect(fs.readFileSync(file, 'utf8')).toBe(source.replace('{dynamicClass}', "{`x ${dynamicClass || ''}`}"))
     })
 
-    it('refuses unsupported-expression for a ternary', () => {
+    it('P3-C (WB-18) — wraps a ternary of plain strings with no fallback (it can never be undefined)', () => {
       const source = [
         'export function App({ active }) {',
         "  return <div className={active ? 'a' : 'b'}>Hi</div>",
@@ -358,8 +431,8 @@ describe('setJsxClassName', () => {
 
       const result = setJsxClassName({ file, line, col, add: t('x'), remove: t() })
 
-      expect(result.ok).toBe(false)
-      if (!result.ok) expect(result.refusal.reason).toBe('unsupported-expression')
+      expect(result.ok).toBe(true)
+      expect(fs.readFileSync(file, 'utf8')).toBe(source.replace("{active ? 'a' : 'b'}", "{`x ${active ? 'a' : 'b'}`}"))
     })
   })
 
@@ -436,9 +509,10 @@ describe('setJsxClassName', () => {
       expect(written.split('\n').length).toBe(source.split('\n').length)
     })
 
-    // The refusal, not the convenience. Adding the import would insert a line
-    // at the top of the file and move every other pending edit in the batch.
-    it('REFUSES css-module-import-missing when the file does not import the stylesheet', () => {
+    // With no batch plan to reserve the import in, the refusal stands: adding
+    // the line here would move every other pending edit in the batch. (The
+    // batch path — P3-C, WB-18 — is `setJsxClassNameWrap.test.ts`.)
+    it('REFUSES css-module-import-missing when the file does not import the stylesheet and there is no plan', () => {
       const source = ['export function Card() {', '  return <div className="wrap">Hi</div>', '}', ''].join('\n')
       const file = writeFixture('module-no-import.tsx', source)
       const { line, col } = locateTag(source, 'div')
@@ -461,7 +535,9 @@ describe('setJsxClassName', () => {
       const file = writeFixture('module-refusal-no-bind.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      const result = setJsxClassName({ file, line, col, add: [mod('./Card.module.css', 'row')], remove: [] })
+      // A REMOVE from an identifier refuses — after the add has resolved (and
+      // would have bound) the side-effect import.
+      const result = setJsxClassName({ file, line, col, add: [mod('./Card.module.css', 'row')], remove: t('x') })
 
       expect(result.ok).toBe(false)
       expect(fs.readFileSync(file, 'utf8')).toBe(source)

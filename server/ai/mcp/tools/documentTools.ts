@@ -25,6 +25,7 @@ export const documentMcpTools: AiTool[] = [
       'List editable documents: pages, templates, and visual components. Use the returned document refs with site_read_document/site_open_document. Each item includes rootNodeId, template metadata, and a short summary. Headless — no editor needed.',
     scope: 'site',
     execution: 'server',
+    sideEffects: 'none',
     inputSchema: Type.Object({}, { additionalProperties: false }),
     requiredCapabilities: ['site.read'],
     handler: async (_input, ctx: ToolContext) => {

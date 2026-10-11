@@ -37,6 +37,16 @@ describe('SourceConstraintNotice', () => {
     expect(notice.textContent).toMatch(/One piece of source renders every row/)
   })
 
+  it('OD-8 — a row over an editable array (not locked) still speaks, and names the array its structure edits', () => {
+    render(<SourceConstraintNotice hasWritableLocation={false} listRowArray={{ source: 'COLUMNS', index: 1 }} />)
+
+    const notice = screen.getByTestId('source-constraint-notice')
+    expect(notice.dataset.variant).toBe('list-row')
+    expect(notice.textContent).toContain('Item 2 of COLUMNS')
+    expect(notice.textContent).toContain('Moving, duplicating or deleting this row edits COLUMNS')
+    expect(notice.textContent).toMatch(/One piece of source renders every row/)
+  })
+
   it('renders nothing for an ordinary node — no structural lock, no textOrigin', () => {
     const { container } = render(<SourceConstraintNotice hasWritableLocation />)
     expect(container.firstChild).toBeNull()

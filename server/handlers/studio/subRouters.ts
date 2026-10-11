@@ -22,9 +22,12 @@ import { tryServeStudioInstall } from './installDeps'
 import { tryServeStudioIngest } from './importUpload'
 import { tryServeStudioAssetUpload } from './assetUpload'
 import { tryServeStudioAssetDrop } from './assetDrop'
+import { tryServeStudioAssetDropUrl } from './assetDropUrl'
+import { tryServeStudioAssetLedger } from './assetPrune'
 import { tryServeStudioReferenceUpload } from './referenceUpload'
 import { tryServeStudioComponentBundle } from './componentBundle'
 import { tryServeStudioTokens } from './tokenExtract'
+import { tryServeStudioTokenCatalog } from './tokenCatalogRoutes'
 import { tryServeStudioTrustTier } from './trustTier'
 import { tryServeStudioLiveOriginInfo } from './liveOriginInfo'
 import { tryServeStudioStyleCompileConsent } from './styleCompileConsent'
@@ -63,7 +66,8 @@ export const STUDIO_SUB_ROUTERS = [
   tryServeStudioInstall,
   tryServeStudioIngest,
   tryServeStudioAssetUpload,
-  tryServeStudioAssetDrop,
+  tryServeStudioAssetDropUrl,
+  tryServeStudioAssetLedger,
   tryServeStudioReferenceUpload,
   tryServeStudioComponentBundle,
   tryServeStudioTrustTier,
@@ -71,6 +75,7 @@ export const STUDIO_SUB_ROUTERS = [
   tryServeStudioStyleCompileConsent,
   tryServeStudioDesignSystemMigrate,
   tryServeStudioTokens,
+  tryServeStudioTokenCatalog,
   tryServeStudioExtractComponent,
   tryServeStudioPreviewAxes,
   tryServeStudioLocalizedPage,
@@ -105,4 +110,5 @@ export const STUDIO_SESSION_SUB_ROUTERS = [
   tryServeStudioProjectRoutes,
   tryServeStudioShares,
   tryServeStudioNodeExport,
+  tryServeStudioAssetDrop,
 ] as const

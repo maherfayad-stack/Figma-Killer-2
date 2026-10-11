@@ -20,8 +20,11 @@
  *  2. **A cross-frame drop (D2 G3)** — the pointer was over a frame showing a
  *     DIFFERENT page. One `transplantNodes` call; the element leaves one file
  *     and lands in another, or the store refuses and says why.
- *  3. **An Alt-drop (K2)** — a copy into the resolved position, same page.
- *  4. **An ordinary reorder** — the move the drag has always been.
+ *  3. **A lift onto the free canvas (P5-G)** — released over the empty board
+ *     of a Studio board: the element leaves its page and becomes a loose
+ *     layer (Alt: a copy of it does).
+ *  4. **An Alt-drop (K2)** — a copy into the resolved position, same page.
+ *  5. **An ordinary reorder** — the move the drag has always been.
  *
  * Nothing here decides ANYTHING about whether a write is allowed. Every branch
  * hands the question straight to the store action that owns it, which is the
@@ -29,10 +32,14 @@
  * verdicts the drag painted while the pointer was down were previews of those
  * same rules and are deliberately not re-read here.
  */
+import type { EditConstraint } from '@core/page-tree'
 import { useEditorStore } from '@site/store/store'
-import type { CanvasDropResolution, CanvasTransplantTarget } from './canvasDnd'
+import { STRUCTURAL_REFUSAL_TITLE, presentStructuralRefusal } from '@site/store/slices/site/structuralSourceEdits'
+import type { CanvasLiftDrop } from './BoardCanvasLayer/canvasLayerLift'
+import type { CanvasDropResolution } from './canvasDnd'
+import type { CanvasTransplantTarget } from './canvasTransplantDrop'
 import {
-  freeMoveStylePatch,
+  freeMoveStylePatches,
   presentFreeMoveRefusal,
   type FreeMoveResolution,
   type FreeMoveStep,
@@ -63,6 +70,15 @@ export interface CanvasDragCommitInput {
   duplicating: boolean
   /** D2 G3 — set when the pointer was over another page's frame at release. */
   foreign: CanvasDragForeignDrop | null
+  /** P5-G — set when the release was over the empty board of a Studio board. */
+  lift: CanvasLiftDrop | null
+  /**
+   * The explained refusal for the position the pointer was released on, when
+   * that position exists but the store would refuse the write (an instance's
+   * own markup, a shared layout, a list row). The drag already painted this
+   * sentence beside the cursor; releasing on it must not end in silence.
+   */
+  refusal: { constraint: EditConstraint; crossFrame: boolean } | null
 }
 
 /**
@@ -77,14 +93,6 @@ export interface CanvasDragCommitInput {
  */
 export function commitCanvasDrag(input: CanvasDragCommitInput): void {
   const store = useEditorStore.getState()
-
-  if (input.free) {
-    if (!input.free.ok) presentFreeMoveRefusal(input.free.refusal)
-    else if (input.freeStep) {
-      store.setNodeInlineStyles(input.draggedId, freeMoveStylePatch(input.free.plan, input.freeStep))
-    }
-    return
-  }
 
   const foreign = input.foreign
   if (foreign) {
@@ -101,8 +109,34 @@ export function commitCanvasDrag(input: CanvasDragCommitInput): void {
     return
   }
 
+  if (input.free) {
+    if (!input.free.ok) presentFreeMoveRefusal(input.free.refusal)
+    else if (input.freeStep) {
+      // IX-22 — every moved layer's own patch, in ONE transaction: one undo
+      // entry however many layers moved together.
+      const patches = freeMoveStylePatches(input.free.plan, input.freeStep)
+      if (patches.length === 1) store.setNodeInlineStyles(patches[0]!.nodeId, patches[0]!.patch)
+      else if (patches.length > 1) store.setNodesInlineStylesPerNode(patches)
+    }
+    return
+  }
+
+  if (input.lift) {
+    store.liftNodeToCanvas(input.draggedId, input.lift.originPageId, input.lift.at, input.duplicating)
+    return
+  }
+
   const target = input.resolution.target
-  if (!target) return
+  if (!target) {
+    if (input.refusal) {
+      presentStructuralRefusal(
+        input.refusal.crossFrame ? STRUCTURAL_REFUSAL_TITLE.transplant : STRUCTURAL_REFUSAL_TITLE.move,
+        input.refusal.constraint,
+        { nodeId: input.draggedId, getState: useEditorStore.getState, set: useEditorStore.setState },
+      )
+    }
+    return
+  }
   if (input.duplicating) store.duplicateNodesTo(target.draggedIds, target.parentId, target.index)
   else store.moveNodes(target.draggedIds, target.parentId, target.index)
 }

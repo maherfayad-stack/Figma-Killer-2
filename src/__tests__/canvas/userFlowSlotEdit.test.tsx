@@ -36,7 +36,6 @@ beforeEach(() => {
     activeDocument: null,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     propertiesPanel: { collapsed: false, x: 0, y: 0, width: 360 },
     propertiesPanelMode: 'docked',
     packageJson: {},
@@ -142,10 +141,14 @@ describe("user's full flow: create VC → drop ref → insert text → edit text
       fireEvent.change(textarea!, { target: { value: 'Edited text' } })
     })
 
-    // 11. Both store AND canvas DOM must reflect the new value.
-    expect(
-      useEditorStore.getState().site!.pages[0].nodes[textId].props.text,
-    ).toBe('Edited text')
+    // Typing is a draft: the canvas previews it live, the source is written once on commit.
+    expect(await screen.findAllByText('Edited text')).not.toHaveLength(0)
+    expect(screen.queryByText('Initial text')).toBeNull()
+    expect(useEditorStore.getState().site!.pages[0].nodes[textId].props.text).toBe('Initial text')
+    act(() => {
+      fireEvent.blur(textarea!)
+    })
+    expect(useEditorStore.getState().site!.pages[0].nodes[textId].props.text).toBe('Edited text')
 
     expect(await screen.findAllByText('Edited text')).not.toHaveLength(0)
     expect(screen.queryByText('Initial text')).toBeNull()

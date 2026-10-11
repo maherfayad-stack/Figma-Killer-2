@@ -24,8 +24,8 @@ export interface StudioSourceRefusals {
    */
   refuseInsertInto: (parentId: string, retryWithParent?: (newParentId: string) => void) => boolean
   /**
-   * `mcp-21` / `store-13` — why a fragment of imported HTML cannot be inserted
-   * into `parentId`, already presented to the user; `null` when it can.
+   * `mcp-21` / `store-13` — why a fragment of editor-built nodes cannot be
+   * inserted into `parentId`, already presented to the user; `null` when it can.
    */
   refuseImportedNodesInto: (parentId: string, retryWithParent?: (newParentId: string) => void) => string | null
 }
@@ -53,7 +53,7 @@ export function createStudioSourceRefusals(
     if (plan.ok) return null
     presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.constraint, {
       nodeId: plan.nodeId,
-      retry: retryWithParent,
+      ...(retryWithParent ? { retry: (mapId: (nodeId: string) => string) => retryWithParent(mapId(parentId)) } : {}),
       getState: get,
       set,
     })
@@ -65,37 +65,16 @@ export function createStudioSourceRefusals(
     refuseInsertIntoWithReason(parentId, retryWithParent) !== null
 
   /**
-   * `mcp-21`'s open defect — a fragment of imported HTML on a studio-imported
-   * tree.
+   * `mcp-21` - a fragment of ALREADY-MAPPED editor nodes on a studio-imported
+   * tree. `insertImportedNodes` merges such a fragment straight into the page as
+   * nanoid nodes and posts no source write at all, so the elements would show on
+   * the canvas until the next parse and then silently not. A fragment of nodes
+   * has no JSX to write (its module mapping is lossy and its ids are not source
+   * locations), so this refuses it, whole.
    *
-   * `insertImportedNodes` merged the fragment straight into the page as nanoid
-   * nodes and posted no source write at all, so the elements showed on the
-   * canvas until the next parse and then silently did not. Reachable from the
-   * paste-HTML modal and, more seriously, from an external MCP client with
-   * `ai.tools.write` calling `site_insert_html` / `site_replace_node_html`.
-   *
-   * This refuses it. Unlike `insert`/`duplicate`/`wrap`/`paste`, an HTML
-   * fragment has no source write to route to instead, and the reason is
-   * structural rather than a gap to be closed later:
-   *
-   *  1. **Most of it has no spelling.** The importer's own rule table maps HTML
-   *     onto ~15 base modules, and exactly two of them — `base.container` and
-   *     `base.text` — can say what they are in a user's repo
-   *     (`ModuleDefinition.sourceIntrinsic`). A link, a button, an image, every
-   *     form control, `<studio-loop>` and `<studio-outlet>` have no JSX form
-   *     Studio may write. Writing the part that can be written and dropping the
-   *     rest is the half-applied patch this store refuses everywhere else.
-   *  2. **The CSS has a different target.** The `<style>` block that comes with
-   *     the markup belongs in a stylesheet, not in the `.tsx`, so one call
-   *     would have to land two writes in two files or leave the structure
-   *     unstyled.
-   *  3. **The tool's own answer cannot be honoured.** `site_insert_html`
-   *     returns the ids it created so the caller can address them; a source
-   *     write's ids are the `line:col`s the codemod produces and do not exist
-   *     until the resync, which is after the tool has returned.
-   *
-   * So: the whole fragment, or none of it. The refusal names the two paths that
-   * do write real code.
+   * HTML itself is NOT refused any more (G-10): `writeHtmlToSource` converts the
+   * markup to intrinsic JSX and writes it with its styles. Callers with HTML
+   * ask that first; this guard only catches a caller that built nodes.
    */
   const refuseImportedNodesInto = (
     parentId: string,
@@ -106,26 +85,26 @@ export function createStudioSourceRefusals(
     const tree = readTree()
     if (!tree) return null
     const plan = planSourceInsert(tree, parentId)
-    // `commit: null` is an ordinary CMS tree — imported HTML is exactly what
-    // that path is for, and nothing here applies to it.
+    // `commit: null` is an ordinary CMS tree - merging a fragment is exactly
+    // what that path is for, and nothing here applies to it.
     if (!plan.ok || !plan.commit) return null
-    // Always `actions: []` — always the toast, never the dialog: the remedy is
-    // a different tool, not a button on this node.
+    // Always `actions: []` - always the toast, never the dialog: the remedy is
+    // a different gesture, not a button on this node.
     presentStructuralRefusal(
       STRUCTURAL_REFUSAL_TITLE.insert,
-      describeStructuralRefusal({ refusal: { reason: 'insert', message: HTML_IMPORT_ON_SOURCE_REFUSAL } }),
+      describeStructuralRefusal({ refusal: { reason: 'insert', message: IMPORTED_NODES_ON_SOURCE_REFUSAL } }),
       { getState: get, set },
     )
-    return HTML_IMPORT_ON_SOURCE_REFUSAL
+    return IMPORTED_NODES_ON_SOURCE_REFUSAL
   }
   return { refuseInsertInto, refuseImportedNodesInto }
 }
 
 /**
- * The one sentence behind every refused HTML import on a studio-imported tree.
- * A module constant rather than an inline string because both audiences read
- * it: the paste-HTML modal shows it inline, and the agent executor returns it
- * as the tool's error. See `refuseImportedNodesInto` for the three reasons.
+ * The one sentence behind a refused fragment of editor nodes on a studio-imported
+ * tree. A module constant rather than an inline string because both audiences
+ * read it: the modal shows it inline, and the agent executor returns it as the
+ * tool's error.
  */
-export const HTML_IMPORT_ON_SOURCE_REFUSAL =
-  'Every element on this board is written back into your project’s React files, and a block of HTML has no single honest form to write there: most of its tags (links, buttons, images, form controls) have no component in this project, and its CSS belongs in a stylesheet rather than in the markup. Nothing was added. Add elements one at a time from the component picker, which writes real JSX.'
+export const IMPORTED_NODES_ON_SOURCE_REFUSAL =
+  'A set of elements built in the editor has no JSX to write into your React files. Add the elements one at a time from the component picker.'

@@ -1,4 +1,5 @@
 # Studio share links
+> **Purpose:** read-only share links at /share/<token> · **Read when:** touching share links · **Trust:** current · **Owner:** server-engineer · **Verified:** not yet
 
 **Status:** v1 (W5-2). Needs human dogfooding — open a created link in a
 private window, on a machine that is not signed in.

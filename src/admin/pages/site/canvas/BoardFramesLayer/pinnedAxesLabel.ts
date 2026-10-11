@@ -15,9 +15,9 @@
  */
 import type { PreviewAxes } from '@core/studio-board'
 
-const AXIS_ORDER: ReadonlyArray<keyof PreviewAxes> = ['direction', 'colorScheme', 'locale']
+const AXIS_ORDER: ReadonlyArray<Exclude<keyof PreviewAxes, 'modes'>> = ['direction', 'colorScheme', 'locale']
 
-function formatAxisValue(key: keyof PreviewAxes, axes: Partial<PreviewAxes>): string | null {
+function formatAxisValue(key: Exclude<keyof PreviewAxes, 'modes'>, axes: Partial<PreviewAxes>): string | null {
   switch (key) {
     case 'direction':
       if (axes.direction === undefined) return null
@@ -39,5 +39,7 @@ function formatAxisValue(key: keyof PreviewAxes, axes: Partial<PreviewAxes>): st
 export function describePinnedAxes(axes: Partial<PreviewAxes> | undefined): string | null {
   if (!axes) return null
   const parts = AXIS_ORDER.map((key) => formatAxisValue(key, axes)).filter((v): v is string => v !== null)
+  // CT-4: modes on the project's own axes (`theme`, `density`), in axis-id order.
+  for (const axisId of Object.keys(axes.modes ?? {}).sort()) parts.push(axes.modes![axisId]!)
   return parts.length > 0 ? parts.join(' · ') : null
 }

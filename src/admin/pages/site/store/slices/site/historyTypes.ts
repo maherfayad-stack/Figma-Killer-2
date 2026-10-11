@@ -47,6 +47,32 @@ export interface HistoryEntry {
    * sticky notes, doc cards, guides, board CRUD). See `BoardHistory`.
    */
   board?: BoardHistory
+  /**
+   * ERR-6 — present only while the structural write this entry stands for is
+   * still on the wire: the gesture's own write (`'gesture'`), or the write an
+   * undo/redo just re-issued for it (`'undo'`/`'redo'`). It is how the write's
+   * answer finds THIS entry again once it arrives, wherever the stack has put
+   * it by then (a reload re-addresses entries by copying them, so identity is
+   * no use). `structuralCommitRollback.ts` sets it, and removes it when the
+   * write lands or is taken back.
+   */
+  pendingCommit?: PendingStructuralCommit
+  /**
+   * P3-D (OD-7) — this entry and the one directly ABOVE it are one gesture: a
+   * `detach` made so a structural gesture inside a shared component applies
+   * to this instance only, and that gesture. ⌘Z on the one above carries on
+   * to this one; ⌘⇧Z on this one carries on to the one above
+   * (`undoRedoActions.ts`). Set only once the gesture above has landed
+   * (`instanceOnlyGesture.ts`), so an unrelated entry is never pulled in.
+   */
+  linkedToNext?: true
+}
+
+/** See `HistoryEntry.pendingCommit`. */
+export interface PendingStructuralCommit {
+  id: number
+  /** Which write is in flight: the gesture itself, or an undo/redo re-issuing it. Decides where a failed write leaves the entry. */
+  step: 'gesture' | 'undo' | 'redo'
 }
 
 /**
@@ -81,32 +107,20 @@ export interface BoardHistory {
   after: BoardHistorySnapshot
 }
 
-/** One end of a re-issuable structural gesture: "put this node here". */
-export interface StructuralHistoryMove {
-  nodeId: string
-  /** The node id this move's destination parent has — the synthetic page root included. */
-  parentId: string
-  /** Index into the destination parent's children AFTER the node is detached, matching `moveNode`. */
-  index: number
-}
-
 /**
- * What undo/redo has to re-issue for a structural transaction.
+ * What undo/redo has to re-issue for a structural transaction: always a
+ * source-writing gesture, whose undo is a WRITE (`structuralSourceHistory.ts`).
  *
- * `move` is re-issuable in both directions: the inverse of a move is another
- * move, planned against the live tree by the same `moveNodes` action a drag
- * uses, so it rides every refusal gate and writes to source exactly once.
- *
- * `delete` (`store-15`) is folded into `StructuralSourceHistory` rather than
- * getting a bare variant of its own: its tree mutation still runs eagerly
- * (same-tick optimistic removal), but its UNDO — writing the element's
- * original markup back — is a `reinsert-source` edit, resolved the identical
- * way every other `source` gesture's inverse is. See `structuralUndoPlan.ts`'s
- * `reinsert-deleted` template.
+ * That includes the ones that mutate the tree eagerly for a same-tick preview —
+ * `delete`, and a same-file move or reorder (single or sequence). Their tree
+ * mutation's own patches are never replayed; the entry is tagged with the
+ * gesture instead (`structuralHistory.ts`), and its ⌘Z is the undo journal's
+ * `restore` (P3-F), resolved the identical way every other `source` gesture's
+ * inverse is. A move used to re-issue `moveNodes` instead, which put the
+ * element back by position and so could not restore a blank line or an
+ * indentation the move had changed.
  */
-export type StructuralHistory =
-  | { gesture: 'move'; undo: StructuralHistoryMove; redo: StructuralHistoryMove }
-  | StructuralSourceHistory
+export type StructuralHistory = StructuralSourceHistory
 
 /**
  * `store-14` — a gesture that wrote the user's markup and mutated NO tree:

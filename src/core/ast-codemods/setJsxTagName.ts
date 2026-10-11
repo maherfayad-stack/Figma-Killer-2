@@ -38,11 +38,19 @@ export interface SetJsxTagNameParams {
 /** Thrown when the element at the target location cannot be renamed. `path` is `<file>:<line>:<col>`. */
 export class JsxTagNameTargetError extends Error {
   readonly path: string
+  /**
+   * The stable refusal code the writeback batch reports (WB-12):
+   * `invalid-tag` — the requested name is not a plain HTML tag;
+   * `component-tag` — the element is a component, and renaming it would need
+   * an import.
+   */
+  readonly reason: 'invalid-tag' | 'component-tag'
 
-  constructor(message: string, path: string) {
+  constructor(message: string, path: string, reason: 'invalid-tag' | 'component-tag') {
     super(`[ast-codemods/setJsxTagName] ${path}: ${message}`)
     this.name = 'JsxTagNameTargetError'
     this.path = path
+    this.reason = reason
   }
 }
 
@@ -58,7 +66,7 @@ export function setJsxTagName(params: SetJsxTagNameParams): void {
   const path = `${file}:${line}:${col}`
 
   if (!HTML_TAG_NAME.test(tag)) {
-    throw new JsxTagNameTargetError(`"${tag}" is not a plain HTML tag name`, path)
+    throw new JsxTagNameTargetError(`"${tag}" is not a plain HTML tag name`, path, 'invalid-tag')
   }
 
   const project = params.project ?? createProject()
@@ -70,6 +78,7 @@ export function setJsxTagName(params: SetJsxTagNameParams): void {
     throw new JsxTagNameTargetError(
       `<${currentName}> is a component, not an HTML element — renaming it would need an import`,
       path,
+      'component-tag',
     )
   }
   if (currentName === tag) return

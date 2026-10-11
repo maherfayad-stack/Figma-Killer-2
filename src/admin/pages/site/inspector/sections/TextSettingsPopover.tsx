@@ -3,7 +3,7 @@
  * P3 item 9). Renamed and relocated from the pre-migration
  * `panels/PropertiesPanel/TypographySettings.tsx` onto the
  * `INSPECTOR_SECTIONS` manifest alongside `TextSection.tsx` — its only
- * caller — content and behavior unchanged (docs/features/inspector-disclosure.md
+ * caller — content and behavior unchanged (docs/features/inspector.md
  * G9, F25–F27 — the design rules that produced this shape).
  *
  * A tabbed `InspectorPopover` that absorbs every typography control used in

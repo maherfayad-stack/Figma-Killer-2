@@ -48,8 +48,8 @@
  * is a sibling of the transform layer in PARENT-document client space. That is
  * the whole reason the two coordinate spaces exist here.
  */
+import { carriesLink } from './canvasDropIntake'
 import type { NodeTree, PageNode } from '@core/page-tree'
-import { resolveCanvasInsertionTarget } from './canvasDnd'
 import {
   refreshBoardDropSurfaces,
   resolveForeignFrameDrop,
@@ -58,13 +58,18 @@ import {
 } from './canvasDragBoard'
 import type { CanvasDragPaint } from './canvasDragPainter'
 import { indexLocalPoint, type ClientPoint } from './canvasDragSession'
+import { dropParentOutlineRect } from './canvasDropParentOutline'
 import {
   CANVAS_FILE_DROP_REFUSAL,
-  canHaveChildren,
+  imageCount,
   refuseDroppedFile,
-  type CanvasFileDropRefusal,
+  resolveCanvasFileDropIntent,
+  type CanvasFileDropModifiers,
+  type CanvasImageDropAction,
   type DroppedFileFacts,
 } from './canvasFileDrop'
+import { measureDropContainer, type DropContainerBox } from './canvasImageDropPlacement'
+import { resolvePortalDocument } from './frameAdapter/resolvePortalDocument'
 import type { CanvasTransform } from './math'
 
 /** What one in-flight file drag knows, carried across its `dragover` stream. */
@@ -74,13 +79,21 @@ export interface CanvasFileDragSession {
   frame: ForeignFrameDrop | null
   /** The ONE layer currently carrying chrome, so the other can be cleared. */
   paintedLayer: HTMLElement | null
+  /**
+   * Container boxes a ⌘-drop has asked about, per frame visit — one
+   * computed-style read per container, not one per animation frame. Cleared
+   * whenever the pointer enters a different frame.
+   */
+  containerBoxes: Map<string, DropContainerBox | null>
 }
 
 /** Everything one preview frame needs from the hook that owns the session. */
 export interface CanvasFileDragPreviewEnv {
   point: ClientPoint
-  /** What the browser will admit about the dragged file before release. */
+  /** What the browser will admit about the dragged files before release. */
   facts: DroppedFileFacts
+  /** The keys held on this `dragover` — they change what the drop means. */
+  modifiers: CanvasFileDropModifiers
   transform: CanvasTransform | null
   readPage: (pageId: string) => NodeTree<PageNode> | null
   /**
@@ -90,6 +103,8 @@ export interface CanvasFileDragPreviewEnv {
    */
   hintLayer: HTMLElement | null
   hintOrigin: ClientPoint | null
+  /** P5-G — a Studio board, whose empty board takes the image as a loose layer (`planCanvasFileDrop`'s `freeCanvas`). */
+  freeCanvas?: boolean
 }
 
 /** Where the chrome for this frame goes, and what it says. */
@@ -99,14 +114,15 @@ export interface CanvasFileDragPaint {
 }
 
 export function beginCanvasFileDragSession(board: BoardDropSurfaces): CanvasFileDragSession {
-  return { board, frame: null, paintedLayer: null }
+  return { board, frame: null, paintedLayer: null, containerBoxes: new Map() }
 }
 
 /**
  * Resolve one animation frame of a file drag: which layer to paint, and what.
  *
- * READ phase only — it measures (through the board cache) and decides, and
- * returns the paint for the caller to write. Nothing here touches a style.
+ * READ phase only — it measures (through the board cache, plus at most one
+ * container read per container for a ⌘-drop) and decides, and returns the
+ * paint for the caller to write. Nothing here touches a style.
  */
 export function resolveCanvasFileDragPaint(
   session: CanvasFileDragSession,
@@ -123,6 +139,7 @@ export function resolveCanvasFileDragPaint(
     env.transform,
     env.readPage,
   )
+  if (frame !== session.frame) session.containerBoxes.clear()
   session.frame = frame
 
   // Over the empty board: no frame, no drop line, and the chip has to go in
@@ -136,9 +153,9 @@ export function resolveCanvasFileDragPaint(
         invalid: null,
         ghost: {
           point: { x: env.point.x - env.hintOrigin.x, y: env.point.y - env.hintOrigin.y },
-          label: (fileRefusal ?? CANVAS_FILE_DROP_REFUSAL.noFrame).headline,
+          label: fileRefusal?.headline ?? (env.freeCanvas ? 'Place on canvas' : CANVAS_FILE_DROP_REFUSAL.noFrame.headline),
           duplicating: false,
-          refusing: true,
+          ...(fileRefusal || !env.freeCanvas ? { refusing: true } : {}),
         },
       },
     }
@@ -146,36 +163,75 @@ export function resolveCanvasFileDragPaint(
 
   const layer = frame.surface.dropLayer()
   const point = indexLocalPoint(frame.index, env.point)
-  const target = resolveCanvasInsertionTarget({
+  const doc = resolvePortalDocument(frame.surface.iframe)
+  const intent = resolveCanvasFileDropIntent({
     tree: frame.tree,
     candidates: frame.index.candidates,
     point,
     zoom: frame.index.scale,
-    canHaveChildren,
+    facts: env.facts,
+    modifiers: env.modifiers,
+    measureContainer: (nodeId) => {
+      if (!session.containerBoxes.has(nodeId)) {
+        session.containerBoxes.set(nodeId, doc ? measureDropContainer(doc, nodeId) : null)
+      }
+      return session.containerBoxes.get(nodeId) ?? null
+    },
   })
 
-  const refusal: CanvasFileDropRefusal | null =
-    fileRefusal ?? (target ? null : CANVAS_FILE_DROP_REFUSAL.noPosition)
+  if (fileRefusal || !intent.ok) {
+    const refusal = fileRefusal ?? (intent.ok ? null : intent.refusal)
+    const target = intent.ok ? null : intent.target
+    // A refused file gets no drop line, for the reason an element drag gets
+    // none: a line is a promise about where the thing lands.
+    return {
+      layer,
+      paint: {
+        target: null,
+        invalid: target ? { overId: target.overId, rect: target.rect, axis: target.axis } : null,
+        ghost: { point, label: refusal?.headline ?? '', duplicating: false, refusing: true },
+      },
+    }
+  }
 
+  const action = intent.action
+  const label = describeDropAction(action, env.facts)
+  if (action.kind === 'insert') {
+    const { target } = action
+    return {
+      layer,
+      paint: {
+        target: { rect: target.rect, axis: target.axis, position: target.position },
+        invalid: null,
+        ghost: { point, label, duplicating: false },
+        parent: dropParentOutlineRect(target, frame.index.candidates),
+      },
+    }
+  }
+  // Replace / background: the element that will change is outlined (P2-E's
+  // drop-target outline), and there is no drop line — nothing is inserted.
   return {
     layer,
     paint: {
-      // A refused file gets no drop line, for the reason an element drag gets
-      // none: a line is a promise about where the thing lands.
-      target: refusal || !target ? null : { rect: target.rect, axis: target.axis, position: target.position },
-      invalid: refusal && target ? { overId: target.overId, rect: target.rect, axis: target.axis } : null,
-      ghost: {
-        point,
-        label: refusal ? refusal.headline : describeDraggedImage(env.facts),
-        duplicating: false,
-        ...(refusal ? { refusing: true } : {}),
-      },
+      target: null,
+      invalid: null,
+      ghost: { point, label, duplicating: false },
+      parent: frame.index.candidates.find((candidate) => candidate.nodeId === action.nodeId)?.rect ?? null,
     },
   }
 }
 
+/** What the chip says about a drop that IS going to land. */
+export function describeDropAction(action: CanvasImageDropAction, facts: DroppedFileFacts): string {
+  if (action.kind === 'replace') return 'Replace image'
+  if (action.kind === 'background') return 'Set as background'
+  const count = imageCount(facts)
+  const what = count > 1 ? `Add ${count} images` : describeDraggedImage(facts.types.find((type) => type === '' || type.startsWith('image/')) ?? '')
+  return action.absolute ? `${what} at the pointer` : what
+}
+
 /**
- * What the chip says about a file that IS going to land.
+ * What the chip says about ONE file that is going to land.
  *
  * The declared MIME type, shortened to the subtype every user already reads as
  * a format ("PNG", "SVG"), because that is the only thing about the file the
@@ -184,9 +240,9 @@ export function resolveCanvasFileDragPaint(
  * `looksLikeImage` deliberately lets through, so the chip says the one thing
  * that is still true.
  */
-export function describeDraggedImage(facts: DroppedFileFacts): string {
-  if (!facts.type) return 'Image file'
-  const subtype = facts.type.slice(facts.type.indexOf('/') + 1)
+export function describeDraggedImage(type: string): string {
+  if (!type) return 'Image file'
+  const subtype = type.slice(type.indexOf('/') + 1)
   return subtype ? `${subtype.replace(/^svg\+xml$/, 'svg').toUpperCase()} image` : 'Image file'
 }
 
@@ -195,8 +251,13 @@ export function describeDraggedImage(facts: DroppedFileFacts): string {
  *
  * `items` is the only readable half of a `DataTransfer` before `drop` — `kind`
  * and `type`, never the bytes and never the name. Returns `null` when the drag
- * carries no files at all, which is every ordinary in-page HTML5 drag and must
- * be left completely alone.
+ * carries neither files nor a link, which is every ordinary in-page HTML5 drag
+ * and must be left completely alone.
+ *
+ * A LINK (`text/uri-list`, an image dragged out of another tab — IMG-5) reads
+ * as one image of unknown type: whether it really is one is only knowable at
+ * drop, when `canvasDropIntake.ts` can read the URL, and the drop refuses a
+ * link to a page with a sentence rather than fetching it.
  */
 export function readDraggedFileFacts(transfer: DataTransfer | null): DroppedFileFacts | null {
   if (!transfer) return null
@@ -205,11 +266,16 @@ export function readDraggedFileFacts(transfer: DataTransfer | null): DroppedFile
   if (files.length === 0) {
     // Safari exposes `types` but not always a populated `items` list for a
     // file drag. `types` including `Files` is the spec's own signal, so a drag
-    // that claims files but enumerates none is still a file drag — with a
-    // count of one, which is the only assumption that does not refuse a real
-    // single-image drop on a browser that told us less.
-    const claimsFiles = Array.from(transfer.types ?? []).includes('Files')
-    return claimsFiles ? { count: 1, type: '' } : null
+    // that claims files but enumerates none is still a file drag — with one
+    // entry of no declared type, which is the only assumption that does not
+    // refuse a real image drop on a browser that told us less.
+    const types = Array.from(transfer.types ?? [])
+    return types.includes('Files') || carriesLink(types) ? { types: [''] } : null
   }
-  return { count: files.length, type: files[0]!.type }
+  return { types: files.map((item) => item.type) }
+}
+
+/** The keys a drag event carries, as the drop's modifiers. ⌘ on macOS, Ctrl elsewhere — either reads as "place here". */
+export function dropModifiersOf(event: Pick<MouseEvent, 'altKey' | 'shiftKey' | 'metaKey' | 'ctrlKey'>): CanvasFileDropModifiers {
+  return { alt: event.altKey, shift: event.shiftKey, absolute: event.metaKey || event.ctrlKey }
 }

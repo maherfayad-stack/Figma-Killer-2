@@ -1,6 +1,6 @@
 /**
  * TokenizedColorField — T8/T9 (`STUDIO-FIGMA-PARITY-PLAN.md` §11) and G6.2
- * (`docs/features/inspector-disclosure.md`).
+ * (`docs/features/inspector.md`).
  *
  * T8 (superseded by G6.2): the swatch used to be a native
  * `<input type="color">` that wrote a raw hex on one click, silently
@@ -16,9 +16,10 @@
  * doesn't.
  */
 import { afterEach, describe, expect, it, mock } from 'bun:test'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useEditorStore } from '@site/store/store'
 import { TokenizedColorField } from '@site/property-controls/TokenizedColorField'
+import { ColorValueInput } from '@site/property-controls/ColorValueInput'
 import type { FrameworkColorToken } from '@core/framework-schema'
 
 function brandToken(): FrameworkColorToken {
@@ -274,5 +275,162 @@ describe('TokenizedColorField — WCAG contrast badge (T9)', () => {
     )
     const badge = screen.getByTitle('WCAG contrast against the resolved background')
     expect(badge.textContent).toMatch(/^\d+(\.\d+)?:1$/)
+  })
+})
+
+describe('TokenizedColorField - Enter commits what was typed', () => {
+  function renderField(value: string, handlers: { onTextBlur?: () => void; onTokenSelect?: (v: string) => void }) {
+    setFrameworkColors([brandToken()])
+    render(
+      <TokenizedColorField
+        value={value}
+        inputLabel="Fill colour"
+        swatchLabel="Fill colour swatch"
+        onTextChange={noop}
+        onTextBlur={handlers.onTextBlur ?? noop}
+        onSwatchChange={noop}
+        onTokenSelect={handlers.onTokenSelect ?? noop}
+      />,
+    )
+    const input = screen.getByLabelText('Fill colour') as HTMLInputElement
+    act(() => input.focus())
+    return input
+  }
+
+  it('typing a hex and pressing Enter commits the typed text, not the first token suggestion', () => {
+    const onTokenSelect = mock((_v: string) => {})
+    const onTextBlur = mock(() => {})
+    const input = renderField('#ff0000', { onTokenSelect, onTextBlur })
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(onTokenSelect).not.toHaveBeenCalled()
+    expect(onTextBlur).toHaveBeenCalledTimes(1)
+  })
+
+  it('Enter leaves the field so Ctrl+Z reaches the editor undo', () => {
+    const input = renderField('#ff0000', {})
+    expect(document.activeElement).toBe(input)
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(document.activeElement).not.toBe(input)
+  })
+
+  it('Enter applies a suggestion once the user has moved the highlight onto it', () => {
+    const onTokenSelect = mock((_v: string) => {})
+    const input = renderField('bra', { onTokenSelect })
+
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(onTokenSelect).toHaveBeenCalledWith('var(--brand)')
+  })
+
+  it('Tab commits the typed text, closes the suggestion list and clears any preview', () => {
+    const onTextBlur = mock(() => {})
+    const onTokenPreviewClear = mock(() => {})
+    setFrameworkColors([brandToken()])
+    render(
+      <TokenizedColorField
+        value="bra"
+        inputLabel="Fill colour"
+        swatchLabel="Fill colour swatch"
+        onTextChange={noop}
+        onTextBlur={onTextBlur}
+        onSwatchChange={noop}
+        onTokenSelect={noop}
+        onTokenPreviewClear={onTokenPreviewClear}
+      />,
+    )
+    const input = screen.getByLabelText('Fill colour') as HTMLInputElement
+    act(() => input.focus())
+    expect(screen.queryByRole('listbox')).not.toBeNull()
+
+    fireEvent.keyDown(input, { key: 'Tab' })
+    expect(screen.queryByRole('listbox')).toBeNull()
+    expect(onTokenPreviewClear).toHaveBeenCalled()
+
+    act(() => input.blur())
+    expect(onTextBlur).toHaveBeenCalledTimes(1)
+  })
+
+  it('Esc cancels the draft and leaves without committing it', () => {
+    const onTextBlur = mock(() => {})
+    const onTextCancel = mock(() => {})
+    setFrameworkColors([brandToken()])
+    render(
+      <TokenizedColorField
+        value="#00ff00"
+        inputLabel="Fill colour"
+        swatchLabel="Fill colour swatch"
+        onTextChange={noop}
+        onTextBlur={onTextBlur}
+        onTextCancel={onTextCancel}
+        onSwatchChange={noop}
+        onTokenSelect={noop}
+      />,
+    )
+    const input = screen.getByLabelText('Fill colour') as HTMLInputElement
+    act(() => input.focus())
+
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    expect(onTextCancel).toHaveBeenCalledTimes(1)
+    expect(onTextBlur).not.toHaveBeenCalled()
+    expect(document.activeElement).not.toBe(input)
+  })
+})
+
+describe('ColorValueInput - draft lifecycle', () => {
+  function renderInput(onChange: (v: string) => void) {
+    render(<ColorValueInput value="#112233" ariaLabel="Text colour" swatchLabel="Text colour swatch" onChange={onChange} />)
+    const input = screen.getByLabelText('Text colour') as HTMLInputElement
+    act(() => input.focus())
+    return input
+  }
+
+  it('Tab after typing a hex commits it once', () => {
+    const onChange = mock((_v: string) => {})
+    const input = renderInput(onChange)
+    fireEvent.change(input, { target: { value: '#00ff00' } })
+    fireEvent.keyDown(input, { key: 'Tab' })
+    act(() => input.blur())
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onChange).toHaveBeenCalledWith('#00ff00')
+  })
+
+  it('Esc after typing restores the committed value and writes nothing', () => {
+    const onChange = mock((_v: string) => {})
+    const input = renderInput(onChange)
+    fireEvent.change(input, { target: { value: '#00ff00' } })
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(input.value).toBe('#112233')
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('shows a computed rgb() as hex, and writes nothing when merely blurred', () => {
+    const onChange = mock((_v: string) => {})
+    render(<ColorValueInput value="rgb(146, 159, 163)" ariaLabel="Text colour" swatchLabel="Text colour swatch" onChange={onChange} />)
+    const input = screen.getByLabelText('Text colour') as HTMLInputElement
+    expect(input.value).toBe('#929fa3')
+    act(() => input.focus())
+    act(() => input.blur())
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('shows a translucent rgba() as 8-digit hex and a token by its name', () => {
+    const { unmount } = render(<ColorValueInput value="rgba(0, 0, 0, 0.5)" ariaLabel="Text colour" swatchLabel="s" onChange={() => {}} />)
+    expect((screen.getByLabelText('Text colour') as HTMLInputElement).value).toBe('#00000080')
+    unmount()
+    render(<ColorValueInput value="var(--color-metal)" ariaLabel="Text colour" swatchLabel="s" onChange={() => {}} />)
+    expect((screen.getByLabelText('Text colour') as HTMLInputElement).value).toBe('var(--color-metal)')
+  })
+
+  it('blurring an untouched field writes nothing', () => {
+    const onChange = mock((_v: string) => {})
+    const input = renderInput(onChange)
+    act(() => input.blur())
+    expect(onChange).not.toHaveBeenCalled()
   })
 })

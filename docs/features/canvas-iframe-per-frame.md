@@ -1,4 +1,5 @@
 # Canvas: iframe-per-viewport rendering
+> **Purpose:** how a static (portal) frame renders in its own iframe · **Read when:** touching frame rendering, injectors or cross-realm events · **Trust:** current · **Owner:** canvas-engineer · **Verified:** not yet
 
 How the visual editor canvas renders page trees inside isolated per-viewport iframes, and how the design and live views are built on top of that foundation.
 
@@ -15,7 +16,7 @@ There is exactly **one** sanctioned selector rewrite, and it is deliberately nar
 - Both modes are fully editable — click-to-select, properties panel, structural edits all work. Neither is a read-only preview.
 - Agent evidence can request any configured viewport. Each capture renders once through an offscreen `AgentSnapshotFrame` at the configured width, then removes it without changing the visible canvas state.
 - CSS arrives in each iframe via five injectors: `EditorChromeInjector` (unlayered), `ProjectCssInjector` (`@layer vendor` — package CSS, read-only), `AuthoredCssInjector` (`@layer user-authored` — the project's OWN `.css`, raw and unparsed), `ClassStyleInjector` (`@layer reset` for the publisher reset, **CMS pages only** — see below, + `@layer user-authored` for the class registry), `UserStylesheetInjector` (`@layer user-authored`). The order is `reset` → `vendor` → `user-authored`: the user's own edits always win over a package default, and the zero-specificity reset loses to both (above `vendor` it annihilated every design-system component) — see "CSS injection into iframes" below.
-- Wheel, pointer, and keyboard events are forwarded from inside the iframe to the parent's gesture / reorder-drag / shortcut handlers. `Tab` is blocked to prevent tab-walking inside the design preview.
+- Wheel, pointer, and keyboard events are forwarded from inside the iframe to the parent's gesture / reorder-drag / shortcut handlers. `Tab` is cancelled inside the frame (no tab-walking the design preview) and forwarded, where it selects the next sibling.
 - Plugin canvas modules use a separate, sandboxed `ModuleSandboxFrame` (not `IframeFrameSurface`).
 
 ---
@@ -56,7 +57,7 @@ IframeFrameSurface
 
 | Mode | `interaction` value | Height | Scroll | Wheel | Pointer | Keyboard | Canvas chrome CSS |
 |---|---|---|---|---|---|---|---|
-| Design canvas frame | `'canvas'` (default) | grows to content | none (frame scrolls with canvas pan) | forwarded to parent pan/zoom (`Shift+wheel` pans sideways) | forwarded for space-left-drag pan | forwarded to parent `document` (shortcuts); `Tab` blocked | applied (cursor, user-select, outline overrides) |
+| Design canvas frame | `'canvas'` (default) | grows to content | none (frame scrolls with canvas pan) | forwarded to parent pan/zoom (`Shift+wheel` pans sideways) | forwarded for space-left-drag pan | forwarded to parent `document` (shortcuts); `Tab` cancelled in-frame, then forwarded | applied (cursor, user-select, outline overrides) |
 | Live frame | `'live'` | 100% | native (iframe is the scroll viewport) | not forwarded | not forwarded | not forwarded | not applied (real cursors, text selection) |
 
 ### Viewport-unit feedback loop guard
@@ -101,49 +102,36 @@ What the profile actually said, and what it cost per mounting frame, is in
 single most expensive thing happening during a mount sweep was the **poster
 rasterization** of frames that had just arrived.
 
-### The mount pool — a departed frame keeps its document
+### The live set: poster first, documents where the user works
 
-`framePool.ts` is the one module that decides which frames hold a live iframe:
-everything `isFrameOnScreen` says is visible, **plus** the recently-departed
-frames the pool still has room for. Panning back to where you just were
-therefore remounts nothing at all. Eviction is least-recently-on-screen, and
-the cap exists because each mounted frame is a whole document carrying its own
-parsed copy of every injected stylesheet, so an uncapped pool would end a pan
-across a 40-frame board with 40 of them resident.
+`frameMount.ts` and `liveFrameCap.ts` decide which frames hold a live iframe.
+Selected frames, the frame holding the selected layer and the frame in play mode
+are always live; frames in view at zoom >= 0.35 are live nearest the viewport
+centre first, up to an adaptive cap (default 20, never below 12, rising with free
+heap; a Tier-2 board with a ready dev server has a lower cap of its own);
+everything else shows its picture, or the title placeholder before it has one.
+A frame that leaves the live set is torn down, because each live frame is a
+whole document carrying its own parsed copy of every injected stylesheet and the
+picture is what a user looks at while panning past it. Editing a poster frame
+promotes it; a click on a poster selects the frame, which is the same thing.
 
-The budget is the one thing that varies, and it varies by what a frame **costs**
-on this board — a Tier 0/1 portal frame is one cheap same-origin `srcDoc`
-document (`max(8, onScreen + 4)`, a floor with headroom); a Tier-2 frame is a
-`LiveBoardFrame`, which is a fallback document **and** a cross-origin bridge
-iframe against a real dev-server process (`max(onScreen, 8)`, a ceiling only
-the visible set may exceed). The trust tier picks the cost in
-`BoardFramesLayer` and touches mounting nowhere else.
-
-`BoardFrameView` takes two separate props as a result: `isOnScreen` (the
-viewport test — drives poster CAPTURE, which has to happen while the frame is
-genuinely visible and settled) and `isMounted` (is the pool holding it — drives
-the live frame, the auto-height box, and the empty-page hint). It resolves them
-through `resolveFrameMount`, and stamps the answer's reason onto the frame
-element as `data-frame-mount` (`on-screen` / `pooled` / `offscreen`), which is
-how a test, the agent's capture path and a human with devtools open all read
-the same answer. `isMounted` is **optional** and defaults to `isOnScreen`; see
-`docs/agent-refs/canvas-internals.md` §Perf for why that is load-bearing.
-
-The active viewport context (highlighted, drives style override routing) is tracked by `activeBreakpointId` in `canvasSlice`.
-
-### Agent evidence frames
-
-`site_render_snapshot` always asks `CanvasRoot` to mount one `AgentSnapshotFrame` through a portal outside the canvas clipping/transform layers. It uses the same `IframeFrameSurface`, `CanvasComposedTree`, breakpoint context, class CSS, and user stylesheet path as the editor, at the breakpoint's configured width. A deterministic transient path avoids capturing a visible frame midway through an asynchronous preview fetch and makes Live/collapsed/disabled-frame state irrelevant. The frame sits offscreen rather than using `display:none`, so it has real layout geometry for evidence collection.
-
-This frame is transient editor-session state. It does not change the active viewport, Design/Live mode, pan/zoom, or collapsed frame ids, and it never runs authored runtime scripts (a read must not duplicate arbitrary side effects or network calls). A revisioned readiness tracker covers post-type preview rows, loop data, and media metadata; capture additionally waits for fonts, React/DOM settling, and cloned image/background embedding. The request-specific marker is stored on the host iframe rather than authored DOM. The executor captures only after that marker appears and releases the request in `finally`. Explicit breakpoint lookup is exact; it never substitutes another frame.
+`BoardFrameView` takes one `isLive` prop, resolves it through `resolveFrameMount`
+and stamps the reason (`live` / `poster` / `cold`) onto the frame element as
+`data-frame-mount`, which is how a test, the agent's capture path and a human
+with devtools open all read the same answer. `PosterFill` photographs the
+frames that were never live, one at a time and only when the board is quiet, so
+the first zoom-out of a board shows pictures. The full rule, the fill and the
+press-promotion are in `docs/agent-refs/canvas-internals.md` §Perf.
 
 ### Frozen posters are queued, never raced against a gesture
 
-`useFramePosterCapture` rasterizes a settled on-screen frame into
-`frameSnapshotCache` so it can come back as a picture rather than an empty box.
-The rasterization is `html-to-image`'s `toCanvas`, which clones the whole
+`useFramePosterCapture` rasterizes a settled live frame into
+`framePosters` (`posterStore.ts`, memory + IndexedDB, keyed by content hash — see
+`posterKey.ts`) so it can come back as a picture rather than an empty box. Until
+SB-2 the rasterization was `html-to-image`'s `toCanvas`, which clones the whole
 document and reads and writes a computed style for every element in it —
-**measured at ~85–350 ms per frame** on an 18-frame board. Each frame used to
+**measured at ~85–350 ms per frame** on an 18-frame board. `posterRasterizer.ts`
+now serializes the frame's real document into one SVG `<foreignObject>` instead. Each frame used to
 arm its own settle timer, so a zoom-out that admitted a dozen frames ran a
 dozen of those inside the gesture.
 
@@ -326,7 +314,7 @@ Native events require explicit handling for four cases:
 
 - **Wheel events (design mode):** `IframeFrameSurface` listens for `wheel` inside the iframe document and re-dispatches a new `WheelEvent` on the iframe element (parent document) so `useCanvas`'s pan/zoom handler picks it up.
 - **Pointer events (design mode):** Space+left-click pan and active reorder drags (`data-studio-canvas-dragging` on `<html>`) need to cross the iframe boundary. Normal mouse scrolling is handled by wheel forwarding, with `Shift+wheel` mapped to horizontal canvas pan. `IframeFrameSurface` tracks `spaceHeld` and `panPointerId` state to identify when a pointerdown starts a pan, then forwards `pointerdown`/`pointermove`/`pointerup`/`pointercancel` to the parent document.
-- **Keyboard shortcuts (design mode):** Clicking a node to select it focuses the iframe, so subsequent keystrokes are delivered to the iframe document. The editor's global / editor / panel shortcuts are native listeners on the parent `window` (spotlight `⌘K`, save `⌘S`) and parent `document` (panel toggles, undo/redo), which never see iframe events. `IframeFrameSurface` re-dispatches a cloned `keydown` on the **parent `document`** (not the iframe element) so it reaches those window/document listeners without re-entering React's root container — which would otherwise double-fire the canvas-root `onKeyDown` shortcuts that already receive the original via fiber bubbling. `Tab` is the exception: it is blocked (not forwarded) to keep the browser from tab-walking focusable nodes inside the design preview.
+- **Keyboard shortcuts (design mode):** Clicking a node to select it focuses the iframe, so subsequent keystrokes are delivered to the iframe document. The editor's global / editor / panel shortcuts are native listeners on the parent `window` (spotlight `⌘K`, save `⌘S`) and parent `document` (panel toggles, undo/redo), which never see iframe events. `IframeFrameSurface` re-dispatches a cloned `keydown` on the **parent `document`** (not the iframe element) so it reaches those window/document listeners without re-entering React's root container — which would otherwise double-fire the canvas-root `onKeyDown` shortcuts that already receive the original via fiber bubbling. `Tab` is cancelled inside the frame, to keep the browser from tab-walking focusable nodes inside the design preview, and then forwarded like any key — with a node selected it selects the next sibling (P2-B). Keyups go to the dispatcher's release broadcast rather than being cloned, and one module, `canvasFrameKeyRelay.ts`, does all of it for portal and Tier 2 bridge frames alike.
 - **Portal overlay dismiss (all modes):** Portal-based overlays (context menus, dropdowns) attach their dismiss-on-outside-click listeners at the document level. A `mousedown` inside an iframe fires on the iframe's own document and never bubbles to the parent's listener, leaving the overlay stuck open. `ContextMenu` calls `collectSameOriginDocuments` (`src/ui/lib/sameOriginDocuments.ts`) to gather the parent document plus every reachable same-origin iframe document, then attaches dismiss listeners to all of them. Cross-origin iframes are skipped — their events are unreachable. The check for whether an event target is a valid DOM node uses `isNode` (also in `sameOriginDocuments.ts`), a structural check on `nodeType` that works across iframe realms where `instanceof Node` would fail.
 
 Native mouse movement is also surfaced for editor chrome that must follow the cursor in the parent document, such as inactive-viewport activation hints. These events are not forwarded as new DOM events; `IframeFrameSurface` invokes callback props with the iframe-native `MouseEvent`, and callers translate the point with `clientPointToEditorDoc`.
@@ -337,7 +325,7 @@ Live frames skip wheel/pointer/keyboard forwarding — they scroll natively, hav
 
 **A drag measures the frame, it does not re-render it.** The element drag builds its `frameCandidateIndex` once from the frame's `contentDocument` (`measureCanvasDropCandidates`'s `[data-node-id]` scan), then rebuilds it only when a `ResizeObserver` on the **frame body** reports a real reflow. **Nothing is ADDED to the frame's DOM at any point** — the drop line, the refusal chip, the alignment guides and the ghost are all painted into the parent document's per-frame overlay layer, which is already transform-scaled with the board. See `docs/reference/canvas-dnd.md` → "The drag session (S2)".
 
-The one thing a drag writes inside the frame is a **free move's preview** (K6): `left`/`top` (and `position`) on the dragged element's own `style`, the same preview-then-commit shape `useElementResizeDrag` uses for `width`/`height`. No element is created, no attribute is added, and the preview is dropped before the store commit — so React's re-render is the last thing to touch the property, and the frame's DOM is byte-identical to what the source says the moment the gesture ends.
+The one thing a drag writes inside the frame is a **free move's preview** (K6): the moved offsets (and `position`) on the dragged element's own `style`, the same preview-then-commit shape `useElementResizeDrag` uses for `width`/`height` and the padding / gap handles (P5-E) use for `padding*` / `*Gap`. No element is created, no attribute is added, and the preview is dropped before the store commit — so React's re-render is the last thing to touch the property, and the frame's DOM is byte-identical to what the source says the moment the gesture ends.
 
 ---
 
@@ -348,9 +336,10 @@ Double-click a text-bearing node to edit its text **in place**: the node's own e
 - **Module contract:** `ModuleDefinition.inlineTextEdit?: { prop: string; multiline?: boolean }`. Declared by `base.text` (`text`, multiline), `base.button` (`label`), and `base.link` (`text`). Modules without the field keep the no-op double-click; the canvas has no per-module branches. A node with children never starts a session (`base.link` renders `text` only when childless), and dynamically-bound props are not literal-editable.
 - **The element IS the editor, and React must NOT own its content:** when `inlineEdit` is set on the component props, the module renders NO children and spreads `inlineEditableElementProps(inlineEdit)` (`src/modules/base/shared/inlineText.ts`) onto its element — `contentEditable="plaintext-only"` (no rich formatting / pasted markup) plus the three live-edit handlers, and crucially **no `dangerouslySetInnerHTML` and no children**. React 19 re-applies `dangerouslySetInnerHTML` on *every* commit of an element (it does not skip an unchanged `__html`), and the live-commit re-render fires one commit per keystroke — so a React-owned content prop would overwrite the user's typing and collapse the caret to the start every keystroke. Instead the canvas seeds the element's content **imperatively** once via `seedInlineEditableContent(el, initialValue)` (which sets `el.innerHTML = rawTextToBreakHtml(initialValue)` — HTML-escaped first, so the only markup is the `<br>`s, never user HTML), and React leaves the contentEditable DOM untouched for the rest of the session.
 - **Session state:** `activeInlineEdit { nodeId, prop, breakpointId, multiline, initialValue, committed }` in `store/slices/inlineEditSlice.ts`. One session globally, owned by the frame that was double-clicked (`isInlineEditing` is true only when `activeInlineEdit.breakpointId === breakpointId`). Design mode only. On session start a `useLayoutEffect` in `NodeRenderer` seeds the content, focuses the element, and drops the caret at the end before paint.
-- **Live commit:** `onInput` reads the edited text back with `readInlineEditableText(el)` (`el.innerText`, which resolves `<br>` and block boundaries to `\n`) and calls `applyInlineEditValue` → `updateNodeProps(nodeId, { [prop]: value })`. Single-field patches coalesce under `props:<nodeId>:<prop>`, so the whole burst is ONE undo entry and every OTHER frame previews the edit live. `startInlineEdit`/`endInlineEdit` reset `_historyCoalesceKey` so the session burst never folds into a Properties-panel burst for the same prop.
+- **One session, one write:** `onInput` reads the edited text back with `readInlineEditableText(el)` (`el.innerText`, which resolves `<br>` and block boundaries to `
+`) and calls `applyInlineEditValue`, which only records the session `draft` — nothing reaches the tree, the undo stack or the autosave while typing (so no partial write can reach `translations.ts`/source). `endInlineEdit` writes the draft ONCE through `updateNodeProps` (or `updateLocalizedNodeText` for a locale-variant frame): one history entry, one source write, skipped when the draft equals the initial value. Other frames show the edit on commit, not per keystroke. `startInlineEdit`/`endInlineEdit` reset `_historyCoalesceKey` so the commit never folds into a Properties-panel burst for the same prop.
 - **Line breaks stored as `\n`, rendered as `<br>`:** the stored value keeps newlines as `\n`. Both render surfaces turn each `\n` into a `<br>` so a hard break shows live in the canvas AND survives publish — `base.text` render emits `textToBreakHtml(text)` (text is pre-escaped by `escapeProps`; DOMPurify's richtext config allows `<br>`), and the canvas display path uses `rawTextToBreakHtml`. A break the author types is a break everywhere.
-- **End:** for single-line modules (`base.button`, `base.link`) plain Enter commits + closes; for multiline `base.text`, plain Enter falls through so the browser inserts a hard break (stored as `\n`), and Cmd/Ctrl+Enter commits + closes. Blur commits + closes. Escape cancels: a single `undo()` iff the session committed anything.
+- **End:** for single-line modules (`base.button`, `base.link`) plain Enter commits + closes; for multiline `base.text`, plain Enter falls through so the browser inserts a hard break (stored as `\n`), and Cmd/Ctrl+Enter commits + closes. Blur commits + closes. Escape cancels: the draft is dropped — nothing was written, so there is nothing to undo.
 - **Force-close:** node deleted, document/page switch, or frame unmount (breakpoint collapsed, live-mode switch) clear `activeInlineEdit` through the slice's existing guards.
 
 Keyboard interplay: the editable element lives inside the breakpoint iframe, and its keystrokes reach the parent two ways — they bubble through React to the canvas-root handler, and `IframeFrameSurface` re-dispatches a clone on the parent `document` so native parent shortcuts work. Both paths must stand down mid-edit:

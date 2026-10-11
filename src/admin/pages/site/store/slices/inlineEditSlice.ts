@@ -1,42 +1,42 @@
 /**
  * Inline text edit slice — ephemeral canvas UI state for the double-click
  * inline text editor.
- * Spec: docs/superpowers/specs/2026-06-10-inline-text-editing-design.md
+ * Contract: docs/agent-refs/canvas-internals.md → "Inline text editing"
  *
  * The session is UI-only state (never persisted, never itself part of undo
- * history). Live commits route through `updateNodeProps`, whose single-field
- * patches coalesce under `props:<nodeId>:<prop>` (see `coalesceKeyForPatch`
- * in slices/site/nodeActions.ts) — the whole typing burst is ONE undo entry,
- * which is what lets `cancelInlineEdit` revert with a single `undo()`.
+ * history). **One session is one write.** Keystrokes only update the
+ * session's `draft` (the contentEditable element already shows the text);
+ * nothing reaches the page tree, the undo stack or the autosave until the
+ * session COMMITS (`endInlineEdit` — Enter, blur, or another gesture taking
+ * over), which writes the draft through `updateNodeProps` exactly once: one
+ * history entry, one source write. `cancelInlineEdit` (Escape) simply drops
+ * the draft — there is nothing to undo, so no partial write can survive it
+ * and no timing window (a save landing between the last keystroke and
+ * Escape) can leave "all but the last character" on disk.
  *
  * Burst isolation: `startInlineEdit` and `endInlineEdit` both reset
- * `_historyCoalesceKey`, so the inline burst can never fold into a
- * Properties-panel typing burst for the same prop (or vice versa) — Escape
- * must revert exactly the inline session, nothing more.
+ * `_historyCoalesceKey`, so the commit can never fold into a
+ * Properties-panel typing burst for the same prop.
  *
- * **WS-10 §4.4 (Phase 4) — locale-variant frame sessions branch to a SECOND
- * mutation path, `updateLocalizedNodeText`.** A session started in a board
- * frame whose OWN `axes.locale` differs from the board default is editing a
- * node that lives in `localizedPageSlice.ts`'s `localizedPages` map, NOT
- * `site.pages` — writing it through `updateNodeProps`/`mutateActiveTree`
- * would silently edit the WRONG tree (the default-locale one, sharing this
- * node's id per trap #2) while displaying the edit in the locale-variant
- * frame, which would both corrupt the default tree and lose the actual
- * locale edit. `session.frameId`/`localeOverride` (resolved once, at
- * `startInlineEdit` time) is what tells `applyInlineEditValue`/
- * `cancelInlineEdit` which path to take. This is a genuinely SEPARATE,
- * undo-EXEMPT mutation (see `localizedPageSlice.ts`'s own doc for why that
- * scope boundary is deliberate) — `session.committed`/`undo()` stay
- * meaningful ONLY for the default-tree path; the locale-variant path
- * reverts by re-setting `initialValue` directly on cancel.
+ * **WS-10 §4.4 (Phase 4) — locale-variant frame sessions commit through a
+ * SECOND mutation path, `updateLocalizedNodeText`.** A session started in a
+ * board frame whose OWN `axes.locale` differs from the board default is
+ * editing a node that lives in `localizedPageSlice.ts`'s `localizedPages`
+ * map, NOT `site.pages` — writing it through `updateNodeProps` would
+ * silently edit the WRONG tree. `session.localeOverride` (resolved once, at
+ * `startInlineEdit` time) tells `endInlineEdit` which path to take. That
+ * path is undo-EXEMPT (see `localizedPageSlice.ts`).
  */
 import { registry } from '@core/module-engine'
-import { isPropWritableToSource } from '@core/page-tree'
+import { canUnbindProp, isPropWritableToSource } from '@core/page-tree'
+import { isCanvasLayerPageId } from '@core/studio-board'
 import { pushToast } from '@ui/components/Toast'
 import type { EditorStore, EditorStoreSliceCreator } from '@site/store/types'
 import { getActiveTree } from './selectionResolve'
 import { selectActiveBoard } from './boardSelectors'
 import { localizedPageKey } from './localizedPageSlice'
+import { mintPendingCommitId } from './site/structuralCommitRollback'
+import { commitCanvasLayerText } from '@site/studio/canvasLayerTextCommit'
 
 interface ActiveInlineEdit {
   nodeId: string
@@ -49,10 +49,35 @@ interface ActiveInlineEdit {
   /** WS-10 §4.4 (Phase 4) — set when `frameId`'s frame has its own locale override that differs from the board default; names WHICH `(pageId, locale)` tree in `localizedPageSlice.ts` this session mutates instead of `site.pages`. `null` for every other session (the overwhelmingly common case, including all of Phase 1-3). */
   localeOverride: { pageId: string; locale: string } | null
   multiline: boolean
-  /** Prop value when the session started; cancel restores it via one undo() (default tree) or a direct re-set (locale-variant tree). */
+  /** Prop value when the session started. */
   initialValue: string
-  /** True once a keystroke produced a REAL history entry (a burst exists). Only meaningful for the default-tree (undo-tracked) path. */
-  committed: boolean
+  /** The text as typed so far; written to the tree once, on commit. Starts equal to `initialValue`. */
+  draft: string
+  /** Open with the whole text selected (a freshly drawn text's placeholder) instead of the caret at the end. */
+  selectAll?: true
+  /**
+   * G-6 (OD-20) - the text is CODE (`{count}`, `{t('x')}`) and the session is the
+   * user typing over it: committing replaces the code with the draft through
+   * `unbindNodeValue` (a journaled source write with its notice and Undo), not
+   * through `updateNodeProps`, which would refuse it.
+   */
+  unbind?: true
+}
+
+/**
+ * Whether `session` edits THIS rendering of `nodeId` — the same node id in the
+ * same breakpoint frame AND the same board frame (two "duplicate as variant"
+ * frames share both the node id and the `'studio'` breakpoint id, trap #2).
+ * A primitive answer on purpose: `NodeRenderer` subscribes to it once per
+ * mounted node (P2-I).
+ */
+export function isInlineEditSessionFor(
+  session: Pick<ActiveInlineEdit, 'nodeId' | 'breakpointId' | 'frameId'> | null,
+  nodeId: string,
+  breakpointId: string | undefined,
+  frameId: string | null,
+): boolean {
+  return session !== null && session.nodeId === nodeId && session.breakpointId === breakpointId && session.frameId === frameId
 }
 
 interface InlineEditSlice {
@@ -71,13 +96,23 @@ interface InlineEditSlice {
    * frame caller needs the return value to answer the frame's
    * `text:editStart` request; the portal double-click handler ignores it.
    */
-  startInlineEdit: (nodeId: string, breakpointId: string, frameId?: string | null) => boolean
-  /** Live per-keystroke commit — one coalesced undo entry per session (default tree), or a direct mutation (locale-variant tree). */
+  startInlineEdit: (nodeId: string, breakpointId: string, frameId?: string | null, options?: { selectAll?: boolean }) => boolean
+  /** Record the text typed so far. Touches only the session draft — no tree write, no history, no save. */
   applyInlineEditValue: (value: string) => void
-  /** Commit + close. Keystrokes already landed live; this ends session + burst. */
+  /** Commit + close: writes the draft once (one undo entry) iff it differs from the initial value. */
   endInlineEdit: () => void
-  /** Revert + close: one undo() (default tree) or a direct re-set of `initialValue` (locale-variant tree), iff the session actually changed something. */
+  /** Discard the draft + close. Nothing was written, so nothing is reverted. */
   cancelInlineEdit: () => void
+  /**
+   * The text an inspector field is being typed into, painted on the canvas
+   * BEFORE it is committed. Transient UI state: no tree write, no history, no
+   * save. `NodeRenderer` overlays it on the node's resolved props; the field's
+   * single commit (`updateNodeProps`) is what reaches the source.
+   */
+  previewNodeProps: { nodeId: string; props: Record<string, unknown> } | null
+  setPreviewNodeProps: (nodeId: string, props: Record<string, unknown>) => void
+  /** Drop the preview (commit, Escape, blur, unmount). Scoped to `nodeId` when given. */
+  clearPreviewNodeProps: (nodeId?: string) => void
 }
 
 // Contribute this slice's fields to the combined `EditorStore` type via TS
@@ -111,7 +146,10 @@ function resolveSessionNode(
   state: EditorStore,
   nodeId: string,
   localeOverride: { pageId: string; locale: string } | null,
+  frameId: string | null | undefined,
 ) {
+  // A loose layer's node lives in its own module's tree, not the active page's.
+  if (frameId && isCanvasLayerPageId(frameId)) return state.canvasLayerPages[frameId]?.nodes[nodeId]
   if (localeOverride) {
     return state.localizedPages[localizedPageKey(localeOverride.pageId, localeOverride.locale)]?.nodes[nodeId]
   }
@@ -120,11 +158,26 @@ function resolveSessionNode(
 
 export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (set, get) => ({
   activeInlineEdit: null,
+  previewNodeProps: null,
 
-  startInlineEdit: (nodeId, breakpointId, frameId = null) => {
+  setPreviewNodeProps: (nodeId, props) => {
+    set((s) => {
+      s.previewNodeProps = { nodeId, props }
+    })
+  },
+
+  clearPreviewNodeProps: (nodeId) => {
+    const current = get().previewNodeProps
+    if (!current || (nodeId !== undefined && current.nodeId !== nodeId)) return
+    set((s) => {
+      s.previewNodeProps = null
+    })
+  },
+
+  startInlineEdit: (nodeId, breakpointId, frameId = null, options) => {
     const state = get()
     const localeOverride = resolveLocaleOverride(state, frameId)
-    const node = resolveSessionNode(state, nodeId, localeOverride)
+    const node = resolveSessionNode(state, nodeId, localeOverride, frameId)
     if (!node) return false
     const def = registry.get(node.moduleId)
     const spec = def?.inlineTextEdit
@@ -156,7 +209,19 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
     // `codeProps` names the text prop only when the text came from an expression
     // AND has no `textOrigin` literal to write instead. See
     // `@core/page-tree`'s `sourceWritability`.
-    if (!isPropWritableToSource(node, spec.prop)) {
+    //
+    // G-6 (OD-20): the one exception is text the user may TYPE OVER - one plain
+    // source location, code that is a value (`canUnbindProp`). The session opens
+    // on what the canvas shows, and committing a change replaces the code with
+    // the text (Undo restores it); leaving without a change writes nothing.
+    // Locale-variant and loose-layer sessions commit through other trees and keep
+    // the refusal.
+    const unbind =
+      !isPropWritableToSource(node, spec.prop) &&
+      localeOverride === null &&
+      !(frameId && isCanvasLayerPageId(frameId)) &&
+      canUnbindProp(node, spec.prop)
+    if (!unbind && !isPropWritableToSource(node, spec.prop)) {
       pushToast({
         kind: 'info',
         title: 'This text is set in code',
@@ -168,7 +233,7 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
     // A dynamically-bound prop isn't literal-editable — the binding would
     // overwrite every keystroke in the canvas preview.
     if (node.dynamicBindings?.[spec.prop]) return false
-    const value = node.props[spec.prop]
+    const value = unbind && node.props[spec.prop] === undefined ? '' : node.props[spec.prop]
     if (typeof value !== 'string') {
       console.warn(
         `[canvas] inline edit aborted: prop "${spec.prop}" on node "${nodeId}" is not a string`,
@@ -184,7 +249,9 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
         localeOverride,
         multiline: spec.multiline ?? false,
         initialValue: value,
-        committed: false,
+        draft: value,
+        ...(options?.selectAll ? { selectAll: true as const } : {}),
+        ...(unbind ? { unbind: true as const } : {}),
       }
       // Isolate the session's burst from any in-flight coalescing burst for
       // the same key (e.g. Properties-panel typing on the same prop).
@@ -194,66 +261,90 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
   },
 
   applyInlineEditValue: (value) => {
-    const state = get()
-    const session = state.activeInlineEdit
-    if (!session) return
-    const node = resolveSessionNode(state, session.nodeId, session.localeOverride)
-    if (!node) return
-    const changed = !Object.is(node.props[session.prop], value)
-    if (session.localeOverride) {
-      // WS-10 §4.4 — a genuinely separate, undo-EXEMPT mutation on
-      // `localizedPageSlice.ts`'s tree, not `site.pages`. See this file's
-      // module doc and `localizedPageSlice.ts`'s own for why.
-      state.updateLocalizedNodeText(session.localeOverride.pageId, session.localeOverride.locale, session.nodeId, session.prop, value)
-    } else {
-      // `committed` flips only on a REAL change — updateNodeProps no-ops equal
-      // values (recordPatchChanges), and cancel must not undo() unless this
-      // session actually pushed a history entry.
-      state.updateNodeProps(session.nodeId, { [session.prop]: value })
-    }
-    if (changed && !session.committed) {
-      set((s) => {
-        if (s.activeInlineEdit) s.activeInlineEdit.committed = true
-      })
-    }
+    if (!get().activeInlineEdit) return
+    set((s) => {
+      if (s.activeInlineEdit) s.activeInlineEdit.draft = value
+    })
   },
 
   endInlineEdit: () => {
-    if (!get().activeInlineEdit) return
+    const state = get()
+    const session = state.activeInlineEdit
+    if (!session) return
+    // Close first, so the write below renders the node as plain (not editing).
     set((s) => {
       s.activeInlineEdit = null
-      // End the burst: later edits of the same prop get a fresh undo entry.
+      s._historyCoalesceKey = null
+    })
+    if (session.draft === session.initialValue) return
+    if (session.unbind) {
+      get().unbindNodeValue(session.nodeId, session.prop, session.draft)
+      return
+    }
+    if (session.frameId && isCanvasLayerPageId(session.frameId)) {
+      // A loose layer's module is not in the page tree: its draft is committed
+      // once, as a source write of its own (see `commitLayerSession`).
+      commitLayerSession(set, get, session)
+      return
+    }
+    if (session.localeOverride) {
+      // WS-10 §4.4 — a separate, undo-EXEMPT mutation on the localized tree.
+      state.updateLocalizedNodeText(session.localeOverride.pageId, session.localeOverride.locale, session.nodeId, session.prop, session.draft)
+    } else {
+      get().updateNodeProps(session.nodeId, { [session.prop]: session.draft })
+    }
+    set((s) => {
       s._historyCoalesceKey = null
     })
   },
 
   cancelInlineEdit: () => {
-    const session = get().activeInlineEdit
-    if (!session) return
-    if (session.localeOverride) {
-      // No undo() entry exists for this path (see module doc) — revert by
-      // re-setting the frozen initial value directly, iff it actually
-      // changed (mirrors `committed`'s purpose for the default-tree path).
-      if (session.committed) {
-        get().updateLocalizedNodeText(
-          session.localeOverride.pageId,
-          session.localeOverride.locale,
-          session.nodeId,
-          session.prop,
-          session.initialValue,
-        )
-      }
-    } else if (session.committed) {
-      // The whole session is one coalesced entry — a single undo() restores
-      // the pre-session value. undo() also resets _historyCoalesceKey.
-      get().undo()
-    }
+    if (!get().activeInlineEdit) return
     set((s) => {
       s.activeInlineEdit = null
       s._historyCoalesceKey = null
     })
   },
 })
+
+type Set = Parameters<EditorStoreSliceCreator<EditorStore>>[0]
+type Get = Parameters<EditorStoreSliceCreator<EditorStore>>[1]
+
+/**
+ * Post a loose layer's finished text session as one write. The layer's tree is
+ * updated first so the text does not flash back to the old value until the
+ * resync; a write that does not land puts the old text back.
+ */
+function commitLayerSession(set: Set, get: Get, session: NonNullable<EditorStore['activeInlineEdit']>): void {
+  const after = session.draft
+  const pageId = session.frameId
+  if (after === undefined || after === session.initialValue || !pageId) return
+  const node = get().canvasLayerPages[pageId]?.nodes[session.nodeId]
+  if (!node) return
+  const writeProp = (value: string) =>
+    set((s) => {
+      const target = s.canvasLayerPages[pageId]?.nodes[session.nodeId]
+      if (target) target.props[session.prop] = value
+    })
+  writeProp(after)
+  let done = false
+  void commitCanvasLayerText({
+    node,
+    before: session.initialValue,
+    after,
+    rollback: {
+      id: mintPendingCommitId(),
+      settle: () => {
+        done = true
+      },
+      rollback: () => {
+        if (done) return
+        done = true
+        writeProp(session.initialValue)
+      },
+    },
+  })
+}
 
 /** `value from c.hotelsTitle` -> `Value from c.hotelsTitle`, for use mid-sentence. */
 function capitalise(text: string): string {

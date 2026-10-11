@@ -57,7 +57,7 @@ import { designSystemImportSpecifier, listWorkspaceFiles } from '@core/page-pars
 import { createProject, rewriteImportSpecifier } from '@core/ast-codemods'
 import { Type } from '@core/utils/typeboxHelpers'
 import { parseJsonWithFallback, safeParseJson } from '@core/utils/jsonValidate'
-import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { PROJECT_DESIGN_SYSTEM_DIR, isDesignSystemBacked } from './builtinDesignSystem'
 import { ensureDesignSystemFiles } from './designSystemFiles'
@@ -303,8 +303,7 @@ export async function tryServeStudioDesignSystemMigrate(
       return jsonResponse(migrateProjectToBuiltinDesignSystem(dir))
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio/designSystemMigrate]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio/designSystemMigrate]', err)
     }
   }
 

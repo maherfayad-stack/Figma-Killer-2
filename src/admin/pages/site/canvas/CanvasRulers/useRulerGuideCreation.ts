@@ -1,5 +1,7 @@
 import { useRef, type PointerEvent as ReactPointerEvent, type RefObject } from 'react'
+import { guardDragSession } from '@core/studio-runtime'
 import type { CanvasTransform } from '@site/hooks/useCanvas'
+import { clearCanvasPointerRelay, markCanvasPointerRelay } from '../canvasPointerRelay'
 import { screenToBoard } from './rulerGeometry'
 
 interface UseRulerGuideCreationParams {
@@ -36,6 +38,12 @@ interface UseRulerGuideCreationParams {
  * render-driving flag) fixes the hazard AND is the better perf fit — no
  * re-render on drag start/end either, matching the "never `setState` per
  * pointermove" rule this hook already followed for the position writes.
+ *
+ * ERR-12 — a guide is dragged OUT of the ruler onto the board, which is
+ * mostly iframes: without pointer capture and the cross-iframe relay the
+ * release lands in a frame's document and the preview line never goes away.
+ * Both are held for the drag, and `guardDragSession` creates the guide at the
+ * last point on a move with the button up and drops it on a window blur.
  */
 export function useRulerGuideCreation({
   axis,
@@ -56,6 +64,9 @@ export function useRulerGuideCreation({
     if (!root) return
     event.preventDefault()
     setPreviewVisible(true)
+    const ruler = event.currentTarget
+    const pointerId = event.pointerId
+    let last = { clientX: event.clientX, clientY: event.clientY }
 
     const writePreview = (clientX: number, clientY: number) => {
       const preview = previewElRef.current
@@ -70,30 +81,52 @@ export function useRulerGuideCreation({
 
     writePreview(event.clientX, event.clientY)
 
-    const onMove = (e: PointerEvent) => writePreview(e.clientX, e.clientY)
-    const onUp = (e: PointerEvent) => {
+    const onMove = (e: PointerEvent) => {
+      last = { clientX: e.clientX, clientY: e.clientY }
+      writePreview(e.clientX, e.clientY)
+    }
+    const end = () => {
+      disposeGuard()
+      clearCanvasPointerRelay()
       document.removeEventListener('pointermove', onMove)
       document.removeEventListener('pointerup', onUp)
       document.removeEventListener('pointercancel', onCancel)
+      try {
+        ruler.releasePointerCapture(pointerId)
+      } catch (_err) {
+        // Released with the pointer already — nothing to undo.
+      }
       setPreviewVisible(false)
-
+    }
+    const create = () => {
+      end()
       const rect = root.getBoundingClientRect()
       const t = transformRef.current
-      const screenPos = axis === 'x' ? e.clientX - rect.left : e.clientY - rect.top
+      const screenPos = axis === 'x' ? last.clientX - rect.left : last.clientY - rect.top
       const pan = axis === 'x' ? t.panX : t.panY
-      const boardPos = screenToBoard(screenPos, t.zoom, pan)
-      onCreate(axis, Math.round(boardPos))
+      onCreate(axis, Math.round(screenToBoard(screenPos, t.zoom, pan)))
     }
-    const onCancel = () => {
-      document.removeEventListener('pointermove', onMove)
-      document.removeEventListener('pointerup', onUp)
-      document.removeEventListener('pointercancel', onCancel)
-      setPreviewVisible(false)
+    const onUp = (e: PointerEvent) => {
+      last = { clientX: e.clientX, clientY: e.clientY }
+      create()
     }
+    const onCancel = () => end()
 
+    try {
+      ruler.setPointerCapture(pointerId)
+    } catch (_err) {
+      // Refused in some test environments — the relay below still carries the drag.
+    }
+    markCanvasPointerRelay(pointerId)
+    const disposeGuard = guardDragSession({
+      documents: [document],
+      focusWindow: window,
+      onReleaseLost: create,
+      onAbandon: onCancel,
+    })
     document.addEventListener('pointermove', onMove)
-    document.addEventListener('pointerup', onUp, { once: true })
-    document.addEventListener('pointercancel', onCancel, { once: true })
+    document.addEventListener('pointerup', onUp)
+    document.addEventListener('pointercancel', onCancel)
   }
 
   return { previewElRef, onPointerDown: onCreate ? onPointerDown : undefined }

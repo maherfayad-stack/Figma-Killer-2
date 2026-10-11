@@ -93,3 +93,21 @@ describe('summarizeAgentActivity', () => {
     expect(activity.completedCount).toBe(2)
   })
 })
+
+describe('a provider hiccup being retried reads as progress, not as an error (AI-8)', () => {
+  it('the headline says the provider is busy and which attempt this is', () => {
+    const message: AgentMessage = { ...assistant([]), retrying: { attempt: 2, maxAttempts: 3 } }
+    expect(summarizeAgentActivity(message).headline).toBe('The AI provider is busy — trying again (2 of 3)')
+  })
+
+  it('the HTTP drivers\' file tools read like the CLI\'s own (P4-C)', () => {
+    const activity = summarizeAgentActivity(assistant([
+      { kind: 'toolCall', toolCall: toolCall({ actionType: 'studio_write_file', externalId: '1', params: { path: 'pages/Checkout.tsx' }, status: 'success' }) },
+      { kind: 'toolCall', toolCall: toolCall({ actionType: 'studio_edit_files', externalId: '2', params: { edits: [{ path: 'pages/A.tsx' }, { path: 'pages/A.module.css' }, { path: 'pages/A.tsx' }] } }) },
+    ]))
+    expect(activity.steps.map((s) => [s.title, s.detail])).toEqual([
+      ['Writing', 'Checkout.tsx'],
+      ['Editing', 'A.tsx, A.module.css'],
+    ])
+  })
+})

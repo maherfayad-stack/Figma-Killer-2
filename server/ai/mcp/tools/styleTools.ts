@@ -57,6 +57,7 @@ export const styleMcpTools: AiTool[] = [
       "Read the site's design system as a CSS stylesheet — design tokens (CSS custom properties for colors, type scale, spacing) plus every class and ambient rule. This is the SAME CSS you write back with site_apply_css, so read it first to learn the available classes (e.g. .ist-btn) and token variables (e.g. var(--ist-accent)) before authoring HTML/CSS. Works headless — no open editor needed. Pass className to read one rule; omit for the whole sheet.",
     scope: 'site',
     execution: 'server',
+    sideEffects: 'none',
     inputSchema: ReadStylesInput,
     requiredCapabilities: SITE_READ_CAPS,
     handler: async (input, ctx: ToolContext) => {
@@ -115,6 +116,7 @@ export const styleMcpTools: AiTool[] = [
       'List the configured viewport breakpoints (id, label, width), in order (the first is the base/widest context). Pass a breakpoint id to site_render_snapshot to capture a specific viewport. Headless — no editor needed.',
     scope: 'site',
     execution: 'server',
+    sideEffects: 'none',
     inputSchema: Type.Object({}, { additionalProperties: false }),
     requiredCapabilities: SITE_READ_CAPS,
     handler: async (_input, ctx: ToolContext) => {

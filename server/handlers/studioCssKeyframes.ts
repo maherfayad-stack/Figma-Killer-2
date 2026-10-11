@@ -9,7 +9,7 @@
  * no path resolution, no knowledge of a workspace. `studioCssWriteback.ts`
  * owns all four of those things and runs them BEFORE dispatching here, so the
  * containment guard, the compiled-stylesheet check, and the actual
- * `writeFileSync` happen in exactly one place for every op regardless of which
+ * `writeSourceFile` happen in exactly one place for every op regardless of which
  * module implements it. The dependency therefore runs one way, which is also
  * what keeps `no-circular-dependencies.test.ts` green.
  *
@@ -28,8 +28,7 @@
  *
  * ## The refusal
  *
- * `analyzeKeyframesTarget` runs first, and it needs only one rule where
- * `analyzeDeclarationTarget` needs four. A second `@keyframes` block with the
+ * `analyzeKeyframesTarget` runs first, and it needs only one rule. A second `@keyframes` block with the
  * same name does not merge with the first the way two rules with the same
  * selector do — it REPLACES it entirely — so editing the first when a second
  * exists would change the file and change nothing on screen. That is exactly

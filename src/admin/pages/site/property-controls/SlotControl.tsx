@@ -30,6 +30,11 @@
  *    JSX value instead of adding to it. Without it, picking a second icon
  *    left the first sitting beside it in a fragment and the component
  *    rendered both — "choose a different icon" was not expressible at all.
+ *  - **Filled slot holding ONE local component → "Swap"** is Figma's
+ *    instance-swap property: it renames that component's tag in place, keeping
+ *    the props the new component also takes (`InstanceSwapPopover`, the same
+ *    one-shot `swap` edit the Component section's header makes). "Replace"
+ *    above discards the old element's props; Swap carries them over.
  *  - **Filled slot → "Add another"** reuses the identical write in append
  *    mode; the codemod itself decides whether that means wrapping the existing
  *    value in a fragment or appending to one already there
@@ -49,7 +54,7 @@
  * codemod exists to back it (a real, disclosed gap — see this file's
  * STATE.md handoff, not a silent omission).
  */
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { ControlProps } from './shared'
 import { studioSlotNodeId } from '@core/utils/studioSlotSentinel'
 import { useEditorStore } from '@site/store/store'
@@ -57,11 +62,13 @@ import { decodeSourceNodeId, explainStructuralConstraint } from '@core/page-tree
 import { resolveNodeById } from '@site/panels/PropertiesPanel/slotOwners'
 import { commitStudioInsertSlot, type SlotJsxNode } from '@site/studio/studioSaveRequests'
 import { SlotPicker } from './SlotPicker'
+import { InstanceSwapPopover } from './InstanceSwapPopover'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { Button } from '@ui/components/Button'
 import { ControlRow } from '@ui/components/ControlRow'
 import { pushToast } from '@ui/components/Toast'
 import { CursorClickSolidIcon } from 'pixel-art-icons/icons/cursor-click-solid'
+import { ArrowsHorizontalIcon } from 'pixel-art-icons/icons/arrows-horizontal'
 import { PlusIcon } from 'pixel-art-icons/icons/plus'
 import { ReloadIcon } from 'pixel-art-icons/icons/reload'
 import styles from './controls.module.css'
@@ -74,6 +81,8 @@ export function SlotControl({ propKey, value, label, isOverride, layout, disable
   const [submittingName, setSubmittingName] = useState<string | null>(null)
 
   const slotNodeId = studioSlotNodeId(value)
+  const [swapOpen, setSwapOpen] = useState(false)
+  const swapButtonRef = useRef<HTMLButtonElement>(null)
 
   // A plain, referentially-stable store read (Mutative preserves an
   // untouched node's own object identity) — the constraint check below runs
@@ -84,6 +93,17 @@ export function SlotControl({ propKey, value, label, isOverride, layout, disable
   const ownerNode = useEditorStore((s) =>
     ownerNodeId ? resolveNodeById(s.site, s._nodeIdToPageIds, ownerNodeId) : null,
   )
+
+  // What the slot holds, when it is exactly one component element — the only
+  // shape a swap has an honest single target for (a fragment slot is a
+  // container of several; a plain DOM element is not a component).
+  const slotInstance = useEditorStore((s) => {
+    if (!slotNodeId) return null
+    const node = resolveNodeById(s.site, s._nodeIdToPageIds, slotNodeId)
+    return node?.moduleId === 'studio.instance' ? node : null
+  })
+  const slotInstanceProps = slotInstance?.props as { componentName?: string; source?: string; sourceFile?: string } | undefined
+  const canSwap = slotInstance !== null && slotInstanceProps?.source !== 'package' && slotInstanceProps?.componentName !== undefined
 
   const insertRefusalReason: string | null = !ownerNodeId
     ? 'This control has no owning node to write into.'
@@ -103,16 +123,12 @@ export function SlotControl({ propKey, value, label, isOverride, layout, disable
         node,
         mode: pickerMode,
       })
-      if (!result.ok) {
-        pushToast({ kind: 'error', title: `${verb} refused`, body: result.message })
-        return
-      }
-      setPickerMode(null)
+      if (result.ok) setPickerMode(null)
+      else pushToast({ kind: 'warning', title: `${verb} refused`, body: result.message })
     } catch (err) {
       pushToast({ kind: 'error', title: `${verb} failed`, body: getErrorMessage(err, 'Unknown error') })
-    } finally {
-      setSubmittingName(null)
     }
+    setSubmittingName(null)
   }
 
   // The call site's own file, needed to resolve a PROJECT component's import
@@ -152,6 +168,22 @@ export function SlotControl({ propKey, value, label, isOverride, layout, disable
             Replace
           </Button>
         )}
+        {canSwap && (
+          <Button
+            ref={swapButtonRef}
+            variant="ghost"
+            size="sm"
+            disabled={disabled}
+            aria-haspopup="dialog"
+            aria-expanded={swapOpen}
+            tooltip={`Swap ${slotInstanceProps?.componentName ?? 'component'} for another component`}
+            onClick={() => setSwapOpen((open) => !open)}
+            data-testid={`slot-control-${propKey}-swap`}
+          >
+            <ArrowsHorizontalIcon size={11} aria-hidden="true" />
+            Swap
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="sm"
@@ -164,6 +196,17 @@ export function SlotControl({ propKey, value, label, isOverride, layout, disable
           {addLabel}
         </Button>
       </div>
+
+      {swapOpen && canSwap && slotNodeId && (
+        <InstanceSwapPopover
+          id={`slot-swap-${propKey}`}
+          anchorRef={swapButtonRef}
+          nodeId={slotNodeId}
+          componentName={slotInstanceProps?.componentName ?? ''}
+          sourceFile={slotInstanceProps?.sourceFile ?? ''}
+          onClose={() => setSwapOpen(false)}
+        />
+      )}
 
       {pickerMode !== null && (
         <SlotPicker

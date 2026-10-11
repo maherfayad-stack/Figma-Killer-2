@@ -11,6 +11,7 @@ import type { StyleRuleRegistry } from '@core/page-tree'
 import type { VisualComponent } from '@core/visualComponents'
 import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 import { CanvasTreeLadderRowButton } from './CanvasTreeLadderRowButton'
+import { getCanvasHover, subscribeCanvasHover } from './canvasHover'
 import {
   buildCanvasTreeLadderRows,
   commitCanvasTreeLadderSelection,
@@ -74,11 +75,18 @@ export function useCanvasTreeLadderOverlay({
   hoveredBreakpointOrigin,
   selectedNodeIds,
 }: UseCanvasTreeLadderOverlayArgs): CanvasTreeLadderOverlayResult {
-  const activePage = useEditorStore(selectActiveCanvasPage)
-  const styleRules = useEditorStore((s) => s.site?.styleRules ?? EMPTY_STYLE_RULES)
-  const visualComponents = useEditorStore((s) => s.site?.visualComponents ?? EMPTY_VISUAL_COMPONENTS)
-  const treeLadderRef = useRef<HTMLDivElement>(null)
   const [inspectActive, setInspectActive] = useState(false)
+  // Read only while the ladder is armed (Alt held over this frame). Every
+  // mounted frame runs this hook, and the active page is a new object after
+  // every keystroke: subscribed unconditionally, a keystroke re-rendered the
+  // selection chrome of every frame on the board and re-attached this hook's
+  // listeners in each (P6-C).
+  const activePage = useEditorStore((s) => (inspectActive ? selectActiveCanvasPage(s) : null))
+  const styleRules = useEditorStore((s) => (inspectActive ? (s.site?.styleRules ?? EMPTY_STYLE_RULES) : EMPTY_STYLE_RULES))
+  const visualComponents = useEditorStore((s) =>
+    inspectActive ? (s.site?.visualComponents ?? EMPTY_VISUAL_COMPONENTS) : EMPTY_VISUAL_COMPONENTS,
+  )
+  const treeLadderRef = useRef<HTMLDivElement>(null)
   const [inspectSuppressed, setInspectSuppressed] = useState(false)
   const [inspectAnchorNodeId, setInspectAnchorNodeId] = useState<string | null>(null)
   const [treeLadderHighlightedNodeId, setTreeLadderHighlightedNodeId] = useState<string | null>(null)
@@ -125,17 +133,14 @@ export function useCanvasTreeLadderOverlay({
     setTreeLadderHighlightedNodeId(null)
   }, [breakpointId])
 
-  useEffect(() => useEditorStore.subscribe(
-    (s) => [s.hoveredNodeId, s.hoveredBreakpointId] as const,
-    ([nodeId, hoveredBreakpoint]) => {
-      if (!inspectActive || inspectSuppressed) return
-      if (nodeId && hoveredBreakpoint === breakpointId) {
-        setInspectAnchorNodeId(nodeId)
-        setTreeLadderHighlightedNodeId(null)
-      }
-    },
-    { equalityFn: (a, b) => a[0] === b[0] && a[1] === b[1] },
-  ), [breakpointId, inspectActive, inspectSuppressed])
+  useEffect(() => subscribeCanvasHover(() => {
+    if (!inspectActive || inspectSuppressed) return
+    const hover = getCanvasHover()
+    if (hover && hover.breakpointId === breakpointId) {
+      setInspectAnchorNodeId(hover.nodeId)
+      setTreeLadderHighlightedNodeId(null)
+    }
+  }), [breakpointId, inspectActive, inspectSuppressed])
 
   useEffect(() => {
     if (!iframeElement) return
@@ -148,12 +153,9 @@ export function useCanvasTreeLadderOverlay({
       const rawNodeId = nodeElement?.getAttribute('data-node-id') ?? null
       if (!rawNodeId) return
 
-      const state = useEditorStore.getState()
-      const activeTree = selectActiveCanvasPage(state)
-      const hoveredId =
-        state.hoveredBreakpointId === breakpointId && state.hoveredNodeId
-          ? state.hoveredNodeId
-          : null
+      const activeTree = selectActiveCanvasPage(useEditorStore.getState())
+      const hover = getCanvasHover()
+      const hoveredId = hover && hover.breakpointId === breakpointId ? hover.nodeId : null
       const anchorNodeId = hoveredId && activeTree?.nodes[hoveredId] ? hoveredId : rawNodeId
 
       setInspectActive(true)

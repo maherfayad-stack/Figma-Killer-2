@@ -49,6 +49,30 @@ import { resolveModelCapabilities } from './drivers/modelCapabilities'
 import type { AiProvider, AiResolvedCredential, ToolContextBase } from './drivers/types'
 import type { AiBrowserBridge } from './runtime/types'
 
+/**
+ * A one-shot call's driver stream ended with an `error` event rather than
+ * text — a credential rejected mid-call, a provider failure, a stream error.
+ * Thrown rather than swallowed: `runOneShotCompletion` used to only ever
+ * accumulate `text` events, so an `error` event (the Claude CLI's own
+ * auth-failure line among them) silently produced an EMPTY string. The
+ * caller then saw "no usable output" with no idea a real error happened —
+ * `translateContent.ts` reported "The model replied with no JSON object",
+ * which named the symptom, not the cause.
+ *
+ * `authFailure` distinguishes the one case worth a different message: the
+ * CREDENTIAL itself was rejected (a Claude CLI setup-token revoked or
+ * expired after it was saved), not merely a turn that failed for some other
+ * reason. See `AiStreamEvent`'s `error` variant.
+ */
+export class AiOneShotError extends Error {
+  readonly authFailure: boolean
+  constructor(message: string, options: { authFailure?: boolean } = {}) {
+    super(message)
+    this.name = 'AiOneShotError'
+    this.authFailure = options.authFailure ?? false
+  }
+}
+
 /** See the module doc — `tools: []` means no driver may legitimately call this. */
 const NO_BRIDGE: AiBrowserBridge = {
   callBrowser() {
@@ -96,6 +120,7 @@ export async function runOneShotCompletion(params: OneShotParams): Promise<strin
     toolContextBase: params.toolContextBase,
   })) {
     if (event.type === 'text') text += event.text
+    else if (event.type === 'error') throw new AiOneShotError(event.message, { authFailure: event.authFailure })
   }
   return text.trim()
 }

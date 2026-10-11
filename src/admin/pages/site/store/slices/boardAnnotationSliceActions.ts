@@ -62,6 +62,11 @@ export function annotationRefKey(ref: AnnotationRef): string {
   return `${ref.kind}:${ref.id}`
 }
 
+/** Same refs in the same order — the marquee recomputes its hits in a stable order. */
+function sameAnnotationRefs(a: readonly AnnotationRef[], b: readonly AnnotationRef[]): boolean {
+  return a.length === b.length && a.every((ref, i) => ref.kind === b[i]!.kind && ref.id === b[i]!.id)
+}
+
 export function isAnnotationSelected(selected: readonly AnnotationRef[], ref: AnnotationRef): boolean {
   const key = annotationRefKey(ref)
   return selected.some((r) => annotationRefKey(r) === key)
@@ -128,6 +133,15 @@ export function createAnnotationActions(set: Set, get: Get): AnnotationActions {
    *     just swept over, depending on the order the two setters ran in.
    */
   const setSelection = (refs: AnnotationRef[], clearOthers: boolean) => {
+    // PERF-11 — the marquee calls this on EVERY pointermove with the hit set
+    // it just recomputed, which is the same set for almost every move. A set()
+    // that changes nothing still re-runs every mounted selector (the canvas
+    // sweep: ~20 ms at 40 pages x 300 nodes x 12 frames), so an unchanged
+    // selection with nothing left to clear returns before it.
+    const current = get()
+    const nothingToClear =
+      refs.length === 0 || !clearOthers || (current.selectedNodeIds.length === 0 && current.selectedFrameIds.length === 0)
+    if (nothingToClear && sameAnnotationRefs(current.selectedAnnotations, refs)) return
     set((state) => {
       state.selectedAnnotations = refs
       if (refs.length === 0 || !clearOthers) return
@@ -251,6 +265,8 @@ export function createAnnotationActions(set: Set, get: Get): AnnotationActions {
       if (state.selectedNodeIds.length > 0 || state.selectedNodeId !== null) state.clearSelection()
       if (state.selectedFrameIds.length > 0) state.clearFrameSelection()
       if (state.selectedAnnotations.length > 0) set({ selectedAnnotations: [] })
+      // P5-G — loose layers on the free canvas are a fourth selection list.
+      if (state.selectedCanvasLayerIds.length > 0) set({ selectedCanvasLayerIds: [] })
     },
   }
 }

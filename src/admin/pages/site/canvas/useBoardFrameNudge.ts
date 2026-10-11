@@ -1,18 +1,15 @@
 /**
  * useBoardFrameNudge — a `board` scope: arrow keys move the SELECTED BOARD
- * FRAMES by 1 board unit, or 10 with Shift (`viewport-01`, `board.nudgeFrames`).
+ * FRAMES by 1 board unit, or 10 with Shift (`viewport-01`, `canvas.moveSelection`).
  *
- * ## Why frames and not nodes
+ * ## Frames here, nodes one rung up
  *
  * A board frame's `x`/`y` are board-layout data in `.studio/boards.json` —
  * moving one is a first-class canvas gesture with an existing store action
  * (`nudgeSelectedFrames`, built on the same pure `moveFrame` transform the drag
- * path uses). A NODE has no canvas position at all: nudging one would mean
- * synthesising a CSS `transform`/`top`/`left` write into the user's stylesheet,
- * which is a style edit with its own writability gate and refusal story. That
- * is deliberately out of scope — the arrows stay unclaimed with a node
- * selected, which is also what keeps a future "select previous/next sibling"
- * binding available (see `keybindings.ts`).
+ * path uses). A NODE has no board position: its arrows are a source write
+ * (an inline `left`/`top`, or a reorder), which is `useCanvasNodeArrowKeys` on
+ * the `node` rung above this one (P2-C, IX-1).
  *
  * ## Ordering
  *
@@ -32,7 +29,7 @@
  * be two calls for one release.
  */
 import { useEditorStore } from '@site/store/store'
-import { frameNudgeDelta, getKeybindingForCommand } from '@admin/spotlight/keybindings'
+import { nudgeDelta, getKeybindingForCommand } from '@admin/spotlight/keybindings'
 import { isInsideKeyOwningOverlay, isTextInputTarget } from './editorKeyGuards'
 import { useEditorKeyScope } from './useEditorKeyDispatcher'
 
@@ -42,12 +39,12 @@ export function useBoardFrameNudge(editable: boolean, isLive: boolean): void {
     'board',
     () => !isLive && editable && useEditorStore.getState().selectedFrameIds.length > 0,
     (event) => {
-      const binding = getKeybindingForCommand('board.nudgeFrames')
+      const binding = getKeybindingForCommand('canvas.moveSelection')
       if (!binding?.match(event)) return false
       if (isTextInputTarget(event.target)) return false
       if (isInsideKeyOwningOverlay(event.target)) return false
 
-      const delta = frameNudgeDelta(event)
+      const delta = nudgeDelta(event)
       if (!delta) return false
 
       event.preventDefault()

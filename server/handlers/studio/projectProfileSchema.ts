@@ -28,7 +28,7 @@ import { Type, type Static } from '@core/utils/typeboxHelpers'
  * whatever is keying off it. Add new codes freely; change existing ones only
  * with a deliberate migration.
  */
-const ProbeWarningSchema = Type.Object({
+export const ProbeWarningSchema = Type.Object({
   code: Type.String(),
   message: Type.String(),
   fix: Type.String(),

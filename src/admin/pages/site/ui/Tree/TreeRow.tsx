@@ -16,7 +16,6 @@ interface TreeRowProps extends HTMLAttributes<HTMLDivElement> {
   depth: number
   selected?: boolean
   hovered?: boolean
-  focused?: boolean
   muted?: boolean
   locked?: boolean
   hidden?: boolean
@@ -30,7 +29,6 @@ export function TreeRow({
   depth,
   selected = false,
   hovered = false,
-  focused = false,
   muted = false,
   locked = false,
   hidden = false,
@@ -55,7 +53,6 @@ export function TreeRow({
         styles.row,
         selected && styles.rowSelected,
         hovered && !selected && styles.rowHovered,
-        focused && styles.rowFocused,
         muted && !selected && styles.rowMuted,
         locked && !selected && styles.rowLocked,
         hidden && styles.rowHidden,

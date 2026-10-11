@@ -12,7 +12,7 @@
 import { describe, expect, it } from 'bun:test'
 import type { NodeTree, PageNode } from '@core/page-tree'
 import { makeNode } from '../../../../../../../__tests__/fixtures'
-import { planSourceTransplant } from '../structuralSourceEdits'
+import { planSourceTransplant } from '../transplantPlan'
 import '@modules/base/index'
 
 const HOME = 'pages/Home.tsx'

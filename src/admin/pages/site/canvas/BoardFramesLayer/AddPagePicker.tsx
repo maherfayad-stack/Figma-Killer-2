@@ -21,12 +21,17 @@
  *
  * Self-gates on `selectActiveBoard`, as both predecessors did: renders nothing
  * when there is no board to add to.
+ *
+ * The menu body (`AddPagePickerMenu`) is also what the board tool opens at the
+ * pointer after a draw on the empty board (P5-F, IX-13 —
+ * `BoardDrawPagePicker`), with a `placement`: both sections then put the frame
+ * where it was drawn, at the drawn size.
  */
 import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSelectors'
-import type { Page } from '@core/page-tree'
-import type { Board, PageKind } from '@core/studio-board'
+import { selectPageDirectory } from '@site/store/slices/pageDirectory'
+import type { Board, BoardFramePlacement, PageKind } from '@core/studio-board'
 import { Button, type ButtonProps } from '@ui/components/Button'
 import { ContextMenu, ContextMenuItem, MenuSearchHeader } from '@ui/components/ContextMenu'
 import { pushToast } from '@ui/components/Toast'
@@ -41,11 +46,6 @@ import {
   type AddPageChoice,
 } from './addPagePickerModel'
 import styles from './AddPagePicker.module.css'
-
-// Stable fallback references — an inline `?? []` hands back a NEW array every
-// render, which a Zustand selector must never do (it breaks
-// useSyncExternalStore's change check and can spiral into a render loop).
-const EMPTY_PAGES: Page[] = []
 
 interface AddPagePickerProps {
   label?: string
@@ -113,18 +113,27 @@ export function AddPagePicker({
  * The popover body. A separate component so it MOUNTS with the menu: the
  * search query resets on every open, and the focus effect runs once, on mount,
  * without the trigger having to own either. Same split `SelectMenu` uses.
+ *
+ * `placement` (P5-F, IX-13): where the new frame goes — a board-tool draw.
+ * Absent, the frame takes the next grid slot, as it always has.
  */
-function AddPagePickerMenu({
+export function AddPagePickerMenu({
   board,
   anchorRef,
   onClose,
+  placement,
+  getAnchorRect,
 }: {
   board: Board
-  anchorRef: RefObject<HTMLButtonElement | null>
+  anchorRef: RefObject<HTMLElement | null>
   onClose: () => void
+  placement?: BoardFramePlacement
+  /** Position the menu at a point instead of the anchor's box (the board tool's release point). */
+  getAnchorRect?: () => DOMRect | null
 }) {
   const boards = useEditorStore((s) => s.boards.boards)
-  const pages = useEditorStore((s) => s.site?.pages ?? EMPTY_PAGES)
+  // The page LIST, not `site.pages` (replaced on every edit — P2-I, PERF-12).
+  const pages = useEditorStore(selectPageDirectory)
   const addFrame = useEditorStore((s) => s.addFrame)
   const [query, setQuery] = useState('')
   const [busy, setBusy] = useState(false)
@@ -146,7 +155,7 @@ function AddPagePickerMenu({
     if (busy) return
     setBusy(true)
     try {
-      await createStudioPage(undefined, kind, board.id)
+      await createStudioPage(undefined, kind, board.id, placement)
       // The server already placed the frame — the reload picks up the new page
       // in `site.pages` AND the board frame that now references it.
       requestCmsSiteReload()
@@ -157,15 +166,14 @@ function AddPagePickerMenu({
         title: 'Could not create page',
         body: getErrorMessage(err, 'Unknown page error'),
       })
-    } finally {
-      setBusy(false)
     }
+    setBusy(false)
   }
 
   function run(choice: AddPageChoice) {
     onClose()
     if (choice.kind === 'new') void createPage(choice.pageKind)
-    else addFrame(choice.pageId)
+    else addFrame(choice.pageId, placement)
   }
 
   function handleSearchKeyDown(event: KeyboardEvent<HTMLInputElement>) {
@@ -181,6 +189,7 @@ function AddPagePickerMenu({
       ariaLabel="Add page"
       onClose={onClose}
       anchorRef={anchorRef}
+      getAnchorRect={getAnchorRect}
       side="bottom"
       align="start"
       width={264}

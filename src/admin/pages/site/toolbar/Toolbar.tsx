@@ -28,7 +28,6 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { pluginRuntime } from '@core/plugins/runtime'
 import type { RegisteredPluginToolbarButton } from '@core/plugin-sdk'
 import { AccountMenuButton } from '@admin/shared/AccountMenuButton'
-import { OpenLivePageButton } from '@admin/shared/OpenLivePageButton'
 import { SettingsButton } from './SettingsButton'
 import { ShortcutsHelpButton } from './ShortcutsHelpButton'
 import { Link } from '@admin/lib/routing'
@@ -67,6 +66,11 @@ type PluginButtonStatus = {
 
 function pluginButtonKey(button: RegisteredPluginToolbarButton): string {
   return `${button.pluginId}:${button.id}`
+}
+
+/** The status line after a plugin command finished: its own message, if it sent one. */
+function pluginCommandDoneMessage(result: Awaited<ReturnType<typeof pluginRuntime.runCommand>>, label: string): string {
+  return result && typeof result === 'object' && result.message ? result.message : `${label} complete`
 }
 
 /**
@@ -205,9 +209,7 @@ export function Toolbar({
       const result = await pluginRuntime.runCommand(button.command)
       setPluginStatus(key, {
         state: 'success',
-        message: result && typeof result === 'object' && result.message
-          ? result.message
-          : `${button.label} complete`,
+        message: pluginCommandDoneMessage(result, button.label),
       })
     } catch (err) {
       console.error('[plugin-runtime] command failed:', err)
@@ -308,15 +310,14 @@ export function Toolbar({
 
           {/* ── Right section — caller-owned ─────────────────────────────── */}
           {rightSlot}
-          {/* SettingsButton + OpenLivePageButton + AccountMenuButton are the
+          {/* SettingsButton + AccountMenuButton are the
               global toolbar trailer — always rendered regardless of `rightSlot`
               or which layout mounted the toolbar. SettingsButton opens the
               global Settings modal (it reads the tiny `adminUi` store, so it
               never drags the editor toolchain into non-editor bundles);
-              OpenLivePageButton jumps to the live site in a new tab
-              (deep-linking to the active page when one is open in the canvas,
-              the site root elsewhere); AccountMenuButton is the account /
-              sign-out entry point. All three are reachable from every admin
+              AccountMenuButton is the account / sign-out entry point. Studio
+              has no CMS live site to open, so there is no "open live site"
+              button. Both are reachable from every admin
               route (Site / Content / Data / Media / Plugins / Users / …), so
               they live in the toolbar shell, not in any layout's right slot.
 
@@ -328,13 +329,6 @@ export function Toolbar({
               bundle-safe on non-editor routes. */}
           <ShortcutsHelpButton />
           <SettingsButton />
-          {/* "Open live page" jumps to the CMS's published static output —
-              meaningless in Studio (its pages are never run through the
-              publish pipeline; that's the future "Download code" story,
-              Phase 6D). Scoped to `section === 'site'` so it still shows on
-              Content / Data / Media / other admin routes, where it's a
-              normal CMS affordance. */}
-          {section !== 'site' && <OpenLivePageButton />}
           <AccountMenuButton />
         </div>
       </header>

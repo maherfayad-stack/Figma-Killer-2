@@ -44,11 +44,10 @@
  * credential; a byte count carries none of those and answers the only question
  * this log exists to answer.
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
 import { Type, safeParseValue, type Static } from '@core/utils/typeboxHelpers'
 import { FIDELITY_MODES } from './fidelityMode'
 import { DESIGN_POLICIES } from './designPolicy'
+import { appendStudioStoreText, readStudioStoreText, statStudioStoreFile, writeStudioStoreFile } from './studioStore'
 
 /** Past this, the file is trimmed on the next append. ~2 MB is tens of thousands of rounds — far more history than any budget question needs. */
 const MAX_LOG_BYTES = 2_000_000
@@ -81,9 +80,41 @@ export const AgentTurnLogEntrySchema = Type.Object({
 })
 export type AgentTurnLogEntry = Static<typeof AgentTurnLogEntrySchema>
 
-function logFile(dir: string): string {
-  return join(dir, '.studio', AGENT_TURN_LOG_FILE)
-}
+/**
+ * One line per TURN (AI-25), beside the per-tool lines above in the same file.
+ * It is what model routing is measured by: which model ran which kind of turn,
+ * how long it took, what it cost in tokens, and how it ended. `kind: 'turn'` is
+ * what tells the two line shapes apart — a tool line has no `kind` and fails
+ * this schema, and a turn line has no `tool` and fails the one above, so each
+ * reader skips the other's lines.
+ *
+ * Like the tool lines: numbers and ids only, never the prompt or the output.
+ */
+export const AgentTurnSummarySchema = Type.Object({
+  kind: Type.Literal('turn'),
+  /** Epoch ms the turn ENDED. */
+  at: Type.Number(),
+  conversationId: Type.String(),
+  provider: Type.String(),
+  /** The model the turn actually ran on. */
+  model: Type.String(),
+  /** The conversation's own model — differs from `model` only when the turn was routed. */
+  conversationModel: Type.String(),
+  /** `routing/modelRouting.ts`'s decision: `pinned` (user's pick), `routed`, or `default`. */
+  modelMode: Type.Union([Type.Literal('pinned'), Type.Literal('routed'), Type.Literal('default')]),
+  /** The routing role: build, creative, smallEdit, question (a turn); subagent (a `studio_delegate` child). */
+  role: Type.String(),
+  /** Wall clock, request to last event. Unlike the tool lines this includes the model's own time. */
+  durationMs: Type.Number(),
+  /** Provider rounds (one per `context` event the driver reported). */
+  rounds: Type.Number(),
+  toolCalls: Type.Number(),
+  promptTokens: Type.Number(),
+  completionTokens: Type.Number(),
+  outcome: Type.Union([Type.Literal('ok'), Type.Literal('error'), Type.Literal('aborted')]),
+  fidelityMode: Type.Optional(Type.Union(FIDELITY_MODES.map((m) => Type.Literal(m)))),
+})
+export type AgentTurnSummary = Static<typeof AgentTurnSummarySchema>
 
 /**
  * Keep the tail of an oversized log, cut at a line boundary.
@@ -92,14 +123,15 @@ function logFile(dir: string): string {
  * every reader has to defend against; finding the first `\n` in the retained
  * slice costs one scan and removes the whole class of problem.
  */
-function trimIfOversized(file: string): void {
+function trimIfOversized(dir: string): void {
   try {
-    if (!existsSync(file)) return
-    if (statSync(file).size <= MAX_LOG_BYTES) return
-    const text = readFileSync(file, 'utf8')
+    const size = statStudioStoreFile(dir, AGENT_TURN_LOG_FILE)?.size ?? 0
+    if (size <= MAX_LOG_BYTES) return
+    const text = readStudioStoreText(dir, AGENT_TURN_LOG_FILE)
+    if (text === null) return
     const tail = text.slice(-TRIM_TO_BYTES)
     const firstBreak = tail.indexOf('\n')
-    writeFileSync(file, firstBreak >= 0 ? tail.slice(firstBreak + 1) : '')
+    writeStudioStoreFile(dir, AGENT_TURN_LOG_FILE, firstBreak >= 0 ? tail.slice(firstBreak + 1) : '')
   } catch (err) {
     console.error('[studio/agentTurnLog] could not trim the log — continuing:', err)
   }
@@ -107,13 +139,20 @@ function trimIfOversized(file: string): void {
 
 /** Append one round. Never throws: see the module doc. */
 export function appendAgentTurnLogEntry(dir: string, entry: AgentTurnLogEntry): void {
+  appendLine(dir, entry)
+}
+
+/** Append one turn summary. Never throws: see the module doc. */
+export function appendAgentTurnSummary(dir: string, summary: AgentTurnSummary): void {
+  appendLine(dir, summary)
+}
+
+function appendLine(dir: string, line: AgentTurnLogEntry | AgentTurnSummary): void {
   try {
-    const file = logFile(dir)
-    mkdirSync(dirname(file), { recursive: true })
-    trimIfOversized(file)
-    appendFileSync(file, `${JSON.stringify(entry)}\n`)
+    trimIfOversized(dir)
+    appendStudioStoreText(dir, AGENT_TURN_LOG_FILE, `${JSON.stringify(line)}\n`)
   } catch (err) {
-    console.error('[studio/agentTurnLog] could not record a turn round — continuing:', err)
+    console.error('[studio/agentTurnLog] could not record a turn line — continuing:', err)
   }
 }
 
@@ -126,11 +165,20 @@ export function appendAgentTurnLogEntry(dir: string, entry: AgentTurnLogEntry): 
  * corruption. Returns `[]` for a project that has never run a turn.
  */
 export function readAgentTurnLog(dir: string): AgentTurnLogEntry[] {
+  return readLines(dir, AgentTurnLogEntrySchema)
+}
+
+/** Every well-formed turn summary, oldest first. Same tolerance as {@link readAgentTurnLog}. */
+export function readAgentTurnSummaries(dir: string): AgentTurnSummary[] {
+  return readLines(dir, AgentTurnSummarySchema)
+}
+
+function readLines<T extends typeof AgentTurnLogEntrySchema | typeof AgentTurnSummarySchema>(dir: string, schema: T): Static<T>[] {
   try {
-    const file = logFile(dir)
-    if (!existsSync(file)) return []
-    const entries: AgentTurnLogEntry[] = []
-    for (const line of readFileSync(file, 'utf8').split('\n')) {
+    const text = readStudioStoreText(dir, AGENT_TURN_LOG_FILE)
+    if (text === null) return []
+    const entries: Static<T>[] = []
+    for (const line of text.split('\n')) {
       if (line.trim().length === 0) continue
       let raw: unknown
       try {
@@ -138,7 +186,7 @@ export function readAgentTurnLog(dir: string): AgentTurnLogEntry[] {
       } catch {
         continue
       }
-      const parsed = safeParseValue(AgentTurnLogEntrySchema, raw)
+      const parsed = safeParseValue(schema, raw)
       if (parsed.ok) entries.push(parsed.value)
     }
     return entries
@@ -146,6 +194,51 @@ export function readAgentTurnLog(dir: string): AgentTurnLogEntry[] {
     console.error('[studio/agentTurnLog] could not read the log — treating as empty:', err)
     return []
   }
+}
+
+export interface ModelRoleSummary {
+  readonly role: string
+  readonly model: string
+  readonly turns: number
+  readonly p50Ms: number
+  readonly p95Ms: number
+  readonly p50PromptTokens: number
+  readonly p50CompletionTokens: number
+  readonly p50ToolCalls: number
+  /** Share of finished turns that ended in an error (aborted turns count on neither side). */
+  readonly errorRate: number
+}
+
+/**
+ * Per (role, model): the numbers a routing assignment is judged by — the rows
+ * `bench:agent-turn` prints. Sorted by role, then by turn count.
+ */
+export function summarizeTurnsByModel(summaries: readonly AgentTurnSummary[]): ModelRoleSummary[] {
+  const groups = new Map<string, AgentTurnSummary[]>()
+  for (const summary of summaries) {
+    const key = `${summary.role} ${summary.model}`
+    const group = groups.get(key) ?? []
+    group.push(summary)
+    groups.set(key, group)
+  }
+  const rows: ModelRoleSummary[] = []
+  for (const group of groups.values()) {
+    const sortedBy = (pick: (s: AgentTurnSummary) => number) => group.map(pick).sort((a, b) => a - b)
+    const ms = sortedBy((s) => s.durationMs)
+    const finished = group.filter((s) => s.outcome !== 'aborted')
+    rows.push({
+      role: group[0]!.role,
+      model: group[0]!.model,
+      turns: group.length,
+      p50Ms: percentile(ms, 0.5),
+      p95Ms: percentile(ms, 0.95),
+      p50PromptTokens: percentile(sortedBy((s) => s.promptTokens), 0.5),
+      p50CompletionTokens: percentile(sortedBy((s) => s.completionTokens), 0.5),
+      p50ToolCalls: percentile(sortedBy((s) => s.toolCalls), 0.5),
+      errorRate: finished.length > 0 ? finished.filter((s) => s.outcome === 'error').length / finished.length : 0,
+    })
+  }
+  return rows.sort((a, b) => (a.role === b.role ? b.turns - a.turns : a.role < b.role ? -1 : 1))
 }
 
 export interface ToolLatencySummary {

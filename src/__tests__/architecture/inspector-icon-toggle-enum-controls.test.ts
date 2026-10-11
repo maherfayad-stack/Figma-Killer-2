@@ -3,7 +3,7 @@
  * never a bare `<Select>` (STUDIO-LIVE-CANVAS-PLAN.md Track P, P2 Rule 4 /
  * panel-22).
  *
- * docs/features/inspector-disclosure.md Law 2 (rare options in a popover) and
+ * docs/features/inspector.md Law 2 (rare options in a popover) and
  * the panel's whole "picture, not a word" density lever (`cssPropertyIcons.ts`)
  * only holds if a property that HAS an icon-toggle group can never also fall
  * through to a plain dropdown from some other call site. Seven CSS properties
@@ -33,7 +33,7 @@
  *      moot ordering that could silently flip.
  *
  * `classStyleSections.ts` is the formal ownership record for which section
- * claims each property (docs/features/inspector-disclosure.md §4 G9.4) —
+ * claims each property (docs/features/inspector.md §4 G9.4) —
  * this gate also confirms all seven are still owned by exactly the section
  * whose file this test reasons about, so a future re-registration can't
  * silently move one of them to a section this gate doesn't know to check.

@@ -1,4 +1,5 @@
 # Editor store
+> **Purpose:** the Zustand editor store: slices, tree mutations, undo history, selection · **Read when:** touching store state, mutations or undo · **Trust:** current · **Owner:** store-engineer · **Verified:** not yet
 
 Zustand + Mutative, composed from slices. Source:
 `src/admin/pages/site/store/`.
@@ -17,6 +18,13 @@ Zustand + Mutative, composed from slices. Source:
    Precompute an index in the slice instead.
 4. **Selectors must return stable references** or a primitive. Returning a fresh
    object/array literal re-renders on every store change.
+5. **Not everything the editor knows is store state.** Every `set()` runs every
+   mounted selector — ~3,600 `NodeRenderer` instances on a 40 × 300 board with
+   12 frames mounted. State that changes on every pointer move and that no
+   mutation, save or undo reads does not belong here: hover lives in
+   `canvas/canvasHover.ts` (P2-I). A per-node fact the store must own (the
+   selection) is read KEYED (`canvas/canvasNodeSelection.ts`), not with a
+   per-node selector.
 
 ---
 
@@ -53,6 +61,18 @@ shipped defects (`buildSelectorUsageMap`, `buildSlotOwners`) were exactly this.
 calls `useEditorStore(` **and every module it value-imports, one hop out**,
 for a `for (const page of X.pages)` loop.
 
+**The page LIST is not the pages array (P2-I, PERF-12).** Chrome that lists
+pages (Explorer, document switcher, template picker, add-page picker, the
+live-path hook) reads `selectPageDirectory` (`slices/pageDirectory.ts`): id,
+title, slug, root id and template flag, recomputed once per `pages` change and
+handed back with the SAME identity while those facts are unchanged, so a
+keystroke re-renders none of it. `selectTemplatePages` does the same for the
+composed tree's template wrappers. That single-slot memo is fine because the
+work is O(pages) and shared by every subscriber — it is not a licence to cache
+a walk of every NODE on `site` identity (above). The same gate now also fails a
+selector that filters/maps `site.pages`, and an always-mounted file that
+subscribes to the whole array or to bare `s.site`.
+
 ---
 
 ## Slices
@@ -68,14 +88,16 @@ for a `for (const page of X.pages)` loop.
 | `styleRuleSlice.ts` (+ `styleRule/`: `crudActions.ts`, `propertyActions.ts`, `assignmentActions.ts`, `conditionActions.ts`, `registryActions.ts`, `uiStateActions.ts`, `helpers.ts`) | The CSS class registry, split the same way `boardSlice.ts` and `site/` are |
 | `uiSlice.ts` | `activeDocument`, panel open/closed, right sidebar expanded |
 | `sitePanelSlice.ts` | Panel-specific UI state |
-| `clipboardSlice.ts` | Copy/paste of subtrees |
+| `clipboardSlice.ts` | Copy/paste of subtrees. Its `copiedAt` is also the Studio marker ⌘C writes onto the OS clipboard (P5-A, `canvas/canvasClipboardBridge.ts`), which is how ⌘V tells the copied layers from a newer image there |
 | `filesSlice.ts` | Site files / code assets |
 | `saveTrackingSlice.ts` | Dirty tracking, autosave cadence |
+| (editing context) | `activeBreakpointId` may hold a board frame's synthetic `'studio'` id after a canvas click. Never use it as a write key: resolve the editing context with `getActiveStyleTab(activeBreakpointId, site.breakpoints)` (unregistered → `'base'`); `setClassContextStyles` refuses unregistered contexts |
 | `commentsSlice.ts` (+ `commentSelectors.ts`) | The editor's view of `<workspace>/.studio/comments.json` and the transient UI state around it (armed tool, open thread, uncommitted pin) — no HTTP here, the round trip lives in `@site/studio/commentActions.ts` |
 | `localizedPageSlice.ts` | WS-10 §4.4 (Phase 4): the `(pageId, locale)` parallel map a board frame reads from when its own `axes.locale` differs from the board default — see `canvas-internals.md`'s Locale section |
 | `visualComponentsSlice.ts`, `vcTreeOps.ts`, `vcSlotReconcile.ts` | Visual Components |
 | `layoutsSlice.ts`, `settingsSlice.ts` | Layouts, editor settings |
 | `prototypeSlice.ts` | A project's flows (prototype mode) — out of scope for this page; see `docs/features/studio-prototype.md` |
+| `streamedLoadSlice.ts` | P6-B: a project opening while its pages are still arriving — `pendingPages`, `openStreamedLoad`, `receiveStreamedPages`, `finishStreamedLoad`, `abandonStreamedLoad`, `adoptLoadedFramework`. See "Opening a project: the streamed load" below |
 
 ---
 
@@ -113,7 +135,7 @@ rather than mutating a studio-imported tree in a way nothing can write back.
 **Structural actions refuse before they mutate (`struct-01`).** `insertNode`,
 `deleteNode(s)`, `moveNode(s)`, `duplicateNode(s)` and `wrapNode(s)` ask
 `structuralSourceEdits.ts` first. On a studio-imported tree they either commit a
-`move`/`delete`/`insert` edit to the user's `.tsx` (`commitStudioMove` /
+`move`/`delete`/`insert` edit to the user's `.tsx` (`commitStudioMove` / `commitStudioSequence` /
 `commitStudioDelete` / `commitStudioInsert`) or toast a reason and do nothing —
 never both nothing and nothing said, which is what they used to do.
 
@@ -166,9 +188,11 @@ See `studio-pipeline.md` → "A refusal reaches the user as an `EditConstraint`"
 (`planSourceInsert` — which resolves the synthetic page root to the page's
 returned root element, and downgrades an unaddressable anchor to "append"),
 commits it, and returns `''`. The new node arrives via the reload, with a real
-source id. The success toast is therefore pushed by `commitStudioInsert`, not by
-the inserter: until the write lands there is nothing to report. Announced, not silent: unlike a
-value refusal, the gesture is always a deliberate one a person just made.
+source id. **No structural commit toasts a success (P3-A).** The optimistic
+preview paints the gesture at once and the resync selects what it made; a
+"Duplicated" / "Placed" / "Undone" card on top of that said the same thing
+twice. A refusal is one `warning`; a write that outlives its retry ladder is one
+`warning` too — it was taken back, so board and disk agree again.
 
 **A structural write reports what it created, and the board selects it
 (`store-13`).** `insert`, `duplicate`, `wrap` and `group` create markup that has
@@ -179,11 +203,12 @@ element's own tag-name `line:col` (`createdJsxLocation.ts`, verified against the
 re-parsed file — an unconfirmable position reports `null`, never a guess),
 `applyStudioEditBatch` turns them into `StudioEditBatchResult.createdNodeIds`
 (the plain `rel:line:col` ids the parser will mint for the same elements), and
-`commitStructural` parks them in `pendingStructuralOutcome.ts`.
-`usePersistence.ts` claims them on BOTH re-read paths — the narrow `patchPages`
-and the full `loadSite` — and selects them, checking every id against the O(1)
-`_nodeIdToPageIds` index first. A write whose elements did not all come back
-selects nothing rather than part of itself.
+`commitStructural` hands them to the resync that reads the write back
+(`pendingStructuralOutcome.ts`). `siteReloadApply.ts` applies them on BOTH
+re-read paths — the narrow `patchPages` and the full `loadSite` — and selects
+them, checking every id against the O(1) `_nodeIdToPageIds` index first. A
+write whose elements did not all come back selects nothing rather than part of
+itself.
 
 **And what it MOVED (`store-14`).** `StudioEditBatchResult` gains
 `relocatedNodeIds`, the counterpart `store-13` left open. `moveJsxElement` and
@@ -196,10 +221,15 @@ selection. **One wire fix went with it:** `POST /admin/api/studio/save` had neve
 actually forwarded `createdNodeIds`, so `store-13`'s selection worked in its unit
 test and nowhere else.
 
-*Two details worth knowing.* The handoff is a one-slot, expiring BOX rather
-than a callback because `studioStructuralCommits.ts` sits inside the store's own
-build graph, where importing `useEditorStore` closes the cycle `adminEvents.ts`
-exists to break. And the batch pins each created element to its distance from
+*Two details worth knowing.* The outcome is not a callback because
+`studioStructuralCommits.ts` sits inside the store's own build graph, where
+importing `useEditorStore` closes the cycle `adminEvents.ts` exists to break.
+Since ERR-10 it is not a global box either: it rides the exact re-read its write
+triggers — `CmsSitePagesPatchDetail.structuralOutcome` on the narrow path,
+`requestCmsSiteReload({ structuralOutcome })` on the full one — so an unrelated
+re-read landing first (an agent's live-reload patch) cannot claim it against a
+tree that does not contain the write yet, and a later commit cannot overwrite it
+before its own reload lands. And the batch pins each created element to its distance from
 the END of its file, not to an absolute line: a batch applies bottom-to-top, so
 a later edit sits above an element an earlier one created and pushes it down —
 recording the line is stale for every created element but the last, which a
@@ -216,22 +246,24 @@ clipboard whose roots are no longer elements in this file — copied from anothe
 project, another page, or a session before the file changed — refuses by name
 instead of minting an orphan.
 
-**An HTML import refuses on a studio tree (`mcp-21`).** `insertImportedNodes`
-had the same defect and a worse blast radius: `site_insert_html` /
-`site_replace_node_html` reach it through the editor bridge, so an external MCP
-client with `ai.tools.write` could merge nanoid nodes into a real repository's
-board. It now refuses the whole fragment (`refuseImportedNodesInto`). There is
-no source write to route to instead: the importer's rule table maps HTML onto
-~15 base modules and exactly two — `base.container` and `base.text` — can spell
-themselves in a user's repo (`ModuleDefinition.sourceIntrinsic`); the `<style>`
-half of the payload belongs in a stylesheet rather than the markup; and the
-tool's own answer (the ids it created, so the caller can address them) cannot be
-produced by a write whose ids do not exist until the resync. The action returns
-`ImportedNodesResult` so the reason travels to the modal and to the tool
-instead of an invented sentence about containers. `refuseImportedNodesInto` is
-also exposed as a store action, for the one caller that must destroy before it
-inserts — `site_replace_node_html` deletes the target's children first, so a
-refusal discovered at insert time emptied the node and wrote nothing.
+**Pasted HTML is a source write on a studio tree (`mcp-21`, G-10).**
+`insertImportedNodes` merged a fragment of nanoid nodes into the page and posted
+no write, so the next parse deleted them; it was closed with a refusal, and
+G-10 replaced the refusal for HTML itself with a real write. `writeHtmlToSource`
+(`studioHtmlWrites.ts`, a SiteSlice action) converts the HTML to intrinsic JSX
+(`htmlToJsx.ts`) and posts ONE `insert` whose `pastedHtml` carries the `<style>`
+text; the server puts the elements in the container and the rules in the page's
+own stylesheet (`studioInsertHtml.ts`), and the gesture's ⌘Z is the journal's
+`restore` over both files. It returns `{ kind: 'cms' }` for an ordinary tree (the
+caller imports into the tree as before), `{ kind: 'written', report }` once
+posted (no node ids: they exist only after the re-read), or `{ kind: 'refused',
+message }` after toasting the reason. Callers: ⌘V (`canvasPaste.ts`), the
+Import HTML dialog, `site_insert_html`. `insertImportedNodes` still refuses a
+fragment of already-mapped nodes on a studio tree
+(`IMPORTED_NODES_ON_SOURCE_REFUSAL`, returned as `ImportedNodesResult`'s
+message), and `site_replace_node_html` refuses a node written in the project's
+files before it deletes anything - a replace is two writes. The full contract is
+in `docs/features/studio-import.md` ("Pasted HTML becomes JSX").
 
 **`updateNodeProps` and `setNodeInlineStyles` refuse a patch if *any* key is
 code-valued** — all-or-nothing, because a half-applied patch is a canvas that
@@ -244,11 +276,58 @@ double-clicked real copy and nothing happened.
 contains its id. Resetting to home is right when opening a different project and
 wrong when re-syncing the open one.
 
+**Held ids follow the ELEMENT across a reparse, on both reload paths (ERR-5).**
+An insert or delete shifts every `relFile:line:col` id below it (see
+`server/ai/tools/studio/staleness.ts`'s "shifted" contract). The old rule — an
+id survives iff it still resolves — was right when a shift vacated an address
+and silently wrong when it PERMUTED one: an agent inserts a banner on line 4,
+the selected "Body" moves to line 5, `a.tsx:4:5` still resolves, and the ring,
+the inspector and the next Delete all land on the banner. `loadSite` did not
+touch held ids at all. Now `loadSite` and `patchPages` both build a follower
+(`site/reparseNodeFollow.ts`) and map `selectedNodeIds`/`selectedNodeId`,
+the hover (`followCanvasHover` — hover is off the store since P2-I), `activeInlineEdit.nodeId` and `enteredInstanceIds` through it
+(`followCanvasStateThroughReparse`, `lifecycleActions.ts`). The follower aligns
+each touched page's old tree against its new one by CONTENT — a deep subtree
+fingerprint, then the node's own module/tag/label/text, then position only when
+every unmatched pair agrees on module and tag — and falls back to
+`buildReparseNodeIdRemap`'s strict walk only when the node at the new address
+still has the same module/tag/label/text. An id with no honest counterpart is
+DROPPED — including one of a run of identical siblings, which the tree alone
+cannot tell apart — never re-pointed. A reload that changed the page SET (a
+project switch, a page create/delete) keeps an id only at the same address with
+the same fingerprint. Cost: O(nodes) of the pages holding a followed id, lazy,
+never the whole site. The live drag session is outside the store, so both paths
+also `publishReparseFollow(follow)` after writing the store;
+`useCanvasReorderDrag` re-addresses its session from it
+(`followDragSessionThroughReparse`) or ends the gesture when the dragged element
+is gone (ERR-23).
+
+**A full reload is awaitable and ordered (ERR-10).** `requestCmsSiteReload()`
+returns a promise that settles once a mounted editor has loaded a document
+fetched AFTER the request and applied its `structuralOutcome` — so
+`resyncBoardAfterWrite`'s full-reload fallback holds `structuralCommitQueue.ts`
+until the board has caught up, and a parked gesture re-plans against post-write
+ids. `usePersistence`'s `reload()` takes a monotonic token when it starts and
+drops its response if a newer reload started since; the newer one covers every
+request the older one did (`latestCmsSiteReloadRequest` /
+`claimCmsSiteReloadRequests` in `adminEvents.ts`). With no editor mounted a
+request resolves at once, and unmounting the last editor settles whatever is
+still waiting, so a structural commit can never hang on a board that is gone.
+
+**A read that gets no answer retries, then says so in place (P3-A, ERR-18).**
+The initial load runs through `@core/http`'s `retryWhileUnreachable` on
+`LOAD_RETRY_BACKOFF_MS` (`hooks/persistenceStatus.ts`), reporting `retrying`
+meanwhile; `retryLoad` runs it again by hand. A background re-read (after a
+write, an agent push or an outside edit) that still fails sets `boardStale`,
+which the save chip shows as "Out of date — reload", never as a toast; the
+next successful read clears it.
+
 **`patchPages(input)`** merges a freshly-re-parsed SUBSET of pages into
 `site.pages` — the targeted-reload path for **every** write, the agent's and
-the user's alike. Three callers reach it: the MCP live-reload push, a
+the user's alike. Four callers reach it: the MCP live-reload push, a file
+changed outside Studio (the same push with `diskChanged`, P1-D), a
 structural commit, and `fsCodemodAdapter.saveSite` when the response reports
-`shifted`/`sharedComponents`. All three go through
+`shifted`/`sharedComponents`. All four go through
 `studioBoardResync.ts`'s `resyncBoardAfterWrite`, which asks
 `POST /admin/api/studio/reload-scope` which pages the touched files actually
 feed (`pageParseCache.ts`'s recorded per-route dependency sets, inverted) and
@@ -259,18 +338,42 @@ settings — enumerated in `studioBoardResync.ts`'s own doc. `input.pages`
 upserts by id (appends an unrecognised id — how `studio_create_page` lands);
 `input.removedPageIds` drops a page confirmed gone, its board frame(s), and
 any dangling `selectedFrameIds`/selection entry. **Deliberately bypasses
-`mutateSite`/`runHistoricMutation`**: it never flips `hasUnsavedChanges` and
-never pushes undo history, because this content came FROM disk — recording it
-as a "change" would queue an autosave that writes what was just read straight
-back out (the write → reload → re-dirty → autosave → write loop
-`fsCodemodAdapter.test.ts`'s header names). A selected/edited node id survives
-the patch iff it still resolves through `_nodeIdToPageIds` afterward — an
-insert/delete shifts every `relFile:line:col` id below it (see
-`server/ai/tools/studio/staleness.ts`'s "shifted" contract), so a shifted id
-simply isn't a key in the fresh page anymore and the selection drops cleanly.
-A page that had local (unsaved) edits and also got overwritten toasts
-`'Local edits overwritten'` — the "merge: reload only touched pages" policy's
-one explicit data-loss case.
+`mutateSite`/`runHistoricMutation`**: it never pushes undo history, and it
+flips `hasUnsavedChanges` only for edits the user made (below) — this content
+came FROM disk, and recording it as a "change" would queue an autosave that
+writes what was just read straight back out (the write → reload → re-dirty →
+autosave → write loop `fsCodemodAdapter.test.ts`'s header names).
+
+**A re-read never throws the user's unsaved edits away (ERR-9, P3-E).** It
+used to: a page with local edits was replaced wholesale and toasted `'Local
+edits overwritten … a change an agent just wrote'` — even when the write was
+the user's own ⌘D, and `loadSite` dropped them silently. Now both
+`patchPages` and `loadSite` REBASE (`site/unsavedEditRebase.ts`):
+
+- **What is unsaved** is decided by the save diff's own baseline, as it stood
+  BEFORE this read advanced it. Both re-read entry points in
+  `loadedValuesBaseline.ts` (`mergeLoadedValuesBaseline` for a narrow read,
+  `resetLoadedValues(pages, { sameProject: true })` for a whole-project read of
+  the open project) file what they replaced under the very `pages` array they
+  were handed; the store looks it up with `baselineBeforeRead(pages)`. A page
+  list no Studio read produced (a test's, a project switch) has none, and is
+  simply adopted.
+- **Where it goes**: the old page with those values put back is aligned with
+  the fresh one by `reparseNodeFollow.ts`'s `alignPageTrees`; an element it
+  cannot place is re-found by its P1-A source identity (one match only).
+- **Local wins**, per node all-or-nothing, unless the element is gone, the
+  value is now code on the fresh node (`isPropWritableToSource`), or it is an
+  origin-backed value whose literal moved to another file or changed there too.
+  Those are reported in ONE warning that names the cause, never who wrote the
+  file (`reportLostUnsavedEdits`).
+- A rebased page keeps its `_dirtySave` mark and `hasUnsavedChanges` stays
+  true, so autosave writes exactly the carried edits against the fresh
+  baseline. `usePersistence` no longer clears the flag after a full reload —
+  `loadSite` owns it. No loop: after that save the values equal the baseline,
+  and the next re-read finds nothing to carry.
+
+Cost: the same per-node diff the save makes, over the replaced pages only, plus
+one alignment per page that holds an unsaved edit.
 
 `input.styleRules`/`input.conditions` carry the PROJECT-WIDE registries the
 same reload recomputed, and are replaced wholesale (never merged — the server
@@ -289,6 +392,37 @@ convert is skipped for every unrequested route — but never the meta: the style
 registry is built from every route's stylesheets together, so it stays a full,
 fresh recompute (`studioPageLoad.ts`'s `options.pageIds` doc).
 
+**A re-read is applied by VALUE, not by object (PERF-6, P6-A).** Everything
+off the wire is a brand-new object graph, and the canvas compares by identity:
+every `NodeRenderer` selects its node, every mounted frame's
+`ClassStyleInjector` regenerates its `<style>` on a new `styleRules` object.
+So `patchPages` puts each re-read page, `styleRules` and `conditions` in
+through `replaceEqualDeep` (`@core/utils/replaceEqualDeep`): a node, rule or
+condition deep-equal to the one the store held keeps its old object, and the
+page or registry itself keeps its identity when all of it is unchanged. A prop
+write therefore re-renders the one node it changed and restyles no frame
+("wholesale" above is about which rules EXIST — a deleted rule is gone — not
+about object identity).
+
+**A renumbered node keeps its React key.** A structural write renumbers every
+`rel:line:col` id below it, and `NodeRenderer` used to key each child by its
+id, so every one of those elements remounted. `site/rereadRenderKeys.ts`
+aligns each re-read page against the page the store held (`alignPageTrees`,
+the alignment the selection follower then reuses via `alignments`) and hands
+it to `canvas/nodeRenderKeys.ts`, an off-store per-page map from node id to
+the key it renders under. `NodeRenderer` and `CanvasComposedTree` key children
+by `nodeRenderKey(pageId, id)`; a moved element re-renders in place (its id
+changed), it does not remount. Rules: keys stay unique among siblings (an
+unaligned node whose id a moved node carries gets a minted key); a node object
+shared from the previous page whose CHILD keys changed is copied, because a
+shared parent would not re-render and would keep the old keys (a move among
+same-size siblings permutes the addresses without changing the parent's
+`children` ids); `loadSite`/`createSite`/`clearSite` clear the map. Only board
+frames (which provide `CanvasPageContext`) carry keys; a frame without a page
+context keys by id, as before. Measured by `bench:editor-store`'s post-write
+re-sync scenario (`scripts/bench/lib/postWriteResync.ts`), whose counts are a
+budget.
+
 A resync triggered by `saveSite` runs as the **last** thing that function does,
 after every diff baseline has advanced, and carries the save's `refusedRuleIds`
 so the reload's own `commitBaseline` does not adopt a value the server refused.
@@ -301,7 +435,48 @@ Both are load-bearing and both have a regression test
 - resolved text with a `textOrigin` is emitted as `kind: 'literal'` with the
   **origin's** `rel:line:col` as its `nodeId` — and that path runs **before** the
   `hasWritableSourceLocation` guard, because that guard is about JSX locations
-  and a literal edit has nothing to do with the node's own id.
+  and a literal edit has nothing to do with the node's own id. It carries
+  `expected` (the baseline the board read there); no baseline, no edit. The
+  server refuses `literal-changed` when the file no longer holds `expected`,
+  and `saveSite` re-reads that file (`resyncBoardAfterWrite`).
+- the unsaved-edit rebase (`unsavedEditRebase.ts`) carries a value traced to a
+  literal only onto a fresh node with the SAME literal (`rel:line:col`), never
+  the same file alone — one dictionary module holds every locale.
+
+### Opening a project: the streamed load (P6-B)
+
+The FIRST load of a project (no document in the store yet) hands the board its
+pages as they arrive instead of after the last one. `usePersistence` passes
+`LoadSiteOptions.progress` (`@core/persistence/types`) built by
+`siteReloadApply.ts`'s `streamedOpenProgress`; `studioProjectLoad.ts` (the
+adapter's `loadSite`) calls `progress.open(site, pending)` once the meta line,
+both `.studio/` reads and the page the editor opens on have arrived, then
+`progress.pages(batch)` once per network chunk. The store side is
+`streamedLoadSlice.ts`:
+
+- `openStreamedLoad` = `loadSite` with the pages so far, plus `pendingPages`
+  (id + title) for the rest. `BoardFramesLayer` paints a `PendingBoardFrame`
+  (inert, same box, `data-page-pending`) for a frame whose page is pending.
+- `receiveStreamedPages` **appends** — undo patches and in-flight structural
+  rollbacks address a page by its POSITION in `site.pages`, so nothing already
+  there may move. Indexes via `applyNodeIndexPatch`; no history, no dirty mark.
+- `finishStreamedLoad(pageOrder)` restores page order only when the undo stack
+  is empty; otherwise the arrival order stays until the next load.
+- `loadSite`/`clearSite` clear `pendingPages`; `abandonStreamedLoad` clears it
+  when the load fails after opening. The default-board seed waits for it
+  (`shouldSeedDefaultBoard`'s `pagesArriving`).
+
+A later batch needs what the open document got from `loadSite`: the adapter
+applies `reconcileFrameworkClassesOnPages` against the registry AS LOADED (the
+store's copy is already claimed and pruned) and extends the save-diff baseline
+(`mergeLoadedValuesBaseline`) before handing it over. Every re-read of a
+project already on screen is unchanged: one whole document through `loadSite`.
+
+The token extraction (`POST /tokens`) runs AFTER every load, unwaited
+(`studioProjectLoad.ts`'s `adoptExtractedTokens`); its framework reaches the
+store through `adoptLoadedFramework(loaded, extracted)` — no history, no dirty
+mark, framework classes reconciled, node indexes rebuilt — and is skipped when
+the document no longer holds the framework the load gave it.
 
 ---
 
@@ -322,7 +497,11 @@ one undo wipes unrelated work, or every keystroke is its own entry.
 takes a whole patch and records ONE entry, so a UI that commits a
 multi-property gesture one property at a time turns one click into N undo
 steps. The Properties panel's single multi-property write channel is
-`onChangeMany(patch)` (`StyleSectionsEditor`). And a field must compare before
+`onChangeMany(patch)` (`StyleSectionsEditor`). A HELD key is one gesture too:
+the canvas arrow nudge (P2-C) previews every auto-repeat through
+`setPreviewNodeStyles` (one bag per layer for a multi-selection) and commits ONE `setNodesInlineStylesPerNode` on the keyup, so
+a hold is one entry and — with `flushAutosave` — one source write
+(`canvas/useCanvasNodeArrowKeys.ts`). And a field must compare before
 it commits — a prefilled field that writes its own displayed value on blur
 pushes an entry that reverts nothing visible. Both rules:
 [`docs/features/inspector.md`](../features/inspector.md)
@@ -335,15 +514,108 @@ owns Ctrl/⌘+Z".
 order, so a patch-only undo of a move changes the canvas and leaves the `.tsx`
 saying the opposite. `moveNodes` tags its entry with the pre-move
 `(parentId, index)` (`structuralHistory.ts`) and `undo` re-issues `moveNodes`
-back to it; `deleteNodes` tags its entry `gesture: 'delete'` and `undo`
-REFUSES with a toast, because no writeback kind can put a subtree's source text
-back. Tagging happens only when a source write was actually issued — a CMS or
-Visual Component tree keeps plain patch replay.
+back to it — on the page that OWNS the element, found through
+`_nodeIdToPageIds` and activated silently, not the active page (ERR-3);
+`deleteNodes` tags its entry as a `source` gesture whose undo is the undo
+journal's `restore` (P3-F — the server's pre-image of the file, compare-and-
+swap; the Properties panel's detach/swap/extract push the same kind of entry
+through `studio/journaledUndo.ts`). Tagging happens only when a source write
+was actually issued — a CMS or Visual Component tree keeps plain patch replay.
+Several elements moved as ONE gesture — an arrow step of a selection
+(`stepSiblings`, P2-C2) or a multi-selection drag (`moveNodes` with several
+ids, P3-D) — go through `moveNodesInSequence` (`moveSequenceActions.ts`):
+single-element moves applied IN ORDER, each planned against the scratch tree
+the previous one leaves (`@core/page-tree`'s `moveSequence.ts`), all or
+nothing, posted as ONE `/save` **sequence** (`commitStudioSequence` → the
+server's `studioEditSequence.ts`, which re-addresses every step by document
+order and restores every file if any step refuses). The entry is tagged
+`moves`; its undo is `invertMoveSequence` re-issued through the same action.
+A sequence of one is an ordinary `move` entry.
+
+**P3-D — what used to refuse and now writes.** ⌥-drag and ⌘V of several
+elements (`planSourceDuplicateTo` returns the copies in WRITE order; several
+are one sequence); a wrap of several elements (it is a group); a move or copy
+into a container in ANOTHER file (a `transplant`, `crossFile` on the plan); a
+paste of something copied in another frame, or before an edit renumbered its
+file (`studioPasteWrites.ts` finds it on the board, by id or by unique
+fingerprint). **OD-7** — a gesture refused `shared-component` is taken over
+by `instanceOnlyGesture.ts`: it detaches THIS call site
+(`commitStudioDetachForInstance`), follows every id the gesture named into
+the detached markup by child-index path, replays it (`retry(mapId)` — every
+`retry` closure now takes an id MAP), and marks the detach entry
+`linkedToNext`, so one ⌘Z undoes both (`undoRedoActions.ts` cascades). A
+detach that refuses is answered with a component copy of that call site (the
+same replay inside it), and only when that refuses too shows one warning.
+**G-3** — the same recipe takes the gestures that CROSS the instance's edge (a
+drag out of it, a drop or insert into it, a transplant to another frame): the
+refusal names the node it is about (`StructuralRefusal.aboutNodeId`), ids
+outside the instance are re-found by identity (`relocateOutside`) because the
+detach shifted the lines above them, a replay that throws is caught and told,
+and a gesture that places something says so once ("Detached Card to place
+this. Undo restores it."). A drop into a layout component's `{children}`
+(`instanceChildrenSlot`, `props.childrenHost`) is written at the call site
+and detaches nothing.
+
+**OD-19 — a VALUE edit inside an instance is an override of that instance**
+(`instanceOverrideActions.ts`, `instanceOverridePlan.ts`). `updateNodeProps` and
+`setNodeInlineStyles` call `overrides.route(...)` BEFORE they mutate (the router
+is built in `siteSlice.ts` and handed to `createNodeActions`). It is a router
+and not a second action: `plain` is the ordinary write, passed in, so a plan of
+`direct` / `whole-component` or a server refusal falls back to it with no
+duplicated logic. The override path is the one structural family that previews
+OUTSIDE history: `previewActiveTreeMutation` shows the value, the hold
+(`studio/instanceOverrideHold.ts`, read by `collectNodeDiffEdits`) keeps the
+autosave diff from writing it to the component, and the write landing pushes the
+one `restore-journal` entry (`undo` option, `kind: 'push'`) — the preview is
+never a second undo step. `mainEditTarget` (+ `setMainEditTarget`, `mainEditMode.ts`)
+is the explicit "edit the shared thing itself" mode — `{ kind: 'component', name }`
+for all instances, or (G-8) `{ kind: 'layout', rel }` for one Next layout file,
+which lifts the `route-chrome` structural refusal for that file only
+(`@core/page-tree`'s `layoutEdit.ts` holds the one fact the pure placement rule
+reads; `setMainEditTarget` is its only writer, and a first load, a project switch,
+`createSite` and `clearSite` end the mode). The router steps aside while the
+target is the component the node's `fromComponent` names (an edit to a value that is a prop of the component there gets an
+info toast, "Set by a prop", instead of a write the server would refuse). A
+gesture parked behind another structural write is re-aimed with
+`again(relocate(id))`, like every other.
+
+G-2a/G-2b: a node whose value is the bare forward of a component prop carries
+`PageNode.propFeeds` (value key, in `codeProps`' own naming → the PAGE's prop
+name) and is NOT in `codeProps` (`parsedPageToSitePage.ts` lifts it), so the panel
+shows a live control and `isPropWritableToSource` agrees. The planner reads
+`propFeeds` first and plans an override marked `fed`: the same `expose-prop`
+wire, the same preview and hold, with the existing prop's name. A refusal of a
+fed override has no ordinary write to fall back to (the markup holds
+`{prop}`), so it is the server's sentence as a warning, never the "changes every
+instance" fallback.
+
+**Undo never jams, and never lies (P1-F).** A structural step that can never
+happen as recorded (an `unsupported` inverse, an element gone from the board, a
+file changed under the entry by an agent or an editor) is SKIPPED: undo drops
+it with one warning toast and carries on to the step below; redo drops the
+redo chain. No modal (ERR-2 stop-gap, ERR-28). And a move or delete whose write
+does not land is taken back: `trackStructuralTreeCommit`
+(`structuralCommitRollback.ts`) holds the mutation's inverse patches and marks
+the entry `pendingCommit`; `commitStructural` settles it when the write lands
+and rolls it back — patches replayed unless a re-read replaced the page since
+(`pageReadEpoch.ts`), entry removed — when it is refused or still unreachable
+after `structuralWriteRetry.ts`'s ladder (ERR-6). An undo/redo's re-issued write
+carries the same handle for its entry: refused → skipped, unreachable → put
+back. The rollback reverts the store's tree only: a Tier 2 bridge frame that
+already painted the move or delete through `optimisticStructuralBroadcast.ts`
+keeps that paint: no runtime message undoes an optimistic DOM op, and a write
+that did not land sends no HMR update. Full contract: `editor-history.md` → "A write that does
+not land is taken back".
 
 **Two gestures write SOMEONE ELSE'S page, named explicitly.** `transplantNodes`
-(D2 G3 — a drag that crossed a board frame) and `insertImageIntoPage` (D2 G15 —
-an image file dropped from the OS) both take their page id as an argument
-instead of using `activePageId`, and neither goes through `mutateActiveTree`.
+(D2 G3 — a drag that crossed a board frame) and the image-drop actions
+(`dropImagesIntoPage`/`replaceImageInPage`/`setBackgroundImageInPage`, D2 G15
++ P5-B — image files dropped from the OS; since P5-B3 any `ImageDropSource`:
+a file, a URL dragged from another tab, or a project file from the Assets
+panel, each landed through `landImageSource` and nothing else;
+`insertJsxSubtreeIntoPage`, P5-A — an SVG pasted from the OS clipboard, one
+`insert` whose `children` carry the whole converted subtree) take their page id as an argument
+instead of trusting `activePageId`, and none goes through `mutateActiveTree`.
 A cross-frame drag ACTIVATES the destination frame on the way
 (`openPageInCanvas` fires from `onPointerDownCapture`), so by commit time the
 active page is the wrong end of the gesture; a dropped file was never preceded
@@ -351,11 +623,22 @@ by a pointerdown at all, so the frame under it was never activated. They are
 therefore NOT among the named tree-mutation actions the
 `no-vc-mode-branches-in-mutations` gate walks — they mutate no tree.
 
-Both still show **nothing optimistically** — unlike `insert`/`duplicate`/`wrap`
-(below), the node that appears afterwards is a freshly parsed one whose id is
-the `rel:line:col` the write produced, and previewing it locally would need a
-tree on the OTHER end of the transplant/drop too. Both ride the same
-`structuralCommitQueue.ts` the rest of that family does.
+The transplant still shows **nothing optimistically** — the node that appears
+afterwards is a freshly parsed one in the OTHER file, and previewing it locally
+would need a tree on the other end of the gesture. The image drop (P5-B) does
+the opposite of guessing an id: it ACTIVATES the dropped-on page first
+(`openPageInCanvas`, a drop is a user gesture on that frame), then previews one
+ghost `<img>` per file through `previewOptimisticInsertRun` (N siblings, one
+preview mutation, ids in the same order as the write's `createdNodeIds`). It
+holds `structuralCommitQueue.ts` from BEFORE the upload (`beginStructuralCommit`)
+until the commit's own end, so the page cannot be resynced under the ghost
+while the bytes go up; a drop whose every file fails rolls the ghost back and
+releases the queue itself. N images are ONE `insert` edit (`siblings`) — one
+write, one undo step whose `delete-created` inverse deletes them all. A replace
+of a LITERAL `src` is an ordinary `updateNodeProps` (ordinary undo); a replace
+of an IMPORT-BOUND one posts `kind: 'asset'` through `commitStudioAssetReplace`
+with the undo template `known` (its inverse is fixed at gesture time: point the
+import back). A ⇧-drop background is one `setNodeInlineStyles`.
 
 **`insert`/`duplicate`/`wrap`/`group` DO paint optimistically now (`perf-10`).**
 `structuralOptimism.ts`'s `previewOptimisticInsert`/`Duplicate`/`Wrap`/`Group`
@@ -371,11 +654,14 @@ replaces the touched PAGE object wholesale, erasing the preview regardless of
 whether its guessed id matches the real one; `commitStructuralBody` explicitly
 rolls it back only on the two paths where no resync follows (a full refusal,
 or the POST never reaching disk). `ungroup`/paste/K2 Alt-drag-duplicate/
-transplant/image-drop are unchanged — still nothing shown until the resync.
-A pending preview id is guarded against a same-window Delete
-(`isPendingOptimisticNodeId`/`excludePendingOptimisticTargets`, wired into
-`deleteNode`/`deleteNodes`) — everything else that could target it goes
-through `structuralCommitQueue.ts` and simply re-plans once the id is gone.
+transplant are unchanged — still nothing shown until the resync. The image drop
+previews through the same module (`previewOptimisticInsertRun`, above).
+A Delete on a pending preview id is QUEUED behind the write that made it and
+then aimed at the element that write created (ERR-22, `resolvePreviewTargets`,
+fed by `settle(createdNodeIds)` — wired into `deleteNode`/`deleteNodes`); it
+used to be refused with "Still writing your last change". Everything else that
+could target a preview goes through `structuralCommitQueue.ts` and simply
+re-plans once the id is gone.
 
 **The whole family is undoable (`store-14`).** It used to record nothing at all,
 so ⌘Z after a ⌘D, a ⌘G, a cross-frame drag or a file drop undid whatever came
@@ -394,9 +680,24 @@ closes the original double-write race — stays; the refusal is gone.
 `structuralCommitQueue.ts` parks the gesture as a THUNK and re-runs it the
 moment the wire is clear, so it re-reads the tree the previous resync left
 behind and re-plans from scratch rather than posting a plan built against
-stale ids. Five presses are five writes, one collapsed toast, the last copy
-selected, five undo steps. The queue holds 20; overflowing it is reported, not
-dropped.
+stale ids. Five presses are five writes, no toast, the last copy selected,
+five undo steps. The queue holds 20; the overflow — only reachable by a held
+key auto-repeating — is dropped without a toast (ERR-25), logged for devtools.
+
+**Every structural writer is in that queue, and its ids are re-found, not
+re-read (P1-A, ERR-4).** `moveNodes`, `deleteNode`, `deleteNodes` and a
+structural ⌘Z/⌘⇧Z step (`undoRedoActions.ts`'s `runStructuralStep` parks the
+whole step, so it reads the stack as the in-flight write's resync left it)
+queue like the rest — they used to post at once, and a Delete pressed while a
+drag's move was on the wire deleted whatever the move put at the old line.
+Re-running a thunk with its ORIGINAL ids was not enough either: the commit
+ahead renumbered the file. `deferWhileStructuralCommitInFlight(gesture,
+nodeIds)` captures who each id names when the gesture is made
+(`sourceIdentity.ts`) and hands the thunk a `relocate(id)` that re-finds each
+element by that identity in the re-read board; one that cannot be found exactly
+once drops the gesture with one warning. A new structural writer passes its ids
+or it is back to guessing. Full contract: `studio-pipeline.md` → "Element
+identity".
 
 **A reparse renumbers `rel:line:col` ids; the stack is re-addressed, not
 wiped.** `buildReparseNodeIdRemap` (`historyNodeIdRemap.ts`) walks the
@@ -456,7 +757,7 @@ frame clears the node selection and vice versa (mutual exclusivity), so
 - **Selection entry points:** frame header click (replace) / Shift-click
   (toggle) in `BoardFramesLayer.tsx`; `⌘/Ctrl+A` on empty canvas
   (`selectAllFrames`, wired through the keybindings registry as the virtual
-  command `board.selectAllFrames`); marquee-drag on empty canvas
+  command `canvas.selectAll`, which with a node selected means its siblings instead — P2-B); marquee-drag on empty canvas
   (`useMarqueeSelection.ts` + `framesInMarquee.ts`). The marquee hit-tests each
   frame's **rendered** box, measured once at pointerdown — not the board-space
   rect `frameVirtualization.ts` derives from `board.frames[].height`, which is a
@@ -497,9 +798,10 @@ frame clears the node selection and vice versa (mutual exclusivity), so
   edit skips the refusing node and still lands on the rest, because leaving
   N-1 nodes half-written is worse than skipping one. The panel names the
   skipped properties instead of leaving the refusal silent
-  (`MultiSelectTargetBar`), and each row states how far its own edit
-  reaches ("writes to 3 of 5") through the three-state
-  `StyleWriteLockContext`. A class target is reachable too, once the user
+  (`MultiSelectTargetBar`). Each `ClassPropertyRow` also states its own
+  count ("writes to 3 of 5"): `StyleSurface` provides the three-state
+  `StyleWriteLockContext` from `SelectionModel.inlineWriteReach`
+  (`inspector.md` §9.4a). A class target is reachable too, once the user
   clears the "used by N other elements" gate — but a class edit is an
   ordinary `updateClassStyles`, not a bulk write, because the class IS the one
   honest target. See
@@ -524,5 +826,6 @@ frame clears the node selection and vice versa (mutual exclusivity), so
 - [ ] Does it need to survive a reload? If so it belongs in `.studio/` on disk
       (project data) or in editor preferences — not in transient store state.
 - [ ] Is the selector O(1)? If it walks the tree, precompute an index.
+- [ ] Does it change on every pointer move (hover-like)? Then it is not store state — see Non-negotiable 5.
 - [ ] Does a tree mutation need a history entry and a coalesce key?
 - [ ] Does a new action need to consult `isPropWritableToSource`?

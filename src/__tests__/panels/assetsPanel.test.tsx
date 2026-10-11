@@ -19,6 +19,19 @@ import '@modules/base/index'
 
 const originalFetch = globalThis.fetch
 
+/**
+ * The Images section (P5-B3) reads two routes on mount; answer them as an
+ * empty project would, and hand every other request to `rest`.
+ */
+function withImageRoutes(rest: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>) {
+  return async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+    if (url.includes('/admin/api/studio/project-assets')) return jsonResponse({ assets: [] })
+    if (url.includes('/admin/api/studio/asset-ledger')) return jsonResponse({ unused: [], incomplete: false })
+    return rest(input, init)
+  }
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -77,13 +90,12 @@ function loadSite(vcs: VisualComponent[] = []) {
 beforeEach(() => {
   localStorage.clear()
   __resetAssetFavoritesForTests()
-  globalThis.fetch = mock(async () => jsonResponse({ value: null })) as typeof fetch
+  globalThis.fetch = mock(withImageRoutes(async () => jsonResponse({ value: null }))) as typeof fetch
   useEditorStore.setState({
     site: null,
     activePageId: null,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     activeDocument: null,
     _historyPast: [],
     _historyFuture: [],
@@ -182,11 +194,11 @@ describe('AssetsPanel', () => {
 
   it('pins a card to the notch without inserting it', async () => {
     const calls: Array<{ init?: RequestInit }> = []
-    globalThis.fetch = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = mock(withImageRoutes(async (_input: RequestInfo | URL, init?: RequestInit) => {
       calls.push({ init })
       if (init?.method === 'PUT') return jsonResponse({ value: JSON.parse(String(init.body)).value })
       return jsonResponse({ value: { favorites: [] } })
-    }) as typeof fetch
+    })) as typeof fetch
 
     loadSite()
     render(<AssetsPanel />)
@@ -276,6 +288,99 @@ describe('AssetsPanel', () => {
       const pageAfterClick = useEditorStore.getState().site?.pages.find((item) => item.id === 'page-home')
       const textNodesAfterClick = pageAfterClick ? Object.values(pageAfterClick.nodes).filter((n) => n.moduleId === 'base.text') : []
       expect(textNodesAfterClick).toHaveLength(2)
+    })
+
+    // P5-G G1 — outside every frame the drag used to resolve to nothing: no
+    // preview, and a release that silently did nothing. On the EMPTY board a
+    // component or element now becomes a loose layer at the pointer.
+    describe('released on the empty board', () => {
+      const realCreateCanvasLayer = useEditorStore.getState().createCanvasLayer
+      const realElementFromPoint = document.elementFromPoint
+      const createCanvasLayer = mock((_element: unknown, _at: unknown): string | null => 'layer-1')
+
+      function mountBoard() {
+        // The transform layer IS the empty board (`isEmptyBoardTarget`); the
+        // board-origin element's one client rect carries the pan (100, 50)
+        // and the painted zoom (2000 / BOARD_ORIGIN_SPAN = 2).
+        const board = document.createElement('div')
+        board.dataset.testid = 'canvas-transform-layer'
+        const origin = document.createElement('div')
+        origin.setAttribute('data-studio-board-origin', '')
+        origin.getBoundingClientRect = () => domRect({ x: 100, y: 50, width: 2000, height: 0 })
+        board.append(origin)
+        document.body.append(board)
+        document.elementFromPoint = () => board
+        return board
+      }
+
+      beforeEach(() => {
+        createCanvasLayer.mockClear()
+        useEditorStore.setState({ createCanvasLayer } as unknown as Parameters<typeof useEditorStore.setState>[0])
+      })
+
+      afterEach(() => {
+        useEditorStore.setState({ createCanvasLayer: realCreateCanvasLayer } as unknown as Parameters<typeof useEditorStore.setState>[0])
+        document.elementFromPoint = realElementFromPoint
+        document.body.querySelectorAll('[data-testid="canvas-transform-layer"]').forEach((el) => el.remove())
+      })
+
+      it('previews the canvas drop and creates one loose layer at the board point, touching no page', async () => {
+        loadSite()
+        render(<AssetsPanel />)
+        mountBoard()
+        const pageBefore = useEditorStore.getState().site?.pages[0]
+
+        const card = document.querySelector('[data-asset-id="base.text"]') as HTMLElement
+        fireEvent.pointerDown(card, { button: 0, clientX: 500, clientY: 500, pointerId: 1 })
+        fireEvent.pointerMove(window, { clientX: 300, clientY: 250, pointerId: 1 })
+        await act(() => new Promise((resolve) => requestAnimationFrame(() => resolve(undefined))))
+
+        const preview = document.querySelector('[data-position]')
+        expect(preview?.getAttribute('data-position')).toBe('canvas')
+        expect(preview?.textContent).toContain('Drop Text on the canvas')
+
+        fireEvent.pointerUp(window, { clientX: 300, clientY: 250, pointerId: 1 })
+        fireEvent.click(card)
+
+        expect(createCanvasLayer).toHaveBeenCalledTimes(1)
+        const [element, at] = createCanvasLayer.mock.calls[0] as [{ name: string }, { x: number; y: number }]
+        expect(element.name).toBe('p')
+        expect(at).toEqual({ x: 100, y: 100 })
+        // The loose layer is not part of the page, and the pointerup's own
+        // click on the card did not insert a second copy into it.
+        expect(useEditorStore.getState().site?.pages[0]).toBe(pageBefore)
+      })
+
+      it('does not offer the board for a Visual Component, which has no loose-layer spelling', async () => {
+        loadSite([makeVC('vc-1', 'Hero Card')])
+        render(<AssetsPanel />)
+        mountBoard()
+
+        const card = document.querySelector('[data-asset-id="vc-1"]') as HTMLElement
+        fireEvent.pointerDown(card, { button: 0, clientX: 500, clientY: 500, pointerId: 1 })
+        fireEvent.pointerMove(window, { clientX: 300, clientY: 250, pointerId: 1 })
+        await act(() => new Promise((resolve) => requestAnimationFrame(() => resolve(undefined))))
+        expect(document.querySelector('[data-position]')).toBeNull()
+
+        fireEvent.pointerUp(window, { clientX: 300, clientY: 250, pointerId: 1 })
+        expect(createCanvasLayer).not.toHaveBeenCalled()
+      })
+
+      it('drops into a frame, not onto the board, when the pointer is over one', () => {
+        loadSite()
+        render(<AssetsPanel />)
+        mountBoard()
+        mountFrame()
+
+        const card = document.querySelector('[data-asset-id="base.text"]') as HTMLElement
+        fireEvent.pointerDown(card, { button: 0, clientX: 500, clientY: 500, pointerId: 1 })
+        fireEvent.pointerMove(window, { clientX: 100, clientY: 60, pointerId: 1 })
+        fireEvent.pointerUp(window, { clientX: 100, clientY: 60, pointerId: 1 })
+
+        expect(createCanvasLayer).not.toHaveBeenCalled()
+        const page = useEditorStore.getState().site?.pages.find((item) => item.id === 'page-home')
+        expect(page ? Object.values(page.nodes).filter((n) => n.moduleId === 'base.text') : []).toHaveLength(1)
+      })
     })
 
     it('does not insert twice when the pointerup-triggered click fires on the card that started the drag', () => {

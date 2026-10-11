@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "boards": [
+    {
+      "id": "82b1cdb2-2d3b-41a6-ae36-22b2ff8854a2",
+      "name": "Board 1",
+      "frames": [
+        {
+          "id": "55400ae1-e9b5-4230-bca0-0e064ed9a705",
+          "pageId": "canonical-screen",
+          "x": 0,
+          "y": 0
+        },
+        {
+          "id": "019970fa-e12d-4092-ae76-fa83586b9c1d",
+          "pageId": "non-canonical-screen",
+          "x": 1104,
+          "y": 0
+        }
+      ],
+      "notes": [],
+      "docs": [],
+      "guides": []
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 # HTTPS via Caddy (compose.tls.yml)
+> **Purpose:** TLS termination with the Caddy override · **Read when:** putting an install behind a real domain · **Trust:** current-cms · **Owner:** server-engineer · **Verified:** not yet
 
 The `compose.tls.yml` override runs a Caddy reverse proxy in front of the CMS, terminating TLS at a real domain with auto-provisioned Let's Encrypt certificates. It composes on top of either the Postgres or SQLite production stack — pick whichever DB mode you want, then add `-f compose.tls.yml`.
 

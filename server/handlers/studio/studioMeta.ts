@@ -36,8 +36,8 @@
  * keeps the graph one-directional, the same way `@core/framework-schema` works
  * for persisted framework settings.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, isAbsolute, join } from 'node:path'
+import { readStudioStoreText, studioStorePath, writeStudioStoreJson } from './studioStore'
+import { isAbsolute } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { parseJsonWithFallback } from '@core/utils/jsonValidate'
 import { ProjectProfileSchema } from './projectProfileSchema'
@@ -224,6 +224,8 @@ const PersistedPreviewAxesSchema = Type.Object({
   direction: Type.Optional(Type.Union([Type.Literal('ltr'), Type.Literal('rtl')])),
   colorScheme: Type.Optional(Type.Union([Type.Literal('light'), Type.Literal('dark')])),
   locale: Type.Optional(Type.String({ minLength: 1 })),
+  /** CT-4 - the mode picked on each catalog axis beyond the three above, `axisId -> modeId`. */
+  modes: Type.Optional(Type.Record(Type.String({ minLength: 1, maxLength: 80 }), Type.String({ minLength: 1, maxLength: 200 }))),
 })
 
 /**
@@ -250,6 +252,17 @@ const StoriesMetaSchema = Type.Object({
   placedPageIds: Type.Optional(Type.Array(Type.String())),
 })
 export type StoriesMeta = Static<typeof StoriesMetaSchema>
+
+/**
+ * CV-2 — where the project's component variants galleries sit on the board.
+ * The same one-time ledger as `StoriesMetaSchema` without the off switch: a
+ * gallery frame the user deletes stays deleted, a deleted board is never
+ * re-created, and a component that gains a gallery later gets its frame.
+ */
+const ComponentsMetaSchema = Type.Object({
+  boardId: Type.Optional(Type.String({ minLength: 1 })),
+  placedPageIds: Type.Optional(Type.Array(Type.String())),
+})
 
 export const StudioMetaSchema = Type.Object({
   /** Decouples the user-facing project name from the folder slug. See `projectDisplayName`. */
@@ -360,6 +373,8 @@ export const StudioMetaSchema = Type.Object({
   previewAxes: Type.Optional(PersistedPreviewAxesSchema),
   /** W5-3 — see `StoriesMetaSchema` above. */
   stories: Type.Optional(StoriesMetaSchema),
+  /** CV-2 — see `ComponentsMetaSchema` above. */
+  components: Type.Optional(ComponentsMetaSchema),
   /** WS-12 §5.1 — see `AgentSessionSchema` above. */
   agentSession: Type.Optional(AgentSessionSchema),
   /**
@@ -444,8 +459,12 @@ export const StudioMetaSchema = Type.Object({
 })
 export type StudioMeta = Static<typeof StudioMetaSchema>
 
-function studioMetaFile(dir: string): string {
-  return join(dir, '.studio', 'meta.json')
+/** The store path of this record (`.studio/meta.json`), for the one door `studioStore.ts`. */
+export const STUDIO_META_FILE = 'meta.json'
+
+/** `<dir>/.studio/meta.json` as a path — for a cache keyed on what it reads (the preview shell's input stamp) to NAME the same file; reading it is `readStudioMeta`'s job. */
+export function studioMetaFile(dir: string): string {
+  return studioStorePath(dir, STUDIO_META_FILE)
 }
 
 /**
@@ -460,15 +479,14 @@ export function isSafePagesDirOverride(value: string): boolean {
 }
 
 /**
- * Reads `.studio/meta.json`, tolerantly. Absent file → `{}`. Unparsable JSON
+ * Reads `.studio/meta.json`, tolerantly. Absent file, or one reached through a link (`studioStore.ts`) → `{}`. Unparsable JSON
  * or a shape `StudioMetaSchema` rejects outright → `{}` (soft fallback, never
  * throws — see module doc). An otherwise-valid file whose `pagesDir` fails
  * the containment guard has just that field stripped, not the whole object.
  */
 export function readStudioMeta(dir: string): StudioMeta {
-  const file = studioMetaFile(dir)
-  if (!existsSync(file)) return {}
-  const raw = readFileSync(file, 'utf8')
+  const raw = readStudioStoreText(dir, STUDIO_META_FILE)
+  if (raw === null) return {}
 
   // `parseJsonWithFallback` is all-or-nothing: one bad field fails the whole
   // object. That is the right default for user intent, but `profile` is not
@@ -533,9 +551,7 @@ function rawWithoutProfile(raw: string): string {
 
 /** Writes `.studio/meta.json` verbatim, creating the `.studio/` sidecar dir if needed. Callers that must not clobber sibling fields use `mergeStudioMeta` instead. */
 export function writeStudioMeta(dir: string, meta: StudioMeta): void {
-  const file = studioMetaFile(dir)
-  mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, JSON.stringify(meta, null, 2))
+  writeStudioStoreJson(dir, STUDIO_META_FILE, meta, { pretty: true })
 }
 
 /**

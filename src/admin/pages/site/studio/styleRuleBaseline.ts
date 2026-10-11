@@ -213,7 +213,7 @@ export function commitBaseline(styleRules: Record<string, StyleRule>, options: C
     const sources = getStudioStyleRuleSources()
     if (!sources[id] && isEditorAuthoredRuleId(id) && !isGeneratedClass(rule)) {
       const destination = resolveCssInsertDestination(rule, pageIndex)
-      if (destination.ok && destination.kind === 'existing') {
+      if (destination.kind === 'existing') {
         sources[id] = { file: destination.file, selector: rule.selector }
       }
     }

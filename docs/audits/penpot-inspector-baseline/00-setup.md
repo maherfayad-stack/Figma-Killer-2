@@ -1,4 +1,5 @@
 # 00 — Setup: self-hosted Penpot instance
+> **Trust:** historical, dated 2026-09-09. Paths may be wrong. Never act on it.
 
 Read this before the other files in this audit — it establishes exactly what
 was running when every measurement and screenshot in this directory was taken.

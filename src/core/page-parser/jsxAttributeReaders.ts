@@ -13,11 +13,13 @@
  * evaluator when the caller opted in (`ctx.eval` present), so a page that uses
  * nothing but literals costs exactly what it did before §7 existed.
  */
+import { expandSideShorthand, isSideShorthandKey } from './sideShorthand'
 import {
   Node,
   type JsxAttribute,
   type JsxSpreadAttribute,
   type SourceFile,
+  type TemplateExpression,
 } from 'ts-morph'
 import { LOOP_ID_SEPARATOR, styleValueKey } from '@core/page-tree'
 import type { ParsedNode, ParsedPropValue } from './types'
@@ -34,6 +36,7 @@ import type { ValueOrigin } from './staticEvalTypes'
 import { packagedImageImportRefusal, STUDIO_ASSET_SENTINEL } from './assetImports'
 import { iconPropFromJsx, withNestedIconValues } from './iconPropValues'
 import { decodeJsxTextEntities } from './jsxTextEntities'
+import { originOf } from './staticEvalValues'
 
 /**
  * Everything one parse pass needs to read values and record nodes. Built once
@@ -97,6 +100,36 @@ export { LOOP_ID_SEPARATOR }
 const READER_OWNED_ATTRIBUTES: ReadonlySet<string> = new Set(['style', 'dangerouslySetInnerHTML'])
 
 /**
+ * The class names a `className` template's static HEAD definitely carries —
+ * `undefined` when it carries none. `` `card ${tone}` `` → `card`; but
+ * `` `badge badge--${tone}` `` → `badge` only: a head that does not end in
+ * whitespace may end MID-TOKEN, and `badge--` is a class no element ever has.
+ * The one shape that provably does not is the BEM modifier idiom,
+ * `` `price${strike ? ' price--strike' : ''}` ``: every branch of the first
+ * interpolation is empty or starts with whitespace, so `price` is whole.
+ * Every name returned is one the element carries at runtime whatever the
+ * interpolation says, which is what makes showing them honest.
+ */
+export function templateHeadClassNames(template: TemplateExpression): string | undefined {
+  const head = template.getHead().getLiteralText()
+  const tokens = head.split(/\s+/).filter((token) => token.length > 0)
+  const lastIsWhole = /\s$/.test(head) || interpolationStartsAClass(template.getTemplateSpans()[0]?.getExpression())
+  if (tokens.length > 0 && !lastIsWhole) tokens.pop()
+  return tokens.length > 0 ? tokens.join(' ') : undefined
+}
+
+/** A ternary whose branches are string literals each empty or starting with whitespace — it can never extend the token before it. */
+function interpolationStartsAClass(expression: Node | undefined): boolean {
+  if (!expression || !Node.isConditionalExpression(expression)) return false
+  return [expression.getWhenTrue(), expression.getWhenFalse()].every((branch) => {
+    const inner = Node.isParenthesizedExpression(branch) ? branch.getExpression() : branch
+    if (!Node.isStringLiteral(inner) && !Node.isNoSubstitutionTemplateLiteral(inner)) return false
+    const value = inner.getLiteralValue()
+    return value.length === 0 || /^\s/.test(value)
+  })
+}
+
+/**
  * Literal-valued attributes (mirrors `../ast-codemods/readJsxProps`), falling
  * through to §7's evaluator ONLY when the literal fast path misses AND the
  * caller opted in (`ctx.eval` present) — zero behaviour change, zero cost,
@@ -126,6 +159,8 @@ export function extractProps(
    */
   codeFunctionPaths: string[]
   assetOrigin?: ValueOrigin
+  /** P3-C — a COMPONENT call site's string-literal attributes, by name. See `ParsedNode.literalPropOrigins`. */
+  literalOrigins: Record<string, ValueOrigin>
 } {
   const result: Record<string, ParsedPropValue> = {}
   const resolutions: Resolution[] = []
@@ -139,6 +174,19 @@ export function extractProps(
   // rarely has more than one image-shaped prop, and picking one honest target
   // beats guessing which of several an edit meant.
   let assetOrigin: ValueOrigin | undefined
+  const literalOrigins: Record<string, ValueOrigin> = {}
+  /**
+   * P3-C (WB-6) — a call site's string literal is the honest target for the
+   * text or prop the component renders from it (`ParsedNode.literalPropOrigins`).
+   * Only a component's attribute crosses into another file's JSX, and only one
+   * NOT inside a `.map` row: `ctx.idSuffix` marks an iteration, whose literal
+   * one piece of JSX renders for every row.
+   */
+  const recordLiteralOrigin = (name: string, literal: Node): void => {
+    if (kind !== 'component' || ctx.idSuffix !== undefined) return
+    const { origin } = originOf(literal, ctx.eval?.options.workspaceRoot)
+    if (origin) literalOrigins[name] = origin
+  }
 
   for (const attribute of attributes) {
     if (!Node.isJsxAttribute(attribute)) continue // skip {...spread} attributes
@@ -155,6 +203,7 @@ export function extractProps(
 
     if (Node.isStringLiteral(initializer)) {
       result[name] = initializer.getLiteralValue()
+      recordLiteralOrigin(name, initializer)
       continue
     }
 
@@ -168,6 +217,7 @@ export function extractProps(
       }
       if (Node.isStringLiteral(expression)) {
         result[name] = expression.getLiteralValue()
+        recordLiteralOrigin(name, expression)
         continue
       }
       if (Node.isTrueLiteral(expression)) {
@@ -329,10 +379,43 @@ export function extractProps(
       // `evalOptions` keeps its pre-§7 behaviour exactly, per this module's
       // own header comment), so there is nothing to report failing.
       if (ctx.eval) codeProps.push(name)
+      // P3-C (WB-18) — an element's `className={\`card ${tone || ''}\`}` shows
+      // the classes its static head DEFINITELY carries (`templateHeadClassNames`),
+      // exactly as an inlined component's element does (`componentSubstitution.ts`).
+      // Without it, a class Studio itself wrote into the head of a wrapped
+      // expression would vanish from the canvas on the next parse. Visual only,
+      // and safe: `parsedPageToSitePage` turns className into `classIds` and
+      // drops the prop, so no writeback reads this value, and the `codeProps`
+      // entry above keeps it locked. Not for a component call site — there the
+      // prop is the component's INPUT, and a partial value would be substituted
+      // as though it were the whole one.
+      if (name === 'className' && kind !== 'component' && Node.isTemplateExpression(expression)) {
+        const head = templateHeadClassNames(expression)
+        if (head !== undefined) result[name] = head
+      }
     }
   }
 
-  return { props: result, resolutions, resolutionsByKey, codeProps, codeFunctionPaths, ...(assetOrigin ? { assetOrigin } : {}) }
+  return {
+    props: result,
+    resolutions,
+    resolutionsByKey,
+    codeProps,
+    codeFunctionPaths,
+    literalOrigins,
+    ...(assetOrigin ? { assetOrigin } : {}),
+  }
+}
+
+/**
+ * File a literal style entry. A `padding` / `margin` shorthand is read back
+ * into its four sides (the bag is per-side only — see `./sideShorthand`), in
+ * source order so a later longhand still overrides it, as in CSS.
+ */
+function assignLiteralStyle(styles: Record<string, string | number>, key: string, value: string | number): void {
+  const sides = isSideShorthandKey(key) ? expandSideShorthand(key, value) : undefined
+  if (sides) Object.assign(styles, sides)
+  else styles[key] = value
 }
 
 /**
@@ -395,12 +478,8 @@ export function extractInlineStyles(
     // syntax differs.
     const valueNode = Node.isShorthandPropertyAssignment(property) ? nameNode : property.getInitializer()
     if (valueNode === undefined) continue
-    if (Node.isStringLiteral(valueNode)) {
-      styles[key] = valueNode.getLiteralValue()
-      continue
-    }
-    if (Node.isNumericLiteral(valueNode)) {
-      styles[key] = valueNode.getLiteralValue()
+    if (Node.isStringLiteral(valueNode) || Node.isNumericLiteral(valueNode)) {
+      assignLiteralStyle(styles, key, valueNode.getLiteralValue())
       continue
     }
     // Non-literal values (var refs, calls, templates, nested objects) fall

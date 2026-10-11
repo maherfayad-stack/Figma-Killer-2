@@ -7,8 +7,7 @@
  * `moveNodes` mutates the ACTIVE tree and then writes the file that tree came
  * from. A cross-frame drop has two trees and two files, and none of
  * `moveNodes`'s machinery survives that: `mutateActiveTree` can only reach one
- * of them, the undo/redo origin it captures (`captureMoveOrigin`) describes a
- * position in the tree the node is leaving, and the id the element gets in its
+ * of them, and the id the element gets in its
  * new file does not exist until the codemod has written it. A flag on
  * `moveNodes` would be a second function wearing the first one's name.
  *
@@ -35,9 +34,11 @@
  * backstop so a caller that gets the routing wrong gets a sentence rather than
  * a cross-file codemod pointed at one file.
  */
+import { openSourceFile } from '../../openSourceFile'
 import { commitStudioTransplant } from '@site/studio/studioStructuralCommits'
 import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
-import { STRUCTURAL_REFUSAL_TITLE, planSourceTransplant, presentStructuralRefusal } from './structuralSourceEdits'
+import { STRUCTURAL_REFUSAL_TITLE, presentStructuralRefusal } from './structuralSourceEdits'
+import { planSourceTransplant } from './transplantPlan'
 import type { Page, SiteDocument } from '@core/page-tree'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 
@@ -57,21 +58,6 @@ function findPage(site: SiteDocument, pageId: string): Page | null {
   return site.pages.find((page) => page.id === pageId) ?? null
 }
 
-/**
- * The slot `nodeId` occupies in `page` right now — its parent and its index in
- * that parent's child list.
- *
- * The parent falls back to the page's root and the index to the end when the
- * node is not addressable, which is a position an append already means; a
- * transplant whose origin cannot be named simply has an undo that puts the
- * element back last rather than one that puts it somewhere wrong.
- */
-function originSlot(page: Page, nodeId: string): { parentNodeId: string; index: number } {
-  const parentNodeId = page.nodes[nodeId]?.parentId ?? page.rootNodeId
-  const index = page.nodes[parentNodeId]?.children.indexOf(nodeId) ?? -1
-  return { parentNodeId, index: index < 0 ? Number.MAX_SAFE_INTEGER : index }
-}
-
 export function createTransplantActions(helpers: SiteSliceHelpers): TransplantActions {
   const { get, set } = helpers
 
@@ -82,7 +68,14 @@ export function createTransplantActions(helpers: SiteSliceHelpers): TransplantAc
       // a second drag fired before the first one's resync would plan against
       // the still-unshifted original and post a SECOND real write. Parked and
       // re-planned once the first has landed, rather than refused.
-      if (deferWhileStructuralCommitInFlight(() => { actions.transplantNodes(nodeIds, destination) })) return
+      if (
+        deferWhileStructuralCommitInFlight(
+          (relocate) => { actions.transplantNodes(nodeIds.map(relocate), { ...destination, parentId: relocate(destination.parentId) }) },
+          [...nodeIds, destination.parentId],
+        )
+      ) {
+        return
+      }
 
       const state = get()
       const site = state.site
@@ -106,7 +99,7 @@ export function createTransplantActions(helpers: SiteSliceHelpers): TransplantAc
           // The refused node is always the one the gesture named — re-issuing
           // after a detach/extract remedy lands means re-issuing the same drop
           // with that id swapped for its replacement.
-          retry: (newNodeId) => actions.transplantNodes([newNodeId], destination),
+          retry: (mapId) => actions.transplantNodes(nodeIds.map(mapId), { ...destination, parentId: mapId(destination.parentId) }),
           // D2 G3 — "Duplicate into frame instead": the SAME drop, with Alt's
           // meaning. It is the same store action and therefore the same gate,
           // the same `guardAgainstConcurrentStructuralCommit`, and the same
@@ -133,14 +126,8 @@ export function createTransplantActions(helpers: SiteSliceHelpers): TransplantAc
         anchorNodeId: commit.anchorNodeId,
         position: commit.position,
         copy: commit.copy,
-        destinationLabel: destinationPage.title || destinationPage.slug,
-        // `store-14` — where it came from, which is the whole of a MOVE's undo.
-        // The slot is recorded as parent + index rather than as a sibling id:
-        // every sibling below the element shifts up the moment it leaves, so a
-        // sibling id captured here would name a line that has moved by the time
-        // ⌘Z is pressed. `anchorTransplantBack` re-reads the slot from the live
-        // tree instead.
-        origin: originSlot(originPage, commit.nodeId),
+        ...(commit.row ? { row: commit.row } : {}),
+        openSource: (origin) => openSourceFile(get(), origin),
       })
     },
   }

@@ -86,7 +86,7 @@ export function TrashDialog({ open, trashed, error, busy, onClose, onRestore, on
         <EmptyState
           variant="centered"
           icon={<TrashSolidIcon size={20} aria-hidden="true" />}
-          title="Nothing has been deleted."
+          title="The trash is empty."
           description="Deleted projects are moved here instead of being erased, and can be restored from this panel."
         />
       ) : (

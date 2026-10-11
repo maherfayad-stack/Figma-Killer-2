@@ -11,6 +11,7 @@ import type { FrameDocumentAdapter, FrameRuntimeEvent } from '@site/canvas/frame
 import { registerFrameAdapter, unregisterFrameAdapter } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
 import { useBridgeFrameInteraction } from '@site/canvas/BoardFramesLayer/useBridgeFrameInteraction'
 import { useEditorStore } from '@site/store/store'
+import { markCanvasPressDragged } from '@site/canvas/canvasNodeGestureLatch'
 
 
 // happy-dom has no `WheelEvent`; the runtime and the hook construct one. A
@@ -59,14 +60,14 @@ function makeFakeAdapter() {
 }
 
 function Harness({ adapter, isActive = true, onActivate = () => {} }: { adapter: FrameDocumentAdapter; isActive?: boolean; onActivate?: (breakpointId: string) => void }) {
-  useBridgeFrameInteraction(adapter, { breakpointId: 'bp-mobile', frameId: 'frame-1', isActive, onActivate })
+  useBridgeFrameInteraction(adapter, { breakpointId: 'bp-mobile', frameId: 'frame-1', pageId: 'page-1', isActive, onActivate })
   return null
 }
 
 const MODS = { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false }
 /** A primary-button mouse press, as the runtime reports one. `screenX/screenY` default to 0 — irrelevant off the pan-replay path (`live-19`). */
 const MOUSE = { button: 0, buttons: 1, pointerId: 1, pointerType: 'mouse', screenX: 0, screenY: 0 }
-const NO_SELECTION = { onNodeClick: () => {}, onFrameNodeClick: () => {}, onNodeHover: () => {}, onNodeContextMenu: () => {}, onNodeDoubleClick: () => {}, onNodePointerDown: () => {}, onNodePointerUp: () => {} }
+const NO_SELECTION = { onNodeClick: () => {}, onFrameNodeClick: () => {}, onFrameBackgroundClick: () => {}, onNodeHover: () => {}, onNodeContextMenu: () => {}, onNodeDoubleClick: () => {}, onNodePointerDown: () => {}, onNodePointerUp: () => {} }
 
 afterEach(() => {
   cleanup()
@@ -77,10 +78,12 @@ describe('useBridgeFrameInteraction', () => {
   it('routes a forwarded click to onFrameNodeClick with the frame and breakpoint it came from, and a move to hover', () => {
     const { adapter, emit } = makeFakeAdapter()
     const clicks: unknown[] = []
+    const backgrounds: unknown[] = []
     const hovers: unknown[] = []
     const value = {
       onNodeClick: () => {},
       onFrameNodeClick: (...args: unknown[]) => clicks.push(args),
+      onFrameBackgroundClick: (...args: unknown[]) => backgrounds.push(args),
       onNodeHover: (...args: unknown[]) => hovers.push(args),
       onNodeContextMenu: () => {},
       onNodeDoubleClick: () => {},
@@ -96,6 +99,9 @@ describe('useBridgeFrameInteraction', () => {
     emit({ type: 'pointer', phase: 'click', nodeId: null, rect: null, clientX: 1, clientY: 2, modifiers: MODS, ...MOUSE })
     emit({ type: 'pointer', phase: 'move', nodeId: 'pages/Home.tsx:5:6', rect: null, clientX: 1, clientY: 2, modifiers: MODS, ...MOUSE })
     expect(clicks).toEqual([['pages/Home.tsx:3:4', { ...MODS, metaKey: true }, 'bp-mobile', 'frame-1']])
+    // No stamped element under the click — the app's own background below its
+    // content: the frame's empty area, which lets go of everything.
+    expect(backgrounds).toEqual([['bp-mobile', 'frame-1']])
     expect(hovers).toEqual([['pages/Home.tsx:5:6', 'bp-mobile', 'frame-1']])
   })
 
@@ -112,7 +118,7 @@ describe('useBridgeFrameInteraction', () => {
     document.addEventListener('wheel', (e) => seen.push(e))
 
     render(
-      <CanvasSelectionContext.Provider value={{ onNodeClick: () => {}, onFrameNodeClick: () => {}, onNodeHover: () => {}, onNodeContextMenu: () => {}, onNodeDoubleClick: () => {}, onNodePointerDown: () => {}, onNodePointerUp: () => {} }}>
+      <CanvasSelectionContext.Provider value={{ onNodeClick: () => {}, onFrameNodeClick: () => {}, onFrameBackgroundClick: () => {}, onNodeHover: () => {}, onNodeContextMenu: () => {}, onNodeDoubleClick: () => {}, onNodePointerDown: () => {}, onNodePointerUp: () => {} }}>
         <Harness adapter={adapter} />
       </CanvasSelectionContext.Provider>,
     )
@@ -124,6 +130,32 @@ describe('useBridgeFrameInteraction', () => {
     expect(seen[0].clientX).toBe(100 + 40 * 0.5)
     expect(seen[0].clientY).toBe(50 + 60 * 0.5)
     unregisterFrameAdapter(iframe)
+  })
+
+  /**
+   * The click a live frame's runtime forwards after a press that became an
+   * element DRAG lands on whatever the pointer was over at release; routed to
+   * selection, it replaced the layer the user had just moved. It is dropped —
+   * once — and the next press starts clean.
+   */
+  it('drops the click that ends an element drag, and only that one', () => {
+    const { adapter, emit } = makeFakeAdapter()
+    const clicks: unknown[] = []
+    render(
+      <CanvasSelectionContext.Provider value={{ ...NO_SELECTION, onFrameNodeClick: (id) => clicks.push(id) }}>
+        <Harness adapter={adapter} />
+      </CanvasSelectionContext.Provider>,
+    )
+    emit({ type: 'pointer', phase: 'down', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 1, clientY: 2, modifiers: MODS, ...MOUSE })
+    // The drag session activates (`useCanvasReorderDrag`) between the press
+    // and the release.
+    markCanvasPressDragged()
+    emit({ type: 'pointer', phase: 'click', nodeId: 'pages/SMS.tsx:12:4', rect: null, clientX: 1, clientY: 2, modifiers: MODS, ...MOUSE })
+    expect(clicks).toEqual([])
+
+    emit({ type: 'pointer', phase: 'down', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 1, clientY: 2, modifiers: MODS, ...MOUSE })
+    emit({ type: 'pointer', phase: 'click', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 1, clientY: 2, modifiers: MODS, ...MOUSE })
+    expect(clicks).toEqual(['pages/SMS.tsx:41:8'])
   })
 
   it('activates an inactive frame on press and on click, before the selection runs', () => {
@@ -153,14 +185,14 @@ describe('useBridgeFrameInteraction', () => {
 
   it('unsubscribes when the adapter goes away', () => {
     const first = makeFakeAdapter()
-    const value = { onNodeClick: () => {}, onFrameNodeClick: () => {}, onNodeHover: () => {}, onNodeContextMenu: () => {}, onNodeDoubleClick: () => {}, onNodePointerDown: () => {}, onNodePointerUp: () => {} }
+    const value = { onNodeClick: () => {}, onFrameNodeClick: () => {}, onFrameBackgroundClick: () => {}, onNodeHover: () => {}, onNodeContextMenu: () => {}, onNodeDoubleClick: () => {}, onNodePointerDown: () => {}, onNodePointerUp: () => {} }
     const view = render(
       <CanvasSelectionContext.Provider value={value}>
         <Harness adapter={first.adapter} />
       </CanvasSelectionContext.Provider>,
     )
-    // pointer, wheel, resize:commit, text:editStart, text:commit, text:cancel
-    expect(first.subscriptions()).toBe(6)
+    // pointer, wheel, resize:commit, resize:guides, text:editStart, key, blur, text:commit, text:cancel
+    expect(first.subscriptions()).toBe(9)
     view.unmount()
     expect(first.subscriptions()).toBe(0)
   })
@@ -366,7 +398,7 @@ describe('useBridgeFrameInteraction', () => {
               localeOverride: null,
               multiline: false,
               initialValue: 'canonical text',
-              committed: false,
+              draft: '',
             },
           } as Parameters<typeof useEditorStore.setState>[0])
           return true
@@ -407,7 +439,7 @@ describe('useBridgeFrameInteraction', () => {
           localeOverride: null,
           multiline: false,
           initialValue: 'x',
-          committed: false,
+          draft: '',
         },
         applyInlineEditValue: (value: string) => applied.push(value),
         endInlineEdit: () => { ended += 1 },
@@ -434,7 +466,7 @@ describe('useBridgeFrameInteraction', () => {
           localeOverride: null,
           multiline: false,
           initialValue: 'x',
-          committed: false,
+          draft: '',
         },
         applyInlineEditValue: (value: string) => applied.push(value),
       } as Parameters<typeof useEditorStore.setState>[0])
@@ -459,7 +491,7 @@ describe('useBridgeFrameInteraction', () => {
           localeOverride: null,
           multiline: false,
           initialValue: 'x',
-          committed: false,
+          draft: '',
         },
         cancelInlineEdit: () => { cancelled += 1 },
       } as Parameters<typeof useEditorStore.setState>[0])

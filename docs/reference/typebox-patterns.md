@@ -1,4 +1,5 @@
 # TypeBox Patterns
+> **Purpose:** validating every untyped boundary with TypeBox · **Read when:** parsing JSON, a request body or a response · **Trust:** rule · **Owner:** server-engineer · **Verified:** not yet
 
 How the codebase validates every untyped boundary with [TypeBox](https://github.com/sinclairzx81/typebox) — what helper to reach for, what shape a schema takes, and how to migrate from older Zod patterns.
 

@@ -16,14 +16,9 @@
  *      `from page_versions`. Those are live SQL queries against tables that
  *      no longer exist and will fail at runtime.
  *
- * Note: part 2 will fail until Step 3 of the unified-content-storage refactor
- * rewires `server/repositories/site.ts`, `server/repositories/publish.ts`,
- * and `server/handlers/cms/setup.ts`. Those failures are expected and owned
- * by Step 3.
- *
  * @see server/db/migrations-pg.ts      — Postgres baseline
  * @see server/db/migrations-sqlite.ts  — SQLite baseline
- * @see docs/plans/2026-05-19-unified-content-storage.md
+ * @see docs/architecture.md → "One content model"
  */
 
 import { describe, test, expect } from 'bun:test'

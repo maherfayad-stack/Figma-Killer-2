@@ -15,6 +15,12 @@ services:
         value: sqlite:/app/storage/data/cms.db
       - key: UPLOADS_DIR
         value: /app/storage/uploads
+      # Every user's projects: must be on the disk below or a redeploy deletes them.
+      - key: STUDIO_WORKSPACE_DIR
+        value: /app/storage/studio-workspace
+      # MCP server secrets and Claude CLI logins: same disk, same reason.
+      - key: STUDIO_DATA_DIR
+        value: /app/storage/.data
       - key: STATIC_DIR
         value: /app/dist
       # Render auto-injects RENDER_EXTERNAL_URL at runtime; Studio uses it as
