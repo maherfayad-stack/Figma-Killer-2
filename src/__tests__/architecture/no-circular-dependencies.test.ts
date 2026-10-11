@@ -41,5 +41,7 @@ describe('Circular dependencies', () => {
     // ~13s of pure analysis on a dev machine before spawn overhead. The budget
     // is a hang guard, not a perf assertion — keep it well clear of the real
     // cost so a legitimately growing graph doesn't turn a green gate red.
-  }, 60000)
+    // Under `bun test --parallel` on a shared box the same run took ~70 s, so
+    // the guard is 180 s.
+  }, 180000)
 })

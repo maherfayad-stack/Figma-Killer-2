@@ -39,7 +39,7 @@ import type { FrameGeometrySnapshot } from '../frameGeometry/frameGeometryTypes'
 import { applyPreviewAxesToFrameDocument } from '../previewAxesFrameEffect'
 import { currentModeAxes } from '../modeRootPlan'
 import { escapeCssAttributeValue } from '../escapeCssAttributeValue'
-import { OverlayRulePatcher } from './overlayRuleDiff'
+import { OverlayRulePatcher, splitCssChunks } from './overlayRuleDiff'
 import type {
   ApplyOverlayOptions,
   DropCandidateGeometry,
@@ -285,6 +285,13 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
       patcher.apply(css)
     } catch (err) {
       console.warn(`[PortalFrameAdapter] overlay "${id}" could not be patched rule by rule; rewriting its text:`, err)
+      this.overlayPatchers.set(id, null)
+      return false
+    }
+    // A style engine that refused every rule (one that cannot model `@layer`,
+    // the sheet's wrapper) leaves an empty sheet for non-empty CSS: the text
+    // is the only honest copy then, so rebuild from it for good.
+    if (el.sheet && el.sheet.cssRules.length === 0 && splitCssChunks(css).length > 0) {
       this.overlayPatchers.set(id, null)
       return false
     }

@@ -161,6 +161,8 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
   // preview is live elsewhere.
   const previewClassAssignment = useCanvasNodeData((s) => (s.previewClassAssignment?.nodeId === nodeId ? s.previewClassAssignment : null), pageScoped)
   const previewNodeStyles = useCanvasNodeData((s) => (s.previewNodeStyles?.nodeIds.includes(nodeId) ? s.previewNodeStyles : null), pageScoped)
+  // The text an inspector field is typing, painted before its single commit.
+  const previewNodeProps = useCanvasNodeData((s) => (s.previewNodeProps?.nodeId === nodeId ? s.previewNodeProps : null), pageScoped)
   const editorFormPreviewState = useCanvasNodeData((s) => resolveEditorFormPreviewState(s, nodeId), pageScoped)
   const editorFormPreviewSuccessMessage = useCanvasNodeData((s) => resolveEditorFormPreviewSuccessMessage(s, nodeId), pageScoped)
   const mcClassName = useCanvasNodeData((s) => {
@@ -350,7 +352,9 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
     addEditorFormPreviewProps(
       node.moduleId,
       resolveDynamicProps(
-      resolveProps(node, breakpointId, definition.schema),
+      previewNodeProps
+        ? { ...resolveProps(node, breakpointId, definition.schema), ...previewNodeProps.props }
+        : resolveProps(node, breakpointId, definition.schema),
       effectiveNodeBindings(node),
       templateContext,
       ),

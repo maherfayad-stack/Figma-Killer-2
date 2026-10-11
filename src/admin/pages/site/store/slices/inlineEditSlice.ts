@@ -103,6 +103,16 @@ interface InlineEditSlice {
   endInlineEdit: () => void
   /** Discard the draft + close. Nothing was written, so nothing is reverted. */
   cancelInlineEdit: () => void
+  /**
+   * The text an inspector field is being typed into, painted on the canvas
+   * BEFORE it is committed. Transient UI state: no tree write, no history, no
+   * save. `NodeRenderer` overlays it on the node's resolved props; the field's
+   * single commit (`updateNodeProps`) is what reaches the source.
+   */
+  previewNodeProps: { nodeId: string; props: Record<string, unknown> } | null
+  setPreviewNodeProps: (nodeId: string, props: Record<string, unknown>) => void
+  /** Drop the preview (commit, Escape, blur, unmount). Scoped to `nodeId` when given. */
+  clearPreviewNodeProps: (nodeId?: string) => void
 }
 
 // Contribute this slice's fields to the combined `EditorStore` type via TS
@@ -148,6 +158,21 @@ function resolveSessionNode(
 
 export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (set, get) => ({
   activeInlineEdit: null,
+  previewNodeProps: null,
+
+  setPreviewNodeProps: (nodeId, props) => {
+    set((s) => {
+      s.previewNodeProps = { nodeId, props }
+    })
+  },
+
+  clearPreviewNodeProps: (nodeId) => {
+    const current = get().previewNodeProps
+    if (!current || (nodeId !== undefined && current.nodeId !== nodeId)) return
+    set((s) => {
+      s.previewNodeProps = null
+    })
+  },
 
   startInlineEdit: (nodeId, breakpointId, frameId = null, options) => {
     const state = get()

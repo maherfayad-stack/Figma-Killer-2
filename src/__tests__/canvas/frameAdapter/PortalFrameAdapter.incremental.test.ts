@@ -127,4 +127,11 @@ describe('PortalFrameAdapter incremental overlays', () => {
     adapter.applyOverlay('mc-classes', '.a { color: blue }', { incremental: true })
     expect(overlayStyle('mc-classes').textContent).toBe('.a { color: blue }')
   })
+
+  it("a style engine that refuses every rule (no @layer) leaves the CSS as text, not as an empty sheet", () => {
+    const adapter = mount()
+    const css = '@layer user-authored { .a { color: red } }'
+    adapter.applyOverlay('mc-classes', css, { incremental: true })
+    expect(overlayStyle('mc-classes').textContent).toBe(css)
+  })
 })
