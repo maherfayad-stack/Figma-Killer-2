@@ -109,9 +109,12 @@ export function invalidateCatalogAfterWrite(edits: ReadonlyArray<{ kind: string 
  * project (the promise is cached by dir, and a settled catalog is read on the
  * first render, so re-mounting the panel for another node costs nothing).
  */
-export function useLocalComponentCatalog(): readonly LocalComponentSpec[] | null {
+export function useLocalComponentCatalog(enabled = true): readonly LocalComponentSpec[] | null {
   const [components, setComponents] = useState<readonly LocalComponentSpec[] | null>(settledLocalComponentCatalog)
   useEffect(() => {
+    // A reader that has no use for the catalog yet (the inspector's variant edit
+    // context, until an element of a component is selected) costs no request.
+    if (!enabled) return
     let cancelled = false
     const load = () => {
       void fetchLocalComponentCatalog().then((list) => {
@@ -124,7 +127,7 @@ export function useLocalComponentCatalog(): readonly LocalComponentSpec[] | null
       cancelled = true
       refreshers.delete(load)
     }
-  }, [])
+  }, [enabled])
   return components
 }
 
