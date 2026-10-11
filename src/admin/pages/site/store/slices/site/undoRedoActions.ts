@@ -25,7 +25,7 @@ import { applyNodeIndexPatch, nodeIndexesOf } from './nodeIndex'
 import { isBoardOnlyEntry, restoreBoardSnapshot } from '../boardHistory'
 import { flushPendingGestures } from '../../pendingGestures'
 import { pushToast } from '@ui/components/Toast'
-import { reissueStructuralMove, reissueStructuralMoves, type StructuralStepOutcome } from './structuralHistory'
+import type { StructuralStepOutcome } from './structuralHistory'
 import { reissueStructuralSourceEdits } from './structuralSourceHistory'
 import { mintPendingCommitId, trackStructuralStackCommit } from './structuralCommitRollback'
 import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
@@ -68,18 +68,16 @@ function runStructuralStep(
   const fromBefore = [...get()[from]]
   const toBefore = [...get()[to]]
 
-  // `store-14`/`store-15` — a SOURCE gesture (duplicate/wrap/group/ungroup/
-  // paste/transplant/image-drop, and `delete`) has no gesture to re-issue
-  // through a store action: its inverse is a WRITE, posted through the same
-  // `/save` route the gesture used. A move re-issues `moveNodes`, whose own
-  // entry (and rollback) the bookkeeping below folds into this one.
-  // P2-C2 / P3-D — a move sequence re-issues `moveNodesInSequence`, the same way.
-  const outcome: StructuralStepOutcome =
-    structural.gesture === 'source'
-      ? reissueStructuralSourceEdits(get, structural, direction, trackStructuralStackCommit({ get, set }, mintPendingCommitId()))
-      : structural.gesture === 'moves'
-        ? reissueStructuralMoves(get, direction === 'undo' ? structural.undo : structural.redo)
-        : reissueStructuralMove(get, direction === 'undo' ? structural.undo : structural.redo)
+  // `store-14`/`store-15` — a structural gesture (duplicate/wrap/group/ungroup/
+  // paste/transplant/image-drop, `delete`, a move) has no store action to
+  // re-issue: its inverse is a WRITE, posted through the same `/save` route
+  // the gesture used.
+  const outcome: StructuralStepOutcome = reissueStructuralSourceEdits(
+    get,
+    structural,
+    direction,
+    trackStructuralStackCommit({ get, set }, mintPendingCommitId()),
+  )
   if (outcome.kind === 'skipped') {
     skipStructuralStep({ get, set }, entry, direction, outcome.notice)
     return

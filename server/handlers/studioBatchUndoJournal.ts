@@ -13,8 +13,13 @@
  * can express — `delete`, `detach`, `expose-prop` (P5-C: a component AND its
  * call site), `swap`, `promote-component` (extract a subtree into a new
  * component), a `list-item` remove (OD-8: a `.map`
- * row's delete cuts array elements whose bytes no op carries back), and a
- * `transplant` that MOVES (a cross-frame drag: two files, one pruned import). A batch holding any of them records ONE
+ * row's delete cuts array elements whose bytes no op carries back), a
+ * `transplant` that MOVES (a cross-frame drag: two files, one pruned import),
+ * a same-file `move` / `reparent` (the splice leaves a blank line and an
+ * indentation no inverse move reproduces),
+ * a free-canvas `canvas-layer-lift` / `canvas-layer-place` that MOVES (the page
+ * and the layer module), and an `insert` that asked for an exact undo
+ * (`exactUndo`, also asked of a `duplicate` and a copying `transplant`: it writes into a childless parent). A batch holding any of them records ONE
  * entry covering every file the batch changed, so one gesture is one token,
  * however many elements a multi-select delete removed and across however
  * many files.
@@ -36,9 +41,9 @@ import type { StudioEdit, StudioEditApplyOutcome, StudioEditBatchOptions, Studio
 import { captureUndoPreImage, recordUndoJournal, restoreUndoJournal, undoJournalFiles } from './studio/undoJournal'
 
 /** The kinds a journaled batch records a pre-image for. */
-const JOURNALED_KINDS = new Set<StudioEdit['kind']>(['delete', 'detach', 'expose-prop', 'swap', 'promote-component'])
+const JOURNALED_KINDS = new Set<StudioEdit['kind']>(['delete', 'detach', 'expose-prop', 'swap', 'promote-component', 'move', 'reparent'])
 
-function isJournaled(edit: StudioEdit): boolean {
+export function isJournaled(edit: StudioEdit): boolean {
   return (
     JOURNALED_KINDS.has(edit.kind) ||
     (edit.kind === 'list-item' && edit.op.kind === 'remove') ||
@@ -49,7 +54,18 @@ function isJournaled(edit: StudioEdit): boolean {
     // the only place an inverse `transplant` could put it back. No id recorded
     // before the write survives it; the pre-image does, and restoring it is
     // also byte-exact (blank lines, import order and all).
-    (edit.kind === 'transplant' && edit.copy !== true)
+    (edit.kind === 'transplant' && (edit.copy !== true || edit.exactUndo === true)) ||
+    // The same shape on the free canvas: a lift cuts the element out of the
+    // page and creates the layer's module, a place writes the root into the
+    // page and removes the module. Either way every id below the cut shifts
+    // (a pruned import, a collapsed blank line) and the module is a whole file
+    // — only the pre-image names both ends. A COPY is taken back by deleting
+    // the layer it made, or the element it wrote: ids the write itself reported.
+    ((edit.kind === 'canvas-layer-lift' || edit.kind === 'canvas-layer-place') && edit.copy !== true) ||
+    // An insert into a childless parent expands `<X />` to `<X>…</X>`; deleting
+    // the insert leaves `<X>` + newline + `</X>`, which is not what was there.
+    // The client asks for the pre-image exactly when the parent had no children.
+    ((edit.kind === 'insert' || edit.kind === 'duplicate') && edit.exactUndo === true)
   )
 }
 
