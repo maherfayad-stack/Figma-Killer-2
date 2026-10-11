@@ -19,14 +19,16 @@ const STYLED = {
   rules: [{ member: 'solid', selector: '[data-tone="solid"]', range: { file: 'src/Badge.css', line: 1, column: 1, endLine: 3, endColumn: 2 } }],
 }
 
-function galleryPage(rootNodeId = 'component-gallery:component-badge:grid') {
+/** A page as the loader builds it: a synthetic body, then the parsed root (the gallery's grid, or an ordinary page's first element). */
+function galleryPage(topId = 'component-gallery:component-badge:grid') {
   const cell = makeNode({
     id: 'src/Badge.tsx:2:17#0',
     moduleId: 'studio.instance',
     props: { componentName: 'Badge', source: 'local', sourceFile: 'src/Badge.tsx', callSiteProps: {} },
   })
-  const root = makeNode({ id: rootNodeId, moduleId: 'base.container', children: [cell.id] })
-  return makePage({ id: 'component-badge', title: 'Components / Badge', rootNodeId, nodes: { [root.id]: root, [cell.id]: cell } })
+  const top = makeNode({ id: topId, moduleId: 'base.container', children: [cell.id] })
+  const body = makeNode({ id: 'component-badge:body', moduleId: 'base.body', children: [top.id] })
+  return makePage({ id: 'component-badge', title: 'Components / Badge', rootNodeId: body.id, nodes: { [body.id]: body, [top.id]: top, [cell.id]: cell } })
 }
 
 function serveCatalog(props: unknown[], role = 'component') {

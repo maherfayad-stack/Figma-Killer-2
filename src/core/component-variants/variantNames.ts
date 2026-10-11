@@ -40,7 +40,7 @@ export function galleryNodeIdPrefix(pageId: string): string {
   return `${GALLERY_NODE_ID_PREFIX}${pageId}`
 }
 
-/** Whether a page's root node is a variants gallery's grid — the one fact that tells a gallery frame from any other. */
-export function isGalleryRootNodeId(rootNodeId: string): boolean {
-  return rootNodeId.startsWith(GALLERY_NODE_ID_PREFIX) && rootNodeId.endsWith(':grid')
+/** Whether a node id is a variants gallery's grid — the first child of its page's body, and the one fact that tells a gallery frame from any other. */
+export function isGalleryGridNodeId(nodeId: string): boolean {
+  return nodeId.startsWith(GALLERY_NODE_ID_PREFIX) && nodeId.endsWith(':grid')
 }

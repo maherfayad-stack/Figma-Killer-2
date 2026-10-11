@@ -16,7 +16,7 @@ export {
   PROP_NAME_PATTERN,
   VARIANT_NAME_PATTERN,
   galleryNodeIdPrefix,
-  isGalleryRootNodeId,
+  isGalleryGridNodeId,
   propNameError,
   variantNameError,
 } from './variantNames'

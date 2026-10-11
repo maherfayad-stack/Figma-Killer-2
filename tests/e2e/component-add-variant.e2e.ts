@@ -122,16 +122,9 @@ test.describe('CV-3 — Add variant from the gallery header', () => {
     await expect(content.locator('button.btn-outline')).toHaveCount(4)
     await expect(content.getByText('variant=outline, size=sm, disabled=true')).toHaveCount(1)
 
-    // One ⌘Z puts all of it back, byte for byte, and the gallery follows.
-    await expect
-      .poll(() =>
-        page.evaluate(async () => {
-          const { useEditorStore } = await import('/src/admin/pages/site/store/store.ts' as string)
-          const top = useEditorStore.getState()._historyPast.at(-1)
-          return top?.structural?.gesture === 'source' && top.structural.source.inverse !== null
-        }),
-      )
-      .toBe(true)
+    // One ⌘Z puts all of it back, byte for byte, and the gallery follows. (The gallery has
+    // re-rendered from the written source, so the commit's own resync, which fills in the
+    // entry's inverse, has run.)
     await canvasRoot.focus()
     await page.keyboard.press('Control+z')
     await expect.poll(() => FILES.map(read), { timeout: 30_000 }).toEqual(FILES.map((rel) => before[rel]!))
