@@ -29,6 +29,18 @@ function studioSite(childIds: string[]) {
 }
 
 const store = () => useEditorStore.getState()
+
+/**
+ * The board's re-read after a move reports the write's undo-journal token on
+ * the entry the move already pushed (`recordStructuralSourceWrite` `fill`).
+ * These specs have no editor mounted to re-read, so they apply that step.
+ */
+function landJournalToken(): void {
+  store().recordStructuralSourceWrite({
+    kind: 'fill',
+    outcome: { createdNodeIds: [], relocatedNodeIds: [], removed: [], undoToken: '0123456789abcdef0123456789abcdef', listArrays: [] },
+  })
+}
 const order = () => [...store().site!.pages[0]!.nodes[ROOT]!.children]
 
 let postedEdits: Record<string, unknown>[][]
@@ -46,7 +58,7 @@ beforeEach(() => {
     if (url.includes('/studio/save')) {
       postedEdits.push(body.edits ?? [])
       postedSequence.push(body.sequence === true)
-      return new Response(JSON.stringify({ ok: true, written: (body.edits ?? []).length, skipped: 0, shifted: true, sharedComponents: false, touchedFiles: [FILE] }), {
+      return new Response(JSON.stringify({ ok: true, written: (body.edits ?? []).length, skipped: 0, shifted: true, sharedComponents: false, undoToken: '0123456789abcdef0123456789abcdef', touchedFiles: [FILE] }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       })
@@ -90,7 +102,7 @@ describe('a multi-selection steps among its siblings as one gesture', () => {
     stepSelectionAmongSiblings([a, b], 1)
     expect(order()).toEqual([u, a, v, b])
     expect(store()._historyPast).toHaveLength(1)
-    expect(store()._historyPast[0]!.structural?.gesture).toBe('moves')
+    expect(store()._historyPast[0]!.structural).toMatchObject({ gesture: 'source', source: { sequence: true } })
     await settle()
     expect(postedEdits).toHaveLength(1)
     expect(moves(postedEdits[0]!)).toHaveLength(2)
@@ -98,18 +110,18 @@ describe('a multi-selection steps among its siblings as one gesture', () => {
     expect(postedSequence).toEqual([true])
   })
 
-  it('one ⌘Z posts the inverse batch in ONE request and restores the order', async () => {
+  it('one ⌘Z posts ONE journal restore in ONE request', async () => {
     const [a, u, b, v] = [at(3), at(5), at(7), at(9)]
     store().loadSite(studioSite([a, u, b, v]))
     store().setActivePage('page-1')
     stepSelectionAmongSiblings([a, b], 1)
     await settle()
+    landJournalToken()
 
     store().undo()
-    expect(order()).toEqual([a, u, b, v])
     await settle()
     expect(postedEdits).toHaveLength(2)
-    expect(moves(postedEdits[1]!)).toHaveLength(2)
+    expect(postedEdits[1]).toEqual([expect.objectContaining({ kind: 'restore' })])
     expect(store()._historyPast).toHaveLength(0)
     expect(store()._historyFuture).toHaveLength(1)
   })
@@ -121,7 +133,7 @@ describe('a multi-selection steps among its siblings as one gesture', () => {
 
     stepSelectionAmongSiblings([a, b], 1)
     expect(order()).toEqual([c, a, b])
-    expect(store()._historyPast[0]!.structural?.gesture).toBe('move')
+    expect(store()._historyPast[0]!.structural).toMatchObject({ gesture: 'source', source: { forward: [{ kind: 'move' }] } })
     await settle()
     expect(postedEdits).toEqual([[expect.objectContaining({ kind: 'move', nodeId: c, anchorNodeId: a, position: 'before' })]])
   })

@@ -25,13 +25,11 @@
  * re-addresses each step against the file the previous one left and restores
  * every file if any step is refused.
  *
- * A sequence of one is an ordinary `moveNodes` — the same entry shape
- * (`move`), the same undo, the same write every single drag makes. Two or
- * more are tagged `moves`, whose undo is `invertMoveSequence`.
+ * A sequence's undo is the undo journal's `restore` (every file back byte for
+ * byte), the same as a single `moveNodes`'.
  */
 import {
   createScratchTree,
-  invertMoveSequence,
   moveNodes,
   moveOnScratch,
   planListRowMoveSequence,
@@ -161,7 +159,6 @@ export function createMoveSequenceActions(
         if (edit) edits.push(edit)
         moveOnScratch(scratch, move)
       }
-      const undo = invertMoveSequence(tree, moves)
       const topBefore = get()._historyPast.at(-1)
       const moved = mutateActiveTree((draft) => {
         for (const move of moves) moveNodes(draft, [move.nodeId], move.parentId, move.index)
@@ -171,8 +168,19 @@ export function createMoveSequenceActions(
       for (const move of moves) broadcastOptimisticMove(move.nodeId, move.parentId, move.index)
       if (edits.length === 0) return // a CMS / Visual Component tree: patch-replay undo is exact
       const rollback = trackStructuralTreeCommit(helpers, topBefore, moves.map((move) => move.nodeId)) ?? undefined
-      tagStructuralGesture(set, { gesture: 'moves', undo, redo: [...moves] })
-      void commitStudioSequence(edits, 'Move refused', rollback ? { rollback } : {})
+      // The undo is the journal's `restore` — every file back byte for byte —
+      // and a redo re-posts the same ordered edits as one sequence.
+      tagStructuralGesture(set, {
+        gesture: 'source',
+        source: {
+          label: edits.length === 1 ? 'Move' : `Move ${edits.length} elements`,
+          forward: edits,
+          sequence: true,
+          inverseTemplate: { kind: 'restore-journal' },
+          inverse: null,
+        },
+      })
+      void commitStudioSequence(edits, 'Move refused', { fill: true, ...(rollback ? { rollback } : {}) })
     },
   }
 
