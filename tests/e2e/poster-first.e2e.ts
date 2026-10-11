@@ -96,14 +96,22 @@ function readViewCounts(page: Page): Promise<ViewCounts> {
   })
 }
 
-/** Poll the view every 100 ms until nothing in view is a blank placeholder; returns ms to that point, or null on timeout. */
-async function msUntilNoBlank(page: Page, timeoutMs: number): Promise<{ ms: number | null; last: ViewCounts }> {
+/**
+ * Poll every 100 ms until no frame in the scope is a blank placeholder; returns ms to that point, or null on
+ * timeout. `scope` 'view' is the frames intersecting the canvas, 'board' is every frame on the board.
+ */
+async function msUntilNoBlank(page: Page, timeoutMs: number, scope: 'view' | 'board' = 'view'): Promise<{ ms: number | null; last: ViewCounts }> {
   const startedAt = Date.now()
-  let last = await readViewCounts(page)
+  const read = async (): Promise<ViewCounts> => {
+    if (scope === 'view') return readViewCounts(page)
+    const counts = await readBoardCounts(page)
+    return { inView: counts.boardFrames, live: counts.mountedFrames, poster: counts.posters, cold: counts.placeholders, zoom: (await readViewCounts(page)).zoom }
+  }
+  let last = await read()
   while (Date.now() - startedAt < timeoutMs) {
     if (last.inView > 0 && last.cold === 0) return { ms: Date.now() - startedAt, last }
     await page.waitForTimeout(100)
-    last = await readViewCounts(page)
+    last = await read()
   }
   return { ms: null, last }
 }
@@ -128,6 +136,22 @@ test.describe('poster-first on the 100 x 140 corpus', () => {
   })
   test.afterAll(() => {
     if (fixture) removeFixtureProject(fixture)
+  })
+
+  test('cold zoom-out: how long until nothing in view is blank', { tag: '@production-bundle' }, async ({ page }) => {
+    // A board opened for the first time (no stored pictures), zoomed all the way out straight away.
+    const { canvasRoot } = await openLargeBoardAtWorkingZoom(page, fixture, largeBoardPageId(0))
+    await wheelZoom(page, canvasRoot, 14, 120)
+    const startedAt = Date.now()
+    const first = await readViewCounts(page)
+    const result = await msUntilNoBlank(page, 120_000)
+    const counts = await readBoardCounts(page)
+    dump(`${LABEL}-cold-${Date.now()}`, { first, result, counts, sinceZoomMs: Date.now() - startedAt })
+    annotate('cold zoom-out, frames in view right after the wheel: live/poster/blank', `${first.live}/${first.poster}/${first.cold} of ${first.inView}`)
+    annotate('cold zoom-out: ms until no frame in view is blank', result.ms === null ? `not within 120 s (${result.last.cold} blank)` : `${result.ms}`)
+    annotate('cold zoom-out: iframes / pictures once settled', `${counts.liveIframes} / ${counts.posters}`)
+    if (RECORD_ONLY) return
+    expect(result.ms, `${result.last.cold} frames in view still blank after 120 s`).not.toBeNull()
   })
 
   test('measure: live iframes, heap, pan and zoom p95, time to pictures', { tag: '@production-bundle' }, async ({ page }) => {
@@ -215,10 +239,12 @@ test.describe('poster-first behaviour on a 20-frame board', () => {
   test('zoom out: every frame in view shows a picture, none is blank', { tag: '@production-bundle' }, async ({ page }) => {
     const { canvasRoot } = await openLargeBoardAtWorkingZoom(page, fixture, largeBoardPageId(0))
     await wheelZoom(page, canvasRoot, 14, 120)
-    const result = await msUntilNoBlank(page, ALL_PICTURES_BY_MS)
+    const result = await msUntilNoBlank(page, ALL_PICTURES_BY_MS, 'board')
     annotate('20-frame board: time to a picture in every frame', result.ms === null ? `not within ${ALL_PICTURES_BY_MS} ms` : `${result.ms} ms`)
-    expect(result.last.inView, 'the zoomed-out view should show the whole board').toBeGreaterThanOrEqual(SMALL_BOARD_FRAMES - 1)
+    expect(result.last.inView, 'the board should have all its frames').toBe(SMALL_BOARD_FRAMES)
     expect(result.ms, `${result.last.cold} frames still blank`).not.toBeNull()
+    // And what the user sees, the frames in view, has no blank either.
+    expect((await readViewCounts(page)).cold).toBe(0)
     expect(result.last.zoom).toBeLessThan(0.35)
     // Below the poster zoom nothing but a working frame is a document.
     const counts = await readBoardCounts(page)
@@ -235,7 +261,7 @@ test.describe('poster-first behaviour on a 20-frame board', () => {
   test('one press on a poster makes the frame live and selected', { tag: '@production-bundle' }, async ({ page }) => {
     const { canvasRoot } = await openLargeBoardAtWorkingZoom(page, fixture, largeBoardPageId(0))
     await wheelZoom(page, canvasRoot, 14, 120)
-    const result = await msUntilNoBlank(page, ALL_PICTURES_BY_MS)
+    const result = await msUntilNoBlank(page, ALL_PICTURES_BY_MS, 'board')
     expect(result.ms, 'no pictures to press on').not.toBeNull()
     const target = page.locator(`[data-page-id="${largeBoardPageId(7)}"]`)
     await expect(target).toHaveAttribute('data-frame-mount', 'poster')

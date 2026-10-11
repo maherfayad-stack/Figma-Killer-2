@@ -59,6 +59,7 @@ import { afterPressPaint } from '../pressRing'
 import { FramePosterPlaceholder } from './FramePosterPlaceholder'
 import { LiveBoardFrame } from './LiveBoardFrame'
 import { resolveFrameMount } from './frameMount'
+import { observeFrameHeight } from './frameMeasuredHeights'
 import { armPosterPress, replayPosterPress } from './posterPress'
 import { FrameModeChips } from './FrameModeChips'
 import { FrameDiagnosticsBadge } from './FrameDiagnosticsBadge'
@@ -302,6 +303,12 @@ function BoardFrameViewImpl({
   useEffect(() => {
     if (mounted && contentReady) void replayPosterPress(frame.id, page.id)
   }, [mounted, contentReady, frame.id, page.id])
+  // A frame that hugs its content is as tall as its document (or its poster): the layer needs that to know what is in view.
+  useEffect(() => {
+    const body = frameBodyRef.current
+    if (!body || hasManualHeight) return
+    return observeFrameHeight(body, frame.id)
+  }, [frame.id, hasManualHeight])
 
   const handleHeaderContextMenu = (e: ReactMouseEvent<HTMLDivElement>) => {
     e.preventDefault()
@@ -539,14 +546,15 @@ function BoardFrameViewImpl({
           UNLESS the frame has never been manually resized, in which case
           `data-frame-auto-height` (canvas-04) lets the box grow to wrap its
           already-correctly-fitted iframe instead (see
-          `BoardFramesLayer.module.css`). Gated on `mounted` too: a
-          frame with no live iframe has nothing to size against, so it keeps
-          the fixed fallback box the placeholder needs — same as before. */}
+          `BoardFramesLayer.module.css`). Gated on `mounted` or a poster: a
+          frame with neither has nothing to size against, so it keeps the
+          fixed fallback box the placeholder needs; a poster is as tall as the
+          live frame it photographed, so promotion does not resize the frame. */}
       <div
         ref={frameBodyRef}
         className={styles.frameBody}
         data-testid="board-frame-body"
-        data-frame-auto-height={!hasManualHeight && mounted ? 'true' : undefined}
+        data-frame-auto-height={!hasManualHeight && (mounted || posterUrl !== undefined) ? 'true' : undefined}
         onPointerDown={mounted ? undefined : handlePosterPointerDown}
         onClick={mounted ? undefined : handlePosterClick}
         style={{ '--frame-w': `${width}px`, '--frame-h': `${height}px` } as CSSProperties}

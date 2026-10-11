@@ -130,6 +130,7 @@ import { FRAME_WIDTH, FRAME_HEIGHT, FRAME_HEADER_HEIGHT, type BoardFrame } from 
 import { isFrameOnScreen, type FrameRect } from './frameVirtualization'
 import { sameLiveSet } from './frameMount'
 import { POSTER_ZOOM, readLiveCapMemory, selectLiveFrames, type LiveFrameCandidate } from './liveFrameCap'
+import { useMeasuredFrameHeights } from './frameMeasuredHeights'
 import { PosterFill } from './PosterFill'
 import { usePosterFillFrameId } from './posterFillTarget'
 import { resolveFramesWithPages } from './resolveFramesWithPages'
@@ -164,9 +165,18 @@ interface LiveSetState {
 
 const INITIAL_LIVE: LiveSetState = { key: '\u0000', ids: EMPTY_LIVE }
 
-/** A frame's board-space box, header included. */
-function frameRect(frame: BoardFrame): FrameRect {
-  return { x: frame.x, y: frame.y, width: frame.width ?? FRAME_WIDTH, height: (frame.height ?? FRAME_HEIGHT) + FRAME_HEADER_HEIGHT }
+/**
+ * A frame's board-space box, header included. A frame that hugs its content has
+ * no stored height: its measured one stands in (`frameMeasuredHeights.ts`), so a
+ * tall page whose middle is on screen is in view, not a picture.
+ */
+function frameRect(frame: BoardFrame, measuredHeights: ReadonlyMap<string, number>): FrameRect {
+  return {
+    x: frame.x,
+    y: frame.y,
+    width: frame.width ?? FRAME_WIDTH,
+    height: (frame.height ?? measuredHeights.get(frame.id) ?? FRAME_HEIGHT) + FRAME_HEADER_HEIGHT,
+  }
 }
 
 export function BoardFramesLayer() {
@@ -247,6 +257,8 @@ export function BoardFramesLayer() {
   const playPageId = useEditorStore((s) => (s.playMode ? (s.playState.screens.at(-1)?.pageId ?? s.activePageId) : null))
   // The one frame `PosterFill` has mounted just to photograph it, if any.
   const fillFrameId = usePosterFillFrameId()
+  // How tall each content-hugging frame really is (it decides what is in view).
+  const measuredHeights = useMeasuredFrameHeights()
 
   // Resolved frames, hoisted ABOVE this component's `hasActiveBoard` early
   // return because the live-set derivation below sets state and the hooks
@@ -260,7 +272,7 @@ export function BoardFramesLayer() {
   const pendingFrames = pendingBoardFrames(frames, relevantPages, pendingPages)
   const viewport = { panX, panY, zoom, width: viewportSize.width, height: viewportSize.height }
   const inViewFrameIds = framesWithPages
-    .filter(({ frame }) => isFrameOnScreen(frameRect(frame), viewport, 0))
+    .filter(({ frame }) => isFrameOnScreen(frameRect(frame, measuredHeights), viewport, 0))
     .map(({ frame }) => frame.id)
   const selectedFrameIdList = framesWithPages.filter(({ page }) => selectedFrameIds.includes(page.id)).map(({ frame }) => frame.id)
   const editingFrameId = !hasNodeSelection
@@ -297,7 +309,7 @@ export function BoardFramesLayer() {
   let liveFrameIds = liveSet.ids
   if (liveSet.key !== liveKey) {
     const candidates = framesWithPages.map(({ frame }): LiveFrameCandidate => {
-      const rect = frameRect(frame)
+      const rect = frameRect(frame, measuredHeights)
       const centerX = panX + (rect.x + rect.width / 2) * zoom
       const centerY = panY + (rect.y + rect.height / 2) * zoom
       return {

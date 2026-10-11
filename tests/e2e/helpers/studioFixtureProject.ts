@@ -273,16 +273,32 @@ export async function panIntoView(
   target: Locator,
   tolerancePx = 40,
 ): Promise<void> {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
+  // A frame that hugs its content is a fixed placeholder until its document has mounted and measured itself, then
+  // grows to its real height (poster-first mounting, SB-5: a frame is live only once the pan has put it in view).
+  // Its centre moves while it grows, so the box is only judged once two reads agree on its size; the 8 attempts
+  // count corrections, not time spent waiting for the frame to finish arriving.
+  let corrections = 0
+  let lastSize = ''
+  for (let tick = 0; tick < 120; tick += 1) {
     const [rootBox, targetBox] = await Promise.all([canvasRoot.boundingBox(), target.boundingBox()])
     if (!rootBox) throw new Error('panIntoView: the canvas root has no bounding box')
     if (!targetBox) throw new Error('panIntoView: target has no bounding box')
+
+    const size = `${Math.round(targetBox.width)}x${Math.round(targetBox.height)}`
+    const settled = size === lastSize
+    lastSize = size
 
     const rootCenterX = rootBox.x + rootBox.width / 2
     const rootCenterY = rootBox.y + rootBox.height / 2
     const dx = targetBox.x + targetBox.width / 2 - rootCenterX
     const dy = targetBox.y + targetBox.height / 2 - rootCenterY
+    if (!settled) {
+      await page.waitForTimeout(150)
+      continue
+    }
     if (Math.abs(dx) <= tolerancePx && Math.abs(dy) <= tolerancePx) return
+    corrections += 1
+    if (corrections > 8) break
 
     await page.mouse.move(rootCenterX, rootCenterY)
     await page.mouse.wheel(dx, dy)
