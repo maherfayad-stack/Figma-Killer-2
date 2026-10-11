@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react'
 import type { Page } from '@core/page-tree'
-import { registry } from '@core/module-engine'
+import { nodeAcceptsChildren } from '@core/module-engine'
 import type { InsertLocation } from '@site/store/insertLocation'
 import {
   getViewportLocalPoint,
@@ -181,7 +181,7 @@ export function resolveCanvasPointerInsertionDrop({
     candidates,
     point,
     zoom,
-    canHaveChildren: (moduleId) => registry.get(moduleId)?.canHaveChildren === true,
+    canHaveChildren: nodeAcceptsChildren,
   })
 
   if (!target) {

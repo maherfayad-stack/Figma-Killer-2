@@ -39,7 +39,7 @@
  * left behind in a frame the pointer has gone from — the same "hide what you
  * stopped tracking" discipline the selection overlay already follows.
  */
-import { registry } from '@core/module-engine'
+import { registry, nodeAcceptsChildren } from '@core/module-engine'
 import type { BoardGuide } from '@core/studio-board'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoardGuides } from '@site/store/slices/boardSelectors'
@@ -306,7 +306,7 @@ export function runCanvasDragFrame(session: DragSession, env: CanvasDragFrameEnv
       point,
       zoom: foreign.index.scale,
       copy: session.duplicating,
-      canHaveChildren,
+      canHaveChildren: nodeAcceptsChildren,
     })
     session.resolution = EMPTY_RESOLUTION
   } else {
@@ -317,7 +317,7 @@ export function runCanvasDragFrame(session: DragSession, env: CanvasDragFrameEnv
       candidates: session.index.candidates,
       point,
       zoom: session.index.scale,
-      canHaveChildren,
+      canHaveChildren: nodeAcceptsChildren,
     })
     session.foreignResolution = EMPTY_TRANSPLANT_RESOLUTION
   }
@@ -506,10 +506,6 @@ export function dragLabel(tree: NodeTree<PageNode>, draggedIds: string[], dragge
   if (draggedIds.length > 1) return `${draggedIds.length} layers`
   const node = tree.nodes[draggedId]
   return node ? getNodeDisplayName(node, registry.get(node.moduleId), undefined) : 'Layer'
-}
-
-function canHaveChildren(moduleId: string): boolean {
-  return registry.get(moduleId)?.canHaveChildren === true
 }
 
 /**

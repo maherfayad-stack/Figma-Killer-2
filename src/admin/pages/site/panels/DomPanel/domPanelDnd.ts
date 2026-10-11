@@ -1,4 +1,4 @@
-import { isResolvedByInstanceDetach, type Page } from '@core/page-tree'
+import { isResolvedByInstanceDetach, type Page, type PageNode } from '@core/page-tree'
 import {
   previewStructuralMove,
   resolvePageTreeDropTarget,
@@ -56,7 +56,7 @@ interface ResolveDomDropTargetInput {
   draggedIds?: string[]
   overId: string
   zone: DomDropZone
-  canHaveChildren: (moduleId: string) => boolean
+  canHaveChildren: (node: PageNode) => boolean
 }
 
 const MIN_EDGE_HIT_ZONE = 8
@@ -124,7 +124,7 @@ interface ResolveDomTransplantDropInput {
   draggedIds: string[]
   overId: string
   zone: DomDropZone
-  canHaveChildren: (moduleId: string) => boolean
+  canHaveChildren: (node: PageNode) => boolean
 }
 
 /**

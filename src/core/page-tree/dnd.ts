@@ -28,7 +28,7 @@ interface ResolvePageTreeDropTargetInput {
   draggedIds?: string[]
   overId: string
   zone: PageTreeDropZone
-  canHaveChildren: (moduleId: string) => boolean
+  canHaveChildren: (node: PageNode) => boolean
 }
 
 export function resolvePageTreeDropTarget({
@@ -55,7 +55,7 @@ export function resolvePageTreeDropTarget({
   if (draggedIds.includes(overId)) return null
 
   if (zone === 'inside') {
-    if (!canHaveChildren(over.moduleId)) return null
+    if (!canHaveChildren(over)) return null
 
     // Slot instances under a VC ref are structural and locked, but their
     // children are the user-authored slot fill. Allow drops into those slots;

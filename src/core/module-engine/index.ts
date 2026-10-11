@@ -55,3 +55,4 @@ export { sanitizePackageName, packageModuleId, PALETTE_HIDDEN_NAME_RE } from './
 export { validateNodeProps } from './validateNodeProps'
 
 export { resolveHtmlTagBadge } from './htmlTagBadge'
+export { nodeAcceptsChildren } from './nodeAcceptsChildren'

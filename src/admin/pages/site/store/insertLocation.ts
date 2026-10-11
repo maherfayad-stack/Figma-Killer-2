@@ -24,7 +24,7 @@
  *     VC ref, which read as a broken click in the editor.
  */
 
-import { registry } from '@core/module-engine'
+import { nodeAcceptsChildren } from '@core/module-engine'
 import type { NodeTree, PageNode } from '@core/page-tree'
 
 export interface InsertLocation {
@@ -81,8 +81,7 @@ export function resolveInsertLocation(
   // The page root always accepts children even if its module entry is
   // unregistered (load-order edge case) — pages are never leaves.
   const isRoot = page.rootNodeId === targetNodeId
-  const definition = registry.get(target.moduleId)
-  const acceptsChildren = isRoot || definition?.canHaveChildren === true
+  const acceptsChildren = isRoot || nodeAcceptsChildren(target)
 
   if (!acceptsChildren) {
     // Leaf target → insert as next sibling under target's parent.

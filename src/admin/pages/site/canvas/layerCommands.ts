@@ -7,9 +7,9 @@
  * the palette (`spotlight/commands/layerArrange.ts`) and the right-click menu
  * (`LayerNodeContextMenu`). None of them re-derives a rule.
  */
-import { getParent } from '@core/page-tree'
+import { getParent, type PageNode } from '@core/page-tree'
 import { isAutoLayoutDisplay } from '@core/studio-runtime'
-import { registry } from '@core/module-engine'
+import { nodeAcceptsChildren } from '@core/module-engine'
 import { pushToast } from '@ui/components/Toast'
 import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 import { measureInRenderingFrame } from './canvasSelectionMeasure'
@@ -54,8 +54,8 @@ export function moveSelectionToEnd(end: 'front' | 'back'): void {
 
 // ── Auto layout (IX-10, PA-7, PA-8) ──────────────────────────────────────────
 
-function isContainer(moduleId: string, isRoot: boolean): boolean {
-  return isRoot || registry.get(moduleId)?.canHaveChildren === true
+function isContainer(node: PageNode, isRoot: boolean): boolean {
+  return isRoot || nodeAcceptsChildren(node)
 }
 
 /**
@@ -79,7 +79,7 @@ export async function toggleFlexLayout(): Promise<void> {
   if (!tree || ids.length === 0) return
 
   const single = ids.length === 1 ? tree.nodes[ids[0]!] : undefined
-  if (single && isContainer(single.moduleId, single.id === tree.rootNodeId)) {
+  if (single && isContainer(single, single.id === tree.rootNodeId)) {
     const measured = await measureInRenderingFrame([single.id], ['display'], store.activeBreakpointId, [single.id])
     const display = measured?.get(single.id)?.computedStyle.display ?? ''
     if (isAutoLayoutDisplay(display)) removeAutoLayoutKeepPositions(single.id)

@@ -501,7 +501,7 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
         e.stopPropagation()
         return
       }
-      // Editable-target guard: the canvas treats Enter / Space as
+      // Editable-target guard: the canvas treats Enter as
       // "click this node" so a focused-but-not-clicked node can be
       // activated from the keyboard. When the keystroke originates from
       // an `<input>` / `<textarea>` / `[contenteditable]` (e.g. a form
@@ -526,7 +526,10 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
       // this handler), so "click the focused node" turned Shift+Enter (select
       // parent) and Enter (select children) into "select the page root".
       if (e.key === 'Enter' && (e.shiftKey || e.altKey || e.metaKey || e.ctrlKey || useEditorStore.getState().selectedNodeId !== null)) return
-      if (e.key === 'Enter' || e.key === ' ') {
+      // Space is NOT an activation key here: it is the canvas's pan modifier, and
+      // the click it triggered stopped the keydown before the frame key relay
+      // heard it, so Space-drag on a selected layer moved the layer (R4 N2).
+      if (e.key === 'Enter') {
         e.preventDefault()
         handleNodeClick(nodeId, e as unknown as React.MouseEvent, true)
       }

@@ -52,7 +52,7 @@
  * images with other files adds the images and names what it left out.
  */
 import { isPlatformMac } from '@admin/spotlight/keybindings'
-import { registry } from '@core/module-engine'
+import { registry, nodeAcceptsChildren } from '@core/module-engine'
 import {
   getNodeHtmlTag,
   isPropWritableToSource,
@@ -456,6 +456,6 @@ export function isSvgFile(file: File): boolean {
 }
 
 /** Shared with the in-flight preview so both halves resolve the same containers. */
-export function canHaveChildren(moduleId: string): boolean {
-  return registry.get(moduleId)?.canHaveChildren === true
+export function canHaveChildren(node: PageNode): boolean {
+  return nodeAcceptsChildren(node)
 }

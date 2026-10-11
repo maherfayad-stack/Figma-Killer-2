@@ -73,7 +73,7 @@ import {
 } from '@ui/components/ContextMenu'
 import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
 import { useShallow } from 'zustand/react/shallow'
-import { registry } from '@core/module-engine'
+import { nodeAcceptsChildren } from '@core/module-engine'
 import { useInsertModule } from '@site/hooks/useInsertModule'
 import { resolveInsertLocation } from '@site/store/insertLocation'
 import { ModulePicker } from '@site/panels/AssetsPanel'
@@ -259,8 +259,7 @@ export function LayerNodeContextMenu({
     const isRoot = tree.rootNodeId === nodeId
     const node = tree.nodes[nodeId]
     if (!node) return false
-    const def = registry.get(node.moduleId)
-    return isRoot || def?.canHaveChildren === true
+    return isRoot || nodeAcceptsChildren(node)
   })
 
   const canComponentize = useEditorStore((s) => {

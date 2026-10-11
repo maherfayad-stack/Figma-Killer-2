@@ -9,7 +9,7 @@
  * of its own: it merges a foreign node map and its `<style>` rules into the
  * site, which no other node action does.
  */
-import { registry } from '@core/module-engine'
+import { nodeAcceptsChildren } from '@core/module-engine'
 import { reindexNodeParents } from '@core/page-tree'
 import { indexStyleRulesByName, linkImportedClassNames, mergeImportedStyleRules } from './importLinking'
 import type { StudioSourceWrites } from './studioSourceWrites'
@@ -37,8 +37,7 @@ export function createImportedNodesActions(
         const parent = tree.nodes[parentId]
         if (!parent) return false
         const isRoot = tree.rootNodeId === parentId
-        const definition = registry.get(parent.moduleId)
-        const acceptsChildren = isRoot || definition?.canHaveChildren === true
+        const acceptsChildren = isRoot || nodeAcceptsChildren(parent)
         if (!acceptsChildren) return false
 
         // The HTML importer stamps class *names* onto each fragment node's

@@ -31,6 +31,7 @@
  * and no unrelated line is reformatted.
  */
 import { Node, type JsxElement, type JsxFragment, type JsxSelfClosingElement, type SourceFile } from 'ts-morph'
+import { VOID_HTML_ELEMENTS } from '@core/utils/htmlTags'
 import { resolveJsxChildRange, type JsxChildRangeReason, type TextEdit } from './jsxChildRange'
 import type { JsxOpeningLikeElement } from './locateJsxElement'
 
@@ -108,6 +109,10 @@ export function resolveChildPlacement(
     // rewrites only the `/>` the user wrote, and is the only honest way to give
     // a leaf element a first child.
     const tagName = parentOpening.getTagNameNode().getText()
+    // A void element (`<input />`, `<img />`) has no closing tag to reopen into: `<input>…</input>` is a React error.
+    if (VOID_HTML_ELEMENTS.has(tagName)) {
+      return refuse('not-a-container', `<${tagName}> is a void element and cannot hold children. Drop beside it instead.`)
+    }
     const end = parentOpening.getEnd()
     const selfCloseStart = text.lastIndexOf('/>', end)
     if (selfCloseStart < parentOpening.getStart()) {

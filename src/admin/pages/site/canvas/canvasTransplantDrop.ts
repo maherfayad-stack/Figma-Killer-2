@@ -51,7 +51,7 @@ interface ResolveCanvasTransplantTargetInput {
   draggedIds: readonly string[]
   candidates: CanvasDropCandidate[]
   point: CanvasPoint
-  canHaveChildren: (moduleId: string) => boolean
+  canHaveChildren: (node: PageNode) => boolean
   /** Alt held: the drop copies across frames instead of moving. */
   copy: boolean
   /** Live canvas zoom (1 = 100%). See `getCanvasDropZone`. Defaults to 1. */
@@ -160,7 +160,7 @@ interface ResolveTransplantDropOverInput {
    * panel) omits it and keeps the append.
    */
   indexAmongChildren?: (containerId: string) => number | null
-  canHaveChildren: (moduleId: string) => boolean
+  canHaveChildren: (node: PageNode) => boolean
   copy: boolean
 }
 

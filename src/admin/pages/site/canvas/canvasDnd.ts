@@ -120,7 +120,7 @@ interface ResolveCanvasDropTargetInput {
   draggedIds: string[]
   candidates: CanvasDropCandidate[]
   point: CanvasPoint
-  canHaveChildren: (moduleId: string) => boolean
+  canHaveChildren: (node: PageNode) => boolean
   /** Live canvas zoom (1 = 100%). See `getCanvasDropZone`. Defaults to 1. */
   zoom?: number
 }
@@ -129,7 +129,7 @@ interface ResolveCanvasInsertionTargetInput {
   tree: NodeTree<PageNode>
   candidates: CanvasDropCandidate[]
   point: CanvasPoint
-  canHaveChildren: (moduleId: string) => boolean
+  canHaveChildren: (node: PageNode) => boolean
   /** Live canvas zoom (1 = 100%). See `getCanvasDropZone`. Defaults to 1. */
   zoom?: number
 }
@@ -425,7 +425,7 @@ interface ResolvePageTreeInsertionTargetInput {
    * Layers-panel row has none and keeps the append convention (`after`).
    */
   nearerSide?: 'before' | 'after'
-  canHaveChildren: (moduleId: string) => boolean
+  canHaveChildren: (node: PageNode) => boolean
 }
 
 export function resolvePageTreeInsertionTarget({
@@ -450,7 +450,7 @@ export function resolvePageTreeInsertionTarget({
 
   if (
     zone === 'inside' &&
-    canHaveChildren(over.moduleId) &&
+    canHaveChildren(over) &&
     (!over.locked || over.moduleId === 'base.slot-instance')
   ) {
     if (over.moduleId === 'base.visual-component-ref') {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import type { DragCancelEvent, DragEndEvent, DragMoveEvent, DragStartEvent } from '@dnd-kit/core'
-import type { Page } from '@core/page-tree'
-import { registry } from '@core/module-engine'
+import type { Page, PageNode } from '@core/page-tree'
+import { registry, nodeAcceptsChildren } from '@core/module-engine'
 import { getNodeDisplayName } from '@core/page-tree'
 import { useEditorStore } from '@site/store/store'
 import {
@@ -88,9 +88,7 @@ export function useDomPanelDnd({
   const [invalidReason, setInvalidReason] = useState<string | null>(null)
 
   // exception #1: feeds resolveTargetAtPoint's effect-bound closure (exhaustive-deps)
-  const canHaveChildren = useCallback((moduleId: string) => {
-    return registry.get(moduleId)?.canHaveChildren === true
-  }, [])
+  const canHaveChildren = useCallback((node: PageNode) => nodeAcceptsChildren(node), [])
 
   // `useState` lazy init (an initializer, not memoization): ONE registry object
   // for the panel's lifetime. Rows read it through

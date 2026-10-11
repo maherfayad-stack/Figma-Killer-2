@@ -13,7 +13,7 @@
  * panel and was already long; this block is one responsibility (arranging
  * the selection) and needs none of that file's state beyond the targets.
  */
-import { registry } from '@core/module-engine'
+import { registry, nodeAcceptsChildren } from '@core/module-engine'
 import { getNodeDisplayName } from '@core/page-tree'
 import { ContextMenuItem, ContextMenuSeparator, ContextMenuSubmenu } from '@ui/components/ContextMenu'
 import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
@@ -63,7 +63,7 @@ export function LayerArrangeMenuItems({ targetIds, layerIdsUnderPointer, onClose
   const store = () => useEditorStore.getState()
   const single = nodes.length === 1 ? nodes[0] : undefined
   const isRoot = single !== undefined && single.id === page?.rootNodeId
-  const isContainer = single !== undefined && (isRoot || registry.get(single.moduleId)?.canHaveChildren === true)
+  const isContainer = single !== undefined && (isRoot || nodeAcceptsChildren(single))
   const locked = nodes.every((node) => node.locked === true)
   // Not "Wrap in …": that is the Wrap submenu's name, and one menu must not
   // offer two items a reader (or a screen reader) cannot tell apart.
