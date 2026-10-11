@@ -188,10 +188,12 @@ async function bringAFrameOnScreen(page: Page, canvasRoot: Locator): Promise<voi
   await page.keyboard.press('Control+0')
   await page.waitForTimeout(600)
 
+  // A frame mounts a beat after the view that puts it on screen (the picture covers the gap), and below zoom 0.35
+  // it is a picture again, so each zoom step is given time to mount before the next one is taken.
   for (let attempt = 0; attempt < 16; attempt += 1) {
-    if (await anyFrame.isVisible({ timeout: 1_000 }).catch(() => false)) return
+    if (await anyFrame.waitFor({ state: 'visible', timeout: 2_500 }).then(() => true).catch(() => false)) return
     await page.keyboard.press('-')
-    await page.waitForTimeout(400)
+    await page.waitForTimeout(300)
   }
 
   throw new Error(

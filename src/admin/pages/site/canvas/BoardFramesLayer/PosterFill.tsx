@@ -22,6 +22,7 @@
  *   localized page tree, which only a live frame fetches.
  * It never retries a frame whose picture did not arrive within
  * {@link FILL_TIMEOUT_MS}; that key stays blank until the page changes.
+ * `posterFillTarget.ts` publishes whether it is still working (`data-poster-fill`).
  */
 import { useContext, useEffect } from 'react'
 import { useShallow } from 'zustand/react/shallow'
@@ -34,7 +35,7 @@ import { framePosters, selectPosterStyleSignature } from './framePosters'
 import { waitForBoardQuiet } from './framePosterQueue'
 import { posterKey } from './posterKey'
 import { nextFillCandidate, type FillCandidate } from './posterFillPlan'
-import { setPosterFillFrameId } from './posterFillTarget'
+import { setPosterFillFrameId, setPosterFillState } from './posterFillTarget'
 import { resolveFramesWithPages } from './resolveFramesWithPages'
 
 /** How long one frame gets to produce its picture once mounted (its mount is staged, then settles, then is photographed). */
@@ -62,10 +63,16 @@ export function PosterFill({ liveFrameIds, enabled }: PosterFillProps) {
   const viewportActions = useContext(CanvasViewportActionsContext)
 
   useEffect(() => {
-    if (!enabled) return
+    if (!enabled) {
+      setPosterFillState('done')
+      return
+    }
+    setPosterFillState('running')
     const controller = new AbortController()
     const candidates = fillCandidates(resolveFramesWithPages(frames, pages), styleSignature, boardAxes)
-    void runPosterFill(candidates, new Set(liveFrameIds), () => viewCenter(viewportActions?.canvasRootRef.current ?? null), controller.signal)
+    void runPosterFill(candidates, new Set(liveFrameIds), () => viewCenter(viewportActions?.canvasRootRef.current ?? null), controller.signal).then((finished) => {
+      if (finished) setPosterFillState('done')
+    })
     return () => {
       controller.abort()
       setPosterFillFrameId(null)
@@ -108,10 +115,10 @@ async function runPosterFill(
   liveFrameIds: ReadonlySet<string>,
   getViewCenter: () => { x: number; y: number },
   signal: AbortSignal,
-): Promise<void> {
+): Promise<boolean> {
   const failedKeys = new Set<string>()
   while (!signal.aborted) {
-    if (!(await waitForBoardQuiet(signal))) return
+    if (!(await waitForBoardQuiet(signal))) return false
     const next = nextFillCandidate(candidates, {
       viewCenter: getViewCenter(),
       liveFrameIds,
@@ -119,14 +126,15 @@ async function runPosterFill(
       hasPoster: (key) => framePosters.has(key),
       failedKeys,
     })
-    if (!next) return
+    if (!next) return true
     if (await framePosters.ensure(next.key)) continue
-    if (signal.aborted) return
+    if (signal.aborted) return false
     setPosterFillFrameId(next.frameId)
     const landed = await posterArrives(next.key, signal)
     setPosterFillFrameId(null)
     if (!landed && !signal.aborted) failedKeys.add(next.key)
   }
+  return false
 }
 
 /** Resolves true when the store holds a picture for `key`; false on timeout or abort. */

@@ -2166,7 +2166,19 @@ cap), waits for `useFramePosterCapture` to photograph it, lets it go and takes t
 next: serially, and only once the board has been quiet
 (`framePosterQueue.waitForBoardQuiet`). It skips Tier-2 boards with a ready dev
 server (SB-8 owns bridge posters) and frames pinned to another locale, and never
-retries a key whose picture did not arrive within 8 s.
+retries a key whose picture did not arrive within 8 s. The layer stamps whether it
+is still working as `data-poster-fill="running|done"` on `board-frames-layer`, so
+a test that measures an idle board waits for `done` instead of counting the fill's
+mounts as the editor's (`canvas-feel-budgets.e2e.ts`'s idle-rAF budget does).
+
+**A hugging frame's box is its measured height.** A frame with no stored height
+is as tall as its document, and the in-view test has to use that: with the 800 px
+default a 3,000 px page whose middle is on screen would be a picture. One shared
+`ResizeObserver` over the frame bodies (`frameMeasuredHeights.ts`) feeds
+`BoardFramesLayer`'s rects, and a poster of such a frame is sized by its own
+aspect ratio (`data-frame-auto-height` also while a poster is showing), so a
+frame does not change size when it is promoted. A frame with no picture yet is
+the 800 px title placeholder and grows once it has one.
 
 **Why the bridge cap applies only once the server is ready (P6-C history).**
 Until its dev server is ready a Tier-2 frame IS its same-origin fallback, and

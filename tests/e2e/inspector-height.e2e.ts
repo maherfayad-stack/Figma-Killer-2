@@ -386,6 +386,9 @@ async function clickLayer(
   target: Locator,
   offset?: { x: number; y: number },
 ): Promise<void> {
+  // The frame holding the layer is a picture until it is in view at a readable zoom (poster-first mounting): bring
+  // it on screen first, then wait for its document.
+  await panIntoView(page, canvasRoot, page.locator('[data-page-id]').first())
   await expect(target).toBeVisible({ timeout: 15_000 })
   await panIntoView(page, canvasRoot, target)
   const box = await target.boundingBox()

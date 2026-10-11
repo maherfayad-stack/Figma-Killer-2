@@ -132,7 +132,7 @@ import { sameLiveSet } from './frameMount'
 import { POSTER_ZOOM, readLiveCapMemory, selectLiveFrames, type LiveFrameCandidate } from './liveFrameCap'
 import { useMeasuredFrameHeights } from './frameMeasuredHeights'
 import { PosterFill } from './PosterFill'
-import { usePosterFillFrameId } from './posterFillTarget'
+import { usePosterFillFrameId, usePosterFillState } from './posterFillTarget'
 import { resolveFramesWithPages } from './resolveFramesWithPages'
 import { getStudioTrustTier, subscribeStudioTrustTier } from '@site/studio/studioProjectTrust'
 import { useDevServerReadiness } from '@site/studio/useDevServerReadiness'
@@ -257,6 +257,7 @@ export function BoardFramesLayer() {
   const playPageId = useEditorStore((s) => (s.playMode ? (s.playState.screens.at(-1)?.pageId ?? s.activePageId) : null))
   // The one frame `PosterFill` has mounted just to photograph it, if any.
   const fillFrameId = usePosterFillFrameId()
+  const fillState = usePosterFillState()
   // How tall each content-hugging frame really is (it decides what is in view).
   const measuredHeights = useMeasuredFrameHeights()
 
@@ -375,6 +376,7 @@ export function BoardFramesLayer() {
       ref={layerRef}
       className={styles.layer}
       data-testid="board-frames-layer"
+      data-poster-fill={fillState}
     >
       {framesWithPages.length === 0 && pendingFrames.length === 0 ? (
         <div className={styles.emptyState}>
