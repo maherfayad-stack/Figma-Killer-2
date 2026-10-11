@@ -351,7 +351,7 @@ export function resolveWriteContainer(tree: NodeTree<PageNode>, parentId: string
       ok: false,
       refusal: {
         reason: 'shared-component',
-        message: `${instanceLabel(bare)} does not render children, so a drop into it can only go inside the component's own markup - which every use of it shares.`,
+        message: `${instanceLabel(bare)} does not render children, so a drop into it can only go inside the component's own markup, which every use of it shares. Detach this instance first.`,
         aboutNodeId: bare.id,
       },
     }

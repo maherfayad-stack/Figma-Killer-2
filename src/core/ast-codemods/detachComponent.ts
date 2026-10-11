@@ -235,7 +235,7 @@ function gateInsertedMarkup(inserted: Node, page: SourceFile, plan: DetachPlan):
       )
     }
     if (kinds.has('call-site') && now !== plan.callSiteKinds.get(name)) {
-      fail('name-collision', `The call site's \`${name}\` would bind to something else once the markup is inlined.`)
+      fail('name-collision', `The call site's \`${name}\` would bind to something else once the markup is inlined. Rename it in the code.`)
     }
     if (kinds.has('module') && now !== 'module') {
       fail(
@@ -244,12 +244,12 @@ function gateInsertedMarkup(inserted: Node, page: SourceFile, plan: DetachPlan):
       )
     }
     if (kinds.has('global') && now !== 'none') {
-      fail('name-collision', `The detached markup reads the global \`${name}\`, which the page shadows at that position.`)
+      fail('name-collision', `The detached markup reads the global \`${name}\`, which the page shadows at that position. Rename the page's \`${name}\`.`)
     }
     if (kinds.has('hook')) {
       const component = enclosingFunctionComponent(inserted)
       if (!component || bindingScopeAt(inserted, name, page) !== component.getBody()) {
-        fail('name-collision', `The detached markup's \`${name}\` would not bind to the hook call written at the top of the page's component.`)
+        fail('name-collision', `The detached markup's \`${name}\` would not bind to the hook call at the top of the page's component. Rename it in the code.`)
       }
     }
   }
@@ -257,7 +257,7 @@ function gateInsertedMarkup(inserted: Node, page: SourceFile, plan: DetachPlan):
     const kinds = plan.expected.get(name)
     const unboundBefore = kinds?.has('call-site') && plan.callSiteKinds.get(name) === 'none'
     if (!kinds?.has('global') && !unboundBefore) {
-      fail('unbound-reference', `The detached markup would read \`${name}\`, which nothing in the page declares.`)
+      fail('unbound-reference', `The detached markup would read \`${name}\`, which nothing in the page declares. Duplicate the component and edit the copy.`)
     }
   }
 }
@@ -288,17 +288,13 @@ export function detachComponentInstance(params: DetachComponentParams): DetachRe
   const fullTagName = opening.getTagNameNode().getText()
   const identifier = fullTagName.split('.')[0]!
   if (!/^[A-Z]/.test(fullTagName)) {
-    return refuse('not-a-component', `<${fullTagName}> is a plain HTML element, not a component instance.`)
+    return refuse('not-a-component', `<${fullTagName}> is a plain HTML element, not a component instance. Select a component instance.`)
   }
 
   const resolved = resolveComponentCallSite(project, sourceFile, workspaceRoot, identifier, file, line, col, { designSystem: 'local' })
   if (!resolved.ok) {
     if (resolved.failure.reason === 'package-component') {
-      return refuse(
-        'package-component',
-        `${resolved.failure.message} Detaching a package component uses a different action ` +
-          '("Eject to local component" / "Replace with markup snapshot"), not yet available.',
-      )
+      return refuse('package-component', resolved.failure.message)
     }
     return refuse('unresolvable', resolved.failure.message)
   }
@@ -307,7 +303,7 @@ export function detachComponentInstance(params: DetachComponentParams): DetachRe
   const roots = getReturnedJsxRoots(fn)
   const chosen = roots.find((r) => r.chosen)
   if (!chosen) {
-    return refuse('no-renderable-jsx', `${identifier} has no renderable JSX to inline.`)
+    return refuse('no-renderable-jsx', `${identifier} has no renderable JSX to inline. Edit the component in the code.`)
   }
   const hadAlternatives = roots.some((r) => !r.chosen)
 

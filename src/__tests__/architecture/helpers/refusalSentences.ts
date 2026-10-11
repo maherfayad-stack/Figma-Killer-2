@@ -171,7 +171,7 @@ export const MAX_REFUSAL_SENTENCES = 2
  * remedy.
  */
 const REMEDY_VERBS = [
-  'add', 'allow', 'apply', 'ask', 'assign', 'do', 'draw', 'frame', 'nudge', 'pass', 'position', 're-export', 'switch', 'widen', 'change', 'check', 'choose', 'click', 'close', 'convert', 'copy', 'destructure', 'enter', 'insert', 'point', 'reduce', 'rewrite', 'simplify', 'create', 'delete', 'detach',
+  'add', 'allow', 'apply', 'ask', 'assign', 'do', 'draw', 'frame', 'nudge', 'pass', 'position', 're-export', 'spread', 'switch', 'widen', 'change', 'check', 'choose', 'click', 'close', 'convert', 'copy', 'destructure', 'enter', 'insert', 'point', 'reduce', 'rewrite', 'simplify', 'create', 'delete', 'detach',
   'drag', 'drop', 'duplicate', 'edit', 'enable', 'export', 'extract', 'finish', 'fix', 'give', 'group', 'hold', 'import',
   'inline', 'install', 'keep', 'make', 'merge', 'move', 'name', 'open', 'paste', 'pick', 'place', 'press', 'put', 'reload',
   'remove', 'rename', 'reorder', 'replace', 'resize', 'restore', 'retry', 'run', 'save', 'select', 'set', 'show', 'split',

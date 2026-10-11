@@ -61,14 +61,14 @@ export class CallSiteValues {
       if (explicit) {
         fail(
           'spread-ambiguous',
-          `This call site sets \`${name}\` and then spreads {...${lastSpread.expr.getText()}}, which may or may not override it — which value renders can't be known from source.`,
+          `This call site sets \`${name}\` and then spreads {...${lastSpread.expr.getText()}}, so which value renders is unknown. Set \`${name}\` after the spread in the code.`,
         )
       }
       if (spreads.length > 1) {
-        fail('spread-ambiguous', `This call site spreads ${spreads.length} objects, and \`${name}\` could come from any of them.`)
+        fail('spread-ambiguous', `This call site spreads ${spreads.length} objects, and \`${name}\` could come from any of them. Spread a single object instead.`)
       }
       if (!Node.isIdentifier(lastSpread.expr)) {
-        fail('spread-ambiguous', `This call site spreads {...${lastSpread.expr.getText()}}, which detach can't read a prop out of — spread a named object instead.`)
+        fail('spread-ambiguous', `This call site spreads {...${lastSpread.expr.getText()}}, which detach cannot read a prop out of. Spread a named object instead.`)
       }
       const base = lastSpread.expr.getText()
       const text = /^[A-Za-z_$][\w$]*$/.test(name) ? `${base}.${name}` : `${base}[${jsStringLiteral(name)}]`
@@ -121,6 +121,6 @@ export class CallSiteValues {
       const attrText = raw.includes('"') ? (raw.includes("'") ? undefined : `'${raw}'`) : `"${raw}"`
       return jsxStringValue(raw, /[\r\n]/.test(raw) ? undefined : attrText, NO_NAMES)
     }
-    fail('unsupported-params', `${this.componentName} uses its children as a value, and this call site passes more than one child.`)
+    fail('unsupported-params', `${this.componentName} uses its children as a value, and this call site passes more than one child. Pass a single child.`)
   }
 }
