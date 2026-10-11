@@ -129,9 +129,10 @@ describe('studio_duplicate_frame_as_variant', () => {
     expect(created.pageId).toBe('home')
     expect(created.width).toBe(400)
     expect(created.axes).toEqual({ direction: 'rtl' })
-    // Beside the source, same row — the placement `boardSlice.ts` uses, sharing
-    // the one `VARIANT_GAP`.
-    expect(created.x).toBe(0 + 400 + VARIANT_GAP)
+    // Beside the source, same row, in FREE space — the placement `boardSlice.ts`
+    // uses (`freeSlotBeside`). One gap past Home would be x=448, which is ON the
+    // About frame (480..1504), so the copy lands one gap past About instead.
+    expect(created.x).toBe(480 + FRAME_WIDTH + VARIANT_GAP)
     expect(created.y).toBe(0)
     expect(out.data.x).toBe(created.x)
   })

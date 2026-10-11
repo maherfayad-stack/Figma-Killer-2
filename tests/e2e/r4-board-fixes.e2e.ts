@@ -54,15 +54,6 @@ const ABOUT = `export default function About() {
 }
 `
 
-const SIDE = `export default function Side() {
-  return (
-    <main style={{ padding: "30px", width: "360px", fontFamily: "sans-serif", background: "#fff" }}>
-      <h1>Side page</h1>
-    </main>
-  )
-}
-`
-
 interface Frame {
   id: string
   pageId: string
@@ -552,5 +543,3 @@ test.describe('#15 page row click', () => {
     await expect(visibleCanvasIframe(aboutFrame)).toBeVisible({ timeout: 60_000 })
   })
 })
-
-export { canvasContentFrame, mouseClick }
