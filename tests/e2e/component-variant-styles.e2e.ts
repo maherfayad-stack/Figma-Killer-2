@@ -140,5 +140,15 @@ test.describe('CV-4 — a style edit on a variant lands in that variant', () => 
     expect(await colourOf('button.btn-primary')).toEqual(primaryBefore)
     expect(await colourOf('button.btn-danger')).toEqual(dangerBefore)
     expect(await colourOf('button.btn-ghost')).toHaveLength(ghostBefore.length)
+
+    // One undo takes the declaration out again: the file is what it was, byte for byte, and the ghost cells follow.
+    await canvasRoot.focus()
+    await page.keyboard.press('Control+z')
+    await expect
+      .poll(() => FILES.map(read), { message: 'undo did not restore the files', timeout: 30_000 })
+      .toEqual(FILES.map((rel) => before[rel]!))
+    await expect
+      .poll(async () => new Set(await colourOf('button.btn-ghost')), { message: 'the ghost cells never went back', timeout: 60_000 })
+      .toEqual(new Set(ghostBefore))
   })
 })

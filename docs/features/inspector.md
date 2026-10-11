@@ -2378,6 +2378,12 @@ It is erased from a production build at its mount site.
 
 ---
 
+## §13. Editing a variant: the write target is the variant's rule (CV-4)
+
+While the selected element is a component's own element and the person is editing the MAIN component (any element of a variants gallery, or a component named by "Edit main component"), `SelectionModel.writeTargetFor` is not the P1 rule: a variant prop that styles the element aims EVERY property at the shown variant's rule (`.btn-ghost`), or returns `none` with the reason and the remedy when that variant has no honest rule. It never falls back to the base class or to `style=""`, which is exactly the leak the rule exists to close. `VariantContextChip` (above the sections) says "Editing variant ghost: .btn-ghost in Button.module.css", switches axis when several props style the element, and is the refusal text when none can; a refused commit is one `warning` toast with "Open in code". On an INSTANCE (which owns no element) the Component section's Main component mode shows the same sentence with **Edit style**, which enters the instance and selects the element. Contract and limits: `docs/features/studio-import.md`, "Style edits per variant — the variant edit context (CV-4)".
+
+---
+
 ## Gates that bite work in this area
 
 `css-token-policy`, `no-css-var-fallbacks`, `button-primitive-usage` (popovers

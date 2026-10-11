@@ -170,6 +170,51 @@ describe('a CSS module class map', () => {
   })
 })
 
+describe('a breakpoint context (atRuleForContext)', () => {
+  it('lands in the variant rule\'s own @media block, and the base rule\'s is not touched', () => {
+    write(
+      'ui/Tag.tsx',
+      [
+        "import './Tag.css'",
+        '',
+        "export type Tone = 'calm' | 'loud'",
+        '',
+        "export function Tag({ tone = 'calm' }: { tone?: Tone }) {",
+        '  return <span className={`tag tag-${tone}`}>t</span>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    const css = [
+      '.tag { padding: 4px; }',
+      '.tag-calm { background: #eef; }',
+      '.tag-loud { background: #fee; }',
+      '@media (max-width: 600px) {',
+      '  .tag { padding: 2px; }',
+      '  .tag-loud { background: white; }',
+      '}',
+      '',
+    ].join('\n')
+    write('ui/Tag.css', css)
+    const context = contextFor('ui/Tag.tsx', 'Tag', 'span', { tone: 'loud' })
+    if (context?.chosen.kind !== 'rule') throw new Error('expected a rule')
+    const atRule = 'media (max-width: 600px)'
+    const edit: StudioEdit = {
+      kind: 'css',
+      op: 'set',
+      nodeId: `css:${context.chosen.file}#${context.chosen.selector}#${atRule}#color`,
+      file: context.chosen.file,
+      selector: context.chosen.selector,
+      property: 'color',
+      value: 'navy',
+      atRule,
+    }
+    const result = applyStudioEditBatch(dir, [edit], {}, EDITOR)
+    expect(result.refusals).toEqual([])
+    expect(read('ui/Tag.css')).toBe(css.replace('  .tag-loud { background: white; }', '  .tag-loud { background: white; color: navy; }'))
+  })
+})
+
 describe('a data attribute', () => {
   const BADGE = [
     "import './Badge.css'",
