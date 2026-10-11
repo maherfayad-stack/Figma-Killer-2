@@ -152,7 +152,7 @@ describe('refuses honestly', () => {
     const back = applyStudioEditBatch(dir, [restore(forward.undoToken!)], {}, EDITOR)
     expect(back.written).toBe(0)
     expect(back.refusals.map((refusal) => refusal.reason)).toEqual(['restore-stale'])
-    expect(back.refusals[0]!.message).toContain('pages/Home.tsx has changed since that edit')
+    expect(back.refusals[0]!.message).toContain('pages/Home.tsx changed after that edit')
     expect(read('pages/Home.tsx')).toBe(beforeRestore)
   })
 

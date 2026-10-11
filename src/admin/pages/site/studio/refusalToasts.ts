@@ -168,22 +168,12 @@ export function reportEditRefusals(refusals: readonly StudioEditRefusalReport[])
  */
 export function reportClassTokenRefusals(refusals: readonly ClassTokenRefusal[]): void {
   for (const refusal of refusals) {
-    toastOnce(`class-token::${refusal.nodeLabel}::${refusal.className}::${refusal.reason}`, {
-      kind: 'warning',
-<<<<
-    toastOnce(`class-token::${refusal.nodeLabel}::${refusal.className}::${refusal.reason}`, {
-      kind: 'warning',
-      title: 'Class not attached in source',
-      body: `${refusal.className} on ${refusal.nodeLabel}: ${refusal.message}`,
-    })
-====
     const target = decodeSourceNodeId(refusal.nodeId)
     toastOnce(`class-token::${refusal.nodeLabel}::${refusal.className}::${refusal.reason}`, {
       kind: 'warning',
       title: 'Class not attached in source',
       body: `${refusal.className} on ${refusal.nodeLabel}: ${refusal.message}`,
       ...(target ? { action: { label: 'Open in code', onSelect: () => jumpToSource(target) } } : {}),
-    })
     })
   }
 }

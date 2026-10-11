@@ -201,7 +201,7 @@ describe('htmlToJsx - elements and text', () => {
   })
 
   it('refuses markup with no elements, with a sentence', () => {
-    expect(htmlToJsx('   ')).toEqual({ ok: false, message: 'There is no HTML to paste.' })
+    expect(htmlToJsx('   ')).toEqual({ ok: false, message: 'There is no HTML to paste. Copy some HTML first.' })
     const styleOnly = htmlToJsx('<style>.a{color:red}</style>')
     expect(styleOnly.ok).toBe(false)
     expect(styleOnly.ok === false && styleOnly.message).toContain('only a stylesheet')

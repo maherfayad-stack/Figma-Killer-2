@@ -68,7 +68,7 @@ describe('R2 — per-prop resolution, not the node-level "first resolution" fall
     const node = { codeProps: ['icon'], resolvedProps: {} }
     const constraint = explainPropConstraint(node, 'icon')
     assertWellFormed(constraint)
-    expect(constraint.explanation).toBe('Set in code.')
+    expect(constraint.explanation).toBe('This value is set in code. Edit it in the code.')
   })
 
   it('a writable prop returns null', () => {
@@ -263,7 +263,7 @@ describe('explainStructuralConstraint', () => {
     })
     assertWellFormed(constraint)
     expect(constraint.reason).toBe('cross-file')
-    expect(constraint.explanation).toContain('different file')
+    expect(constraint.explanation).toContain('same file')
     expect(constraint.actions[0]?.kind).toBe('jump-to-source')
   })
 

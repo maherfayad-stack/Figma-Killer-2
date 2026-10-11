@@ -99,7 +99,7 @@ describe('compare-and-swap — a stale restore refuses and writes nothing', () =
 
     const result = restoreUndoJournal(dir, token!)
     expect(result).toMatchObject({ ok: false, reason: 'restore-stale' })
-    if (!result.ok) expect(result.message).toContain('pages/Other.tsx has changed since')
+    if (!result.ok) expect(result.message).toContain('pages/Other.tsx changed after that edit')
     // All or nothing: the untouched file was NOT put back either.
     expect(read('pages/Home.tsx')).toBe('home v2\n')
     expect(read('pages/Other.tsx')).toBe('other v3 — an agent edited it\n')

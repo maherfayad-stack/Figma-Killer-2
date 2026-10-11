@@ -557,7 +557,7 @@ describe('a layout child reorders (IX-1)', () => {
     release(document, 'ArrowDown')
     unsubscribe()
     expect(seen.map((toast) => toast.title)).toContain("This layer can't be nudged")
-    expect(seen.map((toast) => toast.body).join(' ')).toContain('position: absolute')
+    expect(seen.map((toast) => toast.body).join(' ')).toContain('Use the arrow along the layout')
   })
 
 })
