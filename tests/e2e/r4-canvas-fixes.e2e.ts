@@ -505,3 +505,97 @@ test.describe('#5: Escape in a text edit keeps what was typed', () => {
     await expect.poll(() => selectedInFrames(page), { timeout: 10_000, message: 'the text layer is not selected' }).toBeGreaterThan(0)
   })
 })
+
+test.describe('N6: Escape cancels an insertion drag', () => {
+  test.setTimeout(240_000)
+
+  test('Escape mid-drag removes the ghost and the release inserts nothing', async ({ page }) => {
+    const { node } = await openHome(page)
+    const at = centre(await visualBox(node(ID.input1)))
+    await dragNotchTo(page, 'canvas-notch-div-btn', at)
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(200)
+    await page.mouse.move(at.x + 5, at.y + 5, { steps: 3 })
+    await page.mouse.up()
+    await page.waitForTimeout(1500)
+    expect(readFile(REL), 'the release inserted although the drag was cancelled').toBe(HOME)
+    await expect(page.locator('[data-position="before"], [data-position="after"], [data-position="inside"]')).toHaveCount(0)
+  })
+})
+
+test.describe('N7: a new edit after an undo clears redo', () => {
+  test.setTimeout(240_000)
+
+  test('undo an insertion, nudge something else, redo does nothing', async ({ page }) => {
+    const { node, canvasRoot } = await openHome(page)
+    const at = centre(await visualBox(node(ID.input1)))
+    // A real insertion, then undone.
+    await dragNotchTo(page, 'canvas-notch-div-btn', at)
+    await page.mouse.up()
+    await expect.poll(() => readFile(REL), { timeout: 30_000 }).not.toBe(HOME)
+    await canvasRoot.focus()
+    await page.keyboard.press('Control+z')
+    await expect.poll(() => readFile(REL), { timeout: 30_000 }).toBe(HOME)
+    // A different edit: nudge the tab bar.
+    const bar = centre(await visualBox(node(ID.tabBar)))
+    await page.keyboard.down('ControlOrMeta')
+    await page.mouse.click(bar.x, bar.y)
+    await page.keyboard.up('ControlOrMeta')
+    await page.waitForTimeout(500)
+    await page.keyboard.press('ArrowUp')
+    await expect.poll(() => readFile(REL), { timeout: 30_000 }).toContain('bottom: "11px"')
+    const edited = readFile(REL)
+    await page.keyboard.press('Control+Shift+z')
+    await page.waitForTimeout(1500)
+    expect(readFile(REL), 'redo re-applied the undone insertion on top of a newer edit').toBe(edited)
+  })
+})
+
+
+test.describe('N7: undo and redo walk one chain', () => {
+  test.setTimeout(300_000)
+
+  test('group, ungroup, an Escape-cancelled drag, a real insertion: undo twice, redo twice', async ({ page }) => {
+    const { node, canvasRoot } = await openHome(page)
+    const state = (): string => {
+      const src = readFile(REL)
+      return src === HOME ? 'home' : `changed:${src.match(/<div \/>/g)?.length ?? 0}`
+    }
+    const one = centre(await visualBox(node(sourceNodeId(HOME, REL, 'input', 1))))
+    const two = centre(await visualBox(node(sourceNodeId(HOME, REL, 'input', 2))))
+    await page.keyboard.down('ControlOrMeta')
+    await page.mouse.click(one.x, one.y)
+    await page.keyboard.up('ControlOrMeta')
+    await page.keyboard.down('Shift')
+    await page.mouse.click(two.x, two.y)
+    await page.keyboard.up('Shift')
+    await page.waitForTimeout(400)
+    await page.keyboard.press('Control+g')
+    await expect.poll(state, { timeout: 30_000 }).not.toBe('home')
+    const grouped = readFile(REL)
+    await page.waitForTimeout(2000)
+    await page.keyboard.press('Control+Shift+g')
+    await expect.poll(() => readFile(REL), { timeout: 30_000 }).toBe(HOME)
+    await page.waitForTimeout(2000)
+    // An insertion drag that is cancelled leaves no trace in the history.
+    const at = centre(await visualBox(node(ID.input1)))
+    await dragNotchTo(page, 'canvas-notch-div-btn', at)
+    await page.keyboard.press('Escape')
+    await page.mouse.up()
+    await page.waitForTimeout(800)
+    expect(readFile(REL)).toBe(HOME)
+    await dragNotchTo(page, 'canvas-notch-div-btn', at)
+    await page.mouse.up()
+    await expect.poll(state, { timeout: 30_000 }).not.toBe('home')
+    const inserted = readFile(REL)
+    await canvasRoot.focus()
+    await page.keyboard.press('Control+z')
+    await expect.poll(() => readFile(REL), { timeout: 30_000 }).toBe(HOME)
+    await page.keyboard.press('Control+z')
+    await expect.poll(() => readFile(REL), { timeout: 30_000, message: 'the second undo did not bring back the grouped state' }).toBe(grouped)
+    await page.keyboard.press('Control+Shift+z')
+    await expect.poll(() => readFile(REL), { timeout: 30_000, message: 'redo after two undos did not re-ungroup' }).toBe(HOME)
+    await page.keyboard.press('Control+Shift+z')
+    await expect.poll(() => readFile(REL), { timeout: 30_000, message: 'the second redo did not re-insert' }).toBe(inserted)
+  })
+})

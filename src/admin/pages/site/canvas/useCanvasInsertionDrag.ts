@@ -281,6 +281,7 @@ export function useCanvasInsertionDrag<TGhost>({
 
     const teardown = () => {
       disposeGuard()
+      window.removeEventListener('keydown', onKeyDown, true)
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
       window.removeEventListener('pointercancel', cancel)
@@ -357,6 +358,27 @@ export function useCanvasInsertionDrag<TGhost>({
       setDrag(null)
     }
 
+    // Escape abandons the drag, as it does a move drag: the ghost and the label
+    // go, and the release that is still to come inserts nothing. That release
+    // would otherwise click the button the drag started from, which inserts a
+    // second copy at the default location, so its click is swallowed (R4 N6).
+    const onKeyDown = (keyEvent: KeyboardEvent) => {
+      if (keyEvent.key !== 'Escape') return
+      keyEvent.preventDefault()
+      keyEvent.stopImmediatePropagation()
+      const wasStarted = started
+      cancel()
+      if (!wasStarted) return
+      const swallowRelease = () => {
+        window.removeEventListener('pointerup', swallowRelease, true)
+        suppressClickRef.current = true
+        window.setTimeout(() => {
+          suppressClickRef.current = false
+        }, 0)
+      }
+      window.addEventListener('pointerup', swallowRelease, true)
+    }
+
     teardownRef.current?.()
     markCanvasPointerRelay(event.pointerId)
     // ERR-12 — a move with the button up: the release landed where no relay
@@ -368,6 +390,7 @@ export function useCanvasInsertionDrag<TGhost>({
       onReleaseLost: () => up(lastPoint),
       onAbandon: cancel,
     })
+    window.addEventListener('keydown', onKeyDown, true)
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
     window.addEventListener('pointercancel', cancel)
