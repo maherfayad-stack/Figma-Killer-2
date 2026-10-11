@@ -41,6 +41,7 @@
 import { relative } from 'node:path'
 import { Node, SyntaxKind, type ObjectLiteralExpression, type SourceFile } from 'ts-morph'
 import type {
+  ElementPosition,
   PropDefault,
   SourceRange,
   VariantBinding,
@@ -299,15 +300,76 @@ function objectLiteralNamed(ctx: ComponentAnalysisContext, name: string): Object
   return bare && Node.isObjectLiteralExpression(bare) ? bare : undefined
 }
 
-function entriesOf(ctx: ComponentAnalysisContext, object: ObjectLiteralExpression, members: readonly string[]): VariantEntry[] {
-  const entries: VariantEntry[] = []
+/** The class names an entry's value spells: a class string's words, or the key of `styles.x` / `styles['x']` on a CSS-module import. */
+function entryClassNames(value: Node | undefined, sheets: readonly ImportedStylesheet[]): { names: string[]; moduleSheet?: ImportedStylesheet } {
+  if (!value) return { names: [] }
+  const text = classLiteralText(value)
+  if (text !== undefined) return { names: text.split(/\s+/).filter((word) => word !== '') }
+  const moduleOf = (target: Node) => (Node.isIdentifier(target) ? sheets.find((s) => s.isModule && s.localName === target.getText()) : undefined)
+  if (Node.isPropertyAccessExpression(value)) {
+    const sheet = moduleOf(value.getExpression())
+    return sheet ? { names: [value.getName()], moduleSheet: sheet } : { names: [] }
+  }
+  if (Node.isElementAccessExpression(value)) {
+    const sheet = moduleOf(value.getExpression())
+    const key = value.getArgumentExpression()
+    const name = key ? classLiteralText(key) : undefined
+    return sheet && name !== undefined ? { names: [name], moduleSheet: sheet } : { names: [] }
+  }
+  return { names: [] }
+}
+
+/**
+ * The stylesheet rule behind each member's entry (CV-4). A word every entry
+ * shares is the component's base class, not the member's; of what is left, the
+ * entry has a rule only when EXACTLY ONE word has one in a stylesheet the
+ * component imports. A utility-class list (Tailwind) has none, and an entry
+ * with two candidate rules has no single honest one, so both report nothing.
+ */
+function entryRules(
+  ctx: ComponentAnalysisContext,
+  values: ReadonlyMap<string, Node | undefined>,
+  sheets: readonly ImportedStylesheet[],
+): Map<string, { selector: string; range: SourceRange }> {
+  const spelled = new Map([...values].map(([member, value]) => [member, entryClassNames(value, sheets)]))
+  const shared = new Set<string>()
+  if (spelled.size > 1) {
+    const [first, ...rest] = [...spelled.values()]
+    for (const name of first!.names) if (rest.every((other) => other.names.includes(name))) shared.add(name)
+  }
+  const found = new Map<string, { selector: string; range: SourceRange }>()
+  for (const [member, { names, moduleSheet }] of spelled) {
+    const searched = moduleSheet ? [moduleSheet] : sheets.filter((sheet) => !sheet.isModule)
+    const candidates = names
+      .filter((name) => !shared.has(name))
+      .map((name) => firstRuleAcross(ctx, searched, (all) => findClassRule(all, name)))
+      .filter((rule): rule is { selector: string; range: SourceRange } => rule !== undefined)
+    if (candidates.length === 1) found.set(member, candidates[0]!)
+  }
+  return found
+}
+
+function entriesOf(
+  ctx: ComponentAnalysisContext,
+  object: ObjectLiteralExpression,
+  members: readonly string[],
+  sheets: readonly ImportedStylesheet[],
+): VariantEntry[] {
+  const properties = new Map<string, Node>()
+  const values = new Map<string, Node | undefined>()
   for (const member of members) {
     const property = object
       .getProperties()
       .find((p) => (Node.isPropertyAssignment(p) || Node.isShorthandPropertyAssignment(p)) && propertyNameText(p.getNameNode()) === member)
-    if (property) entries.push({ member, range: sourceRangeOf(ctx.workspaceRoot, property) })
+    if (!property) continue
+    properties.set(member, property)
+    values.set(member, Node.isPropertyAssignment(property) ? property.getInitializer() : undefined)
   }
-  return entries
+  const rules = entryRules(ctx, values, sheets)
+  return [...properties].map(([member, property]) => {
+    const rule = rules.get(member)
+    return { member, range: sourceRangeOf(ctx.workspaceRoot, property), ...(rule ? { rule } : {}) }
+  })
 }
 
 /** The imported name (`cva`, `tv`) a call's callee resolves to through a package-import of the cva family, or `undefined`. */
@@ -351,7 +413,7 @@ function classifyUse(ctx: ComponentAnalysisContext, prop: AnalyzedProp, use: Nod
           kind: 'claim',
           signature: `lookup:${target.getText()}`,
           build: () => {
-            const entries = entriesOf(ctx, object, prop.members)
+            const entries = entriesOf(ctx, object, prop.members, sheets)
             return entries.length === 0
               ? undefined
               : { kind: 'lookup-object', objectName: target.getText(), range: sourceRangeOf(ctx.workspaceRoot, object), entries }
@@ -455,7 +517,7 @@ function classifyUse(ctx: ComponentAnalysisContext, prop: AnalyzedProp, use: Nod
           build: () => {
             const groupObject = cvaGroup(config.variants, group)
             if (!groupObject) return undefined
-            const entries = entriesOf(ctx, groupObject, prop.members)
+            const entries = entriesOf(ctx, groupObject, prop.members, sheets)
             return entries.length === 0
               ? undefined
               : { kind: 'cva', callee: config.helper, group, range: sourceRangeOf(ctx.workspaceRoot, config.call), entries }
@@ -539,11 +601,34 @@ function cssClassBinding(
 }
 
 // ---------------------------------------------------------------------------
+// The element a use styles (CV-4)
+// ---------------------------------------------------------------------------
+
+/**
+ * The JSX element a use of the prop sits in, as the position of its tag name
+ * (the `file:line:col` the parser's node id carries). A use outside any JSX (a
+ * class string built above the `return`) styles the component's first element,
+ * which is where such a string is almost always handed. `undefined` when the
+ * component has no JSX element at all.
+ */
+function elementOf(ctx: ComponentAnalysisContext, use: Node): ElementPosition | undefined {
+  const isElement = (node: Node): boolean => Node.isJsxOpeningElement(node) || Node.isJsxSelfClosingElement(node)
+  const owner = use.getFirstAncestor(isElement) ?? ctx.fn.getFirstDescendant(isElement)
+  if (!owner || !(Node.isJsxOpeningElement(owner) || Node.isJsxSelfClosingElement(owner))) return undefined
+  const { line, column } = owner.getSourceFile().getLineAndColumnAtPos(owner.getTagNameNode().getStart())
+  return { line, column }
+}
+
+function withElement(binding: VariantBinding, element: ElementPosition | undefined): VariantBinding {
+  return element ? { ...binding, element } : binding
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
 function opaque(ctx: ComponentAnalysisContext, node: Node, reason: string): VariantBinding {
-  return { kind: 'opaque', file: relFile(ctx, node.getSourceFile()), line: node.getStartLineNumber(), reason }
+  return withElement({ kind: 'opaque', file: relFile(ctx, node.getSourceFile()), line: node.getStartLineNumber(), reason }, elementOf(ctx, node))
 }
 
 /**
@@ -576,5 +661,7 @@ export function analyzeVariantBinding(ctx: ComponentAnalysisContext, prop: Analy
   if (mismatched) {
     return opaque(ctx, uses[0]!, `\`${prop.name}\` is consumed in more than one way (${first.signature} and ${mismatched.signature})`)
   }
-  return first.build() ?? opaque(ctx, uses[0]!, `\`${prop.name}\` is consumed by ${first.signature}, but nothing it points at was found on disk`)
+  const built = first.build()
+  if (built) return withElement(built, elementOf(ctx, uses[0]!))
+  return opaque(ctx, uses[0]!, `\`${prop.name}\` is consumed by ${first.signature}, but nothing it points at was found on disk`)
 }
