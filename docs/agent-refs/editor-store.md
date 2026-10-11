@@ -555,9 +555,14 @@ OUTSIDE history: `previewActiveTreeMutation` shows the value, the hold
 (`studio/instanceOverrideHold.ts`, read by `collectNodeDiffEdits`) keeps the
 autosave diff from writing it to the component, and the write landing pushes the
 one `restore-journal` entry (`undo` option, `kind: 'push'`) — the preview is
-never a second undo step. `mainEditComponent` (+ `setMainEditComponent`) is the
-explicit all-instances mode; the router steps aside while it names the node's
-`fromComponent` (an edit to a value that is a prop of the component there gets an
+never a second undo step. `mainEditTarget` (+ `setMainEditTarget`, `mainEditMode.ts`)
+is the explicit "edit the shared thing itself" mode — `{ kind: 'component', name }`
+for all instances, or (G-8) `{ kind: 'layout', rel }` for one Next layout file,
+which lifts the `route-chrome` structural refusal for that file only
+(`@core/page-tree`'s `layoutEdit.ts` holds the one fact the pure placement rule
+reads; `setMainEditTarget` is its only writer, and a first load, a project switch,
+`createSite` and `clearSite` end the mode). The router steps aside while the
+target is the component the node's `fromComponent` names (an edit to a value that is a prop of the component there gets an
 info toast, "Set by a prop", instead of a write the server would refuse). A
 gesture parked behind another structural write is re-aimed with
 `again(relocate(id))`, like every other.

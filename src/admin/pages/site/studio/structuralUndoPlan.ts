@@ -216,8 +216,10 @@ const NODE_ID_FIELDS = ['anchorNodeId', 'parentNodeId'] as const
  */
 export function addressesSourceLiteral(edit: StructuralEditPayload): boolean {
   // OD-8 — a `list-item` edit names an ARRAY LITERAL's `[`, never a node; the
-  // codemod's own `length` check is its guard.
-  return edit.kind === 'asset' || edit.kind === 'list-item'
+  // codemod's own `length` check is its guard. G-9's `unroll-list` names the
+  // `.map`'s row TEMPLATE (a row id without its `#n`), which is not a board
+  // node either; its guard is the same `length` plus the array's position.
+  return edit.kind === 'asset' || edit.kind === 'list-item' || edit.kind === 'unroll-list'
 }
 
 /**
@@ -255,16 +257,24 @@ export function structuralEditNodeIds(edit: StructuralEditPayload): string[] {
  * vacating them) let it through. `historyNodeIdRemap.ts`'s isomorphic walk is
  * what makes the correspondence available; this is the part of the entry it
  * applies to.
+ *
+ * Except G-9's `unroll-list`: its `nodeId` is the row TEMPLATE's position in the
+ * file as it was BEFORE the write, not a node of any tree. The list and its
+ * unrolled rows are the same shape, so the reparse that follows its undo maps
+ * the unrolled elements onto the rows — and an element of the unrolled tree
+ * can sit on exactly that position, which would re-aim the redo at it.
  */
 export function remapStructuralEditIds(
   edits: StructuralEditPayload[],
   remap: ReadonlyMap<string, string>,
 ): StructuralEditPayload[] {
+  const remapped = (edit: StructuralEditPayload) => edit.kind !== 'unroll-list'
   // The same array reference back when nothing changed, so a reload that
   // renumbered ids elsewhere in the project keeps `remapHistoryEntries`' "real
   // keep, not a copy" property for the entries it did not touch.
-  if (!edits.some((edit) => structuralEditNodeIds(edit).some((id) => remap.has(id)))) return edits
+  if (!edits.some((edit) => remapped(edit) && structuralEditNodeIds(edit).some((id) => remap.has(id)))) return edits
   return edits.map((edit) => {
+    if (!remapped(edit)) return edit
     const next: StructuralEditPayload = { ...edit, nodeId: remap.get(edit.nodeId) ?? edit.nodeId }
     for (const field of NODE_ID_FIELDS) {
       const value = edit[field]

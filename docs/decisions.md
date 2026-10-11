@@ -55,7 +55,7 @@ Source: the five plans in [`docs/programs/`](programs/), indexed by [`ROADMAP.md
 | OD-18 | Does a move carry props and `.map` row values? | Yes: bake the resolved literal as a named `const` at the destination; a function, JSX or object-ref prop that cannot be serialized still refuses, naming it. A row element moved out of a template is a copy of that row | open |
 | OD-20 | Typing into a code-bound field replaces the binding with the literal? | Yes, with an info notice and Undo; the field stays read-only with an "Unbind" button otherwise | open |
 | OD-23 | Detach hoists state hooks into the enclosing component when the call site is hook-legal? | Yes, with fresh names per instance; otherwise the component-copy fallback runs | open |
-| OD-24 | "Unroll list" as an explicit, lossy, menu-only action? | Yes | open |
+| OD-24 | "Unroll list" as an explicit, lossy, menu-only action? | Yes. **Built to this recommendation (G-9, wave 4) while still open**: nothing offers it unprompted (refusal dialog, Layers menu, palette), the consequence is an info notice with Undo, and ⌘Z restores the file byte for byte. If the owner answers no, deleting it is `unrollMapExpression.ts`, `studioUnrollWriteback.ts`, `unrollListActions.ts`, `listRowUnroll.ts` and the three entry points | open |
 | Brief-1 | Amend [`PROJECT-BRIEF.md`](../PROJECT-BRIEF.md) invariant 2 (needed by OD-17, OD-18, OD-20). Proposed sentence, to be added by the owner or on their go-ahead: "a write has one honest target, or one named consequence the user is shown and can undo" | Adopt after OD-17/18/20 are answered. The brief is **not** changed until then | open |
 
 ### Board speed ([`programs/board-speed.md`](programs/board-speed.md))

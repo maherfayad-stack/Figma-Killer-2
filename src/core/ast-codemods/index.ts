@@ -100,6 +100,13 @@ export type {
   DeleteJsxRefusal,
   DeleteJsxRefusalReason,
 } from './deleteJsxElement'
+export { unrollMapExpression, MAX_UNROLL_ITEMS } from './unrollMapExpression'
+export type {
+  UnrollMapExpressionParams,
+  UnrollMapExpressionResult,
+  UnrollRefusal,
+  UnrollRefusalReason,
+} from './unrollMapExpression'
 export { editListItems } from './editListItems'
 export type { EditListItemsParams, EditListItemsResult, ListItemRefusal, ListItemRefusalReason } from './editListItems'
 export type { CreatedJsxLocation } from './createdJsxLocation'

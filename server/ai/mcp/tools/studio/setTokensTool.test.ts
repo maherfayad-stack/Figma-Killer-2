@@ -146,7 +146,22 @@ describe('studio_set_tokens - rename and remove (CT-3)', () => {
     expect(result.ok).toBe(true)
     expect(read('src/index.css')).toBe(INDEX_CSS.replaceAll('--color-brand', '--color-primary'))
     expect(read('src/App.tsx')).toContain('var(--color-primary)')
-    expect(result.renamed).toEqual([{ name: '--color-brand', to: '--color-primary', mentions: 3, files: 2 }])
+    expect(result.renamed).toEqual([{ name: '--color-brand', to: '--color-primary', mentions: 3, files: 2, unfollowed: [] }])
+  })
+
+  it('renames a Tailwind @theme variable together with the utility classes that spell it, and refuses one whose classes it cannot follow (CT-6)', async () => {
+    const theme = ['@import "tailwindcss";', '@theme {', '  --color-crust: #c58940;', '  --spacing-gutter: 2rem;', '}', ''].join('\n')
+    viteProject(theme)
+    write('src/App.tsx', 'export function App() { return <main className="bg-crust hover:text-crust/50 p-gutter" /> }' + '\n')
+    const moved = await callRaw({ rename: { name: '--color-crust', to: '--color-toast' } })
+    expect(moved.ok).toBe(true)
+    expect(read('src/App.tsx')).toBe('export function App() { return <main className="bg-toast hover:text-toast/50 p-gutter" /> }' + '\n')
+    expect(moved.renamed).toEqual([{ name: '--color-crust', to: '--color-toast', mentions: 3, files: 2, unfollowed: [] }])
+
+    const refused = await callRaw({ rename: { name: '--spacing-gutter', to: '--spacing-edge' } })
+    expect(refused.ok).toBe(false)
+    expect(refused.code).toBe('invalid-input')
+    expect(String(refused.message)).toContain('every spacing and sizing utility')
   })
 
   it('refuses removing a token that is still read, and removes one that is not', async () => {

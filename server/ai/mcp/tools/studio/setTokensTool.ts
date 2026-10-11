@@ -106,7 +106,7 @@ function forEntry(refusal: ToolRefusal, index: number): ToolRefusal & { entryInd
 function planRefusal(refusal: TokenWriteRefusal): ToolRefusal & { entryIndex: number } {
   // The tool registry has no code of its own for these planner refusals; the
   // message and remedy carry the specifics.
-  const code = refusal.code === 'already-declared' || refusal.code === 'no-project-stylesheet' || refusal.code === 'in-use' || refusal.code === 'rename-blocked' ? 'invalid-input' : refusal.code
+  const code = refusal.code === 'already-declared' || refusal.code === 'no-project-stylesheet' || refusal.code === 'in-use' || refusal.code === 'rename-blocked' || refusal.code === 'remove-blocked' ? 'invalid-input' : refusal.code
   return forEntry(
     toolRefusal(code, refusal.message, {
       ...(refusal.remedy ? { remedy: refusal.remedy } : {}),
@@ -148,7 +148,7 @@ const setTokensTool: AiTool = {
       : remove
         ? [{ op: 'remove', name: remove.name, ...(remove.replaceWith ? { replaceWith: remove.replaceWith } : {}) }]
         : (set ?? []).map((request) => ({ op: 'set', name: request.name, value: request.value, target: request.scheme ?? 'light' }))
-    const plan = planTokenEdits(sources, edits, rename || remove ? readTokenWorkspaceFiles(dir) : [])
+    const plan = planTokenEdits(sources, edits, rename || remove ? readTokenWorkspaceFiles(dir, { allText: true }) : [])
     if (!plan.ok) return planRefusal(plan)
 
     return withProjectWriteLock(dir, () => {

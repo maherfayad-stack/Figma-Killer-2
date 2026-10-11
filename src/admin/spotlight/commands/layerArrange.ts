@@ -79,5 +79,13 @@ export function getLayerArrangeCommands(): Command[] {
       const state = useEditorStore.getState()
       await state.detachInstances(state.selectedNodeIds)
     }),
+    // G-9 (OD-24) — the same store action the Layers menu item and the refusal dialog call. A selection that is
+    // not in a list written out in this file does nothing (`planUnrollList` is the one place that decides).
+    layerCommand('layers.unrollList', 'Unroll list', 'Write the selected row’s list out as separate elements; it stops being drawn from its array', ['unroll', 'list', 'map', 'rows', 'repeat', 'expand'], async () => {
+      const { useEditorStore } = await import('@site/store/store')
+      const state = useEditorStore.getState()
+      const [nodeId] = state.selectedNodeIds
+      if (nodeId !== undefined) await state.unrollList(nodeId)
+    }),
   ]
 }

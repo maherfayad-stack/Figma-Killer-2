@@ -46,6 +46,7 @@ import { createWorkspaceProject, isWorkspaceWritablePath, unwritableWorkspaceSeg
 import { applyLineEnding, detectLineEnding, toLf } from '@core/utils/lineEndings'
 import type { VariantMember } from '@core/component-variants'
 import { extractLocalComponentCatalog, type LocalComponentSpec, type LocalPropSpec } from './componentSpecExtract'
+import { storiesPassingVariant } from './variantStoryUses'
 
 /** What the three kinds ask for, as the planner sees it (the wire shapes are in `studioVariantWriteback.ts`). */
 export type VariantEditRequest =
@@ -194,7 +195,11 @@ export function planVariantEdit(dir: string, request: VariantEditRequest, compon
 
   if (request.kind === 'remove-variant') {
     const sites = findComponentCallSites(project, dir, componentAbs, request.exportName)
-    const uses = callSitesPassingVariant(project, dir, sites, prop.name, request.name)
+    // A story's `args` are call sites too: an args-only story has no JSX for the scan above to find.
+    const uses = [
+      ...callSitesPassingVariant(project, dir, sites, prop.name, request.name),
+      ...storiesPassingVariant(dir, project, componentRel, prop.name, request.name),
+    ]
     if (uses.length > 0) {
       return refuse(
         'variant-in-use',

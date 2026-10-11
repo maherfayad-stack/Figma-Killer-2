@@ -170,7 +170,7 @@ beforeEach(() => {
   resetLoadedValues([p])
   store().loadSite(makeSite({ pages: [p], styleRules: { [RULE_ID]: tierRule } }))
   store().setActivePage(PAGE_ID)
-  useEditorStore.setState({ mainEditComponent: null } as Parameters<typeof useEditorStore.setState>[0])
+  useEditorStore.setState({ mainEditTarget: null } as Parameters<typeof useEditorStore.setState>[0])
   patchListener = (evt: Event) => {
     applySitePagesPatch((evt as CustomEvent<CmsSitePagesPatchDetail>).detail)
   }
@@ -251,7 +251,7 @@ describe('what an instance cannot give its own class keeps the ordinary write, w
 
   it('"Edit main component" steps aside, and a node outside a component is never its business', () => {
     stubFetch([{}])
-    store().setMainEditComponent('Tier')
+    store().setMainEditTarget({ kind: 'component', name: 'Tier' })
     expect(store().overrideClassOnInstance({ nodeId: ROOT_A, classId: RULE_ID, patch: { gap: '12px' }, contextId: null })).toBe(false)
     expect(store().overrideClassOnInstance({ nodeId: ROOT_ID, classId: RULE_ID, patch: { gap: '12px' }, contextId: null })).toBe(false)
     expect(saveCalls).toHaveLength(0)

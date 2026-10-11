@@ -1,0 +1,29 @@
+/* ApplyClassStrip - the utility classes that apply a theme value to the selected element. */
+
+.strip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    padding: var(--space-xs);
+    border-radius: var(--radius);
+    background: var(--bg-surface-2);
+    gap: var(--space-3xs);
+    grid-column: 1 / -1;
+}
+
+.label {
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+}
+
+.className {
+    font-family: monospace;
+}
+
+.blocked {
+    width: 100%;
+    margin: 0;
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+    line-height: 1.3;
+}

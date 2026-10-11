@@ -82,6 +82,7 @@ import { Copy2SolidIcon } from 'pixel-art-icons/icons/copy-2-solid'
 import { useSelectionModel } from '../selectionModel'
 import { showsComponentSection } from './componentSectionSelection'
 import { LazyComponentPropertiesEditor } from './LazyComponentPropertiesEditor'
+import { VariantStyleEntry } from './VariantStyleEntry'
 import styles from './ComponentSection.module.css'
 
 interface InstanceProps {
@@ -212,7 +213,10 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
           />
         )}
         {definitionSpec !== null && mode === 'component' ? (
-          <LazyComponentPropertiesEditor spec={definitionSpec} />
+          <>
+            <VariantStyleEntry instanceId={nodeId} callSite={{ componentName, sourceFile, callSiteProps }} spec={definitionSpec} />
+            <LazyComponentPropertiesEditor spec={definitionSpec} />
+          </>
         ) : /* One row per DECLARED prop (E1/E2.5). */ catalog === null ? (
           <PropRowsLoading keys={rows.map((row) => row.key)} />
         ) : rows.length === 0 ? (

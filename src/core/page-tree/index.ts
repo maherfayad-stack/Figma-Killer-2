@@ -94,6 +94,9 @@ export {
   planListRowRemove,
 } from './listRowPlans'
 export type { ListRowEditPlan, ListRowPlan } from './listRowPlans'
+export { planUnrollList } from './listRowUnroll'
+export { isEditedLayoutNodeId, layoutFileOf, layoutRouteCount, setEditedLayoutFile } from './layoutEdit'
+export type { UnrollListEdit, UnrollListPlan } from './listRowUnroll'
 // The same rule asked of a live tree: which sibling a move lands beside, which
 // element "inside the page" means, and whether a selection is one run (K3).
 export {

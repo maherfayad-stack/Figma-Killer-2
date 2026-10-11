@@ -29,8 +29,9 @@
  * partial one. An edit the plan already knows is whole-component does the same
  * before anything is posted.
  *
- * "Edit main component" (`mainEditComponent`) is the explicit all-instances
- * mode: while it names the node's component, the router steps aside.
+ * "Edit main component" (`mainEditTarget`, `mainEditMode.ts`) is the explicit
+ * all-instances mode: while it names the node's component, the router steps
+ * aside.
  *
  * Posts edits, never mints a tree: `no-vc-mode-branches-in-mutations` does not
  * apply (the posture `instanceActions.ts` has).
@@ -51,6 +52,7 @@ import { inlineTailKey } from './nodeIndex'
 import { planInstanceOverride, refusalSentence, type OverrideChange, type PlannedOverride } from './instanceOverridePlan'
 import { CLASS_FALLBACK_REASONS, classRefusalSentence, planClassOverride, type ClassOverrideEdit } from './classOverridePlan'
 import type { ClassOverrideRequest, InstanceOverrideSlice } from './instanceOverrideTypes'
+import { isEditingComponent } from './mainEditMode'
 import type { OptimisticPreviewHandle } from './structuralOptimism'
 import type { SiteSliceHelpers } from './types'
 
@@ -101,7 +103,7 @@ function declinesFedEdit(node: PageNode, change: OverrideChange): boolean {
 
 export function createInstanceOverrideActions(helpers: SiteSliceHelpers): {
   router: InstanceOverrideRouter
-  slice: Pick<InstanceOverrideSlice, 'setMainEditComponent' | 'overrideClassOnInstance' | 'instanceClassEditIsLocal'>
+  slice: Pick<InstanceOverrideSlice, 'setVariantEditAxis' | 'overrideClassOnInstance' | 'instanceClassEditIsLocal'>
 } {
   const { get, set, previewActiveTreeMutation } = helpers
 
@@ -249,7 +251,7 @@ export function createInstanceOverrideActions(helpers: SiteSliceHelpers): {
     if (!target || target.vc) return null
     const node = target.tree.nodes[request.nodeId]
     if (!node || !isInlinedNodeId(request.nodeId)) return null
-    if (state.mainEditComponent !== null && state.mainEditComponent === node.fromComponent) return null
+    if (isEditingComponent(state.mainEditTarget, node.fromComponent)) return null
     const atRule =
       request.contextId === null
         ? undefined
@@ -374,7 +376,7 @@ export function createInstanceOverrideActions(helpers: SiteSliceHelpers): {
       if (!target || target.vc) return false
       const node = target.tree.nodes[request.nodeId]
       if (!node || !isInlinedNodeId(request.nodeId)) return false
-      if (state.mainEditComponent !== null && state.mainEditComponent === node.fromComponent) return declinesFedEdit(node, request.change)
+      if (isEditingComponent(state.mainEditTarget, node.fromComponent)) return declinesFedEdit(node, request.change)
 
       const textProp = registry.get(node.moduleId)?.inlineTextEdit?.prop
       const plan = planInstanceOverride({
@@ -404,9 +406,9 @@ export function createInstanceOverrideActions(helpers: SiteSliceHelpers): {
     slice: {
       overrideClassOnInstance,
       instanceClassEditIsLocal,
-      setMainEditComponent: (componentName) => {
+      setVariantEditAxis: (prop) => {
         set((draft) => {
-          draft.mainEditComponent = componentName
+          draft.variantEditAxis = prop
         })
       },
     },
