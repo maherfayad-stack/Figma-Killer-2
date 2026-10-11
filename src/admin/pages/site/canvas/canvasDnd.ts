@@ -78,6 +78,8 @@ export interface CanvasInsertionTarget {
   overId: string
   rect: CanvasRect
   axis: CanvasDropAxis
+  /** The candidate's flow runs against child order (`row-reverse`, rtl): `before` is its visually-far edge. */
+  reversed?: boolean
   /**
    * Set when the drop lands in a flow container's own space at a child index
    * (`position: 'inside'` over the container itself): the line where the
@@ -439,6 +441,7 @@ export function resolveCanvasInsertionTarget({
     tree,
     overId: candidate.nodeId,
     zone,
+    nearerSide: nearerSiblingSide(candidate, point),
     canHaveChildren,
   })
   if (!target) return null
@@ -460,6 +463,7 @@ export function resolveCanvasInsertionTarget({
     index: index ?? target.index,
     rect: candidate.rect,
     axis: candidate.axis,
+    ...(candidate.reversed ? { reversed: true } : {}),
     ...(gap ? { gap } : {}),
   }
 }
@@ -552,10 +556,31 @@ export function nearestFlowIndex(
   return measured ? children.length : null
 }
 
+/**
+ * Which side of `candidate` the point is nearer to, in child-list order: the
+ * answer for a press in the MIDDLE of an element that cannot hold the new one
+ * (a Label, an image, a locked box). The edge bands of `getCanvasDropZone`
+ * only cover the outer ~26 % of the box; the rest is `inside`, which has no
+ * meaning for a leaf. Resolving that remainder as a fixed `after` put a drop
+ * on the upper half of Label 3 AFTER Label 3 - one slot past where the drop
+ * line and the pointer were. A tie goes to `after`, the side the append
+ * convention already uses.
+ */
+export function nearerSiblingSide(candidate: CanvasDropCandidate, point: CanvasPoint): 'before' | 'after' {
+  const { rect, axis, reversed } = candidate
+  const offset = axis === 'horizontal' ? point.x - rect.left : point.y - rect.top
+  const size = axis === 'horizontal' ? rect.width : rect.height
+  const inNearHalf = offset < size / 2
+  if (!inNearHalf) return reversed ? 'before' : 'after'
+  return reversed ? 'after' : 'before'
+}
+
 interface ResolvePageTreeInsertionTargetInput {
   tree: NodeTree<PageNode>
   overId: string
   zone: PageTreeDropPosition
+  /** Where a drop lands beside `overId` when `zone` is `inside` but `overId` cannot take it. */
+  nearerSide: 'before' | 'after'
   canHaveChildren: (moduleId: string) => boolean
 }
 
@@ -563,6 +588,7 @@ function resolvePageTreeInsertionTarget({
   tree,
   overId,
   zone,
+  nearerSide,
   canHaveChildren,
 }: ResolvePageTreeInsertionTargetInput): Omit<CanvasInsertionTarget, 'rect' | 'axis'> | null {
   const over = tree.nodes[overId]
@@ -596,7 +622,7 @@ function resolvePageTreeInsertionTarget({
           overId,
         }
       }
-      return siblingInsertionTarget(tree, overId, 'after')
+      return siblingInsertionTarget(tree, overId, nearerSide)
     }
 
     return {
@@ -607,7 +633,7 @@ function resolvePageTreeInsertionTarget({
     }
   }
 
-  return siblingInsertionTarget(tree, overId, zone === 'before' ? 'before' : 'after')
+  return siblingInsertionTarget(tree, overId, zone === 'inside' ? nearerSide : zone)
 }
 
 function siblingInsertionTarget(

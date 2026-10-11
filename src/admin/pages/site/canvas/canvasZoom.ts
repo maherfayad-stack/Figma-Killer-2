@@ -64,3 +64,13 @@ export function canvasZoomOf(element: HTMLElement): number {
 export function canvasTransformLayerOf(element: HTMLElement): HTMLElement | null {
   return element.closest<HTMLElement>('[data-canvas-transform-layer]')
 }
+
+/**
+ * The zoom the canvas is painted at right now, or 1 when no canvas is mounted.
+ * For a gesture that starts OUTSIDE the canvas (a drag out of a panel) and so
+ * holds no element of it - the same computed-matrix reading as `canvasZoomOf`.
+ */
+export function currentCanvasZoom(): number {
+  const layer = document.querySelector<HTMLElement>('[data-canvas-transform-layer]')
+  return layer ? canvasZoomOf(layer) : 1
+}
