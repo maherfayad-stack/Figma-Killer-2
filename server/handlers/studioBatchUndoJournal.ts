@@ -19,7 +19,7 @@
  * indentation no inverse move reproduces),
  * a free-canvas `canvas-layer-lift` / `canvas-layer-place` that MOVES (the page
  * and the layer module), a Frame selection (a `group` with a `frame`, PA-6), and an `insert` that asked for an exact undo
- * (`exactUndo`, also asked of a `duplicate` and a copying `transplant`: it writes into a childless parent). A batch holding any of them records ONE
+ * (`exactUndo`, also asked of a `duplicate` and a copying `transplant`: it writes into a childless parent), and CV-3's `add-variant` / `remove-variant` / `add-component-prop` (a component's signature plus its stylesheet). A batch holding any of them records ONE
  * entry covering every file the batch changed, so one gesture is one token,
  * however many elements a multi-select delete removed and across however
  * many files.
@@ -55,7 +55,7 @@ import type { StudioEdit, StudioEditApplyOutcome, StudioEditBatchOptions, Studio
 import { captureUndoPreImage, recordUndoJournal, restoreUndoJournal, undoJournalFiles } from './studio/undoJournal'
 
 /** The kinds a journaled batch records a pre-image for. */
-const JOURNALED_KINDS = new Set<StudioEdit['kind']>(['delete', 'detach', 'expose-prop', 'promote-override', 'swap', 'promote-component', 'move', 'reparent'])
+const JOURNALED_KINDS = new Set<StudioEdit['kind']>(['delete', 'detach', 'expose-prop', 'promote-override', 'swap', 'promote-component', 'move', 'reparent', 'add-variant', 'remove-variant', 'add-component-prop'])
 
 export function isJournaled(edit: StudioEdit): boolean {
   return (

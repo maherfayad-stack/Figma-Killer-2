@@ -393,8 +393,8 @@ skipped like any stale step.
 
 ### The undo journal — the one-shot writes (P3-F: ERR-2, DET-4)
 
-A delete, a detach, a swap and an extract replace source text no edit kind can
-describe: the deleted element's own bytes, the call site a detach inlined, the
+A delete, a detach, a swap, an extract and (CV-3) Add/Remove variant and Add
+property replace source text no edit kind can describe: the deleted element's own bytes, the call site a detach inlined, the
 attributes a swap dropped. So their undo is not an inverse edit. It is the
 server's **undo journal** (`server/handlers/studio/undoJournal.ts`): the
 editor's `/save` batch (`journal: true`, `studioBatchUndoJournal.ts`) reads

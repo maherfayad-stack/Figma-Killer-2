@@ -65,3 +65,12 @@ export {
   type CustomPropertyRemoveResult,
   type InsertCustomPropertyOptions,
 } from './customProperty'
+export {
+  cloneRule,
+  removeRule,
+  rewriteAttributeSelector,
+  rewriteClassSelector,
+  type CloneRuleResult,
+  type RemoveRuleResult,
+  type VariantRuleRefusal,
+} from './variantRule'
