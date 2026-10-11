@@ -22,7 +22,8 @@
  * Bounded: depth, total expressions visited and files parsed are capped, and
  * a cycle (`a = b; b = a`) ends as "computed". Never throws.
  */
-import { join, posix } from 'node:path'
+import { realpathSync } from 'node:fs'
+import { join, posix, sep } from 'node:path'
 import { ts } from 'ts-morph'
 import { readCappedFile } from './styleCompileFileRead'
 
@@ -101,7 +102,7 @@ export class ThemeFileReader {
     const cached = this.parsed.get(rel)
     if (cached !== undefined) return cached
     if (this.parsed.size >= MAX_FILES) return null
-    const text = readCappedFile(join(this.dir, ...rel.split('/')))
+    const text = this.readContained(rel)
     if (text === undefined) {
       this.parsed.set(rel, null)
       return null
@@ -111,6 +112,24 @@ export class ThemeFileReader {
     this.index(file)
     this.parsed.set(rel, file)
     return file
+  }
+
+  /**
+   * The text of a workspace file, or `undefined` for anything that is not plainly inside the workspace: a path with a
+   * backslash, a `..` or an empty segment, or one whose real location (a symlinked file or folder) leaves it. A
+   * theme file is read to be parsed, but a repository can name any path it likes in an `import`.
+   */
+  private readContained(rel: string): string | undefined {
+    if (rel.includes('\\') || rel.includes(':') || rel.split('/').some((segment) => segment === '' || segment === '..')) return undefined
+    const abs = join(this.dir, ...rel.split('/'))
+    try {
+      const root = realpathSync(this.dir)
+      const real = realpathSync(abs)
+      if (real !== root && !real.startsWith(`${root}${sep}`)) return undefined
+    } catch (_err) {
+      return undefined // missing, or a link that does not resolve
+    }
+    return readCappedFile(abs)
   }
 
   private index(file: ParsedFile): void {

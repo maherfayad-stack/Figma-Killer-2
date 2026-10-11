@@ -48,11 +48,11 @@ export interface ThemeClassScan {
   readonly dynamic: readonly number[]
 }
 
-export function isScriptFile(file: string): boolean {
+function isScriptFile(file: string): boolean {
   return SCRIPT_FILE_RE.test(file)
 }
 
-export function isApplyHostFile(file: string): boolean {
+function isApplyHostFile(file: string): boolean {
   return CSS_FILE_RE.test(file)
 }
 
@@ -64,7 +64,25 @@ interface Segment {
   readonly continues: boolean
 }
 
+/**
+ * Parsing every script file is the cost of this module, and the same file is
+ * asked about several times in one request (the rename planner checks the old
+ * and the new key, then rewrites) and again on every refresh of the panel's
+ * usage counts. The segments of a file are remembered by its exact text; a
+ * changed file is simply parsed again.
+ */
+const SEGMENT_CACHE_LIMIT = 2000
+const segmentCache = new Map<string, { text: string; segments: Segment[] }>()
+
+function lineOfOffset(text: string, offset: number): number {
+  let line = 1
+  for (let i = text.indexOf('\n'); i !== -1 && i < offset; i = text.indexOf('\n', i + 1)) line++
+  return line
+}
+
 function literalSegments(file: string, text: string): { segments: Segment[]; lineOf: (offset: number) => number } {
+  const cached = segmentCache.get(file)
+  if (cached?.text === text) return { segments: cached.segments, lineOf: (offset) => lineOfOffset(text, offset) }
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, TYPESCRIPT_ONLY_RE.test(file) ? ts.ScriptKind.TS : ts.ScriptKind.TSX)
   const segments: Segment[] = []
   const visit = (node: ts.Node): void => {
@@ -84,7 +102,9 @@ function literalSegments(file: string, text: string): { segments: Segment[]; lin
     ts.forEachChild(node, visit)
   }
   visit(source)
-  return { segments, lineOf: (offset) => source.getLineAndCharacterOfPosition(offset).line + 1 }
+  if (segmentCache.size >= SEGMENT_CACHE_LIMIT) segmentCache.clear()
+  segmentCache.set(file, { text, segments })
+  return { segments, lineOf: (offset) => lineOfOffset(text, offset) }
 }
 
 /** The class-bearing text of a file: each script string segment, or each `@apply` statement, with where it starts. */
@@ -94,7 +114,7 @@ function classTexts(file: string, text: string): { texts: Array<{ start: number;
     return { texts: segments.filter((segment) => segment.end > segment.start), lineOf }
   }
   const texts = [...text.matchAll(APPLY_STATEMENT_RE)].map((match) => ({ start: match.index, end: match.index + match[0].length, continues: false }))
-  return { texts, lineOf: (offset) => text.slice(0, offset).split('\n').length }
+  return { texts, lineOf: (offset) => lineOfOffset(text, offset) }
 }
 
 /**
@@ -146,7 +166,7 @@ export function themeClassUsage(file: string, text: string, byClass: ReadonlyMap
   const literal = isScriptFile(file) || isApplyHostFile(file)
   const { texts, lineOf } = literal
     ? classTexts(file, text)
-    : { texts: [{ start: 0, end: text.length, continues: false }], lineOf: (offset: number) => text.slice(0, offset).split('\n').length }
+    : { texts: [{ start: 0, end: text.length, continues: false }], lineOf: (offset: number) => lineOfOffset(text, offset) }
   for (const segment of texts) {
     const body = text.slice(segment.start, segment.end)
     for (const word of classWordsOf(body)) {

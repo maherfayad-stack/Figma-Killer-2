@@ -98,8 +98,7 @@ const StyleEditSchema = Type.Object({
 
 /**
  * One `className` token add/remove writeback (Track B2) — `setJsxClassName`.
- * Replaces Phase 0 item 0.6's honesty-only stopgap: a `node.classIds` change
- * now reaches disk here instead of only ever warning that it couldn't.
+ * Replaces Phase 0 item 0.6's honesty-only stopgap: a `node.classIds` change now reaches disk here.
  *
  * `add`/`remove` carry TOKENS, never `StyleRule` ids — the ids are Studio's own
  * `sc-<hash>` bookkeeping. Two token shapes, because two kinds of class exist
@@ -113,17 +112,16 @@ const StyleEditSchema = Type.Object({
  *     it produces markup that styles nothing outside the tool that computed
  *     that hash. `file` is the workspace-relative `*.module.css` path (guarded
  *     by `studioWriteback.ts`'s `resolveClassNameTokens` before it is ever
- *     turned into a specifier) and `local` is the class as WRITTEN in that file, so the
- *     codemod can emit the only reachable spelling: `styles.<local>`.
+ *     turned into a specifier); `local` is the class as WRITTEN in that file,
+ *     the only reachable spelling being `styles.<local>`.
  *
  * Can REFUSE with a specific reason (`css-module-binding` /
  * `template-dynamic` / `spread-attribute` / `unsupported-call` /
  * `unsupported-expression` — `ClassNameRefusalReason` in `@core/ast-codemods`)
  * exactly like `detach`/`swap`/`css` do — see `applyStudioEdit`'s `'class'`
- * case. Since P3-C (WB-18) an ADD to an expression `className` wraps it rather
- * than refusing, and a module token whose stylesheet the file does not import
- * yet is imported after the batch (`cssModuleImportPlan.ts`), so through this
- * schema `css-module-import-missing` no longer occurs.
+ * case. Since P3-C (WB-18) an ADD to an expression `className` wraps it rather than refusing, and a module token
+ * whose stylesheet the file does not import yet is imported after the batch (`cssModuleImportPlan.ts`), so
+ * `css-module-import-missing` no longer occurs through this schema.
  */
 const ClassNameTokenSchema = Type.Union([
   Type.Object({ kind: Type.Literal('literal'), token: Type.String() }),
@@ -138,13 +136,7 @@ const ClassEditSchema = Type.Object({
   nodeId: Type.String(),
   add: Type.Array(ClassNameTokenSchema),
   remove: Type.Array(ClassNameTokenSchema),
-  /**
-   * CT-6 - the editor asks for the pre-image when the class edit is a one-click
-   * "apply bg-primary" from the Variables panel: whether the token was already
-   * on the element is something only the source knows, and a remove written
-   * as its undo would take away a class the author had put there. The journal
-   * puts the file back byte for byte instead (`studioBatchUndoJournal.ts`).
-   */
+  /** CT-6 - asks for the journal's pre-image (an apply-a-class's inverse `remove` could delete a class the author had). */
   exactUndo: Type.Optional(Type.Literal(true)),
 })
 

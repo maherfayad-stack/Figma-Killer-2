@@ -225,6 +225,19 @@ describe('parse, never execute', () => {
     expect(entries[0]!.value).toBeNull()
   })
 
+  it('does not follow a backslash path out of the workspace either (a Windows separator is a path separator)', () => {
+    const outside = `outside-${Date.now()}.ts`
+    writeFileSync(join(dir, '..', outside), "export const stolen = { leaked: '#abcdef' }\n", 'utf8')
+    try {
+      write('tailwind.config.js', `import { stolen } from '.\\\\..\\\\${outside.replace('.ts', '')}'\nexport default { theme: { extend: { colors: stolen } } }\n`)
+      const entries = extractJsThemeEntries(dir)
+      expect(entries.map((entry) => entry.value)).toEqual([null])
+      expect(JSON.stringify(entries)).not.toContain('#abcdef')
+    } finally {
+      rmSync(join(dir, '..', outside), { force: true })
+    }
+  })
+
   it('a project with no JavaScript theme lists nothing', () => {
     write('src/App.tsx', 'export const App = () => null\n')
     expect(extractJsThemeEntries(dir)).toEqual([])
