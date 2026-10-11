@@ -43,8 +43,6 @@ import { writeSourceFile } from '@core/page-parser'
 import { PROP_NAME_PATTERN, VARIANT_NAME_PATTERN } from '@core/component-variants'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { planVariantEdit, type CanonicalSourceRel, type VariantEditPlan, type VariantEditRequest } from './studio/variantEditPlan'
-import { StudioEditRefusalError } from './studioEditRefusals'
-import type { StudioEditApplyOutcome } from './studioEditSchemas'
 
 const IDENTIFIER = PROP_NAME_PATTERN.source
 const VARIANT_NAME = VARIANT_NAME_PATTERN.source
@@ -164,18 +162,19 @@ function commitWrites(plan: Extract<VariantEditPlan, { ok: true }>): void {
 }
 
 /**
- * Applies one variant edit. Throws a {@link StudioEditRefusalError} for every
- * named decline (the batch reports it); returns `applied: true` once every
- * file is written.
+ * Applies one variant edit: `applied: true` once every file is written, or the
+ * named decline as a returned `refusal` (the dispatcher throws it — this module
+ * sits below `studioEditSchemas.ts` and `studioEditRefusals.ts` in the import
+ * graph, so it knows neither).
  */
 export function applyVariantEdit(
   dir: string,
   edit: VariantEdit,
   location: { rel: string },
   canonicalRel: CanonicalSourceRel,
-): StudioEditApplyOutcome {
+): { applied: true } | { refusal: { reason: string; message: string } } {
   const plan = currentPlan(dir, edit, location.rel, canonicalRel)
-  if (!plan.ok) throw new StudioEditRefusalError(plan.reason, plan.message)
+  if (!plan.ok) return { refusal: { reason: plan.reason, message: plan.message } }
   commitWrites(plan)
   planned.delete(edit)
   return { applied: true }

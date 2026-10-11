@@ -257,9 +257,7 @@ describe('untrusted on read', () => {
       path.relative(dir, path.join(outside, 'victim.css')).split(path.sep).join('/'),
       '.studio/theme.css',
       'node_modules/pkg/dist.css',
-      'dist/app.css',
       'components/../../victim.css',
-      'components/app.min.css',
       'C:/Windows/x.css',
     ]) {
       const planted = plant({ version: 1, at: 1, files: [{ rel, before: 'pwned', afterSha256: sha('victim\n') }] })

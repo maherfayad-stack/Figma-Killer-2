@@ -397,9 +397,12 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
     }
     case 'add-variant':
     case 'remove-variant':
-    case 'add-component-prop':
+    case 'add-component-prop': {
       // CV-3 — the component's definition: `loc` is its declaration, the rest is re-read from disk.
-      return applyVariantEdit(dir, edit, target, (rel) => canonicalSourceRel(dir, rel))
+      const result = applyVariantEdit(dir, edit, target, (rel) => canonicalSourceRel(dir, rel))
+      if ('refusal' in result) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
+      return result
+    }
     case 'insert-slot':
     case 'promote-component':
     case 'add-slot-prop': {
