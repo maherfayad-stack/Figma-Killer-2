@@ -126,9 +126,6 @@ describe('PortalFrameAdapter geometry:dirty', () => {
       await adapter.measureAll()
       // The body layout observer ring tracking already needs, plus ONE head observer for stylesheet rewrites.
       expect(constructed).toBe(2)
-      adapter.select([{ nodeId: 'n1' }])
-      adapter.hover({ nodeId: 'n1' })
-      expect(constructed).toBe(2)
       await adapter.measureAll()
       expect(constructed).toBe(2)
     } finally {
@@ -177,27 +174,6 @@ describe('PortalFrameAdapter geometry:dirty', () => {
     adapter.applyOverlay('mc-classes', '.x { width: 10px }')
     await settle()
     expect(fired).toBe(1)
-  })
-
-  it('the adapter own selection chrome never dirties geometry once it is mounted', async () => {
-    const doc = freshDoc()
-    doc.body.innerHTML = `<div data-node-id="n1"></div>`
-    const adapter = adapterFor(doc)
-    let fired = 0
-    adapter.on('geometry:dirty', () => {
-      fired += 1
-    })
-    // The first ring mounts the overlay root and gives a static body `position: relative`, which can move
-    // absolutely-positioned content: a real (and one-time) change, so geometry is read after it.
-    adapter.select([{ nodeId: 'n1' }])
-    await settle()
-    await adapter.measureAll()
-    // From here the rings are created, moved and removed inside the chrome root only.
-    adapter.hover({ nodeId: 'n1' })
-    adapter.select([])
-    adapter.select([{ nodeId: 'n1' }])
-    await settle()
-    expect(fired).toBe(0)
   })
 
   it('dispose() stops the signal', async () => {

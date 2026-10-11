@@ -30,5 +30,5 @@ export function registerFrameChrome(iframe: HTMLIFrameElement, handles: FrameChr
 
 /** The chrome registered for `iframe`, or `null`. */
 export function frameChromeFor(iframe: Element | null): FrameChromeHandles | null {
-  return iframe instanceof HTMLIFrameElement ? (registry.get(iframe) ?? null) : null
+  return iframe?.tagName === 'IFRAME' ? (registry.get(iframe) ?? null) : null
 }

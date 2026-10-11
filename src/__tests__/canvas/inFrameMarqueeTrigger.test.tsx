@@ -76,19 +76,19 @@ afterEach(() => {
 
 describe('useInFrameMarquee trigger', () => {
   it('a travelling press on the screen element itself starts a marquee', () => {
-    renderHook(() => useInFrameMarquee({ enabled: true, overlayRoot, frameId: null }))
+    renderHook(() => useInFrameMarquee({ enabled: true, frameDocument: document, chromeRoot: overlayRoot, frameId: null }))
     sweep(document.querySelector('[data-node-id="screen"]')!)
     expect(overlayRoot.querySelector('[data-canvas-in-frame-marquee]')).not.toBeNull()
   })
 
   it('a travelling press on the page body starts a marquee', () => {
-    renderHook(() => useInFrameMarquee({ enabled: true, overlayRoot, frameId: null }))
+    renderHook(() => useInFrameMarquee({ enabled: true, frameDocument: document, chromeRoot: overlayRoot, frameId: null }))
     sweep(document.querySelector('[data-node-id="body"]')!)
     expect(overlayRoot.querySelector('[data-canvas-in-frame-marquee]')).not.toBeNull()
   })
 
   it('a press on a layer inside the screen is a move, never a marquee', () => {
-    renderHook(() => useInFrameMarquee({ enabled: true, overlayRoot, frameId: null }))
+    renderHook(() => useInFrameMarquee({ enabled: true, frameDocument: document, chromeRoot: overlayRoot, frameId: null }))
     sweep(document.querySelector('[data-node-id="card"]')!)
     expect(overlayRoot.querySelector('[data-canvas-in-frame-marquee]')).toBeNull()
   })
@@ -100,7 +100,7 @@ describe('a press while an inline text edit is open', () => {
   }
 
   it('outside the editor: the edit ends and the press carries on as a marquee', () => {
-    renderHook(() => useInFrameMarquee({ enabled: true, overlayRoot, frameId: null }))
+    renderHook(() => useInFrameMarquee({ enabled: true, frameDocument: document, chromeRoot: overlayRoot, frameId: null }))
     startEdit()
     sweep(document.querySelector('[data-node-id="screen"]')!)
     expect(useEditorStore.getState().activeInlineEdit).toBeNull()
@@ -108,7 +108,7 @@ describe('a press while an inline text edit is open', () => {
   })
 
   it('inside the editor: the edit stays open and nothing sweeps (the press selects text)', () => {
-    renderHook(() => useInFrameMarquee({ enabled: true, overlayRoot, frameId: null }))
+    renderHook(() => useInFrameMarquee({ enabled: true, frameDocument: document, chromeRoot: overlayRoot, frameId: null }))
     startEdit()
     sweep(document.querySelector('[data-node-id="title"]')!)
     expect(useEditorStore.getState().activeInlineEdit).not.toBeNull()

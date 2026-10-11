@@ -100,9 +100,10 @@ function mountFrame(): Harness {
   Object.defineProperty(iframe, 'clientHeight', { value: FRAME_HEIGHT, configurable: true })
   Object.defineProperty(iframe, 'offsetWidth', { value: FRAME_WIDTH, configurable: true })
 
-  const overlayRoot = frameDoc.createElement('div')
-  overlayRoot.setAttribute('data-studio-canvas-overlay-root', 'true')
-  frameDoc.body.appendChild(overlayRoot)
+  // The frame's chrome root lives beside the iframe, in the parent document (SB-4).
+  const overlayRoot = document.createElement('div')
+  overlayRoot.setAttribute('data-canvas-frame-chrome', 'true')
+  viewport.appendChild(overlayRoot)
 
   const nodes: Record<string, HTMLElement> = {}
   for (const [id, { parent, tag, box }] of Object.entries(LAYOUT)) {
@@ -174,7 +175,8 @@ function renderDrag(options: { overlayRoot?: HTMLElement | null; bridgeAdapter?:
         viewportRef,
         canvasRootRef: viewportRef,
         iframeElement: harness.iframe,
-        overlayRoot: options.overlayRoot === undefined ? harness.overlayRoot : options.overlayRoot,
+        frameDocument: options.overlayRoot === null ? null : harness.frameDoc,
+        chromeRoot: options.overlayRoot === undefined ? harness.overlayRoot : options.overlayRoot,
         selectedNodeIds: useEditorStore.getState().selectedNodeIds,
         frameId: null,
         enabled: true,
