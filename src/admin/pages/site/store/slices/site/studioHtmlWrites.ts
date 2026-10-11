@@ -21,28 +21,14 @@
  *      own resync brings them in and selects them.
  */
 import { describeStructuralRefusal, type NodeTree, type PageNode } from '@core/page-tree'
-import { htmlToJsx, type HtmlToJsxReport } from '@site/studio/htmlToJsx'
+import { htmlToJsx } from '@site/studio/htmlToJsx'
 import { announceLeftOut, announcePastedStyles } from '@site/studio/pastedHtmlNotice'
 import { commitStudioInsert } from '@site/studio/studioStructuralCommits'
 import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
 import type { StudioSaveResponse } from '@site/studio/studioSaveRequests'
 import { STRUCTURAL_REFUSAL_TITLE, planSourceInsert, presentStructuralRefusal } from './structuralSourceEdits'
+import type { HtmlSourceWriteResult, PasteHtmlOptions } from './htmlSourceWriteResult'
 import type { SiteSliceHelpers } from './types'
-
-export type HtmlSourceWriteResult =
-  /** An ordinary CMS tree: nothing was done, the caller imports the HTML into the tree as before. */
-  | { kind: 'cms' }
-  /** The write is posted. `report` is what the conversion left out of the markup. */
-  | { kind: 'written'; report: HtmlToJsxReport }
-  /** Refused out loud; `message` is the sentence the user was shown. */
-  | { kind: 'refused'; message: string }
-
-export interface PasteHtmlOptions {
-  /** Insert position within `parentId`'s children; appended when omitted. */
-  index?: number
-  /** What ⌘Z names this step. */
-  undoLabel?: string
-}
 
 export function createStudioHtmlWrite(
   helpers: SiteSliceHelpers,

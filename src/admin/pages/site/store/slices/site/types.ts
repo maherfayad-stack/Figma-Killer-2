@@ -35,7 +35,7 @@ import type { FrameRequest } from './frameRequest'
 import type { PendingStructuralHistory } from '@site/studio/pendingStructuralOutcome'
 import type { SlotOwnerEntry } from './nodeIndex'
 import type { ImportedNodesResult } from './importedNodesResult'
-import type { HtmlSourceWriteResult, PasteHtmlOptions } from './studioHtmlWrites'
+import type { HtmlSourceWriteResult, PasteHtmlOptions } from './htmlSourceWriteResult'
 import type { ImageDropRequest, LandableImageSource, SubtreeInsertRequest, UploadProgressPainter } from './imageDropShapes'
 
 // ---------------------------------------------------------------------------

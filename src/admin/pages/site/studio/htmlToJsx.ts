@@ -55,23 +55,10 @@ import { isSafeIntrinsicTagName, VOID_HTML_ELEMENTS } from '@core/utils/htmlTags
 import { MAX_PASTED_CSS_CHARS, MAX_PASTED_DEPTH, MAX_PASTED_ELEMENTS, MAX_PASTED_HTML_CHARS } from '@core/utils/pastedHtmlLimits'
 import type { JsonDataValue } from '@core/utils/jsonData'
 import { cssValueLoadsExternalResource, markupToJsxAttributeName } from '@core/vector'
+import type { HtmlToJsxReport } from './htmlToJsxReport'
 import type { SlotJsxNode } from './studioSaveRequests'
 import { parseDeclarations } from './svgImportStyles'
 import { svgToJsxNode } from './svgToJsxNode'
-
-/** What the converter left out. Shown to the user, never silent. */
-export interface HtmlToJsxReport {
-  /** `<script>` elements removed. */
-  scripts: number
-  /** `on*` attributes removed. */
-  handlers: number
-  /** `javascript:` / `vbscript:` / non-image `data:` URLs removed. */
-  unsafeUrls: number
-  /** Inline `style` declarations removed (an external resource, or a value the CSS sanitizer refuses). */
-  styleDeclarations: number
-  /** One sentence per `<svg>` that was not written, and why. */
-  svgRefusals: string[]
-}
 
 export type HtmlToJsxResult =
   | { ok: true; nodes: SlotJsxNode[]; css: string; report: HtmlToJsxReport }

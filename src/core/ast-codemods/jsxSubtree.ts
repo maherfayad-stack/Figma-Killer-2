@@ -212,11 +212,17 @@ function isTooLongToInline(rendered: string): boolean {
  * an expression container around a JS string literal instead, where
  * `JSON.stringify`'s escaping IS the language's.
  */
-const NEEDS_EXPRESSION_ATTRIBUTE = /["\\&\x00-\x1f\u2028\u2029]/
+function needsExpressionAttribute(value: string): boolean {
+  for (const char of value) {
+    const code = char.codePointAt(0)!
+    if (char === '"' || char === '\\' || char === '&' || code < 0x20 || code === 0x2028 || code === 0x2029) return true
+  }
+  return false
+}
 
 /** `"value"`, or `{"value"}` when the value cannot sit in a JSX string attribute as written. */
 function jsxAttributeString(value: string): string {
-  return NEEDS_EXPRESSION_ATTRIBUTE.test(value) ? `{${JSON.stringify(value)}}` : `"${value}"`
+  return needsExpressionAttribute(value) ? `{${JSON.stringify(value)}}` : `"${value}"`
 }
 
 export function renderJsxNode(node: InsertJsxNode, unit: string): string {

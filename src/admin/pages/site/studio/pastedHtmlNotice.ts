@@ -20,7 +20,7 @@
  * failure.
  */
 import { pushToast } from '@ui/components/Toast'
-import type { HtmlToJsxReport } from './htmlToJsx'
+import type { HtmlToJsxReport } from './htmlToJsxReport'
 import type { StudioSaveResponse } from './studioSaveRequests'
 import { announceUndoableNotice } from './transplantCarryNotice'
 
