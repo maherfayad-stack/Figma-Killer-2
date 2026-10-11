@@ -11,7 +11,7 @@ import {
   type FixtureProject,
 } from './helpers/studioFixtureProject'
 import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
-import { zoomToPercent } from './helpers/studioFixtureProject'
+import { readZoomPercent, zoomToPercent } from './helpers/studioFixtureProject'
 
 /**
  * Round-4 canvas audit fixes, each replayed with a REAL mouse and keyboard and
@@ -597,5 +597,57 @@ test.describe('N7: undo and redo walk one chain', () => {
     await expect.poll(() => readFile(REL), { timeout: 30_000, message: 'redo after two undos did not re-ungroup' }).toBe(HOME)
     await page.keyboard.press('Control+Shift+z')
     await expect.poll(() => readFile(REL), { timeout: 30_000, message: 'the second redo did not re-insert' }).toBe(inserted)
+  })
+})
+
+test.describe('N4: Shift+2 frames the selection', () => {
+  test.setTimeout(240_000)
+
+  test('a selected layer is zoomed to fill the viewport and ends centred', async ({ page }) => {
+    const { node, canvasRoot } = await openHome(page)
+    await zoomToPercent(page, canvasRoot, 50)
+    await page.waitForTimeout(500)
+    const target = node(ID.input1)
+    const before = await visualBox(target)
+    await selectInFrame(page, target)
+    await page.waitForTimeout(500)
+    await canvasRoot.focus()
+    await page.keyboard.press('Shift+2')
+    await page.waitForTimeout(1200)
+    const after = await visualBox(target)
+    expect(after.right - after.left, 'zoom did not change: Shift+2 did nothing').toBeGreaterThan((before.right - before.left) * 1.5)
+    const root = (await canvasRoot.boundingBox())!
+    const c = centre(after)
+    expect(Math.abs(c.x - (root.x + root.width / 2))).toBeLessThanOrEqual(root.width * 0.2)
+    expect(Math.abs(c.y - (root.y + root.height / 2))).toBeLessThanOrEqual(root.height * 0.2)
+  })
+})
+
+test.describe('N5: Shift+0 zooms to 100% around the viewport centre', () => {
+  test.setTimeout(240_000)
+
+  test('the board point under the middle of the canvas stays there', async ({ page }) => {
+    const { node, canvasRoot } = await openHome(page)
+    await zoomToPercent(page, canvasRoot, 50)
+    await page.waitForTimeout(500)
+    const root = (await canvasRoot.boundingBox())!
+    const cx = root.x + root.width / 2
+    const cy = root.y + root.height / 2
+    // The BOARD point under the viewport centre: (centre - board origin) / zoom, from the painted origin marker.
+    const probe = () =>
+      page.evaluate((pt) => {
+        const origin = document.querySelector('[data-studio-board-origin]')!.getBoundingClientRect()
+        const layer = document.querySelector('[data-testid="canvas-transform-layer"]') as HTMLElement
+        const zoom = Number.parseFloat(getComputedStyle(layer).getPropertyValue('--canvas-zoom')) || 1
+        return { x: (pt.x - origin.left) / zoom, y: (pt.y - origin.top) / zoom }
+      }, { x: cx, y: cy })
+    const under = await probe()
+    await canvasRoot.focus()
+    await page.keyboard.press('Shift+0')
+    await page.waitForTimeout(1200)
+    expect(await readZoomPercent(page)).toBe(100)
+    const still = await probe()
+    expect(Math.abs(still.x - under.x)).toBeLessThanOrEqual(2)
+    expect(Math.abs(still.y - under.y)).toBeLessThanOrEqual(2)
   })
 })

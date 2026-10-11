@@ -124,17 +124,45 @@ export function measureCanvasFitInsets(root: HTMLElement, padding: number): Zoom
  * The current selection, measured from the ALREADY-POSITIONED selection ring
  * element(s) (`[data-canvas-selection-ring="true"]`,
  * `BreakpointSelectionOverlay.tsx`) rather than re-derived from node geometry:
- * the ring is already the exact cross-iframe, `nodeVisualRect`-aware,
- * per-`(frameId,nodeId)`-scoped screen rect a selection has, recomputed every
- * rAF tick by machinery this module has no visibility into (see
- * `canvasSelectionOverlayPositioning.ts`). Multiple rings (multi-select) are
- * unioned by `computeZoomToFitTransform`.
+ * the ring is already the exact `nodeVisualRect`-aware, per-`(frameId,nodeId)`
+ * -scoped rect a selection has, recomputed every rAF tick by machinery this
+ * module has no visibility into (`canvasSelectionOverlayPositioning.ts`).
+ * Multiple rings (multi-select) are unioned by `computeZoomToFitTransform`.
+ *
+ * The rings live INSIDE each frame's iframe document (the editor chrome is
+ * rendered into the frame it belongs to), so they are read there and projected
+ * out through the iframe's own offset and scale. Asking the editor document -
+ * the first version of this - found none and made Shift+2 a no-op (R4 N4).
+ * A selected FRAME (no layer) has no ring; its card is the selection.
  */
 export function measureCanvasSelectionRects(root: HTMLElement): CanvasFitRect[] {
   const rootRect = root.getBoundingClientRect()
   const rects: CanvasFitRect[] = []
-  for (const ring of document.querySelectorAll<HTMLElement>('[data-canvas-selection-ring="true"]')) {
-    const r = ring.getBoundingClientRect()
+  for (const iframe of root.querySelectorAll<HTMLIFrameElement>('iframe')) {
+    // A cross-origin (live) frame throws or answers null: its rings are not readable from here.
+    let doc: Document | null = null
+    try {
+      doc = iframe.contentDocument
+    } catch (_err) {
+      continue
+    }
+    if (!doc) continue
+    const frameRect = iframe.getBoundingClientRect()
+    const scale = iframe.clientWidth > 0 ? frameRect.width / iframe.clientWidth : 1
+    for (const ring of doc.querySelectorAll<HTMLElement>('[data-canvas-selection-ring="true"]')) {
+      const r = ring.getBoundingClientRect()
+      if (r.width === 0 && r.height === 0) continue
+      rects.push({
+        left: frameRect.left - rootRect.left + r.left * scale,
+        top: frameRect.top - rootRect.top + r.top * scale,
+        width: r.width * scale,
+        height: r.height * scale,
+      })
+    }
+  }
+  if (rects.length > 0) return rects
+  for (const card of root.querySelectorAll<HTMLElement>('[data-frame-mount][data-selected="true"]')) {
+    const r = card.getBoundingClientRect()
     if (r.width === 0 && r.height === 0) continue
     rects.push(toFitRect(r, rootRect))
   }

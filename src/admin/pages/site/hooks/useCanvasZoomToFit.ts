@@ -68,18 +68,28 @@ const applyZoomToFitRects = useCallback(
     const root = canvasRootRef.current
     if (!root) return false
     const rootRect = root.getBoundingClientRect()
+    // The rects are measured from the ROOT's corner, but the transform starts at
+    // the layer's own corner, `offsetLeft`/`offsetTop` inside it. Fitting as if
+    // the two were one put the result `offset x (zoom change - 1)` px away from
+    // where it was asked to be: invisible between nearby zooms, 560px at 50% to
+    // 400% (R4 N4). So the fit is solved in root space, with the pan that
+    // includes the offset, and the offset is taken back out of the answer.
+    const layer = transformLayerRef.current
+    const offsetX = layer?.offsetLeft ?? 0
+    const offsetY = layer?.offsetTop ?? 0
+    const current = transformRef.current
     const next = computeZoomToFitTransform(
       { width: rootRect.width, height: rootRect.height },
       targetRects,
-      transformRef.current,
+      { zoom: current.zoom, panX: current.panX + offsetX, panY: current.panY + offsetY },
       measureCanvasFitInsets(root, DEFAULT_ZOOM_FIT_PADDING_PX),
       mode,
     )
     if (!next) return false
-    commitTransform(next, true)
+    commitTransform({ zoom: next.zoom, panX: next.panX - offsetX, panY: next.panY - offsetY }, true)
     return true
   },
-  [canvasRootRef, transformRef, commitTransform],
+  [canvasRootRef, transformLayerRef, transformRef, commitTransform],
 )
 
 /**

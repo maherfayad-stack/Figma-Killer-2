@@ -27,6 +27,7 @@ import {
   zoomFromWheelDelta,
   clampZoom,
   clampPan,
+  RESET_ZOOM,
   incrementalScaleFromPinchMovement,
   type CanvasTransform,
 } from '@site/canvas/math'
@@ -271,10 +272,29 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
     updateTransform({ zoom: t.zoom, ...next })
   }
 
+  /**
+   * Zoom to 100% around the CENTRE of the viewport (Shift+0, Cmd/Ctrl+0): the
+   * board point under the middle of the canvas stays under it. It used to reset
+   * the pan to the board origin as well, which threw the content off screen
+   * (R4 N5). Without a laid-out root it falls back to the board origin.
+   */
   const resetCanvasView = () => {
-    resetView()
-    transformRef.current = { zoom: 1, panX: 0, panY: 0 }
-    applyTransformToDOM(transformRef.current, true)
+    const root = canvasRootRef.current
+    const layer = transformLayerRef.current
+    const t = transformRef.current
+    if (!root || !layer || root.clientWidth === 0 || t.zoom === 0) {
+      resetView()
+      transformRef.current = { zoom: 1, panX: 0, panY: 0 }
+      applyTransformToDOM(transformRef.current, true)
+      return
+    }
+    // The layer sits `offsetLeft`/`offsetTop` inside the root and its transform
+    // starts there, so the viewport centre is measured from the layer's own origin.
+    const centreX = root.clientWidth / 2 - layer.offsetLeft
+    const centreY = root.clientHeight / 2 - layer.offsetTop
+    const boardX = (centreX - t.panX) / t.zoom
+    const boardY = (centreY - t.panY) / t.zoom
+    commitTransform({ zoom: RESET_ZOOM, panX: clampPan(centreX - boardX * RESET_ZOOM), panY: clampPan(centreY - boardY * RESET_ZOOM) }, true)
   }
 
   /**
