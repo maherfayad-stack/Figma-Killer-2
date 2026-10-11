@@ -183,11 +183,11 @@ describe('Layers tree — the window', () => {
       const ids = mountedRowIds()
       // 280px / 28px = 10 rows visible, +1 partial, +8 overscan each way.
       expect(ids.length).toBeLessThanOrEqual(28)
-      expect(ids[0]).toBe('w-root')
+      expect(ids[0]).toBe('w-child-0')
 
       // Height is conserved: mounted rows + both spacers == every row.
       const total = ids.length * ROW_HEIGHT + spacerHeights().reduce((a, b) => a + b, 0)
-      expect(total).toBe((WIDE_CHILD_COUNT + 1) * ROW_HEIGHT)
+      expect(total).toBe(WIDE_CHILD_COUNT * ROW_HEIGHT)
     } finally {
       restore()
     }
@@ -209,7 +209,7 @@ describe('Layers tree — the window', () => {
       expect(after.length).toBeLessThanOrEqual(28)
 
       const total = after.length * ROW_HEIGHT + spacerHeights().reduce((a, b) => a + b, 0)
-      expect(total).toBe((WIDE_CHILD_COUNT + 1) * ROW_HEIGHT)
+      expect(total).toBe(WIDE_CHILD_COUNT * ROW_HEIGHT)
     } finally {
       restore()
     }
@@ -225,7 +225,7 @@ describe('Layers tree — unmeasurable layout', () => {
     // No stubbed row height, no scroller: the panel must not silently truncate.
     loadSite([buildWidePage('page-1', 'w')], 'page-1')
     render(<DomPanel />)
-    expect(mountedRowIds().length).toBe(WIDE_CHILD_COUNT + 1)
+    expect(mountedRowIds().length).toBe(WIDE_CHILD_COUNT)
     expect(spacerHeights()).toEqual([])
   })
 })
@@ -243,8 +243,7 @@ function renderListWithDropState(dropState: DomPanelDropState) {
         <DomPanelDropStateContext.Provider value={dropState}>
           <LayerRowList
             ariaLabel="Page element tree"
-            rootNodeIds={[page.rootNodeId]}
-            alwaysExpandedId={page.rootNodeId}
+            depthOffset={1}
             editable
             revealSelection={false}
           />
@@ -306,8 +305,7 @@ describe('Layers tree — drag source dimming', () => {
           <DomPanelDropStateContext.Provider value={{ ...IDLE_DROP_STATE, activeId: 'deep-0' }}>
             <LayerRowList
               ariaLabel="Page element tree"
-              rootNodeIds={[page.rootNodeId]}
-              alwaysExpandedId={page.rootNodeId}
+              depthOffset={1}
               editable
               revealSelection={false}
             />
@@ -316,7 +314,7 @@ describe('Layers tree — drag source dimming', () => {
       </DomTreeProvider>,
     )
 
-    // Only the body and deep-0 are visible (deep-0 is collapsed), so the
+    // Only deep-0 is visible (deep-0 is collapsed), so the
     // dragged span is exactly deep-0.
     const dimmed = Array.from(container.querySelectorAll('[data-drag-source="true"]'))
     expect(dimmed.map((el) => el.getAttribute('data-node-id'))).toEqual(['deep-0'])
@@ -367,8 +365,8 @@ describe('Layers tree — reveal the canvas selection', () => {
     loadSite([buildDeepPage()], 'page-deep')
     render(<DomPanel />)
 
-    // Nothing but the body and its single child is visible to start with.
-    expect(mountedRowIds()).toEqual(['deep-root', 'deep-0'])
+    // Only the body's single child is visible to start with (the body has no row).
+    expect(mountedRowIds()).toEqual(['deep-0'])
 
     act(() => {
       useEditorStore.setState({
@@ -401,9 +399,9 @@ describe('Layers tree — reveal the canvas selection', () => {
       })
 
       expect(scroller.scrollToCalls.length).toBeGreaterThan(0)
-      // Row 251 (body + 250 children before it), bottom-aligned into a 280px
-      // viewport: (251 + 1) * 28 - 280.
-      expect(scroller.scrollToCalls.at(-1)?.top).toBe(252 * ROW_HEIGHT - VIEWPORT_HEIGHT)
+      // Row 251 (250 children before it), bottom-aligned into a 280px
+      // viewport: (250 + 1) * 28 - 280.
+      expect(scroller.scrollToCalls.at(-1)?.top).toBe(251 * ROW_HEIGHT - VIEWPORT_HEIGHT)
     } finally {
       restore()
     }
@@ -427,7 +425,7 @@ describe('PageLayerSubtree — a many-frame board', () => {
 
       // Push the whole subtree above the viewport.
       treeContainer().getBoundingClientRect = () =>
-        rect(-(WIDE_CHILD_COUNT + 1) * ROW_HEIGHT - 500, (WIDE_CHILD_COUNT + 1) * ROW_HEIGHT)
+        rect(-WIDE_CHILD_COUNT * ROW_HEIGHT - 500, WIDE_CHILD_COUNT * ROW_HEIGHT)
       act(() => {
         scroller.dispatchEvent(new Event('scroll'))
       })
@@ -435,7 +433,7 @@ describe('PageLayerSubtree — a many-frame board', () => {
       expect(mountedRowIds()).toEqual([])
       // …but it still occupies its full height, so the page rows below it do
       // not jump.
-      expect(spacerHeights().reduce((a, b) => a + b, 0)).toBe((WIDE_CHILD_COUNT + 1) * ROW_HEIGHT)
+      expect(spacerHeights().reduce((a, b) => a + b, 0)).toBe(WIDE_CHILD_COUNT * ROW_HEIGHT)
     } finally {
       restore()
     }

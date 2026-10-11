@@ -29,6 +29,7 @@
 import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSelectors'
+import { firstFrameForPage } from '@site/store/slices/boardBulkFrameActions'
 import { snapBoardFurniture } from '../boardSnapping'
 
 interface DragState {
@@ -52,6 +53,16 @@ interface DragState {
    * drag; the COPY's id once an Alt+drag has spawned one.
    */
   movingFrameId: string
+  /**
+   * Figma moves a multi-selection as one. Set when this press landed on a frame
+   * that was ALREADY part of a selection of several (and no Alt copy / Shift
+   * toggle is in play): every selected frame, with where it started. A drag
+   * moves them all by the same delta in one board commit.
+   */
+  group: ReadonlyArray<{ frameId: string; pageId: string; x: number; y: number }> | null
+  /** The press kept a multi-selection intact; a release that never moved collapses it to this frame. */
+  collapseOnClick: boolean
+  moved: boolean
 }
 
 interface BoardFrameMoveDragOptions {
@@ -108,6 +119,7 @@ export function useBoardFrameMoveDrag({
       dragRef.current = null
       const store = useEditorStore.getState()
       if (drag.movingFrameId !== frameId) store.removeFrameById(drag.movingFrameId)
+      else if (drag.group) store.setFramePositions(drag.group)
       else store.setFramePosition(frameId, drag.frameX, drag.frameY)
       store.setBoardSnapGuides([])
       store.endBoardGesture()
@@ -131,7 +143,22 @@ export function useBoardFrameMoveDrag({
     // pressing a frame's header selects it immediately, and a drag that
     // follows moves the now-selected frame. Plain click replaces the
     // selection; Shift-click extends it (toggle-add).
-    useEditorStore.getState().selectFrame(pageId, e.shiftKey ? 'toggle' : 'replace')
+    const pressState = useEditorStore.getState()
+    const keepsSelection =
+      !e.shiftKey && !e.altKey && pressState.selectedFrameIds.length > 1 && pressState.selectedFrameIds.includes(pageId)
+    let group: DragState['group'] = null
+    if (keepsSelection) {
+      const board = selectActiveBoard(pressState)
+      const members: NonNullable<DragState['group']> = []
+      for (const selectedPageId of pressState.selectedFrameIds) {
+        const member = board ? firstFrameForPage(board, selectedPageId) : undefined
+        if (member) members.push({ frameId: member.id, pageId: selectedPageId, x: member.x, y: member.y })
+      }
+      if (members.length > 1) group = members
+    }
+    // Pressing a frame that is already in a multi-selection keeps the selection
+    // so the drag can take all of it; a release that never moved narrows it.
+    if (!group) pressState.selectFrame(pageId, e.shiftKey ? 'toggle' : 'replace')
     e.currentTarget.setPointerCapture(e.pointerId)
     dragRef.current = {
       pointerId: e.pointerId,
@@ -141,6 +168,9 @@ export function useBoardFrameMoveDrag({
       frameY: y,
       duplicating: e.altKey,
       movingFrameId: frameId,
+      group,
+      collapseOnClick: group !== null,
+      moved: false,
     }
   }
 
@@ -156,8 +186,16 @@ export function useBoardFrameMoveDrag({
     // ruler guides (IX-5c), with equal spacing (IX-5d), as the snap toggles
     // allow (IX-5e). The threshold is screen px (IX-5a).
     const state = useEditorStore.getState()
+    drag.moved = drag.moved || dx !== 0 || dy !== 0
+    // The other frames of a group move with this one, so they are not peers to
+    // snap against (their edges would chase the pointer).
+    const moving = drag.group ? new Set(drag.group.map((member) => member.pageId)) : null
+    const activeBoard = selectActiveBoard(state)
     const snapped = snapBoardFurniture({
-      board: selectActiveBoard(state),
+      board:
+        moving && activeBoard
+          ? { ...activeBoard, frames: activeBoard.frames.filter((f) => f.pageId === pageId || !moving.has(f.pageId)) }
+          : activeBoard,
       dragged: { kind: 'frame', pageId },
       rect: { x: drag.frameX + dx, y: drag.frameY + dy, width, height },
       preferences: state.snapPreferences,
@@ -180,12 +218,22 @@ export function useBoardFrameMoveDrag({
     }
 
     useEditorStore.getState().setBoardSnapGuides(snapped.guides, snapped.spacings)
+    if (drag.group) {
+      const shiftX = snapped.x - drag.frameX
+      const shiftY = snapped.y - drag.frameY
+      useEditorStore.getState().setFramePositions(
+        drag.group.map((member) => ({ frameId: member.frameId, x: member.x + shiftX, y: member.y + shiftY })),
+      )
+      return
+    }
     useEditorStore.getState().setFramePosition(drag.movingFrameId, snapped.x, snapped.y)
   }
 
   const onPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (dragRef.current?.pointerId !== e.pointerId) return
+    const drag = dragRef.current
+    if (drag?.pointerId !== e.pointerId) return
     dragRef.current = null
+    if (drag.collapseOnClick && !drag.moved) useEditorStore.getState().selectFrame(pageId, 'replace')
     useEditorStore.getState().setBoardSnapGuides([])
     // `store-09` — close the undo-coalescing burst this drag opened, so a
     // second drag of the SAME frame is its own ⌘Z step.

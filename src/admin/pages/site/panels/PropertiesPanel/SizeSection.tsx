@@ -70,6 +70,7 @@ import {
   sizingAxisRole,
   sizingPatch,
   sizingUnavailableReason,
+  sizingFillRefusal,
   type SizingMode,
   type SizingParentLayout,
 } from '@core/studio-runtime'
@@ -265,7 +266,7 @@ export function SizeSection({
 
   function unavailableReasons(property: 'width' | 'height'): SizingUnavailableReasons {
     if (sizingAxisRole(property, sizingLayout) !== 'absolute') {
-      return { hug: modeUnavailableReason, fill: modeUnavailableReason }
+      return { hug: modeUnavailableReason, fill: modeUnavailableReason ?? sizingFillRefusal(property, sizingLayout) }
     }
     return { fill: constraintAxes.refusalFor(property === 'width' ? 'x' : 'y', 'stretch') ?? undefined }
   }
@@ -287,6 +288,7 @@ export function SizeSection({
       return
     }
     if (!absolute && nextMode !== 'fixed' && modeUnavailableReason) return
+    if (nextMode === 'fill' && sizingFillRefusal(property, sizingLayout)) return
     const patch = sizingPatch(
       nextMode,
       property,

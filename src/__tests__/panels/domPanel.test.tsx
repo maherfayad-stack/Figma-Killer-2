@@ -277,15 +277,12 @@ describe('DomPanel — empty states', () => {
     expect(screen.queryByText('Loading site...')).toBeNull()
   })
 
-  it('renders the body root row when the page is empty (always-show invariant)', () => {
+  it('gives the synthetic body root no row of its own, empty page or not (O4)', () => {
     loadSite(false) // only root, no children
     render(<DomPanel />)
-    // The empty-state hint is gone — the Body row is always rendered now,
-    // matching the always-wrap invariant (every NodeTree's root is base.body).
     expect(screen.queryByText(/no elements yet/i)).toBeNull()
-    // The body row is in the tree as a treeitem.
-    const treeItems = screen.getAllByRole('treeitem')
-    expect(treeItems.length).toBeGreaterThan(0)
+    expect(screen.queryAllByRole('treeitem')).toHaveLength(0)
+    expect(screen.queryByRole('treeitem', { name: /body/i })).toBeNull()
   })
 
   it('renders tree rows when page has child nodes', () => {
@@ -293,7 +290,8 @@ describe('DomPanel — empty states', () => {
     render(<DomPanel />)
     // Tree rows with role=treeitem should exist
     const treeItems = screen.getAllByRole('treeitem')
-    expect(treeItems.length).toBeGreaterThan(0)
+    expect(treeItems).toHaveLength(1)
+    expect(screen.queryByRole('treeitem', { name: /body/i })).toBeNull()
   })
 
   it('hides the structural body root when editing a Visual Component', () => {
@@ -468,10 +466,9 @@ describe('DomPanel — tree accessibility', () => {
 
   it('selected tree node has aria-selected="true"', () => {
     loadSite(true)
-    // Select the root node (root is always visible regardless of expand state).
     // Multi-select: keep `selectedNodeId` and `selectedNodeIds` in sync — the
     // per-row `isSelected` selector reads `selectedNodeIds.includes(nodeId)`.
-    useEditorStore.setState({ selectedNodeId: 'root-1', selectedNodeIds: ['root-1'] } as Parameters<typeof useEditorStore.setState>[0])
+    useEditorStore.setState({ selectedNodeId: 'node-child-1', selectedNodeIds: ['node-child-1'] } as Parameters<typeof useEditorStore.setState>[0])
     render(<DomPanel />)
     const selected = screen.getByRole('treeitem', { selected: true })
     expect(selected).toBeDefined()
@@ -492,7 +489,6 @@ describe('DomPanel — tree accessibility', () => {
     loadContainerSite()
     render(<DomPanel />)
 
-    fireEvent.click(screen.getByRole('treeitem', { name: /body/i }))
     fireEvent.doubleClick(screen.getByRole('treeitem', { name: /container/i }))
 
     const input = await waitFor(() => screen.getByRole('textbox', {
@@ -523,9 +519,6 @@ describe('DomPanel — open container group highlight', () => {
     loadContainerSite()
     render(<DomPanel />)
 
-    const rootItem = screen.getByRole('treeitem', { name: /body/i })
-    fireEvent.click(rootItem)
-
     const containerWrapper = document.querySelector('[data-node-id="container-1"]')
     expect(containerWrapper?.getAttribute('data-open-container-group')).toBeNull()
 
@@ -555,8 +548,6 @@ describe('DomPanel — open container group highlight', () => {
     loadSiblingContainerSite()
     render(<DomPanel />)
 
-    fireEvent.click(screen.getByRole('treeitem', { name: /body/i }))
-
     const firstWrapper = document.querySelector('[data-node-id="container-1"]')
     const secondWrapper = document.querySelector('[data-node-id="container-2"]')
 
@@ -582,12 +573,12 @@ describe('DomPanel — tree keyboard navigation', () => {
     loadSite(true)
     useEditorStore.setState({ selectedNodeId: null, selectedNodeIds: [] } as Parameters<typeof useEditorStore.setState>[0])
     render(<DomPanel />)
-    // Root is always the first (and only top-level) treeitem visible
+    // The page's first layer is the first treeitem; the body has no row.
     const items = screen.getAllByRole('treeitem')
     const rootItem = items[0]
 
     fireEvent.keyDown(rootItem, { key: 'Enter' })
-    expect(useEditorStore.getState().selectedNodeId).toBe('root-1')
+    expect(useEditorStore.getState().selectedNodeId).toBe('node-child-1')
   })
 
   it('pressing Space on a tree row selects the node', () => {
@@ -598,40 +589,27 @@ describe('DomPanel — tree keyboard navigation', () => {
     const rootItem = items[0]
 
     fireEvent.keyDown(rootItem, { key: ' ' })
-    expect(useEditorStore.getState().selectedNodeId).toBe('root-1')
+    expect(useEditorStore.getState().selectedNodeId).toBe('node-child-1')
   })
 
-  it('page root is always rendered expanded — its children are visible without toggling', () => {
-    // The root row is the implicit body injected into every editor: it is
-    // forced open and exposes no chevron, so children are visible immediately.
+  it('the page layers start at the top level: the body is not a row, so its child is visible at once', () => {
     loadSite(true)
     render(<DomPanel />)
 
-    // Root + its single child should both be visible from the first paint.
-    expect(screen.getAllByRole('treeitem').length).toBe(2)
-  })
-
-  it('page root row exposes no aria-expanded — it is not collapsible', () => {
-    loadSite(true)
-    render(<DomPanel />)
-    const rootItem = screen.getAllByRole('treeitem')[0]
-    // aria-expanded is omitted entirely (not "true"/"false") because the row
-    // has no expand/collapse affordance.
-    expect(rootItem.hasAttribute('aria-expanded')).toBe(false)
+    expect(screen.getAllByRole('treeitem').length).toBe(1)
   })
 
   it('clicking a non-root parent row expands its children like the Files tree', () => {
     loadContainerSite()
     render(<DomPanel />)
 
-    // Root is always expanded → root + container are visible, but the
-    // container's text child is collapsed by default.
-    expect(screen.getAllByRole('treeitem').length).toBe(2)
+    // The container is the top level; its text child is collapsed by default.
+    expect(screen.getAllByRole('treeitem').length).toBe(1)
 
     const containerItem = screen.getByRole('treeitem', { name: /container/i })
     fireEvent.click(containerItem)
 
-    expect(screen.getAllByRole('treeitem').length).toBe(3)
+    expect(screen.getAllByRole('treeitem').length).toBe(2)
     expect(useEditorStore.getState().selectedNodeId).toBe('container-1')
   })
 
@@ -641,25 +619,24 @@ describe('DomPanel — tree keyboard navigation', () => {
     loadSiblingContainerSite()
     render(<DomPanel />)
 
-    // root + container-1 + container-2 visible; both containers collapsed
-    expect(screen.getAllByRole('treeitem').length).toBe(3)
+    // container-1 + container-2 visible; both containers collapsed
+    expect(screen.getAllByRole('treeitem').length).toBe(2)
 
     // Expand container-1 — should show its text child
     const containerItems = screen.getAllByRole('treeitem', { name: /container/i })
     fireEvent.click(containerItems[0])
-    expect(screen.getAllByRole('treeitem').length).toBe(4) // root + c1 + text-1 + c2
+    expect(screen.getAllByRole('treeitem').length).toBe(3) // c1 + text-1 + c2
 
     // Expand container-2 — container-1 must REMAIN expanded (text-1 still visible)
     const containerItemsNow = screen.getAllByRole('treeitem', { name: /container/i })
     fireEvent.click(containerItemsNow[1])
-    expect(screen.getAllByRole('treeitem').length).toBe(5) // root + c1 + text-1 + c2 + text-2
+    expect(screen.getAllByRole('treeitem').length).toBe(4) // c1 + text-1 + c2 + text-2
   })
 
   it('commits inline tree rename to the node label', () => {
     loadContainerSite()
     render(<DomPanel />)
 
-    fireEvent.click(screen.getByRole('treeitem', { name: /body/i }))
     const containerItem = screen.getByRole('treeitem', { name: /container/i })
 
     fireEvent.contextMenu(containerItem, { clientX: 40, clientY: 40 })

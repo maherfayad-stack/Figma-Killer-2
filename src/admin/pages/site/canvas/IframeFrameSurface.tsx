@@ -166,6 +166,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       liveFrame,
       onContentReadyChange,
       sizing = 'content',
+      fixedHeight,
     },
     ref,
     ) {
@@ -313,7 +314,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
 
     useIframeCursorBridge(iframeRef, adapter, { onCursorMove, onCursorLeave })
     useCanvasFormControlSuppression(adapter, { enabled: !isLive })
-    useIframeFrameAutoHeight({ iframeRef, iframeDoc, adapter, fitToContent: !isLive && sizing === 'content' })
+    useIframeFrameAutoHeight({ iframeRef, iframeDoc, adapter, fitToContent: !isLive && sizing === 'content' && fixedHeight === undefined })
     // WS-10 — direction/color-scheme, an attribute effect (never `srcDoc`/a
     // `key` — see `previewAxesFrameEffect.ts`). `axesOverride` (Phase 2) is a
     // per-frame override merged onto the board-global axes inside the hook.
@@ -430,7 +431,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
     // against `:where()` (zero-specificity) so the override is safe.
     useEffect(() => {
       if (!iframeDoc?.body) return
-      applyIframeBodyReset(iframeDoc, breakpointId, interaction)
+      applyIframeBodyReset(iframeDoc, breakpointId, interaction, fixedHeight ?? CANVAS_VIEWPORT_HEIGHT)
       if (!onEmptyAreaClick || isLive) return
       // Empty-area click: ONLY fire when the click target is the body or the
       // `<html>` itself (not a child node bubbling up). Without this guard,
@@ -455,7 +456,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
         iframeDoc.body.removeEventListener('click', onBodyClick)
         html.removeEventListener('click', onHtmlClick)
       }
-    }, [iframeDoc, breakpointId, onEmptyAreaClick, interaction, isLive])
+    }, [iframeDoc, breakpointId, onEmptyAreaClick, interaction, isLive, fixedHeight])
 
     // ── Navigation guard ─────────────────────────────────────────────────
     // The canvas iframe is an EDITING surface, never a browsing surface.
@@ -530,7 +531,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
     // breakpoint width (the iframe's real width); height is a fixed
     // device-like value. Pinning `vh`/`vmax`/… to this stops authored
     // viewport units from feeding the grow-to-content height loop above.
-    const viewport: CanvasViewport = { width, height: CANVAS_VIEWPORT_HEIGHT }
+    const viewport: CanvasViewport = { width, height: fixedHeight ?? CANVAS_VIEWPORT_HEIGHT }
 
     // Bridge mode's iframe points at a REAL `src=` URL (the project's own
     // live dev server, proxied — see `resolveLiveFrameSrc.ts`), never
@@ -578,7 +579,13 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
           // Canvas frames are sized to the breakpoint width and grow to content
           // height. Live frames fill the surface-controlled wrapper and scroll
           // internally, so they take 100% in both axes.
-          style={isLive ? { ...style, width: '100%', height: '100%' } : { ...style, width: `${width}px` }}
+          style={
+            isLive
+              ? { ...style, width: '100%', height: '100%' }
+              : fixedHeight === undefined
+                ? { ...style, width: `${width}px` }
+                : { ...style, width: `${width}px`, height: `${fixedHeight}px`, minHeight: 0 }
+          }
           title={`Canvas frame for ${breakpointId}`}
           // Paper follows the PREVIEWED scheme — see `--canvas-frame-paper`.
           data-preview-scheme={frameAxes.colorScheme}

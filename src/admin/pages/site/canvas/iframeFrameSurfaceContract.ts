@@ -116,6 +116,14 @@ export interface IframeFrameSurfaceProps {
    * window over the board whose hosts are absolutely positioned.
    */
   sizing?: 'content' | 'fixed'
+  /**
+   * O11 — a device frame with a stored height (a preset such as 393 x 852, or a
+   * size the author dragged): the iframe is EXACTLY this tall, so its viewport
+   * is the device's whatever the editor window is, `vh` resolves against it,
+   * and a taller page stays inside the frame instead of stretching it. Absent,
+   * the frame hugs its content.
+   */
+  fixedHeight?: number
 }
 
 export interface IframeFrameSurfaceHandle {

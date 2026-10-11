@@ -57,7 +57,7 @@
 /* Viewport frame — width driven by --bp-width CSS var */
 .viewport {
     width: var(--bp-width);
-    min-height: 100vh;
+    min-height: var(--frame-h);
     /* Same paper as the iframe it wraps — see `IframeFrameSurface.module.css`.
        Both paint it because either can be the surface a short page leaves
        uncovered. */

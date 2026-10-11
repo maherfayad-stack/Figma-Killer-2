@@ -80,13 +80,6 @@ function DomPanelInner({ editable = true }: { editable?: boolean }) {
   // which calls `e.stopPropagation()` so this handler only fires on truly
   // empty space (padding around / below the rendered rows).
   const [bgContextMenu, setBgContextMenu] = useState<{ x: number; y: number } | null>(null)
-  const rootNode = page?.nodes[page.rootNodeId] ?? null
-  const hideStructuralRoot = activeDocument?.kind === 'visualComponent' && rootNode?.moduleId === 'base.body'
-  const visibleRootNodeIds = page
-    ? hideStructuralRoot
-      ? rootNode?.children ?? []
-      : [page.rootNodeId]
-    : []
 
   // Panel landmark ref — used by the F6 focus-cycle effect to move focus into
   // the Layers tree. The Explorer shell owns positioning/visibility.
@@ -241,19 +234,16 @@ function DomPanelInner({ editable = true }: { editable?: boolean }) {
             <DomPanelRowRegistryContext.Provider value={dnd.rowRegistry}>
               <DomPanelDropStateContext.Provider value={dnd.dropState}>
                 {/*
-                  Page mode shows the `base.body` root because it represents
-                  the document body and anchors page-level insertion.
-                  Component mode hides that same structural wrapper and
-                  promotes its children to top-level rows so the panel shows
-                  authored component content instead of an implementation
-                  anchor. Background insert/paste still targets the hidden
-                  root through TreeBackgroundContextMenu.
+                  The synthetic `base.body` root gets no row in either mode:
+                  nothing can be dropped into or styled through it, and the
+                  page's own row (or the component tab) is the frame. Its
+                  children are the top level. Background insert/paste still
+                  targets the hidden root through TreeBackgroundContextMenu.
                 */}
                 <LayerRowList
                   ariaLabel="Page element tree"
                   testId="dom-panel-tree"
-                  rootNodeIds={visibleRootNodeIds}
-                  alwaysExpandedId={hideStructuralRoot ? null : page.rootNodeId}
+                  depthOffset={activeDocument?.kind === 'visualComponent' ? 0 : 1}
                   editable={editable}
                   revealSelection
                 />

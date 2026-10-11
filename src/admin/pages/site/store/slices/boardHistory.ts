@@ -72,6 +72,8 @@ type BoardGet = Parameters<EditorStoreSliceCreator<EditorStore>>[1]
  */
 export const boardCoalesceKey = {
   frameMove: (frameId: string) => `board:frame-move:${frameId}`,
+  /** A drag of several selected frames at once: one burst, one undo step. */
+  frameGroupMove: (frameIds: readonly string[]) => `board:frame-group-move:${frameIds.join(',')}`,
   frameRect: (frameId: string) => `board:frame-rect:${frameId}`,
   frameNudge: () => 'board:frame-nudge',
   annotationMove: (kind: string, id: string) => `board:annotation-move:${kind}:${id}`,

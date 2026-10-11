@@ -15,7 +15,6 @@ interface LayerTreeNodeContentProps {
   showIcon: boolean
   showTag: boolean
   showClasses: boolean
-  isRoot?: boolean
   locked?: boolean
   hidden?: boolean
   labelSlot?: ReactNode
@@ -32,7 +31,6 @@ export function LayerTreeNodeContent({
   showIcon,
   showTag,
   showClasses,
-  isRoot = false,
   locked = false,
   hidden = false,
   labelSlot,
@@ -43,7 +41,7 @@ export function LayerTreeNodeContent({
       <TreeChevron
         onClick={onToggle}
         expanded={expanded}
-        visible={hasChildren && !isRoot}
+        visible={hasChildren}
       />
 
       {showIcon && (

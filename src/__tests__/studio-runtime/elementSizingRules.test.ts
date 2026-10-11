@@ -20,6 +20,7 @@ import {
   sizingAxisRole,
   sizingPatch,
   sizingUnavailableReason,
+  sizingFillRefusal,
   type SizingAxis,
   type SizingMode,
   type SizingParentLayout,
@@ -66,14 +67,38 @@ describe('sizingAxisRole', () => {
 
 describe('sizingPatch — Fill', () => {
   it('writes flex: 1 1 0 on a flex MAIN axis, not 100%', () => {
-    expect(sizingPatch('fill', 'width', FLEX_ROW, {}, '200px')).toEqual({ flex: '1 1 0' })
+    expect(sizingPatch('fill', 'width', FLEX_ROW, {}, '200px')).toEqual({ flex: '1 1 0', minWidth: '0' })
   })
 
   it('clears a stale literal length when the main axis switches to Fill', () => {
     expect(sizingPatch('fill', 'width', FLEX_ROW, { width: '200px' }, '200px')).toEqual({
       width: undefined,
       flex: '1 1 0',
+      minWidth: '0',
     })
+  })
+
+  it('keeps a min-width the user set and gives a column Fill no min-height floor', () => {
+    expect(sizingPatch('fill', 'width', FLEX_ROW, { minWidth: '120px' }, '200px')).toEqual({ flex: '1 1 0' })
+    expect(sizingPatch('fill', 'height', FLEX_COLUMN, {}, '200px')).toEqual({ flex: '1 1 0' })
+  })
+
+  it('takes its own min-width: 0 back out when leaving Fill, and only that one', () => {
+    const filled = { flex: '1 1 0', minWidth: '0' }
+    expect(sizingPatch('fixed', 'width', FLEX_ROW, filled, '200px')).toMatchObject({ flex: undefined, minWidth: undefined })
+    expect(sizingPatch('hug', 'width', FLEX_ROW, filled, '200px')).toMatchObject({ flex: '0 0 auto', minWidth: undefined })
+    expect(sizingPatch('fixed', 'width', FLEX_ROW, { flex: '1 1 0', minWidth: '50px' }, '200px')).not.toHaveProperty('minWidth')
+  })
+
+  it('refuses Fill height in a block parent (no remaining space) and says what to do', () => {
+    expect(sizingPatch('fill', 'height', BLOCK, {}, '200px')).toEqual({})
+    expect(sizingFillRefusal('height', BLOCK)).toMatch(/auto layout/)
+    expect(sizingFillRefusal('width', BLOCK)).toBeUndefined()
+    expect(sizingFillRefusal('height', FLEX_COLUMN)).toBeUndefined()
+  })
+
+  it('reads height: 100% in a block parent as a literal length, not Fill', () => {
+    expect(currentSizingMode('height', BLOCK, { height: '100%' })).toBe('fixed')
   })
 
   it('writes align-self: stretch on a flex CROSS axis and clears the size', () => {
@@ -179,6 +204,8 @@ describe('currentSizingMode', () => {
   for (const [name, parent] of PARENTS) {
     for (const axis of AXES) {
       for (const mode of MODES) {
+        // Block flow has no remaining height to share: Fill height is refused there.
+        if (mode === 'fill' && axis === 'height' && name === 'block') continue
         it(`round-trips ${mode} on ${axis} under a ${name} parent`, () => {
           const stored: Record<string, unknown> = { width: '200px', height: '40px' }
           const patch = sizingPatch(mode, axis, parent, stored, stored[axis])
@@ -326,6 +353,6 @@ describe('the absolute sizing role (PA-5)', () => {
 
   it('leaves in-flow behaviour untouched when no child position is given', () => {
     expect(sizingAxisRole('width', FLEX_ROW)).toBe('flex-main')
-    expect(sizingPatch('fill', 'width', FLEX_ROW, {}, 10)).toEqual({ flex: '1 1 0' })
+    expect(sizingPatch('fill', 'width', FLEX_ROW, {}, 10)).toEqual({ flex: '1 1 0', minWidth: '0' })
   })
 })

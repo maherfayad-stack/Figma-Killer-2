@@ -58,15 +58,11 @@ interface LayerRowListProps {
   ariaLabel: string
   testId?: string
   /**
-   * Top-level rows. One entry (the page body) normally; the body's children
-   * when the structural root is hidden in Visual Component mode.
+   * Indentation added to every row. A page's layers hang under that page's own
+   * row in the Pages list, so they sit one level in; a Visual Component's
+   * layers ARE the top level.
    */
-  rootNodeIds: readonly string[]
-  /**
-   * The node that is forced open and has no chevron — the page body. `null`
-   * when the body is hidden and its children are the roots.
-   */
-  alwaysExpandedId: string | null
+  depthOffset: number
   editable: boolean
   /**
    * React to canvas selection: expand the selected node's ancestors and scroll
@@ -79,8 +75,7 @@ interface LayerRowListProps {
 export function LayerRowList({
   ariaLabel,
   testId,
-  rootNodeIds,
-  alwaysExpandedId,
+  depthOffset,
   editable,
   revealSelection,
 }: LayerRowListProps) {
@@ -116,9 +111,17 @@ export function LayerRowList({
   // re-renders only the rows whose indicator actually moved.
   const dropState = useDomPanelDropState()
 
-  const rows: LayerRow[] = page
-    ? flattenLayerRows(page.nodes, rootNodeIds, expandedIds, alwaysExpandedId)
-    : []
+  // The `base.body` root is an implementation anchor: nothing can be dropped
+  // into it, styled through it or picked on the canvas as a layer. The page's
+  // own row (or the component tab) is the frame, so its children are the top
+  // level and the body gets no row of its own.
+  const rootNode = page?.nodes[page.rootNodeId]
+  const rootNodeIds: readonly string[] = !page
+    ? []
+    : rootNode?.moduleId === 'base.body'
+      ? rootNode.children
+      : [page.rootNodeId]
+  const rows: LayerRow[] = page ? flattenLayerRows(page.nodes, rootNodeIds, expandedIds, null) : []
 
   const { window: rowWindow, scrollerRef, rowHeight } = useRowWindow(containerRef, rows.length)
 
@@ -311,7 +314,6 @@ export function LayerRowList({
           if (!node) return null
           const definition = registry.get(node.moduleId)
           const classNames = getNodeClassNames(node, classes)
-          const isRoot = page?.rootNodeId === row.nodeId
           const target = dropState.target
           const dropPosition =
             target?.overId === row.nodeId && target.position !== 'inside'
@@ -324,8 +326,7 @@ export function LayerRowList({
             <TreeNode
               key={row.nodeId}
               node={node}
-              depth={row.depth}
-              isRoot={isRoot}
+              depth={row.depth + depthOffset}
               expanded={row.expanded}
               hasChildren={row.hasChildren}
               selected={selectedNodeIds.includes(row.nodeId)}

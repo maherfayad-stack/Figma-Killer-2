@@ -76,6 +76,8 @@ interface BreakpointFrameProps {
    * (`CanvasTransformLayer`) has real, distinct breakpoints and keeps it.
    */
   showBreakpointChrome?: boolean
+  /** Forwarded to `IframeFrameSurface.fixedHeight` — a device frame with a stored height. */
+  fixedHeight?: number
   /**
    * L8 Phase A (`perf-06`, STATE.md) — forwarded straight through to
    * `IframeFrameSurface`. `BreakpointFrame` stays dumb about WHY a frame is
@@ -141,6 +143,7 @@ export const BreakpointFrame = memo(function BreakpointFrame({
   frameId,
   axesOverride,
   showBreakpointChrome = true,
+  fixedHeight,
   documentMode,
   liveFrame,
   onAdapterChange,
@@ -354,6 +357,7 @@ export const BreakpointFrame = memo(function BreakpointFrame({
           documentMode={documentMode}
           liveFrame={liveFrame}
           onContentReadyChange={onContentReadyChange}
+          fixedHeight={fixedHeight}
         >
           <CanvasTemplateContext.Provider value={templateContext}>
             <CanvasBreakpointContext.Provider value={breakpoint.id}>

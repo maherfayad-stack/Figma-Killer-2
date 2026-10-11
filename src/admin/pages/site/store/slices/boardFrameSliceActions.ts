@@ -36,6 +36,7 @@ import { boardCoalesceKey, commitBoardChange } from './boardHistory'
 type FrameMutationActions = Pick<
   EditorStore,
   | 'setFramePosition'
+  | 'setFramePositions'
   | 'setFrameSize'
   | 'setFrameRect'
   | 'removeFrame'
@@ -57,6 +58,21 @@ export function createFrameMutationActions(
       const board = getActiveBoard(boards, activeBoardId)
       if (!board) return
       commitBoardChange(set, get, boardCoalesceKey.frameMove(frameId), upsertBoard(boards, moveFrame(board, frameId, x, y)))
+    },
+
+    setFramePositions: (positions) => {
+      if (positions.length === 0) return
+      const { boards, activeBoardId } = get()
+      const board = getActiveBoard(boards, activeBoardId)
+      if (!board) return
+      let nextBoard = board
+      for (const { frameId, x, y } of positions) nextBoard = moveFrame(nextBoard, frameId, x, y)
+      commitBoardChange(
+        set,
+        get,
+        boardCoalesceKey.frameGroupMove(positions.map((position) => position.frameId)),
+        upsertBoard(boards, nextBoard),
+      )
     },
 
     setFrameSize: (frameId, width, height) => {

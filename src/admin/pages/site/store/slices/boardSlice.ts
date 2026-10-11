@@ -269,6 +269,11 @@ interface BoardSlice {
    */
   setFramePosition: (frameId: string, x: number, y: number) => void
   /**
+   * Move several frames in ONE board commit (a drag of a multi-selection): one
+   * history entry, one `boardsDirty` flip, therefore one `boards.json` write.
+   */
+  setFramePositions: (positions: ReadonlyArray<{ frameId: string; x: number; y: number }>) => void
+  /**
    * Persist ONE frame's own width/height (Phase 6E — resizable frames +
    * device presets), by `id` (WS-10 Phase 2). No-op with no active board, or
    * if the frame id doesn't exist.

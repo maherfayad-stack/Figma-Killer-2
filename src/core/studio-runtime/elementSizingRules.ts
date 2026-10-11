@@ -139,6 +139,15 @@ const BLOCK_FILL_VALUE = '100%'
 const FLEX_MAIN_FILL_VALUE = '1 1 0'
 /** "Hug contents" on a flex MAIN axis: size to content and refuse to shrink. */
 const FLEX_MAIN_HUG_VALUE = '0 0 auto'
+/**
+ * The companion floor a flex-main Fill clears with it. Without `min-width: 0`
+ * the item's automatic minimum is its content, so long content refuses to
+ * shrink to the leftover and shoves the next sibling out of the row. Written
+ * on the width axis only: a column whose own height is `auto` would collapse
+ * a `min-height: 0` Fill item to nothing and let its content spill over the
+ * siblings, while the automatic minimum keeps it content-tall.
+ */
+const FLEX_MAIN_FILL_MIN_VALUE = '0'
 /** "Fill container" on a flex CROSS axis or either grid axis. */
 const STRETCH_VALUE = 'stretch'
 /**
@@ -206,6 +215,17 @@ export function sizingAxisRole(
   return 'block'
 }
 
+const MIN_SIZE_PROPERTY = { width: 'minWidth' } as const satisfies Partial<Record<SizingAxis, keyof CSSPropertyBag>>
+
+/** The `min-width: 0` a width-axis Fill wrote with its `flex` marker, as long as it is still exactly that. */
+function ownFillMinSize(axis: SizingAxis, stored: Record<string, unknown>): 'minWidth' | null {
+  if (axis !== 'width') return null
+  const key = MIN_SIZE_PROPERTY.width
+  return FILL_FLEX_VALUES.has(normalize(stored.flex)) && normalize(stored[key]).replace(/px$/, '') === FLEX_MAIN_FILL_MIN_VALUE
+    ? key
+    : null
+}
+
 /**
  * The two insets that pin an absolute element along `axis`. Both declared and
  * the size cleared IS the Left-and-right / Top-and-bottom constraint
@@ -251,7 +271,9 @@ export function currentSizingMode(
   }
 
   if (role === 'block') {
-    if (own === BLOCK_FILL_VALUE) return 'fill'
+    // `height: 100%` in block flow is the parent's WHOLE height and ignores
+    // the siblings, so it is a literal length there, never Fill (O5).
+    if (own === BLOCK_FILL_VALUE) return axis === 'width' ? 'fill' : 'fixed'
     if (own === HUG_VALUE) return 'hug'
     return 'fixed'
   }
@@ -329,6 +351,8 @@ export function sizingPatch(
     if (role === 'absolute') releaseEndInset(patch, axis, stored)
     if (role === 'flex-main' && FILL_FLEX_VALUES.has(normalize(stored.flex))) {
       patch.flex = undefined
+      const min = ownFillMinSize(axis, stored)
+      if (min) patch[min] = undefined
     }
     if (role === 'flex-main' && normalize(stored.flex) === FLEX_MAIN_HUG_VALUE) {
       patch.flex = undefined
@@ -354,6 +378,8 @@ export function sizingPatch(
       // `fit-content` above, and `flex-shrink: 0` keeps a crowded row from
       // squeezing the box below the content it was told to hug.
       patch.flex = FLEX_MAIN_HUG_VALUE
+      const min = ownFillMinSize(axis, stored)
+      if (min) patch[min] = undefined
     } else {
       // Cross-axis flex and both grid axes stretch by DEFAULT; `fit-content`
       // on the axis is itself enough to stop that (stretch only applies to an
@@ -371,6 +397,10 @@ export function sizingPatch(
   // crosshair share ONE write; an empty patch here is "not mine to write".
   if (role === 'absolute') return patch
   if (role === 'block') {
+    // Block flow has no "remaining space": `height: 100%` is the whole parent
+    // and pushes every later sibling out of it (O5). Not offered
+    // (`sizingFillRefusal`); the parent has to be auto layout first.
+    if (axis === 'height') return patch
     patch[axis] = BLOCK_FILL_VALUE
     return patch
   }
@@ -380,6 +410,8 @@ export function sizingPatch(
   if (hasStyleValue(stored[axis])) patch[axis] = undefined
   if (role === 'flex-main') {
     patch.flex = FLEX_MAIN_FILL_VALUE
+    const min = MIN_SIZE_PROPERTY[axis as 'width']
+    if (min && !hasStyleValue(stored[min])) patch[min] = FLEX_MAIN_FILL_MIN_VALUE
     return patch
   }
   const self = selfProperty(role, axis)
@@ -396,4 +428,16 @@ export function sizingPatch(
 export function sizingUnavailableReason(parent: SizingParentLayout | null): string | undefined {
   if (parent) return undefined
   return "Hug and Fill need to know how the parent lays this element out, and no parent layout could be read."
+}
+
+/**
+ * Why Fill is unavailable on ONE axis although the parent is known, or
+ * `undefined`. Block flow has no "remaining height" to share, so Fill height
+ * there is refused with the one thing that makes it possible (O5).
+ */
+export function sizingFillRefusal(axis: SizingAxis, parent: SizingParentLayout | null): string | undefined {
+  if (sizingAxisRole(axis, parent) === 'block' && axis === 'height') {
+    return 'Fill height needs the parent in auto layout. Select the parent and press Shift+A.'
+  }
+  return undefined
 }

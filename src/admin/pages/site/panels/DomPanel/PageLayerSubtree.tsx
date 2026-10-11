@@ -84,8 +84,7 @@ export function PageLayerSubtree({ page, editable = true }: PageLayerSubtreeProp
           <DomTreePageContext.Provider value={page.id}>
             <LayerRowList
               ariaLabel={`${page.title} element tree`}
-              rootNodeIds={[page.rootNodeId]}
-              alwaysExpandedId={page.rootNodeId}
+              depthOffset={1}
               editable={editable}
               revealSelection={false}
             />

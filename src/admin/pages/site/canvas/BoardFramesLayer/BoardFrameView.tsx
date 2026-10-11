@@ -590,6 +590,7 @@ function BoardFrameViewImpl({
                     // would be a second, board-global chrome strip on top of it.
                     // See `showBreakpointChrome`'s doc on `BreakpointFrame`.
                     showBreakpointChrome={false}
+                    fixedHeight={hasManualHeight ? height : undefined}
                     onContentReadyChange={setContentReady}
                   />
                 )}

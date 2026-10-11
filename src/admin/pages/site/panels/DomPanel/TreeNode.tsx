@@ -63,8 +63,6 @@ export interface TreeNodeProps {
   /** The node itself — resolved once by the list, never re-selected per row. */
   node: PageNode
   depth: number
-  /** This node is the page body: forced open, no chevron, not draggable. */
-  isRoot: boolean
   expanded: boolean
   hasChildren: boolean
   selected: boolean
@@ -108,7 +106,6 @@ interface ContextMenuState {
 export const TreeNode = memo(function TreeNode({
   node,
   depth,
-  isRoot,
   expanded,
   hasChildren,
   selected,
@@ -160,7 +157,7 @@ export const TreeNode = memo(function TreeNode({
   }
 
   // ── dnd-kit draggable ─────────────────────────────────────────────────────
-  const draggableEnabled = editable && !isRoot && !node.locked && !isRenaming
+  const draggableEnabled = editable && !node.locked && !isRenaming
   const {
     attributes,
     listeners,
@@ -182,7 +179,7 @@ export const TreeNode = memo(function TreeNode({
   const isOpenContainerGroup = openGroupHead
 
   const requestDeleteLayer = () => {
-    if (!editable || isRoot || node.locked) return
+    if (!editable || node.locked) return
     confirmDelete({
       title: 'Delete layer?',
       description: `${displayName} and any of its children will be removed. This can be undone with Ctrl/Cmd+Z.`,
@@ -191,7 +188,7 @@ export const TreeNode = memo(function TreeNode({
   }
 
   const requestDeleteSelection = () => {
-    if (!editable || isRoot || node.locked) return
+    if (!editable || node.locked) return
 
     const state = useEditorStore.getState()
     const page = selectActiveCanvasPage(state)
@@ -240,15 +237,15 @@ export const TreeNode = memo(function TreeNode({
       case ' ':
         e.preventDefault()
         selectLayerNode()
-        if (hasChildren && !isRoot) store.toggle(nodeId)
+        if (hasChildren) store.toggle(nodeId)
         break
       case 'ArrowRight':
         e.preventDefault()
-        if (hasChildren && !isRoot && !expanded) store.toggle(nodeId)
+        if (hasChildren && !expanded) store.toggle(nodeId)
         break
       case 'ArrowLeft':
         e.preventDefault()
-        if (!isRoot && expanded) store.toggle(nodeId)
+        if (expanded) store.toggle(nodeId)
         break
       case 'F2':
         if (!editable) return
@@ -332,7 +329,7 @@ export const TreeNode = memo(function TreeNode({
         {...draggableListeners}
         role="treeitem"
         aria-selected={selected}
-        aria-expanded={hasChildren && !isRoot ? expanded : undefined}
+        aria-expanded={hasChildren ? expanded : undefined}
         // Flat-DOM tree: depth and sibling position are stated, not implied by
         // nesting, because the rows above and below may not be mounted.
         aria-level={ariaLevel}
@@ -399,7 +396,7 @@ export const TreeNode = memo(function TreeNode({
             return
           }
           selectLayerNode()
-          if (hasChildren && !isRoot) store.toggle(nodeId)
+          if (hasChildren) store.toggle(nodeId)
         }}
         onDoubleClick={(e) => {
           e.preventDefault()
@@ -431,10 +428,9 @@ export const TreeNode = memo(function TreeNode({
           showIcon={showIcon}
           showTag={showTag}
           showClasses={showClasses}
-          isRoot={isRoot}
           locked={node.locked}
           hidden={node.hidden}
-          onToggle={(e) => { e.stopPropagation(); if (!isRoot) store.toggle(nodeId) }}
+          onToggle={(e) => { e.stopPropagation(); store.toggle(nodeId) }}
           labelSlot={isRenaming ? (
             <Input
               ref={renameInputRef}

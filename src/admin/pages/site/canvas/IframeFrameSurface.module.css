@@ -22,7 +22,7 @@
    * (a fixed reference), so there's no iframe↔content sizing feedback loop.
    * Once content exceeds the viewport, the measurement loop sets a larger
    * inline `height` and the frame grows to fit. */
-  min-height: 100vh;
+  min-height: var(--frame-h);
   /* The frame's paper — see `--canvas-frame-paper` in globals.css. It follows
      the board's PREVIEWED colour scheme (`data-preview-scheme`, set from the
      frame's own effective axes in `IframeFrameSurface`), not the admin theme:

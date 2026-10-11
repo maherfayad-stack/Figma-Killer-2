@@ -257,6 +257,7 @@ export {
   sizingAxisRole,
   sizingPatch,
   sizingUnavailableReason,
+  sizingFillRefusal,
   FLEX_MAIN_FIXED_VALUE,
   type SizingAxis,
   type SizingAxisRole,

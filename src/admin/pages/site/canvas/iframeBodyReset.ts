@@ -9,7 +9,6 @@
  * affordances inside design frames. Live frames get neither — they behave
  * exactly like the published site.
  */
-import { CANVAS_VIEWPORT_HEIGHT } from './resolveViewportUnits'
 
 /**
  * Frame interaction model.
@@ -113,6 +112,7 @@ export function applyIframeBodyReset(
   iframeDoc: Document,
   breakpointId: string,
   interaction: IframeInteraction,
+  viewportHeight: number,
 ): void {
   iframeDoc.body.setAttribute('data-breakpoint-id', breakpointId)
   iframeDoc.body.dataset.studioIframeInteraction = interaction
@@ -132,8 +132,8 @@ export function applyIframeBodyReset(
   // region) resolves instead of collapsing. The value is the constant device
   // viewport, never a measurement — see `useIframeFrameAutoHeight`, which owns
   // releasing it to `auto` for a document taller than this.
-  iframeDoc.body.style.height = `${CANVAS_VIEWPORT_HEIGHT}px`
-  iframeDoc.body.style.minHeight = `${CANVAS_VIEWPORT_HEIGHT}px`
+  iframeDoc.body.style.height = `${viewportHeight}px`
+  iframeDoc.body.style.minHeight = `${viewportHeight}px`
   // Body is the containing block for absolutely-positioned descendants.
   //
   // An app screen's overlay root is routinely `position: absolute; inset: 0`,
