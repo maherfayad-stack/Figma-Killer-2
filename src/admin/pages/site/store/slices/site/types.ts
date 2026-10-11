@@ -33,6 +33,7 @@ import type { EditorStore } from '@site/store/types'
 import type { LocalComponentSpec } from '@site/property-controls/componentPropKind'
 import type { FrameRequest } from './frameRequest'
 import type { PendingStructuralHistory } from '@site/studio/pendingStructuralOutcome'
+import type { StructuralSourceGesture } from '@site/studio/structuralUndoPlan'
 import type { SlotOwnerEntry } from './nodeIndex'
 import type { ImportedNodesResult } from './importedNodesResult'
 import type { HtmlSourceWriteResult, PasteHtmlOptions } from './htmlSourceWriteResult'
@@ -554,6 +555,8 @@ export interface SiteSlice {
    * the nodes the write made — see `structuralSourceHistory.ts`.
    */
   recordStructuralSourceWrite: (history: PendingStructuralHistory) => void
+  /** A style write ⌘Z cannot undo by value (override, expanded shorthand) becomes a journaled entry — `studio/styleWriteJournal.ts`. */
+  journalStyleWrite: (target: { index: number; entry: HistoryEntry }, gesture: StructuralSourceGesture) => void
 
   // ─── Node-lookup indexes (WS-5.2) ────────────────────────────────────────
   /**

@@ -168,7 +168,7 @@ export function FrameBulkInspector() {
 
   return (
     <div className={styles.panel} data-testid="frame-bulk-inspector">
-      <div className={styles.header}>{selectedFrameIds.length} frames selected</div>
+      <div className={styles.header}>{selectedFrameIds.length === 1 ? '1 frame selected' : `${selectedFrameIds.length} frames selected`}</div>
 
       <Select
         fieldSize="sm"

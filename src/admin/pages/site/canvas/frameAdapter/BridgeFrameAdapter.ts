@@ -261,6 +261,7 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
     this.channel.postMessage(toInboundEnvelope(message), this.frameOrigin)
   }
 
+  // Always the whole text: the in-frame runtime owns the sheet, so `options.incremental` has no meaning here.
   applyOverlay(id: string, css: string): void {
     this.post({ type: 'applyOverlay', id, css })
   }

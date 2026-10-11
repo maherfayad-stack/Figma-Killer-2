@@ -244,12 +244,23 @@ placements and a per-row display-name string only, never `canvasLayerPages`
 
 ---
 
+## The inspector for a loose layer (r3-components)
+
+A loose layer is selected as a whole (`selectedCanvasLayerIds`), and `CanvasLayerInspector` edits its ROOT element, the one element its module returns:
+
+- a root `<svg>`: the Vector controls (`svg-attr` writes);
+- any other root: `LayerStyleControls` (lazy, `LazyLayerStyleControls`): size, fill, stroke (the `border` shorthand), corner radius, opacity, and for a `base.text` root the text colour and font size. They read the root node's inline styles (`layerStyleModel.ts`) and write a `style` edit per gesture (`layerStyleCommit.ts`): the gesture is mirrored onto the rendered element as it happens, coalesced, and posted once through `commitStructural` (the editor's `/save`, the only batch allowed to write a layer module), with a `known` inverse (the same `style` edit carrying the previous values, `remove` for properties that were absent), so one Cmd+Z puts the module back byte for byte. A `border` that is not `<width> solid <colour>` turns the stroke controls off with the reason, never overwriting what it cannot restate.
+
+With a draw tool armed a press always draws: `CanvasDrawToolLayer` sits above the surface, and `useCanvasLayerPointer` stands down unless the tool is `move`, so a press on top of a loose layer starts a new rectangle instead of moving the layer.
+
+---
+
 ## Not built yet
 
 | Work order | Missing |
 |---|---|
 | FC-2 | `canvas-layer-duplicate`; `bakeCapturedBindings` (a `captured-scope` lift refuses instead of becoming a copy with values baked) |
-| FC-3/FC-7 | Editing a loose layer's content in the inspector beyond a root `<svg>`'s Vector paint (a loose layer is selected as a whole; its nodes are not selectable, and any other root says "edit it inside a frame"); Measures X/Y on a placement; context menu; ⌘X and ⌘V ONTO the board |
+| FC-3/FC-7 | Editing a loose layer's CHILDREN in the inspector (a loose layer is selected as a whole and its nodes are not selectable; its ROOT element is edited by the Vector paint for a root `<svg>` and by the layer style controls for any other root, below); Measures X/Y on a placement; context menu; ⌘X and ⌘V ONTO the board |
 | FC-4 | Registering layers as drop targets for an ELEMENT drag (drop into a loose layer's children) |
 | FC-5 | Marquee selection of loose layers; resize handles; z-order keys; lock/hide UI (the placement fields exist and are honoured) |
 | FC-6 | A multi-file drop as ONE undo step (today one per layer) |

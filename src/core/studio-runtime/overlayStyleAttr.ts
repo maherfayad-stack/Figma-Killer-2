@@ -21,3 +21,26 @@
  * imports" module category (see `index.ts`'s own doc).
  */
 export const OVERLAY_ID_ATTR = 'data-studio-overlay-id'
+
+/**
+ * Bumped on a managed `<style>` every time its rules are changed in place
+ * (`insertRule` / `deleteRule`, SB-7 — `PortalFrameAdapter.applyOverlay`'s
+ * `incremental` mode) instead of by rewriting its text.
+ *
+ * A text rewrite is a `childList` / `characterData` mutation under `<head>`,
+ * and everything that has to know "the page's style changed" watches for that:
+ * the frame-fit budget reset, the geometry dirty signal, hover suppression.
+ * A CSSOM edit is invisible to a `MutationObserver`, so it announces itself
+ * with this attribute instead, and those observers watch for it through
+ * {@link STYLE_CHANGE_OBSERVER_OPTIONS}.
+ */
+export const OVERLAY_REVISION_ATTR = 'data-studio-overlay-rev'
+
+/** What an observer on `<head>` passes to `observe()` to see EVERY change to a page stylesheet: a text rewrite or an in-place rule edit. */
+export const STYLE_CHANGE_OBSERVER_OPTIONS: MutationObserverInit = {
+  childList: true,
+  subtree: true,
+  characterData: true,
+  attributes: true,
+  attributeFilter: [OVERLAY_REVISION_ATTR],
+}

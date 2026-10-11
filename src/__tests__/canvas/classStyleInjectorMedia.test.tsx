@@ -8,6 +8,7 @@ import { useEditorStore } from '@site/store/store'
 import { classKindSelector, DEFAULT_BREAKPOINTS, type StyleRule } from '@core/page-tree'
 import { refreshCmsMediaAssetCache } from '@admin/shared/media/hooks/useCmsMediaAssetByPath'
 import { makeSite } from '../fixtures'
+import { recordOverlayCss } from './recordOverlayCss'
 
 const originalFetch = globalThis.fetch
 
@@ -97,6 +98,7 @@ describe('ClassStyleInjector media backgrounds', () => {
 
   it('rewrites persisted class background images after the site loads during editor reload', async () => {
     adapter = new PortalFrameAdapter(document)
+    const overlayCss = recordOverlayCss(adapter)
     render(
       <CanvasFrameAdapterContext.Provider value={adapter}>
         <ClassStyleInjector />
@@ -116,7 +118,7 @@ describe('ClassStyleInjector media backgrounds', () => {
     })
 
     await waitFor(() => {
-      const css = document.head.querySelector<HTMLStyleElement>('[data-studio-overlay-id="mc-classes"]')?.textContent ?? ''
+      const css = overlayCss('mc-classes')
       expect(css).toContain(`background-image: url("${variantPath}");`)
       expect(css).toContain('background-image: image-set(')
       expect(css).not.toContain(backgroundPath)

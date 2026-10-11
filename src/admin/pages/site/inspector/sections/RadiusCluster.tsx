@@ -12,12 +12,13 @@
  * only how many fields are drawn:
  *
  *   - **linked** → `border-radius: 12px`, the four longhands cleared;
- *   - **unlinked** → the four `border-*-radius` longhands, the shorthand
- *     cleared.
+ *   - **unlinked** → ONE corner's `border-*-radius` longhand, written after
+ *     the shorthand (a longhand after a shorthand wins by order, and
+ *     `readCorners` reads the longhand over it). The shorthand and the other
+ *     three corners are never rewritten by it.
  *
- * Never both: a shorthand and a longhand in the same rule resolve by source
- * order, which a property bag does not model, so emitting the pair would make
- * the panel's own read-back a coin flip. Before P9 the linked field wrote
+ * Linking writes the shorthand and clears the longhands, so the pair never
+ * outlives a linked edit. Before P9 the linked field wrote
  * four longhands regardless, which turned every hand-written
  * `border-radius: 12px` into four lines the first time anything touched it.
  *
@@ -132,22 +133,14 @@ export function RadiusCluster({
   }
 
   /**
-   * Unlinked: this corner's longhand. When a shorthand is what currently
-   * declares the radius, the same patch materialises the other three corners
-   * from it and drops the shorthand — otherwise the shorthand would keep
-   * painting them and the panel would show four fields editing one value.
+   * Unlinked: this corner's longhand, and nothing else. A `border-radius` that
+   * declares the other corners stays exactly as written - the longhand is a
+   * single override after it (the corner reads back over the shorthand,
+   * `readCorners`), so editing one corner never rewrites the author's other
+   * three into four lines.
    */
   const writeCorner = (corner: RadiusCorner, value: string | undefined) => {
-    if (!shorthandCorners) {
-      onChange(radiusLonghand(corner), value || undefined)
-      return
-    }
-    const patch: Record<string, string | null> = { borderRadius: null }
-    for (const each of RADIUS_CORNERS) {
-      const next = each === corner ? value || '' : (plainString(radiusState.perCorner[each]) ?? '')
-      patch[String(radiusLonghand(each))] = next || null
-    }
-    onChangeMany(patch)
+    onChange(radiusLonghand(corner), value || undefined)
   }
 
   const previewProperty = onPreview

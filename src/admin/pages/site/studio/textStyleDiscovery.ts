@@ -191,11 +191,18 @@ export function appliedStyles(styles: DiscoveredStyles, family: StyleFamily, cla
   return styles[family].filter((style) => classIds.includes(style.ruleId))
 }
 
+/** A value as a designer reads it: `var(--font-display, serif)` is the token `font-display`, not CSS syntax. */
+function plainValue(value: string): string {
+  const token = /^var\(\s*--([\w-]+)\s*(?:,[^)]*)?\)$/.exec(value.trim())
+  return token ? token[1]! : value
+}
+
 /** One line for a menu row: the values a designer reads first. */
 export function summarizeStyle(style: DiscoveredStyle): string {
-  const d = style.declarations
+  const d = Object.fromEntries(Object.entries(style.declarations).map(([property, value]) => [property, plainValue(value)]))
   if (style.family === 'text') {
-    const parts = [d.fontFamily?.split(',')[0]?.trim().replace(/^['"]|['"]$/g, ''), d.fontWeight, d.fontSize && d.lineHeight ? `${d.fontSize} / ${d.lineHeight}` : d.fontSize]
+    const size = d.fontSize && d.lineHeight ? `${d.fontSize} / ${d.lineHeight}` : d.fontSize
+    const parts = [d.fontFamily?.split(',')[0]?.trim().replace(/^['"]|['"]$/g, ''), d.fontWeight, size]
     return parts.filter((part): part is string => Boolean(part)).join(' · ')
   }
   const first = d.boxShadow ?? d.filter ?? d.backdropFilter ?? d.textShadow ?? ''

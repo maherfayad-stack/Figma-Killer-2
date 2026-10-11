@@ -70,6 +70,7 @@ import { useCanvasToolShortcuts } from './useCanvasToolShortcuts'
 import { useCanvasLayerCommandKeys } from './useCanvasLayerCommandKeys'
 import { useCreatedNodeFollowUp } from './createdNodeFollowUp'
 import { isArmedTool } from './canvasDrawTool'
+import { loadArmedToolChunk, warmArmedToolChunk } from './canvasArmedToolChunk'
 import { SelectionStyleCommandHost } from './SelectionStyleCommandHost'
 import { useCanvasHandTool } from './useCanvasHandTool'
 import { useCanvasFileDrop } from './useCanvasFileDrop'
@@ -86,10 +87,8 @@ const VisualComponentModeControl = lazy(() =>
   import('./VisualComponentModeControl').then((module) => ({ default: module.default })),
 )
 
-// P5-E / P5-D — mounted only while a draw tool or the pen is armed (loaded on first arming).
-const CanvasArmedToolLayer = lazy(() =>
-  import('./CanvasArmedToolLayer').then((m) => ({ default: m.CanvasArmedToolLayer })),
-)
+// P5-E / P5-D — mounted only while a draw tool or the pen is armed. Fetched when the editor is idle (`warmArmedToolChunk`), so the first press after arming draws.
+const CanvasArmedToolLayer = lazy(() => loadArmedToolChunk().then((m) => ({ default: m.CanvasArmedToolLayer })))
 const TemplateModeControl = lazy(() =>
   import('./TemplateModeControl').then((module) => ({ default: module.default })),
 )
@@ -218,6 +217,7 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // mode: `ZoomControls` reads `null` as "nothing to fit" and disables the
   // control rather than letting it no-op. See `canvasViewportCommands.ts`.
   const setCanvasViewportCommands = useEditorStore((s) => s.setCanvasViewportCommands)
+  useEffect(() => (isLive ? undefined : warmArmedToolChunk()), [isLive])
   useEffect(() => {
     if (isLive) return
     setCanvasViewportCommands({ zoomToFit, zoomToFill, zoomToSelection })

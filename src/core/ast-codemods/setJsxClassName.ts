@@ -101,6 +101,7 @@ import {
   type TemplateExpression,
 } from 'ts-morph'
 import { CLASS_NAME_JOIN_BUILTIN_NAMES } from '@core/page-parser'
+import { rebuildTemplateClassName } from './classNameTemplate'
 import { isWrappableClassExpression, wrapExpressionWithTokens } from './classNameWrap'
 import type { PendingModuleImports } from './cssModuleImportPlan'
 import { createProject, findJsxElementAtLocationOrThrow, loadSourceFile } from './locateJsxElement'
@@ -530,14 +531,20 @@ export function setJsxClassName(params: SetJsxClassNameParams): SetJsxClassNameR
   // owned here.
   if (Node.isTemplateExpression(expr)) {
     if (removeCount > 0) {
-      return {
-        ok: false,
-        refusal: {
-          reason: 'template-dynamic',
-          message:
-            `className is a template with an interpolated value ("${expr.getText()}"), and a class could hide in the dynamic part. Remove the class in the code.`,
-        },
+      const rebuilt = rebuildTemplateClassName(expr, add, remove)
+      if (rebuilt.kind === 'refuse') {
+        return {
+          ok: false,
+          refusal: {
+            reason: 'template-dynamic',
+            message: `className is a template with an interpolated value ("${expr.getText()}"), and a class could hide in the dynamic part. Remove the class in the code.`,
+          },
+        }
       }
+      if (rebuilt.kind === 'remove-attribute') existingAttribute.remove()
+      else if (rebuilt.kind === 'string') existingAttribute.setInitializer('"' + rebuilt.text + '"')
+      else expr.replaceWithText(rebuilt.text)
+      return commit()
     }
     if (addCount === 0) return { ok: true }
     // A module token becomes its own interpolated span appended after the
@@ -581,8 +588,22 @@ export function setJsxClassName(params: SetJsxClassNameParams): SetJsxClassNameR
     // Detaching the module token that IS this whole attribute is the one
     // unambiguous removal here — the element stops carrying that class, which
     // is exactly what was asked, and nothing else is left to keep.
-    if (remove.expressions.includes(bindingText) && remove.literals.length === 0 && addCount === 0) {
-      existingAttribute.remove()
+    if (remove.expressions.includes(bindingText) && remove.expressions.length === 1 && remove.literals.length === 0) {
+      if (addCount === 0) {
+        existingAttribute.remove()
+        return commit()
+      }
+      // A swap (`styles.greet` -> `styles.counter`, a text style replaced by another): the binding being
+      // detached is the whole attribute, so the attribute simply becomes what is being attached.
+      const attached = add.expressions.filter((expression) => expression !== bindingText)
+      if (attached.length === 0 && add.literals.length > 0) {
+        existingAttribute.setInitializer('"' + add.literals.join(' ') + '"')
+      } else if (attached.length === 1 && add.literals.length === 0) {
+        expr.replaceWithText(attached[0]!)
+      } else {
+        const parts = [...attached.map((expression) => '${' + expression + '}'), ...add.literals]
+        expr.replaceWithText('`' + parts.join(' ') + '`')
+      }
       return commit()
     }
     if (removeCount > 0) {

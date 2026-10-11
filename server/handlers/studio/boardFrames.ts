@@ -31,10 +31,11 @@ import {
   FRAME_WIDTH,
   type Board,
   type BoardFramePlacement,
+  type BoardsFile,
 } from '@core/studio-board'
 import { discoverPageFiles, projectPagesDir } from '../studioProjects'
 import { pageIdFromRelPath } from '../studioPageIds'
-import { mergeStudioMeta, readStudioMeta } from './studioMeta'
+import { mergeStudioMeta, readStudioMeta, type StudioMeta } from './studioMeta'
 import type { StorySummary } from './storyDiscovery'
 import type { GallerySummary } from './componentGallery'
 import { readBoardsFile, writeBoardsFile } from './boardGeometry'
@@ -236,6 +237,23 @@ export function syncComponentBoardFrames(dir: string, galleries: readonly Galler
   if (ledger) mergeStudioMeta(dir, { components: { ...meta.components, ...ledger } })
 }
 
+/**
+ * A save that leaves out a derived board the editor knew about is the author
+ * deleting it: forget its id in the ledger so the next load does not make it
+ * again (`placeOnDerivedBoard` makes a LOST board again, and a dismissed one is
+ * not lost). `knownBoardIds` absent means the save carried no such claim.
+ */
+export function forgetRemovedDerivedBoards(dir: string, knownBoardIds: readonly string[] | undefined, saved: BoardsFile): void {
+  if (!knownBoardIds) return
+  const meta = readStudioMeta(dir)
+  const removed = (boardId: string | undefined) =>
+    boardId !== undefined && knownBoardIds.includes(boardId) && !saved.boards.some((b) => b.id === boardId)
+  const patch: Partial<StudioMeta> = {}
+  if (removed(meta.stories?.boardId)) patch.stories = { ...meta.stories, boardId: undefined }
+  if (removed(meta.components?.boardId)) patch.components = { ...meta.components, boardId: undefined }
+  if (Object.keys(patch).length > 0) mergeStudioMeta(dir, patch)
+}
+
 /** One derived frame to place: the page it renders and the row it belongs on. */
 interface DerivedFrame {
   pageId: string
@@ -260,18 +278,20 @@ function placeOnDerivedBoard(
   ledger: { boardId?: string; placedPageIds?: string[] } | undefined,
   items: readonly DerivedFrame[],
 ): { boardId: string; placedPageIds: string[] } | null {
-  const placed = new Set(ledger?.placedPageIds ?? [])
+  const existing = readBoardsFile(dir)
+  const recordedBoardId = ledger?.boardId
+  // A recorded id that no longer resolves means the board was lost, not
+  // dismissed: removing one on purpose clears the ledger's id on the way out
+  // (`forgetRemovedDerivedBoards`), so what is left here is a board the editor
+  // overwrote or a file edited by hand. Make it again and place every frame on
+  // it, the way the first load did, rather than leaving the galleries
+  // reachable only through Add page.
+  const boardLost = recordedBoardId !== undefined && !existing.boards.some((b) => b.id === recordedBoardId)
+  const placed = new Set(boardLost ? [] : (ledger?.placedPageIds ?? []))
   const pending = items.filter((item) => !placed.has(item.pageId))
   if (pending.length === 0) return null
 
-  const existing = readBoardsFile(dir)
-  const recordedBoardId = ledger?.boardId
-  // A recorded id that no longer resolves means the user deleted the board.
-  // Honour that: place nothing, and leave the ledger as it is so a later
-  // re-enable starts from a clean slate rather than half a board.
-  if (recordedBoardId !== undefined && !existing.boards.some((b) => b.id === recordedBoardId)) return null
-
-  const board = recordedBoardId
+  const board = recordedBoardId && !boardLost
     ? existing.boards.find((b) => b.id === recordedBoardId)!
     : createBoard(crypto.randomUUID(), boardName)
 

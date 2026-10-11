@@ -529,9 +529,12 @@ invention.
 - **G5.5 — The radius link writes the shorthand (P9).** The cluster's toggle is
   a chain link, and it chooses the *declaration*: **linked** writes
   `border-radius: 12px` and clears the four longhands, **unlinked** writes the
-  four longhands and clears the shorthand. Never both — a shorthand and a
-  longhand in one rule resolve by source order, which a property bag does not
-  model. Before P9 the linked field wrote four longhands regardless, so a
+  **one corner's longhand, written after the shorthand** (a longhand after a
+  shorthand wins by order, and the cluster reads the longhand over it) — the
+  author's `border-radius: 8px` and the other three corners are never rewritten
+  into four lines by one corner's edit (r3-inspector). Linking again writes the
+  shorthand and clears the longhands, so the pair never outlives a linked edit.
+  Before P9 the linked field wrote four longhands regardless, so a
   hand-written `border-radius: 12px` came back as four lines the first time
   anything touched it.
 
@@ -1317,6 +1320,9 @@ re-rendered the reverted draft, so both `ScrubInput` and `TokenAwareInput` set
 a flag that makes that one blur discard instead of commit — otherwise Escape
 writes the very value it was pressed to abandon.
 
+`TextareaControl` (a module's multi-line text, e.g. a Text node's `text`) uses the same draft: it used to write on every keystroke and Enter inserted a newline, so `title="First"` became `title={"Alpha
+"}` and unwinding took one undo per character. Enter or blur now commits once (one history entry); **Shift+Enter is a line break only when the text is the node's own JSX text** (`multiline`, from `renderModuleTabContent`: no `textOrigin`, not code-bound). Text that lands in a call-site attribute (`ComponentSection`) or another file's string literal has no honest newline: there Shift+Enter commits like Enter and pasted line breaks fold to spaces, so a plain string attribute stays a plain string attribute. **Escape on a token-aware field (padding, margin, gap...) now also clears the as-you-type canvas preview** (`TokenAwareInput` called only `onDraftClear`, leaving the abandoned value painted and the panel reading the stale computed value).
+
 **A parked caret commits nothing (ERR-1).** Keeping focus means the caret
 usually sits in a field that has nothing left to say. `ScrubInput` tracks one
 bit, `typed` — set by a keystroke into the text, cleared by every commit,
@@ -2095,6 +2101,8 @@ thing that is actually real here: **a CSS custom property the open project's
 own stylesheets declare** — `--color-primary`, `--space-4`, `--radius-card` —
 written into the source as `var(--name)`.
 
+The hexagon is revealed after a **350 ms dwell** on the field (immediately while the field has focus or the picker is open), and is out of hit-testing until then (`VariableField.module.css`, `visibility`). On a narrow field - a radius corner, a padding side - the 24 px button covers most of the input, so a click that arrived with the pointer, the ordinary way to focus a field, used to open the picker and type into its search box.
+
 ### §10.1 Where the variables come from
 
 The server's **token catalog** (CT-1): `GET /admin/api/studio/token-catalog`
@@ -2376,6 +2384,16 @@ refusal. Without that, a refused `className` (an expression the codemod cannot
 rewrite) would have left the inline values stripped and no class on the layer.
 Cmd+Z is the journal's `restore` (all files byte for byte); Cmd+Shift+Z posts
 the same edits again.
+
+**In a CSS Modules project** (`className={styles.greet}`) a style is reached through
+the file's binding. Applying one swaps the element's bound class for another
+(`styles.greet` becomes `styles.counter`; a `{`${styles.a} ${styles.b}`}` list loses one span and
+keeps the rest, `setJsxClassName` + `classNameTemplate.ts`), and a create writes
+the rule into the page's own module (`Probe.module.css`, the co-located
+stylesheet) and attaches it as `styles["text-hero"]`. A template that holds a
+span glued to text (`btn-${size}`) is not a class list and still refuses
+`template-dynamic`, so the apply is refused whole. The menu's value summary names a
+token (`font-display`), not `var(--font-display)`.
 
 A refusal the client can know (a name taken, a layer computed in code, a
 generated `.map` row) is a sentence in the name popover or a warning toast

@@ -60,7 +60,7 @@ import type { StructuralCommitRollback } from './structuralCommitRollback'
 import type { StructuralStepOutcome } from './structuralHistory'
 import type { HistoryEntry, SiteSlice, SiteSliceHelpers, StructuralSourceHistory } from './types'
 
-type StructuralSourceHistoryActions = Pick<SiteSlice, 'recordStructuralSourceWrite'>
+type StructuralSourceHistoryActions = Pick<SiteSlice, 'recordStructuralSourceWrite' | 'journalStyleWrite'>
 
 /**
  * Apply what a landed structural write means for the undo stack — called by
@@ -76,9 +76,21 @@ type StructuralSourceHistoryActions = Pick<SiteSlice, 'recordStructuralSourceWri
  * position its previous undo cannot have known.
  */
 export function createStructuralSourceHistoryActions({
+  get,
   set,
 }: SiteSliceHelpers): StructuralSourceHistoryActions {
   return {
+    journalStyleWrite: (target, gesture) => {
+      // The entry must still be exactly the one the save was planned from: a
+      // later edit that coalesced into it, an undo, or a reload that copied
+      // it all mean the journal token no longer describes this entry. Checked
+      // on the live stack, outside the recipe, where identity is not a draft's.
+      const present = get()._historyPast[target.index]
+      if (present === undefined || present !== target.entry || present.structural !== undefined) return
+      set((state) => {
+        state._historyPast[target.index]!.structural = { gesture: 'source', source: gesture }
+      })
+    },
     recordStructuralSourceWrite: (history: PendingStructuralHistory) => {
       set((state) => {
         if (history.kind === 'push') {
@@ -227,7 +239,7 @@ function unresolvedNodeIds(
   const missing: string[] = []
   for (const edit of edits) {
     // A `css` edit (CT-5, a style created with its rule) names a stylesheet + selector; its id is a join key, never a board node.
-    if (addressesSourceLiteral(edit) || addressesJournalEntry(edit) || edit.kind === 'css') continue
+    if (addressesSourceLiteral(edit) || addressesJournalEntry(edit) || edit.kind === 'css' || edit.kind === 'styled') continue
     for (const id of structuralEditNodeIds(edit)) {
       if (!state._nodeIdToPageIds.has(id) && !onFreeCanvas(state, id) && !missing.includes(id)) missing.push(id)
     }
