@@ -48,8 +48,9 @@
  *
  * `landing` reports which kind of line took the value, for the inspector's
  * "Saved in Card.css" / "as an override" chip: `'rule'` is the class's own
- * declaration (rewritten, appended to its rule, or a rewritten shorthand);
- * `'override'` is a longhand written after the shorthand it overrides.
+ * declaration (rewritten, or appended to its rule), `'expanded'` a shorthand
+ * rewritten with that one side changed, `'override'` a longhand written after
+ * the declaration it overrides.
  * Unparseable CSS refuses `css-syntax` (a file with a syntax error is not one
  * Studio edits — the same stance every writer takes), a malformed scope
  * `invalid-at-rule`.
@@ -81,10 +82,12 @@ export interface DeclarationWriteRefusal {
 /**
  * Which kind of line took a written value — the inspector's "where did it go".
  * `'rule'`: the class's own declaration (rewritten in place, appended to its
- * rule, a new rule, or a covering shorthand rewritten with that one side
- * changed). `'override'`: a longhand written AFTER the shorthand it overrides.
+ * rule, or a new rule). `'expanded'`: a covering shorthand rewritten with that
+ * one side changed. `'override'`: a longhand written AFTER the declaration it
+ * overrides. The last two are the ones a plain "set the old value back" does
+ * not undo byte for byte, which is why the batch journals them.
  */
-export type DeclarationLanding = 'rule' | 'override'
+export type DeclarationLanding = 'rule' | 'expanded' | 'override'
 
 export type DeclarationWriteResult =
   | {
@@ -292,6 +295,7 @@ export function setDeclaration(
       if (expanded !== null) {
         if (expanded === winner.value) return { css: source, changed: false }
         winner.value = expanded
+        landing = 'expanded'
         return { css: root.toString(), changed: true }
       }
       winner.after({ prop: property, value, important: true })

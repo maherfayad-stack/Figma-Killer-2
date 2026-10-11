@@ -252,7 +252,7 @@ describe('setStyledDeclaration — the ladder (G-5)', () => {
       property: 'padding-top',
       value: '12px',
     })
-    expect(result).toEqual({ ok: true, changed: true, landing: 'rule' })
+    expect(result).toEqual({ ok: true, changed: true, landing: 'expanded' })
     expect(text).toBe(`${IMPORT}export const Card = styled.div\`\n  padding: 12px 8px 8px !important;\n\``)
   })
 

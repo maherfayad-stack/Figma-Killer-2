@@ -120,7 +120,7 @@ describe('setDeclaration — the declaration the cascade reads (P3-C, WB-16)', (
       ok: true,
       css: '.price {\n  padding-top: 4px;\n  padding: 12px 8px 8px !important;\n}\n',
       changed: true,
-      landing: 'rule',
+      landing: 'expanded',
     })
   })
 

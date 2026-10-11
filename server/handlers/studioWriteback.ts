@@ -68,7 +68,7 @@ import {
   syncProjectWithDisk,
   type ModuleImportPlan,
 } from '@core/ast-codemods'
-import { callSitePosition, inlineDepth, type SourceFingerprintExpectations } from '@core/page-tree'
+import { callSitePosition, inlineDepth, type SourceFingerprintExpectations, type StyleLanding } from '@core/page-tree'
 import type { Project } from 'ts-morph'
 import { applyCssEdit } from './studioCssWriteback'
 import { withProjectWriteLock } from './studio/projectWriteLock'
@@ -206,6 +206,7 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
       applied: outcome.applied,
       ...(outcome.applied ? {} : { unwritable: 'stylesheet-unavailable' as const }),
       ...(outcome.createdStylesheet ? { createdStylesheet: outcome.createdStylesheet } : {}),
+      ...(outcome.styleLanding ? { styleLanding: outcome.styleLanding } : {}),
     }
   }
 
@@ -251,7 +252,7 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
       // `changed: false` means the template already says exactly this — the
       // requested state IS the state on disk, so reporting a skip would toast
       // the user about a no-op (`applyCssEdit`'s `unset` precedent).
-      return { applied: true }
+      return { applied: true, styleLanding: { rung: outcome.landing, file: target.rel } }
     }
     case 'style':
       // `style-03` — `JsxStyleTargetError` refuses `style-target`
@@ -259,7 +260,7 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
       // from an expression `style`, a value that is not an object, or a
       // shorthand key: a spread or an identifier is written, not refused.
       setJsxStyle({ ...loc, style: edit.style, ...(edit.remove ? { remove: edit.remove } : {}), project })
-      return { applied: true }
+      return { applied: true, styleLanding: { rung: 'inline', file: target.rel } }
     case 'class': {
       // Track B2 — the real write behind Phase 0 item 0.6's honesty-only
       // stopgap. `setJsxClassName` returns a NAMED refusal (never throws)
@@ -459,6 +460,7 @@ export function applyStudioEditBatch(
   const swapDetails: (StudioEditSwapDetail & { nodeId: string })[] = []
   const detachDetails: (StudioDetachDetail & { nodeId: string })[] = []
   const createdStylesheets: { nodeId: string; file: string }[] = []
+  const styleLandings: StyleLanding[] = []
   const promoteDetails: (StudioPromoteComponentDetail & { nodeId: string })[] = []
   const addSlotPropDetails: (StudioAddSlotPropDetail & { nodeId: string })[] = []
   // `store-13` — where each created element sat, measured from the END of its
@@ -502,6 +504,7 @@ export function applyStudioEditBatch(
         }
         if (outcome.swapDetail) swapDetails.push({ nodeId: edit.nodeId, ...outcome.swapDetail })
         if (outcome.createdStylesheet) createdStylesheets.push({ nodeId: edit.nodeId, ...outcome.createdStylesheet })
+        if (outcome.styleLanding) styleLandings.push({ nodeId: edit.nodeId, ...outcome.styleLanding })
         if (outcome.promoteDetail) promoteDetails.push({ nodeId: edit.nodeId, ...outcome.promoteDetail })
         for (const text of outcome.removed ?? []) removed.push({ nodeId: edit.nodeId, ...text })
         const array = edit.kind === 'list-item' ? studioEditLocation(dir, edit.nodeId, scope) : null
@@ -545,7 +548,7 @@ export function applyStudioEditBatch(
 
   importPrune.prune()
   // P3-F — after the prune and the module imports: the entry is what the files are NOW.
-  const undoToken = journal.commit(written, promoteDetails.map((detail) => detail.newFile))
+  const undoToken = journal.commit(written, promoteDetails.map((detail) => detail.newFile), styleLandings)
 
   // A re-found edit means the caller's ids for its file were already stale
   // before this batch wrote anything — `shifted` is how every caller learns
@@ -587,6 +590,7 @@ export function applyStudioEditBatch(
     swapDetails: asSent(swapDetails),
     detachDetails: asSent(detachDetails),
     createdStylesheets: asSent(createdStylesheets),
+    styleLandings: asSent(styleLandings),
     promoteDetails: asSent(promoteDetails),
     addSlotPropDetails: asSent(addSlotPropDetails),
     touchedFiles: [...touchedFiles],

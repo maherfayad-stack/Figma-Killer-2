@@ -55,8 +55,9 @@
  *      first, never sends it here — it styles the element instead.
  *
  * `landing` reports the rung for the inspector's chip: `'rule'` is rung 1 (or a
- * declaration added to a block that did not write the property), `'override'`
- * is an appended line that shadows another.
+ * declaration added to a block that did not write the property), `'expanded'`
+ * a covering shorthand rewritten with one side changed, `'override'` an
+ * appended line that shadows another.
  *
  * Still refused by name, because they are the file being unreadable and not a
  * style edit that cannot land: `template-not-found` (nothing starts there any
@@ -113,7 +114,7 @@ export type StyledDeclarationRefusalReason =
   | 'unwritable-value'
 
 /** Which rung took the value — see this module's doc, "The ladder". */
-export type StyledDeclarationLanding = 'rule' | 'override'
+export type StyledDeclarationLanding = 'rule' | 'expanded' | 'override'
 
 export type SetStyledDeclarationResult =
   | { ok: true; changed: boolean; landing: StyledDeclarationLanding }
@@ -192,7 +193,7 @@ export function setStyledDeclaration(params: SetStyledDeclarationParams): SetSty
   // the same shorthand with this side changed, or by an `!important` longhand.
   if (winner.important && writtenHere) {
     const expanded = expandShorthandSide(winner.property, winner.value, prop, value)
-    if (expanded !== null && write.replaceValue(winner, expanded)) return { ok: true, changed: true, landing: 'rule' }
+    if (expanded !== null && write.replaceValue(winner, expanded)) return { ok: true, changed: true, landing: 'expanded' }
   }
   return append(write, anchor, property, value, winner.important, 'override')
 }
