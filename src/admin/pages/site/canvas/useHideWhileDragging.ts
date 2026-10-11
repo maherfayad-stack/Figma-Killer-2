@@ -11,13 +11,15 @@
  */
 import { useEffect, type RefObject } from 'react'
 
+function setHidden(element: HTMLElement, hidden: boolean): void {
+  element.style.visibility = hidden ? 'hidden' : ''
+}
+
 export function useHideWhileDragging(ref: RefObject<HTMLElement | null>, dragging: boolean): void {
   useEffect(() => {
     const element = ref.current
     if (!element || !dragging) return
-    element.style.visibility = 'hidden'
-    return () => {
-      element.style.visibility = ''
-    }
+    setHidden(element, true)
+    return () => setHidden(element, false)
   }, [ref, dragging])
 }

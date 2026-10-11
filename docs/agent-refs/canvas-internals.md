@@ -755,7 +755,7 @@ painted (`dropRefusal`), never silence.
 
 **The Layers panel shares the resolver.** A drop on a row of another page's tree
 (`PageLayerSubtree`, wired by `LayerDragBridge`) resolves through
-`resolveTransplantDropOver` (`canvasDnd.ts`) and commits `transplantNodes`, the
+`resolveTransplantDropOver` (`canvasTransplantDrop.ts`) and commits `transplantNodes`, the
 same action the canvas drag commits.
 
 **Released over no frame at all** (the empty board of a Studio board), the drag

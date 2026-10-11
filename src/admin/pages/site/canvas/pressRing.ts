@@ -35,6 +35,7 @@
  * has had its measure pass, and on the next press.
  */
 import { useEditorStore } from '@site/store/store'
+import { escapeCssAttributeValue } from './escapeCssAttributeValue'
 import { measureIframeLocalRect } from './canvasOverlayGeometry'
 import { positionOverlayElement } from './canvasSelectionOverlayPositioning'
 
@@ -121,7 +122,7 @@ export function selectOnPress(element: Element, nodeId: string, select: () => vo
   releasePreviousRing = null
   const doc = element.ownerDocument
   const win = doc.defaultView
-  const target = doc.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`) ?? element
+  const target = doc.querySelector(`[data-node-id="${escapeCssAttributeValue(nodeId)}"]`) ?? element
   const release = win ? borrowHoverRing(doc, nodeId, target) : null
   if (!win || !release) {
     flushPressQueue()
@@ -154,7 +155,7 @@ export function ringOnPress(element: Element, nodeId: string): void {
   releasePreviousRing = null
   const doc = element.ownerDocument
   const win = doc.defaultView
-  const target = doc.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`) ?? element
+  const target = doc.querySelector(`[data-node-id="${escapeCssAttributeValue(nodeId)}"]`) ?? element
   const release = win ? borrowHoverRing(doc, nodeId, target) : null
   if (!win || !release) return
   const held = setTimeout(() => finish(), HELD_RING_MAX_MS)
