@@ -3,7 +3,8 @@
  * commands: ⌥A ⌥D ⌥W ⌥S ⌥H ⌥V align (IX-20), ⌘⇧] / ⌘⇧[ front / back (IX-9),
  * ⇧A flex layout (IX-10), ⌘⌥C / ⌘⌥V copy / paste style (IX-props),
  * P5-F's quick styles: 0–9 opacity, ⇧H / ⇧V flip (`layerQuickStyles.ts`),
- * and P5-C's ⌘⌥B detach instance (the store's `detachInstances`).
+ * P5-C's ⌘⌥B detach instance (the store's `detachInstances`), and PA-6's
+ * ⌘⌥G frame selection.
  *
  * Scoped by INTENT (a layer is selected), like Delete in
  * `useCanvasNodeShortcuts`, so the keys work after a click into the
@@ -20,6 +21,7 @@ import { useEditorStore } from '@site/store/store'
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
 import { ALIGN_COMMANDS, opacityDigit } from '@admin/spotlight/keybindingLayerCommands'
 import { isInsideKeyOwningOverlay, isTextInputTarget } from './editorKeyGuards'
+import { frameSelection } from './canvasFrameSelection'
 import { alignSelection } from './layerAlign'
 import { copySelectionStyle, moveSelectionToEnd, pasteSelectionStyle, toggleFlexLayout } from './layerCommands'
 import { flipSelection, setSelectionOpacity } from './layerQuickStyles'
@@ -32,6 +34,7 @@ function commandFor(event: KeyboardEvent): (() => void) | null {
   }
   if (getKeybindingForCommand('layers.bringToFront')?.match(event)) return () => moveSelectionToEnd('front')
   if (getKeybindingForCommand('layers.sendToBack')?.match(event)) return () => moveSelectionToEnd('back')
+  if (getKeybindingForCommand('layers.frameSelection')?.match(event)) return () => void frameSelection()
   if (getKeybindingForCommand('layers.toggleFlexLayout')?.match(event)) return () => void toggleFlexLayout()
   if (getKeybindingForCommand('layers.copyStyle')?.match(event)) return copySelectionStyle
   if (getKeybindingForCommand('layers.pasteStyle')?.match(event)) return pasteSelectionStyle

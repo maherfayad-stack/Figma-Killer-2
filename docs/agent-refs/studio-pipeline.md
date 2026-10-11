@@ -476,8 +476,7 @@ else the component owns still refuses as **`captured-scope`**, by name and kind
 copy too, and a pasted sequence of copies (`studioEditSequence.ts`) - is journaled, so Cmd+Z is the undo journal's `restore` (both files,
 byte for byte), and the response's `carried` list (`name`, `as`, `how`:
 `copy`/`state`/`value`) drives one info notice with Undo for state and values
-(`transplantCarryNotice.ts`). State is not copied onto or off the free canvas (a
-lift or a place refuses by name). Both files' next
+(`transplantCarryNotice.ts`). A free-canvas lift (move or copy) and a place MOVE carry state the same way and show the same notice; a place COPY refuses by name (its undo deletes the element, which would leave the state behind). Both files' next
 contents are computed in full before either is written, so a refusal leaves two
 untouched files and a success writes two complete ones.
 

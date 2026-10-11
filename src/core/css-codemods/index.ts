@@ -58,9 +58,11 @@ export {
 export {
   insertCustomProperty,
   listCustomPropertyDeclarations,
+  removeCustomPropertyDeclarations,
   setCustomPropertyValueAtLine,
   type CustomPropertyDeclaration,
   type CustomPropertyEditResult,
   type CustomPropertyInsertResult,
+  type CustomPropertyRemoveResult,
   type InsertCustomPropertyOptions,
 } from './customProperty'

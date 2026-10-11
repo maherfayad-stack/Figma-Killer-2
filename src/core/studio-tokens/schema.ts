@@ -114,5 +114,24 @@ export const TokenEditSchema = Type.Union([
     /** Project-relative stylesheet to declare it in; default is chosen by the server. */
     file: Type.Optional(Type.String({ maxLength: 300 })),
   }),
+  /**
+   * Rename a token: every declaration (all modes) and every mention in project
+   * source moves to `to`, in one write. Always the only edit in its request.
+   */
+  Type.Object({
+    op: Type.Literal('rename'),
+    name: Type.String({ pattern: '^--[A-Za-z0-9_-]+$', maxLength: 120 }),
+    to: Type.String({ pattern: '^--[A-Za-z0-9_-]+$', maxLength: 120 }),
+  }),
+  /**
+   * Remove a token: all of its declarations. A token that is still read needs
+   * `replaceWith` (another declared token the readers move to); an unused one
+   * does not. Always the only edit in its request.
+   */
+  Type.Object({
+    op: Type.Literal('remove'),
+    name: Type.String({ pattern: '^--[A-Za-z0-9_-]+$', maxLength: 120 }),
+    replaceWith: Type.Optional(Type.String({ pattern: '^--[A-Za-z0-9_-]+$', maxLength: 120 })),
+  }),
 ])
 export type TokenEdit = Static<typeof TokenEditSchema>

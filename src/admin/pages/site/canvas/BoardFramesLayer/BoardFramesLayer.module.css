@@ -22,6 +22,10 @@
     width: max-content;
     border-radius: var(--radius);
     box-shadow: var(--shadow-panel-drop);
+    /* SB-1 — a frame's layout and counters cannot leak into, or be invalidated
+       by, its 100 siblings. NOT `paint`: the resize handles, the title and the
+       selection ring hang outside this box. */
+    contain: layout style;
 }
 
 /* Sized to the frame's OWN width/height (`--frame-w`/`--frame-h`, Phase
@@ -170,6 +174,10 @@
    dimensions) so the frame's footprint on the board doesn't visibly change
    when the real iframe mounts/unmounts as it crosses the viewport margin. */
 .offscreenPlaceholder {
+    /* SB-1 — a frame far off screen costs no layout or paint; the box keeps its
+       real size (`--frame-w`/`--frame-h` from `.frameBody`) so nothing shifts. */
+    content-visibility: auto;
+    contain-intrinsic-size: auto var(--frame-w) auto var(--frame-h);
     display: flex;
     align-items: center;
     justify-content: center;

@@ -41,7 +41,16 @@ import type { StudioEdit, StudioEditBatchOptions } from './studioEditSchemas'
  * `nodeJsxSource` — can never reach a layer, and has no check of its own to
  * forget (security review of #260, B1).
  */
-export type SourceTargetScope = Pick<StudioEditBatchOptions, 'canvasLayers'>
+export type SourceTargetScope = Pick<StudioEditBatchOptions, 'canvasLayers'> & {
+  /**
+   * CT-3 - plain `.css` files are decodable too. Passed ONLY by the undo
+   * journal (`undoJournal.ts`), which restores the stylesheets a token write
+   * changed: every path it names was recorded by the server itself, never
+   * taken from a request. No node id ever points into a stylesheet, so no
+   * edit kind gains a target from this.
+   */
+  readonly journalStylesheets?: 'allow'
+}
 
 /** The default scope: no Studio-authored target at all. */
 const NO_AUTHORED_TARGETS: SourceTargetScope = {}
@@ -174,6 +183,9 @@ export function isStudioOwnedTargetUnlinked(dir: string, rel: string): boolean {
 /** Files a writeback may touch. Never a `.env`, a lockfile, or anything else that isn't app source. */
 const WRITABLE_SOURCE_EXTENSION = /\.(tsx?|jsx?|mjs|cjs)$/i
 
+/** The one extra extension the undo journal may name: a token write's stylesheets. */
+const JOURNAL_STYLESHEET_EXTENSION = /\.css$/i
+
 /**
  * Whether a decoded `rel` is safe to write, checked on the PATH SHAPE alone so
  * this stays pure and every consumer of `studioEditLocation` inherits it.
@@ -207,7 +219,7 @@ export function isWritableSourceRel(rel: string, scope: SourceTargetScope = NO_A
   const segments = rel.split(/[/\\]/)
   if (segments.some((segment) => segment === '..' || segment === '')) return false
   if (unwritableWorkspaceSegment(rel) !== null && !(scope.canvasLayers === 'allow' && isStudioAuthoredSourceRel(rel))) return false
-  return WRITABLE_SOURCE_EXTENSION.test(rel)
+  return WRITABLE_SOURCE_EXTENSION.test(rel) || (scope.journalStylesheets === 'allow' && JOURNAL_STYLESHEET_EXTENSION.test(rel))
 }
 
 /**

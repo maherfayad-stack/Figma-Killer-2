@@ -40,6 +40,7 @@ import {
 import { UndoRedoButtons } from "./UndoRedoButtons";
 import { CanvasDrawToolButtons } from "./CanvasDrawToolButtons";
 import { useCanvasInsertionDrag } from "./useCanvasInsertionDrag";
+import { newLayerPlacementStyles } from "./canvasNewLayerPlacement";
 import { canPlaceModuleOnCanvas, placeModuleOnCanvas } from "@site/hooks/placeModuleOnCanvas";
 import { CanvasInsertionDragOverlay } from "./CanvasInsertionDragOverlay";
 import { cn } from "@ui/cn";
@@ -199,10 +200,10 @@ function PrimitiveNotchActions() {
   // is over — `useCanvasInsertionDrag` resolves both through the same
   // `resolveInsertLocation`, so the two entry points cannot disagree.
   const canvasDrag = useCanvasInsertionDrag<PrimitiveSpec>({
-    onDrop: (spec, location) => {
+    onDrop: (spec, location, placement) => {
       const mod = registry.get(spec.moduleId);
       if (!mod) return false;
-      return insertModule(mod, location, { defaults: resolveDefaults(mod, spec) }) !== null;
+      return insertModule(mod, location, { defaults: resolveDefaults(mod, spec), inlineStyles: newLayerPlacementStyles(placement) }) !== null;
     },
     // P5-G G1 — released on the empty board, the primitive becomes a loose
     // layer there instead of doing nothing.

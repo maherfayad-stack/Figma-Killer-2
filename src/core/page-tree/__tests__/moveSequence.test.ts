@@ -1,12 +1,12 @@
 /**
- * P3-D — `planMoveSequence` / `invertMoveSequence`: a multi-element move as
- * single-element moves applied IN ORDER, and its exact inverse. Plus the two
+ * P3-D — `planMoveSequence`: a multi-element move as
+ * single-element moves applied IN ORDER. Plus the two
  * `previewStructuralMove` answers P3-D added: a `.map` list's edge as an
  * anchor (WB-22), and a reparent into another file as a transplant (ERR-16).
  */
 import { describe, expect, it } from 'bun:test'
 import { moveNode, moveNodes } from '../mutations'
-import { invertMoveSequence, planMoveSequence, type SequencedMove } from '../moveSequence'
+import { planMoveSequence, type SequencedMove } from '../moveSequence'
 import { previewStructuralMove } from '../sourceStructurePreview'
 import type { NodeTree } from '../treeSchema'
 import type { PageNode } from '../pageNode'
@@ -55,13 +55,6 @@ describe('planMoveSequence', () => {
       const direct = viaMoveNodes(t, ids, parentId, index)
       for (const id of Object.keys(t.nodes)) expect(sequenced.nodes[id]!.children).toEqual(direct.nodes[id]!.children)
     })
-
-    it(`is undone exactly by its inverse: ${name}`, () => {
-      const t = tree()
-      const moves = planMoveSequence(t, ids, parentId, index)
-      const back = apply(apply(t, moves), invertMoveSequence(t, moves))
-      for (const id of Object.keys(t.nodes)) expect(back.nodes[id]!.children).toEqual(t.nodes[id]!.children)
-    })
   }
 
   it('anchors every step after the one it follows — the first after an element that never moves', () => {
@@ -75,7 +68,6 @@ describe('planMoveSequence', () => {
     const t = tree()
     const before = structuredClone(t)
     planMoveSequence(t, ['a', 'd'], 'root', 4)
-    invertMoveSequence(t, [{ nodeId: 'a', parentId: 'x', index: 0 }])
     expect(t).toEqual(before)
   })
 })

@@ -15,21 +15,8 @@
  * page and a cart page.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import * as fs from 'node:fs'
-import * as os from 'node:os'
-import * as path from 'node:path'
-import '@modules/base'
 import { useEditorStore } from '@site/store/store'
-import { registerEditorSave } from '@site/hooks/editorSaveRef'
-import { applySitePagesPatch } from '@site/hooks/siteReloadApply'
-import { CMS_SITE_PAGES_PATCH_EVENT, type CmsSitePagesPatchDetail } from '@admin/state/adminEvents'
-import { __resetToastBusForTests } from '@ui/components/Toast/toastBus'
-import { resetStructuralCommitQueue } from '@site/studio/structuralCommitQueue'
-import { setStudioLoadedDir } from '@site/studio/studioWorkspaceDir'
-import { makeSite } from '../fixtures'
-import { applyStudioEditBatchLocked } from '../../../server/handlers/studioWriteback'
-import { loadStudioPages } from '../../../server/handlers/studioPageLoad'
-import { studioLoadStreamLines } from '../../../server/handlers/studio/studioLoadResponse'
+import { openRealSourceProject, type RealSourceProject } from './realSourceHarness'
 
 const PRODUCT = `import badge from '../assets/badge.svg'
 import { formatPrice } from '../lib/format'
@@ -99,114 +86,25 @@ const FORMAT = `export function formatPrice(n: number): string {
 }
 `
 
-let dir: string
-let originalFetch: typeof globalThis.fetch
-let unregisterSave: (() => void) | null = null
-let patchListener: ((evt: Event) => void) | null = null
-
-const read = (rel: string) => fs.readFileSync(path.join(dir, ...rel.split('/')), 'utf8')
-function write(rel: string, text: string): void {
-  const full = path.join(dir, ...rel.split('/'))
-  fs.mkdirSync(path.dirname(full), { recursive: true })
-  fs.writeFileSync(full, text, 'utf8')
-}
-
-async function waitFor(predicate: () => boolean, timeoutMs = 8000): Promise<void> {
-  const start = Date.now()
-  while (!predicate()) {
-    if (Date.now() - start > timeoutMs) throw new Error('waitFor timed out')
-    await new Promise((resolve) => setTimeout(resolve, 10))
-  }
-}
-
-/** `/save` is the real batch; `/load` is the real parse of the same files. */
-function installRealServer(saves: { edits: { kind: string }[] }[]) {
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === 'string' ? input : input.toString()
-    const route = url.split('?')[0]
-    if (route === '/admin/api/studio/save') {
-      const body = JSON.parse(String(init?.body)) as {
-        edits: Parameters<typeof applyStudioEditBatchLocked>[1]
-        expect?: Parameters<typeof applyStudioEditBatchLocked>[2]
-      }
-      // Exactly the route's own options: the editor's batches are journaled.
-      const result = await applyStudioEditBatchLocked(dir, body.edits, body.expect ?? {}, {
-        canvasLayers: 'allow',
-        journal: true,
-      })
-      saves.push({ edits: [...body.edits] })
-      return new Response(
-        JSON.stringify({
-          ok: true,
-          ...result,
-          touchedFiles: result.touchedFiles.map((file) => path.relative(dir, file).split(path.sep).join('/')),
-        }),
-        { status: 200 },
-      )
-    }
-    if (route === '/admin/api/studio/reload-scope') {
-      const pages = (await loadStudioPages(dir)).pages
-      return new Response(JSON.stringify({ ok: true, narrow: true, pageIds: pages.map((p) => p.id) }), { status: 200 })
-    }
-    if (route === '/admin/api/studio/load') {
-      const result = await loadStudioPages(dir)
-      const lines: string[] = []
-      for await (const line of studioLoadStreamLines({
-        ...result,
-        dir,
-        projectName: 'shop',
-        trust: 'static',
-        projectKey: null,
-        paletteHiddenModuleIds: [],
-        missingPageIds: undefined,
-      })) {
-        lines.push(JSON.stringify(line))
-      }
-      return new Response(lines.join('\n') + '\n', { status: 200 })
-    }
-    return new Response(JSON.stringify({}), { status: 200 })
-  }) as typeof fetch
-}
-
 describe('P0-3 â€” a cross-frame move that orphans an import is one byte-exact âŒ˜Z', () => {
-  let saves: Parameters<typeof installRealServer>[0]
+  let project: RealSourceProject
+  const read = (rel: string) => project.read(rel)
+  const waitFor = (predicate: () => boolean, timeoutMs?: number) => project.waitFor(predicate, timeoutMs)
 
   beforeEach(async () => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-xframe-undo-'))
-    write('pages/Product.tsx', PRODUCT)
-    write('pages/Cart.tsx', CART)
-    write('lib/format.ts', FORMAT)
-    write('components/Sparkle.tsx', SPARKLE)
-    write('components/Chevron.tsx', CHEVRON)
-    write('components/Banner.tsx', BANNER)
-    write('pages/Checkout.tsx', CHECKOUT)
-    write('assets/badge.svg', '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8"/></svg>')
-    __resetToastBusForTests()
-    resetStructuralCommitQueue()
-    originalFetch = globalThis.fetch
-    saves = []
-    unregisterSave = registerEditorSave(async () => {})
-    setStudioLoadedDir(dir)
-    installRealServer(saves)
-
-    patchListener = (evt: Event) => {
-      applySitePagesPatch((evt as CustomEvent<CmsSitePagesPatchDetail>).detail)
-    }
-    window.addEventListener(CMS_SITE_PAGES_PATCH_EVENT, patchListener)
-
-    const loaded = await loadStudioPages(dir)
-    useEditorStore.getState().loadSite(makeSite({ pages: loaded.pages, styleRules: loaded.styleRules }))
+    project = await openRealSourceProject({
+      'pages/Product.tsx': PRODUCT,
+      'pages/Cart.tsx': CART,
+      'lib/format.ts': FORMAT,
+      'components/Sparkle.tsx': SPARKLE,
+      'components/Chevron.tsx': CHEVRON,
+      'components/Banner.tsx': BANNER,
+      'pages/Checkout.tsx': CHECKOUT,
+      'assets/badge.svg': '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8"/></svg>',
+    })
   })
 
-  afterEach(() => {
-    globalThis.fetch = originalFetch
-    unregisterSave?.()
-    if (patchListener) window.removeEventListener(CMS_SITE_PAGES_PATCH_EVENT, patchListener)
-    setStudioLoadedDir(null)
-    resetStructuralCommitQueue()
-    useEditorStore.getState().clearSite()
-    fs.rmSync(dir, { recursive: true, force: true })
-  })
+  afterEach(() => project.close())
 
   it('moves the badge image to the cart page, then one âŒ˜Z restores BOTH files byte for byte', async () => {
     const site = useEditorStore.getState().site!
@@ -221,7 +119,7 @@ describe('P0-3 â€” a cross-frame move that orphans an import is one byte-exact â
       parentId: cartMain.id,
       index: cartMain.children.length,
     })
-    await waitFor(() => saves.length === 1)
+    await waitFor(() => project.saves.length === 1)
     await waitFor(() => useEditorStore.getState().canUndo)
 
     // The write really happened: the import only the badge used is gone, and
@@ -230,10 +128,10 @@ describe('P0-3 â€” a cross-frame move that orphans an import is one byte-exact â
     expect(read('pages/Cart.tsx')).toContain('badge.svg')
 
     useEditorStore.getState().undo()
-    await waitFor(() => saves.length === 2)
+    await waitFor(() => project.saves.length === 2)
     await waitFor(() => !useEditorStore.getState().canUndo)
 
-    expect(saves[1]!.edits[0]!.kind).toBe('restore')
+    expect(project.saves[1]!.edits[0]!.kind).toBe('restore')
     expect(read('pages/Product.tsx')).toBe(PRODUCT)
     expect(read('pages/Cart.tsx')).toBe(CART)
     expect(useEditorStore.getState().canRedo).toBe(true)
@@ -251,21 +149,21 @@ describe('P0-3 â€” a cross-frame move that orphans an import is one byte-exact â
       parentId: cartMain.id,
       index: cartMain.children.length,
     })
-    await waitFor(() => saves.length === 1)
+    await waitFor(() => project.saves.length === 1)
     await waitFor(() => useEditorStore.getState().canUndo)
     const moved = [read('pages/Product.tsx'), read('pages/Cart.tsx')]
 
     useEditorStore.getState().undo()
-    await waitFor(() => saves.length === 2)
+    await waitFor(() => project.saves.length === 2)
     await waitFor(() => useEditorStore.getState().canRedo)
 
     useEditorStore.getState().redo()
-    await waitFor(() => saves.length === 3)
+    await waitFor(() => project.saves.length === 3)
     await waitFor(() => useEditorStore.getState().canUndo)
     expect([read('pages/Product.tsx'), read('pages/Cart.tsx')]).toEqual(moved)
 
     useEditorStore.getState().undo()
-    await waitFor(() => saves.length === 4)
+    await waitFor(() => project.saves.length === 4)
     await waitFor(() => !useEditorStore.getState().canUndo)
     expect(read('pages/Product.tsx')).toBe(PRODUCT)
     expect(read('pages/Cart.tsx')).toBe(CART)
@@ -278,7 +176,7 @@ describe('P0-3 â€” a cross-frame move that orphans an import is one byte-exact â
     const inner = Object.values(checkout.nodes).find((n) => n.id.includes('~') && n.id.includes('Banner') && n.moduleId === 'base.container')!
     useEditorStore.getState().setActivePage(checkout.id)
     useEditorStore.getState().insertNode('base.container', {}, inner.id, 0)
-    await waitFor(() => saves.length >= 2, 15000)
+    await waitFor(() => project.saves.length >= 2, 15000)
     await waitFor(() => useEditorStore.getState().canUndo)
 
     const after = read('pages/Checkout.tsx')

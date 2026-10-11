@@ -99,6 +99,7 @@ describe('a transplant that copies state - one write, told, and byte-exactly und
           kind: 'transplant',
           nodeId: id(BOARD_REL, BOARD, 'button'),
           parentNodeId: id(PASS_REL, PASS, 'main'),
+          exactUndo: true as const,
           ...(copy ? { copy: true } : {}),
         },
       ])
@@ -204,8 +205,8 @@ describe('several cross-file copies pasted as one sequence', () => {
     const result = applyStudioEditSequence(
       tmpDir,
       [
-        { kind: 'transplant', nodeId: id(BOARD_REL, BOARD, 'button'), parentNodeId: id(PASS_REL, PASS, 'main'), copy: true },
-        { kind: 'transplant', nodeId: id(BOARD_REL, BOARD, 'h1'), parentNodeId: id(PASS_REL, PASS, 'main'), copy: true },
+        { kind: 'transplant', nodeId: id(BOARD_REL, BOARD, 'button'), parentNodeId: id(PASS_REL, PASS, 'main'), copy: true, exactUndo: true },
+        { kind: 'transplant', nodeId: id(BOARD_REL, BOARD, 'h1'), parentNodeId: id(PASS_REL, PASS, 'main'), copy: true, exactUndo: true },
       ],
       {},
       { journal: true },
@@ -240,6 +241,7 @@ describe('a transplant of a .map row element - a copy of that row', () => {
         nodeId: spanId(),
         parentNodeId: id(PASS_REL, PASS, 'main'),
         copy: true,
+        exactUndo: true,
         row: { array: arrayId(), index: 1, length: 2 },
       },
     ])

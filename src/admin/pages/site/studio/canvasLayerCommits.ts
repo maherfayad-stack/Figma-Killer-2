@@ -21,7 +21,8 @@
 import { canvasLayerEditNodeId, type CanvasLayerPlacementChange } from '@core/studio-board'
 import type { StructuralCommitRollback } from '@site/store/slices/site/structuralCommitRollback'
 import { commitStructural } from './studioStructuralCommitEngine'
-import type { InsertPropValue, SlotJsxNode } from './studioSaveRequests'
+import type { InsertPropValue, SlotJsxNode, StudioSaveResponse } from './studioSaveRequests'
+import { announceCarried } from './transplantCarryNotice'
 
 /** A new layer's root element — `insert`'s element fields. */
 export interface CanvasLayerElement {
@@ -67,6 +68,7 @@ export async function commitCanvasLayerPlace(
     copy: boolean
   },
 ): Promise<void> {
+  let carried: StudioSaveResponse['carried']
   await commitStructural(
     [
       {
@@ -80,9 +82,15 @@ export async function commitCanvasLayerPlace(
     ],
     'Could not place that into the frame',
     {
+      onAnswer: (answer) => {
+        carried = answer.carried
+      },
+      onLanded: () => announceCarried(carried),
       undo: {
         label: input.copy ? 'Copy into frame' : 'Place into frame',
-        template: input.copy ? { kind: 'delete-created' } : { kind: 'canvas-layer-unplace', layerId: input.layerId },
+        // A move is the journal's `restore` (the page and the module, byte for
+        // byte); a copy is taken back by deleting the element it wrote.
+        template: input.copy ? { kind: 'delete-created' } : { kind: 'restore-journal' },
         placements: input.placements,
       },
       rollback: input.rollback,
@@ -91,23 +99,27 @@ export async function commitCanvasLayerPlace(
 }
 
 /**
- * An element dragged out of a frame onto the empty board. `origin` is where it
- * was written — the whole of a MOVE's undo, recorded as parent + index for
- * `commitStudioTransplant`'s reason (every sibling below it shifts up when it
- * leaves, so a sibling id captured now would be stale by ⌘Z).
+ * An element dragged out of a frame onto the empty board. A MOVE's undo is the
+ * undo journal's `restore` — the page and the new module put back byte for
+ * byte — for `commitStudioTransplant`'s reason: every id below the cut shifts
+ * (a pruned import, a collapsed blank line), so no position recorded at drag
+ * time still names the container the element left.
  */
 export async function commitCanvasLayerLift(
-  input: CanvasLayerCommitBase & { nodeId: string; copy: boolean; origin: { parentNodeId: string; index: number } },
+  input: CanvasLayerCommitBase & { nodeId: string; copy: boolean },
 ): Promise<void> {
+  let carried: StudioSaveResponse['carried']
   await commitStructural(
     [{ kind: 'canvas-layer-lift', nodeId: input.nodeId, layerId: input.layerId, ...(input.copy ? { copy: true } : {}) }],
     'Could not put that on the canvas',
     {
+      onAnswer: (answer) => {
+        carried = answer.carried
+      },
+      onLanded: () => announceCarried(carried),
       undo: {
         label: input.copy ? 'Copy onto canvas' : 'Move onto canvas',
-        template: input.copy
-          ? { kind: 'canvas-layer-delete', layerId: input.layerId }
-          : { kind: 'canvas-layer-lift-back', layerId: input.layerId, parentNodeId: input.origin.parentNodeId, index: input.origin.index },
+        template: input.copy ? { kind: 'canvas-layer-delete', layerId: input.layerId } : { kind: 'restore-journal' },
         placements: input.placements,
       },
       rollback: input.rollback,

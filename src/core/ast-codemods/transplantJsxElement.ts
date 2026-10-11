@@ -409,12 +409,11 @@ export function canvasLayerModuleRoot(source: SourceFile): Node | undefined {
 }
 
 /**
- * Why state does not follow an element onto the free canvas (or off it). A layer
- * is a module of its own whose undo and notice are not the frame-to-frame move's:
- * copying a `useState` into one, or back out of one, would not be taken back by
- * its undo. Between frames the copy is real (G-1b) - this names that remedy.
+ * Why a COPY of a layer into a frame cannot carry state: the copy's undo deletes
+ * the element it wrote, which would leave the state's hook behind. A MOVE of the
+ * layer (or a lift either way) is undone by the journal's `restore`, so it can.
  */
-const CANVAS_LAYER_STATE_REFUSAL = 'a canvas layer is a module of its own, and Studio does not copy state onto it or off it. Drag the element into another frame instead.'
+const PLACE_COPY_STATE_REFUSAL = 'a copy of a canvas layer is taken back by deleting the element, which would leave its state behind. Move the layer into the frame instead.'
 
 export interface PlaceCanvasLayerRootParams {
   /** Absolute path of the layer module (`.studio/canvas/<id>.tsx`). */
@@ -425,6 +424,8 @@ export interface PlaceCanvasLayerRootParams {
   anchorLine?: number
   anchorCol?: number
   position?: 'before' | 'after'
+  /** A copy leaves the layer: its undo deletes the element, so state cannot travel with it. */
+  copy?: boolean
   project?: Project
 }
 
@@ -461,7 +462,7 @@ export function placeCanvasLayerRoot(params: PlaceCanvasLayerRootParams): Transp
     )
   }
   const landed = landInDestination(
-    { element: root, source: moduleSource, text: moduleText, noState: CANVAS_LAYER_STATE_REFUSAL },
+    { element: root, source: moduleSource, text: moduleText, ...(params.copy ? { noState: PLACE_COPY_STATE_REFUSAL } : {}) },
     { ...params, source: destinationSource, text: destinationText },
   )
   if (!landed.ok) return landed
@@ -489,7 +490,7 @@ export interface LiftJsxElementParams {
 }
 
 export type LiftJsxElementResult =
-  | { ok: true; carriedImports: string[]; root: CreatedJsxLocation }
+  | { ok: true; carriedImports: string[]; carriedDeclarations: CarriedDeclaration[]; root: CreatedJsxLocation }
   | { ok: false; refusal: TransplantJsxRefusal }
 
 /**
@@ -545,7 +546,6 @@ export function liftJsxElementToCanvasModule(params: LiftJsxElementParams): Lift
     file: params.moduleFile,
     bodyIndent: '  ',
     body: emptyLayer.getFunctionOrThrow('CanvasLayer').getBodyOrThrow().asKindOrThrow(SyntaxKind.Block),
-    hooksRefusal: CANVAS_LAYER_STATE_REFUSAL,
   })
   if (!carried.ok) return refuseTransplant(carried.refusal.reason, carried.refusal.message)
 
@@ -565,5 +565,5 @@ export function liftJsxElementToCanvasModule(params: LiftJsxElementParams): Lift
   params.writeModule(built.text)
   if (removal) writeVerbatimSource(originSource, params.file, applyTextEdits(originText, [removal]))
 
-  return { ok: true, carriedImports: [...carried.requirements.keys()], root: built.root }
+  return { ok: true, carriedImports: [...carried.requirements.keys()], carriedDeclarations: carried.carried, root: built.root }
 }

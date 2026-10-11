@@ -13,6 +13,7 @@ import {
   type CanvasDropCandidate,
   type CanvasInsertionTarget,
 } from './canvasDnd'
+import { newLayerPlacementAt, type NewLayerPlacement } from './canvasNewLayerPlacement'
 import { clientToBoardPoint, findBoardOrigin, isEmptyBoardTarget } from './BoardCanvasLayer/canvasLayerGeometry'
 
 const CANVAS_VIEWPORT_SELECTOR = '[data-breakpoint-id]'
@@ -42,6 +43,13 @@ export interface CanvasPointerInsertionDrop {
    * to the page a resolved node id happens to belong to).
    */
   pageId: string
+  /**
+   * PA-3 — where the dropped layer sits in its parent, asked once at release
+   * (never per pointermove: it reads computed style). A free frame answers
+   * `absolute` at the pointer; ⌘/Ctrl (`modifierHeld`) asks for the same in any
+   * parent. Portal frames only — a live frame answers `flow`.
+   */
+  placeLayer: (modifierHeld: boolean) => NewLayerPlacement
 }
 
 interface ResolveCanvasPointerInsertionDropInput {
@@ -157,6 +165,8 @@ export function resolveCanvasPointerInsertionDrop({
   // no light-DOM children to find its own tag inside of.
   const iframe = viewport.tagName === 'IFRAME' ? (viewport as unknown as HTMLIFrameElement) : viewport.querySelector<HTMLIFrameElement>('iframe')
   const point = getViewportLocalPoint(viewport, clientX, clientY)
+  const placeLayerAt = (parentId: string) => (modifierHeld: boolean) =>
+    newLayerPlacementAt(iframe, parentId, { x: clientX, y: clientY, width: 0, height: 0 }, modifierHeld)
   const candidates = candidatesForViewport
     ? candidatesForViewport(viewport, iframe, tree)
     : measureCanvasDropCandidates(viewport, tree, iframe)
@@ -178,6 +188,7 @@ export function resolveCanvasPointerInsertionDrop({
       preview: fixedPreviewForViewport(viewport, 'inside', `${label} at page root`),
       breakpointId,
       pageId: tree.id,
+      placeLayer: placeLayerAt(tree.rootNodeId),
     }
   }
 
@@ -186,6 +197,7 @@ export function resolveCanvasPointerInsertionDrop({
     preview: fixedPreviewForTarget(viewport, target, `${label} ${target.position}`),
     breakpointId,
     pageId: tree.id,
+    placeLayer: placeLayerAt(target.parentId),
   }
 }
 

@@ -19,8 +19,9 @@
  * PATCH moves the node back in memory only; `saveSite` diffs values, never
  * structure (see `structuralSourceEdits.ts`'s header), so the `.tsx` keeps the
  * move and the next reparse snaps the canvas back. Undo of a move is now the
- * INVERSE MOVE, re-planned against the live tree and written to the user's
- * source like any other drag.
+ * undo journal's `restore` (W2-2) — every file back byte for byte, which an
+ * inverse move could not do (a blank line shifted, a block re-indented) —
+ * posted to the user's source like a delete's.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
 import { useEditorStore } from '@site/store/store'
@@ -62,19 +63,23 @@ const store = () => useEditorStore.getState()
 /** Every `/admin/api/studio/save` body this test saw, newest last. */
 let postedEdits: Record<string, unknown>[][]
 let realFetch: typeof globalThis.fetch
+/** The undo-journal token the stubbed `/save` reports — `undefined` is a server that could not journal. */
+let undoToken: string | undefined
+const TOKEN = '0123456789abcdef0123456789abcdef'
 
 beforeEach(() => {
   // ERR-4 — the in-flight flag and the queue are module state: a commit left
   // on the wire by one spec would park the next spec's gestures.
   resetStructuralCommitQueue()
   postedEdits = []
+  undoToken = TOKEN
   realFetch = globalThis.fetch
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(typeof input === 'string' || input instanceof URL ? input : input.url)
     const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {}
     if (url.includes('/studio/save')) {
       postedEdits.push(body.edits ?? [])
-      return new Response(JSON.stringify({ ok: true, written: 1, skipped: 0, shifted: true, sharedComponents: false, touchedFiles: [FILE] }), {
+      return new Response(JSON.stringify({ ok: true, written: 1, skipped: 0, shifted: true, sharedComponents: false, touchedFiles: [FILE], ...(undoToken ? { undoToken } : {}) }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       })
@@ -118,6 +123,18 @@ async function settle() {
   for (let i = 0; i < 200 && isStructuralCommitInFlight(); i++) await new Promise((r) => setTimeout(r, 1))
 }
 
+/**
+ * The board's re-read after a move reports the write's undo-journal token on
+ * the entry the move already pushed (`recordStructuralSourceWrite` `fill`).
+ * These specs have no editor mounted to re-read, so they apply that step.
+ */
+function landJournalToken(): void {
+  store().recordStructuralSourceWrite({
+    kind: 'fill',
+    outcome: { createdNodeIds: [], relocatedNodeIds: [], removed: [], undoToken: '0123456789abcdef0123456789abcdef', listArrays: [] },
+  })
+}
+
 describe('a structural reparse renames node ids — history is re-addressed, not wiped', () => {
   it('re-points the stack at the new ids instead of wiping it', async () => {
     // `a` spans two lines, so dragging it to the end renumbers b and c to
@@ -134,6 +151,7 @@ describe('a structural reparse renames node ids — history is re-addressed, not
     store().moveNodes([a], ROOT, 3)
     expect(store()._historyPast.length).toBe(2)
     await settle()
+    landJournalToken()
 
     // The write lands and the file is re-read: b -> 3, c -> 5, a -> 7. Same
     // shape, new addresses; `c`'s old id is simply gone.
@@ -145,10 +163,10 @@ describe('a structural reparse renames node ids — history is re-addressed, not
     expect(store().canUndo).toBe(true)
     expect(store()._historyPast.length).toBe(2)
 
-    store().undo() // the move, re-issued against the new ids
-    expect(store().site!.pages[0]!.nodes[ROOT]!.children).toEqual([a2, b2, c2])
-    // The re-issued move is a write; the next ⌘Z queues behind it (P3-D).
+    store().undo() // the move: the journal's restore, whatever the ids became
+    // The restore is a write; the next ⌘Z queues behind it (P3-D).
     await settle()
+    expect(postedEdits.at(-1)![0]).toMatchObject({ kind: 'restore', token: TOKEN })
 
     store().undo() // the value edit, at `c`'s NEW address
     expect(store().site!.pages[0]!.nodes[c2]!.props.text).toBe(c)
@@ -165,6 +183,7 @@ describe('a structural reparse renames node ids — history is re-addressed, not
     store().updateNodeProps(c, { text: 'edited' })
     store().moveNodes([a], ROOT, 3)
     await settle()
+    landJournalToken()
 
     // b -> 3, c -> 4, a -> 5.
     const reparsed = studioSite([at(3), at(4), at(5)])
@@ -198,8 +217,8 @@ describe('a structural reparse renames node ids — history is re-addressed, not
   })
 })
 
-describe('undo of a move is the inverse move, written to source', () => {
-  it('records the pre-move position on the history entry', () => {
+describe('undo of a move is the undo journal’s restore, written to source', () => {
+  it('tags the move as a restore-journal source gesture', () => {
     const a = at(3), b = at(4), c = at(5)
     store().loadSite(studioSite([a, b, c]))
     store().setActivePage('page-1')
@@ -208,38 +227,38 @@ describe('undo of a move is the inverse move, written to source', () => {
     expect(store().site!.pages[0]!.nodes[ROOT]!.children).toEqual([b, c, a])
 
     const entry = store()._historyPast[store()._historyPast.length - 1]!
-    expect(entry.structural).toEqual({
-      gesture: 'move',
-      undo: { nodeId: a, parentId: ROOT, index: 0 },
-      redo: { nodeId: a, parentId: ROOT, index: 3 },
+    expect(entry.structural).toMatchObject({
+      gesture: 'source',
+      source: { label: 'Move', forward: [{ kind: 'move', nodeId: a }], inverseTemplate: { kind: 'restore-journal' }, inverse: null },
     })
   })
 
-  it('posts a real move edit to the user’s source on undo AND on redo', async () => {
+  it('posts a restore of the write’s token on undo and the move again on redo', async () => {
     const a = at(3), b = at(4), c = at(5)
     store().loadSite(studioSite([a, b, c]))
     store().setActivePage('page-1')
 
     store().moveNodes([a], ROOT, 3)
     await settle()
+    landJournalToken()
     expect(postedEdits.length).toBe(1)
+    expect(postedEdits[0]![0]).toMatchObject({ kind: 'move', nodeId: a })
 
     store().undo()
-    expect(store().site!.pages[0]!.nodes[ROOT]!.children).toEqual([a, b, c])
     await settle()
     // The undo is a WRITE, not a memory-only patch replay: without this the
     // canvas and the `.tsx` disagree until the next reparse silently wins.
     expect(postedEdits.length).toBe(2)
-    expect(postedEdits[1]![0]).toMatchObject({ kind: 'move', nodeId: a })
+    expect(postedEdits[1]).toHaveLength(1)
+    expect(postedEdits[1]![0]).toMatchObject({ kind: 'restore', token: TOKEN })
 
     store().redo()
-    expect(store().site!.pages[0]!.nodes[ROOT]!.children).toEqual([b, c, a])
     await settle()
     expect(postedEdits.length).toBe(3)
     expect(postedEdits[2]![0]).toMatchObject({ kind: 'move', nodeId: a })
   })
 
-  it('consumes exactly one entry — the inverse move must not push its own', async () => {
+  it('consumes exactly one entry — the restore must not push its own', async () => {
     const a = at(3), b = at(4), c = at(5)
     store().loadSite(studioSite([a, b, c]))
     store().setActivePage('page-1')
@@ -247,6 +266,7 @@ describe('undo of a move is the inverse move, written to source', () => {
     store().moveNodes([a], ROOT, 3)
     const pastAfterMove = store()._historyPast.length
     await settle()
+    landJournalToken()
 
     store().undo()
     expect(store()._historyPast.length).toBe(pastAfterMove - 1)
@@ -267,11 +287,13 @@ describe('undo of a move is the inverse move, written to source', () => {
     store().updateNodeProps(c, { text: 'one' })
     store().moveNodes([a], ROOT, 3)
     await settle()
+    landJournalToken()
     store().updateNodeProps(b, { text: 'two' })
     store().undo()
     store().undo()
     await settle()
     store().undo()
+    await settle()
     expect(store()._historyFuture.length).toBe(3)
 
     store().redo() // the first value edit
@@ -282,7 +304,6 @@ describe('undo of a move is the inverse move, written to source', () => {
     expect(store()._historyFuture.length).toBe(1)
     store().redo()
     expect(store().site!.pages[0]!.nodes[b]!.props.text).toBe('two')
-    expect(store().site!.pages[0]!.nodes[ROOT]!.children).toEqual([b, c, a])
     expect(store()._historyFuture.length).toBe(0)
   })
 
@@ -293,12 +314,29 @@ describe('undo of a move is the inverse move, written to source', () => {
     store().updateNodeProps(b, { text: 'edited' })
     store().moveNodes([a], ROOT, 2)
     await settle()
+    landJournalToken()
 
     store().undo() // the move
-    expect(store().site!.pages[0]!.nodes[ROOT]!.children).toEqual([a, b])
     await settle()
+    expect(postedEdits.at(-1)![0]).toMatchObject({ kind: 'restore' })
     store().undo() // the value edit
     expect(store().site!.pages[0]!.nodes[b]!.props.text).toBe(b)
+  })
+
+  it('a move the server could not journal is skipped by ⌘Z, not faked', async () => {
+    undoToken = undefined
+    const a = at(3), b = at(4)
+    store().loadSite(studioSite([a, b]))
+    store().setActivePage('page-1')
+    store().moveNodes([a], ROOT, 2)
+    await settle()
+    const posted = postedEdits.length
+    const pastBefore = store()._historyPast.length
+
+    store().undo()
+    await settle()
+    expect(postedEdits.length).toBe(posted)
+    expect(store()._historyPast.length).toBe(pastBefore - 1)
   })
 })
 
@@ -309,6 +347,7 @@ describe('a source delete the server journaled no undo for is skipped by ⌘Z, n
   // `restore-journal` template with no inverse, so ⌘Z has nothing it could
   // post and must skip it rather than resurrect the element on the canvas.
   it('keeps no inverse, and ⌘Z drops the entry instead of faking it or sticking on it', async () => {
+    undoToken = undefined
     const a = at(3), b = at(4)
     store().loadSite(studioSite([a, b]))
     store().setActivePage('page-1')
@@ -333,6 +372,7 @@ describe('a source delete the server journaled no undo for is skipped by ⌘Z, n
   })
 
   it('carries on to the step below in the same ⌘Z, so the edits before a delete stay undoable', async () => {
+    undoToken = undefined
     const a = at(3), b = at(4)
     store().loadSite(studioSite([a, b]))
     store().setActivePage('page-1')

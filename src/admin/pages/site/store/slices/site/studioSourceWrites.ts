@@ -73,6 +73,7 @@ import {
   previewOptimisticWrap,
 } from './structuralOptimism'
 import { writeListRowPlan } from './listRowSourceWrites'
+import type { FrameRequest } from './frameRequest'
 import type { SiteSliceHelpers } from './types'
 
 /**
@@ -107,6 +108,7 @@ export interface StudioSourceWrites extends StudioSourceRefusals {
     nodeIds: readonly string[],
     containerModuleId: string,
     defaults: Record<string, unknown>,
+    frame?: FrameRequest,
   ) => boolean
   /**
    * Insert a component declared in the user's own project (the Assets panel's
@@ -114,7 +116,12 @@ export interface StudioSourceWrites extends StudioSourceRefusals {
    * caller must stop (written, parked, or refused out loud), false on an ordinary
    * CMS tree.
    */
-  writeInsertProjectComponentToSource: (component: LocalComponentSpec, parentId: string, index?: number) => boolean
+  writeInsertProjectComponentToSource: (
+    component: LocalComponentSpec,
+    parentId: string,
+    index?: number,
+    style?: Record<string, string>,
+  ) => boolean
   /** K3 - Cmd+Shift+G: a container dissolved, its children taking its place. */
   writeUngroupToSource: (nodeId: string) => boolean
 }
@@ -200,9 +207,10 @@ export function createStudioSourceWrites(
     component: LocalComponentSpec,
     parentId: string,
     index?: number,
+    style?: Record<string, string>,
   ): boolean => {
     const planned = planInsertToSource(parentId, index, (relocated) => {
-      writeInsertProjectComponentToSource(component, relocated, index)
+      writeInsertProjectComponentToSource(component, relocated, index, style)
     })
     if (planned.kind === 'stop') return true
     if (planned.kind === 'cms') return false
@@ -221,7 +229,7 @@ export function createStudioSourceWrites(
       name: localComponentJsxName(component),
       importSpecifier: relativeImportSpecifier(targetFile, component.file),
       ...(component.isDefaultExport ? { importStyle: 'default' as const } : {}),
-      props: {},
+      props: style && Object.keys(style).length > 0 ? { style: { ...style } } : {},
     })
     return true
   }
@@ -460,6 +468,7 @@ export function createStudioSourceWrites(
     nodeIds: readonly string[],
     containerModuleId: string,
     defaults: Record<string, unknown>,
+    frame?: FrameRequest,
   ): boolean => {
     if (nodeIds.length === 0) return false
     // `store-14` — same queue as `writeDuplicateToSource`: a held Cmd+G must
@@ -467,7 +476,7 @@ export function createStudioSourceWrites(
     // must not be thrown away either.
     if (
       deferWhileStructuralCommitInFlight((relocate) => {
-        writeGroupToSource(nodeIds.map(relocate), containerModuleId, defaults)
+        writeGroupToSource(nodeIds.map(relocate), containerModuleId, defaults, frame)
       }, nodeIds)
     ) {
       return true
@@ -479,7 +488,7 @@ export function createStudioSourceWrites(
       const refusedNodeId = plan.nodeId
       presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.group, plan.constraint, {
         nodeId: refusedNodeId,
-        retry: (mapId) => { void writeGroupToSource(nodeIds.map(mapId), containerModuleId, defaults) },
+        retry: (mapId) => { void writeGroupToSource(nodeIds.map(mapId), containerModuleId, defaults, frame) },
         getState: get,
         set,
       })
@@ -507,7 +516,19 @@ export function createStudioSourceWrites(
     const mod = registry.get(containerModuleId)
     const resolvedDefaults = { ...(mod?.defaults ?? {}), ...defaults }
     const only = plan.commit.length === 1 ? plan.commit[0] : undefined
-    if (only !== undefined) {
+    if (frame) {
+      // PA-6 — a frame is ALWAYS a `group` (even around one element), has no
+      // optimistic preview (a bare wrapper would flash before its style
+      // lands), and its patches follow the run in source order.
+      void commitStudioGroup({
+        nodeIds: plan.commit,
+        ...container,
+        frame: {
+          wrapperStyle: frame.wrapperStyle,
+          memberStyles: plan.commit.map((id) => frame.memberStyles[id] ?? {}),
+        },
+      })
+    } else if (only !== undefined) {
       const optimistic = previewOptimisticWrap(helpers, only, containerModuleId, resolvedDefaults) ?? undefined
       void commitStudioWrap({ nodeId: only, ...container, ...(optimistic ? { optimistic } : {}) })
     } else {
