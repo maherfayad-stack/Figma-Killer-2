@@ -13,8 +13,8 @@
  * under the board refuses (`list-changed`) rather than unrolling something
  * the user did not point at.
  *
- * Returns rather than throws, like its siblings; `studioWriteback.ts` turns a
- * refusal into the batch's `StudioEditRefusalError`. ⌘Z is the undo journal's
+ * A refusal is thrown as the batch's `StudioEditRefusalError` (the dispatcher's
+ * one channel; `studioWriteback.ts` calls this straight from its case). ⌘Z is the undo journal's
  * `restore` (`studioBatchUndoJournal.ts`): the rows replace source text no
  * edit kind describes.
  */
@@ -22,6 +22,7 @@ import { unrollMapExpression } from '@core/ast-codemods'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import type { Project } from 'ts-morph'
 import type { CreatedJsxLocation } from '@core/ast-codemods'
+import { StudioEditRefusalError } from './studioEditRefusals'
 
 export const UnrollListEditSchema = Type.Object({
   kind: Type.Literal('unroll-list'),
@@ -34,10 +35,6 @@ export const UnrollListEditSchema = Type.Object({
 })
 export type UnrollListEditWire = Static<typeof UnrollListEditSchema>
 
-export type UnrollListOutcome =
-  | { ok: true; created: CreatedJsxLocation[] }
-  | { ok: false; reason: string; message: string }
-
 /** Run one `unroll-list` edit against its already-decoded, already-guarded location. */
 export function applyUnrollListEdit(
   loc: { file: string; line: number; col: number },
@@ -46,11 +43,11 @@ export function applyUnrollListEdit(
   array: { rel: string; line: number; col: number } | null,
   edit: UnrollListEditWire,
   project?: Project,
-): UnrollListOutcome {
+): { applied: true; created: CreatedJsxLocation[] } {
   // The array must be in the file being written: a list whose items are written
   // elsewhere is not one this edit can unroll.
   if (!array || array.rel !== targetRel) {
-    return { ok: false, reason: 'not-literal', message: 'This list’s items are not written in the same file as its rows, so they cannot be copied into them.' }
+    throw new StudioEditRefusalError('not-literal', 'This list’s items are not written in the same file as its rows, so they cannot be copied into them.')
   }
   const result = unrollMapExpression({
     file: loc.file,
@@ -60,5 +57,6 @@ export function applyUnrollListEdit(
     length: edit.length,
     ...(project ? { project } : {}),
   })
-  return result.ok ? { ok: true, created: result.created } : { ok: false, ...result.refusal }
+  if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
+  return { applied: true, created: result.created }
 }

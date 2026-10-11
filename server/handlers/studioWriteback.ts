@@ -328,13 +328,8 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
       if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
       return { applied: true }
     }
-    case 'unroll-list': {
-      // G-9 (OD-24) — `loc` is the row ROOT's template position; the array is decoded
-      // through the same guard and must sit in this file. ⌘Z is the undo journal's `restore`.
-      const result = applyUnrollListEdit(loc, target.rel, studioEditLocation(dir, edit.array, scope), edit, project)
-      if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
-      return { applied: true, created: result.created }
-    }
+    case 'unroll-list': // G-9 — `loc` is the row template; the array goes through the same path guard
+      return applyUnrollListEdit(loc, target.rel, studioEditLocation(dir, edit.array, scope), edit, project)
     case 'detach': {
       // P3-D (OD-7) — the import is retired by this batch's prune pass
       // (`studioBatchImportPrune.ts`); ⌘Z is the undo journal's `restore`.
