@@ -42,10 +42,9 @@
  *     a prune and a delete alike;
  *   - an entry is size-capped ({@link MAX_ENTRY_BYTES}) before it is read and
  *     validated with TypeBox after;
- *   - every `rel` it names is re-derived through `canonicalJournalRel`: the
- *     same guard a node id's file goes through (`canonicalSourceRel`), or the
- *     stylesheet writer's (`canonicalStylesheetRel`, G-5) — inside the project
- *     on the real path, app source or a hand-authored `.css` only, never
+ *   - every `rel` it names is re-derived through `canonicalSourceRel` in the
+ *     editor's scope (`journalStylesheets: 'allow'`, which admits a
+ *     hand-authored `.css`): inside the project on the real path, never
  *     `.studio`/`.git`/`node_modules`, no link on the way. An entry that names
  *     anything else is `restore-unavailable`, not a write.
  *
@@ -73,7 +72,6 @@ import { existsSync, readFileSync, unlinkSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { canonicalSourceRel } from '../studioEditRouting'
-import { canonicalStylesheetRel } from '../studioCssWriteback'
 import { writeFileAtomic } from '@core/page-parser'
 import {
   StudioStoreLinkError,
@@ -126,19 +124,7 @@ const UndoJournalEntrySchema = Type.Object({
 type UndoJournalEntry = Static<typeof UndoJournalEntrySchema>
 
 /** Every file a restore writes is resolved in the editor's scope — the journal is the editor's undo. */
-const EDITOR_SCOPE = { canvasLayers: 'allow' } as const
-
-/**
- * `rel` when the journal may record or restore it: app source (`canonicalSourceRel`)
- * or, since G-5, a hand-authored stylesheet (`canonicalStylesheetRel`) — a style
- * edit that lands as an override or an expanded shorthand is undone from a
- * pre-image of its `.css`. Both guards are the writers' own, applied on the real
- * path with no link on the way, so a planted entry still cannot name anything
- * Studio would not write.
- */
-function canonicalJournalRel(dir: string, rel: string): string | null {
-  return canonicalSourceRel(dir, rel, EDITOR_SCOPE) ?? canonicalStylesheetRel(dir, rel)
-}
+const EDITOR_SCOPE = { canvasLayers: 'allow', journalStylesheets: 'allow' } as const
 
 /** What a write's files held before it ran: absolute path to bytes, or `null` for "did not exist". */
 export type UndoPreImage = ReadonlyMap<string, Buffer | null>
@@ -193,7 +179,7 @@ export function recordUndoJournal(dir: string, preImage: UndoPreImage, created: 
     const now = readBytes(file)
     if (was === null ? now === null : now !== null && was.equals(now)) continue
     const rel = relative(dir, file).split(sep).join('/')
-    if (canonicalJournalRel(dir, rel) !== rel) return null
+    if (canonicalSourceRel(dir, rel, EDITOR_SCOPE) !== rel) return null
     const text = was === null ? null : was.toString('utf8')
     // Not valid UTF-8: the string would not write back the same bytes.
     if (text !== null && !Buffer.from(text, 'utf8').equals(was!)) return null
@@ -227,7 +213,7 @@ function readEntry(dir: string, token: string): UndoJournalEntry | null {
 function entryFiles(dir: string, entry: UndoJournalEntry): string[] | null {
   const files: string[] = []
   for (const { rel } of entry.files) {
-    if (canonicalJournalRel(dir, rel) !== rel) return null
+    if (canonicalSourceRel(dir, rel, EDITOR_SCOPE) !== rel) return null
     files.push(join(dir, ...rel.split('/')))
   }
   return files
@@ -282,7 +268,7 @@ export function restoreUndoJournal(dir: string, token: string, deps: UndoJournal
       }
     }
   }
-  // Every path here passed `canonicalJournalRel(...) === rel`, which a link
+  // Every path here passed `canonicalSourceRel(...) === rel`, which a link
   // never does (its real path canonicalises differently). That equality is
   // what makes `writeFileAtomic` — which writes THROUGH a symlink to its
   // target — safe here: relax it and this becomes a write-through-link hole.

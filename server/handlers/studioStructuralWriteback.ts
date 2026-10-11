@@ -44,6 +44,7 @@ import {
   unwrapJsxElement,
   wrapJsxElement,
   wrapJsxElements,
+  frameJsxElements,
   type CreatedJsxLocation,
 } from '@core/ast-codemods'
 import { designSystemImportSpecifier } from '@core/page-parser'
@@ -138,6 +139,13 @@ const InsertEditSchema = Type.Object({
    * every one of them, in order.
    */
   siblings: Type.Optional(Type.Array(InsertNodeSchema, { minItems: 1 })),
+  /**
+   * The editor's ⌘Z for this insert is the undo journal's `restore`, not a
+   * `delete` of what it made: the parent had no children, so the write may have
+   * expanded a self-closing `<X />`, and only the pre-image puts that back byte
+   * for byte. Honoured on the editor's journaled `/save` only (`studioBatchUndoJournal.ts`).
+   */
+  exactUndo: Type.Optional(Type.Literal(true)),
 })
 
 /**
@@ -163,6 +171,8 @@ const DuplicateEditSchema = Type.Object({
   parentNodeId: Type.Optional(Type.String()),
   anchorNodeId: Type.Optional(Type.String()),
   position: Type.Optional(Type.Union([Type.Literal('before'), Type.Literal('after')])),
+  /** As on `insert`: the copy lands in a childless parent, so the editor's undo is the journal's `restore`. */
+  exactUndo: Type.Optional(Type.Literal(true)),
 })
 
 /**
@@ -203,10 +213,24 @@ const WrapEditSchema = Type.Object({
 const GroupEditSchema = Type.Object({
   kind: Type.Literal('group'),
   nodeId: Type.String(),
-  siblingNodeIds: Type.Array(Type.String(), { minItems: 1 }),
+  /** Empty for a frame around ONE element (PA-6); ⌘G on one element is the `wrap` kind. */
+  siblingNodeIds: Type.Array(Type.String()),
   name: Type.String(),
   importSpecifier: Type.Optional(Type.String()),
   designSystemImport: Type.Optional(DesignSystemImportSchema),
+  /**
+   * PA-6 — Frame selection: the container is SIZED AND PLACED. `wrapperStyle`
+   * is its inline style; `memberStyles` has one patch per member in the order
+   * `[nodeId, ...siblingNodeIds]` (`null` removes a key), the offsets each
+   * member needs inside the frame. The batch is journaled, so its undo is the
+   * pre-image (`frameJsxElements`).
+   */
+  frame: Type.Optional(
+    Type.Object({
+      wrapperStyle: Type.Record(Type.String(), Type.String()),
+      memberStyles: Type.Array(Type.Record(Type.String(), Type.Union([Type.String(), Type.Number(), Type.Null()]))),
+    }),
+  ),
 })
 
 /**
@@ -274,6 +298,8 @@ const TransplantEditSchema = Type.Object({
   anchorNodeId: Type.Optional(Type.String()),
   position: Type.Optional(Type.Union([Type.Literal('before'), Type.Literal('after')])),
   copy: Type.Optional(Type.Boolean()),
+  /** A COPY into a childless parent: as on `insert`, the editor's undo is the journal's `restore`. */
+  exactUndo: Type.Optional(Type.Literal(true)),
 })
 
 /** The structural edit kinds, folded into `StudioEditSchema` by `studioWriteback.ts`. */
@@ -606,12 +632,15 @@ export function applyStructuralEdit(
         }
       }
       const wrapperSpecifier = resolveNodeImport(edit, targetRel)
-      const result = wrapJsxElements({
+      const groupParams = {
         file: loc.file,
         targets: [{ line: loc.line, col: loc.col }, ...siblings],
         name: edit.name,
         ...(wrapperSpecifier === undefined ? {} : { importSpecifier: wrapperSpecifier }),
-      })
+      }
+      const result = edit.frame
+        ? frameJsxElements({ ...groupParams, wrapperStyle: edit.frame.wrapperStyle, memberStyles: edit.frame.memberStyles })
+        : wrapJsxElements(groupParams)
       return result.ok ? { ok: true, created: createdList(result.created) } : { ok: false, ...result.refusal }
     }
     case 'ungroup': {

@@ -53,8 +53,9 @@ import { RESIZE_HANDLES, type ResizeHandle } from '@core/studio-runtime'
 import { resizeRect, type ResizeRect } from '../rectResize'
 import { useBoardFrameMoveDrag } from './useBoardFrameMoveDrag'
 import { useFramePosterCapture } from './useFramePosterCapture'
+import { selectPosterStyleSignature, useFramePoster } from './framePosters'
+import { posterKey } from './posterKey'
 import { afterPressPaint } from '../pressRing'
-import { getFramePoster } from './frameSnapshotCache'
 import { FramePosterPlaceholder } from './FramePosterPlaceholder'
 import { LiveBoardFrame } from './LiveBoardFrame'
 import { resolveFrameMount } from './framePool'
@@ -268,7 +269,6 @@ function BoardFrameViewImpl({
   // not while the frame is on screen and already has one) and for why it
   // doesn't mount a second offscreen frame to do this.
   const frameBodyRef = useRef<HTMLDivElement>(null)
-  useFramePosterCapture(frameBodyRef, page, width, isOnScreen, mounted)
   // S1 — the frame's mount is staged (iframe -> injectors -> node tree; see
   // `IframeFrameSurface`'s header), so between entering the viewport and the
   // tree's commit the iframe is a real but EMPTY document. The poster stays
@@ -278,6 +278,13 @@ function BoardFrameViewImpl({
   // stable by React's own contract, so it cannot defeat `BreakpointFrame`'s
   // `memo()` bailout the way a fresh closure would.
   const [contentReady, setContentReady] = useState(false)
+  // SB-2 — the picture is keyed by what the frame renders (content hash + axes + width), so an edit
+  // makes a new key and the old picture is unreachable. A Tier-2 frame reports no readiness (see
+  // below), so it is captured on the same terms as before: once mounted and quiet.
+  const styleSignature = useEditorStore(selectPosterStyleSignature)
+  const posterId = posterKey({ frameId: frame.id, page, styleSignature, axes: effectiveAxes, width })
+  const posterUrl = useFramePoster(posterId)
+  useFramePosterCapture(frameBodyRef, page.id, posterId, width, posterUrl !== undefined, mounted, contentReady || trust === 'run-project')
 
   // Capture phase — fires before the frame's own node-click handling, so
   // `activePageId` is already switched to this page by the time selection
@@ -581,7 +588,7 @@ function BoardFrameViewImpl({
                     onActivate={activatePage}
                     frameId={frame.id}
                     axesOverride={frame.axes}
-                    width={width}
+                    posterUrl={posterUrl}
                   />
                 ) : (
                   // Byte-for-byte the SAME call this branch has always made —
@@ -606,14 +613,14 @@ function BoardFrameViewImpl({
             </CanvasPageContext.Provider>
           </CanvasDiagnosticsScopeContext.Provider>
         ) : (
-          <FramePosterPlaceholder title={page.title} posterUrl={getFramePoster(page, width)} />
+          <FramePosterPlaceholder title={page.title} posterUrl={posterUrl} />
         )}
         {/* The poster stays painted over a portal frame until its tree has
             committed. A Tier-2 frame reports no such readiness — it draws its
             own boot and crash chrome (`LiveBoardFrame`) — so an overlay there
             would be a poster that never lifts. */}
         {mounted && trust !== 'run-project' && !contentReady && (
-          <FramePosterPlaceholder title={page.title} posterUrl={getFramePoster(page, width)} overlay />
+          <FramePosterPlaceholder title={page.title} posterUrl={posterUrl} overlay />
         )}
         {/* A page with nothing on it renders as a blank rectangle, which reads
             as "it did not load". Only for a frame that is actually drawing its

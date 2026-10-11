@@ -14,7 +14,6 @@
  */
 import type { Patches } from 'mutative'
 import type { BoardsFile } from '@core/studio-board'
-import type { SequencedMove } from '@core/page-tree'
 import type { StructuralSourceGesture } from '@site/studio/structuralUndoPlan'
 
 /**
@@ -108,47 +107,20 @@ export interface BoardHistory {
   after: BoardHistorySnapshot
 }
 
-/** One end of a re-issuable structural gesture: "put this node here". */
-export interface StructuralHistoryMove {
-  nodeId: string
-  /** The node id this move's destination parent has — the synthetic page root included. */
-  parentId: string
-  /** Index into the destination parent's children AFTER the node is detached, matching `moveNode`. */
-  index: number
-}
-
 /**
- * What undo/redo has to re-issue for a structural transaction.
+ * What undo/redo has to re-issue for a structural transaction: always a
+ * source-writing gesture, whose undo is a WRITE (`structuralSourceHistory.ts`).
  *
- * `move` is re-issuable in both directions: the inverse of a move is another
- * move, planned against the live tree by the same `moveNodes` action a drag
- * uses, so it rides every refusal gate and writes to source exactly once.
- *
- * `delete` is folded into `StructuralSourceHistory` rather than getting a bare
- * variant of its own: its tree mutation still runs eagerly (same-tick
- * optimistic removal), but its UNDO — the file as it was — is the undo
- * journal's `restore` (P3-F), resolved the identical way every other `source`
- * gesture's inverse is. See `structuralUndoPlan.ts`'s `restore-journal`
- * template.
+ * That includes the ones that mutate the tree eagerly for a same-tick preview —
+ * `delete`, and a same-file move or reorder (single or sequence). Their tree
+ * mutation's own patches are never replayed; the entry is tagged with the
+ * gesture instead (`structuralHistory.ts`), and its ⌘Z is the undo journal's
+ * `restore` (P3-F), resolved the identical way every other `source` gesture's
+ * inverse is. A move used to re-issue `moveNodes` instead, which put the
+ * element back by position and so could not restore a blank line or an
+ * indentation the move had changed.
  */
-export type StructuralHistory =
-  | { gesture: 'move'; undo: StructuralHistoryMove; redo: StructuralHistoryMove }
-  | StructuralHistoryMoves
-  | StructuralSourceHistory
-
-/**
- * P2-C2 / P3-D — several elements moved as ONE gesture (`moveNodesInSequence`:
- * a multi-selection drag, an arrow step of a selection, the first half of a
- * non-adjacent group): single-element moves applied IN ORDER, each against the
- * tree the previous one left, written as one `/save` sequence. `undo` is the
- * reversed list of where each element came from (`invertMoveSequence`), so
- * both directions re-issue through the same action: one write, one entry.
- */
-export interface StructuralHistoryMoves {
-  gesture: 'moves'
-  undo: SequencedMove[]
-  redo: SequencedMove[]
-}
+export type StructuralHistory = StructuralSourceHistory
 
 /**
  * `store-14` — a gesture that wrote the user's markup and mutated NO tree:

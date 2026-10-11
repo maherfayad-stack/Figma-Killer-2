@@ -34,6 +34,7 @@ import { fetchStudioPagesById } from '../studio/studioLiveReloadFetch'
 import { noteBoardRead } from '../studio/sourceIdentity'
 import { resyncBoardAfterWrite } from '../studio/studioBoardResync'
 import { flushEditorSave } from '../hooks/editorSaveRef'
+import { framePosters } from '../canvas/BoardFramesLayer/framePosters'
 import { getAgentStoreApi } from './storeRef'
 
 const getStoreState = (): EditorStore => getAgentStoreApi<EditorStore>().getState()
@@ -132,6 +133,8 @@ export async function runStudioLiveReload(input: StudioLiveReloadInput): Promise
   if (input.diskChanged) {
     try {
       await reloadAfterDiskChange(input.diskChanged.files)
+      // A file changed outside Studio can be an image, a font or a stylesheet no poster key sees.
+      framePosters.invalidate()
     } catch (err) {
       console.error('[studioLiveReload] re-reading files changed outside Studio failed — canvas may be stale:', err)
       failed.push('disk')

@@ -116,7 +116,7 @@
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { QuoteKind } from 'ts-morph'
-import { isWorkspaceWritablePath, listWorkspaceFiles, realWorkspaceRel, unwritableWorkspaceSegment, writeSourceFile } from '@core/page-parser'
+import { isWorkspaceWritablePath, listWorkspaceFiles, unwritableWorkspaceSegment, writeSourceFile } from '@core/page-parser'
 import { createProject, relativeSpecifier, topLevelBindingNames } from '@core/ast-codemods'
 import {
   AT_RULE_SCOPE_PATTERN,
@@ -634,25 +634,6 @@ export function applyCssEdit(dir: string, edit: CssEdit): CssEditOutcome {
   if (!result.ok) return { applied: false, refusal: { reason: result.refusal.reason, message: result.refusal.message } }
   if (result.changed) writeSourceFile(filePath, result.css)
   return { applied: true, styleLanding: { rung: result.landing, file: edit.file } }
-}
-
-/**
- * `rel` when it names a stylesheet this module may write, reached through no
- * link — the stylesheet counterpart of `studioEditRouting.ts`'s
- * `canonicalSourceRel`, and the one place the undo journal asks whether it may
- * put a `.css` file back. The same shape guard and real-path predicate the
- * writer applies (`safeRelSegments`, `isWorkspaceWritablePath`), then the real
- * path re-derived: a link anywhere on the way canonicalises to a different
- * spelling and answers `null`, so a restore never writes THROUGH a link.
- */
-export function canonicalStylesheetRel(dir: string, rel: string): string | null {
-  const segments = safeRelSegments(rel, /\.css$/i)
-  if (!segments) return null
-  if (classifyStylesheetEditability(rel).kind === 'compiled') return null
-  const absolute = join(dir, ...segments)
-  if (!isWorkspaceWritablePath(dir, absolute)) return null
-  const canonical = realWorkspaceRel(dir, absolute)
-  return canonical !== null && canonical === segments.join('/') ? canonical : null
 }
 
 /**

@@ -581,7 +581,7 @@ describe('useInspectorCommit — optimistic in-frame broadcast (`speed-01`)', ()
     }
   })
 
-  it('commitStyle(value=null) commits nothing to broadcast — a clear is not previewable as a positive override', () => {
+  it('commitStyle(value=null) (inline) broadcasts the clear as an empty patch value, so a bridge frame drops the inline value at once', () => {
     const nodeId = 'node-1'
     const rootId = 'root'
     const page = makePage({
@@ -605,7 +605,9 @@ describe('useInspectorCommit — optimistic in-frame broadcast (`speed-01`)', ()
         result.current.commit.commitStyle('color', null, { existing: true })
       })
 
-      expect(bridge.styleMessages()).toHaveLength(0)
+      expect(bridge.styleMessages()).toEqual([
+        { type: 'optimistic.style', ref: { nodeId, occurrenceIndex: 0 }, patch: { color: '' } },
+      ])
     } finally {
       bridge.dispose()
     }

@@ -359,16 +359,27 @@ follow from keeping the eager mutation:
   SAME top-of-stack entry once the commit's `undoToken` is known — never
   pushing a second entry for a gesture that only happened once.
 
+- **An entry's own `forward` is not re-addressed by its own write.** A move's
+  entry is pushed with the ids of the file BEFORE the write; the write's reload
+  then renumbers every id below the cut. `historyNodeIdRemap.ts` re-addresses
+  the stack through that renumbering, but skips `forward` while the entry's
+  `inverse` is still `null` (its write has not landed): an undo restores the
+  pre-write file, and a redo has to name the ids that file has. (A redo used to
+  re-aim at whichever element inherited the line.) A sequence of journaled kinds
+  (a multi-element move) is journaled once by `studioEditSequence.ts`; a
+  sequence of deletes is not, its undo being the ids its steps report.
+
 Where the protocol can say it, the inverse is an ordinary edit:
 
 | gesture | inverse |
 |---|---|
-| insert / duplicate / paste / image drop | `delete` what it created |
+| insert / duplicate / paste / image drop | `delete` what it created. An insert, or a copy (Alt-drag, paste, a cross-frame copy), into a parent with NO children is the exception: it writes `exactUndo` (on `insert`, `duplicate` and a copying `transplant`), and its ⌘Z is the undo-journal `restore` — the write may have expanded a self-closing `<X />` to `<X>…</X>`, which a `delete` leaves as `<X>\n</X>` (and which then makes a linked OD-7 detach restore refuse `restore-stale`) |
 | wrap / group | `ungroup` the container it created |
 | ungroup | `group` the children it released, into the same container |
 | transplant (move) | `restore` the undo-journal entry the write recorded. A cross-frame move cuts markup from one file, prunes the import only that markup used, and carries imports into the other, so every `line:col` below the cut moves in BOTH files — including the container the element left, which an inverse `transplant` would have had to name from an id recorded at drag time. That id was stale the moment the import line went (the undo then refused as a changed file). The pre-image has no ids, and puts both files back byte for byte |
-| transplant (copy) | `delete` the copy it created |
-| delete / detach / expose-prop / swap / extract, a `.map` row's delete (OD-8) | `restore` the undo-journal entry the write recorded (P3-F) |
+| transplant (copy) | `delete` the copy it created (into a childless parent: `restore`, as above) |
+| free-canvas lift / place (move) | `restore` the undo-journal entry — the page and the layer module, byte for byte. A lift prunes the import only the element used, so a parent id recorded at drag time (the old `canvas-layer-lift-back`) was a line off by ⌘Z; a place removes the module, which the pre-image recreates. A COPY is taken back by deleting the layer or element it made |
+| delete / detach / expose-prop / promote-override / swap / extract, a `.map` row's delete (OD-8) | `restore` the undo-journal entry the write recorded (P3-F) |
 | vector drag / nudge (P5-D) | `svg-attr` on the same part carrying the previous literals, `remove` for the attributes that were absent — a `known` template, fixed at gesture time (`svgPartCommits.ts`) |
 | pen path (P5-D) | `delete` the `<svg>` it created (an `insert`); on the empty board, the free canvas's own layer delete |
 
@@ -415,9 +426,8 @@ The rules that keep it narrow:
 - **Untrusted on read.** A token is 32 lowercase hex digits before it meets a
   path; the folder and entry are refused if reached through a link; an entry is
   size-capped (8 MiB) and TypeBox-validated; every `rel` is re-derived through
-  `canonicalJournalRel` — `canonicalSourceRel`, or since G-5 the stylesheet
-  writer's own `canonicalStylesheetRel` (a hand-authored `.css`, no link on the
-  way, never `.min.css`/`dist/`/`node_modules`/`.studio`) — so an entry naming
+  `canonicalSourceRel` in the editor's scope (`journalStylesheets: 'allow'`,
+  which admits a hand-authored `.css`), so an entry naming
   anything outside app source and hand-authored stylesheets is
   `restore-unavailable`, never a write.
 - **A style edit is journaled only when a value-set cannot undo it (G-5).** A
@@ -461,7 +471,11 @@ moved hook or every row) wrote nothing and pushes nothing; the confirmed
 re-post is the entry. Redo re-posts the gesture's `forward` edits — for a
 confirmed detach, without the `dryRun`. "Expose as prop" (`expose-prop`)
 writes two files (the component and its one call site) in one journaled
-batch, one entry.
+batch, one entry — however many values the gesture set. OD-19: this is what a
+text, attribute or inline-style edit inside a component instance posts; its
+canvas preview is outside history, so the landing write is the only entry.
+"Apply to all (N)" (`promote-override`) is the same two files, the same kind
+of entry.
 
 Because the inverse addresses elements the write had not made yet (or, for
 `delete`, discarded bytes the write had not yet reported), the gesture records
@@ -504,8 +518,7 @@ the file. Now:
   `openPageInCanvas` — the way Figma takes you to the page an undo changes —
   before calling `moveNodes`, which routes through `mutateActiveTree`.
 - `reissueStructuralSourceEdits` checks every id against `_nodeIdToPageIds`,
-  i.e. the whole board, and reads a `canvas-layer-lift-back` parent's children
-  off the page that owns it. Nothing is activated: the write does not need a tree.
+  i.e. the whole board. Nothing is activated: the write does not need a tree.
 
 ### A step that can never happen is skipped (ERR-2 stop-gap, ERR-28)
 

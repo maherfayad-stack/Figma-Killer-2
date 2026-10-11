@@ -30,6 +30,10 @@ async function call(set: unknown[]): Promise<Result> {
   return (await tool.handler!({ dir, set } as never, { userId: 'u1' } as never)) as Result
 }
 
+async function callRaw(input: Record<string, unknown>): Promise<Result> {
+  return (await tool.handler!({ dir, ...input } as never, { userId: 'u1' } as never)) as Result
+}
+
 const INDEX_CSS = [
   '/* The palette. Keep in sync with Figma. */',
   ':root {',
@@ -129,6 +133,38 @@ describe('studio_set_tokens', () => {
     viteProject()
     const result = await call([{ name: '--space-md', value: '1px; color: red' }])
     expect(result.ok).toBe(false)
+    expect(result.code).toBe('invalid-input')
+    expect(read('src/index.css')).toBe(INDEX_CSS)
+  })
+})
+
+describe('studio_set_tokens - rename and remove (CT-3)', () => {
+  it('renames the declaration in every mode and every var() across files, in one call', async () => {
+    viteProject()
+    write('src/App.tsx', 'export function App() { return <main style={{ color: "var(--color-brand)" }} /> }\n')
+    const result = await callRaw({ rename: { name: '--color-brand', to: '--color-primary' } })
+    expect(result.ok).toBe(true)
+    expect(read('src/index.css')).toBe(INDEX_CSS.replaceAll('--color-brand', '--color-primary'))
+    expect(read('src/App.tsx')).toContain('var(--color-primary)')
+    expect(result.renamed).toEqual([{ name: '--color-brand', to: '--color-primary', mentions: 3, files: 2 }])
+  })
+
+  it('refuses removing a token that is still read, and removes one that is not', async () => {
+    viteProject()
+    write('src/App.tsx', 'export function App() { return <main style={{ margin: "var(--space-md)" }} /> }\n')
+    const used = await callRaw({ remove: { name: '--space-md' } })
+    expect(used.ok).toBe(false)
+    expect(String(used.message)).toContain('src/App.tsx:1')
+    expect(read('src/index.css')).toBe(INDEX_CSS)
+
+    const unused = await callRaw({ remove: { name: '--radius-card' } })
+    expect(unused.ok).toBe(true)
+    expect(read('src/index.css')).toBe(INDEX_CSS.replace('  --radius-card: 12px;\n', ''))
+  })
+
+  it('wants exactly one of set, rename or remove', async () => {
+    viteProject()
+    const result = await callRaw({ rename: { name: '--space-md', to: '--space-base' }, remove: { name: '--radius-card' } })
     expect(result.code).toBe('invalid-input')
     expect(read('src/index.css')).toBe(INDEX_CSS)
   })

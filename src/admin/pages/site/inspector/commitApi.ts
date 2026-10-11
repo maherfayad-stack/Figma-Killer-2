@@ -78,6 +78,7 @@ import { useEditorStore } from '@site/store/store'
 import { registry } from '@core/module-engine'
 import type { CSSPropertyBag, PageNode } from '@core/page-tree'
 import { styleValueKey } from '@core/page-tree'
+import { OPTIMISTIC_STYLE_CLEARED } from '@core/studio-runtime'
 import { getActiveStyleTab } from '../panels/PropertiesPanel/classStyleSections'
 import { broadcastOptimisticStyle, broadcastOptimisticStyleClear } from '../canvas/frameAdapter/optimisticStructuralBroadcast'
 import type { SelectionModel } from './selectionModel'
@@ -152,17 +153,25 @@ export function lockedStyleProperties(node: PageNode | null): ReadonlySet<string
 // ---------------------------------------------------------------------------
 
 /**
- * Narrows a style patch to what {@link broadcastOptimisticStyle} can carry:
- * drops `null`/`undefined` entries (a clear — the wire's `patch` is a set of
- * positive `!important` overrides, not a way to express "remove", and the
- * removal will show once the file write reaches Vite same as it always has)
- * and stringifies a raw number the way the store itself stores it verbatim.
- * Returns `null` when nothing is left to broadcast.
+ * Narrows a style patch to what {@link broadcastOptimisticStyle} can carry.
+ * A `null`/`undefined` entry is a CLEAR. For an INLINE write it travels as
+ * `OPTIMISTIC_STYLE_CLEARED`: the frame removes the element's inline value,
+ * which is what the file will say. For a CLASS write it is dropped: the
+ * class's own rule is not something the frame can un-set per element, and the
+ * removal shows once the file write reaches Vite. A raw number is stringified
+ * the way the store itself stores it verbatim. Returns `null` when nothing is
+ * left to broadcast.
  */
-function optimisticStylePatch(patch: Record<string, string | number | null>): Record<string, string> | null {
+function optimisticStylePatch(
+  patch: Record<string, string | number | null>,
+  clears: 'send' | 'drop',
+): Record<string, string> | null {
   const out: Record<string, string> = {}
   for (const [key, value] of Object.entries(patch)) {
-    if (value === null || value === undefined) continue
+    if (value === null || value === undefined) {
+      if (clears === 'send') out[key] = OPTIMISTIC_STYLE_CLEARED
+      continue
+    }
     out[key] = String(value)
   }
   return Object.keys(out).length > 0 ? out : null
@@ -241,7 +250,7 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
       // frames already repainted from the store mutation above; see
       // `optimisticStructuralBroadcast.ts`'s own doc for why this never
       // double-paints one.
-      const optimisticPatch = optimisticStylePatch(patch)
+      const optimisticPatch = optimisticStylePatch(patch, 'send')
       if (optimisticPatch) for (const id of inlineTargetIds) broadcastOptimisticStyle(id, optimisticPatch)
     } else if (target.kind === 'class') {
       if (activeContextId) {
@@ -258,7 +267,7 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
       // board frame IS a breakpoint frame, so this is the common case a
       // panel edit hits, not an edge one.
       if (!onCondition) {
-        const optimisticPatch = optimisticStylePatch(patch)
+        const optimisticPatch = optimisticStylePatch(patch, 'drop')
         if (optimisticPatch) {
           broadcastOptimisticStyle(selectedNodeId, optimisticPatch, {
             className: bareClassName(target.selector),
@@ -287,7 +296,7 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
         styles: patch,
       })
       if (selectedNodeId) {
-        const optimisticPatch = optimisticStylePatch(patch)
+        const optimisticPatch = optimisticStylePatch(patch, 'drop')
         if (optimisticPatch) {
           broadcastOptimisticStyle(selectedNodeId, optimisticPatch, {
             className: bareClassName(target.selector),
@@ -298,7 +307,7 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
     } else if (target.kind === 'inline') {
       if (inlineTargetIds.length === 0) return
       setPreviewNodeStyles({ nodeIds: [...inlineTargetIds], styles: patch })
-      const optimisticPatch = optimisticStylePatch(patch)
+      const optimisticPatch = optimisticStylePatch(patch, 'send')
       if (optimisticPatch) for (const id of inlineTargetIds) broadcastOptimisticStyle(id, optimisticPatch)
     }
   }

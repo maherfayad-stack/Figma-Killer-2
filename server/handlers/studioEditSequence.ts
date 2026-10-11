@@ -59,6 +59,10 @@ import { applyStudioEditBatch } from './studioWriteback'
 import { rememberSourceTexts } from './studio/sourceTextHistory'
 import { withProjectWriteLock } from './studio/projectWriteLock'
 import { recordUndoJournal } from './studio/undoJournal'
+import { isJournaled } from './studioBatchUndoJournal'
+
+/** A delete sequence is undone by the ids its steps report; every other journaled kind has no inverse but the pre-image. */
+const isJournaledInSequence = (edit: StudioEdit): boolean => edit.kind !== 'delete' && isJournaled(edit)
 
 /** The edit kinds a sequence may hold — each one's effect on every OTHER element is known. */
 const SEQUENCE_KINDS = new Set<StudioEdit['kind']>([
@@ -279,8 +283,9 @@ export function applyStudioEditSequence(
   const removed: StudioEditBatchResult['removed'] = []
   // P3-F — a step records no journal entry of its own (it would be an
   // orphan): a move, group or delete sequence's undo is the gesture's own
-  // inverse. A DETACH has no inverse but the journal, so a sequence holding
-  // one (P5-C, a multi-selection detach) is journaled ONCE, below, from
+  // inverse. A DETACH, or any other kind `isJournaled` names bar a delete (a
+  // move, whose splice no inverse move reproduces), has no inverse but the
+  // journal, so a sequence holding one (P5-C, a multi-selection detach) is journaled ONCE, below, from
   // `originals` — every file as it was before the first step, which is
   // exactly what its ⌘Z has to put back.
   const stepOptions: StudioEditBatchOptions = { ...options, journal: undefined }
@@ -394,7 +399,7 @@ export function applyStudioEditSequence(
     const after = existsSync(file) ? readFileSync(file, 'utf8').split('\n').length : -1
     if (after !== lineCountBefore.get(file)) shifted = true
   }
-  const undoToken = options.journal === true && edits.some((edit) => edit.kind === 'detach') ? recordUndoJournal(dir, originals) : null
+  const undoToken = options.journal === true && edits.some(isJournaledInSequence) ? recordUndoJournal(dir, originals) : null
   return {
     written: edits.length,
     skipped: 0,
