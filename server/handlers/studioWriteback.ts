@@ -10,7 +10,8 @@
  * 'style' | 'class' | 'literal' | 'tag' | 'asset' | 'svg-attr' | 'detach' | 'expose-prop' | 'swap' | 'restore' | 'move' |
  * 'delete' | 'insert' | 'duplicate' | 'wrap' | 'group' | 'ungroup' |
  * 'reparent' | 'transplant' | 'insert-slot' |
- * 'promote-component' | 'add-slot-prop' | 'css'`) lives in
+ * 'promote-component' | 'add-slot-prop' | 'add-variant' | 'remove-variant' |
+ * 'add-component-prop' | 'css'`) lives in
  * `studioEditSchemas.ts` (split out for the
  * `module-size-budgets` ceiling) and is re-exported below verbatim, so every
  * existing consumer's import path is unchanged.
@@ -82,6 +83,7 @@ import {
   type StudioPromoteComponentDetail,
 } from './studioSlotWriteback'
 import { dispatchStructuralEdit } from './studioStructuralDispatch'
+import { applyVariantEdit } from './studioVariantWriteback'
 import { applySvgAttrEdit } from './studioSvgWriteback'
 import { applyListItemEdit } from './studioListItemWriteback'
 import { applyCanvasLayerEdit, isCanvasLayerEdit } from './studioCanvasLayerWriteback'
@@ -126,6 +128,7 @@ export { StudioEditRefusalError } from './studioEditRefusals'
 export { canonicalSourceRel, isWritableSourceRel } from './studioEditRouting'
 export { studioEditLocation, isSharedSourceNodeId, orderStudioEditsForApply, dedupeStudioEdits, studioEditFile, type StudioEditLocation }
 import {
+  canonicalSourceRel,
   dedupeStudioEdits,
   isSharedSourceNodeId,
   orderStudioEditsForApply,
@@ -368,6 +371,11 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
         swapDetail: { removedProps: result.removedProps, unfilledRequiredProps: result.unfilledRequiredProps },
       }
     }
+    case 'add-variant':
+    case 'remove-variant':
+    case 'add-component-prop':
+      // CV-3 — the component's definition: `loc` is its declaration, the rest is re-read from disk.
+      return applyVariantEdit(dir, edit, target, (rel) => canonicalSourceRel(dir, rel))
     case 'insert-slot':
     case 'promote-component':
     case 'add-slot-prop': {
