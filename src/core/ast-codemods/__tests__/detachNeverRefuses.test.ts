@@ -490,7 +490,8 @@ describe("OD-21 - a component from the project's design-system/ folder detaches 
   /** The real vendored design system, placed where Studio writes it - a fixture that is not ours to simplify. */
   function placeDesignSystem(): void {
     const vendor = path.resolve(import.meta.dir, '..', '..', '..', '..', 'vendor', 'alm-design-system', 'src')
-    fs.cpSync(vendor, path.join(tmpDir, 'design-system'), { recursive: true })
+    // Every source file; not the ~570 icon SVGs, which nothing under test reads.
+    fs.cpSync(vendor, path.join(tmpDir, 'design-system'), { recursive: true, filter: (from) => !/\/icons\/(line-icons|logotypes)/.test(from.split(path.sep).join('/')) })
   }
 
   it("inlines the design system's Chip into the page, bound to the call site's own props", () => {
