@@ -18,7 +18,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import '@modules/base'
-import type { Page, PageNode } from '@core/page-tree'
+import { callSitePosition, type Page, type PageNode } from '@core/page-tree'
 import { planInstanceOverride, type OverrideChange, type PlannedOverride } from '@site/store/slices/site/instanceOverridePlan'
 import { snapshotNodeValues } from '@site/studio/loadedValuesBaseline'
 import { loadStudioPages } from '../studioPageLoad'
@@ -121,7 +121,8 @@ function rendered(b: Board, instance: PageNode): unknown[] {
 /** The `expose-prop` edit the editor posts for `change` made to `element`, or the plan if it is not an override. */
 function planFor(b: Board, element: PageNode, change: OverrideChange) {
   const baseline = snapshotNodeValues(b.pages).get(element.id)
-  return planInstanceOverride({ node: element, nodeId: element.id, change, textProp: 'text', baseline })
+  const page = b.pages.find((candidate) => candidate.nodes[element.id])
+  return planInstanceOverride({ node: element, nodeId: element.id, change, textProp: 'text', baseline, callSite: page?.nodes[callSitePosition(element.id)] })
 }
 
 function exposeEdit(element: PageNode, overrides: PlannedOverride[]): StudioEdit {
@@ -290,23 +291,152 @@ describe('what stays as it was, with the reason', () => {
   it('an element two components deep, or in a list row, cannot carry a per-instance value', async () => {
     const nested = 'pages/Rooms.tsx:5:8~components/RoomCard.tsx:5:8~components/Badge.tsx:2:10'
     const node = { id: nested, moduleId: 'base.text', props: { text: 'New', tag: 'span' }, fromComponent: 'Badge' } as unknown as PageNode
-    const plan = planInstanceOverride({ node, nodeId: nested, change: { props: { text: 'Newer' } }, textProp: 'text', baseline: { text: 'New', tag: 'span' } })
+    const plan = planInstanceOverride({ node, nodeId: nested, change: { props: { text: 'Newer' } }, textProp: 'text', baseline: { text: 'New', tag: 'span' }, callSite: undefined })
     expect(plan.kind).toBe('whole-component')
     const row = 'pages/Rooms.tsx:5:8#2~components/RoomCard.tsx:5:8'
-    const rowPlan = planInstanceOverride({ node: { ...node, id: row } as PageNode, nodeId: row, change: { props: { text: 'Newer' } }, textProp: 'text', baseline: { text: 'New', tag: 'span' } })
+    const rowPlan = planInstanceOverride({ node: { ...node, id: row } as PageNode, nodeId: row, change: { props: { text: 'Newer' } }, textProp: 'text', baseline: { text: 'New', tag: 'span' }, callSite: undefined })
     expect(rowPlan).toEqual({ kind: 'whole-component', reason: 'Badge is repeated by a list here, and one piece of code renders every item, so this changes every Badge.' })
   })
 })
 
-describe('the instance keeps its other instances\' editability (documented limit)', () => {
-  it('after one override the OTHER instances read the component default, which is code — not editable per instance until the follow-up', async () => {
+describe('after one override, every other instance stays editable per instance', () => {
+  /** Overrides instance 0's heading and returns the board after, with the files as they then stood. */
+  async function afterFirstOverride() {
     const before = await board()
-    await override(before, elementOf(before, before.instances[0]!, 'h3'), { props: { text: 'Committee room' } })
-    const after = await board()
+    const { result } = await override(before, elementOf(before, before.instances[0]!, 'h3'), { props: { text: 'Committee room' } })
+    return { after: await board(), card: read('components/RoomCard.tsx'), rooms: read('pages/Rooms.tsx'), firstUndo: result.undoToken! }
+  }
+
+  it('the parser says which prop feeds the default-fed text, so the planner writes the call site and the component is untouched', async () => {
+    const { after, card } = await afterFirstOverride()
     const other = elementOf(after, after.instances[1]!, 'h3')
-    // Pinned on purpose: a default-fed value has no origin (componentSubstitution.ts: "never set for a destructure DEFAULT").
+    expect(other.propFeeds).toEqual({ text: 'heading' })
+    // Still code in the markup, with no origin: the feed is the write target, not a baked literal.
     expect(other.codeProps).toContain('text')
     expect(other.textOrigin).toBeUndefined()
-    expect(planFor(after, other, { props: { text: 'Another' } })).toEqual({ kind: 'direct' })
+
+    const plan = planFor(after, other, { props: { text: 'Another' } })
+    expect(plan).toEqual({ kind: 'override', overrides: [{ key: 'text', target: { kind: 'text' }, propName: 'heading', value: 'Another', fed: true }] })
+    if (plan.kind !== 'override') return
+
+    const othersBefore = [rendered(after, after.instances[0]!), rendered(after, after.instances[2]!)]
+    const result = applyStudioEditBatch(dir, [exposeEdit(other, plan.overrides)], {}, EDITOR)
+    expect(result.refusals).toEqual([])
+    expect(result.written).toBe(1)
+    // The component is byte-identical; only the second instance's call site gained the attribute.
+    expect(read('components/RoomCard.tsx')).toBe(card)
+    expect(read('pages/Rooms.tsx')).toContain('<RoomCard name="Elm room" heading="Another" />')
+    expect(read('pages/Rooms.tsx')).toContain('<RoomCard name="Oak room" heading="Committee room" />')
+
+    const final = await board()
+    expect(final.instances.map((instance) => (elementOf(final, instance, 'h3').props as { text: string }).text)).toEqual(['Committee room', 'Another', 'Main hall'])
+    expect([rendered(final, final.instances[0]!), rendered(final, final.instances[2]!)]).toEqual(othersBefore)
+
+    // One restore puts the second instance back; the first override is still there.
+    expect(applyStudioEditBatch(dir, [restore(result.undoToken!)], {}, EDITOR).refusals).toEqual([])
+    expect(read('pages/Rooms.tsx')).toContain('<RoomCard name="Elm room" />')
+    expect(read('components/RoomCard.tsx')).toBe(card)
+  })
+
+  it('an inline style stays editable per instance: a number replaces a number, and another primitive widens the prop type', async () => {
+    const before = await board()
+    await override(before, elementOf(before, before.instances[2]!, 'p'), { styles: { opacity: 0.3 } })
+    const mid = await board()
+    const card = read('components/RoomCard.tsx')
+    expect(card).toContain('opacityValue?: number')
+
+    // Instance 1 never overrode it: default-fed, so the call site gains the attribute.
+    const elm = elementOf(mid, mid.instances[1]!, 'p')
+    expect(elm.propFeeds).toEqual({ 'style:opacity': 'opacityValue' })
+    const addPlan = planFor(mid, elm, { styles: { opacity: 0.5 } })
+    if (addPlan.kind !== 'override') throw new Error(JSON.stringify(addPlan))
+    expect(applyStudioEditBatch(dir, [exposeEdit(elm, addPlan.overrides)], {}, EDITOR).refusals).toEqual([])
+    expect(read('pages/Rooms.tsx')).toContain('<RoomCard name="Elm room" opacityValue={0.5} />')
+    expect(read('components/RoomCard.tsx')).toBe(card)
+
+    // Instance 2 passes a numeric literal (no origin: only strings carry one): its second edit replaces it in place.
+    const again = await board()
+    const birch = elementOf(again, again.instances[2]!, 'p')
+    const replacePlan = planFor(again, birch, { styles: { opacity: 0.9 } })
+    if (replacePlan.kind !== 'override') throw new Error(JSON.stringify(replacePlan))
+    expect(applyStudioEditBatch(dir, [exposeEdit(birch, replacePlan.overrides)], {}, EDITOR).refusals).toEqual([])
+    expect(read('pages/Hire.tsx')).toContain('<RoomCard name="Birch room" opacityValue={0.9} />')
+
+    // Instance 0 gets a string: the declared `number` is widened, once, and the call site passes the string.
+    const now = await board()
+    const oak = elementOf(now, now.instances[0]!, 'p')
+    const widenPlan = planFor(now, oak, { styles: { opacity: '50%' } })
+    if (widenPlan.kind !== 'override') throw new Error(JSON.stringify(widenPlan))
+    const widened = applyStudioEditBatch(dir, [exposeEdit(oak, widenPlan.overrides)], {}, EDITOR)
+    expect(widened.refusals).toEqual([])
+    expect(read('components/RoomCard.tsx')).toContain('opacityValue?: number | string')
+    expect(read('pages/Rooms.tsx')).toContain('<RoomCard name="Oak room" opacityValue="50%" />')
+    expect(applyStudioEditBatch(dir, [restore(widened.undoToken!)], {}, EDITOR).refusals).toEqual([])
+    expect(read('components/RoomCard.tsx')).toContain('opacityValue?: number')
+    expect(read('components/RoomCard.tsx')).not.toContain('number | string')
+  })
+
+  it('Apply to all after a fed edit makes the value the default and drops it from the call site', async () => {
+    const { after } = await afterFirstOverride()
+    const elm = elementOf(after, after.instances[1]!, 'h3')
+    const plan = planFor(after, elm, { props: { text: 'Gallery' } })
+    if (plan.kind !== 'override') throw new Error(JSON.stringify(plan))
+    expect(applyStudioEditBatch(dir, [exposeEdit(elm, plan.overrides)], {}, EDITOR).refusals).toEqual([])
+    const mid = await board()
+    const promoted = applyStudioEditBatch(dir, [{ kind: 'promote-override', nodeId: mid.instances[1]!.children[0]!, propNames: ['heading'] }], {}, EDITOR)
+    expect(promoted.refusals).toEqual([])
+    expect(read('components/RoomCard.tsx')).toContain("heading = 'Gallery'")
+    expect(read('pages/Rooms.tsx')).toContain('<RoomCard name="Elm room" />')
+    const final = await board()
+    // Instance 0 keeps its own override; the others show the new default.
+    expect(final.instances.map((instance) => (elementOf(final, instance, 'h3').props as { text: string }).text)).toEqual(['Committee room', 'Gallery', 'Gallery'])
+  })
+
+  it('refuses by name, writing nothing: a prop that feeds two places, a call site that passes code, a spread that could still win', async () => {
+    const { after, card, rooms } = await afterFirstOverride()
+    const elm = elementOf(after, after.instances[1]!, 'h3')
+    const plan = planFor(after, elm, { props: { text: 'Another' } })
+    if (plan.kind !== 'override') throw new Error(JSON.stringify(plan))
+    const edit = exposeEdit(elm, plan.overrides)
+
+    // The same prop also labels the image: setting it would change a place the user did not point at.
+    write('components/RoomCard.tsx', card.replace('alt="Hall photo"', 'alt={heading}'))
+    const twice = read('components/RoomCard.tsx')
+    const shared = applyStudioEditBatch(dir, [edit], {}, EDITOR)
+    expect(shared.refusals.map((refusal) => refusal.reason)).toEqual(['shared-prop'])
+    expect(read('components/RoomCard.tsx')).toBe(twice)
+    expect(read('pages/Rooms.tsx')).toBe(rooms)
+    // ...and the parser does not even offer it: the second read removes the feed.
+    const twiceBoard = await board()
+    expect(elementOf(twiceBoard, twiceBoard.instances[1]!, 'h3').propFeeds).toBeUndefined()
+    write('components/RoomCard.tsx', card)
+
+    // The instance passes the prop as code: never overwritten with a literal.
+    write('pages/Rooms.tsx', rooms.replace('<RoomCard name="Elm room" />', '<RoomCard name="Elm room" heading={title} />'))
+    const coded = read('pages/Rooms.tsx')
+    const codeRefusal = applyStudioEditBatch(dir, [edit], {}, EDITOR)
+    expect(codeRefusal.refusals.map((refusal) => refusal.reason)).toEqual(['not-a-literal'])
+    expect(read('pages/Rooms.tsx')).toBe(coded)
+    const codeBoard = await board()
+    const codeNode = elementOf(codeBoard, codeBoard.instances[1]!, 'h3')
+    expect(planFor(codeBoard, codeNode, { props: { text: 'Another' } })).toEqual({ kind: 'direct' })
+
+    // A spread after the attribute could override the value written.
+    write('pages/Rooms.tsx', rooms.replace('<RoomCard name="Elm room" />', '<RoomCard name="Elm room" heading="Old" {...extra} />'))
+    const spread = read('pages/Rooms.tsx')
+    expect(applyStudioEditBatch(dir, [edit], {}, EDITOR).refusals.map((refusal) => refusal.reason)).toEqual(['call-site-spread'])
+    expect(read('pages/Rooms.tsx')).toBe(spread)
+  })
+
+  it('a prop typed as a fixed set of values refuses to be widened, and nothing is written', async () => {
+    const { after, rooms } = await afterFirstOverride()
+    write('components/RoomCard.tsx', read('components/RoomCard.tsx').replace('heading?: string', "heading?: 'Main hall' | 'Hall'"))
+    const typed = read('components/RoomCard.tsx')
+    const elm = elementOf(after, after.instances[1]!, 'h3')
+    // A number for a string-typed prop needs the type widened, which a fixed set of values refuses.
+    const refused = applyStudioEditBatch(dir, [{ kind: 'expose-prop', nodeId: elm.id, overrides: [{ target: { kind: 'text' }, propName: 'heading', value: 3 }] }], {}, EDITOR)
+    expect(refused.refusals.map((refusal) => refusal.reason)).toEqual(['unsupported-props-type'])
+    expect(read('components/RoomCard.tsx')).toBe(typed)
+    expect(read('pages/Rooms.tsx')).toBe(rooms)
   })
 })

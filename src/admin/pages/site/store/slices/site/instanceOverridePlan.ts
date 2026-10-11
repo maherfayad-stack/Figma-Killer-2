@@ -26,11 +26,14 @@
  * type it cannot extend), and the caller then falls back to the ordinary write
  * with the server's sentence.
  *
- * Inline styles: a value turned into a prop is `style:<property>` code on
- * every instance afterwards (`isPropWritableToSource` deliberately never lifts
- * the lock on a style, with or without an origin), so a second edit to the
- * same property is the ordinary "set in code" refusal. That is one-shot by
- * design here, not by accident.
+ * A value that is ALREADY a prop (`<h2>{heading}</h2>`, which is what the
+ * first override leaves every other instance with, and what a hand-written
+ * component often is) is an `override` too, marked `fed`: the parser recorded
+ * which prop feeds it (`PageNode.propFeeds`), and the write is the call site's
+ * attribute alone (`exposeFedProp.ts`) — added when the instance does not pass
+ * it, replaced when it passes a literal, never over an expression. That keeps
+ * every instance editable per instance after the first override, including a
+ * style (`style:<property>`), which the ordinary lock never lifts.
  */
 import {
   callSitePosition,
@@ -53,6 +56,8 @@ export interface PlannedOverride {
   /** The preferred prop name — the server picks a free variant when it is taken. */
   propName: string
   value: string | number | boolean
+  /** The value is already the bare read of the prop `propName`: only the call site changes, nothing is exposed. */
+  fed?: true
 }
 
 /** What a store action was asked to change on one node. */
@@ -74,6 +79,8 @@ export interface OverridePlanInput {
   textProp: string | undefined
   /** The values the board read from disk for this node (`getLoadedNodeValues`): what the file stated as a literal. */
   baseline: LoadedNodeValues | undefined
+  /** The instance node (the call site) this node sits in, when the board has it: its `callSiteProps` say whether a fed prop may be written there. */
+  callSite: PageNode | undefined
 }
 
 const IDENTIFIER_RE = /^[A-Za-z_$][\w$]*$/
@@ -119,7 +126,9 @@ function everywhere(componentName: string, why: string): string {
 }
 
 export function planInstanceOverride(input: OverridePlanInput): OverridePlan {
-  const { node, nodeId, change, textProp, baseline } = input
+  const { node, nodeId, change, textProp, baseline, callSite } = input
+  /** A fed value may be written at the call site unless it passes that prop as code (an expression with no literal behind it). */
+  const callSiteTakesProp = (prop: string): boolean => callSite !== undefined && isPropWritableToSource(callSite, `callSiteProps:${prop}`)
   if (!isInlinedNodeId(nodeId)) return { kind: 'direct' }
   const name = node.fromComponent ?? 'component'
 
@@ -138,10 +147,18 @@ export function planInstanceOverride(input: OverridePlanInput): OverridePlan {
       continue
     }
     const isText = key === textProp
+    const owned = isText ? node.textOrigin !== undefined : node.resolvedProps?.[key]?.origin !== undefined
+    const feed = owned ? undefined : node.propFeeds?.[isText ? 'text' : key]
+    if (feed !== undefined) {
+      // The component passes this on from its own prop: the call site is the target.
+      if (!callSiteTakesProp(feed)) return { kind: 'direct' }
+      overrides.push({ key, target: isText ? { kind: 'text' } : { kind: 'attribute', name: key }, propName: feed, value, fed: true })
+      continue
+    }
     // Code with no literal behind it: the ordinary write refuses the whole patch by name.
     if (!isPropWritableToSource(node, key)) return { kind: 'direct' }
     // The call site (or a dictionary) already owns this value: the ordinary write is instance-local.
-    if (isText ? node.textOrigin !== undefined : node.resolvedProps?.[key]?.origin !== undefined) {
+    if (owned) {
       direct += 1
       continue
     }
@@ -158,9 +175,20 @@ export function planInstanceOverride(input: OverridePlanInput): OverridePlan {
 
   for (const [property, value] of Object.entries(change.styles ?? {})) {
     const key = styleValueKey(property)
-    if ((node.codeProps ?? []).includes(key)) return { kind: 'direct' }
     const removal = value === null || value === undefined || value === ''
     if (!removal && Object.is(node.inlineStyles?.[property], value)) continue
+    const feed = node.propFeeds?.[key]
+    if (feed !== undefined) {
+      // A fed style cannot be cleared for one instance (a prop has no "absent" a literal can say), and is only written as a plain scalar.
+      if (removal || !callSiteTakesProp(feed)) return { kind: 'direct' }
+      if (!isScalar(value) || typeof value === 'boolean') {
+        direct += 1
+        continue
+      }
+      overrides.push({ key, target: { kind: 'style', property }, propName: feed, value, fed: true })
+      continue
+    }
+    if ((node.codeProps ?? []).includes(key)) return { kind: 'direct' }
     if (removal) {
       if (baseline?.[key] !== undefined) unsupported.push(everywhere(name, `${name} sets \`${property}\` itself, and removing it can't be limited to one instance`))
       continue

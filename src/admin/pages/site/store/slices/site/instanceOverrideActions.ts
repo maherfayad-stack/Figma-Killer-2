@@ -188,7 +188,9 @@ export function createInstanceOverrideActions(helpers: SiteSliceHelpers): {
     // No answer at all: the engine has already taken the preview back and said so.
     const refusal = outcome.answer?.refusals?.[0]
     if (!refusal) return
-    const sentence = FALLBACK_REASONS.has(refusal.reason) ? refusalSentence(refusal.reason, componentName) : null
+    // A value that is already a prop has no ordinary write to fall back to (the markup holds `{prop}`, which the
+    // ordinary write refuses as code): the server's own sentence is the answer.
+    const sentence = FALLBACK_REASONS.has(refusal.reason) && !overrides.some((override) => override.fed) ? refusalSentence(refusal.reason, componentName) : null
     if (sentence === null) {
       pushToast({ kind: 'warning', title: 'Could not change this instance', body: refusal.message, location: 'site-editor' })
       return
@@ -207,7 +209,14 @@ export function createInstanceOverrideActions(helpers: SiteSliceHelpers): {
       if (state.mainEditComponent !== null && state.mainEditComponent === node.fromComponent) return false
 
       const textProp = registry.get(node.moduleId)?.inlineTextEdit?.prop
-      const plan = planInstanceOverride({ node, nodeId: request.nodeId, change: request.change, textProp, baseline: getLoadedNodeValues(request.nodeId) })
+      const plan = planInstanceOverride({
+        node,
+        nodeId: request.nodeId,
+        change: request.change,
+        textProp,
+        baseline: getLoadedNodeValues(request.nodeId),
+        callSite: findNode(callSitePosition(request.nodeId)),
+      })
       if (plan.kind === 'direct') return false
       if (plan.kind === 'whole-component') {
         request.plain()

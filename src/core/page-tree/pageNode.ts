@@ -174,6 +174,15 @@ export const PageNodeSchema = Type.Object({
    */
   fromComponent: Type.Optional(Type.String()),
   /**
+   * Studio import (OD-19) — on an inlined node: the value keys (`text`, an
+   * attribute name, `style:<property>`) that are the bare forward of one of
+   * the component's own props, mapped to that prop's name. Where a value's
+   * origin is a call site (or the prop's default) rather than a literal in
+   * the component's markup; the editor writes the call site. See
+   * `ParsedNode.propFeeds` in `@core/page-parser`.
+   */
+  propFeeds: Type.Optional(Type.Record(Type.String(), Type.String())),
+  /**
    * Studio import (OD-8) — on a `.map` row's ROOT node only: the array literal
    * the row is an element of (its `[` position, this row's index, the length),
    * or why there is no array in this file to edit. What makes a row's reorder,
@@ -253,6 +262,13 @@ function parseCodeProps(raw: unknown): string[] | undefined {
   return names.length > 0 ? names : undefined
 }
 
+/** Parse a raw `propFeeds` field — string-to-string entries only, dropped (not thrown) otherwise. */
+function parsePropFeeds(raw: unknown): Record<string, string> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const entries = Object.entries(raw).filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].length > 0)
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined
+}
+
 /** Parse a raw `codeFunctionPaths` field — same shape and tolerance as `codeProps`. */
 function parseCodeFunctionPaths(raw: unknown): string[] | undefined {
   return parseCodeProps(raw)
@@ -291,6 +307,7 @@ export function parsePageNode(raw: unknown, nodePath: string): PageNode {
   const assetOrigin = parseAssetOrigin(r.assetOrigin)
   const codeProps = parseCodeProps(r.codeProps)
   const codeFunctionPaths = parseCodeFunctionPaths(r.codeFunctionPaths)
+  const propFeeds = parsePropFeeds(r.propFeeds)
 
   return {
     ...base,
@@ -308,6 +325,7 @@ export function parsePageNode(raw: unknown, nodePath: string): PageNode {
     ...(typeof r.fromComponent === 'string' && r.fromComponent.length > 0
       ? { fromComponent: r.fromComponent }
       : {}),
+    ...(propFeeds !== undefined ? { propFeeds } : {}),
     ...(isListRowSource(r.listRow) ? { listRow: r.listRow } : {}),
   }
 }

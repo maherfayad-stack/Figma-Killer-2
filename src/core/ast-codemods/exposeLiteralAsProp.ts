@@ -53,7 +53,8 @@ import { Node, QuoteKind, SyntaxKind, type Project, type SourceFile } from 'ts-m
 import { createWorkspaceProject, type FunctionLike } from '@core/page-parser'
 import { buildParamBindings } from './detachComponent'
 import { findComponentCallSites } from './componentCallSites'
-import { addOptionalPropToSignature } from './componentPropSignature'
+import { addOptionalPropToSignature, widenPropType } from './componentPropSignature'
+import { fedIdentifier, needsWidening, planFedOverride, type FedPlan } from './exposeFedProp'
 import { jsStringLiteral, jsxTextValue, isJsxAttributeSafe } from './detachSource'
 import { topLevelBindingNames } from './importReconcile'
 import { findJsxElementAtLocationOrThrow, loadSourceFile, type JsxOpeningLikeElement } from './locateJsxElement'
@@ -71,6 +72,7 @@ export type ExposeLiteralRefusalReason =
   | 'unsupported-props-type'
   | 'maps-over-props'
   | 'call-site-spread'
+  | 'shared-prop'
 
 /** One literal of the element, the prop it becomes, and (optionally) this call site's own value for it. */
 export interface ExposeOverride {
@@ -116,6 +118,9 @@ class ExposeRefusal extends Error {
 function refuse(reason: ExposeLiteralRefusalReason, message: string): never {
   throw new ExposeRefusal(reason, message)
 }
+
+/** One override, planned: a literal that becomes a prop, or a value that already IS a prop (only the call site changes). */
+type PlannedOverride = { fed: false; literal: LiteralSite } | { fed: true; plan: Extract<FedPlan, { ok: true }>; name: string }
 
 /** One literal, and what replaces it once it is a prop. */
 interface LiteralSite {
@@ -316,18 +321,29 @@ export function exposeLiteralAsProp(params: ExposeLiteralAsPropParams): ExposeLi
 
     const seenTargets = new Set<string>()
     const propNames = new Set([...bindings.keys(), ...(childrenParam ? [childrenParam] : [])])
-    const literals = params.overrides.map((override) => {
+    const planned = params.overrides.map((override): PlannedOverride => {
       const key = targetKey(override.target)
       if (seenTargets.has(key)) refuse('not-a-literal', 'The same value was listed twice.')
       seenTargets.add(key)
+      // OD-19 — a value that is already the bare read of a prop of this name: only the call site changes.
+      const paramName = fedIdentifier(element, override.target)
+      const binding = paramName !== undefined ? bindings.get(paramName) : undefined
+      if (paramName !== undefined && binding?.attrName === override.propName) {
+        if (override.value === undefined) refuse('not-a-literal', `\`${override.propName}\` is already a prop here, so there is no literal to expose.`)
+        const plan = planFedOverride({ fn, callSite, paramName, propName: override.propName, defaultText: binding.defaultText, value: override.value })
+        if (!plan.ok) refuse(plan.reason, plan.message)
+        return { fed: true, plan, name: override.propName }
+      }
       const literal = literalFor(element, componentFile, override.target)
       assertNotMappedOverProps(literal.anchor, fn, propNames)
-      return literal
+      return { fed: false, literal }
     })
+    const literals = planned.flatMap((entry) => (entry.fed ? [] : [entry.literal]))
 
-    const sites = allCallSites(project, params.workspaceRoot, componentFile, target.exportedName ?? identifier, exportNameOf(componentFile, target.declaration))
+    // A fed value adds no prop, so no other call site can collide with it: only a new prop needs the survey.
+    const sites = literals.length === 0 ? [callSite] : allCallSites(project, params.workspaceRoot, componentFile, target.exportedName ?? identifier, exportNameOf(componentFile, target.declaration))
     if (!sites.some((site) => site === callSite || (site.getSourceFile() === callFile && site.getStart() === callSite.getStart()))) sites.push(callSite)
-    const spread = sites.find((site) => site.getAttributes().some((attr) => Node.isJsxSpreadAttribute(attr)))
+    const spread = literals.length === 0 ? undefined : sites.find((site) => site.getAttributes().some((attr) => Node.isJsxSpreadAttribute(attr)))
     if (spread) {
       refuse('call-site-spread', `A <${identifier}> in ${path.basename(spread.getSourceFile().getFilePath())} spreads an object into it, which could already set a prop of the new name — nothing was changed.`)
     }
@@ -339,7 +355,9 @@ export function exposeLiteralAsProp(params: ExposeLiteralAsPropParams): ExposeLi
       ...sites.flatMap((site) => site.getAttributes().flatMap((attr) => (Node.isJsxAttribute(attr) ? [attr.getNameNode().getText()] : []))),
       ...RESERVED_PROPS,
     ])
-    const names = params.overrides.map((override) => {
+    const names = params.overrides.map((override, i) => {
+      const entry = planned[i]!
+      if (entry.fed) return entry.name
       let name = override.propName
       for (let n = 2; taken.has(name); n += 1) name = `${override.propName}${n}`
       taken.add(name)
@@ -352,20 +370,29 @@ export function exposeLiteralAsProp(params: ExposeLiteralAsPropParams): ExposeLi
     const fnIndex = functionLikesOf(componentFile).indexOf(fn)
     const attrs = callSite.getAttributes()
     const attrAt = attrs.length > 0 ? attrs[attrs.length - 1]!.getEnd() : callSite.getTagNameNode().getEnd()
-    const attrText = params.overrides.map((override, i) => (override.value === undefined ? '' : ` ${attributeText(names[i]!, override.value)}`)).join('')
+    const attrText = params.overrides.map((override, i) => (override.value === undefined || planned[i]!.fed ? '' : ` ${attributeText(names[i]!, override.value)}`)).join('')
     const edits = new Map<SourceFile, { pos: number; remove: number; text: string }[]>()
     const push = (file: SourceFile, edit: { pos: number; remove: number; text: string }) => edits.set(file, [...(edits.get(file) ?? []), edit])
-    literals.forEach((literal, i) => push(componentFile, { pos: literal.start, remove: literal.end - literal.start, text: literal.asJsx ? `{${names[i]}}` : names[i]! }))
+    planned.forEach((entry, i) => {
+      if (entry.fed) push(callFile, entry.plan.edit)
+      else push(componentFile, { pos: entry.literal.start, remove: entry.literal.end - entry.literal.start, text: entry.literal.asJsx ? `{${names[i]}}` : names[i]! })
+    })
     if (attrText) push(callFile, { pos: attrAt, remove: 0, text: attrText })
     for (const [file, fileEdits] of edits) {
       let out = file.getFullText()
       for (const edit of [...fileEdits].sort((x, y) => y.pos - x.pos)) out = out.slice(0, edit.pos) + edit.text + out.slice(edit.pos + edit.remove)
       file.replaceWithText(out)
     }
-    for (const [i, literal] of literals.entries()) {
+    for (const [i, entry] of planned.entries()) {
       const component = functionAtIndex(componentFile, fnIndex)
       const name = names[i]!
-      const signature = addOptionalPropToSignature(componentFile, component, { name, binding: `${name} = ${literal.defaultText}`, type: propType(literal, params.overrides[i]!.value) })
+      const value = params.overrides[i]!.value
+      const signature = entry.fed
+        ? (() => {
+            const widen = value === undefined ? undefined : needsWidening(entry.plan, value)
+            return widen === undefined ? { ok: true as const } : widenPropType(componentFile, component, name, widen)
+          })()
+        : addOptionalPropToSignature(componentFile, component, { name, binding: `${name} = ${entry.literal.defaultText}`, type: propType(entry.literal, value) })
       if (!signature.ok) refuse('unsupported-props-type', signature.message)
     }
 
