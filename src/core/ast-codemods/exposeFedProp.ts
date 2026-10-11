@@ -101,14 +101,18 @@ function attributeLiteralType(initializer: Node | undefined): FedValueType | und
 export function planFedOverride(params: {
   fn: FunctionLike
   callSite: JsxOpeningLikeElement
-  /** The local binding the target reads, and the call-site attribute it is passed under. */
-  paramName: string
+  /**
+   * The local binding the target reads, and the call-site attribute it is
+   * passed under. `undefined` when the component at this call site only
+   * forwards the prop through a spread and never reads it itself.
+   */
+  paramName: string | undefined
   propName: string
   defaultText: string | undefined
   value: string | number | boolean
 }): FedPlan {
   const { fn, callSite, paramName, propName, defaultText, value } = params
-  if (paramReadCount(fn, paramName) !== 1) {
+  if (paramName !== undefined && paramReadCount(fn, paramName) !== 1) {
     return { ok: false, reason: 'shared-prop', message: `\`${propName}\` feeds more than one place in this component, so setting it here would change places you did not point at.` }
   }
 

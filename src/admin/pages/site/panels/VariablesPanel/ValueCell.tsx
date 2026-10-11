@@ -31,7 +31,11 @@ interface ValueCellProps {
   onCommit: (value: string) => Promise<void>
 }
 
-function previewTarget(cell: VariableCell): { selector: string | null; atRules: readonly string[] } {
+/** A CSS Module's class is renamed on the canvas, so a preview aimed at its source selector would paint nothing: such a cell previews on commit only. */
+const CSS_MODULE_FILE_RE = /\.module\.css$/i
+
+function previewTarget(cell: VariableCell): { selector: string | null; atRules: readonly string[] } | null {
+  if (cell.decl && cell.column.gate.kind === 'scope' && CSS_MODULE_FILE_RE.test(cell.decl.file)) return null
   if (cell.decl) return { selector: cell.decl.selector, atRules: cell.decl.atRules }
   const gate = cell.column.gate
   if (gate.kind === 'base') return { selector: ':root', atRules: [] }
@@ -46,7 +50,7 @@ function Swatch({ color }: { color: string }) {
 export function ValueCell({ name, cell, isColor, editable, busy, onCommit }: ValueCellProps) {
   const [draft, setDraft] = useState<string | null>(null)
   const current = cell.decl?.value ?? ''
-  const label = `${name} ${cell.column.label}`
+  const label = cell.column.gate.kind === 'scope' ? `${name} in ${cell.column.label}` : `${name} ${cell.column.label}`
 
   if (!editable || (cell.decl && cell.decl.origin !== 'project')) {
     return (
@@ -59,7 +63,8 @@ export function ValueCell({ name, cell, isColor, editable, busy, onCommit }: Val
 
   function change(value: string) {
     setDraft(value)
-    setStudioTokenPreview({ name, value, ...previewTarget(cell) })
+    const target = previewTarget(cell)
+    if (target) setStudioTokenPreview({ name, value, ...target })
   }
 
   function cancel() {
@@ -89,7 +94,7 @@ export function ValueCell({ name, cell, isColor, editable, busy, onCommit }: Val
       fieldSize="xs"
       monospace
       aria-label={label}
-      placeholder={cell.decl ? undefined : 'Inherits default'}
+      placeholder={cell.decl ? undefined : cell.column.gate.kind === 'base' ? 'Not set on :root' : 'Inherits default'}
       value={shown}
       disabled={busy}
       prefix={isColor ? <Swatch color={cell.decl ? cell.decl.resolvedValue : shown} /> : undefined}

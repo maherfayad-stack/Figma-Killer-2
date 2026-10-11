@@ -8,7 +8,7 @@
  * for the parent) so this is a clean seam, not an arbitrary one.
  */
 import { findNthNodeById } from './nodeIdIndexing'
-import { rectRelativeToBody } from './nodeDom'
+import { presentedElementOf, rectRelativeToBody } from './nodeDom'
 import type { NodeMeasurement } from './messages'
 
 /** The computed-style properties a `measure` request gets when it doesn't name its own. */
@@ -32,8 +32,10 @@ export function measureNodes(
 ): NodeMeasurement[] {
   const props = properties?.length ? properties : DEFAULT_MEASURED_PROPERTIES
   return refs.map(({ nodeId, occurrenceIndex }) => {
-    const el = findNthNodeById(doc, nodeId, occurrenceIndex)
-    if (!el || !doc.body) return { nodeId, occurrenceIndex, rect: null, computedStyle: {} }
+    const own = findNthNodeById(doc, nodeId, occurrenceIndex)
+    if (!own || !doc.body) return { nodeId, occurrenceIndex, rect: null, computedStyle: {} }
+    // A design-system instance's host is `display: contents`: its box is its rendered root's.
+    const el = presentedElementOf(view, own)
     const rect = rectRelativeToBody(el, doc.body)
     const computed = view.getComputedStyle(el)
     const computedStyle: Record<string, string> = {}

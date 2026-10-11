@@ -406,6 +406,16 @@ export interface ParsedNode {
    */
   propFeeds?: Record<string, string>
   /**
+   * G-2b — on a component CALL SITE inside another component's markup that
+   * forwards that component's props with a spread (`<Inner {...props} />`, or
+   * `{...rest}`): its `props` hold what the OUTER instance was handed, merged in
+   * JSX order, so the inner component's elements read the page's values. Set
+   * only when the outer instance itself sits on the page (or is forwarded the
+   * same way), which is what keeps the page's call site the one honest target
+   * for a value that arrives through the spread.
+   */
+  spreadForwarded?: true
+  /**
    * OD-8 — on a `.map` row's ROOT node only: the array literal element this
    * row renders (the array's own `[` position, the index, the length, how the
    * row's `key` reads its item), or why the array is not one Studio can edit

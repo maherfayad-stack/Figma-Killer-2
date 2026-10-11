@@ -124,6 +124,18 @@ describe('PortalFrameAdapter — measure', () => {
     expect(Object.keys(measurement!.computedStyle)).toContain('display')
   })
 
+  it('a layout-transparent instance host is measured as the element it renders', async () => {
+    const doc = freshDoc()
+    doc.body.innerHTML = `<div data-node-id="host" style="display: contents"><button style="position: absolute; left: 12px; top: 5px">Go</button></div>`
+    const adapter = new PortalFrameAdapter(doc)
+    adapters.push(adapter)
+
+    const [measurement] = await adapter.measure([{ nodeId: 'host' }], ['display', 'position', 'left'])
+    expect(measurement!.computedStyle.display).not.toBe('contents')
+    expect(measurement!.computedStyle.position).toBe('absolute')
+    expect(measurement!.computedStyle.left).toBe('12px')
+  })
+
   it('reports a null rect for a node that does not exist', async () => {
     const doc = freshDoc()
     const adapter = new PortalFrameAdapter(doc)

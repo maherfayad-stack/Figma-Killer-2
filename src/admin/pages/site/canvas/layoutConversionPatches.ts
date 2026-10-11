@@ -50,6 +50,22 @@ export interface ConversionPlan {
 const hasBox = (box: MeasuredBox) => box.rect.width + box.rect.height > 0 && box.display !== 'none' && box.display !== 'contents'
 const px = (value: number) => `${Math.round(value * 100) / 100}px`
 const whole = (value: number) => `${Math.round(value)}px`
+
+/**
+ * A measured size as the pixels to write. Whole when the layer is within half a
+ * pixel of a whole number (Figma rounds the same way: sub-pixel layout noise such
+ * as 222.76 from a shrink-wrapped label is not a size anyone chose); a size the
+ * source itself authors fractionally (`width: 12.5px`) and that the layer still
+ * measures at keeps its exact value.
+ */
+function sizePx(measured: number, authored: unknown): string {
+  if (typeof authored === 'string') {
+    const match = /^(-?\d*\.?\d+)px$/.exec(authored.trim())
+    const value = match ? Number(match[1]) : Number.NaN
+    if (Number.isFinite(value) && Math.abs(value - Math.round(value)) > 1e-6 && Math.abs(value - measured) <= 0.5) return px(value)
+  }
+  return whole(measured)
+}
 const sum = (sides: BoxSides) => sides.top + sides.right + sides.bottom + sides.left
 
 function paddingBox(parent: MeasuredBox): LayoutRect {
@@ -155,8 +171,8 @@ export function planFreezePositions(parent: MeasuredBox, children: readonly Meas
       right: null,
       bottom: null,
       insetInlineStart: null,
-      width: px(size.width),
-      height: px(size.height),
+      width: sizePx(size.width, child.inline.width),
+      height: sizePx(size.height, child.inline.height),
     }
     return { nodeId: child.nodeId, patch }
   })
@@ -177,7 +193,33 @@ export function planFreezePositions(parent: MeasuredBox, children: readonly Meas
   if (parent.position === 'static') parentPatch.position = 'relative'
   // With nothing in flow the container would collapse: keep the size it has.
   const size = specifiedSize(parent)
-  if (!('height' in parent.inline)) parentPatch.height = px(size.height)
-  if (parent.display === 'inline-flex' && !('width' in parent.inline)) parentPatch.width = px(size.width)
+  if (!('height' in parent.inline)) parentPatch.height = sizePx(size.height, undefined)
+  if (parent.display === 'inline-flex' && !('width' in parent.inline)) parentPatch.width = sizePx(size.width, undefined)
   return { parentPatch, childPatches, exact: true }
+}
+
+/**
+ * Wrapping layers in a new container that lays them out as they run now: the
+ * wrapper's flex style, read off the layers' MARGIN boxes (a flex container puts
+ * its gap between margin boxes, so a spacing a margin makes is read as spacing,
+ * not as no spacing). The wrapper hugs the union of those boxes, so it has no
+ * padding of its own, and a zero gap is not written.
+ */
+export function planWrapAutoLayout(layers: readonly MeasuredBox[]): Record<string, string> {
+  const outer = layers.map(outerRect)
+  const left = Math.min(...outer.map((rect) => rect.x))
+  const top = Math.min(...outer.map((rect) => rect.y))
+  const bounds: LayoutRect = {
+    x: left,
+    y: top,
+    width: Math.max(...outer.map((rect) => rect.x + rect.width)) - left,
+    height: Math.max(...outer.map((rect) => rect.y + rect.height)) - top,
+  }
+  const inferred = inferAutoLayout(outer, bounds)
+  return {
+    display: 'flex',
+    flexDirection: inferred.direction,
+    alignItems: inferred.align,
+    ...(inferred.gap > 0 ? { gap: `${inferred.gap}px` } : {}),
+  }
 }

@@ -59,7 +59,7 @@ import type { StudioEdit, StudioEditApplyOutcome, StudioEditBatchOptions, Studio
 import { captureUndoPreImage, recordUndoJournal, restoreUndoJournal, undoJournalFiles } from './studio/undoJournal'
 
 /** The kinds a journaled batch records a pre-image for. */
-const JOURNALED_KINDS = new Set<StudioEdit['kind']>(['delete', 'detach', 'expose-prop', 'promote-override', 'swap', 'promote-component', 'move', 'reparent', 'add-variant', 'remove-variant', 'add-component-prop',
+const JOURNALED_KINDS = new Set<StudioEdit['kind']>(['delete', 'detach', 'expose-prop', 'promote-override', 'expose-class', 'promote-class-override', 'swap', 'promote-component', 'move', 'reparent', 'add-variant', 'remove-variant', 'add-component-prop',
   // G-7: a group may gather members from elsewhere, an ungroup may keep the wrapper (and a component or
   // styled wrapper has no plain inverse at all), so the inverse of all three is the pre-image.
   'wrap', 'group', 'ungroup'])

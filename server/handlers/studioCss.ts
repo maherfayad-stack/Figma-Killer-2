@@ -86,6 +86,7 @@ import { cssToStyleRules, type ImportWarning } from '@core/siteImport'
 import { collectEntryStylesheets, collectPageStylesheets } from '@core/studio-sync/collectPageStylesheets'
 import type { PageStylesheet } from '@core/studio-sync/pageStylesheet'
 import { relativeCssUrlsToAssetSentinels } from './studioAsset'
+import { registerModifierClasses } from './studioModifierClasses'
 
 /** Guard against a pathological vendored bundle being pulled in as "the page's CSS". */
 const MAX_STYLESHEET_BYTES = 2 * 1024 * 1024
@@ -393,6 +394,8 @@ export async function loadStudioStyles(
     if (cssText === undefined) continue
     mergeParsedCss(cssText, sheet.relPath)
   }
+
+  registerModifierClasses(styleRules, classIdsByName, sources)
 
   // Track B1/B3 — these used to vanish entirely (only `.rules`/`.conditions`
   // were ever read off `cssToStyleRules`'s result). A dropped at-rule, an

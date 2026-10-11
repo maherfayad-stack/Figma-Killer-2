@@ -8,8 +8,6 @@ import {
   createModuleImportPlan,
   
   detachComponentInstance,
-  exposeLiteralAsProp,
-  promoteOverrideToDefault,
   setImportSpecifier,
   setJsxClassName,
   setJsxProp,
@@ -21,9 +19,10 @@ import {
   swapComponentInstance,
   
   type ModuleImportPlan } from '@core/ast-codemods'
-import { callSitePosition, inlineDepth, inlineSegments } from '@core/page-tree'
 import type { Project } from 'ts-morph'
+import { applyClassOverrideEdit } from './studioClassOverride'
 import { applyCssEdit } from './studioCssWriteback'
+import { applyInstanceOverrideEdit } from './studioInstanceOverrideWriteback'
 import type { } from './studioPastedHtmlStyles'
 import { applyRestoreEdit } from './studioBatchUndoJournal'
 import { relativeImportSpecifier, resolveClassNameTokens, resolveContainedRefPath } from './studioEditTargets'
@@ -251,51 +250,14 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
       const detachDetail = { written, lossy, movedHooks, perRow, ...(branchNote ? { branchNote } : {}) }
       return { applied: written, detachDetail, ...(result.created ? { created: [result.created] } : {}) }
     }
-    case 'expose-prop': {
-      // P5-C (DET-7) — two files: the component (this id's tail, `loc`) and
-      // the ONE call site (its head). G-2b: an element deeper than one call
-      // site also names the call site inside each component on the way down
-      // (`page~Card~Badge`); each is decoded on its own, so each file is
-      // contained on its own, and the codemod threads the value through them.
-      if (inlineDepth(edit.nodeId) < 1) {
-        throw new StudioEditRefusalError('not-in-component', 'That element is not part of a component. Select an element inside a component to make it a prop.')
-      }
-      const sites = inlineSegments(edit.nodeId).slice(0, -1).map((segment) => studioEditLocation(dir, segment, scope))
-      const [callSite, ...inner] = sites
-      if (!callSite || inner.some((site) => site === null)) return { applied: false, unwritable: 'no-source-location' }
-      const result = exposeLiteralAsProp({
-        callSiteFile: join(dir, callSite.rel),
-        callSiteLine: callSite.line,
-        callSiteCol: callSite.col,
-        via: inner.flatMap((site) => (site ? [{ file: join(dir, site.rel), line: site.line, col: site.col }] : [])),
-        elementFile: loc.file,
-        line: loc.line,
-        col: loc.col,
-        workspaceRoot: dir,
-        overrides: edit.overrides.map(({ target, propName, value }) => ({ target, propName, ...(value !== undefined ? { value } : {}) })) })
-      if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
-      return { applied: true }
-    }
-    case 'promote-override': {
-      // OD-19 — "Apply to all": the same two files as `expose-prop`, addressed
-      // the same way (call site = the id's head, component file = its tail,
-      // both through `studioEditLocation`); the codemod checks the file the
-      // call site's import resolves to is the tail's.
-      if (inlineDepth(edit.nodeId) !== 1) {
-        throw new StudioEditRefusalError('not-in-component', 'Only an instance placed on this page can apply a value everywhere. Select that instance and try again.')
-      }
-      const callSite = studioEditLocation(dir, callSitePosition(edit.nodeId), scope)
-      if (!callSite) return { applied: false, unwritable: 'no-source-location' }
-      const result = promoteOverrideToDefault({
-        callSiteFile: join(dir, callSite.rel),
-        callSiteLine: callSite.line,
-        callSiteCol: callSite.col,
-        componentFile: loc.file,
-        workspaceRoot: dir,
-        propNames: edit.propNames })
-      if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
-      return { applied: true }
-    }
+    case 'expose-prop':
+    case 'promote-override':
+      // OD-19 - an override for one instance (`studioInstanceOverrideWriteback.ts`).
+      return applyInstanceOverrideEdit(dir, edit, loc, (id) => studioEditLocation(dir, id, scope))
+    case 'expose-class':
+    case 'promote-class-override':
+      // G-2b - a class edit for one instance (page, component, stylesheet).
+      return applyClassOverrideEdit(dir, edit, (id) => studioEditLocation(dir, id, scope))
     case 'swap': {
       const result = swapComponentInstance({
         ...loc,

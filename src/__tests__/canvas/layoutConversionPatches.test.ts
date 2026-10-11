@@ -3,7 +3,7 @@
  * write, from measured boxes. The claim under every case: nothing moves.
  */
 import { describe, expect, it } from 'bun:test'
-import { planAddAutoLayout, planFreezePositions, type MeasuredBox } from '@site/canvas/layoutConversionPatches'
+import { planAddAutoLayout, planFreezePositions, planWrapAutoLayout, type MeasuredBox } from '@site/canvas/layoutConversionPatches'
 
 const zero = { top: 0, right: 0, bottom: 0, left: 0 }
 
@@ -200,5 +200,39 @@ describe('planAddAutoLayout — margins', () => {
       box('b', 0, 40, 200, 30, { margin }),
     ])
     expect(plan.parentPatch).toMatchObject({ flexDirection: 'column', gap: '0px', alignItems: 'stretch' })
+  })
+})
+
+describe('planWrapAutoLayout', () => {
+  it('reads the gap between stacked layers', () => {
+    const style = planWrapAutoLayout([box('a', 0, 0, 120, 40), box('b', 0, 64, 180, 40)])
+    expect(style).toEqual({ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '24px' })
+  })
+
+  it('reads a row, and writes no gap when the layers touch', () => {
+    const style = planWrapAutoLayout([box('a', 0, 0, 100, 40), box('b', 100, 0, 100, 40)])
+    expect(style).toMatchObject({ flexDirection: 'row' })
+    expect(style).not.toHaveProperty('gap')
+  })
+
+  it('spacing a margin makes is not lost: the gap is what is left between the margin boxes', () => {
+    const margin = { top: 0, right: 0, bottom: 10, left: 0 }
+    const style = planWrapAutoLayout([box('a', 0, 0, 100, 30, { margin }), box('b', 0, 50, 100, 30, { margin })])
+    // 10px margin plus 10px of real spacing: the margin stays on the layer, the gap carries the rest.
+    expect(style.gap).toBe('10px')
+  })
+})
+
+describe('planFreezePositions — whole pixels', () => {
+  const freeze = (child: MeasuredBox) =>
+    planFreezePositions(box('p', 0, 0, 400, 100, { display: 'flex' }), [child]).childPatches[0]!.patch
+
+  it('rounds a sub-pixel size to whole pixels', () => {
+    expect(freeze(box('a', 0, 0, 222.76, 47.95))).toMatchObject({ width: '223px', height: '48px' })
+  })
+
+  it('keeps a size the source authors fractionally', () => {
+    const patch = freeze(box('a', 0, 0, 12.5, 40, { inline: { width: '12.5px' } }))
+    expect(patch).toMatchObject({ width: '12.5px', height: '40px' })
   })
 })

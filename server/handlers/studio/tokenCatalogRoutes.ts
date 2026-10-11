@@ -21,12 +21,12 @@
  *        (409 `stale-source` when a file moved since it was read).
  *
  * The write holds `withProjectWriteLock`, re-reads each file inside it and
- * refuses `stale-source` if it no longer equals what the plan was made
- * against, and goes through the agent file gate's containment rule
+ * re-plans once if it no longer equals the source text the plan was made
+ * against (`stale-source` only if that also misses), and goes through the agent file gate's containment rule
  * (`resolveAgentFilePath`) so a stylesheet outside the project, under
  * `.studio/` or behind a link is refused here exactly as for the file tools.
  */
-import { Type } from '@core/utils/typeboxHelpers'
+import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { TokenEditSchema } from '@core/studio-tokens'
 import { writeFileAtomic } from '@core/page-parser'
 import { toLf } from '@core/utils/lineEndings'
@@ -60,7 +60,79 @@ function refusalResponse(code: TokenWriteCode | 'path-outside-project' | 'protec
   )
 }
 
-export async function tryServeStudioTokenCatalog(req: Request, url: URL, pathname: string): Promise<Response | null> {
+/** Test seam: runs between planning and the write, where a file can move under the plan. */
+interface TokenCatalogHooks {
+  afterPlan?: () => void
+}
+
+type PostBody = Static<typeof PostBodySchema>
+
+/**
+ * One plan-then-write pass. `'stale'` means a file no longer equals the text the
+ * plan was made from (compared source against source: the plan's `original` is
+ * the file as the user wrote it), so the caller reads again and plans again
+ * rather than handing the user a dead end.
+ */
+async function planAndWrite(dir: string, body: PostBody, hooks: TokenCatalogHooks): Promise<Response | 'stale'> {
+  // The scan may compile the project's styles, so it runs outside the lock;
+  // the lock re-reads every file and reports `stale` if one moved since.
+  const sources = await collectProjectTokenSources(dir)
+  // Only a rename or remove reads the project's other files (all of them: a
+  // Tailwind theme name is also spelled as classes, which hold no `--`).
+  const needsWorkspace = body.edits.some((edit) => edit.op === 'rename' || edit.op === 'remove')
+  const plan = planTokenEdits(sources, body.edits, needsWorkspace ? readTokenWorkspaceFiles(dir, { allText: true }) : [])
+  if (!plan.ok) return refusalResponse(plan.code, plan.message, plan.entryIndex, plan.remedy, plan.details?.declarations)
+  hooks.afterPlan?.()
+
+  return await withProjectWriteLock(dir, () => {
+    const writes: Array<{ abs: string; rel: string; original: string; next: string }> = []
+    for (const file of plan.files) {
+      const target = resolveAgentFilePath(dir, file.file, 'write')
+      if (!target.ok) return refusalResponse(target.code, target.message, 0, target.remedy)
+      const stat = statIfPresent(target.abs)
+      if (stat && hasOtherHardLinks(stat)) {
+        return refusalResponse('protected-path', `"${target.rel}" has other hard-linked names on disk, so writing it would change them too.`, 0)
+      }
+      const read = readTextFile(target.abs, MAX_STYLESHEET_BYTES)
+      if (read.kind !== 'text') return refusalResponse('not-text', `"${target.rel}" could not be read as a text stylesheet.`, 0)
+      if (toLf(read.content) !== toLf(file.original)) return 'stale'
+      writes.push({ abs: target.abs, rel: target.rel, original: read.content, next: file.next })
+    }
+
+    const preImage = captureUndoPreImage(writes.map((write) => write.abs))
+    const written: typeof writes = []
+    try {
+      for (const write of writes) {
+        writeFileAtomic(write.abs, write.next)
+        written.push(write)
+      }
+    } catch (err) {
+      for (const write of written) {
+        try {
+          writeFileAtomic(write.abs, write.original)
+        } catch (restoreErr) {
+          console.error('[studio:tokenCatalog] could not restore a stylesheet after a failed batch write:', write.rel, restoreErr)
+        }
+      }
+      return internalServerError('[studio:tokenCatalog]', err)
+    }
+
+    return jsonResponse({
+      ok: true,
+      // What puts the stylesheets (and, for a rename, the source files) back
+      // byte for byte; `null` when the write could not be journaled.
+      undoToken: recordUndoJournal(dir, preImage),
+      files: writes.map((write) => ({ path: write.rel, hash: contentHash(write.next) })),
+      changed: plan.changed,
+      unchanged: plan.unchanged,
+      inserted: plan.inserted,
+      renamed: plan.renamed,
+      removed: plan.removed,
+    })
+  })
+}
+
+export async function tryServeStudioTokenCatalog(req: Request, url: URL, pathname: string, hooks: TokenCatalogHooks = {}): Promise<Response | null> {
   if (pathname !== ROUTE_PATH) return null
 
   if (req.method === 'GET') {
@@ -84,63 +156,14 @@ export async function tryServeStudioTokenCatalog(req: Request, url: URL, pathnam
       if (!body) return badRequest('invalid token-catalog body')
       const dir = resolveProjectDir(body.dir)
 
-      // The scan may compile the project's styles, so it runs outside the lock;
-      // the lock re-reads every file and refuses if one moved since.
-      const sources = await collectProjectTokenSources(dir)
-      // Only a rename or remove reads the project's other files (all of them: a
-      // Tailwind theme name is also spelled as classes, which hold no `--`).
-      const needsWorkspace = body.edits.some((edit) => edit.op === 'rename' || edit.op === 'remove')
-      const plan = planTokenEdits(sources, body.edits, needsWorkspace ? readTokenWorkspaceFiles(dir, { allText: true }) : [])
-      if (!plan.ok) return refusalResponse(plan.code, plan.message, plan.entryIndex, plan.remedy, plan.details?.declarations)
-
-      return await withProjectWriteLock(dir, () => {
-        const writes: Array<{ abs: string; rel: string; original: string; next: string }> = []
-        for (const file of plan.files) {
-          const target = resolveAgentFilePath(dir, file.file, 'write')
-          if (!target.ok) return refusalResponse(target.code, target.message, 0, target.remedy)
-          const stat = statIfPresent(target.abs)
-          if (stat && hasOtherHardLinks(stat)) {
-            return refusalResponse('protected-path', `"${target.rel}" has other hard-linked names on disk, so writing it would change them too.`, 0)
-          }
-          const read = readTextFile(target.abs, MAX_STYLESHEET_BYTES)
-          if (read.kind !== 'text') return refusalResponse('not-text', `"${target.rel}" could not be read as a text stylesheet.`, 0)
-          if (toLf(read.content) !== toLf(file.original)) {
-            return refusalResponse('stale-source', `"${target.rel}" changed while its tokens were being read, so nothing was written.`, 0, 'Try again; the file is re-read.')
-          }
-          writes.push({ abs: target.abs, rel: target.rel, original: read.content, next: file.next })
-        }
-
-        const preImage = captureUndoPreImage(writes.map((write) => write.abs))
-        const written: typeof writes = []
-        try {
-          for (const write of writes) {
-            writeFileAtomic(write.abs, write.next)
-            written.push(write)
-          }
-        } catch (err) {
-          for (const write of written) {
-            try {
-              writeFileAtomic(write.abs, write.original)
-            } catch (restoreErr) {
-              console.error('[studio:tokenCatalog] could not restore a stylesheet after a failed batch write:', write.rel, restoreErr)
-            }
-          }
-          return internalServerError('[studio:tokenCatalog]', err)
-        }
-
-        return jsonResponse({
-          ok: true,
-          // What puts the stylesheets (and, for a rename, the source files) back
-          // byte for byte; `null` when the write could not be journaled.
-          undoToken: recordUndoJournal(dir, preImage),
-          files: writes.map((write) => ({ path: write.rel, hash: contentHash(write.next) })),
-          changed: plan.changed,
-          unchanged: plan.unchanged,
-          inserted: plan.inserted,
-          renamed: plan.renamed,
-          removed: plan.removed,
-        })
-      })
+      // A file that moved between the read and the write is re-planned once from
+      // fresh text; only a second miss (someone is typing into the stylesheet)
+      // is reported.
+      const first = await planAndWrite(dir, body, hooks)
+      if (first !== 'stale') return first
+      const second = await planAndWrite(dir, body, {})
+      if (second !== 'stale') return second
+      return refusalResponse('stale-source', 'A stylesheet kept changing while its variables were being written, so nothing was written.', 0, 'Wait a moment and try again.')
     } catch (err) {
       if (err instanceof ProjectWriteLockBusyError) return jsonResponse({ error: err.message, code: 'busy' }, { status: 409 })
       rethrowProjectDirRefusal(err)
