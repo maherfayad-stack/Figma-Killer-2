@@ -1,20 +1,20 @@
 /**
  * CanvasResizeHandles — the eight drag handles drawn on a selected element.
  *
- * Portalled (by `BreakpointSelectionOverlay`) into the iframe's own overlay
- * root, so the handles live in the same coordinate space as the element they
- * size. The FRAME is positioned by the overlay's RAF tick off the very same
- * measured rect the selection ring uses, which is why this component writes no
- * position of its own: two independent measurements of one element is exactly
- * how handles end up drifting off the box they belong to.
+ * Rendered (by `BreakpointSelectionOverlay`) in the chrome root beside the
+ * frame's iframe, in the frame's own viewport px. The FRAME is positioned by
+ * the overlay's placement pass off the very same rect the selection ring uses,
+ * which is why this component writes no position of its own: two independent
+ * measurements of one element is exactly how handles end up drifting off the
+ * box they belong to.
  *
- * Appearance and hit areas are the injected stylesheet's
- * (`CanvasSelectionOverlayInjector`) — corners are visible squares, edges are
- * invisible full-length strips, because the ask was "drag the sides" and a 9px
- * dot at the midpoint of a 300px edge is a worse version of that gesture.
+ * Appearance and hit areas are `FrameChrome.module.css`'s — corners are visible
+ * squares, edges are invisible full-length strips, because the ask was "drag
+ * the sides" and a 9px dot at the midpoint of a 300px edge is a worse version
+ * of that gesture. Sizes are in SCREEN px at every zoom (`--px`).
  *
- * This is the ONLY interactive thing in an otherwise click-through overlay:
- * the frame stays `pointer-events: none` and only the handles opt back in, so
+ * This is the ONLY interactive thing in an otherwise click-through root: the
+ * frame stays `pointer-events: none` and only the handles opt back in, so
  * clicking page content anywhere but within a few px of the selected element's
  * edge behaves exactly as it did before.
  *
@@ -40,12 +40,13 @@ import { useGroupResizeDrag } from './useGroupResizeDrag'
 import { hasNestedMember } from './groupResize'
 import { useElementRotateDrag } from './useElementRotateDrag'
 import { CanvasSpacingHandles } from './CanvasSpacingHandles'
+import styles from './FrameChrome.module.css'
 
 interface CanvasResizeHandlesProps {
   /** The single selected node. May not be resizable — `canOfferResize` decides. */
   nodeId: string
-  /** The frame's document, so the element's display can be checked before rendering anything. */
-  iframeDoc: Document | null
+  /** The frame's document, so the element's display can be checked before rendering anything; `null` for a bridge frame. */
+  frameDocument: Document | null
   /**
    * Hands the frame element back to the overlay, which positions it in its RAF
    * tick. A callback rather than a forwarded ref because the overlay needs it
@@ -55,7 +56,7 @@ interface CanvasResizeHandlesProps {
   onFrameReady: (element: HTMLDivElement | null) => void
 }
 
-export function CanvasResizeHandles({ nodeId, iframeDoc, onFrameReady }: CanvasResizeHandlesProps) {
+export function CanvasResizeHandles({ nodeId, frameDocument: iframeDoc, onFrameReady }: CanvasResizeHandlesProps) {
   const [frame, setFrame] = useState<HTMLDivElement | null>(null)
 
   // The node itself, for its `moduleId` — the fact that decides whether a
@@ -103,6 +104,7 @@ export function CanvasResizeHandles({ nodeId, iframeDoc, onFrameReady }: CanvasR
         setFrame(element)
         onFrameReady(element)
       }}
+      className={styles.resizeFrame}
       data-canvas-resize-frame="true"
       data-canvas-overlay-node-id={nodeId}
     >
@@ -114,15 +116,15 @@ export function CanvasResizeHandles({ nodeId, iframeDoc, onFrameReady }: CanvasR
       {/* P5-F / IX-25 — rotation zones just OUTSIDE each corner handle, so a
           press on the corner still resizes. Invisible; the cursor says it. */}
       {ROTATE_CORNERS.map((corner) => (
-        <div key={`rotate-${corner}`} {...{ [ROTATE_HANDLE_ATTR]: corner }} />
+        <div key={`rotate-${corner}`} className={styles.rotateZone} {...{ [ROTATE_HANDLE_ATTR]: corner }} />
       ))}
       {RESIZE_HANDLES.map((handle) => (
-        <div key={handle} {...{ [RESIZE_HANDLE_ATTR]: handle }} />
+        <div key={handle} className={styles.handle} {...{ [RESIZE_HANDLE_ATTR]: handle }} />
       ))}
       {/* IX-18 — the W×H badge; shown by the injected CSS only while a drag
           marks this frame, its text written by the drag and the overlay's
           measure pass. */}
-      <div {...{ [RESIZE_SIZE_BADGE_ATTR]: 'true' }} />
+      <div className={styles.sizeBadge} {...{ [RESIZE_SIZE_BADGE_ATTR]: 'true' }} />
     </div>
   )
 }
@@ -130,7 +132,7 @@ export function CanvasResizeHandles({ nodeId, iframeDoc, onFrameReady }: CanvasR
 interface CanvasGroupResizeHandlesProps {
   /** Two or more selected nodes. The group box is offered only when EVERY one is resizable. */
   nodeIds: readonly string[]
-  iframeDoc: Document | null
+  frameDocument: Document | null
   /** As `CanvasResizeHandles`: the frame goes to the overlay, which places it on the union of the rings. */
   onFrameReady: (element: HTMLDivElement | null) => void
 }
@@ -146,7 +148,7 @@ interface CanvasGroupResizeHandlesProps {
  * would scale that layer twice. No padding / gap handles here —
  * those belong to ONE container.
  */
-export function CanvasGroupResizeHandles({ nodeIds, iframeDoc, onFrameReady }: CanvasGroupResizeHandlesProps) {
+export function CanvasGroupResizeHandles({ nodeIds, frameDocument: iframeDoc, onFrameReady }: CanvasGroupResizeHandlesProps) {
   const [frame, setFrame] = useState<HTMLDivElement | null>(null)
   // A joined string, not an array: a fresh array per store change would be a
   // new snapshot every time. One module id per member, in selection order.
@@ -183,13 +185,14 @@ export function CanvasGroupResizeHandles({ nodeIds, iframeDoc, onFrameReady }: C
         setFrame(element)
         onFrameReady(element)
       }}
+      className={styles.resizeFrame}
       data-canvas-resize-frame="true"
       data-canvas-resize-group="true"
     >
       {RESIZE_HANDLES.map((handle) => (
-        <div key={handle} {...{ [RESIZE_HANDLE_ATTR]: handle }} />
+        <div key={handle} className={styles.handle} {...{ [RESIZE_HANDLE_ATTR]: handle }} />
       ))}
-      <div {...{ [RESIZE_SIZE_BADGE_ATTR]: 'true' }} />
+      <div className={styles.sizeBadge} {...{ [RESIZE_SIZE_BADGE_ATTR]: 'true' }} />
     </div>
   )
 }

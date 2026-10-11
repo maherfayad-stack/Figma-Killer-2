@@ -98,21 +98,21 @@ interface UseCanvasReorderDragOptions {
    */
   iframeElement: HTMLIFrameElement | null
   /**
-   * The in-iframe overlay host (`CanvasSelectionOverlayInjector`'s root), or
-   * `null`. Two jobs here:
+   * The frame's CURRENT same-origin document, or `null`. Two jobs here:
    *
-   *  1. It is the DESIGN-FRAME gate. The injector is design-mode only, so a
-   *     live/prototype `IframeFrameSurface` never creates one — pressing an
-   *     element in a live frame must behave exactly like the published page,
-   *     never start an editor drag.
-   *  2. It is the handle on the iframe's CURRENT document
-   *     (`overlayRoot.ownerDocument`). A frame reload mints a new document and
-   *     a new overlay root together, so keying the body-drag listener on this
-   *     value re-attaches it to the right document automatically — where
+   *  1. It is the DESIGN-FRAME gate. The caller passes `null` for a live /
+   *     prototype surface — pressing an element in a live frame must behave
+   *     exactly like the published page, never start an editor drag — and for
+   *     a bridge frame, which has no document to listen on.
+   *  2. It is the handle on the iframe's CURRENT document. A frame reload mints
+   *     a new document (and a new adapter), so keying the body-drag listener on
+   *     this value re-attaches it to the right document automatically — where
    *     `iframeElement` alone stays referentially stable across the swap and
    *     would leave the listener bound to a dead document.
    */
-  overlayRoot: HTMLElement | null
+  frameDocument: Document | null
+  /** The frame's chrome root (`BreakpointSelectionOverlay`), where the in-frame marquee paints; `null` until it mounts. */
+  chromeRoot: HTMLElement | null
   selectedNodeIds: readonly string[]
   /** Frame that owns this overlay, for frame-scoped selection (`selectedNodeFrameId`). */
   frameId?: string | null
@@ -146,7 +146,8 @@ interface UseCanvasReorderDragOptions {
 export function useCanvasReorderDrag({
   viewportRef,
   iframeElement,
-  overlayRoot,
+  frameDocument,
+  chromeRoot,
   selectedNodeIds,
   frameId = null,
   pageId = null,
@@ -574,7 +575,7 @@ export function useCanvasReorderDrag({
   useCanvasBodyDragTrigger({
     enabled: bodyDragEnabled,
     iframeElement,
-    overlayRoot,
+    frameDocument,
     pageId,
     frameId,
     beginDrag,
@@ -590,7 +591,7 @@ export function useCanvasReorderDrag({
   })
   // P5-E (IX-16, OD-6) — a press on the page ROOT that travels is a marquee,
   // not a drag (the root never moves). Same document, same gate.
-  useInFrameMarquee({ enabled: bodyDragEnabled, overlayRoot, frameId })
+  useInFrameMarquee({ enabled: bodyDragEnabled, frameDocument, chromeRoot, frameId })
   // The same sweep in a Tier 2 BRIDGE frame, drawn in the parent over the iframe.
   useBridgeFrameMarquee({ enabled: bodyDragEnabled, iframeElement, pageId, frameId })
 

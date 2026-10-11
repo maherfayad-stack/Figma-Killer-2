@@ -152,6 +152,18 @@ export class FrameGeometryIndex {
     return index === undefined ? null : this.rectAt(index)
   }
 
+  /**
+   * The node's box in the FRAME's own viewport px (the iframe element's coordinate space, which is also the
+   * space of the chrome the parent paints beside it), or `null` when the frame has no box for it. Independent
+   * of the frame's place on the board, so chrome that rides its frame needs no board origin at all.
+   */
+  localRectOf(nodeId: string): BoardRect | null {
+    const index = this.byId.get(nodeId)
+    if (index === undefined) return null
+    const at = index * 4
+    return { x: this.boxes[at]!, y: this.boxes[at + 1]!, width: this.boxes[at + 2]! - this.boxes[at]!, height: this.boxes[at + 3]! - this.boxes[at + 1]! }
+  }
+
   /** The listed ancestors of `nodeId`, nearest first. Empty for a root or an unknown node. */
   ancestorsOf(nodeId: string): string[] {
     const out: string[] = []

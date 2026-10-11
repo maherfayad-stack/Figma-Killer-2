@@ -1,5 +1,5 @@
 /**
- * MeasureLayer — Figma's Alt-hover measurement, in the in-frame overlay
+ * MeasureLayer — Figma's Alt-hover measurement, in the frame's chrome root
  * (work order K5).
  *
  * With something selected and Alt held, hovering a DIFFERENT node draws the
@@ -14,35 +14,23 @@
  *
  * ## Where it paints, and why the numbers are not zoom-multiplied
  *
- * Same two-space split as the selection rings (`BreakpointSelectionOverlay`'s
- * docblock): when the design-mode overlay root exists, everything portals
- * INTO the frame's own `<body>` and is positioned in the frame's own
- * coordinates, so pan/zoom moves it as one composited transform and there is
- * no per-frame conversion to go stale. When it doesn't — a live/bridge frame,
- * or the startup window before the injector's effect has run — the chrome
- * falls back to the parent canvas root and each rect is projected once,
- * through `CanvasOverlayMeasureSession.project`, the SAME arithmetic the ring
- * fallback uses.
+ * It is a child of the frame's chrome root (`FrameChrome.module.css`), so it
+ * paints in the frame's own viewport px, beside the iframe — the same space
+ * the rings are in, which is why a measurement line starts exactly on the ring
+ * it measures from, at every zoom. Lines and pills are counter-scaled to stay
+ * one screen pixel / one font size (`--px`, `1 / --canvas-zoom`).
  *
- * The distances themselves are always computed in FRAME coordinates and
- * projected only for painting, so a pill reads the CSS px a developer would
- * type into a stylesheet — never `px × zoom`.
+ * The distances themselves are computed in those same frame px, so a pill
+ * reads the CSS px a developer would type into a stylesheet — never
+ * `px × zoom`.
  *
  * ## Geometry source
  *
- * `FrameDocumentAdapter.measure` — one call per pass, both nodes at once,
- * with the four `padding-*` properties. That is the only measurement API a
- * cross-origin bridge frame has, so routing through it is what makes this
- * work outside portal mode at all.
- *
- * ONE exception, and it is deliberate: in portal mode the RECTS come from
- * `measureIframeLocalRect` instead of the adapter's. The adapter returns
- * body-relative rects; the in-frame rings are positioned from
- * iframe-viewport-relative ones, and the two differ by whatever margin the
- * user's `body` carries. A measurement line that starts a few px away from
- * the selection ring it is measuring FROM reads as broken, so the layer
- * follows the ring. In bridge mode there is no local element to read and no
- * in-frame ring to disagree with, so the adapter's rect is used directly.
+ * The rects come from the frame's rect index (`getFrameLocalGeometry`), the
+ * same read the rings place from; the only thing it asks the frame for besides
+ * is the hovered node's four `padding-*` values (`FrameDocumentAdapter.measure`,
+ * the one measurement API a cross-origin bridge frame has), read when the
+ * target or the index changes, not on every pass.
  *
  * ## Alt, and the tree ladder
  *
@@ -55,18 +43,10 @@
  * both stand down while an inline text edit is open.
  */
 import { use, useEffect, useEffectEvent, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { selectCanvasPageFor, useEditorStore } from '@site/store/store'
-import { cn } from '@ui/cn'
-import { CanvasPageContext } from './CanvasContexts'
+import { CanvasPageContext, CanvasViewportActionsContext } from './CanvasContexts'
 import { isEditableTextTarget } from './canvasEventTargets'
-import { CanvasNodeElementCache } from './canvasNodeLookup'
-import {
-  createCanvasOverlayMeasureSession,
-  measureIframeLocalRect,
-  unionCanvasOverlayRects,
-  type CanvasOverlayRect,
-} from './canvasOverlayGeometry'
+import { unionCanvasOverlayRects, type CanvasOverlayRect } from './canvasOverlayGeometry'
 import {
   formatMeasureDistance,
   measureBandMidpoint,
@@ -77,21 +57,19 @@ import {
   measureSegmentRect,
   parseMeasurePadding,
   resolveMeasureTarget,
-  type MeasureRect,
   type MeasureSide,
 } from './canvasMeasureGeometry'
 import { listFrameAdapters } from './frameAdapter/canvasFrameAdapterRegistry'
 import { resolvePortalDocument } from './frameAdapter/resolvePortalDocument'
-import type { NodeMeasurement } from './frameAdapter/FrameDocumentAdapter'
-import styles from './MeasureLayer.module.css'
+import { chromeRectOf } from './frameChromeRects'
+import { getFrameLocalGeometry } from './frameGeometry/frameGeometryRegistry'
+import type { FrameGeometryIndex } from './frameGeometry/frameGeometryIndex'
+import styles from './FrameChrome.module.css'
 
 const MEASURE_SIDES: readonly MeasureSide[] = ['left', 'right', 'top', 'bottom']
 
 /** The only computed properties this layer needs; keeps the bridge payload small. */
 const MEASURED_PADDING_PROPERTIES = ['padding-top', 'padding-right', 'padding-bottom', 'padding-left']
-
-/** Segment thickness in FRAME px — the same 1px the selection ring uses, so both scale together. */
-const SEGMENT_THICKNESS = 1
 
 interface MeasurePlacement {
   x: number
@@ -120,8 +98,10 @@ function writeMeasureElement(element: HTMLElement | null, placement: MeasurePlac
     return
   }
   element.style.display = ''
+  // A pill is centred on its anchor point at SCREEN size: anchored in frame px,
+  // scaled back by the zoom about that point, then centred in its own units.
   element.style.transform = placement.centered
-    ? `translate(${placement.x}px, ${placement.y}px) translate(-50%, -50%)`
+    ? `translate(${placement.x}px, ${placement.y}px) scale(calc(1 / var(--canvas-zoom))) translate(-50%, -50%)`
     : `translate(${placement.x}px, ${placement.y}px)`
   if (placement.width !== undefined) element.style.width = `${placement.width}px`
   if (placement.height !== undefined) element.style.height = `${placement.height}px`
@@ -129,46 +109,28 @@ function writeMeasureElement(element: HTMLElement | null, placement: MeasurePlac
 }
 
 interface MeasureLayerProps {
-  /** The frame whose adapter supplies every measurement. */
+  /** The frame whose index supplies every rect. */
   iframeElement: HTMLIFrameElement | null
-  /** In-iframe overlay root (design mode), or `null` for a live/bridge frame. */
-  overlayRoot: HTMLElement | null
-  /** Parent-document fallback target — the canvas root, or `null` while it resolves. */
-  portalTarget: HTMLElement | null
-  /** `'scoped'` (inside the canvas root) or `'fixed'` (body fallback), for the fallback CSS. */
-  portalMode: 'scoped' | 'fixed'
-  /** Canvas root, for the fallback projection's origin. */
-  canvasRoot: HTMLElement | null
   /** This frame's selection, already frame-scoped by the owner. */
   selectedNodeIds: readonly string[]
   /** This frame's hover, already frame/breakpoint-scoped by the owner. */
   hoveredNodeId: string | null
-  /** Whether the caller shows canvas chrome at all (permissions). */
-  enabled: boolean
 }
 
-export function MeasureLayer({
-  iframeElement,
-  overlayRoot,
-  portalTarget,
-  portalMode,
-  canvasRoot,
-  selectedNodeIds,
-  hoveredNodeId,
-  enabled,
-}: MeasureLayerProps) {
+export function MeasureLayer({ iframeElement, selectedNodeIds, hoveredNodeId }: MeasureLayerProps) {
   const [altHeld, setAltHeld] = useState(false)
   // Inline text editing owns the keyboard outright — measuring mid-edit would
   // paint chrome over the caret for a gesture the user is not making.
   const inlineEditing = useEditorStore((s) => s.activeInlineEdit !== null)
   const framePageId = use(CanvasPageContext)
   const framePage = useEditorStore((s) => selectCanvasPageFor(s, framePageId))
+  const viewportActions = use(CanvasViewportActionsContext)
   const elementsRef = useRef<Map<string, HTMLElement> | null>(null)
   if (elementsRef.current === null) elementsRef.current = new Map()
-  const nodeElementCacheRef = useRef<CanvasNodeElementCache | null>(null)
-  if (nodeElementCacheRef.current === null) nodeElementCacheRef.current = new CanvasNodeElementCache()
-  // Bumped whenever the loop tears down, so an in-flight `measure` promise
-  // that resolves after unmount never writes to detached elements.
+  // The hovered node's padding, read from the frame once per (target, index).
+  const paddingRef = useRef<{ nodeId: string; index: FrameGeometryIndex; padding: Record<string, string> } | null>(null)
+  // Bumped whenever the loop tears down, so an in-flight pass that resolves
+  // after unmount never writes to detached elements.
   const passTokenRef = useRef(0)
   const measureInFlightRef = useRef(false)
 
@@ -182,7 +144,7 @@ export function MeasureLayer({
   if (!altHeld && hoverSeenDuringHold) setHoverSeenDuringHold(false)
 
   const measureTargetId =
-    enabled && altHeld && !inlineEditing
+    altHeld && !inlineEditing
       ? resolveMeasureTarget({
           selectedNodeIds,
           hoveredNodeId,
@@ -196,9 +158,6 @@ export function MeasureLayer({
   // (native events don't cross the boundary) and vice versa. `blur` clears,
   // because an Alt-Tab away releases the key somewhere we can't hear it.
   useEffect(() => {
-    // No chrome, no gesture: a frame the caller does not draw rings in (a pure
-    // Viewer) must not keep two key listeners per document alive either.
-    if (!enabled) return
     const clear = () => setAltHeld(false)
     const handleKeyDown = (event: KeyboardEvent) => {
       if (isEditableTextTarget(event.target)) return
@@ -246,12 +205,12 @@ export function MeasureLayer({
       iframeElement?.removeEventListener('load', attachFrameDocument)
       for (const cleanup of cleanups) cleanup()
     }
-  }, [enabled, iframeElement])
+  }, [iframeElement])
 
   const drawPass = useEffectEvent((
-    measurements: readonly NodeMeasurement[],
+    index: FrameGeometryIndex,
+    padding: Record<string, string>,
     hovered: string,
-    iframe: HTMLIFrameElement,
   ) => {
     // `hovered` is the measure TARGET: the hovered node, or (IX-19) the
     // selection's parent when nothing is hovered.
@@ -261,38 +220,24 @@ export function MeasureLayer({
       for (const element of elements.values()) writeMeasureElement(element, null)
     }
 
-    // ── READ phase ────────────────────────────────────────────────────────
-    // In-frame rects when the overlay lives in the frame (must agree with the
-    // ring to the pixel — see the module doc); the adapter's wire rects
-    // otherwise, projected once below.
-    const frameDoc = overlayRoot ? resolvePortalDocument(iframe) : null
-    const byId = new Map(measurements.map((entry) => [entry.nodeId, entry]))
-    const cache = nodeElementCacheRef.current!
-    const rectFor = (nodeId: string): CanvasOverlayRect | null => {
-      if (frameDoc) return measureIframeLocalRect(cache.resolve(frameDoc, nodeId, framePage))
-      const wire = byId.get(nodeId)?.rect ?? null
-      return wire ? { x: wire.x, y: wire.y, width: wire.width, height: wire.height } : null
-    }
-
+    // ── READ phase: arithmetic over the index; nothing is touched ──────────
     let selectionRect: CanvasOverlayRect | null = null
     for (const id of selectedNodeIds) {
-      const rect = rectFor(id)
+      const rect = chromeRectOf(index, framePage, id)
       if (rect) selectionRect = unionCanvasOverlayRects(selectionRect, rect)
     }
-    const hoveredRect = rectFor(hovered)
-    cache.retainOnly(new Set([...selectedNodeIds, hovered]))
+    const hoveredRect = chromeRectOf(index, framePage, hovered)
     if (!selectionRect || !hoveredRect) {
       hideAll()
       return
     }
 
+    // One screen pixel, in frame px, for the lines.
+    const zoom = viewportActions?.transformRef?.current?.zoom ?? 1
     const segments = measureRectDistances(selectionRect, hoveredRect)
-    const padding = parseMeasurePadding(byId.get(hovered)?.computedStyle ?? {})
-    const bands = measurePaddingBands(hoveredRect, padding)
-    const contentBox = measureContentBox(hoveredRect, padding)
-    // The one parent-document read of the pass, taken before any write.
-    const session = frameDoc ? null : createCanvasOverlayMeasureSession(iframe, canvasRoot)
-    const project = (rect: MeasureRect): MeasureRect => (session ? session.project(rect) : rect)
+    const parsedPadding = parseMeasurePadding(padding)
+    const bands = measurePaddingBands(hoveredRect, parsedPadding)
+    const contentBox = measureContentBox(hoveredRect, parsedPadding)
 
     // ── WRITE phase ───────────────────────────────────────────────────────
     const painted = new Set<string>()
@@ -302,38 +247,19 @@ export function MeasureLayer({
     }
 
     for (const band of bands) {
-      const rect = project(band.rect)
-      paint(`padding-${band.side}`, { x: rect.x, y: rect.y, width: rect.width, height: rect.height })
+      paint(`padding-${band.side}`, { x: band.rect.x, y: band.rect.y, width: band.rect.width, height: band.rect.height })
       const mid = measureBandMidpoint(band)
-      const point = project({ x: mid.x, y: mid.y, width: 0, height: 0 })
-      paint(`padding-label-${band.side}`, {
-        x: point.x,
-        y: point.y,
-        centered: true,
-        text: formatMeasureDistance(band.value),
-      })
+      paint(`padding-label-${band.side}`, { x: mid.x, y: mid.y, centered: true, text: formatMeasureDistance(band.value) })
     }
     if (bands.length > 0) {
-      const rect = project(contentBox)
-      paint('content-box', { x: rect.x, y: rect.y, width: rect.width, height: rect.height })
+      paint('content-box', { x: contentBox.x, y: contentBox.y, width: contentBox.width, height: contentBox.height })
     }
 
     for (const segment of segments) {
-      const rect = project(measureSegmentRect(segment, SEGMENT_THICKNESS))
-      paint(`line-${segment.side}`, {
-        x: rect.x,
-        y: rect.y,
-        width: rect.width,
-        height: rect.height,
-      })
+      const rect = measureSegmentRect(segment, 1 / zoom)
+      paint(`line-${segment.side}`, { x: rect.x, y: rect.y, width: rect.width, height: rect.height })
       const mid = measureSegmentMidpoint(segment)
-      const point = project({ x: mid.x, y: mid.y, width: 0, height: 0 })
-      paint(`line-label-${segment.side}`, {
-        x: point.x,
-        y: point.y,
-        centered: true,
-        text: formatMeasureDistance(segment.distance),
-      })
+      paint(`line-label-${segment.side}`, { x: mid.x, y: mid.y, centered: true, text: formatMeasureDistance(segment.distance) })
     }
 
     for (const [key, element] of elements) {
@@ -341,31 +267,32 @@ export function MeasureLayer({
     }
   })
 
-  const runPass = useEffectEvent((token: number) => {
+  const runPass = useEffectEvent(async (token: number) => {
     const iframe = iframeElement
     const hovered = measureTargetId
     if (!iframe || !hovered || selectedNodeIds.length === 0) return
-    const adapter = listFrameAdapters().get(iframe) ?? null
-    if (!adapter) return
-    // One outstanding `measure` at a time. Portal mode resolves in a
-    // microtask, but a BRIDGE frame's measure is a real postMessage round
-    // trip — issuing one per rAF regardless would queue requests faster than
-    // the frame can answer them.
+    // One outstanding pass at a time: a BRIDGE frame's index read is a real
+    // postMessage round trip, and issuing one per rAF regardless would queue
+    // requests faster than the frame can answer them.
     if (measureInFlightRef.current) return
     measureInFlightRef.current = true
-
-    const ids = [...new Set([...selectedNodeIds, hovered])]
-    void adapter
-      .measure(ids.map((nodeId) => ({ nodeId })), MEASURED_PADDING_PROPERTIES)
-      .then((measurements) => {
+    try {
+      const index = await getFrameLocalGeometry(iframe)
+      if (!index || token !== passTokenRef.current) return
+      let cached = paddingRef.current
+      if (!cached || cached.nodeId !== hovered || cached.index !== index) {
+        const adapter = listFrameAdapters().get(iframe) ?? null
+        const measured = adapter ? (await adapter.measure([{ nodeId: hovered }], MEASURED_PADDING_PROPERTIES))[0] : undefined
         if (token !== passTokenRef.current) return
-        drawPass(measurements, hovered, iframe)
-      })
-      // A frame that navigated mid-measure rejects; the next rAF retries.
-      .catch(() => undefined)
-      .finally(() => {
-        measureInFlightRef.current = false
-      })
+        cached = { nodeId: hovered, index, padding: measured?.computedStyle ?? {} }
+        paddingRef.current = cached
+      }
+      drawPass(index, cached.padding, hovered)
+    } catch (_err) {
+      // A frame that navigated mid-read rejects; the next rAF retries.
+    } finally {
+      measureInFlightRef.current = false
+    }
   })
 
   useEffect(() => {
@@ -377,7 +304,7 @@ export function MeasureLayer({
     let cancelled = false
     const tick = () => {
       if (cancelled) return
-      runPass(token)
+      void runPass(token)
       frame = requestAnimationFrame(tick)
     }
     frame = requestAnimationFrame(tick)
@@ -387,19 +314,13 @@ export function MeasureLayer({
       cancelAnimationFrame(frame)
       // Invalidates any promise still in flight — see `passTokenRef`.
       passTokenRef.current += 1
+      paddingRef.current = null
     }
-  }, [active, iframeElement, overlayRoot])
+  }, [active, iframeElement])
 
-  const target = overlayRoot ?? portalTarget
-  if (!active || !target) return null
+  if (!active) return null
 
-  // In-frame: appearance comes from the injected stylesheet via the stable
-  // `data-canvas-measure-*` selectors (CSS Module class names do not exist
-  // inside the frame). Parent-document fallback: the module's own classes.
-  const inFrame = Boolean(overlayRoot)
-  const fallbackClass = (name: string) => (inFrame ? undefined : styles[name])
-  const fallbackMode = inFrame ? undefined : portalMode
-  return createPortal(
+  return (
     <>
       {MEASURE_SIDES.map((side) => (
         <div
@@ -408,8 +329,7 @@ export function MeasureLayer({
             if (element) elementsRef.current?.set(`padding-${side}`, element)
             else elementsRef.current?.delete(`padding-${side}`)
           }}
-          className={fallbackClass('paddingBand')}
-          data-canvas-measure-mode={fallbackMode}
+          className={styles.measurePadding}
           data-canvas-measure-padding="true"
           data-side={side}
         />
@@ -419,8 +339,7 @@ export function MeasureLayer({
           if (element) elementsRef.current?.set('content-box', element)
           else elementsRef.current?.delete('content-box')
         }}
-        className={fallbackClass('contentBox')}
-        data-canvas-measure-mode={fallbackMode}
+        className={styles.measureContentBox}
         data-canvas-measure-content-box="true"
       />
       {MEASURE_SIDES.map((side) => (
@@ -430,8 +349,7 @@ export function MeasureLayer({
             if (element) elementsRef.current?.set(`line-${side}`, element)
             else elementsRef.current?.delete(`line-${side}`)
           }}
-          className={fallbackClass('line')}
-          data-canvas-measure-mode={fallbackMode}
+          className={styles.measureLine}
           data-canvas-measure-line="true"
           data-side={side}
         />
@@ -443,8 +361,7 @@ export function MeasureLayer({
             if (element) elementsRef.current?.set(`line-label-${side}`, element)
             else elementsRef.current?.delete(`line-label-${side}`)
           }}
-          className={cn(fallbackClass('label'), fallbackClass('distanceLabel'))}
-          data-canvas-measure-mode={fallbackMode}
+          className={styles.measureLabel}
           data-canvas-measure-label="true"
           data-measure-kind="distance"
           data-side={side}
@@ -457,14 +374,12 @@ export function MeasureLayer({
             if (element) elementsRef.current?.set(`padding-label-${side}`, element)
             else elementsRef.current?.delete(`padding-label-${side}`)
           }}
-          className={cn(fallbackClass('label'), fallbackClass('paddingLabel'))}
-          data-canvas-measure-mode={fallbackMode}
+          className={styles.measureLabel}
           data-canvas-measure-label="true"
           data-measure-kind="padding"
           data-side={side}
         />
       ))}
-    </>,
-    target,
+    </>
   )
 }

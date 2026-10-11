@@ -7,10 +7,11 @@
  * canvas rendering purposes after this work order lands** — enforced by
  * `src/__tests__/architecture/frame-document-adapter-isolation.test.ts`.
  *
- * Every operation here is the SAME DOM mechanics today's five CSS injectors,
- * `CanvasSelectionOverlayInjector`, and the structural drag/reorder code
- * already perform directly against `targetDocument` — this class is a
- * refactor of where that code lives, not a behavior change. `measure` is
+ * Every operation here is the SAME DOM mechanics today's CSS injectors and the
+ * structural drag/reorder code already perform directly against
+ * `targetDocument` — this class is a refactor of where that code lives, not a
+ * behavior change. It draws no selection chrome: since SB-4 the rings and
+ * handles are parent-document elements placed from `measureAll`'s rect index. `measure` is
  * synchronous under the hood (same-origin, no real async boundary) but
  * `Promise`-shaped so callers never branch on which adapter kind they hold.
  */
@@ -21,13 +22,9 @@ import {
   collectNodeGeometry,
   createGeometryDirtySignal,
   OVERLAY_ID_ATTR,
-  SELECTION_CHROME_RULES,
-  SELECTION_OVERLAY_ROOT_ID,
-  SELECTION_STYLE_TAG_ID,
   startAnimationFreeze,
   startHoverSuppression,
   startScrollUnroll,
-  isSelectionChromeMutation,
   type AnimationFreezeController,
   type GeometryDirtySignal,
   type HoverSuppressionController,
@@ -131,10 +128,6 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
    * write is skipped here, once, for every injector (P6-C).
    */
   private readonly overlayCss = new Map<string, string>()
-  private readonly selectionRings = new Map<string, HTMLDivElement>()
-  private hoverRing: HTMLDivElement | null = null
-  private hoverNodeId: string | null = null
-  private overlayRoot: HTMLDivElement | null = null
   private interactionMode: 'design' | 'live' | null = null
   private hoverController: HoverSuppressionController | null = null
   private scrollController: ScrollUnrollController | null = null
@@ -142,9 +135,8 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
   private readonly bus = new SyntheticEventBus()
   private readonly domUnsubscribes: Unsubscribe[] = []
   private disposed = false
-  private repositionRaf: number | null = null
   private layoutObserver: MutationObserver | null = null
-  private ringTrackingArmed = false
+  private geometryTrackingArmed = false
   /** SB-3 — created by the first `measureAll`; fed by `layoutObserver` below, so geometry adds no body observer of its own. */
   private geometrySignal: GeometryDirtySignal | null = null
 
@@ -188,55 +180,33 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
   }
 
   /**
-   * Keeps this adapter's OWN rings glued to their node across resize/layout
-   * changes — mirrors `runtime.ts`'s `scheduleReposition`/`layoutObserver`
-   * pair. Armed on the first `select`/`hover`, never in the constructor
-   * (PERF-10): portal mode's selection chrome is `BreakpointSelectionOverlay`'s
-   * own portal, so on an ordinary board nothing ever calls those two and this
-   * adapter has no rings to reposition. A subtree `attributes` observer armed
-   * anyway allocated records and scheduled a no-op animation frame for every
-   * attribute write in every frame — a ring style write, every frame of an
-   * element resize.
+   * Arms the body observer that feeds the rect index's dirty signal. Armed by
+   * the first `measureAll`, never in the constructor: a frame nobody indexes has
+   * no use for it, and a subtree `attributes` observer allocates records for
+   * every attribute write in the frame (PERF-10: an element resize writes
+   * styles every frame).
    *
-   * SB-3: the first `measureAll` arms it too, because the same observer is the
-   * rect index's dirty signal for content and style-attribute changes (it
-   * forwards to `geometrySignal`). A frame nobody hit-tests still pays nothing.
+   * Content and style-attribute changes are the common case, so this observer
+   * is the signal for them; `geometryDirtySignal.ts` adds the head, load, font,
+   * transition, scroll and viewport-resize listeners the body observer cannot
+   * see. `characterData` is observed too: typing in an inline text edit resizes
+   * its box without adding or removing a node.
    */
-  private armLayoutTracking(): void {
-    if (this.ringTrackingArmed || this.disposed) return
-    this.ringTrackingArmed = true
+  private armGeometryTracking(): void {
+    if (this.geometryTrackingArmed || this.disposed) return
+    this.geometryTrackingArmed = true
     const view = this.doc.defaultView
-    const raf = view?.requestAnimationFrame?.bind(view) ?? requestAnimationFrame
-    const scheduleReposition = (records?: MutationRecord[]) => {
-      // This adapter's own ring writes are chrome; repositioning for them
-      // would schedule another frame for nothing.
-      if (records?.every(isSelectionChromeMutation)) return
-      this.geometrySignal?.notify()
-      if (this.repositionRaf !== null) return
-      this.repositionRaf = raf(() => {
-        this.repositionRaf = null
-        this.repositionAllRings()
-      })
-    }
-    const onResize = () => scheduleReposition()
-    view?.addEventListener('resize', onResize)
-    this.domUnsubscribes.push(() => view?.removeEventListener('resize', onResize))
     if (this.doc.body) {
       const MutationObserverCtor = view?.MutationObserver ?? MutationObserver
       try {
-        this.layoutObserver = new MutationObserverCtor(scheduleReposition)
-        this.layoutObserver.observe(this.doc.body, { childList: true, subtree: true, attributes: true })
+        this.layoutObserver = new MutationObserverCtor(() => this.geometrySignal?.notify())
+        this.layoutObserver.observe(this.doc.body, { childList: true, subtree: true, attributes: true, characterData: true })
       } catch (_err) {
-        // Some browser realms reject observing a cross-realm node. Rings
-        // still reposition on the next explicit select/hover/resize.
+        // Some browser realms reject observing a cross-realm node. The head /
+        // load / font / resize listeners still cover everything but a body change.
         this.layoutObserver = null
       }
     }
-  }
-
-  private repositionAllRings(): void {
-    for (const [nodeId, ring] of this.selectionRings) this.positionRingOnNode(ring, nodeId)
-    if (this.hoverRing && this.hoverNodeId !== null) this.positionRingOnNode(this.hoverRing, this.hoverNodeId)
   }
 
   applyOverlay(id: string, css: string): void {
@@ -259,91 +229,6 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
     this.overlayCss.delete(id)
   }
 
-  private ensureOverlayRoot(): HTMLDivElement | null {
-    if (!this.doc.body) return null
-    if (this.overlayRoot?.isConnected) return this.overlayRoot
-    let root = this.doc.getElementById(SELECTION_OVERLAY_ROOT_ID) as HTMLDivElement | null
-    if (!root) {
-      root = this.doc.createElement('div')
-      root.id = SELECTION_OVERLAY_ROOT_ID
-      Object.assign(root.style, {
-        position: 'absolute',
-        top: '0',
-        left: '0',
-        width: '0',
-        height: '0',
-        overflow: 'visible',
-        pointerEvents: 'none',
-        zIndex: '2147483647',
-      })
-      this.doc.body.appendChild(root)
-    }
-    const view = this.doc.defaultView
-    if (view && view.getComputedStyle(this.doc.body).position === 'static') {
-      this.doc.body.style.position = 'relative'
-    }
-    if (!this.doc.getElementById(SELECTION_STYLE_TAG_ID)) {
-      const styleEl = this.doc.createElement('style')
-      styleEl.id = SELECTION_STYLE_TAG_ID
-      styleEl.setAttribute('data-source', 'portal-frame-adapter')
-      styleEl.textContent = SELECTION_CHROME_RULES
-      this.doc.head?.appendChild(styleEl)
-    }
-    this.overlayRoot = root
-    return root
-  }
-
-  private createRing(kind: 'selection' | 'hover'): HTMLDivElement {
-    const el = this.doc.createElement('div')
-    el.setAttribute(kind === 'selection' ? 'data-canvas-selection-ring' : 'data-canvas-hover-ring', '')
-    el.style.display = 'none'
-    this.ensureOverlayRoot()?.appendChild(el)
-    return el
-  }
-
-  private positionRingOnNode(ringEl: HTMLDivElement, nodeId: string): void {
-    const target = findByNodeId(this.doc, nodeId)
-    if (!target || !this.doc.body) {
-      ringEl.style.display = 'none'
-      return
-    }
-    const rect = rectRelativeToBody(target, this.doc.body)
-    ringEl.style.display = ''
-    ringEl.style.width = `${rect.width}px`
-    ringEl.style.height = `${rect.height}px`
-    ringEl.style.transform = `translate(${rect.x}px, ${rect.y}px)`
-  }
-
-  select(refs: NodeRef[]): void {
-    this.armLayoutTracking()
-    const next = new Set(refs.map((ref) => ref.nodeId))
-    for (const [nodeId, ring] of this.selectionRings) {
-      if (!next.has(nodeId)) {
-        ring.remove()
-        this.selectionRings.delete(nodeId)
-      }
-    }
-    for (const ref of refs) {
-      let ring = this.selectionRings.get(ref.nodeId)
-      if (!ring) {
-        ring = this.createRing('selection')
-        this.selectionRings.set(ref.nodeId, ring)
-      }
-      this.positionRingOnNode(ring, ref.nodeId)
-    }
-  }
-
-  hover(ref: NodeRef | null): void {
-    this.armLayoutTracking()
-    this.hoverNodeId = ref?.nodeId ?? null
-    if (!ref) {
-      if (this.hoverRing) this.hoverRing.style.display = 'none'
-      return
-    }
-    this.hoverRing ??= this.createRing('hover')
-    this.positionRingOnNode(this.hoverRing, ref.nodeId)
-  }
-
   async measure(refs: NodeRef[], properties?: string[]): Promise<NodeMeasurement[]> {
     const props = properties?.length ? properties : DEFAULT_MEASURED_PROPERTIES
     const view = this.doc.defaultView
@@ -362,14 +247,18 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
    * SB-3 — the same `collectNodeGeometry` the bridge runtime answers `measureAll`
    * with, run on the same-origin document. Synchronous under the hood. The first
    * call arms the layout observer and the extra dirty listeners (see
-   * {@link armLayoutTracking}); every call re-arms the `geometry:dirty` latch.
+   * {@link armGeometryTracking}); every call re-arms the `geometry:dirty` latch.
    */
   async measureAll(): Promise<FrameGeometrySnapshot> {
+    return this.measureAllNow() ?? { origin: { x: 0, y: 0 }, nodes: [], truncated: false }
+  }
+
+  measureAllNow(): FrameGeometrySnapshot | null {
     const view = this.doc.defaultView
-    if (!view) return { origin: { x: 0, y: 0 }, nodes: [], truncated: false }
-    this.armLayoutTracking()
+    if (!view) return null
     this.geometrySignal ??= createGeometryDirtySignal(this.doc, view, () => this.bus.emit({ type: 'geometry:dirty' }))
     this.geometrySignal.track()
+    this.armGeometryTracking()
     this.geometrySignal.markClean()
     return collectNodeGeometry(this.doc, view)
   }
@@ -391,12 +280,12 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
   }
 
   /**
-   * A portal frame's resize handles are the parent's own React elements,
-   * portaled into this document's overlay root (`CanvasResizeHandles`) and
-   * dragged from the parent (`useElementResizeDrag`) — a same-origin document
-   * allows it, and that path commits synchronously in the same tick. The
-   * in-frame handles this call drives exist for the cross-origin bridge; a
-   * second set here would be two sets of handles on one element.
+   * A portal frame's resize handles are the parent's own React elements
+   * (`CanvasResizeHandles`), dragged from the parent (`useElementResizeDrag`) —
+   * a same-origin document allows it, and that path commits synchronously in
+   * the same tick. The in-frame handles this call drives exist for the
+   * cross-origin bridge; a second set here would be two sets of handles on one
+   * element.
    */
   setResizeTarget(_ref: NodeRef | null, _options: ResizeTargetOptions): void {}
 
@@ -486,10 +375,6 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
     this.domUnsubscribes.length = 0
     this.layoutObserver?.disconnect()
     this.geometrySignal?.dispose()
-    if (this.repositionRaf !== null) {
-      const view = this.doc.defaultView
-      ;(view?.cancelAnimationFrame?.bind(view) ?? cancelAnimationFrame)(this.repositionRaf)
-    }
 
     this.hoverController?.dispose()
     this.scrollController?.dispose()
@@ -499,14 +384,6 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
     this.overlayStyles.clear()
     this.overlayCss.clear()
 
-    for (const ring of this.selectionRings.values()) ring.remove()
-    this.selectionRings.clear()
-    this.hoverRing?.remove()
-    this.hoverRing = null
-
-    this.doc.getElementById(SELECTION_STYLE_TAG_ID)?.remove()
-    this.overlayRoot?.remove()
-    this.overlayRoot = null
   }
 
   /**

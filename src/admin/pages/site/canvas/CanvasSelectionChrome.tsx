@@ -2,34 +2,42 @@
  * CanvasSelectionChrome — the rings, the node-name badges, the
  * selector-affinity pool and the resize handles, as ELEMENTS. Where each of
  * them goes is `canvasSelectionOverlayPositioning.ts`'s job and stays there:
- * every node here is positioned imperatively by the overlay's measure pass
+ * every node here is positioned imperatively by the overlay's placement pass
  * through the refs it hands down.
  *
  * Split out of `BreakpointSelectionOverlay.tsx` when that component passed
  * the 700-line ceiling — `canvas-17` named this block as the unit to
  * extract, and both K5 and S2 then added a mount line to it.
  *
- * **It renders nothing on its own.** It is a plain function component so it
- * can be portaled as one child, and it deliberately holds NO state, no
- * effect and no measurement: the overlay owns all three, and a second
- * measure pass here would be the drift `canvas-17` spent a work order
- * removing.
+ * **It renders nothing on its own.** It is a plain function component and it
+ * deliberately holds NO state, no effect and no measurement: the overlay owns
+ * all three, and a second placement pass here would be the drift `canvas-17`
+ * spent a work order removing.
+ *
+ * ## Where these elements live (SB-4)
+ *
+ * In the PARENT document, inside the zero-size chrome root the overlay renders
+ * beside the frame's iframe (`FrameChrome.module.css`). They used to be
+ * appended to the frame's own `<body>`, which put editor DOM in the user's
+ * document and made every ring write a mutation the frame's observers had to
+ * filter out. They carry `data-canvas-overlay-node-id`, NOT `data-node-id`:
+ * `data-node-id` is the contract the canvas's own scans (drop candidates,
+ * `findRenderedCanvasNodes`, plugin `useCanvasNodeRect`) query on, and chrome
+ * must never masquerade as a second copy of an authored node.
  */
 import type { RefObject } from 'react'
-import { cn } from '@ui/cn'
 import { CanvasGroupResizeHandles, CanvasResizeHandles } from './CanvasResizeHandles'
-import styles from './BreakpointSelectionOverlay.module.css'
+import styles from './FrameChrome.module.css'
 
 interface CanvasSelectionChromeProps {
   selectedNodeIds: readonly string[]
-  /** The node the hover ring tracks, or `null` — the ring stays mounted either way (PERF-2). */
-  hoverRingNodeId: string | null
   showSelectorHighlight: boolean
-  usingIframeOverlay: boolean
-  toolbarMode: 'scoped' | 'fixed'
   /** The selected layers that get resize handles: one gets its own, several get a group box (IX-6g). */
   resizeNodeIds: readonly string[]
-  overlayRoot: HTMLElement | null
+  /** The frame's same-origin document, for the handles' element reads; `null` for a bridge frame. */
+  frameDocument: Document | null
+  /** A design frame has the node badge and the handles; the live surface has rings only. */
+  designMode: boolean
   selectorHighlightRef: RefObject<HTMLDivElement | null>
   hoverRef: RefObject<HTMLDivElement | null>
   ringRefs: RefObject<Map<string, HTMLDivElement | null> | null>
@@ -45,39 +53,23 @@ interface CanvasSelectionChromeProps {
 
 export function CanvasSelectionChrome({
   selectedNodeIds,
-  hoverRingNodeId,
   showSelectorHighlight,
-  usingIframeOverlay,
-  toolbarMode,
   resizeNodeIds,
-  overlayRoot,
+  frameDocument,
+  designMode,
   selectorHighlightRef,
   hoverRef,
   ringRefs,
   badgeRefs,
   onResizeFrameReady,
 }: CanvasSelectionChromeProps) {
-  const legacyRingClassName = (variant: 'selection' | 'hover') =>
-    usingIframeOverlay ? undefined : cn(styles.ring, styles[variant])
-  const legacyRingMode = usingIframeOverlay ? undefined : toolbarMode
   return (
     <>
-      {/* Orange affinity rings — populated imperatively by the RAF tick, one
-          per element matching the hovered selector. */}
+      {/* Orange affinity rings — populated imperatively by the placement pass,
+          one per element matching the hovered selector. */}
       {showSelectorHighlight && (
         <div ref={selectorHighlightRef} data-canvas-selector-highlight-layer="true" />
       )}
-      {/* `data-canvas-overlay-node-id`, NOT `data-node-id`: when hosted inside
-          the iframe (WS-5.1), these elements live in the SAME document as
-          authored content. `data-node-id` is the contract many other
-          subsystems query on inside a canvas iframe — drag/drop candidate
-          measurement (`measureCanvasDropCandidates`'s `[data-node-id]` scan),
-          `findRenderedCanvasNodes`/`CanvasNodeElementCache`'s node
-          resolution, plugin `useCanvasNodeRect` — carrying it here would
-          make chrome masquerade as a second, ring-shaped copy of the
-          authored node wherever those scans run. The correlating id below is
-          JS-only bookkeeping (ref maps, the e2e/test hook), never a selector
-          any other subsystem treats as "this is an authored node". */}
       {selectedNodeIds.map((id) => (
         <div
           key={`ring-${id}`}
@@ -85,55 +77,51 @@ export function CanvasSelectionChrome({
             if (el) ringRefs.current?.set(id, el)
             else ringRefs.current?.delete(id)
           }}
-          className={legacyRingClassName('selection')}
-          data-canvas-ring-mode={legacyRingMode}
+          className={`${styles.ring} ${styles.selection}`}
           data-canvas-selection-ring="true"
           data-canvas-overlay-node-id={id}
         />
       ))}
-      {/* Node-name badge (WS-5.1) — design-mode only (see props doc): one per
-          selected node, anchored just above its ring by `positionNodeBadge`.
-          Text set imperatively. No badge for the hover ring or
-          selector-affinity pool (transient affordances, not a deliberate
-          selection), and none in the live-mode fallback — the badge is a
-          WS-5.1 addition, not a pre-existing affordance to preserve there. */}
-      {usingIframeOverlay && selectedNodeIds.map((id) => (
+      {/* Node-name badge (WS-5.1): one per selected node, anchored just above
+          its ring by `positionNodeBadge`. Text set imperatively. No badge for
+          the hover ring or selector-affinity pool (transient affordances, not
+          a deliberate selection). */}
+      {designMode && selectedNodeIds.map((id) => (
         <div
           key={`badge-${id}`}
           ref={(el) => {
             if (el) badgeRefs.current?.set(id, el)
             else badgeRefs.current?.delete(id)
           }}
+          className={styles.nodeBadge}
           data-canvas-node-badge="true"
           data-canvas-overlay-node-id={id}
         />
       ))}
-      {/* ALWAYS mounted (PERF-2): a hover starting or ending is a style
-          write on this element (the overlay hides it with
-          `hideOverlayElement`), never a `childList` mutation under the
-          frame's observed `<body>`. Hover is continuous in normal use, and
-          every mount used to re-run the frame's two full-document layout
-          passes. */}
+      {/* ALWAYS mounted (PERF-2): a hover starting or ending is a style write
+          on this element (the overlay hides it with `hideOverlayElement`),
+          never a mount or an unmount. Hover is continuous in normal use. The
+          overlay also owns its `data-canvas-overlay-node-id`: it is written in
+          the same step as the ring's placement, never by a render that could
+          land after a newer hover has already moved the ring on. */}
       <div
         ref={hoverRef}
-        className={legacyRingClassName('hover')}
-        data-canvas-ring-mode={legacyRingMode}
+        className={`${styles.ring} ${styles.hover}`}
         data-canvas-hover-ring="true"
-        data-canvas-overlay-node-id={hoverRingNodeId ?? undefined}
       />
-      {/* The one interactive thing in this click-through overlay — see
+      {/* The interactive part of an otherwise click-through root — see
           `CanvasResizeHandles`. */}
       {resizeNodeIds.length === 1 && (
         <CanvasResizeHandles
           nodeId={resizeNodeIds[0]!}
-          iframeDoc={overlayRoot?.ownerDocument ?? null}
+          frameDocument={frameDocument}
           onFrameReady={onResizeFrameReady}
         />
       )}
       {resizeNodeIds.length > 1 && (
         <CanvasGroupResizeHandles
           nodeIds={resizeNodeIds}
-          iframeDoc={overlayRoot?.ownerDocument ?? null}
+          frameDocument={frameDocument}
           onFrameReady={onResizeFrameReady}
         />
       )}

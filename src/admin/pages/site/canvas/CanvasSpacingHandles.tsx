@@ -3,13 +3,11 @@
  * or grid container (P5-E, IX-17; Penpot's flex controls).
  *
  * Rendered INSIDE the resize-handle frame (`CanvasResizeHandles`), which the
- * overlay already positions on the selection ring's measured rect every pass
- * — so the bands ride that one measurement and cannot drift off the box, the
- * rule `canvas-17` settled for every piece of selection chrome. Their own
- * geometry is RELATIVE to that frame (`spacingBands`), and is positioned with
- * `--band-*` custom properties the injected in-frame stylesheet reads
- * (`canvasSpacingChromeCss.ts`): CSS Module classes do not exist inside the
- * iframe, and a style object would be the inline styles the rules forbid.
+ * overlay already positions on the selection ring's rect every pass — so the
+ * bands ride that one placement and cannot drift off the box, the rule
+ * `canvas-17` settled for every piece of selection chrome. Their own geometry
+ * is RELATIVE to that frame (`spacingBands`), and is positioned with
+ * `--band-*` custom properties that `FrameChrome.module.css` reads.
  *
  * The one layout read (`readSpacingGeometry`) runs in a rAF — never in the
  * same pass as a write — when the handles mount, when the node changes in
@@ -28,6 +26,7 @@ import { findNodeById } from './InPlaceInspector/findNodeById'
 import { spacingBands, type SpacingBand, type SpacingGeometry } from './spacingHandleRules'
 import { readSpacingGeometry } from './spacingHandleMeasure'
 import { SPACING_BAND_ATTR, useSpacingHandleDrag } from './useSpacingHandleDrag'
+import styles from './FrameChrome.module.css'
 
 interface CanvasSpacingHandlesProps {
   nodeId: string
@@ -121,17 +120,18 @@ export function CanvasSpacingHandles({ nodeId, iframeDoc, target }: CanvasSpacin
   if (!geometry) return null
 
   return (
-    <div ref={setLayer} data-canvas-spacing-layer="true" data-canvas-spacing-dragging={drag ? 'true' : undefined}>
+    <div ref={setLayer} className={styles.spacingLayer} data-canvas-spacing-layer="true" data-canvas-spacing-dragging={drag ? 'true' : undefined}>
       {bands.map((band, index) => (
         <div
           key={index}
+          className={styles.spacingBand}
           {...{ [SPACING_BAND_ATTR]: String(index) }}
           data-spacing-kind={band.kind}
           data-spacing-axis={band.kind === 'gap' ? band.axis : band.side === 'top' || band.side === 'bottom' ? 'row' : 'column'}
           data-spacing-active={drag && sameBand(drag.band, band) ? 'true' : undefined}
           style={bandStyle(band)}
         >
-          <span data-canvas-spacing-value="true">{bandValueLabel(band, drag && sameBand(drag.band, band) ? drag.patch : null)}</span>
+          <span className={styles.spacingValue} data-canvas-spacing-value="true">{bandValueLabel(band, drag && sameBand(drag.band, band) ? drag.patch : null)}</span>
         </div>
       ))}
     </div>

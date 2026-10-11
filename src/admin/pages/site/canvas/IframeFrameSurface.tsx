@@ -106,7 +106,6 @@ import { CanvasAnimationInjector } from './CanvasAnimationInjector'
 import { CanvasHoverSuppressionInjector } from './CanvasHoverSuppressionInjector'
 import { CanvasDiagnosticsInjector } from './CanvasDiagnosticsInjector'
 import { CanvasScrollUnrollInjector } from './CanvasScrollUnrollInjector'
-import { CanvasSelectionOverlayInjector } from './CanvasSelectionOverlayInjector'
 import { EditorChromeInjector } from './EditorChromeInjector'
 import { RuntimeScriptInjector } from './RuntimeScriptInjector'
 import { useIframeCursorBridge } from './useIframeCursorBridge'
@@ -179,7 +178,6 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       // never `iframeRef.current` (the frame contexts need the element).
       const [frameDocument, setFrameDocument] = useState<FrameDocumentState | null>(null)
       const iframeDoc = frameDocument?.doc ?? null
-      const [overlayRoot, setOverlayRoot] = useState<HTMLDivElement | null>(null)
       const [adapter, setAdapter] = useState<FrameDocumentAdapter | null>(null)
       // Mount stage 3 — see this module's header. `false` until the injector
       // commit has landed and the transition scheduled below has run.
@@ -404,10 +402,9 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
         iframeElement: iframeRef.current,
         contentDocument: iframeDoc,
         contentBody: (iframeDoc?.body ?? null) as HTMLBodyElement | null,
-        contentOverlayRoot: overlayRoot,
         adapter,
       }),
-      [iframeDoc, overlayRoot, adapter],
+      [iframeDoc, adapter],
     )
 
     // Wire up the iframe document once it's ready — the stable ref callback
@@ -609,22 +606,6 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
                   first so a failure during the rest of this subtree's own mount
                   is still collected. Inserts no DOM — see its docblock. */}
               <CanvasDiagnosticsInjector />
-              {/* Design frames only: selection/hover rings + the node-name badge
-                  render INSIDE this document (WS-5.1) so they track the element
-                  with zero zoom/pan conversion. See its own docblock.
-
-                  Gated on `treeMounted` with the node tree, and NOT because it
-                  is expensive — because it is the one injector that appends a
-                  real element to `<body>`. Its effect runs after the commit's
-                  DOM writes, so in a single-commit mount the authored content
-                  was already there and the overlay root landed behind it. Mount
-                  it in stage 2 and it becomes `body`'s FIRST child, which
-                  breaks `body > :first-child` / `:nth-child` / `:empty` for the
-                  page's own CSS — the exact invariant
-                  `bodyPresentation.test.tsx` guards. */}
-              {!isLive && !isCapture && treeMounted && (
-                <CanvasSelectionOverlayInjector onRootReady={setOverlayRoot} />
-              )}
               {/* Vendor package CSS (Alm design-system + the open project's own
                   bare-specifier package CSS) — read-only, @layer vendor,
                   ordered below @layer user-authored. See canvasCssLayers.ts. */}

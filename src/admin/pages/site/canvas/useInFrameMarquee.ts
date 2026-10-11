@@ -15,10 +15,10 @@
  * Like `useCanvasBodyDragTrigger`, this is a native capture-phase listener on
  * the frame's own document: pointer events raised there are already in the
  * frame's untransformed CSS px, which is the space the layer rects and the
- * in-frame overlay root share, so there is no zoom arithmetic anywhere. The
- * rectangle is painted into that overlay root (editor chrome, never a box in
- * the page). Portal (design) frames only — the overlay root is the gate, as
- * it is for the body drag.
+ * frame's chrome root share, so there is no zoom arithmetic anywhere. The
+ * rectangle is painted into that chrome root, in the parent document (editor
+ * chrome, never a box in the page). Portal (design) frames only — the frame
+ * document is the gate, as it is for the body drag.
  *
  * Reads happen once, when the marquee starts (every descendant's rect); each
  * move after that is arithmetic plus, at most once per animation frame, a
@@ -35,6 +35,7 @@ import { presentedElementForNode } from './canvasNodeLookup'
 import { nodeVisualRect } from './canvasDomGeometry'
 import { createBareWrapperProbe } from './canvasBareWrapperProbe'
 import { canvasPressContext, isFrameBackgroundHit, marqueeRootId } from './canvasPressTarget'
+import chromeStyles from './FrameChrome.module.css'
 import { collectMarqueeCandidates, marqueeBetween, marqueeHits, type MarqueeCandidate, type MarqueeRect } from './inFrameMarquee'
 
 /** Frame px the pointer travels before a root press becomes a marquee rather than a click. */
@@ -42,8 +43,10 @@ const MARQUEE_THRESHOLD_PX = 4
 
 interface InFrameMarqueeOptions {
   enabled: boolean
-  /** The in-frame overlay root: the design-frame gate, the frame's current document, and where the rectangle paints. */
-  overlayRoot: HTMLElement | null
+  /** The frame's current same-origin document, or `null`: the design-frame gate, and where the sweep listens. */
+  frameDocument: Document | null
+  /** The frame's chrome root, where the rectangle paints; `null` until it mounts. */
+  chromeRoot: HTMLElement | null
   frameId: string | null
 }
 
@@ -55,10 +58,10 @@ function paintMarquee(element: HTMLElement, rect: MarqueeRect): void {
   })
 }
 
-export function useInFrameMarquee({ enabled, overlayRoot, frameId }: InFrameMarqueeOptions): void {
+export function useInFrameMarquee({ enabled, frameDocument, chromeRoot, frameId }: InFrameMarqueeOptions): void {
   useEffect(() => {
-    if (!enabled || !overlayRoot) return
-    const doc = overlayRoot.ownerDocument
+    if (!enabled || !frameDocument || !chromeRoot) return
+    const doc = frameDocument
     let cleanupGesture: (() => void) | null = null
     let swallowClick = false
 
@@ -85,9 +88,6 @@ export function useInFrameMarquee({ enabled, overlayRoot, frameId }: InFrameMarq
       if (state.canvasTool !== 'move') return
       const target = event.target
       if (!isElementLike(target)) return
-      // Editor chrome in the same document (rings, resize and spacing
-      // handles) — the page root may be `<body>` itself, which holds them.
-      if (target.closest('[data-studio-canvas-overlay-root]')) return
       const nodeId = target.closest(CANVAS_NODE_SELECTOR)?.getAttribute('data-node-id')
       if (!nodeId) return
       const resolved = resolveSelectableNode(state, nodeId)
@@ -134,18 +134,10 @@ export function useInFrameMarquee({ enabled, overlayRoot, frameId }: InFrameMarq
             const rect = element ? nodeVisualRect(element) : null
             return rect ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : null
           })
-          box = doc.createElement('div')
+          box = chromeRoot.ownerDocument.createElement('div')
+          box.className = chromeStyles.marquee ?? ''
           box.setAttribute('data-canvas-in-frame-marquee', 'true')
-          Object.assign(box.style, {
-            position: 'absolute',
-            top: '0',
-            left: '0',
-            boxSizing: 'border-box',
-            pointerEvents: 'none',
-            border: '1px solid var(--canvas-selection-ring-color)',
-            background: 'color-mix(in srgb, var(--canvas-selection-ring-color) 10%, transparent)',
-          })
-          overlayRoot.appendChild(box)
+          chromeRoot.appendChild(box)
         }
         moveEvent.preventDefault()
         pending = { x: moveEvent.clientX, y: moveEvent.clientY, deepest: moveEvent.altKey }
@@ -190,5 +182,5 @@ export function useInFrameMarquee({ enabled, overlayRoot, frameId }: InFrameMarq
       doc.removeEventListener('pointerdown', onPointerDown, true)
       doc.removeEventListener('click', onClickCapture, true)
     }
-  }, [enabled, overlayRoot, frameId])
+  }, [enabled, frameDocument, chromeRoot, frameId])
 }

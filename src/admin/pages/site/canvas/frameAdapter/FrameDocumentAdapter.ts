@@ -234,10 +234,6 @@ export interface FrameDocumentAdapter {
   /** Mounts/updates a managed `<style id="...">`-equivalent with `css` — the generic mechanism every CSS-text injector (`ClassStyleInjector`, `EditorChromeInjector`, ...) now goes through instead of a direct `targetDocument.head.appendChild`. */
   applyOverlay(id: string, css: string): void
   removeOverlay(id: string): void
-  /** Shows/positions the selection ring(s) for exactly these nodes; an empty array clears selection. */
-  select(refs: NodeRef[]): void
-  /** Shows/positions the hover ring for one node; `null` clears it. */
-  hover(ref: NodeRef | null): void
   /** Rects + a bounded set of computed-style properties. Portal mode resolves synchronously (wrapped in a resolved `Promise` so callers never branch on adapter kind); bridge mode is genuinely async (a real `postMessage` round trip, bounded by a timeout). */
   measure(refs: NodeRef[], properties?: string[]): Promise<NodeMeasurement[]>
   /**
@@ -251,6 +247,14 @@ export interface FrameDocumentAdapter {
    * so a frame nobody indexes pays nothing for it.
    */
   measureAll(): Promise<FrameGeometrySnapshot>
+  /**
+   * {@link measureAll}, synchronously, for a frame whose document this side can
+   * read (a same-origin portal frame); `null` for a bridge frame, whose only
+   * answer is a `postMessage` round trip. It lets selection chrome land in the
+   * task of the event that moved it (a press, a hover, a layout effect) instead
+   * of a microtask later, and still arms the frame's `geometry:dirty` latch.
+   */
+  measureAllNow(): FrameGeometrySnapshot | null
   /**
    * `speed-06` — every node currently in the frame's document, with its
    * drop-target geometry, for a per-drag candidate snapshot

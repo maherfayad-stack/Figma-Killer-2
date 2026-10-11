@@ -44,6 +44,7 @@ import {
 import { presentedElementForNode } from './canvasNodeLookup'
 import { findNodeById } from './InPlaceInspector/findNodeById'
 import { createInlineStylePreview } from './elementResizeInlinePreview'
+import { iframeZoom } from './elementResizeGuides'
 import { startHandleDrag } from './handleDragSession'
 
 /** ⇧ snaps the angle to multiples of this. */
@@ -91,7 +92,7 @@ export function rotateRefusal(
 const NO_INLINE_STYLES: Readonly<Record<string, unknown>> = {}
 
 interface ElementRotateDragOptions {
-  /** The handle frame portalled into the iframe overlay root, or `null`. */
+  /** The handle frame rendered beside the iframe, or `null`. */
   frame: HTMLElement | null
   iframeDoc: Document | null
   /** The single selected node, or `null` when rotation is not offered. */
@@ -126,7 +127,11 @@ export function useElementRotateDrag({ frame, iframeDoc, nodeId }: ElementRotate
         const base = parseRotateDegrees(stored.rotate ?? computed.rotate) ?? 0
         const box = target.getBoundingClientRect()
         const center = { x: box.left + box.width / 2, y: box.top + box.height / 2 }
-        const from = { x: event.clientX, y: event.clientY }
+        // The pointer in FRAME px, the space `center` is in: the press is a parent-document client point, so it
+        // is taken out of the iframe's (zoomed) screen box. The drag session hands `step` frame-px deltas.
+        const zoom = iframeZoom(view.frameElement)
+        const frameBox = view.frameElement?.getBoundingClientRect()
+        const from = { x: (event.clientX - (frameBox?.left ?? 0)) / zoom, y: (event.clientY - (frameBox?.top ?? 0)) / zoom }
         const preview = createInlineStylePreview(target)
         let angle = normalizeDegrees(base)
 
@@ -136,6 +141,7 @@ export function useElementRotateDrag({ frame, iframeDoc, nodeId }: ElementRotate
           frame,
           activeAttr: ROTATE_ACTIVE_ATTR,
           iframeDoc,
+          zoom,
           scaleTool: false,
           callbacks: {
             step: (dx, dy, modifiers) => {

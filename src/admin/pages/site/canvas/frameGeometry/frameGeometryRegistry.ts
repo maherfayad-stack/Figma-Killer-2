@@ -45,6 +45,8 @@ interface FrameGeometryEntry {
   /** The epoch `index` was read at; `index` is fresh iff it equals `epoch`. */
   builtAtEpoch: number
   inflight: Promise<FrameGeometryIndex | null> | null
+  /** The epoch `inflight` started at. */
+  inflightEpoch: number
   unsubscribe: Unsubscribe
 }
 
@@ -69,6 +71,7 @@ function syncEntries(): void {
       epoch: 1,
       builtAtEpoch: 0,
       inflight: null,
+      inflightEpoch: 0,
       unsubscribe: adapter.on('geometry:dirty', () => {
         entry.epoch += 1
         for (const listener of [...dirtyListeners]) listener(iframe)
@@ -98,37 +101,91 @@ function readFrameBoardOrigin(iframe: HTMLIFrameElement): BoardPoint | null {
 }
 
 /**
- * The frame's geometry index, re-read first if it was never built or went stale. `null` when the iframe has no
- * registered adapter, or it is not on a Studio board. Concurrent callers share one read.
+ * Reads (or reuses) the entry's index. `origin` is only used to stamp a NEW build; a reused index keeps the origin
+ * its last board-space caller gave it. A read already in flight is shared only while it is still current: one that
+ * started before the latest `geometry:dirty` would hand back a picture the frame has since left, and the latch means
+ * no further signal would ever correct it, so a newer read is queued behind it instead.
+ */
+function indexOf(iframe: HTMLIFrameElement, entry: FrameGeometryEntry, origin: BoardPoint): Promise<FrameGeometryIndex | null> {
+  if (entry.index && entry.builtAtEpoch === entry.epoch) return Promise.resolve(entry.index)
+  if (entry.inflight && entry.inflightEpoch === entry.epoch) return entry.inflight
+  const queuedAtEpoch = entry.epoch
+  const read = (): Promise<FrameGeometryIndex | null> => {
+    const epochAtRead = entry.epoch
+    return entry.adapter.measureAll().then(
+      (snapshot) => {
+        // The adapter may have been replaced while the read was out.
+        if (entries.get(iframe) !== entry) return null
+        entry.index = FrameGeometryIndex.fromSnapshot(snapshot, origin)
+        entry.builtAtEpoch = epochAtRead
+        return entry.index
+      },
+      (err: unknown) => {
+        console.error('[frameGeometryRegistry] measureAll failed:', err)
+        return null
+      },
+    )
+  }
+  const previous = entry.inflight
+  const inflight: Promise<FrameGeometryIndex | null> = (previous ? previous.then(read, read) : read()).finally(() => {
+    if (entry.inflight === inflight) entry.inflight = null
+  })
+  entry.inflight = inflight
+  entry.inflightEpoch = queuedAtEpoch
+  return inflight
+}
+
+/**
+ * The frame's geometry index in BOARD space, re-read first if it was never built or went stale. `null` when the
+ * iframe has no registered adapter, or it is not on a Studio board. Concurrent callers share one read.
  */
 export function getFrameGeometry(iframe: HTMLIFrameElement): Promise<FrameGeometryIndex | null> {
   const entry = entryFor(iframe)
   if (!entry) return Promise.resolve(null)
   const origin = readFrameBoardOrigin(iframe)
   if (!origin) return Promise.resolve(null)
-  if (entry.index && entry.builtAtEpoch === entry.epoch) {
-    entry.index.setOrigin(origin)
-    return Promise.resolve(entry.index)
-  }
-  if (entry.inflight) return entry.inflight
-  const epochAtRead = entry.epoch
-  const inflight = entry.adapter.measureAll().then(
-    (snapshot) => {
-      // The adapter may have been replaced while the read was out.
-      if (entries.get(iframe) !== entry) return null
-      entry.index = FrameGeometryIndex.fromSnapshot(snapshot, origin)
-      entry.builtAtEpoch = epochAtRead
-      return entry.index
-    },
-    (err: unknown) => {
-      console.error('[frameGeometryRegistry] measureAll failed:', err)
-      return null
-    },
-  ).finally(() => {
-    entry.inflight = null
+  return indexOf(iframe, entry, origin).then((index) => {
+    index?.setOrigin(origin)
+    return index
   })
-  entry.inflight = inflight
-  return inflight
+}
+
+/**
+ * The frame's geometry index for chrome that rides the frame (SB-4: rings, handles, badges are painted in the
+ * frame's own viewport px beside the iframe), re-read first if it was never built or went stale. Reads
+ * `localRectOf`, which does not depend on the frame's place on the board, so it works for a CMS / Visual
+ * Component frame too, and never touches the origin a board-space caller set. `null` only when the iframe has no
+ * registered adapter. Concurrent callers share one read.
+ */
+export function getFrameLocalGeometry(iframe: HTMLIFrameElement): Promise<FrameGeometryIndex | null> {
+  const entry = entryFor(iframe)
+  return entry ? indexOf(iframe, entry, { x: 0, y: 0 }) : Promise.resolve(null)
+}
+
+/**
+ * The frame's local geometry index THIS TASK, or `null` when only an async read can answer (a bridge frame with a
+ * stale or missing index, an iframe with no registered adapter). A fresh index is returned as is; a stale one is
+ * re-read synchronously when the adapter can (`measureAllNow`: a same-origin frame). This is what lets a press, a
+ * hover or a layout effect place chrome in the task of the event that moved it.
+ */
+export function readFrameLocalGeometryNow(iframe: HTMLIFrameElement): FrameGeometryIndex | null {
+  const entry = entryFor(iframe)
+  if (!entry) return null
+  if (entry.index && entry.builtAtEpoch === entry.epoch) return entry.index
+  // A read already out belongs to a bridge frame; a same-origin frame has none, but never race one regardless.
+  if (entry.inflight) return null
+  const epochAtRead = entry.epoch
+  const snapshot = entry.adapter.measureAllNow()
+  if (!snapshot) return null
+  entry.index = FrameGeometryIndex.fromSnapshot(snapshot, entry.index?.origin ?? { x: 0, y: 0 })
+  entry.builtAtEpoch = epochAtRead
+  return entry.index
+}
+
+/** True when the frame's last-built index is still trusted: it exists and no `geometry:dirty` arrived since. */
+export function isFrameGeometryFresh(iframe: HTMLIFrameElement): boolean {
+  const entry = entryFor(iframe)
+  return entry !== null && entry.index !== null && entry.builtAtEpoch === entry.epoch
 }
 
 /** The last index built for the frame, fresh or not; `null` when none was ever built. Never reads the frame. */

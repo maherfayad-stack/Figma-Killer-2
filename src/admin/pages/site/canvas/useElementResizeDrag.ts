@@ -1,29 +1,25 @@
 /**
  * useElementResizeDrag — the pointer half of dragging a selected element's
- * edge, wired imperatively onto handles that live INSIDE the frame's iframe.
+ * edge, wired imperatively onto handles that sit beside the frame's iframe in
+ * the PARENT document (SB-4).
  *
  * ## Why native listeners rather than React props
  *
- * The handles are portalled into `CanvasSelectionOverlayInjector`'s overlay
- * root, which is in the IFRAME's document. React attaches its listeners at the
- * root container of the tree, and a portal into a second document puts the
- * elements outside the document React is delegating from — so `onPointerDown`
- * on a portalled handle is not something to rely on. Attaching real listeners
- * to the real nodes sidesteps the question entirely, and costs one effect.
+ * The handles are React elements, but the drag needs pointer capture and
+ * document-level move/up listeners with a lifetime of exactly one gesture, and
+ * it must be cancellable from an effect cleanup when the handles are torn down
+ * mid-drag. Attaching real listeners to the real nodes costs one effect and
+ * keeps all of that in one place (`handleDragSession.ts`).
  *
- * ## Why there is no zoom division anywhere in here
+ * ## Zoom
  *
- * The canvas zoom is a CSS transform on the iframe ELEMENT, applied in the
- * parent document. Pointer events raised inside the iframe's own document are
- * reported in that document's untransformed CSS pixels — the browser
- * un-projects the ancestor transform before the event is dispatched. So a 40px
- * pointer delta read here is 40 CSS px of element, at every zoom level. This
- * is the same property that let the selection rings drop their zoom math
- * (`BreakpointSelectionOverlay`'s docblock); dividing by zoom here would
- * double-correct and make the element run away from the cursor at any zoom
- * other than 1. `setPointerCapture` on the handle keeps the whole gesture in
- * that one document even when the cursor leaves the frame. The ONE zoom-aware
- * number is the snap threshold, which is screen px by design (IX-5a).
+ * The handles are in the parent document, so a pointer event is in SCREEN px
+ * and the canvas zoom is a CSS transform on an ancestor. `startHandleDrag`
+ * divides every pointer delta by the zoom it is given (`iframeZoom`, read once
+ * at pointerdown), so everything below works in FRAME px — the space the
+ * element's CSS lives in. A 40 screen-px drag at zoom 0.5 is 80 px of element,
+ * and the snap threshold (screen px by design, IX-5a) is the one number that
+ * is converted back.
  *
  * ## Snapping (P2-E / IX-6e)
  *
@@ -131,9 +127,9 @@ export const DOUBLE_PRESS_MS = 400
 const DOUBLE_PRESS_SLOP_PX = 4
 
 interface ElementResizeDragOptions {
-  /** The handle container portalled into the iframe overlay root, or `null`. */
+  /** The handle container rendered beside the iframe, or `null`. */
   frame: HTMLElement | null
-  /** The iframe document the selected element lives in. */
+  /** The iframe document the selected element lives in (element reads, and the keys the drag hears). */
   iframeDoc: Document | null
   /** The single selected node, or `null` when resize is not offered. */
   nodeId: string | null
@@ -151,14 +147,10 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
     let cancelActive: (() => void) | null = null
 
     // A press on a handle ends in a `click` (and two in a `dblclick`) ON the
-    // handle — and the overlay root sits inside the page's body, so that click
-    // bubbled into the body node's click-to-select: every resize ended with
-    // the PAGE selected instead of the element just sized (measured in
-    // `element-resize.e2e.ts`). Captured at the document, which runs before
-    // any node's own capture handler, and only for targets inside the handle
-    // frame — a click anywhere else is untouched.
+    // handle, which would bubble up the canvas to its empty-board deselect and
+    // end every resize with the selection gone instead of the element just
+    // sized. The handle frame is the last stop for both.
     const swallowHandleClick = (event: MouseEvent) => {
-      if (!frame.contains(event.target as Node | null)) return
       event.preventDefault()
       event.stopPropagation()
     }
@@ -195,11 +187,11 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
         'Resized',
       )
     }
-    iframeDoc.addEventListener('click', swallowHandleClick, true)
-    iframeDoc.addEventListener('dblclick', swallowHandleClick, true)
+    frame.addEventListener('click', swallowHandleClick)
+    frame.addEventListener('dblclick', swallowHandleClick)
     cleanups.push(() => {
-      iframeDoc.removeEventListener('click', swallowHandleClick, true)
-      iframeDoc.removeEventListener('dblclick', swallowHandleClick, true)
+      frame.removeEventListener('click', swallowHandleClick)
+      frame.removeEventListener('dblclick', swallowHandleClick)
     })
 
     for (const handleEl of frame.querySelectorAll<HTMLElement>(`[${RESIZE_HANDLE_ATTR}]`)) {
@@ -249,6 +241,7 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
         // Both read once, here, before the first write of the drag.
         const iframe = view.frameElement
         const guideSurface = resolveResizeGuideSurface(iframe)
+        const zoom = guideSurface?.zoom ?? iframeZoom(iframe)
         const parentNode = node?.parentId ? findNodeById(state, node.parentId) : null
         const snapInput = readResizeSnapInput({
           view,
@@ -260,7 +253,7 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
             const rect = nodeVisualRect(element)
             return rect ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : null
           },
-          zoom: guideSurface?.zoom ?? iframeZoom(iframe),
+          zoom,
           // P5-F - the ruler guides (IX-5c) and the snap toggles (IX-5e).
           guideLines: resizeGuideLines(iframe, selectActiveBoardGuides(state)),
           preferences: state.snapPreferences,
@@ -280,6 +273,7 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
           frame,
           activeAttr: RESIZE_ACTIVE_ATTR,
           iframeDoc,
+          zoom,
           scaleTool,
           callbacks: {
             step: (dx, dy, modifiers) => {

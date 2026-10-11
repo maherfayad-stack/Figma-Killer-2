@@ -16,7 +16,7 @@ import type { VisualComponent } from '@core/visualComponents'
 import { styleRuleSelector } from '@core/page-tree'
 import { selectCanvasPageFor, useEditorStore } from '@site/store/store'
 import { CanvasPageContext } from './CanvasContexts'
-import { useCanvasHoverSelect } from './canvasHover'
+import { useCanvasHoverSelect, type CanvasHover } from './canvasHover'
 
 const EMPTY_VISUAL_COMPONENTS: readonly VisualComponent[] = []
 /** Stable empty fallback for the frame-scoped selection read below (Guideline #239 — no inline `?? []`). */
@@ -54,6 +54,34 @@ export function framePageCanRender(
   framePageId: string | null,
 ): boolean {
   return framePageId === null || (nodeIdToPageIds.get(id)?.includes(framePageId) ?? true)
+}
+
+/**
+ * The node `hover` names for THIS frame, or `null` when the hover belongs to
+ * another one. `hover.breakpointId === null` is a global hover (a Layers row)
+ * that every frame mirrors; one that came from the canvas is scoped to its
+ * breakpoint frame so adjacent previews do not all light up at once, and
+ * `frameId` is the same idea one dimension over (see {@link
+ * useBreakpointOverlaySelectionState}). Pure, so the overlay's synchronous
+ * hover path (a store-free subscription that places the ring in the event's
+ * own task) applies exactly the rule its React render does.
+ */
+export function hoverNodeForFrame(
+  hover: CanvasHover | null,
+  scope: {
+    breakpointId: string
+    frameId: string | null
+    framePageId: string | null
+    nodeIdToPageIds: ReadonlyMap<string, readonly string[]>
+  },
+): string | null {
+  if (!hover) return null
+  if (hover.breakpointId !== null && hover.breakpointId !== scope.breakpointId) return null
+  const owned =
+    hover.frameId === null
+      ? framePageCanRender(scope.nodeIdToPageIds, hover.nodeId, scope.framePageId)
+      : hover.frameId === scope.frameId
+  return owned ? hover.nodeId : null
 }
 
 export interface BreakpointOverlaySelectionState {
@@ -102,13 +130,7 @@ export function useBreakpointOverlaySelectionState(
   // `frameId` is the SAME idea one dimension over — see its own doc.
   const nodeIdToPageIds = useEditorStore((s) => s._nodeIdToPageIds)
   const hoveredNodeId = useCanvasHoverSelect((hover) =>
-    hover &&
-    (hover.breakpointId === null || hover.breakpointId === breakpointId) &&
-    (hover.frameId === null
-      ? framePageCanRender(nodeIdToPageIds, hover.nodeId, framePageId)
-      : hover.frameId === frameId)
-      ? hover.nodeId
-      : null,
+    hoverNodeForFrame(hover, { breakpointId, frameId, framePageId, nodeIdToPageIds }),
   )
   const hoveredBreakpointOrigin = useCanvasHoverSelect((hover) => hover?.breakpointId ?? null)
   const activeBreakpointId = useEditorStore((s) => s.activeBreakpointId)

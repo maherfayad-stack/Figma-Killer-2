@@ -269,19 +269,6 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
     this.post({ type: 'removeOverlay', id })
   }
 
-  select(refs: NodeRef[]): void {
-    this.post({ type: 'select', refs: refs.map((ref) => this.toWireRef(ref.nodeId)) })
-  }
-
-  hover(ref: NodeRef | null): void {
-    if (!ref) {
-      this.post({ type: 'hover', nodeId: null, occurrenceIndex: 0 })
-      return
-    }
-    const wire = this.toWireRef(ref.nodeId)
-    this.post({ type: 'hover', nodeId: wire.nodeId, occurrenceIndex: wire.occurrenceIndex })
-  }
-
   measure(refs: NodeRef[], properties?: string[]): Promise<NodeMeasurement[]> {
     const requestId = `bridge-measure-${this.nextRequestId++}`
     const wireRefs = refs.map((ref) => this.toWireRef(ref.nodeId))
@@ -326,6 +313,11 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
    * folded node's own `clips`/`inert` facts, which is the bridge's documented
    * approximation.
    */
+  /** A cross-origin frame cannot be read in the caller's own task: only `measureAll`'s round trip answers. */
+  measureAllNow(): FrameGeometrySnapshot | null {
+    return null
+  }
+
   measureAll(): Promise<FrameGeometrySnapshot> {
     this.geometryRequested = true
     const requestId = `bridge-measure-all-${this.nextRequestId++}`

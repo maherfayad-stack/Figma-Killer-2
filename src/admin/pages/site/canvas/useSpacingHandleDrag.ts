@@ -1,8 +1,9 @@
 /**
  * useSpacingHandleDrag — the pointer half of the padding / gap handles
- * (P5-E, IX-17), wired imperatively onto bands that live INSIDE the frame's
- * iframe (the same reason `useElementResizeDrag` gives: React does not
- * delegate from a portal into a second document).
+ * (P5-E, IX-17), wired imperatively onto bands that sit beside the frame's
+ * iframe in the PARENT document (SB-4). Pointer positions there are screen px,
+ * so every delta is divided by the canvas zoom before it reaches
+ * `spacingPatch`, whose arithmetic is in frame px.
  *
  * ## Preview, then ONE commit through the inspector's write target
  *
@@ -30,6 +31,7 @@ import { guardDragSession } from '@core/studio-runtime'
 import { beginCanvasGesture, endCanvasGesture } from './canvasGesture'
 import { presentedElementForNode } from './canvasNodeLookup'
 import { createInlineStylePreview } from './elementResizeInlinePreview'
+import { iframeZoom } from './elementResizeGuides'
 import { runSelectionStyleCommand } from './selectionStyleCommands'
 import { spacingPatch, type SpacingBand, type SpacingGeometry, type SpacingModifiers } from './spacingHandleRules'
 
@@ -37,7 +39,7 @@ import { spacingPatch, type SpacingBand, type SpacingGeometry, type SpacingModif
 export const SPACING_BAND_ATTR = 'data-canvas-spacing-band'
 
 interface SpacingHandleDragOptions {
-  /** The band layer portalled into the iframe overlay, or `null`. */
+  /** The band layer rendered beside the iframe, or `null`. */
   layer: HTMLElement | null
   iframeDoc: Document | null
   nodeId: string
@@ -62,10 +64,9 @@ export function useSpacingHandleDrag({ layer, iframeDoc, nodeId, readBands, onDr
     if (!layer || !iframeDoc) return
     let cancelActive: (() => void) | null = null
 
-    // The click that ends a drag lands on a band inside the page's body, and
-    // would select the page (the resize handles' finding).
+    // The click that ends a drag lands on a band, and would bubble up the
+    // canvas to its empty-board deselect (the resize handles' finding).
     const swallowBandClick = (event: MouseEvent) => {
-      if (!layer.contains(event.target as Node | null)) return
       event.preventDefault()
       event.stopPropagation()
     }
@@ -83,6 +84,8 @@ export function useSpacingHandleDrag({ layer, iframeDoc, nodeId, readBands, onDr
 
       const { geometry } = read
       const preview = createInlineStylePreview(target)
+      const pointerDoc = bandEl.ownerDocument
+      const zoom = iframeZoom(iframeDoc.defaultView?.frameElement ?? null)
       const startX = event.clientX
       const startY = event.clientY
       let pointer = { x: startX, y: startY }
@@ -103,7 +106,7 @@ export function useSpacingHandleDrag({ layer, iframeDoc, nodeId, readBands, onDr
         reportDrag({ band, patch })
       }
       const step = () => {
-        patch = spacingPatch(band, geometry, pointer.x - startX, pointer.y - startY, modifiers)
+        patch = spacingPatch(band, geometry, (pointer.x - startX) / zoom, (pointer.y - startY) / zoom, modifiers)
         pendingFrame = pendingFrame ?? requestAnimationFrame(applyPending)
       }
       const onMove = (moveEvent: PointerEvent) => {
@@ -115,7 +118,7 @@ export function useSpacingHandleDrag({ layer, iframeDoc, nodeId, readBands, onDr
 
       // Keys go to whichever document holds focus, so both are heard, in the
       // capture phase, and what this drag uses is claimed.
-      const keyDocuments = [iframeDoc, document]
+      const keyDocuments = [pointerDoc, iframeDoc]
       const onKey = (keyEvent: KeyboardEvent) => {
         if (keyEvent.type === 'keydown' && keyEvent.key === 'Escape') {
           keyEvent.preventDefault()
@@ -134,9 +137,9 @@ export function useSpacingHandleDrag({ layer, iframeDoc, nodeId, readBands, onDr
         cancelActive = null
         disposeGuard()
         if (pendingFrame !== null) cancelAnimationFrame(pendingFrame)
-        iframeDoc.removeEventListener('pointermove', onMove)
-        iframeDoc.removeEventListener('pointerup', onUp)
-        iframeDoc.removeEventListener('pointercancel', onCancel)
+        pointerDoc.removeEventListener('pointermove', onMove)
+        pointerDoc.removeEventListener('pointerup', onUp)
+        pointerDoc.removeEventListener('pointercancel', onCancel)
         for (const doc of keyDocuments) {
           doc.removeEventListener('keydown', onKey, true)
           doc.removeEventListener('keyup', onKey, true)
@@ -168,14 +171,14 @@ export function useSpacingHandleDrag({ layer, iframeDoc, nodeId, readBands, onDr
       // ERR-12 — before the move listener, so a move with the button already
       // up finishes the drag instead of being a step.
       const disposeGuard = guardDragSession({
-        documents: [iframeDoc],
+        documents: [pointerDoc],
         focusWindow: window,
         onReleaseLost: () => finish(true),
         onAbandon: () => finish(false),
       })
-      iframeDoc.addEventListener('pointermove', onMove)
-      iframeDoc.addEventListener('pointerup', onUp)
-      iframeDoc.addEventListener('pointercancel', onCancel)
+      pointerDoc.addEventListener('pointermove', onMove)
+      pointerDoc.addEventListener('pointerup', onUp)
+      pointerDoc.addEventListener('pointercancel', onCancel)
       for (const doc of keyDocuments) {
         doc.addEventListener('keydown', onKey, true)
         doc.addEventListener('keyup', onKey, true)
@@ -183,13 +186,13 @@ export function useSpacingHandleDrag({ layer, iframeDoc, nodeId, readBands, onDr
     }
 
     layer.addEventListener('pointerdown', onPointerDown)
-    iframeDoc.addEventListener('click', swallowBandClick, true)
-    iframeDoc.addEventListener('dblclick', swallowBandClick, true)
+    layer.addEventListener('click', swallowBandClick)
+    layer.addEventListener('dblclick', swallowBandClick)
     return () => {
       cancelActive?.()
       layer.removeEventListener('pointerdown', onPointerDown)
-      iframeDoc.removeEventListener('click', swallowBandClick, true)
-      iframeDoc.removeEventListener('dblclick', swallowBandClick, true)
+      layer.removeEventListener('click', swallowBandClick)
+      layer.removeEventListener('dblclick', swallowBandClick)
     }
   }, [layer, iframeDoc, nodeId])
 }

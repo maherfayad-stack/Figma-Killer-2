@@ -12,11 +12,14 @@
  *  - the canvas-gesture freeze (`beginCanvasGesture` / `endCanvasGesture`)
  *    and, for a resize, the frame's `RESIZE_ACTIVE_ATTR` (the W×H badge,
  *    IX-18);
- *  - pointer capture on the handle, and the pointer listeners on the frame
- *    document (a pointer event inside the iframe is already in the frame's
- *    own CSS px — see `useElementResizeDrag`'s docblock on zoom);
+ *  - pointer capture on the handle, and the pointer listeners on the document
+ *    the handle lives in. Since SB-4 that is the PARENT document: the handles
+ *    are editor chrome beside the iframe, not elements inside it. Pointer
+ *    positions there are screen px, so the session divides every delta by the
+ *    canvas zoom and hands the callbacks FRAME px, the space every resize rule
+ *    works in (see `useElementResizeDrag`'s docblock on zoom);
  *  - ⇧ / ⌥ read on every move AND every key change (IX-6c), and Escape,
- *    claimed in the capture phase of both documents;
+ *    claimed in the capture phase of both documents (focus may be in either);
  *  - ONE write per animation frame — the caller's `paint`;
  *  - `guardDragSession` (ERR-12): a move with the button up finishes at the
  *    last point shown, a window blur abandons.
@@ -30,7 +33,7 @@ import { guardDragSession, resizeModifiersOf, type ResizeModifiers } from '@core
 import { beginCanvasGesture, endCanvasGesture } from './canvasGesture'
 
 export interface HandleDragCallbacks {
-  /** A new pointer delta (frame-document px) or modifier state. Compute; do not write. */
+  /** A new pointer delta (frame px, already divided by the zoom) or modifier state. Compute; do not write. */
   step(dx: number, dy: number, modifiers: ResizeModifiers): void
   /** The write phase, at most once per animation frame. */
   paint(): void
@@ -54,7 +57,10 @@ export interface HandleDragInput {
    * `RESIZE_ACTIVE_ATTR` for a resize (it shows the W×H badge), or `null`.
    */
   activeAttr: string | null
+  /** The frame's document: it holds keyboard focus after a click on the page, so it hears the drag's keys too. */
   iframeDoc: Document
+  /** The canvas zoom the frame is drawn at; a screen-px pointer delta over it is the frame-px delta. */
+  zoom: number
   /** `K4`'s scale tool, latched for the gesture: ⇧ as if held. */
   scaleTool: boolean
   callbacks: HandleDragCallbacks
@@ -62,7 +68,11 @@ export interface HandleDragInput {
 
 /** Start the drag. Returns the cancel to call if the handles go away under it. */
 export function startHandleDrag(input: HandleDragInput): () => void {
-  const { event, handleEl, frame, activeAttr, iframeDoc, scaleTool, callbacks } = input
+  const { event, handleEl, frame, activeAttr, iframeDoc, zoom, scaleTool, callbacks } = input
+  // The document the handle lives in (the parent): the pointer is captured on the handle, so its moves and its
+  // release arrive here.
+  const pointerDoc = handleEl.ownerDocument
+  const scale = zoom > 0 ? zoom : 1
   const startX = event.clientX
   const startY = event.clientY
   let pointer = { x: startX, y: startY }
@@ -93,7 +103,7 @@ export function startHandleDrag(input: HandleDragInput): () => void {
     callbacks.paint()
   }
   const step = () => {
-    callbacks.step(pointer.x - startX, pointer.y - startY, modifiers)
+    callbacks.step((pointer.x - startX) / scale, (pointer.y - startY) / scale, modifiers)
     pendingFrame ??= requestAnimationFrame(applyPending)
   }
 
@@ -108,7 +118,7 @@ export function startHandleDrag(input: HandleDragInput): () => void {
   // both, in the capture phase, and CLAIMS what it uses: an Escape that ends
   // the drag must not also deselect through the dispatcher, and a ⌥ that
   // means "from the centre" must not also open the Alt-hover tree ladder.
-  const keyDocuments = [iframeDoc, document]
+  const keyDocuments = pointerDoc === iframeDoc ? [pointerDoc] : [pointerDoc, iframeDoc]
   const onKey = (keyEvent: KeyboardEvent) => {
     if (keyEvent.type === 'keydown' && keyEvent.key === 'Escape') {
       keyEvent.preventDefault()
@@ -130,9 +140,9 @@ export function startHandleDrag(input: HandleDragInput): () => void {
     finished = true
     disposeGuard()
     if (pendingFrame !== null) cancelAnimationFrame(pendingFrame)
-    iframeDoc.removeEventListener('pointermove', onMove)
-    iframeDoc.removeEventListener('pointerup', onUp)
-    iframeDoc.removeEventListener('pointercancel', onCancel)
+    pointerDoc.removeEventListener('pointermove', onMove)
+    pointerDoc.removeEventListener('pointerup', onUp)
+    pointerDoc.removeEventListener('pointercancel', onCancel)
     for (const doc of keyDocuments) {
       doc.removeEventListener('keydown', onKey, true)
       doc.removeEventListener('keyup', onKey, true)
@@ -155,14 +165,14 @@ export function startHandleDrag(input: HandleDragInput): () => void {
   // ERR-12 — registered BEFORE the move listener below, so a move with the
   // button already up finishes the drag instead of being a step.
   const disposeGuard = guardDragSession({
-    documents: [iframeDoc],
+    documents: [pointerDoc],
     focusWindow: window,
     onReleaseLost: () => finish(true),
     onAbandon: () => finish(false),
   })
-  iframeDoc.addEventListener('pointermove', onMove)
-  iframeDoc.addEventListener('pointerup', onUp)
-  iframeDoc.addEventListener('pointercancel', onCancel)
+  pointerDoc.addEventListener('pointermove', onMove)
+  pointerDoc.addEventListener('pointerup', onUp)
+  pointerDoc.addEventListener('pointercancel', onCancel)
   for (const doc of keyDocuments) {
     doc.addEventListener('keydown', onKey, true)
     doc.addEventListener('keyup', onKey, true)

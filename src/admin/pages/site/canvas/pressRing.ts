@@ -16,10 +16,12 @@
  *     element, the hover ring was sitting on exactly the layer a press means
  *     (hover and press resolve through the same `canvasPressTarget` rule). At
  *     press time it is restyled as a selection ring with one attribute write
- *     (`data-canvas-press-ring`; the rule is in `selectionChromeCss.ts`) - no
- *     DOM added, so none of the childList mutations the frame's layout
- *     observers re-measure for. A press that had no hover ring on that layer
- *     (a touch, a synthetic click) places the hover ring itself.
+ *     (`data-canvas-press-ring`; the rule is in `FrameChrome.module.css`). The
+ *     ring is parent-document chrome beside the iframe (`frameChromeRegistry`),
+ *     so the press writes nothing inside the user's frame at all. A press that
+ *     had no hover ring on that layer (a touch, a synthetic click, a Cmd-press
+ *     that resolves to a deeper layer than the hover did) places the hover ring
+ *     itself, from the frame's rect index.
  *  2. **The store work runs one paint later.** The page activation and the
  *     selection are queued ({@link afterPressPaint}) and run after a frame
  *     has been presented, in order, in ONE task - so one React flush. (Run as
@@ -35,7 +37,9 @@
  * has had its measure pass, and on the next press.
  */
 import { useEditorStore } from '@site/store/store'
-import { measureIframeLocalRect } from './canvasOverlayGeometry'
+import { chromeRectOf } from './frameChromeRects'
+import { frameChromeFor } from './frameChromeRegistry'
+import { peekFrameGeometry } from './frameGeometry/frameGeometryRegistry'
 import { positionOverlayElement } from './canvasSelectionOverlayPositioning'
 
 const PRESS_RING_ATTR = 'data-canvas-press-ring'
@@ -96,14 +100,19 @@ export function afterPressPaint(win: Window, task: () => void): void {
   }
 }
 
-/** Show the hover ring as a selection ring on `target`; returns how to put it back. */
-function borrowHoverRing(doc: Document, nodeId: string, target: Element): (() => void) | null {
-  const ring = doc.querySelector<HTMLElement>('[data-canvas-hover-ring]')
-  if (!ring) return null
+/** Show the frame's hover ring as a selection ring on `nodeId`; returns how to put it back, or `null` when there is no ring to borrow. */
+function borrowHoverRing(iframe: Element | null, nodeId: string): (() => void) | null {
+  const ring = frameChromeFor(iframe)?.hoverRing()
+  if (!ring || !(iframe instanceof HTMLIFrameElement)) return null
   const onThisLayer = ring.getAttribute('data-canvas-overlay-node-id') === nodeId && ring.style.display !== 'none'
   if (!onThisLayer) {
-    const rect = measureIframeLocalRect(target)
+    // The rect index is the whole answer: no element read, no layout. A frame
+    // whose index was never built cannot place the ring this early; the press
+    // then takes the ordinary path (the real ring is placed by the pass the
+    // selection schedules).
+    const rect = chromeRectOf(peekFrameGeometry(iframe), null, nodeId)
     if (!rect) return null
+    ring.setAttribute('data-canvas-overlay-node-id', nodeId)
     positionOverlayElement(ring, rect)
   }
   ring.setAttribute(PRESS_RING_ATTR, 'true')
@@ -117,10 +126,8 @@ function borrowHoverRing(doc: Document, nodeId: string, target: Element): (() =>
 export function selectOnPress(element: Element, nodeId: string, select: () => void): void {
   releasePreviousRing?.()
   releasePreviousRing = null
-  const doc = element.ownerDocument
-  const win = doc.defaultView
-  const target = doc.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`) ?? element
-  const release = win ? borrowHoverRing(doc, nodeId, target) : null
+  const win = element.ownerDocument.defaultView
+  const release = win ? borrowHoverRing(win.frameElement, nodeId) : null
   if (!win || !release) {
     flushPressQueue()
     select()

@@ -14,16 +14,16 @@
  * coalesced pointer move (`gestureForwarding.ts`), so hover follows position,
  * not enter/leave pairs.
  */
-import { SELECTION_OVERLAY_ROOT_ID, STUDIO_NODE_ID_ATTR as NODE_ID_ATTR } from '@core/studio-runtime'
+import { STUDIO_NODE_ID_ATTR as NODE_ID_ATTR } from '@core/studio-runtime'
 
 /** Duck-typed, not `instanceof Element`: the target lives in the frame's own realm. */
 function asElement(target: EventTarget | null): Element | null {
   return target !== null && typeof (target as Partial<Element>).closest === 'function' ? (target as Element) : null
 }
 
-/** The node id the pointer moved INTO on a leave, or `null` when it moved onto no node (outside the frame, or onto the selection chrome). */
+/** The node id the pointer moved INTO on a leave, or `null` when it moved onto no node (outside the frame; the selection chrome is parent-document DOM, so it is never a `relatedTarget` here). */
 export function canvasNodeIdEnteredOnLeave(relatedTarget: EventTarget | null): string | null {
   const entered = asElement(relatedTarget)
-  if (!entered || entered.closest(`#${SELECTION_OVERLAY_ROOT_ID}`)) return null
+  if (!entered) return null
   return entered.closest(`[${NODE_ID_ATTR}]`)?.getAttribute(NODE_ID_ATTR) ?? null
 }

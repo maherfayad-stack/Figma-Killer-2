@@ -128,12 +128,6 @@ export function CanvasLiveSurface({
   // it for positioning context, and queries the iframe element for node rects.
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const [iframeEl, setIframeEl] = useState<HTMLIFrameElement | null>(null)
-  // Always `null` here in practice — `CanvasSelectionOverlayInjector` is
-  // design-mode only (WS-5.1), so a live-interaction `IframeFrameSurface`
-  // never creates one. Tracked (rather than passing a literal `null`) so this
-  // stays correct automatically if that ever changes; `BreakpointSelectionOverlay`
-  // already falls back to its pre-WS-5.1 rendering whenever this is `null`.
-  const [overlayRoot, setOverlayRoot] = useState<HTMLDivElement | null>(null)
   // `live-13` — the frame's adapter, for the overlay to drive a bridge frame's chrome through.
   const [adapter, setAdapter] = useState<FrameDocumentAdapter | null>(null)
 
@@ -193,7 +187,6 @@ export function CanvasLiveSurface({
 
   const handleIframeRef = (handle: IframeFrameSurfaceHandle | null) => {
     setIframeEl(handle?.iframeElement ?? null)
-    setOverlayRoot(handle?.contentOverlayRoot ?? null)
     setAdapter(handle?.adapter ?? null)
   }
 
@@ -337,7 +330,7 @@ export function CanvasLiveSurface({
                   breakpointId={activeBreakpoint.id}
                   viewportRef={viewportRef}
                   iframeElement={bridgeReady ? bridgeIframeEl : iframeEl}
-                  overlayRoot={bridgeReady ? null : overlayRoot}
+                  designMode={false}
                 />
               </CanvasFrameAdapterContext.Provider>
 

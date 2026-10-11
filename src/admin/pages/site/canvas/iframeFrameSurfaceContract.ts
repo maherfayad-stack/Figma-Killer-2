@@ -126,18 +126,9 @@ export interface IframeFrameSurfaceHandle {
   /** Convenience: the iframe's body. `null` until loaded. */
   contentBody: HTMLBodyElement | null
   /**
-   * The in-iframe selection-overlay root (WS-5.1) — `null` in live and
-   * capture modes (never mounted) and until `CanvasSelectionOverlayInjector`
-   * creates it.
-   * `BreakpointSelectionOverlay` portals rings/badge into this instead of the
-   * parent canvas root, so they live in the same coordinate space as the
-   * element they track.
-   */
-  contentOverlayRoot: HTMLDivElement | null
-  /**
    * The frame's `FrameDocumentAdapter` (`live-05`, STATE.md) — `null` until
-   * the iframe document exists. `contentDocument`/`contentBody`/
-   * `contentOverlayRoot` above are migrating to this one field batch by
+   * the iframe document exists. `contentDocument`/`contentBody`
+   * above are migrating to this one field batch by
    * batch; both coexist until every consumer has moved over.
    */
   adapter: FrameDocumentAdapter | null

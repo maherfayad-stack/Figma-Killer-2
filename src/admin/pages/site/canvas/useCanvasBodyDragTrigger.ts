@@ -55,13 +55,13 @@ interface CanvasBodyDragTriggerOptions {
   /** The page this frame renders — the tree a press's depth is resolved against (`canvasPressTarget.ts`). */
   pageId: string | null
   /**
-   * The in-iframe overlay host. Doubles as the DESIGN-FRAME gate (the injector
-   * that creates it is design-mode only, so a live frame never has one) and as
-   * the handle on the iframe's CURRENT document — a frame reload mints a new
-   * document and a new overlay root together, so keying the listener on this
-   * value re-attaches it to the right document automatically.
+   * The frame's CURRENT same-origin document, or `null`. Doubles as the
+   * DESIGN-FRAME gate (a live frame and a bridge frame pass `null`, so pressing
+   * an element there behaves exactly like the published page) and as the handle
+   * on the iframe's current document: a frame reload mints a new document, so
+   * keying the listener on this value re-attaches it to the right one.
    */
-  overlayRoot: HTMLElement | null
+  frameDocument: Document | null
   frameId: string | null
   /** Opens the drag session. Returns false when this press cannot start one. */
   beginDrag: (origin: CanvasDragOrigin) => boolean
@@ -70,7 +70,7 @@ interface CanvasBodyDragTriggerOptions {
 export function useCanvasBodyDragTrigger({
   enabled,
   iframeElement,
-  overlayRoot,
+  frameDocument,
   pageId,
   frameId,
   beginDrag,
@@ -89,7 +89,7 @@ export function useCanvasBodyDragTrigger({
   useEffect(() => {
     if (!enabled) return
     const iframe = iframeElement
-    const doc = overlayRoot?.ownerDocument ?? null
+    const doc = frameDocument
     if (!iframe || !doc) return
 
     const onPointerDown = (event: PointerEvent) => {
@@ -133,14 +133,11 @@ export function useCanvasBodyDragTrigger({
 
       const target = event.target
       if (!isElementLike(target)) return
-      // Editor chrome portaled into this SAME document (WS-5.1). The overlay
-      // root is `pointer-events: none`, so in practice only the resize handles
-      // inside it are pressable — and a resize is `useElementResizeDrag`'s
-      // gesture, not this one. Matched on the overlay root rather than the
-      // handle so anything else that opts back into pointer events later is
-      // excluded by default.
+      // An editor control rendered inside the frame (a live-edit affordance the
+      // frame itself owns) is never a drag. The selection chrome is not one of
+      // them: it lives in the parent document now, so a press on a handle never
+      // reaches this document at all.
       if (target.closest(CANVAS_EDITOR_CONTROL_SELECTOR)) return
-      if (target.closest('[data-studio-canvas-overlay-root]')) return
       // Any authored contentEditable region: the caret is the user's target.
       if (target.closest('[contenteditable]')) return
 
@@ -194,5 +191,5 @@ export function useCanvasBodyDragTrigger({
 
     doc.addEventListener('pointerdown', onPointerDown, true)
     return () => doc.removeEventListener('pointerdown', onPointerDown, true)
-  }, [enabled, iframeElement, overlayRoot, pageId, frameId])
+  }, [enabled, iframeElement, frameDocument, pageId, frameId])
 }

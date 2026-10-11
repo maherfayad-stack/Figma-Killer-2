@@ -46,13 +46,14 @@ import { findNodeById } from './InPlaceInspector/findNodeById'
 import { createInlineStylePreview, type InlineStylePreview } from './elementResizeInlinePreview'
 import { authoredOffsets, planNudge, type NudgePlan } from './canvasNodeArrowMove'
 import { groupUnionRect, memberResizeStep, resizeGroupBox, type GroupResizeMember } from './groupResize'
+import { iframeZoom } from './elementResizeGuides'
 import { startHandleDrag } from './handleDragSession'
 
 /** A node with no `style={{…}}` of its own — stable, so no fallback object is built per press. */
 const NO_INLINE_STYLES: Readonly<Record<string, unknown>> = {}
 
 interface GroupResizeDragOptions {
-  /** The handle container portalled into the iframe overlay root, or `null`. */
+  /** The handle container rendered beside the iframe, or `null`. */
   frame: HTMLElement | null
   /** The iframe document the selected elements live in. */
   iframeDoc: Document | null
@@ -84,19 +85,17 @@ export function useGroupResizeDrag({ frame, iframeDoc, nodeIdsKey }: GroupResize
     const cleanups: Array<() => void> = []
     let cancelActive: (() => void) | null = null
 
-    // The handles sit inside the page's body: without this, the click that
-    // ends a drag would bubble into the body's click-to-select and select
-    // the PAGE (the same guard the single drag has).
+    // The click that ends a drag would bubble up the canvas to its empty-board
+    // deselect (the same guard the single drag has).
     const swallowHandleClick = (event: MouseEvent) => {
-      if (!frame.contains(event.target as Node | null)) return
       event.preventDefault()
       event.stopPropagation()
     }
-    iframeDoc.addEventListener('click', swallowHandleClick, true)
-    iframeDoc.addEventListener('dblclick', swallowHandleClick, true)
+    frame.addEventListener('click', swallowHandleClick)
+    frame.addEventListener('dblclick', swallowHandleClick)
     cleanups.push(() => {
-      iframeDoc.removeEventListener('click', swallowHandleClick, true)
-      iframeDoc.removeEventListener('dblclick', swallowHandleClick, true)
+      frame.removeEventListener('click', swallowHandleClick)
+      frame.removeEventListener('dblclick', swallowHandleClick)
     })
 
     for (const handleEl of frame.querySelectorAll<HTMLElement>(`[${RESIZE_HANDLE_ATTR}]`)) {
@@ -142,6 +141,7 @@ export function useGroupResizeDrag({ frame, iframeDoc, nodeIdsKey }: GroupResize
           frame,
           activeAttr: RESIZE_ACTIVE_ATTR,
           iframeDoc,
+          zoom: iframeZoom(view.frameElement),
           scaleTool: state.canvasTool === 'scale',
           callbacks: {
             step: (dx, dy, modifiers) => {

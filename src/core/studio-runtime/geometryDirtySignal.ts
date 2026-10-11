@@ -18,8 +18,9 @@
  *  - **the `<head>`**: a `<style>` rewritten by the class/authored-CSS injectors
  *    moves boxes without touching the body;
  *  - **`load`** (an image or stylesheet finishing), **font loading**
- *    (`document.fonts` `loadingdone`) and **`transitionend`/`animationend`**:
- *    layout moves with no DOM mutation at all;
+ *    (`document.fonts` `loadingdone`), **`transitionend`/`animationend`** and
+ *    **`scroll`** (a scrolled container moves every box inside it): layout
+ *    moves with no DOM mutation at all;
  *  - **window `resize`**: a different viewport width reflows the page.
  *
  * ## A latch, not a stream
@@ -70,7 +71,8 @@ export function createGeometryDirtySignal(doc: Document, view: Window & typeof g
         // listeners below still cover everything but a stylesheet rewrite.
       }
     }
-    for (const type of ['load', 'transitionend', 'animationend']) {
+    // `scroll` does not bubble, so it is caught in the capture phase: a scrolled container moves every box it clips.
+    for (const type of ['load', 'transitionend', 'animationend', 'scroll']) {
       doc.addEventListener(type, notify, true)
       releases.push(() => doc.removeEventListener(type, notify, true))
     }

@@ -152,19 +152,18 @@ const SELECTOR_HIGHLIGHT_RING_CAP = 300
  * matching `selector` inside the breakpoint iframe (capped). Returns null
  * when the highlight is inactive (clears the pool in the write phase).
  *
- * `measure` is a plain measurement function rather than a whole
- * `CanvasOverlayMeasureSession` — the affinity rings live in the in-iframe
- * overlay root now (WS-5.1), so the caller passes `measureIframeLocalRect`
- * (no zoom/offset conversion needed); the signature stays generic so a
- * caller that genuinely needs parent-document coordinates could still pass
- * `session.measure`.
+ * `measure` is a plain measurement function: the rings are painted in the
+ * frame's own viewport px beside the iframe, so the caller passes
+ * `measureIframeLocalRect` (the element's rect in that same space).
  */
 export function measureSelectorHighlightRects(
   selector: string | null,
-  iframeDoc: Document,
+  iframeDoc: Document | null,
   measure: (target: HTMLElement | null) => CanvasOverlayRect | null,
 ): CanvasOverlayRect[] | null {
   if (!selector) return null
+  // A bridge frame has no reachable document: the affinity highlight is a portal-frame affordance.
+  if (!iframeDoc) return []
 
   // Ambient selectors are arbitrary author/CSS-importer strings; a malformed
   // one makes querySelectorAll throw. Treat that as "matches nothing" rather
@@ -186,28 +185,16 @@ export function measureSelectorHighlightRects(
 }
 
 /**
- * Styling for an affinity ring created OUTSIDE the in-iframe overlay root —
- * the live-mode / transient-startup fallback (see `BreakpointSelectionOverlay`'s
- * `usingIframeOverlay`). `className` is the caller's pre-composed CSS Module
- * class string (this module doesn't import CSS Modules itself, to stay
- * decoupled from any one component's stylesheet); `mode` is the same
- * scoped/fixed value the selection toolbar already uses.
- */
-export interface LegacySelectorRingStyle {
-  className: string
-  mode: 'scoped' | 'fixed'
-}
-
-/**
  * WRITE-phase half: sync the orange affinity ring pool under `container` to
  * the measured `rects` — grows the pool as needed, positions each ring, and
  * hides any surplus from a previous, larger match set (rings are reused, not
- * removed). `rects === null` clears the pool.
+ * removed). `rects === null` clears the pool. `ringClassName` is the chrome
+ * module's own ring class (this module does not import CSS Modules itself).
  */
 export function syncSelectorHighlightRings(
   container: HTMLDivElement | null,
   rects: CanvasOverlayRect[] | null,
-  legacyStyle?: LegacySelectorRingStyle | null,
+  ringClassName: string,
 ): void {
   if (!container) return
   if (!rects) {
@@ -219,18 +206,8 @@ export function syncSelectorHighlightRings(
     let ring = container.children[i] as HTMLDivElement | undefined
     if (!ring) {
       ring = container.ownerDocument.createElement('div')
-      // Inside the in-iframe overlay root (WS-5.1, `legacyStyle` omitted):
-      // hashed CSS Module class names from the parent document don't exist
-      // inside the iframe, so appearance comes ONLY from
-      // `CanvasSelectionOverlayInjector`'s `[data-canvas-selector-highlight-ring]`
-      // rule. In the live-mode / transient-startup fallback (`legacyStyle`
-      // provided), the ring is portaled into the PARENT document instead,
-      // where the CSS Module class is what actually paints it.
       ring.setAttribute('data-canvas-selector-highlight-ring', 'true')
-      if (legacyStyle) {
-        ring.className = legacyStyle.className
-        ring.setAttribute('data-canvas-ring-mode', legacyStyle.mode)
-      }
+      ring.className = ringClassName
       container.appendChild(ring)
     }
     positionOverlayElement(ring, rects[i])
@@ -403,6 +380,7 @@ export function publishSelectionAnchor(
   element.style.setProperty('--selection-anchor-h', `${r.height}px`)
 }
 
+/** Screen px between the badge and its ring. */
 const NODE_BADGE_GAP = 4
 const NODE_BADGE_FALLBACK_HEIGHT = 20
 
@@ -410,6 +388,7 @@ interface AppliedBadgePlacement {
   x: number
   y: number
   label: string
+  above: boolean
 }
 
 /** Last placement + label applied per badge — same no-op-when-unchanged idea as `appliedOverlayPlacements`. */
@@ -437,15 +416,21 @@ export function resolveNodeBadgeLabel(
 /**
  * Position the node-name badge (WS-5.1) just above its ring's top-left
  * corner, Figma-style — or just below when there's no room above (the ring
- * sits at the very top of the frame). `ringRect` is iframe-local (the SAME
- * rect the selection ring for this node was just positioned with), so no
- * extra measurement pass. `label` is the node's tag or display name; a
+ * sits at the very top of the frame). `ringRect` is in the frame's viewport px
+ * (the SAME rect the selection ring for this node was just positioned with),
+ * so no extra measurement pass. `label` is the node's tag or display name; a
  * `null` rect or label hides the badge.
+ *
+ * The badge is the one piece of chrome with TEXT, so it is kept at screen size
+ * at every zoom: anchored at the ring's corner (frame px), then scaled by
+ * `1 / --canvas-zoom` about that corner and stepped above it in its own,
+ * screen-sized units. `zoom` is only for the above-or-below decision.
  */
 export function positionNodeBadge(
   badge: HTMLElement | null,
   ringRect: CanvasOverlayRect | null,
   label: string | null,
+  zoom = 1,
 ): void {
   if (!badge) return
   if (!ringRect || !label) {
@@ -456,7 +441,9 @@ export function positionNodeBadge(
     return
   }
 
+  const scale = zoom > 0 ? zoom : 1
   const prev = appliedBadgePlacements.get(badge)
+  const wasAbove = prev !== undefined && prev !== 'hidden' ? prev.above : true
   if (
     prev !== undefined &&
     prev !== 'hidden' &&
@@ -464,18 +451,22 @@ export function positionNodeBadge(
     prev.y === ringRect.y &&
     prev.label === label
   ) {
-    return
+    // Same ring, same text: only a zoom change could flip it, and the flip is decided below.
+    const badgeHeight = badge.offsetHeight || NODE_BADGE_FALLBACK_HEIGHT
+    if ((ringRect.y * scale >= badgeHeight + NODE_BADGE_GAP) === wasAbove) return
   }
 
   if (badge.textContent !== label) badge.textContent = label
   badge.style.display = ''
   // Measured AFTER `textContent`/`display` are current, so `offsetHeight`
-  // reflects the label actually being shown this tick.
+  // reflects the label actually being shown this tick (screen px: the badge's
+  // own box is not scaled by the board's zoom, see above).
   const badgeHeight = badge.offsetHeight || NODE_BADGE_FALLBACK_HEIGHT
-  const aboveY = ringRect.y - badgeHeight - NODE_BADGE_GAP
-  const y = aboveY >= 0 ? aboveY : ringRect.y + NODE_BADGE_GAP
-  badge.style.transform = `translate(${ringRect.x}px, ${y}px)`
-  appliedBadgePlacements.set(badge, { x: ringRect.x, y: ringRect.y, label })
+  const above = ringRect.y * scale >= badgeHeight + NODE_BADGE_GAP
+  badge.style.transform =
+    `translate(${ringRect.x}px, ${ringRect.y}px) scale(calc(1 / var(--canvas-zoom))) ` +
+    (above ? `translateY(calc(-100% - ${NODE_BADGE_GAP}px))` : `translateY(${NODE_BADGE_GAP}px)`)
+  appliedBadgePlacements.set(badge, { x: ringRect.x, y: ringRect.y, label, above })
 }
 
 /**

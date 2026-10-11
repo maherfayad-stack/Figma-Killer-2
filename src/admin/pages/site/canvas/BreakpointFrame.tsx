@@ -90,7 +90,7 @@ interface BreakpointFrameProps {
    * L8 Phase A — notified with this frame's `FrameDocumentAdapter` whenever
    * it changes (mirrors `IframeFrameSurfaceHandle.adapter`, which already
    * updates on the same `useImperativeHandle` recompute this component's own
-   * `handleIframeRef` already reacts to for `iframeEl`/`overlayRoot`).
+   * `handleIframeRef` already reacts to for `iframeEl`).
    * `LiveBoardFrame` uses this to subscribe to `adapter.on('ready', ...)` and
    * flip its not-ready/ready render fork. `undefined` for every other
    * caller, who has no such need — a no-op call costs nothing.
@@ -109,9 +109,8 @@ interface BreakpointFrameProps {
    * this to `false` on its hidden bridge `BreakpointFrame` while the adapter
    * hasn't fired `ready` yet: that frame's iframe still boots concurrently
    * (the whole point of the not-ready/ready render fork), but its OWN overlay
-   * has nothing to measure (`overlayRoot` is never mounted in bridge mode
-   * anyway) and `useBridgeSelectionChrome` would otherwise open a real
-   * `postMessage` round trip — `select`/`hover`/`measure` — into a document
+   * has nothing to measure yet and its rect index would otherwise open a real
+   * `postMessage` round trip — `measureAll` — into a document
    * that has not finished loading, AND render a second, independently-
    * positioned toolbar/inspector stacked on top of the Tier-0 fallback's own
    * (real, already-working) chrome for the exact same selection. The bridge
@@ -167,9 +166,6 @@ export const BreakpointFrame = memo(function BreakpointFrame({
   // `getBoundingClientRect()` call. State (not ref) so the overlay re-renders
   // when the iframe mounts.
   const [iframeEl, setIframeEl] = useState<HTMLIFrameElement | null>(null)
-  // The in-iframe selection-overlay root (WS-5.1) — state so the overlay
-  // re-renders once it's ready to portal rings/badge into it.
-  const [overlayRoot, setOverlayRoot] = useState<HTMLDivElement | null>(null)
   // `live-13` — the same adapter `onAdapterChange` reports, kept here and
   // provided to the selection overlay (through context, never as a prop —
   // see the overlay's own note) so it can drive a bridge frame's chrome.
@@ -224,7 +220,6 @@ export const BreakpointFrame = memo(function BreakpointFrame({
   const handleIframeRef = (handle: IframeFrameSurfaceHandle | null) => {
     iframeHandleRef.current = handle
     setIframeEl(handle?.iframeElement ?? null)
-    setOverlayRoot(handle?.contentOverlayRoot ?? null)
     setAdapter(handle?.adapter ?? null)
     onAdapterChange?.(handle?.adapter ?? null)
   }
@@ -362,18 +357,18 @@ export const BreakpointFrame = memo(function BreakpointFrame({
           </CanvasTemplateContext.Provider>
         </IframeFrameSurface>
 
-        {/* Selection / hover rings + node badge render INSIDE the iframe
-            (WS-5.1, see CanvasSelectionOverlayInjector) via `overlayRoot`.
-            The toolbar and InPlaceInspector still portal into the parent
-            document — real inputs/buttons inside a transformed iframe are a
-            worse problem — anchored via the `--selection-anchor-*` channel. */}
+        {/* Selection / hover rings, node badge and resize handles render in the
+            PARENT document, in a chrome root beside the iframe, from the
+            frame's rect index (SB-4, see BreakpointSelectionOverlay). The
+            toolbar and InPlaceInspector portal into the canvas root — real
+            inputs/buttons inside a transformed iframe are a worse problem —
+            anchored via the `--selection-anchor-*` channel. */}
         {overlayEnabled && (
           <CanvasFrameAdapterContext.Provider value={adapter}>
             <BreakpointSelectionOverlay
               breakpointId={breakpoint.id}
               viewportRef={viewportRef}
               iframeElement={iframeEl}
-              overlayRoot={overlayRoot}
               frameId={frameId}
             />
           </CanvasFrameAdapterContext.Provider>

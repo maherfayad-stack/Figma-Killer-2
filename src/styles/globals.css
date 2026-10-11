@@ -391,6 +391,11 @@
     --canvas-frame-paper: #ffffff;
     --canvas-frame-paper-dark: #121212;
     --canvas-chrome-shadow: 0 12px 28px var(--scrim-30);
+    /* The canvas zoom, republished on the board's transform layer every rAF
+       (`useCanvas`). 1 everywhere else, so a `calc(1px / var(--canvas-zoom))`
+       counter-scale on a surface outside the board (the live surface) still
+       resolves. */
+    --canvas-zoom: 1;
     --canvas-selection-ring: inset 0 0 0 1px #39ff14;
     --canvas-hover-ring: inset 0 0 0 1px #ff2bd6;
     /* Bare colours for surfaces that need an `outline` / `border-color` / or
