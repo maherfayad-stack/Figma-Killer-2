@@ -14,7 +14,6 @@
  */
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { Project } from 'ts-morph'
 import { classNamesOfStylesheets, exposeClassOverride, promoteClassOverride } from '@core/ast-codemods'
 import { classifyStylesheetEditability } from '@core/css-codemods'
 import { listWorkspaceFiles, writeSourceFile } from '@core/page-parser'
@@ -80,7 +79,7 @@ function projectClassNames(dir: string): Set<string> {
   return classNamesOfStylesheets(texts)
 }
 
-export function applyClassOverrideEdit(dir: string, edit: ClassOverrideEdit, locate: LocateNode, project: Project | undefined): StudioEditApplyOutcome {
+export function applyClassOverrideEdit(dir: string, edit: ClassOverrideEdit, locate: LocateNode): StudioEditApplyOutcome {
   const decoded = decodeSegments(edit, locate)
   if (!decoded) return { applied: false, unwritable: 'no-source-location' }
   const editability = classifyStylesheetEditability(edit.file)
@@ -95,7 +94,6 @@ export function applyClassOverrideEdit(dir: string, edit: ClassOverrideEdit, loc
     css: { text, write: (next: string) => writeSourceFile(cssPath, next), convention: /\.module\.css$/i.test(edit.file) ? ('module' as const) : ('plain' as const) },
     selector: edit.selector,
     ...(edit.atRule !== undefined ? { atRule: edit.atRule } : {}),
-    ...(project ? { project } : {}),
   }
   const result =
     edit.kind === 'expose-class'

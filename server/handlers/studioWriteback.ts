@@ -386,8 +386,8 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
     }
     case 'expose-class':
     case 'promote-class-override':
-      // G-2b — a class edit for one instance: the page, the component and the stylesheet, each position through the one decoder.
-      return applyClassOverrideEdit(dir, edit, (id) => studioEditLocation(dir, id, scope), project)
+      // G-2b — a class edit for one instance (page, component, stylesheet).
+      return applyClassOverrideEdit(dir, edit, (id) => studioEditLocation(dir, id, scope))
     case 'swap': {
       const result = swapComponentInstance({
         ...loc,

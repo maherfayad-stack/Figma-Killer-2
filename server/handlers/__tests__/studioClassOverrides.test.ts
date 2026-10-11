@@ -85,7 +85,7 @@ interface Board {
 
 async function board(component = 'Tier'): Promise<Board> {
   const loaded = await loadStudioPages(dir)
-  const order = (node: PageNode) => Number(/:(\d+):\d+$/.exec(node.id)![1])
+  const order = (node: PageNode) => Number(/:(\d+):\d+$/.exec(node.id)?.[1] ?? 0)
   const instances = loaded.pages
     .flatMap((page) => Object.values(page.nodes))
     .filter((node) => node.moduleId === 'studio.instance' && (node.props as { componentName?: string }).componentName === component)
@@ -277,5 +277,165 @@ describe('the file\'s own idiom', () => {
     const after = await board()
     expect(classesOf(after, after.instances[1]!).length).toBe(2)
     expect(classesOf(after, after.instances[0]!).length).toBe(1)
+  })
+})
+
+// --- spread-forwarding -------------------------------------------------------------------------------------------
+
+const TIER_ACCEPTING = [
+  "import './Tier.css'",
+  'interface TierProps { name: string; price: number; className?: string }',
+  'export function Tier({ name, price, className }: TierProps) {',
+  '  return (',
+  "    <section className={`tier ${className || ''}`}>",
+  '      <h3 className="tier__name">Plan</h3>',
+  '      <p className="tier__price">{name}{price}</p>',
+  '    </section>',
+  '  )',
+  '}',
+  '',
+].join('\n')
+
+const PANEL_SPREAD = ["import { Tier } from './Tier'", 'interface PanelProps { name: string; price: number }', 'export function Panel(props: PanelProps) {', '  return <Tier {...props} />', '}', ''].join('\n')
+
+const PANEL_HOME = [
+  "import { Panel } from '../components/Panel'",
+  'export default function Home() {',
+  '  return (',
+  '    <main>',
+  '      <Panel name="Basic" price={5} />',
+  '      <Panel name="Plus" price={9} />',
+  '      <Panel name="Pro" price={19} />',
+  '    </main>',
+  '  )',
+  '}',
+  '',
+].join('\n')
+
+const PANEL_FILES = ['components/Tier.tsx', 'components/Tier.css', 'components/Panel.tsx', 'pages/Home.tsx']
+
+function spreadProject(panel = PANEL_SPREAD, tier = TIER): void {
+  write('components/Tier.tsx', tier)
+  write('components/Panel.tsx', panel)
+  write('pages/Home.tsx', PANEL_HOME)
+}
+
+function byId(b: Board, id: string | undefined): PageNode {
+  return b.pages.flatMap((page) => Object.values(page.nodes)).find((node) => node.id === id)!
+}
+
+/** The Tier root inside a Panel instance (Panel -> Tier -> root). */
+function innerRootOf(b: Board, panel: PageNode): PageNode {
+  return byId(b, byId(b, panel.children[0]).children[0])
+}
+
+describe('a component that passes its props on with a spread is not edited', () => {
+  it("the class travels through the spread: the page's call site passes it, the forwarder gains only the type, the inner root reads it", async () => {
+    spreadProject(PANEL_SPREAD, TIER_ACCEPTING)
+    const before = await board('Panel')
+    expect(before.instances).toHaveLength(3)
+    const original = snapshot(PANEL_FILES)
+    const result = applyStudioEditBatch(dir, [exposeClass(innerRootOf(before, before.instances[1]!).id, { padding: '20px' })], {}, EDITOR)
+    expect(result.refusals).toEqual([])
+    expect(read('pages/Home.tsx')).toContain('<Panel name="Plus" price={9} className="tier-home-2" />')
+    // Tier already took className; Panel's body is untouched, its props type gains the property.
+    expect(read('components/Tier.tsx')).toBe(TIER_ACCEPTING)
+    expect(read('components/Panel.tsx')).toBe(PANEL_SPREAD.replace('price: number }', 'price: number; className?: string }'))
+
+    const after = await board('Panel')
+    const classes = (node: PageNode) => (innerRootOf(after, node).classIds ?? []).map((id) => after.styleRules[id]?.name)
+    expect(classes(after.instances[0]!)).toEqual(['tier'])
+    expect(classes(after.instances[1]!)).toEqual(['tier', 'tier-home-2'])
+    expect(classes(after.instances[2]!)).toEqual(['tier'])
+
+    expect(applyStudioEditBatch(dir, [restore(result.undoToken!)], {}, EDITOR).refusals).toEqual([])
+    expect(snapshot(PANEL_FILES)).toEqual(original)
+  })
+
+  it('a literal travels through the spread too: the page passes it, the inner component declares it, the other instances read the default', async () => {
+    spreadProject(PANEL_SPREAD, TIER_ACCEPTING)
+    const before = await board('Panel')
+    const heading = byId(before, innerRootOf(before, before.instances[1]!).children[0])
+    const result = applyStudioEditBatch(dir, [{ kind: 'expose-prop', nodeId: heading.id, overrides: [{ target: { kind: 'text' }, propName: 'heading', value: 'Starter' }] }], {}, EDITOR)
+    expect(result.refusals).toEqual([])
+    expect(read('pages/Home.tsx')).toContain('<Panel name="Plus" price={9} heading="Starter" />')
+    expect(read('pages/Home.tsx')).toContain('<Panel name="Basic" price={5} />')
+    expect(read('components/Panel.tsx')).toBe(PANEL_SPREAD.replace('price: number }', 'price: number; heading?: string }'))
+    expect(read('components/Tier.tsx')).toContain("heading = 'Plan'")
+    expect(read('components/Tier.tsx')).toContain('<h3 className="tier__name">{heading}</h3>')
+
+    const after = await board('Panel')
+    const texts = after.instances.map((panel) => (byId(after, innerRootOf(after, panel).children[0]).props as { text: string }).text)
+    expect(texts).toEqual(['Plan', 'Starter', 'Plan'])
+  })
+
+  it('a forwarder that takes className itself, a filtering spread and a hop that passes props one by one are refused by name, writing nothing', async () => {
+    const cases: [string, string][] = [
+      ['class-filtered', ["import { Tier } from './Tier'", 'interface PanelProps { name: string; price: number; className?: string }', 'export function Panel({ className, ...rest }: PanelProps) {', '  return <Tier {...rest} />', '}', ''].join('\n')],
+      ['class-filtered', ["import { Tier } from './Tier'", 'interface PanelProps { name: string; price: number }', 'const omit = (props: PanelProps) => props', 'export function Panel(props: PanelProps) {', '  return <Tier {...omit(props)} />', '}', ''].join('\n')],
+      ['class-not-forwarded', ["import { Tier } from './Tier'", 'export function Panel({ name, price }: { name: string; price: number }) {', '  return <Tier name={name} price={price} />', '}', ''].join('\n')],
+    ]
+    for (const [reason, panel] of cases) {
+      spreadProject(panel, TIER_ACCEPTING)
+      const before = await board('Panel')
+      const files = snapshot(PANEL_FILES)
+      const result = applyStudioEditBatch(dir, [exposeClass(innerRootOf(before, before.instances[1]!).id, { padding: '20px' })], {}, EDITOR)
+      expect(result.refusals.map((refusal) => refusal.reason)).toEqual([reason])
+      expect(result.written).toBe(0)
+      expect(snapshot(PANEL_FILES)).toEqual(files)
+    }
+  })
+
+  it('a literal through a filtering spread is refused as a spread it cannot read', async () => {
+    spreadProject(["import { Tier } from './Tier'", 'const omit = (props: { name: string; price: number }) => props', 'export function Panel(props: { name: string; price: number }) {', '  return <Tier {...omit(props)} />', '}', ''].join('\n'), TIER_ACCEPTING)
+    const before = await board('Panel')
+    const heading = byId(before, innerRootOf(before, before.instances[1]!).children[0])
+    const files = snapshot(PANEL_FILES)
+    const result = applyStudioEditBatch(dir, [{ kind: 'expose-prop', nodeId: heading.id, overrides: [{ target: { kind: 'text' }, propName: 'heading', value: 'Starter' }] }], {}, EDITOR)
+    expect(result.refusals.map((refusal) => refusal.reason)).toEqual(['call-site-spread'])
+    expect(snapshot(PANEL_FILES)).toEqual(files)
+  })
+})
+
+describe("what cannot be given one instance's own class is refused by name, writing nothing", () => {
+  it("an element inside the component (only the root takes a class), a spread at the page's call site, and another call site that passes a className", async () => {
+    const before = await board()
+    const inner = byId(before, rootOf(before, before.instances[1]!).children[0])
+    let files = snapshot(ALL)
+    let result = applyStudioEditBatch(dir, [exposeClass(inner.id, { color: 'red' }, { selector: '.tier__name' })], {}, EDITOR)
+    expect(result.refusals.map((refusal) => refusal.reason)).toEqual(['class-not-root'])
+    expect(snapshot(ALL)).toEqual(files)
+
+    write('pages/Home.tsx', HOME.replace('<Tier name="Plus" price={9} />', '<Tier name="Plus" price={9} {...extra} />').replace('export default function Home() {', 'const extra = {}\nexport default function Home() {'))
+    const spread = await board()
+    files = snapshot(ALL)
+    result = applyStudioEditBatch(dir, [exposeClass(spread.instances[1]!.children[0]!, { padding: '20px' })], {}, EDITOR)
+    expect(result.refusals.map((refusal) => refusal.reason)).toEqual(['call-site-spread'])
+    expect(snapshot(ALL)).toEqual(files)
+
+    write('pages/Home.tsx', HOME)
+    write('pages/Other.tsx', ["import { Tier } from '../components/Tier'", 'export default function Other() {', '  return <Tier name="Legacy" price={1} className="legacy" />', '}', ''].join('\n'))
+    const stray = await board()
+    files = snapshot([...ALL, 'pages/Other.tsx'])
+    result = applyStudioEditBatch(dir, [exposeClass(stray.instances[0]!.children[0]!, { padding: '20px' })], {}, EDITOR)
+    expect(result.refusals.map((refusal) => refusal.reason)).toEqual(['call-site-class'])
+    expect(snapshot([...ALL, 'pages/Other.tsx'])).toEqual(files)
+  })
+
+  it('a stylesheet that does not parse and a rule that is not one plain class', async () => {
+    const before = await board()
+    let result = applyStudioEditBatch(dir, [exposeClass(before.instances[1]!.children[0]!, { padding: '20px' }, { selector: '.tier:hover' })], {}, EDITOR)
+    expect(result.refusals.map((refusal) => refusal.reason)).toEqual(['class-selector-unsupported'])
+    write('components/Tier.css', '.tier { padding: ')
+    const files = snapshot(ALL)
+    result = applyStudioEditBatch(dir, [exposeClass(before.instances[1]!.children[0]!, { padding: '20px' })], {}, EDITOR)
+    expect(result.refusals.map((refusal) => refusal.reason)).toEqual(['css-syntax'])
+    expect(snapshot(ALL)).toEqual(files)
+  })
+
+  it('an Apply to all with nothing to apply', async () => {
+    const before = await board()
+    const result = applyStudioEditBatch(dir, [{ kind: 'promote-class-override', nodeId: before.instances[1]!.children[0]!, file: 'components/Tier.css', selector: '.tier', properties: ['padding'] }], {}, EDITOR)
+    expect(result.refusals.map((refusal) => refusal.reason)).toEqual(['not-an-override'])
   })
 })
