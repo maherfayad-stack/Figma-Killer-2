@@ -86,6 +86,7 @@ describe('previewStructuralTransplant — what it commits', () => {
         anchorNodeId: ABOUT_H1,
         position: 'before',
         copy: false,
+        parentIsEmpty: false,
       },
     })
   })
