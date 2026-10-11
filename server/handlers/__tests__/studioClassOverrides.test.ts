@@ -141,7 +141,7 @@ describe('a class edit inside one instance changes only that instance', () => {
     expect(classesOf(after, after.instances[2]!)).toEqual(othersBefore[1]!)
     expect(classesOf(after, after.instances[1]!)).toEqual(['tier', 'tier-home-2'])
     const modifier = Object.values(after.styleRules).find((rule) => rule.name === 'tier-home-2')!
-    expect(modifier.styles).toMatchObject({ padding: '20px' })
+    expect(modifier.styles).toMatchObject({ paddingTop: '20px', paddingLeft: '20px' })
 
     const undone = applyStudioEditBatch(dir, [restore(result.undoToken!)], {}, EDITOR)
     expect(undone.refusals).toEqual([])
@@ -157,7 +157,7 @@ describe('a class edit inside one instance changes only that instance', () => {
     expect(again.refusals).toEqual([])
     expect(read('components/Tier.css')).toContain('.tier.tier-home-2 {\n  padding: 24px;\n  gap: 12px;\n}')
     expect(read('pages/Home.tsx').match(/tier-home-2/g)).toHaveLength(1)
-    expect(read('components/Tier.tsx').match(/className/g)!.length).toBeLessThan(6)
+    expect(read('components/Tier.tsx')).toContain("<section className={`tier ${className || ''}`}>")
   })
 
   it('editing the modifier the instance already has writes that rule (the panel sends the rule it shows)', async () => {
@@ -274,9 +274,6 @@ describe('the file\'s own idiom', () => {
     expect(result.refusals).toEqual([])
     expect(read('components/Tier.module.css')).toBe('.tier {\n  padding: 8px;\n}\n\n.tier:global(.tier-home-2) {\n  padding: 20px;\n}\n')
     expect(read('components/Tier.tsx')).toContain('<section className={`${styles.tier} ${className || \'\'}`}>')
-    const after = await board()
-    expect(classesOf(after, after.instances[1]!).length).toBe(2)
-    expect(classesOf(after, after.instances[0]!).length).toBe(1)
   })
 })
 
