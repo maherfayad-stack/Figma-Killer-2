@@ -2103,7 +2103,15 @@ inlined once per URL) into an SVG `<foreignObject>` and draws it once at poster
 size, which replaced `html-to-image` (85–1,160 ms of main thread) on the board
 path. `html-to-image` remains only in `agent/renderEvidence.ts` (agent exports).
 What the rasterizer cannot draw by name: `<video>`/`<canvas>` pixels, iframe
-children, `@import`ed and cross-origin `<link>` sheets. `framePosterQueue`'s busy
+children, `@import`ed and cross-origin `<link>` sheets. The frame document's `<html>` carries
+`overflow: hidden` (grow-to-content reset) and its body is pinned to the nominal frame height; in
+the live document that overflow propagates to the viewport, inside a `foreignObject` it clips, so
+the rasterizer appends `html{overflow:visible !important}` or a 1301 px screen comes out blank
+below 800 px (gated by the `poster fidelity` assertion in `board-scale-budgets.e2e.ts`).
+**Containment (SB-1):** `.frame` is `contain: layout style` (never `paint`: handles, title and
+ring hang outside), the title placeholder is `content-visibility: auto`, and a Layers row
+selects/hovers with `selectLayersFrameId` (the frame the user last worked in, else the first frame
+of the active page) so the rings mount in one frame, not every variant. `framePosterQueue`'s busy
 listeners run in every mounted frame document too (portal: DOM listeners; bridge:
 the adapter's `pointer`/`wheel`/`key` events), so a press inside a frame holds the
 queue. Each capture records a `studio:poster-capture` User Timing measure.
