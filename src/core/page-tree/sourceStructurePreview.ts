@@ -18,7 +18,7 @@
  * being lifted in one surface and forgotten in another.
  */
 import { chooseGroupWrapperTag } from '@core/utils/htmlContentModel'
-import { isSourceDerivedNodeId, isStudioPageRootId, loopTemplateNodeId } from './sourceNodeId'
+import { decodeSourceNodeId, isSourceDerivedNodeId, isStudioPageRootId, loopTemplateNodeId } from './sourceNodeId'
 import { getParent } from './selectors'
 import { createScratchTree, moveOnScratch, planMoveSequence, type SequencedMove } from './moveSequence'
 import {
@@ -421,11 +421,16 @@ export type StructuralGroupPreview =
  *     sits inside the span, so the wrapper would land around it too — N
  *     targets for a gesture that named one.
  *
- * Both refuse as `multi-select` with the same remedy sentence, because to the
- * person holding ⌘G they are one fact: these are not a run. The refusals only
- * a PARSE can answer (an expression child between them, a run whose members
- * disagree about owning their line) stay with the codemod and arrive at save
- * time — see `src/core/ast-codemods/wrapJsxElements.ts`.
+ * Neither refuses any more (G-7). Elements that are not a run - a gap between
+ * them, or different parents - are GATHERED by the codemod: the first keeps its
+ * place and gets the container, the others are written inside it, and whatever
+ * was not selected stays where it was (`gatherGroupRun.ts`). The commit is the
+ * members in DOCUMENT order, with any member that sits inside another selected
+ * one dropped (it travels with the one that holds it). What still refuses: a
+ * selection that mixes imported markup with canvas-only nodes, one spanning
+ * several files, and the refusals only a PARSE can answer (a name the container
+ * cannot see, a content model) at save time - see
+ * `src/core/ast-codemods/wrapJsxElements.ts`.
  *
  * A selection of ONE is a legitimate group and returns a one-element commit:
  * the store writes it through the existing single-element `wrap`, so ⌘G on one
@@ -470,8 +475,25 @@ export function previewStructuralGroup(
     if (refusal) return { ok: false, refusal, nodeId: node.id }
   }
 
-  const parent = getParent(tree, nodes[0]!.id)
-  if (!parent) {
+  const files = new Set(nodes.map((node) => decodeSourceNodeId(node.id)?.rel))
+  if (files.size > 1) {
+    return {
+      ok: false,
+      refusal: {
+        reason: 'group',
+        message:
+          'These elements are written in different files, so there is no single place in the code to put one container around them. Group the ones from one file.',
+      },
+    }
+  }
+
+  // Document order, not click order: the container is written where the first
+  // member is, and the others follow it in the order they appear. A member
+  // inside another selected one is not a second member.
+  const ordered = topLevelInDocumentOrder(tree, nodes.map((node) => node.id))
+  const first = tree.nodes[ordered[0]!]
+  const parent = first ? getParent(tree, first.id) : null
+  if (!first || !parent) {
     return {
       ok: false,
       nodeId: nodes[0]!.id,
@@ -482,22 +504,7 @@ export function previewStructuralGroup(
       },
     }
   }
-  if (nodes.some((node) => getParent(tree, node.id) !== parent)) {
-    return { ok: false, refusal: NOT_A_RUN }
-  }
-
-  const selected = new Set(nodes.map((node) => node.id))
-  const positions = parent.children
-    .map((childId, index) => (selected.has(childId) ? index : -1))
-    .filter((index) => index >= 0)
-  if (positions.length !== selected.size) return { ok: false, refusal: NOT_A_RUN }
-  if (positions[positions.length - 1]! - positions[0]! + 1 !== positions.length) {
-    return { ok: false, refusal: NOT_A_RUN }
-  }
-
-  // Ordered by the CHILD LIST, not by the order the user clicked: the wrapper
-  // is written around a span, and a span runs in source order.
-  const commit = parent.children.filter((childId) => selected.has(childId))
+  const commit = ordered
 
   if (htmlTagOf) {
     const choice = chooseGroupWrapperTag({
@@ -537,12 +544,35 @@ function ancestorHtmlTags(
 }
 
 /**
- * The one sentence both "not siblings" and "not adjacent" get. One fact to the
- * user, one remedy: put them next to each other first — which is a drag that
- * already writes.
+ * `nodeIds` in the order they appear in the tree (a pre-order walk from the
+ * root), without any that sits inside another of them. The order the page reads
+ * in is the order a group is written in.
  */
-const NOT_A_RUN: StructuralRefusal = {
-  reason: 'multi-select',
-  message:
-    'Studio writes a group as one container around a run of elements that sit next to each other in the code, and these do not. Select siblings next to each other, or move them together first.',
+function topLevelInDocumentOrder(tree: NodeTree<PageNode>, nodeIds: readonly string[]): string[] {
+  const wanted = new Set(nodeIds)
+  const ordered: string[] = []
+  const walk = (id: string, insideWanted: boolean): void => {
+    const node = tree.nodes[id]
+    if (!node) return
+    const isWanted = wanted.has(id)
+    if (isWanted && !insideWanted) ordered.push(id)
+    for (const childId of node.children) walk(childId, insideWanted || isWanted)
+  }
+  walk(tree.rootNodeId, false)
+  return ordered
+}
+
+/**
+ * True when these nodes are one unbroken run of siblings in the tree - the shape
+ * a group is written around as a single span, which the local preview (a plain
+ * wrap) can show. Anything else is gathered by the codemod, and the board waits
+ * for the re-read rather than draw a container the file does not have.
+ */
+export function isSiblingRun(tree: NodeTree<PageNode>, nodeIds: readonly string[]): boolean {
+  const first = tree.nodes[nodeIds[0] ?? '']
+  const parent = first ? getParent(tree, first.id) : null
+  if (!parent) return false
+  const positions = nodeIds.map((id) => parent.children.indexOf(id))
+  if (positions.some((position) => position === -1)) return false
+  return Math.max(...positions) - Math.min(...positions) + 1 === positions.length
 }

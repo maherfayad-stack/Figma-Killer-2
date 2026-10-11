@@ -374,8 +374,8 @@ Where the protocol can say it, the inverse is an ordinary edit:
 | gesture | inverse |
 |---|---|
 | insert / duplicate / paste / image drop | `delete` what it created. An insert, or a copy (Alt-drag, paste, a cross-frame copy), into a parent with NO children is the exception: it writes `exactUndo` (on `insert`, `duplicate` and a copying `transplant`), and its ⌘Z is the undo-journal `restore` — the write may have expanded a self-closing `<X />` to `<X>…</X>`, which a `delete` leaves as `<X>\n</X>` (and which then makes a linked OD-7 detach restore refuse `restore-stale`) |
-| wrap / group | `ungroup` the container it created |
-| ungroup | `group` the children it released, into the same container |
+| wrap / group / ungroup (G-7) | `restore` the undo-journal entry. They were each other's inverse until a group could GATHER members from elsewhere (`gatherGroupRun.ts`) and an ungroup could KEEP a wrapper that carries behaviour (`unwrapJsxElement.ts`): a re-group or an `ungroup` of what the first created no longer reproduces the original file, and a component or styled container had no plain inverse at all (the old "skipped at ⌘Z" notices are gone). The pre-image is exact whatever the container was |
+| unbind on type (G-6, OD-20) | `restore` the undo-journal entry — the code a typed literal replaced comes back byte for byte (`unbindCommit.ts`); the info notice's Undo button is the store's own `undo()` |
 | transplant (move) | `restore` the undo-journal entry the write recorded. A cross-frame move cuts markup from one file, prunes the import only that markup used, and carries imports into the other, so every `line:col` below the cut moves in BOTH files — including the container the element left, which an inverse `transplant` would have had to name from an id recorded at drag time. That id was stale the moment the import line went (the undo then refused as a changed file). The pre-image has no ids, and puts both files back byte for byte |
 | transplant (copy) | `restore` the undo-journal entry (the editor sends `exactUndo`, G-1): a copy can write state, constants and imports beside its markup, which deleting what it made would leave behind |
 | free-canvas lift / place (move) | `restore` the undo-journal entry — the page and the layer module, byte for byte. A lift prunes the import only the element used, so a parent id recorded at drag time (the old `canvas-layer-lift-back`) was a line off by ⌘Z; a place removes the module, which the pre-image recreates. A COPY is taken back by deleting the layer or element it made |
@@ -487,12 +487,7 @@ first seven, `undoToken` for the journaled ones (`restore-journal`). A template 
 it: the gesture has been performed a second time, possibly at a different
 position, and the entry's inverse has to describe THAT one.
 
-**Two refusals are deliberate, and are skipped at ⌘Z (see "A step that can never
-happen is skipped" below) rather than posting a write the server would decline:** a group into a COMPONENT container (dissolving it would
-delete a call site — `unwrapJsxElement`'s `has-behaviour`), and an ungroup of a
-container carrying a `className`/`style`/`id` (a re-wrap writes a bare tag and
-would drop what it carried). Closing the second needs `props` on the
-`wrap`/`group` edit.
+**The two skipped-at-⌘Z cases are gone (G-7):** a group into a COMPONENT container, and an ungroup of a container carrying a `className`/`style`/`id`, used to be skipped because their inverse (an `ungroup`, a bare re-wrap) could not reproduce the file. Both undo through the journal now, like every other one-shot write.
 
 **Why absolute ids are safe here:** undo is strictly LIFO, so undoing the top
 entry restores the file to the state the entry below it was recorded against —

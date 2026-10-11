@@ -47,15 +47,30 @@
  * cross-file anchor) are answered earlier and cheaper by `refuseStructuralEdit`
  * in `@core/page-tree`.
  *
+ * WHAT USED TO REFUSE AND NOW WRITES (G-7)
+ * ----------------------------------------
+ *  - **`same-element`** - "put this next to itself" is a move that changes
+ *    nothing, so it writes nothing and succeeds (`unchanged`).
+ *  - **`no-anchor`** - a reorder that names no sibling means an edge of the
+ *    element's own parent: `position: 'before'` is first, anything else last.
+ *    Already there, it is the same no-op.
+ *  - **`not-siblings`** - the canvas shows two elements side by side that the
+ *    source nests differently (a `<Fragment>` is not a node). The element is
+ *    written beside the anchor, in the anchor's own parent: it renders exactly
+ *    where the person dropped it. What stays refused is an anchor INSIDE the
+ *    moved element (`into-own-descendant`) and a name the new place cannot see
+ *    (`out-of-scope`), both of which would break the file.
+ *
  * BYTE-EXACTNESS. The AST locates; the write is a splice of the original
  * bytes (see `jsxChildRange.ts`). Comments, blank lines, attribute wrapping
  * and every untouched sibling survive verbatim — asserted in
  * `__tests__/structuralJsxCodemods.test.ts` against whole-file fixtures.
  */
-import { Project, type SourceFile } from 'ts-morph'
+import { Node, Project, type SourceFile } from 'ts-morph'
 import { createProject, findJsxElementAtLocation, loadSourceFile } from './locateJsxElement'
 import {
   applyTextEdits,
+  ownedTextRange,
   resolveJsxChildRange,
   spliceRange,
   verbatimSourceText,
@@ -94,10 +109,10 @@ export interface MoveJsxElementParams {
 
 export type MoveJsxRefusalReason =
   | JsxChildRangeReason
-  | 'same-element'
+  // Only a cross-file transplant asks a placement to refuse an anchor outside
+  // its container; this codemod writes beside the anchor instead (G-7).
   | 'not-siblings'
   | 'mixed-indentation'
-  | 'no-anchor'
   | 'not-a-container'
   | 'into-own-descendant'
   | 'out-of-scope'
@@ -119,11 +134,22 @@ export interface MoveJsxRefusal {
  * same refusal-to-guess `createdJsxLocation` documents.
  */
 export type MoveJsxElementResult =
-  | { ok: true; relocated: CreatedJsxLocation | null }
+  | {
+      ok: true
+      relocated: CreatedJsxLocation | null
+      /** G-7 - the file already said what was asked (same element, or already at that edge): nothing was written. */
+      unchanged?: true
+    }
   | { ok: false; refusal: MoveJsxRefusal }
 
 function refuseMove(reason: MoveJsxRefusalReason, message: string): MoveJsxElementResult {
   return { ok: false, refusal: { reason, message } }
+}
+
+/** The one sentence for a name the new place cannot see - it names them, because "some binding" is not something a person can act on. */
+function outOfScopeMessage(names: readonly string[]): string {
+  const list = names.map((name) => `\`${name}\``).join(', ')
+  return `This element reads ${list} from the code around it, and ${names.length === 1 ? 'that name is' : 'those names are'} not in scope where it would land — moving it there would break the file. Move it somewhere inside the same component, or pass ${names.length === 1 ? 'the value' : 'those values'} through first.`
 }
 
 export function moveJsxElement(params: MoveJsxElementParams): MoveJsxElementResult {
@@ -149,7 +175,45 @@ export function moveJsxElement(params: MoveJsxElementParams): MoveJsxElementResu
     : reorder(sourceFile, file, verbatim, target.range, params)
 }
 
-/** The original sibling reorder: two children of one parent, one byte splice. */
+/**
+ * What a move is written against: a child of some JSX parent and the bytes it
+ * owns - an element, or (WB-22) the `{…}` container the code produces it with.
+ */
+type PlacementAnchor = Pick<JsxChildRange, 'element' | 'parent' | 'start' | 'end' | 'wholeLine'>
+
+/** True when `inner` lies entirely inside `outer`. */
+function lies(inner: Node, outer: Node): boolean {
+  return inner.getStart() >= outer.getStart() && inner.getEnd() <= outer.getEnd()
+}
+
+/** The move changed nothing because the file already says it: reported as success, and the file is not written. */
+function unchangedMove(sourceFile: SourceFile, target: JsxChildRange): MoveJsxElementResult {
+  const { line, column } = sourceFile.getLineAndColumnAtPos(target.opening.getTagNameNode().getStart())
+  return { ok: true, relocated: { line, col: column }, unchanged: true }
+}
+
+/**
+ * The children of a JSX parent a move can be written against, in source order:
+ * elements and the `{…}` containers that produce them. Whitespace text and
+ * the empty containers that only hold a comment are not children in this sense.
+ */
+function placementUnits(parent: Node): Node[] {
+  if (!Node.isJsxElement(parent) && !Node.isJsxFragment(parent)) return []
+  return parent
+    .getJsxChildren()
+    .filter(
+      (child) =>
+        Node.isJsxElement(child) ||
+        Node.isJsxSelfClosingElement(child) ||
+        (Node.isJsxExpression(child) && child.getExpression() !== undefined),
+    )
+}
+
+/**
+ * A reorder: put the target next to an anchor, or - with no anchor - at an edge
+ * of its own parent. Same parent and same line shape is one byte splice; every
+ * other shape is a cut and an insertion beside the anchor.
+ */
 function reorder(
   sourceFile: SourceFile,
   file: string,
@@ -159,30 +223,53 @@ function reorder(
 ): MoveJsxElementResult {
   const { anchorLine, anchorCol, position } = params
   if (anchorLine === undefined || anchorCol === undefined) {
-    return refuseMove(
-      'no-anchor',
-      'A reorder is written as "put this element next to that one", so it needs a sibling to be written against.',
-    )
+    // No sibling named: an edge of the element's own parent. 'before' is first,
+    // anything else last; an element already there, or alone, has nowhere to go.
+    const units = placementUnits(target.parent)
+    const others = units.filter((unit) => unit !== target.element)
+    const atEdge = position === 'before' ? units[0] === target.element : units[units.length - 1] === target.element
+    if (others.length === 0 || atEdge) return unchangedMove(sourceFile, target)
+    const edge = position === 'before' ? others[0]! : others[others.length - 1]!
+    const owned = ownedTextRange(verbatim, edge.getStart(), edge.getEnd())
+    return placeBesideAnchor(sourceFile, file, verbatim, target, { element: edge, parent: target.parent, ...owned }, position ?? 'after')
   }
 
   // WB-22 — an anchor the code produces is its `{…}` container.
   const anchor = resolveJsxChildRange(sourceFile, anchorLine, anchorCol, 'container')
   if (!anchor.ok) return refuseMove(anchor.reason, anchor.message)
 
-  if (target.element === anchor.range.element) {
-    return refuseMove('same-element', 'An element cannot be moved next to itself.')
-  }
-  if (target.parent !== anchor.range.parent) {
+  if (target.element === anchor.range.element) return unchangedMove(sourceFile, target)
+  if (lies(anchor.range.element, target.element)) {
     return refuseMove(
-      'not-siblings',
-      'These two elements are not siblings in the code — the canvas shows them side by side, but the source nests them differently, so there is no single place to write the new order.',
+      'into-own-descendant',
+      'The element this would be written next to is part of the element being moved, so moving it there would leave neither with a place in the file.',
     )
   }
-  if (target.wholeLine !== anchor.range.wholeLine) {
-    return reorderAcrossLineShapes(sourceFile, file, verbatim, target, anchor.range, position ?? 'after')
+  return placeBesideAnchor(sourceFile, file, verbatim, target, anchor.range, position ?? 'after')
+}
+
+/** The bytes of a move beside `anchor`, whatever the two share: a parent, a line shape, a scope. */
+function placeBesideAnchor(
+  sourceFile: SourceFile,
+  file: string,
+  verbatim: string,
+  target: JsxChildRange,
+  anchor: PlacementAnchor,
+  position: 'before' | 'after',
+): MoveJsxElementResult {
+  if (target.parent !== anchor.parent) {
+    // The canvas shows these side by side (a `<Fragment>` is not a node) but the
+    // source nests them differently: the element is written where the anchor is,
+    // which is where it renders - provided it can still see what it reads there.
+    const outOfScope = freeVariablesOutOfScopeAt(target.element, anchor.element, sourceFile)
+    if (outOfScope.length > 0) return refuseMove('out-of-scope', outOfScopeMessage(outOfScope))
+    return relocateBesideAnchor(sourceFile, file, verbatim, target, anchor, position)
+  }
+  if (target.wholeLine !== anchor.wholeLine) {
+    return relocateBesideAnchor(sourceFile, file, verbatim, target, anchor, position)
   }
 
-  const at = position === 'before' ? anchor.range.start : anchor.range.end
+  const at = position === 'before' ? anchor.start : anchor.end
   const moved = verbatim.slice(target.start, target.end)
   writeVerbatimSource(sourceFile, file, spliceRange(verbatim, target.start, target.end, at))
   // `spliceRange`'s own arithmetic, read back: the block lands at `at`, minus
@@ -202,13 +289,17 @@ function reorder(
  * moved element leaves behind: an inline element takes one of its separating
  * runs of spaces with it (`inlineRemoval`), so `<a/> <b/>` minus `<b/>` is
  * `<a/>`, not `<a/> `. Every other sibling on either line keeps its bytes.
+ *
+ * G-7 - the same cut-and-insert is how a move lands in a DIFFERENT parent: the
+ * element is re-hung at the anchor's indentation, `reindentBlock`'s leading
+ * whitespace only.
  */
-function reorderAcrossLineShapes(
+function relocateBesideAnchor(
   sourceFile: SourceFile,
   file: string,
   verbatim: string,
   target: JsxChildRange,
-  anchor: JsxChildRange,
+  anchor: PlacementAnchor,
   position: 'before' | 'after',
 ): MoveJsxElementResult {
   const subtree = verbatim.slice(target.element.getStart(), target.element.getEnd())
@@ -281,13 +372,16 @@ function reparent(
     )
   }
 
-  const outOfScope = freeVariablesOutOfScopeAt(target.element, destination, sourceFile)
-  if (outOfScope.length > 0) {
-    const names = outOfScope.map((name) => `\`${name}\``).join(', ')
-    return refuseMove(
-      'out-of-scope',
-      `This element reads ${names} from the code around it, and ${outOfScope.length === 1 ? 'that name is' : 'those names are'} not in scope where it would land — moving it there would break the file. Move it somewhere inside the same component, or pass ${outOfScope.length === 1 ? 'the value' : 'those values'} through first.`,
-    )
+  // The anchor is inside the subtree being moved: it is about to stop existing,
+  // so it cannot be what the new position is written against.
+  if (params.anchorLine !== undefined && params.anchorCol !== undefined) {
+    const anchor = resolveJsxChildRange(sourceFile, params.anchorLine, params.anchorCol, 'container')
+    if (anchor.ok && lies(anchor.range.element, target.element)) {
+      return refuseMove(
+        'into-own-descendant',
+        'The element this would be written next to is part of the element being moved, so moving it there would leave neither with a place in the file.',
+      )
+    }
   }
 
   const subtree = verbatim.slice(target.element.getStart(), target.element.getEnd())
@@ -304,10 +398,18 @@ function reparent(
           : null,
       ...(params.position ? { position: params.position } : {}),
       exclude: { start: target.start, end: target.end },
+      // G-7 - an anchor the source nests elsewhere (inside a `<Fragment>` the
+      // canvas flattens) is written beside, where it renders.
+      besideAnchorInItsParent: true,
     },
     (indent) => reindentBlock(subtree, fromIndent, indent),
   )
   if (!placement.ok) return refuseMove(placement.refusal.reason, placement.refusal.message)
+
+  // The names the markup reads must resolve where it LANDS - the container, or
+  // the anchor's own parent when that is not the same place.
+  const outOfScope = freeVariablesOutOfScopeAt(target.element, placement.landing, sourceFile)
+  if (outOfScope.length > 0) return refuseMove('out-of-scope', outOfScopeMessage(outOfScope))
 
   const removal: TextEdit = { start: target.start, end: target.end, text: '' }
   writeVerbatimSource(sourceFile, file, applyTextEdits(verbatim, [placement.edit, removal]))
