@@ -671,7 +671,34 @@ A rule or entry that already exists for the new name is reused, not duplicated. 
 
 **The default board's seed** (`useStudioDefaultBoardSeed`) no longer puts a gallery frame on a brand-new project's first board: a gallery is derived and belongs to the server-placed Components board. Not closed: on a project with no `boards.json` the client reads the board list before the first `/load` creates the Components board, then seeds and autosaves its own list over that file, so the Components board can be lost on a fresh project until the board list is read after the load. The Stories board has the same exposure.
 
-Not done: variant-scoped style editing (CV-4); renaming a value; removing a prop; a state rule (`.primary:hover`) is neither copied on Add nor removed on Remove; a story's `args` and a typed constant (`const v: Variant = 'ghost'`) are not call sites for Remove.
+**State rules and stories (CV-4 follow-up).** Add copies the member's state rules beside the copy and Remove deletes them with it: the top-level rules whose every selector is the member's selector plus pseudo-classes or pseudo-elements (`.primary:hover`, `.primary:not(:disabled):focus-visible`, `.primary::before`; `variantRule.ts`). A descendant rule (`.primary .icon`) and a rule inside `@media` are not reached. A Storybook story's `args` (and `meta.args`) count as call sites for Remove: `variantStoryUses.ts` reads the args-only stories the Stories board reads and refuses with `variant-in-use`, naming the story, when one passes the value.
+
+Not done: renaming a value; removing a prop; a typed constant (`const v: Variant = 'ghost'`) is not a call site for Remove.
+
+### Style edits per variant — the variant edit context (CV-4)
+
+A component's markup is shared by every variant, so a style edit made while looking at `<Button variant="ghost">` has three places it could go: the base rule (`.btn`; every variant changes), the element's `style=""` (same), or the variant's own rule (`.btn-ghost`; only ghost changes). The cascade picks the first two for any property the base rule sets, which is the leak this section closes. The **variant edit context** aims the edit at the variant's own rule, writes it through the ordinary style ladder (`setDeclaration`, G-5), and refuses by name when there is no honest rule. Nothing runs: the rule comes from the CV-1 binding, read off the component's source.
+
+**The rule (`@core/component-variants/variantStyleContext.ts`, pure and browser-safe).** `deriveVariantStyleContext(tail, axes, chosenProp)` takes the selected element's tail (`line:col` of its tag name, the tail of its node id) and one axis per variant prop that has a binding (`prop`, the member the call site shows or the declared default, `binding`). An axis applies to the element only when `binding.element` equals that tail: the analyzer now records the JSX element that consumes the prop (`element`, on every binding kind, `opaque` included; a class string built above the `return` styles the component's first element). An inner icon or wrapper has no variant rule and keeps the ordinary behaviour. For each applicable axis `variantStyleTargetFor` answers:
+
+| binding | lands in | otherwise |
+|---|---|---|
+| `css-module-class`, `data-attr` | the rule found for the member (`.btn-ghost`, `[data-variant="ghost"]`) | `no-rule`: names the class or attribute rule it looked for |
+| `lookup-object`, `cva` | the stylesheet rule behind the entry's class (`entry.rule`, below) | `no-stylesheet-rule`: names `file:line` of the entry, says Studio cannot write a declaration into a class list (Tailwind utilities) |
+| `boolean-class` | nothing | `unsupported-binding`, names the class and line |
+| `opaque`, no binding | nothing | `opaque-binding`: names the line that defeated the analyzer |
+
+A refusal carries `message`, `remedy` and `openAt` (the line to open), and is never swapped for the base rule. When several props style the element (`variant` and `size`) the first axis with a rule is chosen and the inspector's chip offers the others (`variantEditAxis` in the store).
+
+**`entry.rule`.** A lookup/`cva` entry is a class string, so a stylesheet rule is behind it only when exactly one of its class names has one in a stylesheet the component imports (a `styles.x` value on a CSS module counts); a word every entry shares is the component's base class and is not the member's. Utility-class entries and entries with two candidate rules report none.
+
+**Where it applies (`variantEditContext.ts`).** The selection is ONE element inlined out of a component (`~` in its id), and the person is editing the MAIN component: any element of a variants gallery (the Components board is the main component by construction), or any element of a component named by `mainEditTarget` (component) ("Edit main component", OD-19). The member shown is the call site's `callSiteProps` value, else the declared default. The catalog is fetched only then (`useLocalComponentCatalog(enabled)`). `useSelectionModel` exposes `variantContext`, `variantRuleId` and `variantBlocker`, and `writeTargetFor` returns the member's rule for every property, `none` plus the reason for a refusal, and for a clear only what the rule declares. It never falls back to another class or to the inline layer.
+
+**How the rule gets written.** The rule is found among the board's `StyleRule`s by its write-back source (`findStyleRuleIdForSource`: same file, selector compared without spacing or quote style), so the edit is an ordinary class write: instant paint, the same undo as any class edit, the diff turns it into a `css` edit with the file and selector, and the server writes it through `setDeclaration` (the G-5 ladder: `rule`, `expanded`, `override`, with `undoToken`s). A rule the board did not load (a stylesheet Studio does not read as plain CSS) is a refusal that says so. A refusal at commit time is a `warning` toast with "Open in code" (`error-toast-sites` unchanged).
+
+**The selected instance.** A click inside an instance selects the instance, which owns no element, so the style sections have nothing to write there. In "Main component" mode the Component section shows `VariantStyleEntry`: "Style edits go to .btn-ghost in Button.css" with **Edit style**, which sets `mainEditTarget` (component), enters the instance and selects the element that carries the variant. The Design panel then shows `VariantContextChip` ("Editing variant ghost: .btn-ghost in Button.css", the axis switch, or the refusal with its remedy).
+
+**Limits.** A member's rule is written, so it must come AFTER the base rule it overrides in the cascade (the usual `.btn` then `.btn-ghost` order); a variant rule declared before the base rule loses to it and the canvas will not show the change. An inline `style` the component sets itself outranks any class and is not touched. A descendant rule (`.btn-ghost .icon`) is a different element's rule and is not the member's. A style edit on a `.map` row or in a nested component whose binding sits in another file is refused or unchanged exactly as before.
 
 ### Imports are followed through barrels
 

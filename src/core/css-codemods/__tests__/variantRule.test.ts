@@ -74,25 +74,113 @@ describe('removeRule', () => {
   it('removes the rule and the blank gap before it', () => {
     const result = removeRule(SHEET, { line: 5, column: 1, selector: '.info' })
     if (!result.ok) throw new Error(result.refusal.message)
-    expect(applyTextSplices(SHEET, [result.splice])).toBe(['.base {', '  padding: 4px;', '}', '', '.warn {', '  color: orange;', '}', ''].join('\n'))
+    expect(applyTextSplices(SHEET, result.splices)).toBe(['.base {', '  padding: 4px;', '}', '', '.warn {', '  color: orange;', '}', ''].join('\n'))
   })
 
   it('removes the first rule with the gap after it', () => {
     const result = removeRule(SHEET, { line: 1, column: 1, selector: '.base' })
     if (!result.ok) throw new Error(result.refusal.message)
-    expect(applyTextSplices(SHEET, [result.splice]).startsWith('.info {')).toBe(true)
+    expect(applyTextSplices(SHEET, result.splices).startsWith('.info {')).toBe(true)
   })
 
   it('round-trips a clone', () => {
     const cloned = cloneInfo(SHEET, 'danger')
     const result = removeRule(cloned, { line: 10, column: 1, selector: '.danger' })
     if (!result.ok) throw new Error(result.refusal.message)
-    expect(applyTextSplices(cloned, [result.splice])).toBe(SHEET)
+    expect(applyTextSplices(cloned, result.splices)).toBe(SHEET)
   })
 
   it('refuses when the selector at the position is not the expected one', () => {
     const result = removeRule(SHEET, { line: 5, column: 1, selector: '.warn' })
     expect(!result.ok && result.refusal.reason).toBe('stale-source')
+  })
+})
+
+describe('state rules travel with the member (CV-3 leftover)', () => {
+  const STATES = [
+    '.btn {',
+    '  padding: 4px;',
+    '}',
+    '',
+    '.primary {',
+    '  color: blue;',
+    '}',
+    '',
+    '.primary:hover,',
+    '.primary:focus-visible {',
+    '  color: navy;',
+    '}',
+    '',
+    '.primary::before {',
+    "  content: '';",
+    '}',
+    '',
+    '.primary .icon {',
+    '  width: 1em;',
+    '}',
+    '',
+    '.primarycolor:hover {',
+    '  color: red;',
+    '}',
+    '',
+    '.warn {',
+    '  color: orange;',
+    '}',
+    '',
+  ].join('\n')
+
+  const toDanger = (selector: string) => rewriteClassSelector(selector, 'primary', 'danger')
+
+  it('Add copies .x:hover, .x:focus-visible and .x::before beside the copy, and leaves a descendant rule and a longer class alone', () => {
+    const result = cloneRule(STATES, { line: 5, column: 1, selector: '.primary' }, toDanger)
+    if (!result.ok || !result.splice) throw new Error('expected a splice')
+    const copies = [
+      '',
+      '.danger {',
+      '  color: blue;',
+      '}',
+      '',
+      '.danger:hover,',
+      '.danger:focus-visible {',
+      '  color: navy;',
+      '}',
+      '',
+      '.danger::before {',
+      "  content: '';",
+      '}',
+    ].join('\n')
+    expect(applyTextSplices(STATES, [result.splice])).toBe(STATES.replace('.primary {\n  color: blue;\n}', `.primary {\n  color: blue;\n}\n${copies}`))
+  })
+
+  it('Remove takes the member rule and its states, and the file stays whole', () => {
+    const result = removeRule(STATES, { line: 5, column: 1, selector: '.primary' })
+    if (!result.ok) throw new Error(result.refusal.message)
+    expect(applyTextSplices(STATES, result.splices)).toBe(
+      ['.btn {', '  padding: 4px;', '}', '', '.primary .icon {', '  width: 1em;', '}', '', '.primarycolor:hover {', '  color: red;', '}', '', '.warn {', '  color: orange;', '}', ''].join('\n'),
+    )
+  })
+
+  it('Remove of the FIRST rule in the file takes its states and the gap after them', () => {
+    const css = '.a { x: 1 }\n\n.a:hover { x: 2 }\n\n.b { x: 3 }\n'
+    const result = removeRule(css, { line: 1, column: 1, selector: '.a' })
+    if (!result.ok) throw new Error(result.refusal.message)
+    expect(applyTextSplices(css, result.splices)).toBe('.b { x: 3 }\n')
+  })
+
+  it('an add followed by a remove is byte-exact', () => {
+    const added = cloneRule(STATES, { line: 5, column: 1, selector: '.primary' }, toDanger)
+    if (!added.ok || !added.splice) throw new Error('expected a splice')
+    const withDanger = applyTextSplices(STATES, [added.splice])
+    const removed = removeRule(withDanger, { line: 9, column: 1, selector: '.danger' })
+    if (!removed.ok) throw new Error(removed.refusal.message)
+    expect(applyTextSplices(withDanger, removed.splices)).toBe(STATES)
+  })
+
+  it('a state copy that already exists is not duplicated', () => {
+    const css = '.a { x: 1 }\n\n.a:hover { x: 2 }\n\n.b:hover { x: 9 }\n'
+    const result = cloneRule(css, { line: 1, column: 1, selector: '.a' }, (selector) => rewriteClassSelector(selector, 'a', 'b'))
+    if (!result.ok || !result.splice) throw new Error('expected a splice')
+    expect(applyTextSplices(css, [result.splice])).toBe('.a { x: 1 }\n\n.b { x: 1 }\n\n.a:hover { x: 2 }\n\n.b:hover { x: 9 }\n')
   })
 })
 

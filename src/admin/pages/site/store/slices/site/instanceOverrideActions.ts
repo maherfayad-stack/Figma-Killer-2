@@ -97,8 +97,11 @@ function declinesFedEdit(node: PageNode, change: OverrideChange): boolean {
   return true
 }
 
-export function createInstanceOverrideActions(helpers: SiteSliceHelpers): { router: InstanceOverrideRouter } {
-  const { get, previewActiveTreeMutation } = helpers
+export function createInstanceOverrideActions(helpers: SiteSliceHelpers): {
+  router: InstanceOverrideRouter
+  slice: Pick<InstanceOverrideSlice, 'setVariantEditAxis'>
+} {
+  const { get, set, previewActiveTreeMutation } = helpers
 
   function findNode(nodeId: string): PageNode | undefined {
     const state = get()
@@ -263,5 +266,14 @@ export function createInstanceOverrideActions(helpers: SiteSliceHelpers): { rout
     },
   }
 
-  return { router }
+  return {
+    router,
+    slice: {
+      setVariantEditAxis: (prop) => {
+        set((draft) => {
+          draft.variantEditAxis = prop
+        })
+      },
+    },
+  }
 }

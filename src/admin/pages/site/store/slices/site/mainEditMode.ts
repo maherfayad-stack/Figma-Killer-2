@@ -47,6 +47,7 @@ export function createMainEditActions(set: EditorStoreSetter): Pick<MainEditSlic
     setMainEditTarget: (target) => {
       set((draft) => {
         draft.mainEditTarget = target
+        draft.variantEditAxis = null // CV-4 — the chosen variant prop belonged to the component being edited
       })
       setEditedLayoutFile(editedLayoutOf(target))
     },
