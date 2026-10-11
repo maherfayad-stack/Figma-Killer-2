@@ -94,6 +94,7 @@ import { rememberSourceTexts } from './studio/sourceTextHistory'
 import { countLines, recordCreatedPosition, resolveCreatedNodeIds, type CreatedNodePosition } from './studioEditPositions'
 import { projectThumbnailQueue } from './studio/projectThumbnailQueue'
 import {
+  type StudioCarriedDeclaration,
   type StudioEdit,
   type StudioEditApplyOutcome,
   type StudioEditBatchOptions,
@@ -492,6 +493,8 @@ export function applyStudioEditBatch(
   const relocatedPositions: CreatedNodePosition[] = []
   // P5-G — every `canvas-layer-delete`'s module bytes, keyed by the edit's own `nodeId`.
   const removed: StudioEditBatchResult['removed'] = []
+  // G-1 — what each landed `transplant` copied to its destination.
+  const carried: StudioCarriedDeclaration[] = []
   // OD-8 — each written `list-item` edit's array, pinned from the file's end.
   const listArrayPositions: { nodeId: string; position: CreatedNodePosition[] }[] = []
   // WB-24 — no edit writes into a file that does not parse (`studioSyntaxGuard.ts`).
@@ -528,6 +531,7 @@ export function applyStudioEditBatch(
         if (outcome.createdStylesheet) createdStylesheets.push({ nodeId: edit.nodeId, ...outcome.createdStylesheet })
         if (outcome.promoteDetail) promoteDetails.push({ nodeId: edit.nodeId, ...outcome.promoteDetail })
         for (const text of outcome.removed ?? []) removed.push({ nodeId: edit.nodeId, ...text })
+        for (const entry of outcome.carried ?? []) carried.push({ name: entry.name, as: entry.as, how: entry.how })
         const array = edit.kind === 'list-item' ? studioEditLocation(dir, edit.nodeId, scope) : null
         if (array) {
           const position: CreatedNodePosition[] = []
@@ -622,6 +626,7 @@ export function applyStudioEditBatch(
     listArrays: listArrayPositions.flatMap(({ nodeId, position }) =>
       resolveCreatedNodeIds(position, lineCountAfter).map((to) => ({ nodeId: sentId.get(nodeId) ?? nodeId, to })),
     ),
+    ...(carried.length > 0 ? { carried } : {}),
     ...(undoToken ? { undoToken } : {}),
   }
 }

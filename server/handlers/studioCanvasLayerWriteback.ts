@@ -46,6 +46,7 @@ import {
   canvasLayerModuleFromSpec,
   liftJsxElementToCanvasModule,
   placeCanvasLayerRoot,
+  type CarriedDeclaration,
   type CreatedJsxLocation,
   type InsertJsxNode,
 } from '@core/ast-codemods'
@@ -195,6 +196,8 @@ export interface CanvasLayerEditOutcome {
   created?: readonly CreatedJsxLocation[]
   createdIn?: string
   removed?: readonly CanvasLayerRemovedText[]
+  /** G-1 - what a lift or place copied beside the markup (state, constants). */
+  carried?: readonly CarriedDeclaration[]
 }
 
 /**
@@ -220,6 +223,11 @@ export function applyCanvasLayerEdit(dir: string, edit: CanvasLayerEdit, locate:
     if (err instanceof CanvasLayerFileError) throw new CanvasLayerEditRefusal(err.reason, err.message)
     throw err
   }
+}
+
+/** What a write copied that the destination did not already have. */
+function carriedOf(declarations: readonly CarriedDeclaration[]): readonly CarriedDeclaration[] {
+  return declarations.filter((entry) => !entry.reused)
 }
 
 function dispatch(dir: string, edit: CanvasLayerEdit, locate: Locate): CanvasLayerEditOutcome {
@@ -257,11 +265,12 @@ function dispatch(dir: string, edit: CanvasLayerEdit, locate: Locate): CanvasLay
         ...(anchor && anchor.rel === destination.rel
           ? { anchorLine: anchor.line, anchorCol: anchor.col, position: edit.position ?? 'before' }
           : {}),
+        ...(edit.copy ? { copy: true } : {}),
       })
       if (!result.ok) throw new CanvasLayerEditRefusal(result.refusal.reason, result.refusal.message)
       // The page has the markup now; a move takes the layer off the canvas.
       const removed = edit.copy ? undefined : { text: removeCanvasLayerFile(dir, edit.layerId), wholeLine: false }
-      return { applied: true, created: locations(result.created), createdIn: edit.parentNodeId, ...(removed ? { removed: [removed] } : {}) }
+      return { applied: true, created: locations(result.created), createdIn: edit.parentNodeId, carried: carriedOf(result.carriedDeclarations), ...(removed ? { removed: [removed] } : {}) }
     }
     case 'canvas-layer-lift': {
       const origin = locate(edit.nodeId)
@@ -283,7 +292,7 @@ function dispatch(dir: string, edit: CanvasLayerEdit, locate: Locate): CanvasLay
         },
       })
       if (!result.ok) throw new CanvasLayerEditRefusal(result.refusal.reason, result.refusal.message)
-      return { applied: true, created: locations(result.root), createdIn: layerNodeId }
+      return { applied: true, created: locations(result.root), createdIn: layerNodeId, carried: carriedOf(result.carriedDeclarations) }
     }
   }
 }

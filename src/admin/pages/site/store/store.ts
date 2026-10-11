@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { registerCarryNoticeUndo } from '@site/studio/transplantCarryNotice'
 import { mutative } from 'zustand-mutative'
 import { subscribeWithSelector } from 'zustand/middleware'
 import type { Page, SiteDocument } from '@core/page-tree'
@@ -491,3 +492,6 @@ export const useCanUndo = () => useEditorStore((s) => s.canUndo)
 
 /** React hook: true when redo is available. */
 export const useCanRedo = () => useEditorStore((s) => s.canRedo)
+
+// The carry notice's Undo is the store's own ⌘Z; the studio layer cannot import the store, so it is handed in here.
+registerCarryNoticeUndo({ depth: () => useEditorStore.getState()._historyPast.length, undo: () => useEditorStore.getState().undo() })

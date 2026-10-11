@@ -453,9 +453,31 @@ component's body, a private module-level constant or function into its module
 scope — deduped when the destination already declares the identical thing,
 renamed on a clash (`transplantBindings.ts` decides, `transplantScopeCarry.ts`
 renders; `carriedDeclarations` reports what was written). Nothing is exported
-from the origin. Anything the component OWNS - a prop, state/ref/custom-hook
-result, a `.map` row, a `let` - refuses as **`captured-scope`**, by name (moving
-state and baking props are separate decisions: G-1b/G-1c). Both files' next
+from the origin. **State travels as its own copy (G-1b, OD-17).** A
+`useState`/`useReducer`/`useRef(init)` statement the element - or a copied handler
+- reads is written again at the top of the destination component, only the slots
+read (`const [, setOpen] = useState(false)`), under fresh names, with the hook
+import (`transplantStateCarry.ts`); an identical `useState` the destination
+already has is never reused, because it would be someone else's state. The copy
+goes above any early return of the destination (rules of hooks) and refuses,
+naming why, for an async component or a `'use client'` element going into a
+server component; a custom hook's result and a `useCallback`/`useMemo` refuse by
+name; an effect that sets the state in the origin stays there. **A row or a prop
+default travels as a literal (G-1c).** An element inside a `.map` row of an array
+literal written in the same file is COPIED (never cut - the template and the
+array stay byte-exact) with `const item = <that array element's source text>`
+and `const i = <index>` at the destination (`transplantPropBake.ts`; the wire
+`row` names the array's `[`, the server re-derives the array from the AST and
+refuses `stale-source` on a mismatch); a destructured prop's default is written
+down only for an element in the page's own file, never for one inlined out of a
+component; a prop nothing gives a value to, a function default and everything
+else the component owns still refuses as **`captured-scope`**, by name and kind
+(`"qty" (a prop)`). Types the markup names are copied like constants; globals
+(`HTMLInputElement`, `setTimeout`) are left alone. A cross-file transplant - a
+copy too, and a pasted sequence of copies (`studioEditSequence.ts`) - is journaled, so Cmd+Z is the undo journal's `restore` (both files,
+byte for byte), and the response's `carried` list (`name`, `as`, `how`:
+`copy`/`state`/`value`) drives one info notice with Undo for state and values
+(`transplantCarryNotice.ts`). A free-canvas lift (move or copy) and a place MOVE carry state the same way and show the same notice; a place COPY refuses by name (its undo deletes the element, which would leave the state behind). Both files' next
 contents are computed in full before either is written, so a refusal leaves two
 untouched files and a success writes two complete ones.
 
@@ -492,7 +514,7 @@ from the node id and `lockReason` alone:
 
 | Refusal | Because |
 |---|---|
-| `list-row` | a `.map` row — one piece of JSX renders every row. A row ROOT's reorder/delete/duplicate/paste write its array instead (OD-8); what still refuses is a gesture the array cannot express, a node inside a row, or an array not written in this file |
+| `list-row` | a `.map` row — one piece of JSX renders every row. A row ROOT's reorder/delete/duplicate/paste write its array instead (OD-8); what still refuses is a gesture the array cannot express, a node inside a row, or an array not written in this file. A drag into another FRAME is the exception (G-1c): a row element, root or inside, is copied there with the row's data as constants |
 | `shared-component` | an inlined id — the markup is in the component's own file, so a move there moves every instance |
 | `route-chrome` | a Next `layout`/`template` — one file, many frames |
 | `code-placed` | the parser recorded a structural `lockReason` |

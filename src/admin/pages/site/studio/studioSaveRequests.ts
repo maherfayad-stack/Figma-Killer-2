@@ -159,6 +159,22 @@ export const StudioSaveResponseSchema = Type.Object({
    */
   listArrays: Type.Optional(Type.Array(Type.Object({ nodeId: Type.String(), to: Type.String() }))),
   /**
+   * G-1 — what a cross-file move copied to its destination besides the markup:
+   * plain constants (`copy`), the element's own copy of the state it used
+   * (`state`, OD-17), a row's data or a prop default as a literal constant
+   * (`value`). The board tells the user about the last two
+   * (`transplantCarryNotice.ts`). `Type.Optional`, same tolerant-rollout reasoning.
+   */
+  carried: Type.Optional(
+    Type.Array(
+      Type.Object({
+        name: Type.String(),
+        as: Type.String(),
+        how: Type.Union([Type.Literal('copy'), Type.Literal('state'), Type.Literal('value')]),
+      }),
+    ),
+  ),
+  /**
    * P5-G — every `canvas-layer-delete` in the batch that SUCCEEDED, with the
    * module bytes it removed, keyed by the edit's own `nodeId` — its ⌘Z
    * (`canvas-layer-restore`) is built from these once the resync lands.

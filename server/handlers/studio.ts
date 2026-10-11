@@ -488,6 +488,7 @@ export async function tryServeStudio(
         fingerprints,
         retargeted,
         listArrays,
+        carried,
         undoToken,
       } = await (body.sequence ? applyStudioEditSequenceLocked : applyStudioEditBatchLocked)(dir, edits, body.expect ?? {}, {
         canvasLayers: 'allow',
@@ -534,6 +535,9 @@ export async function tryServeStudio(
         // P5-G — what a `canvas-layer-delete` took out, for its own undo.
         // Keyed by the edit's own node id — nothing to strip.
         removed,
+        // G-1 — what a cross-file move copied to its destination besides the
+        // markup (state, row data, constants), for the board's one-line notice.
+        ...(carried ? { carried } : {}),
         // P3-F — the undo-journal token for a delete/detach/swap/extract, the
         // ONLY thing its ⌘Z has to name. The lesson `store-15` learned here:
         // this route lists its fields by hand, and a field the batch computed
