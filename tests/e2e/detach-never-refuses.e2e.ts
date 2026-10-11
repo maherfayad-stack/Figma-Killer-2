@@ -178,10 +178,14 @@ test.describe('G-3 / OD-22 - gestures across a component instance edge', () => {
     // The middle of the plate, clear of its two children (which sit at its left): "inside the plate".
     await dragTo(page, tip, { x: plateBox!.x + plateBox!.width / 2, y: plateBox!.y + plateBox!.height / 2 })
 
-    await expect.poll(() => read(PAGE), { timeout: 30_000 }).not.toContain('<Plate')
-    const after = read(PAGE)
-    const plateMarkup = after.slice(after.indexOf('<div className="plate"'), after.indexOf('</div>'))
-    expect(plateMarkup, 'the tip did not land inside the detached plate').toContain('className="tip"')
+    // The detach lands first and the replayed move is a second write: wait for the END state, not the first.
+    const tipInsidePlate = (): boolean => {
+      const text = read(PAGE)
+      const start = text.indexOf('<div className="plate"')
+      return start >= 0 && text.slice(start, text.indexOf('</div>', start)).includes('className="tip"')
+    }
+    await expect.poll(tipInsidePlate, { timeout: 30_000, message: 'the tip did not land inside the detached plate' }).toBe(true)
+    expect(read(PAGE)).not.toContain('<Plate')
     expect(read('components/Plate.tsx'), 'the component was edited').toBe(PLATE)
 
     const notice = page.locator('[data-toast-kind="info"]').filter({ hasText: 'Detached Plate to place this. Undo restores it.' })
@@ -214,9 +218,12 @@ test.describe('G-3 / OD-22 - gestures across a component instance edge', () => {
     expect(tipBox, 'the page element rendered no box').not.toBeNull()
     await dragTo(page, close, { x: tipBox!.x + tipBox!.width / 2, y: tipBox!.y + tipBox!.height - 3 })
 
-    await expect.poll(() => read(PAGE), { timeout: 30_000 }).not.toContain('<Plate')
-    const after = read(PAGE)
-    expect(after.indexOf('className="plate-close"'), 'the button did not leave the plate').toBeGreaterThan(after.indexOf('</div>'))
+    const buttonLeftThePlate = (): boolean => {
+      const text = read(PAGE)
+      const end = text.indexOf('</div>')
+      return !text.includes('<Plate') && end >= 0 && text.indexOf('className="plate-close"') > end
+    }
+    await expect.poll(buttonLeftThePlate, { timeout: 30_000, message: 'the button did not leave the plate' }).toBe(true)
     expect(read('components/Plate.tsx')).toBe(PLATE)
     const toasts = await readToastRecorder(page)
     expect(toasts.filter((toast) => toast.kind === 'error')).toHaveLength(0)
