@@ -32,7 +32,7 @@ const RULES: Record<string, StyleRule> = {
   heading: rule('heading', 'heading', { fontSize: '32px', fontWeight: '700', lineHeight: '1.2' }),
   display: rule('display', 'display', { fontSize: '48px', fontWeight: '800', lineHeight: '1' }),
   soft: rule('soft', 'soft', { boxShadow: '0 1px 2px rgba(0, 0, 0, 0.2)' }),
-  card: rule('card', 'card', { padding: '8px', fontSize: '14px' }),
+  card: rule('card', 'card', { display: 'flex', fontSize: '14px' }),
 }
 
 let posted: Array<{ edits: Array<Record<string, unknown>> }> = []

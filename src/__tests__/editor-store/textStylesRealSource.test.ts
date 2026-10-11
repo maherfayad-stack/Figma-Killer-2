@@ -150,6 +150,16 @@ describe('CT-5 - apply, create and detach are each one byte-exact undo', () => {
     expect(project.read('pages/Home.css')).toBe(before['pages/Home.css'])
 
     await undoAndExpect(before, 2)
+
+    // Cmd+Shift+Z posts the same edits again, and is undoable in turn.
+    store().redo()
+    await project.waitFor(() => project.saves.length === 3)
+    expect(project.saves[2]!.edits).toEqual(project.saves[0]!.edits)
+    await project.waitFor(() => project.read('pages/Home.tsx') === after)
+    await project.waitFor(() => store().canUndo)
+    store().undo()
+    await project.waitFor(() => project.saves.length === 4)
+    await project.waitFor(() => project.read('pages/Home.tsx') === before['pages/Home.tsx'])
   }, 30_000)
 
   it('apply swaps one style for another of its family instead of stacking both', async () => {

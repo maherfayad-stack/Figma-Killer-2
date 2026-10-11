@@ -92,7 +92,7 @@ export type ClassNameEditToken =
   | { kind: 'literal'; token: string }
   | { kind: 'module'; file: string; local: string }
 
-/** One `kind: 'class'` edit, matching `server/handlers/studioEditSchemas.ts`'s `ClassEditSchema`. */
+/** One `kind: 'class'` edit, matching `server/handlers/studioClassEditSchema.ts`'s `ClassEditSchema`. */
 export interface ClassNameEditPayload {
   kind: 'class'
   nodeId: string
