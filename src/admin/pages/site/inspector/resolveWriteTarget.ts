@@ -41,6 +41,13 @@ export interface WriteTargetClassCandidate {
   classId: string
   /** Human-readable selector, e.g. `.card` — for the chip/notice copy only. */
   selector: string
+  /**
+   * G-5 — whether this class can HOLD a value at all, asked before it is
+   * written. A styled-component template cannot spell a value holding a
+   * backtick, a semicolon or `${` (`isStyledWritableValue`); that value goes to
+   * the element instead of to a refusal. Absent means any value fits.
+   */
+  holds?: (value: string | number | null) => boolean
 }
 
 export interface ResolveWriteTargetParams {
@@ -54,6 +61,8 @@ export interface ResolveWriteTargetParams {
    * compiled / unmapped — see `classCssWritability.ts`).
    */
   writableClasses: ReadonlyArray<WriteTargetClassCandidate>
+  /** The values this commit writes, so a class that cannot hold one steps aside (see {@link WriteTargetClassCandidate.holds}). */
+  values?: ReadonlyArray<string | number | null>
 }
 
 export type WriteTarget =
@@ -69,6 +78,15 @@ const NO_TARGET_REASON =
  * The forward-looking rule, used for a WRITE of a new or changed value.
  */
 export function resolveWriteTarget(params: ResolveWriteTargetParams): WriteTarget {
+  const holders = params.writableClasses.filter((c) => params.values?.every((value) => c.holds?.(value) ?? true) ?? true)
+  const target = resolveAmong({ ...params, writableClasses: holders })
+  // Every class stepped aside and the element cannot take it either: say so
+  // through the class (the server names the value it cannot spell) rather than
+  // swallow the edit as a silent no-op.
+  return target.kind === 'none' && holders.length < params.writableClasses.length ? resolveAmong(params) : target
+}
+
+function resolveAmong(params: ResolveWriteTargetParams): WriteTarget {
   const { provenance, inlineWritable, writableClasses } = params
 
   const winner = provenance?.sources.find((source) => source.winner)

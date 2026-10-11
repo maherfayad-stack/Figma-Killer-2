@@ -316,7 +316,7 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
     if (keys.length === 0) return
     const mode = opts?.mode ?? 'set'
     const existing = opts?.existing ?? mode === 'clear'
-    const target = writeTargetFor(keys[0], { existing })
+    const target = writeTargetFor(keys[0], { existing, values: keys.map((key) => (patch as Record<string, string | number | null>)[key]) })
     const filteredPatch: Record<string, string | number | null> = {}
     for (const key of keys) filteredPatch[key] = (patch as Record<string, string | number | null>)[key]
 
@@ -334,7 +334,7 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
   const commitStyle: InspectorCommitApi['commitStyle'] = (prop, value, opts) => {
     const key = String(prop)
     if (lockedPropertySet.has(key)) return
-    const target = opts?.target ?? writeTargetFor(key, { existing: opts?.existing })
+    const target = opts?.target ?? writeTargetFor(key, { existing: opts?.existing, values: [value] })
     if (opts?.preview) {
       previewToTarget(target, { [key]: value } as Partial<CSSPropertyBag>)
       return
