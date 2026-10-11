@@ -425,7 +425,8 @@ export function planSourceGroup(
  * children, in the same file and the same scope, so an ordinary element at a
  * known location is the whole requirement here. The question only the AST can
  * answer — is this container ONLY a container, or does it carry a handler, a
- * ref, a `key`, a spread — arrives at save time as `has-behaviour`.
+ * ref, a `key`, a spread — decides, at save time, whether it is removed or
+ * kept (emptied) with its children handed to the parent (G-7).
  */
 export function planSourceUngroup(
   tree: NodeTree<PageNode>,

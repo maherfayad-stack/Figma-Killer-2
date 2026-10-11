@@ -16,7 +16,10 @@
  * row's delete cuts array elements whose bytes no op carries back), a
  * `transplant` that MOVES (a cross-frame drag: two files, one pruned import),
  * a same-file `move` / `reparent` (the splice leaves a blank line and an
- * indentation no inverse move reproduces),
+ * indentation no inverse move reproduces), a `wrap` / `group` / `ungroup` (G-7:
+ * a group may gather members from elsewhere and an ungroup may keep a wrapper
+ * that carries behaviour, so neither is the other's inverse), an `unbind` prop
+ * or text edit (G-6: the code a typed literal replaced),
  * a free-canvas `canvas-layer-lift` / `canvas-layer-place` that MOVES (the page
  * and the layer module), and an `insert` that asked for an exact undo
  * (`exactUndo`, also asked of a `duplicate` and a copying `transplant`: it writes into a childless parent). A batch holding any of them records ONE
