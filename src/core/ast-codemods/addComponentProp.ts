@@ -24,11 +24,11 @@
  * writes what comes back. Parse, never execute.
  */
 import { Project, type SourceFile } from 'ts-morph'
+import { VARIANT_NAME_PATTERN } from '@core/component-variants'
 import { findComponentDeclaration, findNamedComponentDeclaration, getFunctionLikeNode } from '@core/page-parser'
 import { addOptionalPropToSignature, type OptionalProp } from './componentPropSignature'
 import { buildParamBindings } from './detachComponent'
 import { introducesSyntaxErrors } from './syntaxRegression'
-import { VARIANT_NAME_PATTERN } from './unionMember'
 
 export type NewComponentProp =
   | { kind: 'boolean'; name: string; defaultValue: boolean }

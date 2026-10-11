@@ -39,9 +39,10 @@ import {
   type VariantRuleRefusal,
 } from '@core/css-codemods'
 import { applyTextSplices, type TextSplice } from '@core/utils/textSplice'
+import { VARIANT_NAME_PATTERN } from '@core/component-variants'
 import type { PropDefault, SourceRange, VariantBinding, VariantEntry, VariantMember, VariantRule } from '@core/component-variants'
 import { cloneObjectEntry, removeObjectEntry, type ObjectEntryRefusal } from './objectEntry'
-import { addUnionMember, removeUnionMember, VARIANT_NAME_PATTERN, type UnionMemberRefusal } from './unionMember'
+import { addUnionMember, removeUnionMember, type UnionMemberRefusal } from './unionMember'
 
 export type VariantPlanRefusalReason =
   | 'union-not-writable'

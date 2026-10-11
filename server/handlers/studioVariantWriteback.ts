@@ -40,20 +40,20 @@
  */
 import { readFileSync } from 'node:fs'
 import { writeSourceFile } from '@core/page-parser'
-import { VARIANT_NAME_PATTERN } from '@core/ast-codemods'
+import { PROP_NAME_PATTERN, VARIANT_NAME_PATTERN } from '@core/component-variants'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { planVariantEdit, type CanonicalSourceRel, type VariantEditPlan, type VariantEditRequest } from './studio/variantEditPlan'
 import { StudioEditRefusalError } from './studioEditRefusals'
 import type { StudioEditApplyOutcome } from './studioEditSchemas'
 
-const IDENTIFIER = '^[A-Za-z_$][A-Za-z0-9_$]*$'
+const IDENTIFIER = PROP_NAME_PATTERN.source
 const VARIANT_NAME = VARIANT_NAME_PATTERN.source
 
 const AddVariantEditSchema = Type.Object({
   kind: Type.Literal('add-variant'),
   nodeId: Type.String(),
   exportName: Type.String({ maxLength: 128 }),
-  prop: Type.String({ pattern: IDENTIFIER, maxLength: 64 }),
+  prop: Type.String({ pattern: IDENTIFIER }),
   name: Type.String({ pattern: VARIANT_NAME }),
 })
 
@@ -61,7 +61,7 @@ const RemoveVariantEditSchema = Type.Object({
   kind: Type.Literal('remove-variant'),
   nodeId: Type.String(),
   exportName: Type.String({ maxLength: 128 }),
-  prop: Type.String({ pattern: IDENTIFIER, maxLength: 64 }),
+  prop: Type.String({ pattern: IDENTIFIER }),
   name: Type.String({ pattern: VARIANT_NAME }),
 })
 
@@ -76,7 +76,7 @@ const AddComponentPropEditSchema = Type.Object({
   kind: Type.Literal('add-component-prop'),
   nodeId: Type.String(),
   exportName: Type.String({ maxLength: 128 }),
-  name: Type.String({ pattern: IDENTIFIER, maxLength: 64 }),
+  name: Type.String({ pattern: IDENTIFIER }),
   propType: NewPropSchema,
 })
 

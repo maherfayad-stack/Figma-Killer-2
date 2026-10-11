@@ -42,7 +42,7 @@ import {
   type ParsedPropValue,
   type StaticEvalOptions,
 } from '@core/page-parser'
-import { planVariantGrid, type GalleryAxisInput, type GalleryPlan } from '@core/component-variants'
+import { galleryNodeIdPrefix, planVariantGrid, type GalleryAxisInput, type GalleryPlan } from '@core/component-variants'
 import type { Project } from 'ts-morph'
 import { pageIdFromRelPath } from '../studioPageIds'
 import { extractLocalComponentCatalog, type LocalComponentSpec } from './componentSpecExtract'
@@ -253,7 +253,7 @@ function scaffold(
 /** The one-page `ParsedPage` for a gallery: header + a wrapping grid of labelled call sites. Pure — `inlineLocalComponents` does the rest. */
 export function synthesizeGalleryPage(gallery: DiscoveredGallery): { parsed: ParsedPage; sources: Record<string, ComponentSource> } {
   const { summary, plan, line, col } = gallery
-  const prefix = `component-gallery:${summary.pageId}`
+  const prefix = galleryNodeIdPrefix(summary.pageId)
   const nodes: Record<string, ParsedNode> = {}
   const sources: Record<string, ComponentSource> = {}
   const cellIds: string[] = []

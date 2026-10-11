@@ -25,11 +25,9 @@
  * to point at and is never reached.
  */
 import { Node, Project, type SourceFile, type UnionTypeNode } from 'ts-morph'
+import { VARIANT_NAME_PATTERN } from '@core/component-variants'
 import { introducesSyntaxErrors } from './syntaxRegression'
 import { offsetOfLineColumn, type TextSplice } from '@core/utils/textSplice'
-
-/** A variant name becomes a CSS class, an object key and a string literal: letters, digits, `_` and `-`, starting with a letter. */
-export const VARIANT_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,39}$/
 
 export type UnionMemberRefusalReason = 'invalid-variant-name' | 'variant-exists' | 'stale-source' | 'not-a-union' | 'last-member'
 
