@@ -148,7 +148,7 @@ describe('a class edit inside one instance changes only that instance', () => {
     expect(snapshot(ALL)).toEqual(original)
   })
 
-  it('a colour over a var() binding writes the literal to the instance's own rule and leaves the component's variable alone', async () => {
+  it('a colour over a var() binding writes the literal to the instance own rule and leaves the component variable alone', async () => {
     write('components/Tier.css', `:root {
   --probe-accent: #cc0000;
 }

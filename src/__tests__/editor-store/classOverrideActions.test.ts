@@ -222,7 +222,7 @@ describe('a class edit on the root of a component instance', () => {
     expect(saveCalls[1]!.edits).toEqual([{ kind: 'promote-class-override', nodeId: ROOT_A, file: 'components/Tier.css', selector: '.tier', properties: ['gap'] }])
   })
 
-  it('a colour set over a variable binding is the instance's alone, and the notice says the component keeps the variable', async () => {
+  it('a colour set over a variable binding is the instance alone, and the notice says the component keeps the variable', async () => {
     stubFetch([{ undoToken: TOKEN }])
     const bound = { ...tierRule, styles: { padding: '8px', color: 'var(--probe-accent)' } } as StyleRule
     store().loadSite(makeSite({ pages: [page()], styleRules: { [RULE_ID]: bound } }))
