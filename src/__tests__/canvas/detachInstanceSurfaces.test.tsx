@@ -134,17 +134,13 @@ describe('the layer menu (both the Layers panel\'s and the canvas\'s)', () => {
     expect(screen.queryByTestId('layer-menu-detach-instance')).toBeNull()
   })
 
-  it('is OFFERED on a design-system component — disabled, with the reason — never silently missing', async () => {
+  it("is offered, enabled, on a design-system component - OD-21: the folder is the project's own code", () => {
     seed(['ds'])
     menu('ds')
     const item = screen.getByTestId('layer-menu-detach-instance') as HTMLButtonElement
-    expect(item.disabled || item.getAttribute('aria-disabled') === 'true').toBe(true)
+    expect(item.disabled || item.getAttribute('aria-disabled') === 'true').toBe(false)
     fireEvent.click(item)
-    expect(detachInstances).not.toHaveBeenCalled()
-    fireEvent.pointerEnter(item)
-    fireEvent.mouseEnter(item)
-    fireEvent.focus(item)
-    expect(await screen.findByText(/Button is a design-system component/)).toBeTruthy()
+    expect(detachInstances).toHaveBeenCalledWith(['ds'])
   })
 
   it('is offered, disabled, on an npm package component', () => {
