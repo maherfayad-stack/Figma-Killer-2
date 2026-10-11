@@ -32,7 +32,7 @@
  * file's own doc for the conversion.
  */
 import type { PreviewAxes } from '@core/studio-board'
-import type { ResizeCommitPatch, ResizeSizingMarkers, RuntimeErrorKind, SnapGuide } from '@core/studio-runtime'
+import type { ResizeAnchors, ResizeCommitPatch, ResizeSizingMarkers, RuntimeErrorKind, SnapGuide } from '@core/studio-runtime'
 
 /** A real, canonical parser/tree node id — the ONLY id shape any caller outside `frameAdapter/` ever sees. */
 export interface NodeRef {
@@ -213,6 +213,8 @@ export interface ResizeTargetOptions {
   sizing?: ResizeSizingMarkers
   /** canvas-26 — what the moving edge snaps to: the node's tree siblings and parent, and the canvas zoom for the screen-px threshold. */
   snap?: { siblings: NodeRef[]; parent: NodeRef | null; zoom: number }
+  /** PA-8 — which offsets the node's source anchors it by, so a live resize writes the same edge a portal one does. */
+  anchors?: ResizeAnchors
 }
 
 /**

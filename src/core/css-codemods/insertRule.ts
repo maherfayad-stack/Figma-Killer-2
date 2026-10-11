@@ -17,7 +17,7 @@
  * this does NOT create a second, cascade-shadowing block. CLAUDE.md's "one
  * honest target" invariant applies just as much to inserting as to editing —
  * two `.card { }` blocks in one file is precisely the hazard
- * `analyzeDeclarationTarget` exists to catch on the read side. Each supplied
+ * `setDeclaration`'s winner search exists to resolve on the edit side. Each supplied
  * declaration is instead SET on the existing rule (via `applyDeclaration`,
  * shared verbatim with `setDeclaration` so the two codemods' notion of "the
  * same rule" cannot drift), so calling `insertRule` twice with the same

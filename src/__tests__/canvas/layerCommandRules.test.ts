@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'bun:test'
 import type { NodeTree, PageNode } from '@core/page-tree'
 import { planAlign, type AlignLayer } from '@site/canvas/layerAlign'
-import { flexLayoutPatch, inferFlexDirection, pasteStylePatch, styleOf } from '@site/canvas/layerCommands'
+import { pasteStylePatch, styleOf } from '@site/canvas/layerCommands'
 import type { ArrowParentLayout, ArrowTargetStyle } from '@site/canvas/canvasNodeArrowMove'
 
 const FLOW: ArrowTargetStyle = { position: 'static', direction: 'ltr', left: 'auto', right: 'auto', top: 'auto', bottom: 'auto' }
@@ -73,20 +73,6 @@ describe('planAlign (IX-20)', () => {
         { nodeId: 'p', patch: { top: '30px' } },
       ],
     })
-  })
-})
-
-describe('⇧A (IX-10)', () => {
-  it('reads the direction the children already run', () => {
-    expect(inferFlexDirection([{ x: 0, y: 0, width: 50, height: 20 }, { x: 60, y: 0, width: 50, height: 20 }])).toBe('row')
-    expect(inferFlexDirection([{ x: 0, y: 0, width: 50, height: 20 }, { x: 0, y: 25, width: 50, height: 20 }])).toBe('column')
-    // One child keeps a block's vertical stacking.
-    expect(inferFlexDirection([{ x: 0, y: 0, width: 50, height: 20 }])).toBe('column')
-  })
-
-  it('adds flex in that direction; on a flex container it takes flex away (Penpot’s toggle)', () => {
-    expect(flexLayoutPatch('block', 'row')).toEqual({ display: 'flex', flexDirection: 'row' })
-    expect(flexLayoutPatch('inline-flex', 'row')).toEqual({ display: null, flexDirection: null })
   })
 })
 

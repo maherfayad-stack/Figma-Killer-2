@@ -314,6 +314,14 @@ export const OptimisticMoveMessageSchema = Type.Object({
  * doc, "ALWAYS element-scoped"); a class write's other elements catch up on
  * the next HMR update rather than getting an in-frame preview of their own.
  */
+/**
+ * The `patch` value that means "this property was cleared": the frame removes the
+ * element's inline value, so it shows what its class or the cascade gives it, which
+ * is what the file will say once the write lands. A stylesheet rule cannot express
+ * "absent" (`unset` would also override a class that sets the property). An empty
+ * string already satisfies {@link OPTIMISTIC_STYLE_VALUE_PATTERN}.
+ */
+export const OPTIMISTIC_STYLE_CLEARED = ''
 const OPTIMISTIC_STYLE_KEY_PATTERN = '^[a-zA-Z-]{1,64}$'
 const OPTIMISTIC_STYLE_VALUE_PATTERN = '^(?!.*!important)[^;}<]{0,256}$'
 const OPTIMISTIC_STYLE_CLASS_NAME_PATTERN = '^[^\\s{};<]{1,128}$'

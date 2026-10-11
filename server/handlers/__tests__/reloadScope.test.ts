@@ -326,3 +326,59 @@ describe('tryServeStudioReloadScope', () => {
     expect(JSON.stringify(narrowHome)).toContain('Edited')
   })
 })
+
+// CV-3 — adding or removing a variant axis changes the BOARD's shape: a
+// gallery page appears or vanishes, which no patch of the pages that render
+// the component can show. Rule 5 compares the galleries a touched component
+// file owns now with the ones the cache holds, and widens when they differ.
+describe('tryServeStudioReloadScope — a gallery appearing or vanishing widens (CV-3)', () => {
+  let wsDir: string
+
+  beforeEach(async () => {
+    clearPageParseCache()
+    const root = projectsRootDir()
+    fs.mkdirSync(root, { recursive: true })
+    wsDir = fs.mkdtempSync(path.join(root, '__reload_scope_gallery_test_'))
+    write('pages/Home.tsx', "import { Tag } from '../components/Tag'\nimport { Plain } from '../components/Plain'\nexport default function Home() {\n  return <main><Tag /><Plain /></main>\n}\n")
+    write('components/Tag.tsx', "export function Tag({ tone = 'a' }: { tone?: 'a' | 'b' }) {\n  return <b data-tone={tone}>tag</b>\n}\n")
+    write('components/Plain.tsx', 'export function Plain() {\n  return <i>plain</i>\n}\n')
+    await loadStudioPages(wsDir)
+  })
+
+  afterEach(() => {
+    fs.rmSync(wsDir, { recursive: true, force: true })
+    clearPageParseCache()
+  })
+
+  function write(relPath: string, contents: string): void {
+    const full = path.join(wsDir, ...relPath.split('/'))
+    fs.mkdirSync(path.dirname(full), { recursive: true })
+    fs.writeFileSync(full, contents, 'utf8')
+  }
+
+  it('stays narrow, and names the gallery page too, when a component keeps the galleries it had', async () => {
+    write('components/Tag.tsx', "export function Tag({ tone = 'a' }: { tone?: 'a' | 'b' | 'c' }) {\n  return <b data-tone={tone}>tag</b>\n}\n")
+    const { body } = await reloadScope(wsDir, ['components/Tag.tsx'])
+    expect(body.narrow).toBe(true)
+    expect(body.pageIds).toContain('home')
+    expect(body.pageIds?.some((id) => id.startsWith('component-'))).toBe(true)
+  })
+
+  it('widens when a component that had no axis now has one (a gallery appears)', async () => {
+    write('components/Plain.tsx', 'export function Plain({ solid = false }: { solid?: boolean }) {\n  return <i data-solid={solid}>plain</i>\n}\n')
+    const { body } = await reloadScope(wsDir, ['components/Plain.tsx'])
+    expect(body.narrow).toBe(false)
+  })
+
+  it('widens when a component lost its only axis (its gallery vanishes)', async () => {
+    write('components/Tag.tsx', "export function Tag({ tone = 'a' }: { tone?: 'a' }) {\n  return <b data-tone={tone}>tag</b>\n}\n")
+    const { body } = await reloadScope(wsDir, ['components/Tag.tsx'])
+    expect(body.narrow).toBe(false)
+  })
+
+  it('does not pay for a route file: a page with an enum prop of its own stays narrow', async () => {
+    write('pages/Home.tsx', "import { Tag } from '../components/Tag'\nimport { Plain } from '../components/Plain'\nexport default function Home({ mood = 'x' }: { mood?: 'x' | 'y' }) {\n  return <main data-mood={mood}><Tag /><Plain /></main>\n}\n")
+    const { body } = await reloadScope(wsDir, ['pages/Home.tsx'])
+    expect(body.narrow).toBe(true)
+  })
+})

@@ -21,8 +21,14 @@ field model into it, which added a section without renumbering one.)
 > one `INSPECTOR_SECTIONS` manifest entry per section, each re-skinned to the
 > measured Penpot baseline (`docs/audits/penpot-inspector-baseline/`); the write
 > target is resolved by `resolveWriteTarget.ts` ("the write target is a rule, not
-> a mode"), and computed values are read through `SelectionModel` (from the live
-> DOM at Tier 2). `SelectorInspector.tsx`, the separate surface for a bare CSS
+> a mode"; G-5: a class that cannot hold the typed value — a styled template
+> cannot spell a `;` or a backtick — steps aside through `holds`, so the value
+> lands on the element instead of being refused), a style edit never refuses
+> and `StyleLandingChip` says where it went after the write ("Saved in
+> `Card.module.css`" / "as an override" / "shorthand expanded" / "inline", with
+> an Undo for the two rungs a value-set cannot take back — see
+> `docs/features/studio-import.md` "CSS write-back"), and computed values are read
+> through `SelectionModel` (from the live DOM at Tier 2). `SelectorInspector.tsx`, the separate surface for a bare CSS
 > selector, keeps its search bar and category rail. Every law and primitive below
 > applies to all of it. The same rules in design language are in
 > [`docs/design.md`](../design.md) → "The inspector"; why the panel was rebuilt this
@@ -420,6 +426,36 @@ container whose children are all absolute shows a derived **Free frame** chip
 (`useParentPlacementKind`); the menu items read "Add auto layout" / "Add /
 remove auto layout" to match shift-A. Live (Tier 2) frames cannot be measured
 and say so.
+
+#### Add auto layout / Remove auto layout, keeping positions (PA-7, PA-8)
+
+⇧A, the layer menu's **Add auto layout / Remove (keep positions)** and the
+palette are one command, `toggleFlexLayout`, and it reads the frame before it
+writes. On a container that is not auto layout it **adds** it: the children's
+measured rects go through `core/studio-runtime/inferAutoLayout.ts` (direction
+from how they overlap vertically, gap from the spaces between their MARGIN
+boxes, `align-items` from the edge they share, `flex-wrap` plus a row gap when
+they form lines, padding from the container's padding box to the first
+child), and `convertLayout` writes `display: flex` with those values. A free
+frame's absolute children flow back in visual order (their `position`, insets
+and `translate` cleared; if the source order differs the reorder is the usual
+structural move written first and the restyle follows it, so that case is two
+undo entries, the move and the layout; in order it is one). Block children that
+fill their parent get `align-items: stretch` so they keep filling it; a bare
+content-box container that gains padding becomes `border-box` so it keeps its
+outer size. An absolute badge on a flow container stays pinned. On a container
+that **is** auto layout it **removes** it without moving anything
+(`freezePositions`): each in-flow child becomes `position: absolute` at the
+offset from the container's padding box (border and its own margin taken off)
+with its measured width and height, and the container leaves flex, becomes
+`position: relative` if it was static and keeps its height. Either way the
+container and all its children are written in one `convertLayout` call, all or
+nothing: a `.map` row, markup shared by other call sites or a style set in code
+refuses the whole gesture and a dialog names the element. Uneven spacing is
+averaged and the toast says a few layers move; live (Tier 2) frames cannot be
+measured and say so. Undo restores the same declarations, but a key the write
+removed returns at the END of its `style` object (style undo is a patch replay,
+not a journal restore).
 
 ### G3 — Layout: the settings popover (F3–F8)
 

@@ -95,13 +95,23 @@ function stringLiteralValue(node: TypeNode): string | undefined {
  * (`extractLocalComponentCatalog` walks the WHOLE workspace `Project`) into
  * O(props × files) instead of O(files) amortized.
  */
-const typeAliasIndexCache = new WeakMap<Project, Map<string, TypeNode>>()
+const typeAliasIndexCache = new WeakMap<Project, { files: readonly unknown[]; index: Map<string, TypeNode> }>()
 
+/**
+ * The kept per-project `Project` (`workspaceProject.ts`) outlives edits: a
+ * changed file gets a new parse tree and the alias nodes memoized from the old
+ * one are forgotten. The memo is therefore valid only while every source file
+ * still holds the parse tree it was built from (compared by identity, O(files)
+ * per call against O(files) to rebuild), which is also what makes a union
+ * Add variant just extended read back with its new member.
+ */
 function typeAliasIndex(project: Project): Map<string, TypeNode> {
-  let index = typeAliasIndexCache.get(project)
-  if (index) return index
-  index = new Map()
-  for (const sourceFile of project.getSourceFiles()) {
+  const sourceFiles = project.getSourceFiles()
+  const trees = sourceFiles.map((sourceFile) => sourceFile.compilerNode)
+  const cached = typeAliasIndexCache.get(project)
+  if (cached && cached.files.length === trees.length && cached.files.every((tree, i) => tree === trees[i])) return cached.index
+  const index = new Map<string, TypeNode>()
+  for (const sourceFile of sourceFiles) {
     for (const alias of sourceFile.getTypeAliases()) {
       const body = alias.getTypeNode()
       // First declaration wins on a name collision across files — same "don't
@@ -111,7 +121,7 @@ function typeAliasIndex(project: Project): Map<string, TypeNode> {
       if (body && !index.has(alias.getName())) index.set(alias.getName(), body)
     }
   }
-  typeAliasIndexCache.set(project, index)
+  typeAliasIndexCache.set(project, { files: trees, index })
   return index
 }
 
@@ -427,6 +437,9 @@ export const LocalComponentSpecSchema = Type.Object({
   /** The literal export name at `file` — `'default'` for a default export, otherwise identical to `name`. */
   exportName: Type.String(),
   isDefaultExport: Type.Boolean(),
+  /** 1-based position of the declaration's name in `file`: the `rel:line:col` an edit to the component (Add variant, Add property) is addressed by. */
+  line: Type.Integer({ minimum: 1 }),
+  column: Type.Integer({ minimum: 1 }),
   /**
    * What the declaration IS in the project: a reusable `component`, a route
    * `page` (under the project's detected pages directory, or a framework route
@@ -506,6 +519,8 @@ export interface LocalCatalogOptions {
   pagesDir?: string
   /** Read each enum/boolean prop's variant bindings (default on; the gallery's discovery pass skips the stylesheet analysis). */
   analyzeBindings?: boolean
+  /** Only this workspace-relative POSIX file — a write re-reads ONE component, not the project. */
+  onlyFile?: string
 }
 
 /** `buildComponentSpec`, plus the variant read model for every enum/boolean prop. */
@@ -524,8 +539,12 @@ function buildLocalComponentSpec(
     (resolveTypeNodeToMembers(project, resolvePropsTypeNode(declaration))?.getProperties() ?? []).map((p) => [p.getName(), p] as const),
   )
   const context = analyzeBindings ? createComponentAnalysisContext(declaration, workspaceRoot) : undefined
+  const anchor = (Node.hasName(declaration) ? declaration.getNameNode() : undefined) ?? declaration
+  const { line, column } = declaration.getSourceFile().getLineAndColumnAtPos(anchor.getStart())
   return {
     ...spec,
+    line,
+    column,
     props: spec.props.map((prop) => ({
       ...prop,
       ...variantFieldsFor(project, workspaceRoot, declaration, context, prop, signatures.get(prop.name)),
@@ -590,13 +609,14 @@ function localSpec(
  * kind it can't read from a type annotation.
  */
 export function extractLocalComponentCatalog(project: Project, workspaceRoot: string, options: LocalCatalogOptions = {}): LocalComponentSpec[] {
-  const { pagesDir, analyzeBindings = true } = options
+  const { pagesDir, analyzeBindings = true, onlyFile } = options
   const specs: LocalComponentSpec[] = []
   const pagesPrefix = pagesDir ? `${toPosix(pagesDir).replace(/^\.?\/+|\/+$/g, '')}/` : null
 
   for (const sourceFile of project.getSourceFiles()) {
     const relFile = toPosix(sourceFile.getFilePath()).replace(toPosix(workspaceRoot), '').replace(/^\/+/, '')
     if (!relFile) continue // shouldn't happen for a file `createWorkspaceProject` itself added, belt-and-braces
+    if (onlyFile !== undefined && relFile !== onlyFile) continue
     // Studio's own preview shell (`prototypeShell/`) is the viewer, not part of
     // the design — `App`/`CanvasPanel` in the component picker would be Studio
     // offering the user its own scaffold to place on their canvas.

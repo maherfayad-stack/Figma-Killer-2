@@ -54,7 +54,13 @@ import { ELEMENT_MOVED_REASON, withSourceLocation, type SourceFingerprintExpecta
 import { refusalFor } from './studioEditRefusals'
 import { editNamedNodeIds, resolveEditIdentities } from './studioEditIdentity'
 import { studioEditFile, studioEditLocation, type SourceTargetScope } from './studioEditRouting'
-import type { StudioEdit, StudioEditBatchOptions, StudioEditBatchResult, StudioEditRefusal } from './studioEditSchemas'
+import type {
+  StudioCarriedDeclaration,
+  StudioEdit,
+  StudioEditBatchOptions,
+  StudioEditBatchResult,
+  StudioEditRefusal,
+} from './studioEditSchemas'
 import { applyStudioEditBatch } from './studioWriteback'
 import { rememberSourceTexts } from './studio/sourceTextHistory'
 import { withProjectWriteLock } from './studio/projectWriteLock'
@@ -226,6 +232,7 @@ function refused(edits: readonly StudioEdit[], refusals: StudioEditRefusal[], to
     swapDetails: [],
     detachDetails: [],
     createdStylesheets: [],
+    styleLandings: [],
     promoteDetails: [],
     addSlotPropDetails: [],
     touchedFiles: [...touchedFiles],
@@ -278,6 +285,7 @@ export function applyStudioEditSequence(
   const lineCountBefore = new Map([...originals].map(([file, bytes]) => [file, bytes ? bytes.toString('utf8').split('\n').length : -1]))
   const touched = new Set<string>()
   const created: { key: string; nodeId: string }[] = []
+  const carried: StudioCarriedDeclaration[] = []
   const relocated = new Map<string, string>()
   const removed: StudioEditBatchResult['removed'] = []
   // P3-F — a step records no journal entry of its own (it would be an
@@ -390,6 +398,7 @@ export function applyStudioEditSequence(
       lost.delete(targetSentId)
     }
     result.createdNodeIds.forEach((nodeId, i) => created.push({ key: `${index}:${i}`, nodeId }))
+    carried.push(...(result.carried ?? []))
   }
 
   let shifted = false
@@ -408,6 +417,7 @@ export function applyStudioEditSequence(
     swapDetails: [],
     detachDetails,
     createdStylesheets: [],
+    styleLandings: [],
     promoteDetails: [],
     addSlotPropDetails: [],
     touchedFiles: [...touchedFiles],
@@ -417,6 +427,7 @@ export function applyStudioEditSequence(
     fingerprints: [],
     retargeted: identity.retargeted,
     listArrays,
+    ...(carried.length > 0 ? { carried } : {}),
     ...(undoToken ? { undoToken } : {}),
   }
 }

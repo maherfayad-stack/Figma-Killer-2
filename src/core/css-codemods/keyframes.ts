@@ -49,8 +49,7 @@
  * trimmed, matching every other matcher in this module family. The FIRST
  * match in source order is the write target, exactly as `findRule` takes the
  * first selector match; when a file holds more than one,
- * `analyzeKeyframesTarget` refuses BEFORE any of these writers run, the same
- * way `analyzeDeclarationTarget` gates `setDeclaration`.
+ * `analyzeKeyframesTarget` refuses BEFORE any of these writers run.
  *
  * A step is matched by its keyText, normalised only for whitespace and case
  * (`FROM` and `from` are the same step; `0%` and `from` are NOT — they are
@@ -111,8 +110,9 @@ function findStep(atRule: AtRule, keyText: string): Rule | undefined {
 /**
  * Would a write to `@keyframes <name>` land on exactly one honest target?
  *
- * The `@keyframes`-shaped counterpart of `analyzeDeclarationTarget`, and it
- * needs exactly one rule where that one needs four: a second block with the
+ * The honest-target gate for `@keyframes`. A class declaration no longer needs
+ * one (a doubled selector or a covering shorthand is written where it takes
+ * effect — `setDeclaration`), but a second block with the
  * same name does not merge with the first, it REPLACES it wholesale, so
  * writing the first when a second exists changes the file and changes nothing
  * on screen. Run by the server immediately before any writer below, on the

@@ -21,7 +21,7 @@ import type { StudioIcon } from '@site/studio/iconCatalog'
 import '@modules/alm/register'
 
 const projectCatalog: LocalComponentSpec[] = [
-  { name: 'MyCard', file: 'src/components/MyCard.tsx', exportName: 'MyCard', isDefaultExport: false, role: 'component', props: [] },
+  { name: 'MyCard', file: 'src/components/MyCard.tsx', exportName: 'MyCard', isDefaultExport: false, line: 1, column: 1, role: 'component', props: [] },
 ]
 
 const packageIcons: StudioIcon[] = [

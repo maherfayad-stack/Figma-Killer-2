@@ -124,6 +124,9 @@ export function useBoardFrameMoveDrag({
     // pointerdown must fall through to `onContextMenu` untouched, never
     // arming drag state (see `BoardFrameView`'s "Drag-to-reposition" note).
     if (e.button !== 0) return
+    // A control in the header (the gallery's Add variant button) owns its own press: guard by target, never by
+    // stopping propagation, which would leave the canvas pan gesture's tap state stale (canvas-overlay-pointerdown gate).
+    if (e.target instanceof Element && e.target.closest('button')) return
     // WS-7.1 — select on pointerDOWN (not click/mouseup), matching Figma:
     // pressing a frame's header selects it immediately, and a drag that
     // follows moves the now-selected frame. Plain click replaces the

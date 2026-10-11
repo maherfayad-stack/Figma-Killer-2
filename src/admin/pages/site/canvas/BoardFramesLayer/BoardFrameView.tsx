@@ -61,6 +61,7 @@ import { LiveBoardFrame } from './LiveBoardFrame'
 import { resolveFrameMount } from './framePool'
 import { FrameModeChips } from './FrameModeChips'
 import { FrameDiagnosticsBadge } from './FrameDiagnosticsBadge'
+import { GalleryAddVariantButton } from './GalleryAddVariantButton'
 import { describePinnedAxes } from './pinnedAxesLabel'
 import {
   getLocalesCapability,
@@ -450,6 +451,7 @@ function BoardFrameViewImpl({
             trust. */}
         <FrameModeChips frame={frame} />
         <FrameDiagnosticsBadge scopeKey={frame.id} />
+        <GalleryAddVariantButton page={page} />
       </div>
 
       {contextMenu && createPortal(

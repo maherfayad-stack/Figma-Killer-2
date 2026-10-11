@@ -57,7 +57,11 @@ export function getLayerArrangeCommands(): Command[] {
       const { moveSelectionToEnd } = await import('@site/canvas/layerCommands')
       moveSelectionToEnd('back')
     }),
-    layerCommand('layers.toggleFlexLayout', 'Add auto layout', 'Lay the container out with flexbox (again removes it)', ['flex', 'auto layout', 'layout', 'row', 'column'], async () => {
+    layerCommand('layers.frameSelection', 'Frame selection', 'Put the selected layers in a frame sized to their bounds, each keeping its place', ['frame', 'wrap', 'container', 'group', 'selection'], async () => {
+      const { frameSelection } = await import('@site/canvas/canvasFrameSelection')
+      await frameSelection()
+    }),
+    layerCommand('layers.toggleFlexLayout', 'Add auto layout', 'Lay the container out as flex, inferred from where its layers are (again removes it, keeping every layer in place)', ['flex', 'auto layout', 'layout', 'row', 'column'], async () => {
       const { toggleFlexLayout } = await import('@site/canvas/layerCommands')
       await toggleFlexLayout()
     }),

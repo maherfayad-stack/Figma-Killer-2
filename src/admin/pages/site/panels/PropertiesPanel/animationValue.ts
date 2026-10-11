@@ -7,8 +7,8 @@
  * the text is something this module would have to guess at, and serialise back
  * so the write goes through the ORDINARY declaration path every other
  * inspector control uses. Everything about writability — the
- * `StyleWriteLockContext` graying, the `unmapped`/`compiled` refusals,
- * `analyzeDeclarationTarget` — comes free from that, and nothing here needs to
+ * `StyleWriteLockContext` graying, the `unmapped`/`compiled` refusals, the
+ * style write ladder's landing — comes free from that, and nothing here needs to
  * know a stylesheet exists.
  *
  * ## Two shapes, because the parser really does deliver two

@@ -7,12 +7,14 @@
  * the palette (`spotlight/commands/layerArrange.ts`) and the right-click menu
  * (`LayerNodeContextMenu`). None of them re-derives a rule.
  */
-import { getParent, type CSSPropertyBag } from '@core/page-tree'
+import { getParent } from '@core/page-tree'
+import { inferAutoLayout, isAutoLayoutDisplay } from '@core/studio-runtime'
 import { registry } from '@core/module-engine'
 import { pushToast } from '@ui/components/Toast'
 import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 import { measureInRenderingFrame } from './canvasSelectionMeasure'
 import { armCreatedNodeFollowUp } from './createdNodeFollowUp'
+import { addAutoLayout, removeAutoLayoutKeepPositions } from './layoutConversion'
 import { runSelectionStyleCommand } from './selectionStyleCommands'
 
 // ── Bring to front / send to back (IX-9) ─────────────────────────────────────
@@ -50,39 +52,24 @@ export function moveSelectionToEnd(end: 'front' | 'back'): void {
   store.moveNode(nodeId, parent.id, to)
 }
 
-// ── Flex layout (IX-10) ──────────────────────────────────────────────────────
-
-/**
- * Which way a container's children already run, from their measured rects:
- * the second child starting below the first one's bottom is a column. Fewer
- * than two children keep a block's vertical stacking — a column.
- */
-export function inferFlexDirection(rects: ReadonlyArray<{ x: number; y: number; width: number; height: number }>): 'row' | 'column' {
-  const [first, second] = rects
-  if (!first || !second) return 'column'
-  // Half a pixel of slack: sub-pixel layouts put a stacked second child a
-  // fraction above the first one's bottom.
-  if (second.y >= first.y + first.height - 0.5) return 'column'
-  return 'row'
-}
+// ── Auto layout (IX-10, PA-7, PA-8) ──────────────────────────────────────────
 
 function isContainer(moduleId: string, isRoot: boolean): boolean {
   return isRoot || registry.get(moduleId)?.canHaveChildren === true
 }
 
-/** The flex patch for a container, or `null` for its removal when it is flex already. */
-export function flexLayoutPatch(display: string, direction: 'row' | 'column'): Partial<Record<keyof CSSPropertyBag, string | null>> {
-  if (display === 'flex' || display === 'inline-flex') return { display: null, flexDirection: null }
-  return { display: 'flex', flexDirection: direction }
-}
-
 /**
- * ⇧A. A container becomes `display: flex` in the direction its children
- * already run; pressed on a flex container it goes back (Penpot's toggle).
+ * ⇧A. A container becomes auto layout with everything Figma infers from where
+ * its children already are — direction, gap, padding, alignment, wrap — and
+ * absolute children of a free frame flow in visual order (`addAutoLayout`,
+ * one write). Pressed on a container that is auto layout already it goes back
+ * the way Figma's does: the children keep their positions
+ * (`removeAutoLayoutKeepPositions`).
+ *
  * Anything else — a leaf, or several layers — is wrapped first (one layer:
- * `wrapNode`; siblings: ⌘G's `groupNodes`) and the new wrapper is laid out in
- * the direction the layers ran. On a studio tree the wrapper exists only once
- * its write lands, so that half runs as a follow-up on it
+ * `wrapNode`; siblings: ⌘G's `groupNodes`) and the new wrapper is laid out the
+ * way the layers ran, gap included. On a studio tree the wrapper exists only
+ * once its write lands, so that half runs as a follow-up on it
  * (`createdNodeFollowUp.ts`): two undo entries, the wrap and the layout, which
  * is honest about the two writes it made.
  */
@@ -94,29 +81,41 @@ export async function toggleFlexLayout(): Promise<void> {
 
   const single = ids.length === 1 ? tree.nodes[ids[0]!] : undefined
   if (single && isContainer(single.moduleId, single.id === tree.rootNodeId)) {
-    const measured = await measureInRenderingFrame([single.id, ...single.children], ['display'], store.activeBreakpointId, [single.id])
+    const measured = await measureInRenderingFrame([single.id], ['display'], store.activeBreakpointId, [single.id])
     const display = measured?.get(single.id)?.computedStyle.display ?? ''
-    const rects = single.children.flatMap((id) => {
-      const rect = measured?.get(id)?.rect
-      return rect && rect.width + rect.height > 0 ? [rect] : []
-    })
-    const patch = flexLayoutPatch(display, inferFlexDirection(rects))
-    runSelectionStyleCommand((commit) => commit.commitStyleMany(patch))
+    if (isAutoLayoutDisplay(display)) removeAutoLayoutKeepPositions(single.id)
+    else addAutoLayout(single.id)
     return
   }
 
   const layerIds = ids.filter((id) => id !== tree.rootNodeId)
   if (layerIds.length === 0) return
   const measured = await measureInRenderingFrame(layerIds, [], store.activeBreakpointId, layerIds)
-  const direction = inferFlexDirection(
-    [...layerIds]
-      .sort((a, b) => (tree.nodes[tree.nodes[a]?.parentId ?? '']?.children.indexOf(a) ?? 0) - (tree.nodes[tree.nodes[b]?.parentId ?? '']?.children.indexOf(b) ?? 0))
-      .flatMap((id) => {
-        const rect = measured?.get(id)?.rect
-        return rect ? [rect] : []
+  const rects = [...layerIds]
+    .sort((a, b) => (tree.nodes[tree.nodes[a]?.parentId ?? '']?.children.indexOf(a) ?? 0) - (tree.nodes[tree.nodes[b]?.parentId ?? '']?.children.indexOf(b) ?? 0))
+    .flatMap((id) => {
+      const rect = measured?.get(id)?.rect
+      return rect ? [rect] : []
+    })
+  // The wrapper hugs exactly these layers, so its own padding is nothing.
+  const bounds = rects.length > 0
+    ? {
+        x: Math.min(...rects.map((rect) => rect.x)),
+        y: Math.min(...rects.map((rect) => rect.y)),
+        width: Math.max(...rects.map((rect) => rect.x + rect.width)) - Math.min(...rects.map((rect) => rect.x)),
+        height: Math.max(...rects.map((rect) => rect.y + rect.height)) - Math.min(...rects.map((rect) => rect.y)),
+      }
+    : { x: 0, y: 0, width: 0, height: 0 }
+  const inferred = inferAutoLayout(rects, bounds)
+  const layOut = () =>
+    runSelectionStyleCommand((commit) =>
+      commit.commitStyleMany({
+        display: 'flex',
+        flexDirection: inferred.direction,
+        alignItems: inferred.align,
+        ...(inferred.gap > 0 ? { gap: `${inferred.gap}px` } : {}),
       }),
-  )
-  const layOut = () => runSelectionStyleCommand((commit) => commit.commitStyleMany({ display: 'flex', flexDirection: direction }))
+    )
   armCreatedNodeFollowUp(() => layOut())
   const wrapperId = layerIds.length === 1
     ? store.wrapNode(layerIds[0]!, 'base.container')

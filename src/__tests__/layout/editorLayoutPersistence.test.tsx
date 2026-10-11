@@ -546,7 +546,8 @@ describe('AdminCanvasLayout — permanent panel rail', () => {
     expect(sidebar.getAttribute('data-active-panel')).toBe('framework')
     expect(useEditorStore.getState().frameworkPanelOpen).toBe(true)
     expect(useEditorStore.getState().explorerPanelOpen).toBe(false)
-    expect(within(sidebar).getByTestId('framework-panel')).toBeDefined()
+    // Framework is a first-open lazy chunk, so its mount is awaited.
+    expect(await within(sidebar).findByTestId('framework-panel')).toBeDefined()
 
     fireEvent.click(within(rail).getByRole('button', { name: /open explorer panel/i }))
 

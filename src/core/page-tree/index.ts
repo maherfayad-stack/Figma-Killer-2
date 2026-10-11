@@ -20,11 +20,13 @@ export { PageNodeSchema, parsePageNode } from './pageNode'
 export {
   INLINE_ID_SEPARATOR,
   LOOP_ID_SEPARATOR,
+  MAX_INSTANCE_OVERRIDE_DEPTH,
   buildSourceNodeId,
   callSitePosition,
   decodeSourceNodeId,
   hasWritableSourceLocation,
   inlineDepth,
+  inlineSegments,
   isInlinedNodeId,
   isRouteChromeNodeId,
   isSourceDerivedNodeId,
@@ -334,6 +336,14 @@ export {
   IMPORTED_RULE_TIMESTAMP,
   isImportedStyleRuleId,
 } from './styleRuleOrigin'
+
+export {
+  StyleLandingRungSchema,
+  StyleLandingSchema,
+  styleLandingNeedsJournal,
+  styleLandingText,
+} from './styleLanding'
+export type { StyleLanding, StyleLandingRung } from './styleLanding'
 
 export { getNodeDisplayName, getNodeHtmlTag, getNodeClassNames } from './nodeDisplayName'
 

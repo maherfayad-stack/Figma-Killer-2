@@ -66,12 +66,13 @@
 import { useRef, useState } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { detachRefusalFor } from '@site/store/slices/site/instanceDetachability'
-import { explainPropConstraint, type PageNode } from '@core/page-tree'
+import { explainPropConstraint, hasWritableSourceLocation, type PageNode } from '@core/page-tree'
 import { PropertyControlRenderer } from '@site/property-controls/PropertyControlRenderer'
 import { buildComponentCallSiteRows } from '../../panels/PropertiesPanel/componentCallSiteRows'
 import { useLocalComponentCatalog, findLocalComponentSpec } from '@site/studio/componentCatalog'
 import { InstanceSwapPopover } from '@site/property-controls/InstanceSwapPopover'
 import { Button } from '@ui/components/Button'
+import { SegmentedControl } from '@ui/components/SegmentedControl'
 import { ControlRow } from '@ui/components/ControlRow'
 import { SectionStaticHeader } from '@ui/components/Section'
 import { Skeleton } from '@ui/components/Skeleton'
@@ -80,6 +81,7 @@ import { ArrowsHorizontalIcon } from 'pixel-art-icons/icons/arrows-horizontal'
 import { Copy2SolidIcon } from 'pixel-art-icons/icons/copy-2-solid'
 import { useSelectionModel } from '../selectionModel'
 import { showsComponentSection } from './componentSectionSelection'
+import { LazyComponentPropertiesEditor } from './LazyComponentPropertiesEditor'
 import styles from './ComponentSection.module.css'
 
 interface InstanceProps {
@@ -123,6 +125,12 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
   const catalog = useLocalComponentCatalog()
   const spec = catalog === null ? null : findLocalComponentSpec(catalog, componentName, sourceFile)
   const rows = buildComponentCallSiteRows(spec, callSiteProps)
+
+  // CV-3 — "Instance" edits this call site's values; "Component" edits the
+  // definition itself (its variants and properties). A generated gallery cell has
+  // no call site to edit, so it opens on the component.
+  const [mode, setMode] = useState<'instance' | 'component'>(hasWritableSourceLocation(nodeId) ? 'instance' : 'component')
+  const definitionSpec = source === 'local' && spec !== null && spec.role === 'component' ? spec : null
 
   const detachRefusal = detachRefusalFor(node)
   const [detaching, setDetaching] = useState(false)
@@ -189,8 +197,23 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
       />
 
       <div className={styles.body}>
-        {/* One row per DECLARED prop (E1/E2.5). */}
-        {catalog === null ? (
+        {definitionSpec !== null && (
+          <SegmentedControl<'instance' | 'component'>
+            size="xs"
+            fullWidth
+            aria-label="What to edit"
+            value={mode}
+            onChange={setMode}
+            options={[
+              { value: 'instance', label: 'Instance' },
+              { value: 'component', label: 'Main component' },
+            ]}
+            data-testid="component-mode"
+          />
+        )}
+        {definitionSpec !== null && mode === 'component' ? (
+          <LazyComponentPropertiesEditor spec={definitionSpec} />
+        ) : /* One row per DECLARED prop (E1/E2.5). */ catalog === null ? (
           <PropRowsLoading keys={rows.map((row) => row.key)} />
         ) : rows.length === 0 ? (
           <p className={styles.noParams}>This component takes no props.</p>

@@ -21,7 +21,8 @@
 import { canvasLayerEditNodeId, type CanvasLayerPlacementChange } from '@core/studio-board'
 import type { StructuralCommitRollback } from '@site/store/slices/site/structuralCommitRollback'
 import { commitStructural } from './studioStructuralCommitEngine'
-import type { InsertPropValue, SlotJsxNode } from './studioSaveRequests'
+import type { InsertPropValue, SlotJsxNode, StudioSaveResponse } from './studioSaveRequests'
+import { announceCarried } from './transplantCarryNotice'
 
 /** A new layer's root element — `insert`'s element fields. */
 export interface CanvasLayerElement {
@@ -67,6 +68,7 @@ export async function commitCanvasLayerPlace(
     copy: boolean
   },
 ): Promise<void> {
+  let carried: StudioSaveResponse['carried']
   await commitStructural(
     [
       {
@@ -80,6 +82,10 @@ export async function commitCanvasLayerPlace(
     ],
     'Could not place that into the frame',
     {
+      onAnswer: (answer) => {
+        carried = answer.carried
+      },
+      onLanded: () => announceCarried(carried),
       undo: {
         label: input.copy ? 'Copy into frame' : 'Place into frame',
         // A move is the journal's `restore` (the page and the module, byte for
@@ -102,10 +108,15 @@ export async function commitCanvasLayerPlace(
 export async function commitCanvasLayerLift(
   input: CanvasLayerCommitBase & { nodeId: string; copy: boolean },
 ): Promise<void> {
+  let carried: StudioSaveResponse['carried']
   await commitStructural(
     [{ kind: 'canvas-layer-lift', nodeId: input.nodeId, layerId: input.layerId, ...(input.copy ? { copy: true } : {}) }],
     'Could not put that on the canvas',
     {
+      onAnswer: (answer) => {
+        carried = answer.carried
+      },
+      onLanded: () => announceCarried(carried),
       undo: {
         label: input.copy ? 'Copy onto canvas' : 'Move onto canvas',
         template: input.copy ? { kind: 'canvas-layer-delete', layerId: input.layerId } : { kind: 'restore-journal' },

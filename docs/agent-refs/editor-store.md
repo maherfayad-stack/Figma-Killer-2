@@ -544,6 +544,34 @@ the detached markup by child-index path, replays it (`retry(mapId)` — every
 `linkedToNext`, so one ⌘Z undoes both (`undoRedoActions.ts` cascades). A
 detach that refuses shows the refusal dialog, as before.
 
+**OD-19 — a VALUE edit inside an instance is an override of that instance**
+(`instanceOverrideActions.ts`, `instanceOverridePlan.ts`). `updateNodeProps` and
+`setNodeInlineStyles` call `overrides.route(...)` BEFORE they mutate (the router
+is built in `siteSlice.ts` and handed to `createNodeActions`). It is a router
+and not a second action: `plain` is the ordinary write, passed in, so a plan of
+`direct` / `whole-component` or a server refusal falls back to it with no
+duplicated logic. The override path is the one structural family that previews
+OUTSIDE history: `previewActiveTreeMutation` shows the value, the hold
+(`studio/instanceOverrideHold.ts`, read by `collectNodeDiffEdits`) keeps the
+autosave diff from writing it to the component, and the write landing pushes the
+one `restore-journal` entry (`undo` option, `kind: 'push'`) — the preview is
+never a second undo step. `mainEditComponent` (+ `setMainEditComponent`) is the
+explicit all-instances mode; the router steps aside while it names the node's
+`fromComponent` (an edit to a value that is a prop of the component there gets an
+info toast, "Set by a prop", instead of a write the server would refuse). A
+gesture parked behind another structural write is re-aimed with
+`again(relocate(id))`, like every other.
+
+G-2a/G-2b: a node whose value is the bare forward of a component prop carries
+`PageNode.propFeeds` (value key, in `codeProps`' own naming → the PAGE's prop
+name) and is NOT in `codeProps` (`parsedPageToSitePage.ts` lifts it), so the panel
+shows a live control and `isPropWritableToSource` agrees. The planner reads
+`propFeeds` first and plans an override marked `fed`: the same `expose-prop`
+wire, the same preview and hold, with the existing prop's name. A refusal of a
+fed override has no ordinary write to fall back to (the markup holds
+`{prop}`), so it is the server's sentence as a warning, never the "changes every
+instance" fallback.
+
 **Undo never jams, and never lies (P1-F).** A structural step that can never
 happen as recorded (an `unsupported` inverse, an element gone from the board, a
 file changed under the entry by an agent or an editor) is SKIPPED: undo drops
