@@ -73,7 +73,7 @@ import {
   previewOptimisticWrap,
 } from './structuralOptimism'
 import { writeListRowPlan } from './listRowSourceWrites'
-import type { SiteSliceHelpers } from './types'
+import type { FrameRequest, SiteSliceHelpers } from './types'
 
 /**
  * The writers, plus the two pre-write questions `studioSourceRefusals.ts`
@@ -107,6 +107,7 @@ export interface StudioSourceWrites extends StudioSourceRefusals {
     nodeIds: readonly string[],
     containerModuleId: string,
     defaults: Record<string, unknown>,
+    frame?: FrameRequest,
   ) => boolean
   /**
    * Insert a component declared in the user's own project (the Assets panel's
@@ -466,6 +467,7 @@ export function createStudioSourceWrites(
     nodeIds: readonly string[],
     containerModuleId: string,
     defaults: Record<string, unknown>,
+    frame?: FrameRequest,
   ): boolean => {
     if (nodeIds.length === 0) return false
     // `store-14` — same queue as `writeDuplicateToSource`: a held Cmd+G must
@@ -473,7 +475,7 @@ export function createStudioSourceWrites(
     // must not be thrown away either.
     if (
       deferWhileStructuralCommitInFlight((relocate) => {
-        writeGroupToSource(nodeIds.map(relocate), containerModuleId, defaults)
+        writeGroupToSource(nodeIds.map(relocate), containerModuleId, defaults, frame)
       }, nodeIds)
     ) {
       return true
@@ -485,7 +487,7 @@ export function createStudioSourceWrites(
       const refusedNodeId = plan.nodeId
       presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.group, plan.constraint, {
         nodeId: refusedNodeId,
-        retry: (mapId) => { void writeGroupToSource(nodeIds.map(mapId), containerModuleId, defaults) },
+        retry: (mapId) => { void writeGroupToSource(nodeIds.map(mapId), containerModuleId, defaults, frame) },
         getState: get,
         set,
       })
@@ -513,7 +515,19 @@ export function createStudioSourceWrites(
     const mod = registry.get(containerModuleId)
     const resolvedDefaults = { ...(mod?.defaults ?? {}), ...defaults }
     const only = plan.commit.length === 1 ? plan.commit[0] : undefined
-    if (only !== undefined) {
+    if (frame) {
+      // PA-6 — a frame is ALWAYS a `group` (even around one element), has no
+      // optimistic preview (a bare wrapper would flash before its style
+      // lands), and its patches follow the run in source order.
+      void commitStudioGroup({
+        nodeIds: plan.commit,
+        ...container,
+        frame: {
+          wrapperStyle: frame.wrapperStyle,
+          memberStyles: plan.commit.map((id) => frame.memberStyles[id] ?? {}),
+        },
+      })
+    } else if (only !== undefined) {
       const optimistic = previewOptimisticWrap(helpers, only, containerModuleId, resolvedDefaults) ?? undefined
       void commitStudioWrap({ nodeId: only, ...container, ...(optimistic ? { optimistic } : {}) })
     } else {

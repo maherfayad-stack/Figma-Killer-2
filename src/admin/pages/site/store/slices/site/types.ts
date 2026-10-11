@@ -85,6 +85,12 @@ export type {
   PendingStructuralCommit,
 } from './historyTypes'
 
+/** PA-6 — Frame selection's measured write: the frame's inline style and each member's patch (`null` removes a key). */
+export interface FrameRequest {
+  wrapperStyle: Record<string, string>
+  memberStyles: Record<string, Record<string, string | number | null>>
+}
+
 export interface SiteSlice {
   site: SiteDocument | null
 
@@ -396,7 +402,13 @@ export interface SiteSlice {
    * produces. Refuses out loud unless the selection is a contiguous run of
    * siblings in the code. See `groupActions.ts`.
    */
-  groupNodes: (nodeIds: string[], containerModuleId?: string, defaults?: Record<string, unknown>) => string | null
+  groupNodes: (
+    nodeIds: string[],
+    containerModuleId?: string,
+    defaults?: Record<string, unknown>,
+    /** PA-6 — Frame selection: the container is sized and placed and the members are rebased, in this same write. */
+    frame?: FrameRequest,
+  ) => string | null
   /**
    * K3 — ⌘⇧G. The container goes; its children take its place at its own index.
    * On a studio tree that is `unwrapJsxElement`, which refuses a container

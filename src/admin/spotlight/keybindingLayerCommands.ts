@@ -107,6 +107,20 @@ export const LAYER_COMMAND_KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     ignoreInEditableField: true,
   },
 
+  // PA-6 — Figma's "Frame selection". The selected layers go inside ONE new
+  // container sized to their bounds, each keeping its place on screen. ⌥⌘G on
+  // macOS, Ctrl+Alt+G on Windows; the plain chord is Group (`layers.group`
+  // rejects ⌥), the Shift chord Ungroup.
+  {
+    commandId: 'layers.frameSelection',
+    displayName: 'Frame selection (a container sized to the layers, each keeping its place)',
+    shortcut: { mac: '⌘⌥G', win: 'Ctrl+Alt+G' },
+    ariaKeyshortcuts: 'Control+Alt+G',
+    match: (e) => (e.metaKey || e.ctrlKey) && e.altKey && !e.shiftKey && isLetter(e, 'g'),
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
   // IX-10 — Figma's "add auto layout". A container becomes `display: flex`
   // in the direction its children already run; pressed again it goes back to
   // block. Two or more siblings are grouped first, then the group is laid out.

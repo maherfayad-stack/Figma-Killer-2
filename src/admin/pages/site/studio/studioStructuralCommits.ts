@@ -303,9 +303,15 @@ export async function commitStudioGroup(group: {
   importSpecifier?: string
   designSystemImport?: true
   optimistic?: OptimisticPreviewHandle
+  /**
+   * PA-6 — Frame selection: the container is sized and placed, and each member
+   * (in `nodeIds` order) gets the patch that keeps it where it was. A frame
+   * around ONE element is a run of one; a plain group of one is `wrap`.
+   */
+  frame?: { wrapperStyle: Record<string, string>; memberStyles: Record<string, string | number | null>[] }
 }): Promise<void> {
   const [nodeId, ...siblingNodeIds] = group.nodeIds
-  if (nodeId === undefined || siblingNodeIds.length === 0) return
+  if (nodeId === undefined || (siblingNodeIds.length === 0 && !group.frame)) return
   await commitStructural(
     [
       {
@@ -315,11 +321,15 @@ export async function commitStudioGroup(group: {
         name: group.name,
         ...(group.importSpecifier === undefined ? {} : { importSpecifier: group.importSpecifier }),
         ...(group.designSystemImport === undefined ? {} : { designSystemImport: group.designSystemImport }),
+        ...(group.frame ? { frame: group.frame } : {}),
       },
     ],
-    'Group refused',
+    group.frame ? 'Frame refused' : 'Group refused',
     {
-      undo: { label: 'Group', template: dissolveWrapperTemplate(group) },
+      // A frame rewrote the members too, so ⌘Z is the journal's pre-image.
+      undo: group.frame
+        ? { label: 'Frame selection', template: { kind: 'restore-journal' } }
+        : { label: 'Group', template: dissolveWrapperTemplate(group) },
       ...(group.optimistic ? { optimistic: group.optimistic } : {}),
     },
   )

@@ -14,7 +14,7 @@
  * call site), `swap`, `promote-component` (extract a subtree into a new
  * component), a `list-item` remove (OD-8: a `.map`
  * row's delete cuts array elements whose bytes no op carries back), and a
- * `transplant` that MOVES (a cross-frame drag: two files, one pruned import). A batch holding any of them records ONE
+ * Frame selection (a `group` with a `frame`), and a `transplant` that MOVES (a cross-frame drag: two files, one pruned import). A batch holding any of them records ONE
  * entry covering every file the batch changed, so one gesture is one token,
  * however many elements a multi-select delete removed and across however
  * many files.
@@ -41,6 +41,9 @@ const JOURNALED_KINDS = new Set<StudioEdit['kind']>(['delete', 'detach', 'expose
 function isJournaled(edit: StudioEdit): boolean {
   return (
     JOURNALED_KINDS.has(edit.kind) ||
+    // PA-6 — a frame rewrites the wrapper AND every member's offsets; no `ungroup`
+    // gives those back, the pre-image does.
+    (edit.kind === 'group' && edit.frame !== undefined) ||
     (edit.kind === 'list-item' && edit.op.kind === 'remove') ||
     // A cross-file MOVE (a COPY is taken back by deleting what it made). The
     // move cuts markup from one file, prunes the import only that markup used,
