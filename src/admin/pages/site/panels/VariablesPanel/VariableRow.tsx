@@ -11,12 +11,14 @@
  */
 import { useState } from 'react'
 import { EditSolidIcon } from 'pixel-art-icons/icons/edit-solid'
+import { CodeIcon } from 'pixel-art-icons/icons/code'
 import { TrashSolidIcon } from 'pixel-art-icons/icons/trash-solid'
-import type { TokenEdit } from '@core/studio-tokens'
+import { themeApplyClasses, type TokenEdit } from '@core/studio-tokens'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { Button } from '@ui/components/Button'
 import { Input } from '@ui/components/Input'
 import { Select } from '@ui/components/Select'
+import { ApplyClassStrip } from './ApplyClassStrip'
 import { ValueCell } from './ValueCell'
 import type { VariableCell, VariableRow as VariableRowModel } from './variablesModel'
 import styles from './VariableRow.module.css'
@@ -38,6 +40,10 @@ interface VariableRowProps {
   busy: boolean
   /** Runs a write; rejects with the server's refusal. */
   onWrite: (write: VariableRowWrite) => Promise<void>
+  /** Why no class can be applied to the selection right now, or `null`. */
+  applyBlockedReason: string | null
+  /** Adds a utility class to the selection (a Tailwind theme variable is also a class vocabulary). */
+  onApplyClass: (className: string) => Promise<void>
 }
 
 function valueEdit(row: VariableRowModel, cell: VariableCell, value: string): TokenEdit {
@@ -62,15 +68,18 @@ function useRowRunner(onWrite: VariableRowProps['onWrite']) {
   return { error, run, clearError: () => setError(null) }
 }
 
-export function VariableRow({ row, replacements, busy, onWrite }: VariableRowProps) {
+export function VariableRow({ row, replacements, busy, onWrite, applyBlockedReason, onApplyClass }: VariableRowProps) {
   const { token } = row
   const [mode, setMode] = useState<'view' | 'rename' | 'remove'>('view')
+  const [showApply, setShowApply] = useState(false)
   const [nameDraft, setNameDraft] = useState(token.name)
   const [replacement, setReplacement] = useState('')
   const { error, run, clearError } = useRowRunner(onWrite)
   const uses = row.usage?.count ?? null
   const isColor = token.family === 'color'
   const nameValid = TOKEN_NAME_RE.test(nameDraft)
+  // A Tailwind v4 `@theme` variable is also the classes that read it (`--color-brand` is `bg-brand`).
+  const classes = token.decls.some((decl) => decl.inTheme) ? themeApplyClasses(token.name) : []
 
   function close() {
     setMode('view')
@@ -162,6 +171,19 @@ export function VariableRow({ row, replacements, busy, onWrite }: VariableRowPro
           </>
         ) : (
           <>
+            {classes.length > 0 ? (
+              <Button
+                variant="ghost"
+                size="xs"
+                iconOnly
+                aria-label={`Apply ${token.name} as a class`}
+                tooltip="Apply as a class"
+                pressed={showApply}
+                onClick={() => setShowApply(!showApply)}
+              >
+                <CodeIcon size={11} aria-hidden="true" />
+              </Button>
+            ) : null}
             <Button
               variant="ghost"
               size="xs"
@@ -196,6 +218,10 @@ export function VariableRow({ row, replacements, busy, onWrite }: VariableRowPro
         </p>
       ) : null}
       {readOnlyReason ? <p className={styles.note}>{readOnlyReason}</p> : null}
+
+      {showApply && classes.length > 0 ? (
+        <ApplyClassStrip subject={token.name} classes={classes} blockedReason={applyBlockedReason} busy={busy} onApply={onApplyClass} />
+      ) : null}
 
       {mode === 'remove' ? (
         <div className={styles.confirm} role="group" aria-label={`Remove ${token.name}`}>

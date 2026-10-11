@@ -235,11 +235,14 @@ export interface TextEdit {
  * import block above it) without either one knowing the other's arithmetic.
  *
  * Ranges must not overlap; every producer here derives them from distinct AST
- * nodes, which cannot.
+ * nodes, which cannot. Two edits may START at the same byte, though - a cut and
+ * an insertion where the cut began (a move to the line just above or below its
+ * own) - and then the cut goes first: applying the insertion first would put the
+ * cut's range over the text it just inserted.
  */
 export function applyTextEdits(text: string, edits: readonly TextEdit[]): string {
   let out = text
-  for (const edit of [...edits].sort((a, b) => b.start - a.start)) {
+  for (const edit of [...edits].sort((a, b) => b.start - a.start || b.end - a.end)) {
     out = out.slice(0, edit.start) + edit.text + out.slice(edit.end)
   }
   return out

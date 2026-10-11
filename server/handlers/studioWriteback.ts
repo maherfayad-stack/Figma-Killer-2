@@ -232,11 +232,11 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
       // WB-11 — an attribute holding code refuses `binding-overwrite` rather
       // than baking a literal over the binding (`studioEditRefusals.ts`).
       const prop = edit.prop.startsWith('callSiteProps:') ? edit.prop.slice('callSiteProps:'.length) : edit.prop
-      setJsxProp({ ...loc, prop, value: edit.value, project })
+      setJsxProp({ ...loc, prop, value: edit.value, ...(edit.unbind ? { unbind: true } : {}), project })
       return { applied: true }
     }
     case 'text':
-      setJsxText({ ...loc, text: edit.text, project })
+      setJsxText({ ...loc, text: edit.text, ...(edit.unbind ? { unbind: true } : {}), project })
       return { applied: true }
     case 'styled': {
       // W4-4 Phase B. `loc` is the `styled.…` TAG, not a JSX element — the

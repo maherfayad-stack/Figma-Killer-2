@@ -28,7 +28,7 @@
  * path is undo-EXEMPT (see `localizedPageSlice.ts`).
  */
 import { registry } from '@core/module-engine'
-import { isPropWritableToSource } from '@core/page-tree'
+import { canUnbindProp, isPropWritableToSource } from '@core/page-tree'
 import { isCanvasLayerPageId } from '@core/studio-board'
 import { pushToast } from '@ui/components/Toast'
 import type { EditorStore, EditorStoreSliceCreator } from '@site/store/types'
@@ -55,6 +55,13 @@ interface ActiveInlineEdit {
   draft: string
   /** Open with the whole text selected (a freshly drawn text's placeholder) instead of the caret at the end. */
   selectAll?: true
+  /**
+   * G-6 (OD-20) - the text is CODE (`{count}`, `{t('x')}`) and the session is the
+   * user typing over it: committing replaces the code with the draft through
+   * `unbindNodeValue` (a journaled source write with its notice and Undo), not
+   * through `updateNodeProps`, which would refuse it.
+   */
+  unbind?: true
 }
 
 /**
@@ -177,7 +184,19 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
     // `codeProps` names the text prop only when the text came from an expression
     // AND has no `textOrigin` literal to write instead. See
     // `@core/page-tree`'s `sourceWritability`.
-    if (!isPropWritableToSource(node, spec.prop)) {
+    //
+    // G-6 (OD-20): the one exception is text the user may TYPE OVER - one plain
+    // source location, code that is a value (`canUnbindProp`). The session opens
+    // on what the canvas shows, and committing a change replaces the code with
+    // the text (Undo restores it); leaving without a change writes nothing.
+    // Locale-variant and loose-layer sessions commit through other trees and keep
+    // the refusal.
+    const unbind =
+      !isPropWritableToSource(node, spec.prop) &&
+      localeOverride === null &&
+      !(frameId && isCanvasLayerPageId(frameId)) &&
+      canUnbindProp(node, spec.prop)
+    if (!unbind && !isPropWritableToSource(node, spec.prop)) {
       pushToast({
         kind: 'info',
         title: 'This text is set in code',
@@ -189,7 +208,7 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
     // A dynamically-bound prop isn't literal-editable — the binding would
     // overwrite every keystroke in the canvas preview.
     if (node.dynamicBindings?.[spec.prop]) return false
-    const value = node.props[spec.prop]
+    const value = unbind && node.props[spec.prop] === undefined ? '' : node.props[spec.prop]
     if (typeof value !== 'string') {
       console.warn(
         `[canvas] inline edit aborted: prop "${spec.prop}" on node "${nodeId}" is not a string`,
@@ -207,6 +226,7 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
         initialValue: value,
         draft: value,
         ...(options?.selectAll ? { selectAll: true as const } : {}),
+        ...(unbind ? { unbind: true as const } : {}),
       }
       // Isolate the session's burst from any in-flight coalescing burst for
       // the same key (e.g. Properties-panel typing on the same prop).
@@ -232,6 +252,10 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
       s._historyCoalesceKey = null
     })
     if (session.draft === session.initialValue) return
+    if (session.unbind) {
+      get().unbindNodeValue(session.nodeId, session.prop, session.draft)
+      return
+    }
     if (session.frameId && isCanvasLayerPageId(session.frameId)) {
       // A loose layer's module is not in the page tree: its draft is committed
       // once, as a source write of its own (see `commitLayerSession`).

@@ -56,7 +56,8 @@ export const ClassEditSchema = Type.Object({
    * ALL OR NOTHING - if any edit in the batch refuses, every file goes back to
    * the bytes it had and nothing is written. A half-applied restyle (the inline
    * values stripped, the class refused) is a layer that changed look.
-   * See `studioBatchUndoJournal.ts`.
+   * The Variables panel's apply-a-theme-class (CT-6) posts it too, alone. See
+   * `studioBatchUndoJournal.ts`.
    */
   restyle: Type.Optional(Type.Literal(true)),
 })

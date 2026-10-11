@@ -51,9 +51,20 @@ export interface ChildPlacementRequest {
    * A byte range this placement must pretend is not there — the subtree being
    * MOVED. Without it, a reparent into an ancestor could resolve its own moved
    * element as the "last child" of the destination and write the copy beside
-   * the hole it is about to cut.
+   * the hole it is about to cut. (An ANCHOR inside that range is the caller's to
+   * refuse - `moveJsxElement` does, as `into-own-descendant`.)
    */
   exclude?: { start: number; end: number } | null
+  /**
+   * G-7 - an anchor that is not a child of the container (the canvas flattens a
+   * `<Fragment>`, so a node it shows as the container's child is written inside
+   * the fragment) is written BESIDE, in the anchor's own parent, instead of
+   * refused `not-siblings`. The newcomer renders exactly where the anchor does,
+   * so this is the position the person pointed at. Off by default: a cross-file
+   * transplant (`transplantJsxElement.ts`) carries bindings for the container's
+   * component, and a landing in some other component would carry the wrong ones.
+   */
+  besideAnchorInItsParent?: boolean
 }
 
 /**
@@ -64,7 +75,17 @@ export interface ChildPlacementRequest {
 export type ChildPlacementRefusalReason = JsxChildRangeReason | 'not-a-container' | 'not-siblings'
 
 export type ChildPlacementResult =
-  | { ok: true; edit: TextEdit }
+  | {
+      ok: true
+      edit: TextEdit
+      /**
+       * The JSX element or fragment the bytes land INSIDE - the container, or
+       * (`besideAnchorInItsParent`) the anchor's own parent. A caller that moves
+       * markup checks the names it reads against THIS, not against the container
+       * it asked for.
+       */
+      landing: Node
+    }
   | { ok: false; refusal: { reason: ChildPlacementRefusalReason; message: string } }
 
 function refuse(reason: ChildPlacementRefusalReason, message: string): ChildPlacementResult {
@@ -102,6 +123,7 @@ export function resolveChildPlacement(
         end,
         text: `>\n${childIndent}${render(childIndent, unit)}\n${parentIndent}</${tagName}>`,
       },
+      landing: parentOpening,
     }
   }
 
@@ -117,7 +139,7 @@ export function resolveChildPlacement(
   const last = children[children.length - 1]
   if (last) {
     const range = resolveJsxChildRange(sourceFile, ...tagLocation(sourceFile, last))
-    if (range.ok) return { ok: true, edit: insertBeside(range.range, 'after', render, unit, text) }
+    if (range.ok) return { ok: true, edit: insertBeside(range.range, 'after', render, unit, text), landing: parentElement }
   }
 
   // Empty parent: replace the whitespace-only run between the tags.
@@ -130,11 +152,12 @@ export function resolveChildPlacement(
     // Children exist but none of them resolved to a plain element (an
     // expression child, a bare text node, or the very subtree being moved out
     // of here). Append after them without touching what is already there.
-    return { ok: true, edit: { start: innerEnd, end: innerEnd, text: `\n${childIndent}${jsx}\n${parentIndent}` } }
+    return { ok: true, edit: { start: innerEnd, end: innerEnd, text: `\n${childIndent}${jsx}\n${parentIndent}` }, landing: parentElement }
   }
   return {
     ok: true,
     edit: { start: innerStart, end: innerEnd, text: `\n${childIndent}${jsx}\n${parentIndent}` },
+    landing: parentElement,
   }
 }
 
@@ -154,23 +177,16 @@ function resolveAnchorPlacement(
   // written beside the `{…}` container that produces it.
   const resolved = resolveJsxChildRange(sourceFile, anchor.line, anchor.col, 'container')
   if (!resolved.ok) return refuse(resolved.reason, resolved.message)
-  if (resolved.range.parent !== parentElement) {
+  if (resolved.range.parent !== parentElement && request.besideAnchorInItsParent !== true) {
     return refuse(
       'not-siblings',
       'The element this would be written next to is not a child of the container it was dropped into, so there is no single place in the file to write it.',
     )
   }
-  if (isWithin(resolved.range.element, request.exclude)) {
-    // The anchor is inside the subtree being moved — it is about to stop
-    // existing, so it cannot be what the new position is written against.
-    return refuse(
-      'not-siblings',
-      'The element this would be written next to is part of the element being moved, so there is no fixed position in the file to write it against.',
-    )
-  }
   return {
     ok: true,
     edit: insertBeside(resolved.range, request.position ?? 'after', render, unit, text),
+    landing: resolved.range.parent,
   }
 }
 
