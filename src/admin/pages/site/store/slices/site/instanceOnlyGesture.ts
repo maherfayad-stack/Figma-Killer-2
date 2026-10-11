@@ -61,6 +61,7 @@ import {
   callSitePosition,
   decodeSourceNodeId,
   isInlinedNodeId,
+  isInstanceNode,
   markSoleInstanceComponentFile,
   type NodeTree,
   type PageNode,
@@ -107,11 +108,14 @@ export function applyToThisInstanceOnly(input: {
   componentCopy?: false
 }): boolean {
   const { get, set, refusedNodeId, retry, onRefused } = input
-  if (!isInlinedNodeId(refusedNodeId)) return false
   const tree = resolveActiveTreeTarget(get())?.tree
   if (!tree) return false
-  const callSite = callSitePosition(refusedNodeId)
+  // The node is usually INSIDE the instance (a composite id); a drop onto a
+  // component that renders no children is refused about the instance itself.
+  const inside = isInlinedNodeId(refusedNodeId)
+  const callSite = inside ? callSitePosition(refusedNodeId) : refusedNodeId
   const instance = tree.nodes[callSite]
+  if (!inside && !isInstanceNode(instance)) return false
   const [rootId, ...more] = instance?.children ?? []
   if (!instance || rootId === undefined || more.length > 0) return false
 

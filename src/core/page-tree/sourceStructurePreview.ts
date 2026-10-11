@@ -21,6 +21,7 @@ import { chooseGroupWrapperTag } from '@core/utils/htmlContentModel'
 import { isSourceDerivedNodeId, isStudioPageRootId, loopTemplateNodeId } from './sourceNodeId'
 import { getParent } from './selectors'
 import { createScratchTree, moveOnScratch, planMoveSequence, type SequencedMove } from './moveSequence'
+import { instanceChildrenSlot, instanceWithoutChildrenSlot, isCallSiteChild } from './instanceChildrenSlot'
 import {
   refusePlacement,
   refuseStructuralEdit,
@@ -164,7 +165,7 @@ export function previewStructuralMove(
 
     // The synthetic page root is a container the same way it is for an insert:
     // resolved to the page's own returned root element before it is judged.
-    const container = resolveSourceContainer(tree, newParentId)
+    const container = resolveWriteContainer(tree, newParentId)
     if (!container.ok) return { ok: false, refusal: container.refusal }
 
     const refusal = refuseStructuralEdit({ kind: 'reparent', node, destination: container.node })
@@ -182,7 +183,7 @@ export function previewStructuralMove(
         // index names a position in a different list, so it is dropped rather
         // than applied to the wrong one — appending is an honest position, and
         // the user can drag within the new parent, which already writes.
-        ...resolveContainerAnchor(tree, container.node, container.node.id === newParentId ? newIndex : undefined),
+        ...resolveWriteAnchor(tree, container, newParentId, newIndex),
       },
     }
   }
@@ -220,11 +221,20 @@ export function previewStructuralMove(
     firstRefusal ??= refusal
   }
 
+  // OD-22 - inside an instance's children slot the neighbours on either side
+  // may be the component's own elements, which the call site cannot name; the
+  // nearest of the CALL SITE's own children in that direction is the honest
+  // anchor (the element still lands in the slot, in the order the call site can express).
+  if (firstRefusal && instanceChildrenSlot(tree, newParentId)) {
+    const nearest = nearestCallSiteAnchor(tree, reordered, index, newParentId)
+    if (nearest) return { ok: true, commit: { nodeId, ...nearest } }
+  }
+
   // WB-22 — no neighbour to name, but the element lands LAST: "append to my
   // own parent" is a position the reparent form already writes (with no
   // anchor it appends after the last written child).
   if (next === undefined && firstRefusal?.reason === 'no-sibling-anchor' && isSourceDerivedNodeId(nodeId)) {
-    const container = resolveSourceContainer(tree, newParentId)
+    const container = resolveWriteContainer(tree, newParentId)
     if (container.ok && !refuseStructuralEdit({ kind: 'reparent', node, destination: container.node })) {
       return {
         ok: true,
@@ -303,6 +313,80 @@ export function resolveSourceContainer(
     }
   }
   return { ok: true, node: only }
+}
+
+/** A container a write lands in, and the node whose children its anchor is chosen from. */
+export type WriteContainer =
+  | { ok: true; node: PageNode; anchorOwner: PageNode; slot: boolean; emptyAtCallSite: boolean }
+  | { ok: false; refusal: StructuralRefusal }
+
+/**
+ * OD-22 - the container a write into `parentId` really targets, which is not
+ * always the element the pointer is over: dropped into a layout component's
+ * `{children}`, an element is written between the `<Layout>` tags at the CALL
+ * SITE (`node` is the instance, the element's own `anchorOwner` is the inlined
+ * host whose children the drop index counts). Dropped into a component that
+ * renders no children, there is no call-site place to put it, so the gesture
+ * is refused as the instance's own markup (`shared-component`, about the
+ * instance) and the store detaches it (`instanceOnlyGesture.ts`).
+ *
+ * Everything else is {@link resolveSourceContainer}, unchanged.
+ */
+export function resolveWriteContainer(tree: NodeTree<PageNode>, parentId: string): WriteContainer {
+  const container = resolveSourceContainer(tree, parentId)
+  if (!container.ok) return container
+  const slot = instanceChildrenSlot(tree, container.node.id)
+  if (slot) {
+    return {
+      ok: true,
+      node: slot.instance,
+      anchorOwner: slot.host,
+      slot: true,
+      emptyAtCallSite: !slot.host.children.some((childId) => isCallSiteChild(slot, childId)),
+    }
+  }
+  const bare = instanceWithoutChildrenSlot(tree, container.node.id)
+  if (bare) {
+    return {
+      ok: false,
+      refusal: {
+        reason: 'shared-component',
+        message: `${instanceLabel(bare)} does not render children, so a drop into it can only go inside the component's own markup - which every use of it shares.`,
+        aboutNodeId: bare.id,
+      },
+    }
+  }
+  return { ok: true, node: container.node, anchorOwner: container.node, slot: false, emptyAtCallSite: container.node.children.length === 0 }
+}
+
+function instanceLabel(instance: PageNode): string {
+  const name = (instance.props as { componentName?: unknown } | undefined)?.componentName
+  return typeof name === 'string' && name !== '' ? name : 'This component'
+}
+
+/** The anchor for a drop at `newIndex` (counted in the DROP PARENT's children) inside `container`. */
+export function resolveWriteAnchor(
+  tree: NodeTree<PageNode>,
+  container: Extract<WriteContainer, { ok: true }>,
+  newParentId: string,
+  newIndex: number | undefined,
+): { anchorNodeId: string | null; position: 'before' | 'after' } {
+  return resolveContainerAnchor(tree, container.anchorOwner, container.anchorOwner.id === newParentId ? newIndex : undefined)
+}
+
+/** The call site's own child nearest to `at` in `order`, on whichever side has one - `null` when the slot holds none. */
+function nearestCallSiteAnchor(
+  tree: NodeTree<PageNode>,
+  order: readonly string[],
+  at: number,
+  parentId: string,
+): { anchorNodeId: string; position: 'before' | 'after' } | null {
+  const slot = instanceChildrenSlot(tree, parentId)
+  if (!slot) return null
+  const addressable = (id: string): boolean => isCallSiteChild(slot, id) && isSourceDerivedNodeId(id) && refusePlacement(tree.nodes[id] ?? { id }, 'Moved') === null
+  for (let i = at - 1; i >= 0; i -= 1) if (addressable(order[i]!)) return { anchorNodeId: order[i]!, position: 'after' }
+  for (let i = at + 1; i < order.length; i += 1) if (addressable(order[i]!)) return { anchorNodeId: order[i]!, position: 'before' }
+  return null
 }
 
 /**

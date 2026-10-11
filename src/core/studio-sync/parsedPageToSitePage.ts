@@ -112,6 +112,7 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
           source: node.instanceOf.source,
           sourceFile: node.instanceOf.sourceFile ?? '',
           callSiteProps: node.instanceOf.callSiteProps,
+          ...(node.instanceOf.childrenHost ? { childrenHost: node.instanceOf.childrenHost } : {}),
         }
       : { ...node.props }
 

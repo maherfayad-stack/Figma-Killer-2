@@ -172,6 +172,14 @@ export function applySubstitutions(
   relFile: string,
   fn: FunctionLike,
   evalOptions: StaticEvalOptions | undefined,
+  /**
+   * G-3 / OD-22 - collects the id of every plain element that renders the
+   * component's `{children}` directly (`<div className="body">{children}</div>`).
+   * One id is the instance's children slot: the place a call site's own
+   * children are written, so a drop there needs no detach. An element a branch
+   * or a loop decides is left out - it is not a place the call site can name.
+   */
+  childrenHosts?: string[],
 ): ParsedPage {
   if (env.size === 0) return subPage
   const nodes = { ...subPage.nodes }
@@ -402,6 +410,7 @@ export function applySubstitutions(
           if (Node.isJsxExpression(child)) {
             const expr = child.getExpression()
             if (expr && Node.isIdentifier(expr) && env.get(expr.getText())?.kind === 'children') {
+              if (!existing.locked) childrenHosts?.push(id)
               patchedChildren = [
                 ...existing.children.slice(0, insertAt),
                 ...callSiteChildrenIds,

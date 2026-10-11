@@ -91,22 +91,12 @@ interface HookSlot {
   local: string
 }
 
-type HookBinding =
-  | { kind: 'whole'; decl: Node; local: string }
-  | { kind: 'keys'; keys: HookKey[] }
-  | { kind: 'slots'; slots: HookSlot[] }
-
-/** A hook call in the component's body that may be moved — see this module's doc for the shape. */
-export interface ComponentHook {
+/** What every movable hook call carries. */
+interface HookBase {
   statement: VariableStatement
   call: CallExpression
   /** What the user reads in a confirm: `useLanguage`. */
   label: string
-  binding: HookBinding
-  /** The declaration the callee resolves to — two calls are the same hook when these match. `undefined` for a state holder, which is never shared. */
-  identity: unknown
-  /** `useState` / `useReducer` / `useRef` / `useId`: the instance's own state, hoisted under fresh names and never reused. */
-  state: boolean
   /**
    * Arguments computed from the component's own props (`useDir(dir)`): the call
    * site's values are written in their place, which the planner renders
@@ -114,6 +104,25 @@ export interface ComponentHook {
    */
   fromProps: ReadonlySet<Node>
 }
+
+/** A CONTEXT READER in the component's body that may be moved - see this module's doc for the shape. */
+export interface ComponentHook extends HookBase {
+  binding: { kind: 'whole'; decl: Node; local: string } | { kind: 'keys'; keys: HookKey[] }
+  /** The declaration the callee resolves to - two calls are the same hook when these match. */
+  identity: unknown
+  state: false
+}
+
+/**
+ * G-3 - a STATE HOLDER (`useState` / `useReducer` / `useRef` / `useId`): the
+ * instance's own state, hoisted under fresh names and never reused.
+ */
+export interface StateHook extends HookBase {
+  binding: { kind: 'whole'; decl: Node; local: string } | { kind: 'slots'; slots: HookSlot[] }
+  state: true
+}
+
+export type MovableHook = ComponentHook | StateHook
 
 /** A text edit to the page, applied by `detachComponent.ts` (descending by `pos`). */
 export interface PageTextEdit {
@@ -294,8 +303,8 @@ function isDerivedFromProps(arg: Node, fn: FunctionLike): boolean {
  * Every hook call in `fn`'s body, each one checked movable - or a
  * `uses-hooks` refusal naming the first that is not.
  */
-export function readComponentHooks(fn: FunctionLike, componentName: string): ComponentHook[] {
-  const hooks: ComponentHook[] = []
+export function readComponentHooks(fn: FunctionLike, componentName: string): MovableHook[] {
+  const hooks: MovableHook[] = []
   const body = fn.getBody()
   for (const call of fn.getDescendantsOfKind(SyntaxKind.CallExpression)) {
     const name = calleeName(call)
@@ -343,7 +352,11 @@ export function readComponentHooks(fn: FunctionLike, componentName: string): Com
           : `${componentName} passes ${name} a value its body computes, which the enclosing component does not have.`,
       )
     }
-    hooks.push({ statement, call, label: name, binding: readHookBinding(decl.getNameNode(), componentName, name, state), identity, state, fromProps })
+    if (state) {
+      hooks.push({ statement, call, label: name, binding: readStateBinding(decl.getNameNode(), componentName, name), state: true, fromProps })
+    } else {
+      hooks.push({ statement, call, label: name, binding: readContextBinding(decl.getNameNode(), componentName, name), identity, state: false, fromProps })
+    }
   }
   return hooks
 }
@@ -412,7 +425,7 @@ export function findHookBindingForName(fn: FunctionLike, name: string): Componen
       if (!isLiteralArgument(arg)) return 'unmovable'
     }
     try {
-      return { statement, call, label, binding: readHookBinding(nameNode, '', label, false), identity, state: false, fromProps: new Set() }
+      return { statement, call, label, binding: readContextBinding(nameNode, '', label), identity, state: false, fromProps: new Set() }
     } catch {
       return 'unmovable'
     }
@@ -420,9 +433,8 @@ export function findHookBindingForName(fn: FunctionLike, name: string): Componen
   return undefined
 }
 
-function readHookBinding(nameNode: Node, componentName: string, hookName: string, state: boolean): ComponentHook['binding'] {
+function readContextBinding(nameNode: Node, componentName: string, hookName: string): ComponentHook['binding'] {
   if (Node.isIdentifier(nameNode)) return { kind: 'whole', decl: nameNode.getParentOrThrow(), local: nameNode.getText() }
-  if (state && Node.isArrayBindingPattern(nameNode)) return readSlots(nameNode, componentName, hookName)
   if (!Node.isObjectBindingPattern(nameNode)) {
     fail('uses-hooks', `${componentName} unpacks ${hookName}() in a way detach can't move (an array pattern).`)
   }
@@ -439,7 +451,15 @@ function readHookBinding(nameNode: Node, componentName: string, hookName: string
   return { kind: 'keys', keys }
 }
 
-function readSlots(pattern: ArrayBindingPattern, componentName: string, hookName: string): ComponentHook['binding'] {
+function readStateBinding(nameNode: Node, componentName: string, hookName: string): StateHook['binding'] {
+  if (Node.isIdentifier(nameNode)) return { kind: 'whole', decl: nameNode.getParentOrThrow(), local: nameNode.getText() }
+  if (!Node.isArrayBindingPattern(nameNode)) {
+    fail('uses-hooks', `${componentName} unpacks ${hookName}() in a way detach can't move (an object pattern).`)
+  }
+  return readSlots(nameNode, componentName, hookName)
+}
+
+function readSlots(pattern: ArrayBindingPattern, componentName: string, hookName: string): StateHook['binding'] {
   const slots: HookSlot[] = []
   pattern.getElements().forEach((element, index) => {
     if (Node.isOmittedExpression(element)) return
@@ -545,10 +565,11 @@ export class DetachHookPlan {
   /** G-3 - the `'use client'` directive the page needs once a state holder lands in it, as the component's own file spells it. */
   useClient: string | undefined
 
-  private readonly byDecl = new Map<Node, { hook: ComponentHook; key?: string }>()
-  private readonly placed = new Map<ComponentHook, (key: string | undefined) => PageRead>()
+  private readonly byDecl = new Map<Node, { hook: MovableHook; key?: string }>()
+  private readonly placed = new Map<MovableHook, (key: string | undefined) => PageRead>()
   private readonly component: FunctionLike | undefined
   private readonly callSite: Node
+  private readonly renderArgument: (arg: Node) => string
   private readonly page: SourceFile
   private readonly names: DetachNameResolver
   private readonly componentName: string
@@ -557,13 +578,14 @@ export class DetachHookPlan {
   private concise: { newStatements: string[] } | undefined
 
   constructor(
-    hooks: readonly ComponentHook[],
+    hooks: readonly MovableHook[],
     page: SourceFile,
     callSite: Node,
     names: DetachNameResolver,
     componentName: string,
-    private readonly renderArgument: (arg: Node) => string,
+    renderArgument: (arg: Node) => string,
   ) {
+    this.renderArgument = renderArgument
     this.page = page
     this.names = names
     this.componentName = componentName
@@ -610,7 +632,7 @@ export class DetachHookPlan {
     this.edits.push({ pos: body.getStart(), remove: 0, text: head }, { pos: body.getEnd(), remove: 0, text: `\n${base}}` })
   }
 
-  private place(hook: ComponentHook): (key: string | undefined) => PageRead {
+  private place(hook: MovableHook): (key: string | undefined) => PageRead {
     const component = this.component
     if (!component) {
       fail(
@@ -636,7 +658,7 @@ export class DetachHookPlan {
    * callback, a render helper) it may render any number of times, and one
    * hoisted state would be shared by all of them.
    */
-  private assertStateIsHoistable(component: FunctionLike, hook: ComponentHook): void {
+  private assertStateIsHoistable(component: FunctionLike, hook: MovableHook): void {
     for (const ancestor of this.callSite.getAncestors()) {
       if (ancestor === component) return
       if (Node.isArrowFunction(ancestor) || Node.isFunctionExpression(ancestor) || Node.isFunctionDeclaration(ancestor) || Node.isMethodDeclaration(ancestor)) {
@@ -705,7 +727,7 @@ export class DetachHookPlan {
     }
   }
 
-  private writeNewCall(component: FunctionLike, hook: ComponentHook): (key: string | undefined) => PageRead {
+  private writeNewCall(component: FunctionLike, hook: MovableHook): (key: string | undefined) => PageRead {
     const callee = hook.call.getExpression()
     const calleeText = Node.isPropertyAccessExpression(callee)
       ? `${this.outer(callee.getExpression())}.${callee.getName()}`

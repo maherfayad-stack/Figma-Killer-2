@@ -211,7 +211,7 @@ export function createStudioSourceWrites(
     if (!targetFile) return false
     broadcastOptimisticInsert(
       `optimistic:${crypto.randomUUID()}`,
-      commit.parentNodeId,
+      commit.previewParentId ?? commit.parentNodeId,
       index ?? Number.MAX_SAFE_INTEGER,
       'div',
       undefined,
@@ -271,7 +271,7 @@ export function createStudioSourceWrites(
     const ghostId = `optimistic:${crypto.randomUUID()}`
     broadcastOptimisticInsert(
       ghostId,
-      plan.commit.parentNodeId,
+      plan.commit.previewParentId ?? plan.commit.parentNodeId,
       index ?? Number.MAX_SAFE_INTEGER,
       element.intrinsic ? element.name : 'div',
       element.intrinsic ? element.children : undefined,
@@ -281,7 +281,7 @@ export function createStudioSourceWrites(
         helpers,
         moduleId,
         moduleInsertProps(moduleId, defaults),
-        plan.commit.parentNodeId,
+        plan.commit.previewParentId ?? plan.commit.parentNodeId,
         index,
         ghostId,
         element.intrinsic ? inlineStyles : undefined,

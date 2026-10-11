@@ -41,7 +41,7 @@
  */
 import { decodeSourceNodeId, isSourceDerivedNodeId, isStudioPageRootId } from './sourceNodeId'
 import { refusePlacement, type StructuralRefusal } from './sourceStructure'
-import { resolveContainerAnchor, resolveSourceContainer } from './sourceStructurePreview'
+import { resolveWriteAnchor, resolveWriteContainer } from './sourceStructurePreview'
 import type { PageNode } from './pageNode'
 import type { NodeTree } from './treeSchema'
 
@@ -62,6 +62,13 @@ export interface StructuralTransplantCommit {
   position: 'before' | 'after'
   /** K2 across frames — leave the origin's markup where it is and write only the copy. */
   copy: boolean
+  /**
+   * The container holds nothing the file wrote (`<X />` or `<X></X>`), so a
+   * copy may expand it and its undo is the journal's `restore`. For a drop into
+   * a layout component's children slot (OD-22) that is a question about the
+   * CALL SITE's children, which the store cannot read off the container node.
+   */
+  parentIsEmpty: boolean
 }
 
 export type StructuralTransplantPreview =
@@ -135,8 +142,8 @@ export function previewStructuralTransplant(
     return { ok: false, refusal: placement, nodeId: node.id }
   }
 
-  const container = resolveSourceContainer(destinationTree, newParentId)
-  if (!container.ok) return { ok: false, refusal: container.refusal }
+  const container = resolveWriteContainer(destinationTree, newParentId)
+  if (!container.ok) return { ok: false, refusal: container.refusal, nodeId: container.refusal.aboutNodeId }
 
   // The destination page has to BE a studio-imported page. Dropping imported
   // markup into a CMS tree has no file to write into at all.
@@ -188,12 +195,9 @@ export function previewStructuralTransplant(
       // index names a position in a different list, so it is dropped rather
       // than applied to the wrong one — identical reasoning to
       // `previewStructuralMove`'s reparent branch.
-      ...resolveContainerAnchor(
-        destinationTree,
-        container.node,
-        container.node.id === newParentId ? newIndex : undefined,
-      ),
+      ...resolveWriteAnchor(destinationTree, container, newParentId, newIndex),
       copy,
+      parentIsEmpty: container.emptyAtCallSite,
     },
   }
 }

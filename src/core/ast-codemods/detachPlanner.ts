@@ -26,7 +26,7 @@ import type { FunctionLike } from '@core/page-parser'
 import type { JsxOpeningLikeElement } from './locateJsxElement'
 import { bindingKindAt, freeReferenceNames, isReferenceIdentifier, tagReferenceRoot, type BindingKind } from './subtreeFreeVariables'
 import { DetachNameResolver, type Expectation, type PendingImport } from './detachNames'
-import { DetachHookPlan, type ComponentHook, type PageTextEdit } from './detachHooks'
+import { DetachHookPlan, type MovableHook, type PageTextEdit } from './detachHooks'
 import { foldClassName, readFoldPart } from './detachClassNameFold'
 import { DetachConditionals, type Unit } from './detachConditionals'
 import {
@@ -107,7 +107,7 @@ export class DetachPlanner {
     root: Node,
     opening: JsxOpeningLikeElement,
     componentName: string,
-    hooks: readonly ComponentHook[],
+    hooks: readonly MovableHook[],
   ) {
     this.page = page
     this.componentFile = componentFile

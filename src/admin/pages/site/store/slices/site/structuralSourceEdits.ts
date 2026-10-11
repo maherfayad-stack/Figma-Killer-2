@@ -50,7 +50,8 @@ import {
   previewStructuralMove,
   refuseStructuralEdit,
   resolveContainerAnchor,
-  resolveSourceContainer,
+  resolveWriteAnchor,
+  resolveWriteContainer,
   type EditConstraint,
   type ListRowEditPlan,
   type NodeTree,
@@ -169,6 +170,13 @@ export interface SourceInsertCommit {
    * the insert's ⌘Z is the undo journal's `restore` (`commitStudioInsert`).
    */
   parentIsEmpty: boolean
+  /**
+   * OD-22 - the element the new child APPEARS in on the board when that is not
+   * `parentNodeId`: a drop into a layout component's children slot is written
+   * at the call site (`parentNodeId`, the instance) and rendered inside the
+   * inlined element that holds `{children}`. The optimistic preview goes there.
+   */
+  previewParentId?: string
 }
 
 /**
@@ -186,9 +194,14 @@ export function planSourceInsert(
   parentId: string,
   index?: number,
 ): StructuralPlan<SourceInsertCommit> {
-  const container = resolveSourceContainer(tree, parentId)
+  const container = resolveWriteContainer(tree, parentId)
   if (!container.ok) {
-    return { ok: false, constraint: describeStructuralRefusal({ refusal: container.refusal }) }
+    const about = container.refusal.aboutNodeId === undefined ? undefined : tree.nodes[container.refusal.aboutNodeId]
+    return {
+      ok: false,
+      constraint: describeStructuralRefusal({ refusal: container.refusal, ...(about ? { node: about } : {}) }),
+      ...(about ? { nodeId: about.id } : {}),
+    }
   }
 
   const node = container.node
@@ -199,9 +212,18 @@ export function planSourceInsert(
     return { ok: false, constraint: describeStructuralRefusal({ refusal, node }), nodeId: node.id }
   }
 
+  // OD-22 - inside a layout component's children slot the element is written
+  // at the call site (`parentNodeId` is the instance), but the drop index and
+  // the optimistic preview count the slot's own children.
+  const anchor = container.slot ? resolveWriteAnchor(tree, container, parentId, index) : resolveContainerAnchor(tree, node, index)
   return {
     ok: true,
-    commit: { parentNodeId: node.id, ...resolveContainerAnchor(tree, node, index), parentIsEmpty: node.children.length === 0 },
+    commit: {
+      parentNodeId: node.id,
+      ...anchor,
+      parentIsEmpty: container.emptyAtCallSite,
+      ...(container.slot ? { previewParentId: container.anchorOwner.id } : {}),
+    },
   }
 }
 
@@ -325,9 +347,14 @@ export function planSourceDuplicateTo(
 
   if (!isSourceDerivedNodeId(first)) return { ok: true, commit: null }
 
-  const container = resolveSourceContainer(tree, newParentId)
+  const container = resolveWriteContainer(tree, newParentId)
   if (!container.ok) {
-    return { ok: false, constraint: describeStructuralRefusal({ refusal: container.refusal }) }
+    const about = container.refusal.aboutNodeId === undefined ? undefined : tree.nodes[container.refusal.aboutNodeId]
+    return {
+      ok: false,
+      constraint: describeStructuralRefusal({ refusal: container.refusal, ...(about ? { node: about } : {}) }),
+      ...(about ? { nodeId: about.id } : {}),
+    }
   }
   for (const nodeId of ids) {
     if (tree.nodes[nodeId]) continue
@@ -342,7 +369,7 @@ export function planSourceDuplicateTo(
   // names a position in a different list, so it is dropped rather than applied
   // to the wrong one — appending is an honest position. Identical reasoning to
   // `previewStructuralMove`'s reparent branch.
-  const anchor = resolveContainerAnchor(tree, container.node, container.node.id === newParentId ? newIndex : undefined)
+  const anchor = resolveWriteAnchor(tree, container, newParentId, newIndex)
   const intoFile = decodeSourceNodeId(container.node.id)?.rel
   const writeOrder = anchor.anchorNodeId !== null && anchor.position === 'after' ? [...ids].reverse() : ids
   return {
@@ -352,7 +379,7 @@ export function planSourceDuplicateTo(
       parentNodeId: container.node.id,
       ...anchor,
       ...(decodeSourceNodeId(nodeId)?.rel !== intoFile ? { crossFile: true as const } : {}),
-      ...(container.node.children.length === 0 ? { parentIsEmpty: true as const } : {}),
+      ...(container.emptyAtCallSite ? { parentIsEmpty: true as const } : {}),
     })),
   }
 }
