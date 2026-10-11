@@ -20,8 +20,13 @@ describe('addComponentProp', () => {
   it('adds to a same-file interface, one member per line', () => {
     const source = ['interface AvatarProps {', '  src: string', '}', '', 'export function Avatar({ src }: AvatarProps) {', '  return <img src={src} />', '}', ''].join('\n')
     expect(add(source, 'Avatar')).toBe(
-      ['interface AvatarProps {', '  src: string', '  rounded?: boolean;', '}', '', 'export function Avatar({ src, rounded = true }: AvatarProps) {', '  return <img src={src} />', '}', ''].join('\n'),
+      ['interface AvatarProps {', '  src: string', '  rounded?: boolean', '}', '', 'export function Avatar({ src, rounded = true }: AvatarProps) {', '  return <img src={src} />', '}', ''].join('\n'),
     )
+  })
+
+  it('copies the indent and the separator of a semicolon-terminated body, after a trailing comment', () => {
+    const source = ['interface AvatarProps {', '\tsrc: string; // the image', '}', '', 'export function Avatar({ src }: AvatarProps) {', '  return <img src={src} />', '}', ''].join('\n')
+    expect(add(source, 'Avatar')).toContain('\tsrc: string; // the image\n\trounded?: boolean;\n}')
   })
 
   it('adds to a type alias object and keeps a trailing ...rest last', () => {
