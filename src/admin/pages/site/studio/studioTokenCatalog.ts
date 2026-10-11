@@ -16,8 +16,9 @@
  * (`resyncBoardAfterWrite`), so a stylesheet edit repaints every frame.
  */
 import { apiRequest } from '@core/http'
-import { Type } from '@core/utils/typeboxHelpers'
-import { TokenCatalogSchema, type TokenCatalog, type TokenEdit } from '@core/studio-tokens'
+import { Type, type Static } from '@core/utils/typeboxHelpers'
+import { TokenCatalogSchema, type TokenCatalog, type TokenEdit, type TokenUsage } from '@core/studio-tokens'
+import { journaledWriteOutcome } from './journaledUndo'
 import { resyncBoardAfterWrite } from './studioBoardResync'
 import { studioWriteDir } from './studioWorkspaceDir'
 
@@ -27,13 +28,29 @@ const WriteResponseSchema = Type.Object({
   ok: Type.Literal(true),
   files: Type.Array(Type.Object({ path: Type.String(), hash: Type.String() })),
   inserted: Type.Array(Type.Object({ name: Type.String() })),
+  renamed: Type.Array(Type.Object({ name: Type.String(), to: Type.String(), mentions: Type.Integer(), files: Type.Integer() })),
+  removed: Type.Array(Type.Object({ name: Type.String(), declarations: Type.Integer(), movedReaders: Type.Integer(), replacedWith: Type.Optional(Type.String()) })),
+  /** The undo-journal entry that puts every file this write changed back; `null` when it could not be journaled. */
+  undoToken: Type.Union([Type.String(), Type.Null()]),
 })
 
-let catalog: TokenCatalog | null = null
+export type StudioTokenWriteResult = Static<typeof WriteResponseSchema>
+
+/** What the editor knows about the project's tokens: the catalog, and (once the Variables panel asked) where each is read. */
+export interface StudioTokenState {
+  readonly catalog: TokenCatalog | null
+  readonly usage: ReadonlyMap<string, TokenUsage> | null
+}
+
+let state: StudioTokenState = { catalog: null, usage: null }
 const listeners = new Set<() => void>()
 
 export function getStudioTokenCatalog(): TokenCatalog | null {
-  return catalog
+  return state.catalog
+}
+
+export function getStudioTokenState(): StudioTokenState {
+  return state
 }
 
 export function subscribeStudioTokenCatalog(listener: () => void): () => void {
@@ -41,8 +58,8 @@ export function subscribeStudioTokenCatalog(listener: () => void): () => void {
   return () => listeners.delete(listener)
 }
 
-function publish(next: TokenCatalog | null): void {
-  catalog = next
+function publish(next: StudioTokenState): void {
+  state = next
   for (const listener of listeners) listener()
 }
 
@@ -50,6 +67,9 @@ function publish(next: TokenCatalog | null): void {
  * Re-reads the catalog. Never throws: a project whose styles cannot be read
  * simply has no variables to offer, which is a real answer, and the picker's
  * "no affordance when there is nothing to offer" rule handles it.
+ *
+ * `usage: true` (the Variables panel) also scans where each token is read; a
+ * plain refresh keeps the last usage rather than dropping the panel's counts.
  */
 export async function refreshStudioTokenCatalog(options: { usage?: boolean } = {}): Promise<TokenCatalog | null> {
   const dir = studioWriteDir() ?? undefined
@@ -58,33 +78,41 @@ export async function refreshStudioTokenCatalog(options: { usage?: boolean } = {
       query: { dir, ...(options.usage ? { usage: '1' } : {}) },
       schema: TokenCatalogSchema,
     })
-    publish(fresh)
+    const usage = options.usage
+      ? new Map(fresh.tokens.flatMap((token) => (token.usage ? [[token.name, token.usage] as const] : [])))
+      : state.usage
+    publish({ catalog: fresh, usage })
     return fresh
   } catch (err) {
     console.error('[studioTokenCatalog] could not read the token catalog:', err)
-    return catalog
+    return state.catalog
   }
 }
 
 /**
- * Applies token edits through the server planner. Throws the server's refusal
- * (its message already carries the remedy) for the caller to show next to the
- * control; on success re-syncs the board and refreshes the catalog.
+ * Applies token edits through the server planner, as ONE write with ONE undo
+ * entry labelled `undoLabel` (the server journals every file the write changed;
+ * `journaledUndo.ts` turns its token into the entry's inverse). Throws the
+ * server's refusal - its message already carries the remedy - for the caller
+ * to show next to the control; on success re-syncs the board and refreshes the
+ * catalog (and the usage counts, when the panel had asked for them).
  */
-export async function applyStudioTokenEdits(edits: readonly TokenEdit[]): Promise<readonly string[]> {
+export async function applyStudioTokenEdits(edits: readonly TokenEdit[], undoLabel: string): Promise<StudioTokenWriteResult> {
   const dir = studioWriteDir() ?? undefined
   const result = await apiRequest(ROUTE, {
     method: 'POST',
     body: { dir, edits },
     schema: WriteResponseSchema,
   })
-  await resyncBoardAfterWrite(result.files.map((file) => file.path))
-  await refreshStudioTokenCatalog()
-  return result.inserted.map((entry) => entry.name)
+  await resyncBoardAfterWrite(result.files.map((file) => file.path), {
+    structuralOutcome: journaledWriteOutcome(undoLabel, [], result.undoToken ?? undefined),
+  })
+  await refreshStudioTokenCatalog({ usage: state.usage !== null })
+  return result
 }
 
 /** Declares `name: value` as a new variable in a project stylesheet; resolves to the declared name. */
 export async function createStudioVariable(request: { name: string; value: string }): Promise<string> {
-  const [name] = await applyStudioTokenEdits([{ op: 'insert', name: request.name, value: request.value }])
-  return name ?? request.name
+  const result = await applyStudioTokenEdits([{ op: 'insert', name: request.name, value: request.value }], `Create ${request.name}`)
+  return result.inserted[0]?.name ?? request.name
 }

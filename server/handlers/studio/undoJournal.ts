@@ -123,7 +123,7 @@ const UndoJournalEntrySchema = Type.Object({
 type UndoJournalEntry = Static<typeof UndoJournalEntrySchema>
 
 /** Every file a restore writes is resolved in the editor's scope — the journal is the editor's undo. */
-const EDITOR_SCOPE = { canvasLayers: 'allow' } as const
+const EDITOR_SCOPE = { canvasLayers: 'allow', journalStylesheets: 'allow' } as const
 
 /** What a write's files held before it ran: absolute path to bytes, or `null` for "did not exist". */
 export type UndoPreImage = ReadonlyMap<string, Buffer | null>

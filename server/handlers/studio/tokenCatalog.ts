@@ -28,10 +28,9 @@
  * not the user's token layer (CT-OD-1). The editor lists them as a separate,
  * read-only collection.
  */
-import { readFileSync } from 'node:fs'
-import { extname, join } from 'node:path'
 import {
   gateKey,
+  findTokenMentions,
   lineOfOffset,
   modeOfGate,
   resolveVarValue,
@@ -45,7 +44,7 @@ import {
   type TokenFamily,
   type TokenUsage,
 } from '@core/studio-tokens'
-import { isPrototypeShellPath, listWorkspaceFiles } from '@core/page-parser'
+import { readTokenWorkspaceFiles } from './tokenWorkspaceFiles'
 import { classifyDesignTokenFamily } from './tokenExtractCssScan'
 import { familyOf, type TokenCssSource } from './projectTokenIndex'
 
@@ -191,48 +190,27 @@ export function inferModeAxes(tokens: readonly CatalogToken[]): ModeAxis[] {
 // Usage - where each token is read (P6)
 // ---------------------------------------------------------------------------
 
-const USAGE_FILE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.css', '.scss', '.sass', '.less', '.html', '.vue', '.svelte', '.mdx'])
-/** `var(--x)`, Tailwind v3 arbitrary `[--x]`, Tailwind v4 shorthand `(--x)`. */
-const USAGE_RE = /(?:var\(\s*|\[|\()(--[A-Za-z0-9_-]+)/g
-const MAX_USAGE_FILES = 4000
-const MAX_USAGE_FILE_BYTES = 512 * 1024
 const MAX_SITES_PER_TOKEN = 25
 
 /**
- * Every place the project reads a custom property: `var(--x)` in any stylesheet
- * or source file, plus Tailwind's arbitrary-value forms. One server-side pass
- * over the workspace file list (not in a selector path), cheap enough to run
- * per request; the catalog asks for it only when a panel shows counts.
+ * Every place the project reads a custom property: any mention of its name
+ * that is not a declaration (`@core/studio-tokens` `findTokenMentions` - the
+ * ONE definition rename and remove use too, so a count of 0 means removing it
+ * breaks nothing). One server-side pass over the workspace file list (not in a
+ * selector path), cheap enough to run per request; the catalog asks for it
+ * only when a panel shows counts.
  */
 export function scanTokenUsage(dir: string): Map<string, TokenUsage> {
   const found = new Map<string, { count: number; sites: Array<{ file: string; line: number }> }>()
-  let scanned = 0
-  for (const rel of listWorkspaceFiles(dir)) {
-    if (scanned >= MAX_USAGE_FILES) break
-    if (!USAGE_FILE_EXTENSIONS.has(extname(rel).toLowerCase()) || isPrototypeShellPath(rel)) continue
-    let text: string
-    try {
-      const buffer = readFileSync(join(dir, rel))
-      if (buffer.byteLength > MAX_USAGE_FILE_BYTES) continue
-      text = buffer.toString('utf8')
-    } catch (err) {
-      console.error('[studio:tokenCatalog] could not read a file for the usage scan:', rel, err)
-      continue
-    }
-    scanned++
-    if (!text.includes('--')) continue
-    const lines = text.split('\n')
+  for (const { file, text } of readTokenWorkspaceFiles(dir)) {
+    const lines = text.split(/\r?\n/)
     for (let index = 0; index < lines.length; index++) {
-      const line = lines[index]!
-      if (!line.includes('--')) continue
-      USAGE_RE.lastIndex = 0
-      let match: RegExpExecArray | null
-      while ((match = USAGE_RE.exec(line))) {
-        const name = match[1]!
-        let entry = found.get(name)
-        if (!entry) found.set(name, (entry = { count: 0, sites: [] }))
+      for (const mention of findTokenMentions(lines[index]!)) {
+        if (mention.declaration) continue
+        let entry = found.get(mention.name)
+        if (!entry) found.set(mention.name, (entry = { count: 0, sites: [] }))
         entry.count++
-        if (entry.sites.length < MAX_SITES_PER_TOKEN) entry.sites.push({ file: rel, line: index + 1 })
+        if (entry.sites.length < MAX_SITES_PER_TOKEN) entry.sites.push({ file, line: index + 1 })
       }
     }
   }

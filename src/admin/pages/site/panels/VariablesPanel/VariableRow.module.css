@@ -1,0 +1,95 @@
+/* VariableRow - one token across the panel's mode columns.
+ *
+ * The column count comes from the list (`--mode-count`, set by
+ * VariablesPanel); the row is a grid of: name | one value per mode | actions.
+ * Notes, the remove confirmation and a refusal span every column. */
+
+.row {
+    display: grid;
+    align-items: center;
+    padding: var(--space-3xs) 0;
+    border-bottom: 1px solid var(--border-subtle);
+    column-gap: var(--space-xs);
+    grid-template-columns: minmax(8rem, 1.4fr) repeat(var(--mode-count), minmax(6rem, 1fr)) 3.75rem;
+    list-style: none;
+    row-gap: var(--space-3xs);
+}
+
+.nameCell {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.name {
+    overflow: hidden;
+    color: var(--text-bright);
+    font-family: monospace;
+    font-size: var(--text-xs);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.uses {
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+    line-height: 1.2;
+}
+
+.valueCell {
+    min-width: 0;
+}
+
+.actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-4xs);
+    opacity: 0;
+}
+
+/* Revealed on hover or keyboard focus - never the only way to reach them. */
+.row:hover .actions,
+.row:focus-within .actions {
+    opacity: 1;
+}
+
+.note,
+.confirm,
+.error {
+    grid-column: 1 / -1;
+    margin: 0;
+}
+
+.note {
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+    line-height: 1.3;
+}
+
+.confirm {
+    display: flex;
+    flex-direction: column;
+    padding: var(--space-xs);
+    border-radius: var(--radius);
+    background: var(--bg-surface-2);
+    gap: var(--space-xs);
+}
+
+.confirmText {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    line-height: 1.35;
+}
+
+.confirmActions {
+    display: flex;
+    gap: var(--space-xs);
+}
+
+.error {
+    color: var(--danger-text);
+    font-size: var(--text-xs);
+    line-height: 1.35;
+}

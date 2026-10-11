@@ -15,8 +15,10 @@
  *
  * ## Position: K6's rule, not a second one
  *
- * A plain drop is FLOW — the image lands at an index among its siblings. A
- * ⌘/Ctrl-drop asks for a POSITION, and gets exactly what K6's ⌘-drag gives a
+ * A plain drop is FLOW — the image lands at an index among its siblings —
+ * except into a FREE FRAME, whose children are all placed by their own insets
+ * (`resolvePlacement`, PA-3): there it lands absolute at the pointer. A
+ * ⌘/Ctrl-drop asks for a POSITION anywhere, and gets exactly what K6's ⌘-drag gives a
  * moved element (`canvasFreeMove.ts`): `position: absolute` plus the inline
  * offset and `top`, measured from the container's padding box (the box an
  * absolutely positioned child is placed against), and ONLY inside a
@@ -28,28 +30,16 @@
  * The pure size and cascade maths (`clampImageSize`, `absolutePlacementStyle`)
  * live in the store-side leaf `imageDropShapes.ts`, which the store builds
  * props with; this module is the canvas half — the container measurement and
- * the K6 decision. Everything but {@link measureDropContainer} is pure.
+ * the placement kind. The decision itself is `canvasNewLayerPlacement.ts`'s. Everything but {@link measureDropContainer} is pure.
  */
-import {
-  containingBlockOffsets,
-  establishesContainingBlock,
-  inlineOffsetProperty,
-  type ContainingBlockBox,
-} from '@core/studio-runtime'
-import type { AbsoluteImagePlacement } from '@site/store/slices/site/imageDropShapes'
-import type { ClientPoint } from './canvasDragSession'
+import { establishesContainingBlock } from '@core/studio-runtime'
+import { placementKindOfElement, type NewLayerParent } from './canvasNewLayerPlacement'
 import { presentedElementForNode } from './canvasNodeLookup'
 
 /** What the drop needs to know about the container, read once at drop time. */
-export interface DropContainerBox {
+export interface DropContainerBox extends NewLayerParent {
   /** Content-box width in CSS px — the widest an image can be without overflowing. */
   contentWidth: number
-  /** The container's box in frame-viewport coordinates, for `containingBlockOffsets`. */
-  block: ContainingBlockBox
-  /** Does an absolute child of this container stay inside it (positioned, transformed, …)? */
-  containsAbsolute: boolean
-  /** Computed `direction`, for the inline offset property. */
-  direction: string
 }
 
 /**
@@ -87,37 +77,8 @@ export function measureDropContainer(doc: Document, nodeId: string): DropContain
       scrollLeft: element.scrollLeft,
       scrollTop: element.scrollTop,
     },
+    kind: placementKindOfElement(view, element),
     containsAbsolute: establishesContainingBlock(style),
     direction: style.direction,
-  }
-}
-
-export type AbsolutePlacementResolution =
-  | { ok: true; placement: AbsoluteImagePlacement }
-  | { ok: false; reason: 'static-parent' | 'unmeasured' }
-
-/**
- * K6's rule for a ⌘-drop: the pointer's offset from the container's padding
- * box, written as `left`/`top` (or `insetInlineStart`/`top` under RTL), only
- * when the container is positioned. `point` is in frame-viewport coordinates
- * (`indexLocalPoint`'s space).
- */
-export function resolveAbsolutePlacement(
-  box: DropContainerBox | null,
-  point: ClientPoint,
-): AbsolutePlacementResolution {
-  if (!box) return { ok: false, reason: 'unmeasured' }
-  // A container that does not establish a containing block would hand the
-  // absolute image to some distant ancestor.
-  if (!box.containsAbsolute) return { ok: false, reason: 'static-parent' }
-  const property = inlineOffsetProperty(box.direction)
-  const offsets = containingBlockOffsets({ left: point.x, top: point.y, width: 0, height: 0 }, box.block)
-  return {
-    ok: true,
-    placement: {
-      property,
-      inline: property === 'left' ? offsets.left : offsets.right,
-      top: offsets.top,
-    },
   }
 }
