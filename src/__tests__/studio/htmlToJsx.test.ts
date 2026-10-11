@@ -274,6 +274,7 @@ describe('htmlToJsx - hostile input', () => {
       { href: 'mailto:hi@example.org' },
     ])
     expect(JSON.stringify(result.nodes)).not.toMatch(/javascript|vbscript/i)
+    expect(result.report.unsafeUrls).toBe(3)
   })
 
   it('keeps an inline raster image in src but refuses any other data: URL', () => {

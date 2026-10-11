@@ -139,7 +139,9 @@ export function htmlToJsx(html: string): HtmlToJsxResult {
   report.scripts = parsed.querySelectorAll('script').length
   for (const element of Array.from(parsed.querySelectorAll('*'))) {
     for (const attribute of Array.from(element.attributes)) {
-      if (isEventHandlerAttributeName(attribute.name)) report.handlers += 1
+      const name = attribute.name.toLowerCase()
+      if (isEventHandlerAttributeName(name)) report.handlers += 1
+      else if (URL_ATTRIBUTES.has(name) && !isAcceptableUrl(name, attribute.value)) report.unsafeUrls += 1
     }
   }
 
@@ -384,10 +386,8 @@ function convertAttributes(element: Element, tag: string, context: ConversionCon
       if (style) props.style = style
       continue
     }
-    if (URL_ATTRIBUTES.has(name) && !isAcceptableUrl(name, value)) {
-      context.report.unsafeUrls += 1
-      continue
-    }
+    // Counted from the raw document above; the sanitizer has removed it already, this is the second lock.
+    if (URL_ATTRIBUTES.has(name) && !isAcceptableUrl(name, value)) continue
     if (tag === 'option' && name === 'selected') continue // carried by the select's defaultValue
 
     const jsxName = jsxAttributeName(name, tag, inputType)

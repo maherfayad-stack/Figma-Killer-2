@@ -9,6 +9,7 @@ import {
   STUDIO_NODES_MIME,
   UNREADABLE_CLIPBOARD,
   decideCanvasPaste,
+  looksLikeHtmlDesign,
   looksLikeSvgDocument,
   readMarkerDigits,
   readMarkerHtml,
@@ -23,7 +24,7 @@ const png = new File([new Uint8Array([0x89, 0x50])], 'shot.png', { type: 'image/
 const SVG = '<svg viewBox="0 0 24 24"><path d="M0 0h24v24H0z"/></svg>'
 
 function snapshot(overrides: Partial<ClipboardSnapshot> = {}): ClipboardSnapshot {
-  return { readable: true, marker: null, images: [], svg: null, ...overrides }
+  return { readable: true, marker: null, images: [], svg: null, html: null, ...overrides }
 }
 
 describe('decideCanvasPaste — the decision table (IMG-4, SVG-5 §4.5)', () => {
@@ -38,6 +39,17 @@ describe('decideCanvasPaste — the decision table (IMG-4, SVG-5 §4.5)', () => 
   it('an SVG document beats a raster image offered beside it', () => {
     const svg = { kind: 'text' as const, markup: SVG }
     expect(decideCanvasPaste(snapshot({ svg, images: [png] }), COPIED_AT)).toEqual({ kind: 'svg', source: svg })
+  })
+
+  it('HTML from another page beats layers copied earlier, but not an image or an SVG beside it (G-10)', () => {
+    const html = '<div class="card"><p>Hello</p></div>'
+    expect(decideCanvasPaste(snapshot({ html }), COPIED_AT)).toEqual({ kind: 'html', html })
+    expect(decideCanvasPaste(snapshot({ html }), null)).toEqual({ kind: 'html', html })
+    expect(decideCanvasPaste(snapshot({ html, images: [png] }), COPIED_AT)).toEqual({ kind: 'images', files: [png] })
+    const svg = { kind: 'text' as const, markup: SVG }
+    expect(decideCanvasPaste(snapshot({ html, svg }), COPIED_AT)).toEqual({ kind: 'svg', source: svg })
+    // …and the Studio marker still wins: the clipboard IS this editor's layers.
+    expect(decideCanvasPaste(snapshot({ html, marker: COPIED_AT }), COPIED_AT)).toEqual({ kind: 'nodes' })
   })
 
   it('a marker from another tab is not this editor’s layers, and is not pasted as them', () => {
@@ -125,6 +137,14 @@ describe('snapshotFromDataTransfer — a paste event', () => {
     expect(fromText.svg).toEqual({ kind: 'text', markup: SVG })
   })
 
+  it('offers foreign HTML that looks like a design, and nothing for a styled run of text', () => {
+    const design = `<meta charset="utf-8"><div class="hero"><h1>Bread</h1></div>`
+    expect(snapshotFromDataTransfer(dataTransfer({ 'text/html': design })).html).toBe(design)
+    expect(snapshotFromDataTransfer(dataTransfer({ 'text/html': `<meta charset="utf-8"><span style="color:red">just words</span>` })).html).toBeNull()
+    // The Studio marker is HTML too, and is never offered as a design.
+    expect(snapshotFromDataTransfer(dataTransfer({ 'text/html': studioMarkerHtml(COPIED_AT) })).html).toBeNull()
+  })
+
   it('treats ordinary text as nothing to paste, and a missing DataTransfer as unreadable', () => {
     expect(snapshotFromDataTransfer(dataTransfer({ 'text/plain': 'hello' }))).toEqual(snapshot())
     expect(snapshotFromDataTransfer(null)).toBe(UNREADABLE_CLIPBOARD)
@@ -146,5 +166,24 @@ describe('snapshotFromClipboardItems — the async API fallback', () => {
     expect(result.marker).toBe(COPIED_AT)
     expect(result.svg).toEqual({ kind: 'text', markup: SVG })
     expect(result.images.map((file) => [file.name, file.type])).toEqual([['pasted-image.jpg', 'image/jpeg']])
+    expect(result.html).toBeNull()
+  })
+
+  it('reads foreign design HTML from text/html (G-10)', async () => {
+    const html = '<section><h2>Menu</h2></section>'
+    const result = await snapshotFromClipboardItems([item({ 'text/html': new Blob([html]) })])
+    expect(result.marker).toBeNull()
+    expect(result.html).toBe(html)
+  })
+})
+
+describe('looksLikeHtmlDesign', () => {
+  it('accepts markup with structure, rejects a span of text', () => {
+    for (const html of ['<div>x</div>', '<P>x</P>', '<ul><li>a</li></ul>', '<img src="a.png">', '<h3 class="t">x</h3>', '<svg viewBox="0 0 1 1"></svg>']) {
+      expect(looksLikeHtmlDesign(html)).toBe(true)
+    }
+    for (const html of ['<span>x</span>', '<b>x</b><i>y</i>', '<a href="/x">link</a>', 'plain text', '<divider>x</divider>']) {
+      expect(looksLikeHtmlDesign(html)).toBe(false)
+    }
   })
 })
