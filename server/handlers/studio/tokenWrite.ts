@@ -40,40 +40,9 @@ import {
 } from '@core/studio-tokens'
 import { insertCustomProperty, setCustomPropertyValueAtLine } from '@core/css-codemods'
 import type { TokenCssSource } from './projectTokenIndex'
-
-export type TokenWriteCode =
-  | 'no-such-token'
-  | 'read-only-source'
-  | 'ambiguous-declaration'
-  | 'invalid-input'
-  | 'already-declared'
-  | 'no-project-stylesheet'
-  | 'stale-source'
-
-export interface TokenWriteRefusal {
-  readonly ok: false
-  readonly code: TokenWriteCode
-  readonly message: string
-  readonly remedy?: string
-  readonly details?: { readonly declarations: readonly string[] }
-  /** Index into the request's edits - which entry the refusal came from. */
-  readonly entryIndex: number
-}
-
-/** One file's planned rewrite. `original` is the text the plan was made against. */
-export interface PlannedTokenFile {
-  readonly file: string
-  readonly original: string
-  readonly next: string
-}
-
-export interface TokenWritePlan {
-  readonly ok: true
-  readonly files: readonly PlannedTokenFile[]
-  readonly changed: ReadonlyArray<{ name: string; target: TokenTarget; file: string; line: number; from: string; to: string }>
-  readonly unchanged: ReadonlyArray<{ name: string; target: TokenTarget }>
-  readonly inserted: ReadonlyArray<{ name: string; target: TokenTarget; file: string }>
-}
+import { tokenRefusal, type PlannedTokenFile, type TokenWritePlan, type TokenWriteRefusal } from './tokenWriteTypes'
+import { planTokenRefactor, type TokenRefactorEdit } from './tokenRefactor'
+import type { TokenWorkspaceFile } from './tokenWorkspaceFiles'
 
 interface ScannedSource {
   readonly source: TokenCssSource
@@ -117,17 +86,6 @@ function declarationsOf(scans: readonly ScannedSource[], name: string): SourceDe
   return found
 }
 
-function refusal(entryIndex: number, code: TokenWriteCode, message: string, extra: { remedy?: string; declarations?: readonly string[] } = {}): TokenWriteRefusal {
-  return {
-    ok: false,
-    code,
-    message,
-    entryIndex,
-    ...(extra.remedy ? { remedy: extra.remedy } : {}),
-    ...(extra.declarations ? { details: { declarations: extra.declarations } } : {}),
-  }
-}
-
 /** The honest `set` target, or the refusal explaining why there is none. */
 function resolveSetTarget(edit: Extract<TokenEdit, { op: 'set' }>, entryIndex: number, scans: readonly ScannedSource[]): SourceDecl | TokenWriteRefusal {
   const target = edit.target ?? DEFAULT_TARGET
@@ -141,12 +99,12 @@ function resolveSetTarget(edit: Extract<TokenEdit, { op: 'set' }>, entryIndex: n
       const other = target === 'light' ? 'dark' : 'light'
       const hasOther = all.some((entry) => matchesTarget(entry.declaration.gate, other))
       if (hasOther) {
-        return refusal(entryIndex, 'no-such-token', `${edit.name} has a ${other} value but no ${target} declaration in any stylesheet the canvas loads, so there is no ${target} value to change.`, {
+        return tokenRefusal(entryIndex, 'no-such-token', `${edit.name} has a ${other} value but no ${target} declaration in any stylesheet the canvas loads, so there is no ${target} value to change.`, {
           remedy: `Add the ${target} declaration yourself with the file tools, next to the ${other} one (studio_list_tokens gives its file:line), inside the project's existing ${target === 'dark' ? 'dark-scheme gate' : ':root rule'}.`,
         })
       }
     }
-    return refusal(
+    return tokenRefusal(
       entryIndex,
       'no-such-token',
       inOtherMode
@@ -167,7 +125,7 @@ function resolveSetTarget(edit: Extract<TokenEdit, { op: 'set' }>, entryIndex: n
     const from = origin === 'compiled'
       ? 'compiled Sass/PostCSS/Tailwind output'
       : origin === 'package' ? `a package stylesheet (${winner.scanned.source.file})` : "Studio's built-in design system"
-    return refusal(entryIndex, 'read-only-source', `The ${label} value of ${edit.name} that the canvas paints comes from ${from}, which is not a project file this tool edits in place.`, {
+    return tokenRefusal(entryIndex, 'read-only-source', `The ${label} value of ${edit.name} that the canvas paints comes from ${from}, which is not a project file this tool edits in place.`, {
       remedy: origin === 'compiled'
         ? `Search the project's source for "${edit.name}" to find the file it was compiled from, and edit that file with the file tools.`
         : `Override it in the project's own global stylesheet: declare ${edit.name} there${target === 'dark' ? ' under the dark-scheme gate' : ' in :root'} (an insert edit does exactly this). The project's declaration wins because it loads later.`,
@@ -177,7 +135,7 @@ function resolveSetTarget(edit: Extract<TokenEdit, { op: 'set' }>, entryIndex: n
   const projectCandidates = candidates.filter((entry) => entry.scanned.source.origin === 'project')
   if (projectCandidates.length > 1) {
     const places = projectCandidates.map(where)
-    return refusal(entryIndex, 'ambiguous-declaration', `${edit.name} (${targetLabel(target)}) is declared ${places.length} times in the project: ${places.join(', ')}. The last one wins on the canvas, but changing it would leave the others contradicting it.`, {
+    return tokenRefusal(entryIndex, 'ambiguous-declaration', `${edit.name} (${targetLabel(target)}) is declared ${places.length} times in the project: ${places.join(', ')}. The last one wins on the canvas, but changing it would leave the others contradicting it.`, {
       remedy: 'Decide which declaration is the token, edit it (and remove or align the others) with the file tools, then try again.',
       declarations: places,
     })
@@ -195,7 +153,7 @@ function resolveSetTarget(edit: Extract<TokenEdit, { op: 'set' }>, entryIndex: n
     if (others.length > 0) {
       const describe = (entry: SourceDecl): string => `${where(entry)}${entry.declaration.atRules.length > 0 ? ` (${entry.declaration.atRules.join(' ')})` : ''}`
       const places = [where(winner), ...others.map(describe)]
-      return refusal(entryIndex, 'ambiguous-declaration', `${edit.name} is declared ${places.length} times in the project (${places.join(', ')}) - a second selector or a responsive override - so one edit would leave the others contradicting it.`, {
+      return tokenRefusal(entryIndex, 'ambiguous-declaration', `${edit.name} is declared ${places.length} times in the project (${places.join(', ')}) - a second selector or a responsive override - so one edit would leave the others contradicting it.`, {
         remedy: 'Edit the declaration you mean with the file tools (or target its mode explicitly), and align or remove the others in the same change.',
         declarations: places,
       })
@@ -233,11 +191,28 @@ function chooseInsertSource(scans: readonly ScannedSource[], name: string, gate:
  * collapsing to one line cannot shift a declaration still waiting above it),
  * then inserts.
  */
-export function planTokenEdits(sources: readonly TokenCssSource[], edits: readonly TokenEdit[]): TokenWritePlan | TokenWriteRefusal {
+export function planTokenEdits(
+  sources: readonly TokenCssSource[],
+  allEdits: readonly TokenEdit[],
+  workspace: readonly TokenWorkspaceFile[] = [],
+): TokenWritePlan | TokenWriteRefusal {
+  const refactor = allEdits.find((edit): edit is TokenRefactorEdit => edit.op === 'rename' || edit.op === 'remove')
+  if (refactor) {
+    // A rename or remove rewrites mentions across many files, so it is its own
+    // request: mixing it with value edits would make "which text is the
+    // plan against" depend on the order of the entries.
+    if (allEdits.length > 1) {
+      return tokenRefusal(allEdits.indexOf(refactor), 'invalid-input', 'A rename or remove must be the only edit in its request.', {
+        remedy: 'Send the rename or remove on its own, then the value edits.',
+      })
+    }
+    return planTokenRefactor(sources, workspace, refactor)
+  }
+  const edits = allEdits.filter((edit): edit is Extract<TokenEdit, { op: 'set' | 'insert' }> => edit.op === 'set' || edit.op === 'insert')
   const seen = new Set<string>()
   for (const [index, edit] of edits.entries()) {
     const key = `${edit.op}|${edit.name}|${targetLabel(edit.target ?? DEFAULT_TARGET)}`
-    if (seen.has(key)) return refusal(index, 'invalid-input', `${edit.name} (${targetLabel(edit.target ?? DEFAULT_TARGET)}) is listed twice.`)
+    if (seen.has(key)) return tokenRefusal(index, 'invalid-input', `${edit.name} (${targetLabel(edit.target ?? DEFAULT_TARGET)}) is listed twice.`)
     seen.add(key)
   }
 
@@ -261,7 +236,7 @@ export function planTokenEdits(sources: readonly TokenCssSource[], edits: readon
     const target = entry.edit.target ?? DEFAULT_TARGET
     const result = setCustomPropertyValueAtLine(textOf(source), entry.edit.name, entry.at.line, entry.edit.value)
     if (!result.ok) {
-      return refusal(entry.entryIndex, result.reason === 'invalid-value' ? 'invalid-input' : 'stale-source', result.message, {
+      return tokenRefusal(entry.entryIndex, result.reason === 'invalid-value' ? 'invalid-input' : 'stale-source', result.message, {
         remedy: result.reason === 'invalid-value' ? 'Pass one value, on one line, with no ";", "{" or "}".' : 'Try again; the file is re-read.',
       })
     }
@@ -276,13 +251,13 @@ export function planTokenEdits(sources: readonly TokenCssSource[], edits: readon
     const target = edit.target ?? DEFAULT_TARGET
     const gate = resolveGate(target)
     if (!gate) {
-      return refusal(entryIndex, 'invalid-input', 'A new token needs a concrete mode: pass the gate to declare it under (for example a [data-theme="dark"] attribute gate), not "dark".', {
+      return tokenRefusal(entryIndex, 'invalid-input', 'A new token needs a concrete mode: pass the gate to declare it under (for example a [data-theme="dark"] attribute gate), not "dark".', {
         remedy: 'Use { kind: "attr", attr: "data-theme", value: "dark" } (or the project\'s own dark gate).',
       })
     }
     const existing = declarationsOf(scans, edit.name).filter((entry) => entry.scanned.source.origin === 'project' && gateKey(entry.declaration.gate) === gateKey(gate))
     if (existing.length > 0) {
-      return refusal(entryIndex, 'already-declared', `${edit.name} is already declared for ${targetLabel(target)} at ${existing.map(where).join(', ')}.`, {
+      return tokenRefusal(entryIndex, 'already-declared', `${edit.name} is already declared for ${targetLabel(target)} at ${existing.map(where).join(', ')}.`, {
         remedy: 'Change its value with a set edit instead.',
         declarations: existing.map(where),
       })
@@ -292,14 +267,14 @@ export function planTokenEdits(sources: readonly TokenCssSource[], edits: readon
     if (edit.file !== undefined) {
       destination = scans.find((scanned) => scanned.source.file === edit.file && isInsertableSource(scanned.source)) ?? null
       if (!destination) {
-        return refusal(entryIndex, 'invalid-input', `"${edit.file}" is not a project stylesheet a token can be declared in.`, {
+        return tokenRefusal(entryIndex, 'invalid-input', `"${edit.file}" is not a project stylesheet a token can be declared in.`, {
           remedy: 'Name a hand-written .css file the project imports, or omit the file to let Studio choose.',
         })
       }
     } else {
       destination = chooseInsertSource(scans, edit.name, gate)
       if (!destination) {
-        return refusal(entryIndex, 'no-project-stylesheet', 'The project has no global stylesheet to declare a token in.', {
+        return tokenRefusal(entryIndex, 'no-project-stylesheet', 'The project has no global stylesheet to declare a token in.', {
           remedy: "Create a global stylesheet (src/index.css) and import it from the app's entry module, then try again.",
         })
       }
@@ -316,7 +291,7 @@ export function planTokenEdits(sources: readonly TokenCssSource[], edits: readon
       ...(siblings.length > 0 ? { after: siblings[siblings.length - 1]!.name } : {}),
     })
     if (!result.ok) {
-      return refusal(entryIndex, result.reason === 'already-declared' ? 'already-declared' : 'invalid-input', result.message, {
+      return tokenRefusal(entryIndex, result.reason === 'already-declared' ? 'already-declared' : 'invalid-input', result.message, {
         remedy: result.reason === 'invalid-value' ? 'Pass one value, on one line, with no ";", "{" or "}".' : undefined,
       })
     }
@@ -329,5 +304,5 @@ export function planTokenEdits(sources: readonly TokenCssSource[], edits: readon
     const original = sources.find((source) => source.file === file)!.css
     if (next !== original) files.push({ file, original, next })
   }
-  return { ok: true, files, changed, unchanged, inserted }
+  return { ok: true, files, changed, unchanged, inserted, renamed: [], removed: [] }
 }

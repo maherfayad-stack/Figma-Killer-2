@@ -2220,6 +2220,39 @@ one, in a new gate block otherwise. `insertCustomProperty`
 are kept. Refusals are the same from both writers: `no-such-token`,
 `read-only-source`, `ambiguous-declaration`, `already-declared`,
 `no-project-stylesheet`, `invalid-input`, `stale-source`.
+
+### §10.8 The Variables panel (CT-3)
+
+The rail's **Variables** entry (`panels/VariablesPanel/`) lists every token of
+the catalog, grouped by collection, with one column per MODE the project's own
+gates define and a usage count (`GET token-catalog?usage=1`, read when the panel
+opens and when the project's stylesheets change). The contract of a value cell:
+
+- **Typing previews, committing writes once.** Each keystroke sets
+  `studioTokenPreview`; every iframe frame's `TokenPreviewInjector` restates that
+  ONE declaration under its own gate (selector doubled, conditional at-rules kept,
+  `prefers-color-scheme` rewritten as for the project's stylesheets), so a dark
+  value repaints dark frames only. Enter/blur POSTs a single `set` (or `insert`
+  for a mode with no value); Escape clears the preview and writes nothing.
+- **One write, one undo.** The route records the files it changed in the undo
+  journal and returns `undoToken`; the panel pushes `journaledWriteOutcome`, so
+  Cmd/Ctrl+Z (or the panel's Undo) restores every file byte for byte, refusing
+  `restore-stale` if any moved since. The journal's path rule gained one
+  extension for this (`SourceTargetScope.journalStylesheets`, `.css`, journal
+  only). Redo is not offered: there is no `/save` edit for a token write.
+- **Rename** (`{ op: 'rename' }`) rewrites every mention of the name in project
+  source: the declarations of all modes, `var()`, strings in TSX, Tailwind
+  arbitrary values, in one plan. It refuses a name already declared or named in
+  source, a package/compiled declaration, and a Tailwind `@theme` name in a
+  utility namespace (the name is also the class).
+- **Remove** (`{ op: 'remove', replaceWith? }`) deletes all declarations (and
+  rules left empty). A token still read needs `replaceWith` (same family,
+  chosen in the row); the server refuses `in-use` otherwise, listing where.
+- Rows whose declarations are not project files render their values as text and
+  disable rename/remove with the reason: no control that cannot write.
+
+`studio_set_tokens` takes `rename` / `remove` (each its own call) next to
+`set`, through the same planner.
 ## §11. What an inspector gesture costs the undo stack
 
 Two defects made Ctrl+Z read as broken from the Properties panel. Both were

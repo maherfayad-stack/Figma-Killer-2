@@ -291,3 +291,51 @@ export function insertCustomProperty(cssText: string, options: InsertCustomPrope
   if (refusal) return refusal
   return { ok: true, css: rewrite.css, changed: true, created: createdKind }
 }
+
+// ---------------------------------------------------------------------------
+// Remove - delete every declaration of a token
+// ---------------------------------------------------------------------------
+
+export type CustomPropertyRemoveResult =
+  | { readonly ok: true; readonly css: string; readonly removed: number }
+  | { readonly ok: false; readonly reason: 'not-a-custom-property' | 'unparseable-stylesheet'; readonly message: string }
+
+/** Drop `node`, then every ancestor it leaves empty (a rule, an `@media`) - but never the root. */
+function removeWithEmptyAncestors(node: Node): void {
+  let current: Node | undefined = node
+  while (current && current.type !== 'root') {
+    const parent = current.parent as postcss.Container | undefined
+    current.remove()
+    if (!parent || parent.type === 'root' || (parent.nodes?.length ?? 0) > 0) return
+    current = parent
+  }
+}
+
+/**
+ * Delete every declaration of `name` from the stylesheet - under every gate -
+ * and the rules or at-rules that held nothing else. A comment inside a block
+ * that still has other content stays; a block left with only comments stays
+ * too (it was the author's note, not ours to delete). Every other byte is the
+ * caller's own. Zero declarations is `removed: 0` with the caller's bytes back.
+ */
+export function removeCustomPropertyDeclarations(cssText: string, name: string): CustomPropertyRemoveResult {
+  if (!CUSTOM_PROPERTY_NAME_RE.test(name)) {
+    return { ok: false, reason: 'not-a-custom-property', message: `"${name}" is not a CSS custom property name (it must start with "--").` }
+  }
+  if (!parse(toLf(cssText))) {
+    return { ok: false, reason: 'unparseable-stylesheet', message: `The stylesheet does not parse as CSS, so ${name} cannot be removed from it safely.` }
+  }
+  let removed = 0
+  const rewrite = preservingLineEndings(cssText, (source) => {
+    const root = postcss.parse(source)
+    const decls: Declaration[] = []
+    root.walkDecls(name, (decl) => {
+      decls.push(decl)
+    })
+    if (decls.length === 0) return { css: source, changed: false }
+    for (const decl of decls) removeWithEmptyAncestors(decl)
+    removed = decls.length
+    return { css: root.toString(), changed: true }
+  })
+  return { ok: true, css: rewrite.css, removed }
+}

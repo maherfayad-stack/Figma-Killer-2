@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { listCustomPropertyDeclarations, setCustomPropertyValueAtLine } from '../customProperty'
+import { listCustomPropertyDeclarations, removeCustomPropertyDeclarations, setCustomPropertyValueAtLine } from '../customProperty'
 
 const TOKENS = [
   '/* brand palette */',
@@ -94,5 +94,24 @@ describe('setCustomPropertyValueAtLine', () => {
     expect(!notCustom.ok && notCustom.reason).toBe('not-a-custom-property')
     const broken = setCustomPropertyValueAtLine(':root {\n  --a: 1px;\n', '--a', 2, '2px')
     expect(!broken.ok && broken.reason).toBe('unparseable-stylesheet')
+  })
+})
+
+describe('removeCustomPropertyDeclarations', () => {
+  const css = [':root {', '  --a: 1;', '  --b: 2;', '}', '', '[data-theme="dark"] {', '  --a: 3;', '}', '', '@media (min-width: 768px) {', '  :root {', '    --a: 4;', '  }', '}', ''].join('\n')
+
+  it('drops every declaration in every gate and the rules and at-rules left empty', () => {
+    expect(removeCustomPropertyDeclarations(css, '--a')).toEqual({ ok: true, css: [':root {', '  --b: 2;', '}', ''].join('\n'), removed: 3 })
+  })
+
+  it('keeps CRLF and answers removed: 0 with the same bytes when nothing declares it', () => {
+    const crlf = css.replaceAll('\n', '\r\n')
+    expect(removeCustomPropertyDeclarations(crlf, '--zzz')).toEqual({ ok: true, css: crlf, removed: 0 })
+    const out = removeCustomPropertyDeclarations(crlf, '--b')
+    expect(out.ok && out.css).toBe(crlf.replace('  --b: 2;\r\n', ''))
+  })
+
+  it('refuses a name that is not a custom property', () => {
+    expect(removeCustomPropertyDeclarations(css, 'color')).toMatchObject({ ok: false, reason: 'not-a-custom-property' })
   })
 })
