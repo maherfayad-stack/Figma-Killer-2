@@ -85,6 +85,7 @@ import {
 import { dispatchStructuralEdit } from './studioStructuralDispatch'
 import { applySvgAttrEdit } from './studioSvgWriteback'
 import { applyListItemEdit } from './studioListItemWriteback'
+import { applyUnrollListEdit } from './studioUnrollWriteback'
 import { applyCanvasLayerEdit, isCanvasLayerEdit } from './studioCanvasLayerWriteback'
 import { createCanvasLayerScope } from './studioCanvasLayerScope'
 import { createSyntaxGuard } from './studioSyntaxGuard'
@@ -321,6 +322,13 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
       const result = applyListItemEdit(loc, edit, project)
       if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
       return { applied: true }
+    }
+    case 'unroll-list': {
+      // G-9 (OD-24) — `loc` is the row ROOT's template position; the array is decoded
+      // through the same guard and must sit in this file. ⌘Z is the undo journal's `restore`.
+      const result = applyUnrollListEdit(loc, target.rel, studioEditLocation(dir, edit.array, scope), edit, project)
+      if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
+      return { applied: true, created: result.created }
     }
     case 'detach': {
       // P3-D (OD-7) — the import is retired by this batch's prune pass

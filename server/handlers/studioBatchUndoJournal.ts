@@ -50,6 +50,8 @@ export function isJournaled(edit: StudioEdit): boolean {
     // gives those back, the pre-image does.
     (edit.kind === 'group' && edit.frame !== undefined) ||
     (edit.kind === 'list-item' && edit.op.kind === 'remove') ||
+    // G-9 — the rows replace the `.map` and drop its `key`: no edit kind describes the bytes.
+    edit.kind === 'unroll-list' ||
     // A cross-file MOVE (a COPY is taken back by deleting what it made). The
     // move cuts markup from one file, prunes the import only that markup used,
     // and carries imports into the other — every `line:col` below the cut in
