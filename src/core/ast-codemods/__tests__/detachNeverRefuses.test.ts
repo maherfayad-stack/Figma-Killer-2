@@ -245,6 +245,17 @@ describe('G-3 - a component that keeps state detaches: the state moves up under 
     expect(text).toContain('const [on, setOn] = useState(false)')
   })
 
+  it('refuses, byte-identical, when the page component is async: a server component never calls a hook', () => {
+    write('components/Quantity.tsx', QUANTITY)
+    const message = expectRefusedUntouched(
+      'app/page.tsx',
+      ["import { Quantity } from '../components/Quantity'", 'export default async function Page() {', '  return <main><Quantity label="x" /></main>', '}', ''].join('\n'),
+      'Quantity',
+      'uses-hooks',
+    )
+    expect(message).toContain('async')
+  })
+
   it('refuses, byte-identical, when the call site is inside a list row: one state would be shared by every row', () => {
     write('components/Quantity.tsx', QUANTITY)
     const message = expectRefusedUntouched(
@@ -585,5 +596,104 @@ describe('G-3 - a component that renders several roots detaches into plain sibli
       'Pair',
     )
     expect(text).toContain('return <><dt>K</dt><dd>V</dd></>')
+  })
+})
+
+describe('G-3 - a body value the markup cannot inline is computed once, at the top of the page component', () => {
+  it('hoists a const the markup reads twice, under its own name', () => {
+    write('components/Heading.tsx', [
+      'export function Heading({ title }: { title: string }) {',
+      '  const label = title.toUpperCase()',
+      '  return <h2 title={label}>{label}</h2>',
+      '}',
+      '',
+    ].join('\n'))
+    const text = expectDetached(
+      'pages/Home.tsx',
+      ["import { Heading } from '../components/Heading'", 'export default function Home() {', '  return <Heading title="Confirm" />', '}', ''].join('\n'),
+      'Heading',
+    )
+    expect(text).toContain('const label = "Confirm".toUpperCase()')
+    expect(text).toContain('<h2 title={label}>{label}</h2>')
+  })
+
+  it('hoists the value a single-use const is built from, and gives a second instance fresh names', () => {
+    write('components/Heading.tsx', [
+      'export function Heading({ title }: { title: string }) {',
+      '  const base = title.trim()',
+      '  const label = base.toUpperCase()',
+      '  return <h2>{label}</h2>',
+      '}',
+      '',
+    ].join('\n'))
+    const page = ["import { Heading } from '../components/Heading'", 'export default function Home() {', '  return <main><Heading title=" a " /><Heading title="b" /></main>', '}', ''].join('\n')
+    const once = expectDetached('pages/Home.tsx', page, 'Heading')
+    // `label` is read once, so it is inlined; what it is built from is shared and computed once.
+    expect(once).toContain('const base = " a ".trim()')
+    expect(once).toContain('<h2>{base.toUpperCase()}</h2>')
+    expect(once).not.toContain('const label')
+    const twice = expectDetached('pages/Home.tsx', once, 'Heading')
+    expect(twice).toContain('const base2 = "b".trim()')
+    expect(twice).toContain('<h2>{base2.toUpperCase()}</h2>')
+  })
+
+  it('hoists a handler built from state, after the state it reads', () => {
+    write('components/Disclosure.tsx', [
+      "import { useState } from 'react'",
+      'export function Disclosure({ label }: { label: string }) {',
+      '  const [open, setOpen] = useState(false)',
+      '  const toggle = () => setOpen(!open)',
+      '  return <section><button type="button" onClick={toggle}>{label}</button><i onClick={toggle}>{open ? "-" : "+"}</i></section>',
+      '}',
+      '',
+    ].join('\n'))
+    const text = expectDetached(
+      'pages/Home.tsx',
+      ["import { Disclosure } from '../components/Disclosure'", 'export default function Home() {', '  return <Disclosure label="More" />', '}', ''].join('\n'),
+      'Disclosure',
+    )
+    expect(text.indexOf('const [open, setOpen] = useState(false)')).toBeLessThan(text.indexOf('const toggle = () => setOpen(!open)'))
+    expect(text).toContain('<button type="button" onClick={toggle}>More</button><i onClick={toggle}>')
+  })
+
+  it('refuses, byte-identical, a value whose computation it cannot prove has no effect', () => {
+    write('components/Tagged.tsx', [
+      "import { nextId } from '../ids'",
+      'export function Tagged({ label }: { label: string }) {',
+      '  const id = nextId()',
+      '  return <label htmlFor={id}>{label}<input id={id} /></label>',
+      '}',
+      '',
+    ].join('\n'))
+    write('ids.ts', 'let n = 0' + '\n' + 'export function nextId() { n += 1; return String(n) }' + '\n')
+    const message = expectRefusedUntouched(
+      'pages/Home.tsx',
+      ["import { Tagged } from '../components/Tagged'", 'export default function Home() {', '  return <Tagged label="Name" />', '}', ''].join('\n'),
+      'Tagged',
+      'body-local',
+    )
+    expect(message).toContain('without running it earlier')
+  })
+
+  it('refuses a value computed from something only the call site has, and one for a call site inside a list row', () => {
+    write('components/Heading.tsx', [
+      'export function Heading({ title }: { title: string }) {',
+      '  const label = title.toUpperCase()',
+      '  return <h2 title={label}>{label}</h2>',
+      '}',
+      '',
+    ].join('\n'))
+    expectRefusedUntouched(
+      'pages/A.tsx',
+      ["import { Heading } from '../components/Heading'", 'export default function A({ heading }: { heading: string }) {', '  return <Heading title={heading} />', '}', ''].join('\n'),
+      'Heading',
+      'body-local',
+    )
+    expectRefusedUntouched(
+      'pages/B.tsx',
+      ["import { Heading } from '../components/Heading'", 'export default function B() {', "  return <main>{['a'].map((x) => <Heading key={x} title=\"t\" />)}</main>", '}', ''].join('\n'),
+      'Heading',
+      'body-local',
+    )
   })
 })

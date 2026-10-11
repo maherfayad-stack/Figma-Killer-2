@@ -419,44 +419,6 @@ describe('detachComponentInstance — body locals (bug 4)', () => {
     expect(text).not.toContain('label')
   })
 
-  it('refuses `body-local` for a const the markup reads twice', () => {
-    write('components/Heading.tsx', [
-      'export function Heading({ title }: { title: string }) {',
-      '  const label = title.toUpperCase()',
-      '  return <h2 title={label}>{label}</h2>',
-      '}',
-      '',
-    ].join('\n'))
-    const source = [
-      "import { Heading } from '../components/Heading'",
-      'export default function Home() {',
-      '  return <Heading title="Confirm" />',
-      '}',
-      '',
-    ].join('\n')
-    const message = expectRefusedUntouched('pages/Home.tsx', source, 'Heading', 'body-local')
-    expect(message).toContain('label')
-  })
-
-  it('refuses `body-local` for a const computed from another body value', () => {
-    write('components/Heading.tsx', [
-      'export function Heading({ title }: { title: string }) {',
-      '  const base = title.trim()',
-      '  const label = base.toUpperCase()',
-      '  return <h2>{label}</h2>',
-      '}',
-      '',
-    ].join('\n'))
-    const source = [
-      "import { Heading } from '../components/Heading'",
-      'export default function Home() {',
-      '  return <Heading title="Confirm" />',
-      '}',
-      '',
-    ].join('\n')
-    expectRefusedUntouched('pages/Home.tsx', source, 'Heading', 'body-local')
-  })
-
   it('refuses `body-local` for a tag chosen by a body value, naming the tag', () => {
     write('components/Banner.tsx', [
       "import { InfoIcon, WarnIcon } from './icons'",

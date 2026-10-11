@@ -14,7 +14,6 @@ import {
   SyntaxKind,
   VariableDeclarationKind,
   type Identifier,
-  type JsxAttribute,
   type JsxAttributeLike,
   type Project,
   type SourceFile,
@@ -27,11 +26,11 @@ import type { JsxOpeningLikeElement } from './locateJsxElement'
 import { bindingKindAt, freeReferenceNames, isReferenceIdentifier, tagReferenceRoot, type BindingKind } from './subtreeFreeVariables'
 import { DetachNameResolver, type Expectation, type PendingImport } from './detachNames'
 import { DetachHookPlan, type MovableHook, type PageTextEdit } from './detachHooks'
+import { CallSiteValues } from './detachCallSiteValues'
+import { isPureInitializer } from './detachPurity'
 import { foldClassName, readFoldPart } from './detachClassNameFold'
 import { DetachConditionals, type Unit } from './detachConditionals'
 import {
-  NO_NAMES,
-  TRUE_VALUE,
   UNDEFINED_VALUE,
   fail,
   attributeText,
@@ -39,16 +38,11 @@ import {
   nodeValue,
   isJsxNode,
   isJsxTextSafe,
-  isNeverUndefined,
   isWithin,
-  jsStringLiteral,
-  jsxStringValue,
-  jsxTextValue,
   needsParens,
   readCallSite,
   readParamTable,
   type CallSite,
-  type CallSiteAttr,
   type ParamEntry,
   type ParamTable,
   type Value,
@@ -87,9 +81,11 @@ export class DetachPlanner {
   private readonly fnIdentifierNames: Set<string>
   private readonly names: DetachNameResolver
   private readonly hooks: DetachHookPlan
+  private readonly values: CallSiteValues
   private readonly refCache = new Map<Node, Ref>()
   private readonly paramCache = new Map<ParamEntry, Value>()
   private readonly inProgress = new Set<Node>()
+  private readonly hoisted = new Map<VariableDeclaration, Value>()
   private readonly scopeCache = new Map<Node, Map<string, MorphSymbol>>()
   private fragmentLocal: string | undefined
   private readonly conditionals: DetachConditionals
@@ -120,6 +116,7 @@ export class DetachPlanner {
     this.callSite = readCallSite(opening)
     this.fnIdentifierNames = new Set(fn.getDescendantsOfKind(SyntaxKind.Identifier).map((id) => id.getText()))
     this.names = new DetachNameResolver(this.checker, page, componentFile, componentName, opening, this.fnIdentifierNames)
+    this.values = new CallSiteValues(this.callSite, this.names, componentName, (node) => this.componentValue(node))
     this.hooks = new DetachHookPlan(hooks, page, opening, this.names, componentName, (arg) => this.hookArgument(arg))
     this.conditionals = new DetachConditionals({
       readProp: (reference, unit) => {
@@ -173,14 +170,6 @@ export class DetachPlanner {
       movedHooks,
       ...(useClient ? { useClient } : {}),
     }
-  }
-
-  // --- call-site values ----------------------------------------------------
-
-  private callSiteValue(node: Node): Value {
-    const free = new Set(freeReferenceNames(node))
-    this.names.expectCallSiteNames(free)
-    return nodeValue(node, node.getText(), free)
   }
 
   // --- classification ------------------------------------------------------
@@ -537,83 +526,8 @@ export class DetachPlanner {
     }
     // React never passes `key` to a component.
     if (entry.attrName === 'key') return entry.default ? this.componentValue(entry.default) : UNDEFINED_VALUE
-    if (entry.attrName === 'children' && this.callSite.children) return this.childrenValue()
-    return this.attributeValue(entry.attrName, entry.default)
-  }
-
-  private lastAttribute(name: string): CallSiteAttr | undefined {
-    return this.callSite.attrs.filter((a) => a.name === name).at(-1)
-  }
-
-  private attributeValue(name: string, fallback: Node | undefined): Value {
-    const explicit = this.lastAttribute(name)
-    const spreads = this.callSite.spreads
-    const lastSpread = spreads.at(-1)
-    if (lastSpread && (!explicit || explicit.index < lastSpread.index)) {
-      if (explicit) {
-        fail(
-          'spread-ambiguous',
-          `This call site sets \`${name}\` and then spreads {...${lastSpread.expr.getText()}}, which may or may not override it — which value renders can't be known from source.`,
-        )
-      }
-      if (spreads.length > 1) {
-        fail('spread-ambiguous', `This call site spreads ${spreads.length} objects, and \`${name}\` could come from any of them.`)
-      }
-      if (!Node.isIdentifier(lastSpread.expr)) {
-        fail('spread-ambiguous', `This call site spreads {...${lastSpread.expr.getText()}}, which detach can't read a prop out of — spread a named object instead.`)
-      }
-      const base = lastSpread.expr.getText()
-      const text = /^[A-Za-z_$][\w$]*$/.test(name) ? `${base}.${name}` : `${base}[${jsStringLiteral(name)}]`
-      const free = new Set([base])
-      this.names.expectCallSiteNames(free)
-      const member: Value = { expr: () => text, primary: true, free }
-      return fallback ? this.defaulted(member, fallback) : member
-    }
-    if (explicit) return this.explicitValue(explicit.attr, fallback)
-    return fallback ? this.componentValue(fallback) : UNDEFINED_VALUE
-  }
-
-  private explicitValue(attr: JsxAttribute, fallback: Node | undefined): Value {
-    const initializer = attr.getInitializer()
-    if (!initializer) return TRUE_VALUE
-    if (Node.isStringLiteral(initializer)) {
-      const text = initializer.getText()
-      return jsxStringValue(initializer.getLiteralText(), text, NO_NAMES, text.charAt(0))
-    }
-    if (Node.isJsxExpression(initializer)) {
-      const expr = initializer.getExpression()
-      if (!expr || (Node.isIdentifier(expr) && expr.getText() === 'undefined')) {
-        return fallback ? this.componentValue(fallback) : UNDEFINED_VALUE
-      }
-      const value = this.callSiteValue(expr)
-      return fallback && !isNeverUndefined(expr) ? this.defaulted(value, fallback) : value
-    }
-    return this.callSiteValue(initializer)
-  }
-
-  /** A destructured default applies exactly when the value is `undefined` — so that is what gets written. */
-  private defaulted(value: Value, fallback: Node): Value {
-    const alternative = this.componentValue(fallback)
-    const operand = value.primary ? value.expr() : `(${value.expr()})`
-    return {
-      expr: () => `${operand} === undefined ? ${alternative.expr()} : ${value.expr()}`,
-      primary: false,
-      free: new Set([...value.free, ...alternative.free]),
-    }
-  }
-
-  /** `children` as a VALUE (anywhere but a `{children}` child slot): one element, one expression, or one run of text. */
-  private childrenValue(): Value {
-    const nodes = this.callSite.children!.nodes
-    const only = nodes.length === 1 ? nodes[0]! : undefined
-    if (only && isJsxNode(only)) return this.callSiteValue(only)
-    if (only && Node.isJsxExpression(only) && only.getExpression()) return this.callSiteValue(only.getExpression()!)
-    if (only && Node.isJsxText(only)) {
-      const raw = jsxTextValue(only.getText())
-      const attrText = raw.includes('"') ? (raw.includes("'") ? undefined : `'${raw}'`) : `"${raw}"`
-      return jsxStringValue(raw, /[\r\n]/.test(raw) ? undefined : attrText, NO_NAMES)
-    }
-    fail('unsupported-params', `${this.componentName} uses its children as a value, and this call site passes more than one child.`)
+    if (entry.attrName === 'children' && this.callSite.children) return this.values.childrenValue()
+    return this.values.attributeValue(entry.attrName, entry.default)
   }
 
   /** The component's own source for a default or a body value, rewritten for the page. */
@@ -648,36 +562,64 @@ export class DetachPlanner {
     return value.expr()
   }
 
-  /** A body `const` the JSX reads: inlined as its initializer when that is a faithful rewrite, refused otherwise. */
+  /**
+   * A body `const` the JSX reads. Read once at the top of the markup, it is
+   * inlined as its initializer (the cleanest page). Read twice, inside a
+   * callback, or built from another body value, it is hoisted instead (G-3):
+   * computed once at the top of the page's component, under a fresh name, so
+   * nothing is recomputed and nothing is written twice.
+   */
   private localValue(decl: VariableDeclaration, site: Node, unit: Unit): Value {
-    const name = decl.getName()
-    if (unit.node !== this.root) {
-      const owner = unit.node.getParent()
-      const what = Node.isVariableDeclaration(owner) ? `\`${owner.getName()}\`` : 'a prop default'
-      fail(
-        'body-local',
-        `${this.componentName} computes ${what} from \`${name}\`, another value in its body — detach inlines one level only. Duplicate the component and edit the copy instead.`,
-      )
-    }
+    if (this.canInlineLocal(decl, site, unit)) return this.componentValue(decl.getInitializerOrThrow())
+    return this.hoistLocal(decl)
+  }
+
+  private canInlineLocal(decl: VariableDeclaration, site: Node, unit: Unit): boolean {
+    if (unit.node !== this.root) return false
     const uses = this.root
       .getDescendantsOfKind(SyntaxKind.Identifier)
       .filter((id) => isReferenceIdentifier(id) && this.symbolOf(id)?.getDeclarations().includes(decl))
-    if (uses.length !== 1) {
-      fail(
-        'body-local',
-        `${this.componentName} computes \`${name}\` in its body and its markup reads it ${uses.length} times — inlining would repeat the computation. Duplicate the component and edit the copy instead.`,
-      )
-    }
+    if (uses.length !== 1) return false
     for (const ancestor of site.getAncestors()) {
       if (ancestor === this.root) break
-      if (Node.isArrowFunction(ancestor) || Node.isFunctionExpression(ancestor) || Node.isFunctionDeclaration(ancestor)) {
+      if (Node.isArrowFunction(ancestor) || Node.isFunctionExpression(ancestor) || Node.isFunctionDeclaration(ancestor)) return false
+    }
+    return true
+  }
+
+  /**
+   * The value of a body `const` computed once in the page: the initializer is
+   * written in terms of the page (its props are the call site's values, its
+   * hooks and other body values are hoisted first, so statements come out in
+   * dependency order) and emitted as `const <fresh> = ...`. Refused, `body-local`,
+   * when the initializer could do something by being computed early
+   * (`detachPurity.ts`), or reads a name only the call site's own scope has.
+   */
+  private hoistLocal(decl: VariableDeclaration): Value {
+    const cached = this.hoisted.get(decl)
+    if (cached) return cached
+    const name = decl.getName()
+    const initializer = decl.getInitializerOrThrow()
+    if (!isPureInitializer(initializer)) {
+      fail(
+        'body-local',
+        `${this.componentName} computes \`${name}\` in its body with a call detach cannot move without running it earlier than it was meant to run. Duplicate the component and edit the copy instead.`,
+      )
+    }
+    const written = this.componentValue(initializer)
+    for (const read of written.free) {
+      if (this.names.expected.get(read)?.has('call-site')) {
         fail(
           'body-local',
-          `${this.componentName} computes \`${name}\` once per render but reads it inside a callback — inlined, it would be recomputed on every call. Duplicate the component and edit the copy instead.`,
+          `${this.componentName} computes \`${name}\` from a value this call site passes (\`${read}\`), which the enclosing component may not have at the top of its body.`,
         )
       }
     }
-    return this.componentValue(decl.getInitializerOrThrow())
+    const local = this.hooks.emitLocal(name, written.expr())
+    this.names.expect(local, 'hook')
+    const value: Value = { expr: () => local, primary: true, free: new Set([local]) }
+    this.hoisted.set(decl, value)
+    return value
   }
 
   /** `rest.x` / `props.x` — the call site's own `x`, unless a named param consumed it. */
@@ -688,9 +630,9 @@ export class DetachPlanner {
     this.assertRestIsReadable('member')
     const name = node.getName()
     if (this.params.restExcludes.has(name) || name === 'key') return UNDEFINED_VALUE
-    if (name === 'children' && this.callSite.children) return this.childrenValue()
-    const explicit = this.lastAttribute(name)
-    return explicit ? this.explicitValue(explicit.attr, undefined) : UNDEFINED_VALUE
+    if (name === 'children' && this.callSite.children) return this.values.childrenValue()
+    const explicit = this.values.lastAttribute(name)
+    return explicit ? this.values.explicitValue(explicit.attr, undefined) : UNDEFINED_VALUE
   }
 
   /**
@@ -717,7 +659,7 @@ export class DetachPlanner {
     this.assertRestIsReadable()
     const out: { name: string; text: string; free: ReadonlySet<string> }[] = []
     for (const attr of this.callSite.attrs) {
-      if (this.params.restExcludes.has(attr.name) || this.lastAttribute(attr.name) !== attr) continue
+      if (this.params.restExcludes.has(attr.name) || this.values.lastAttribute(attr.name) !== attr) continue
       const initializer = attr.attr.getInitializer()
       const free = new Set(initializer ? freeReferenceNames(initializer) : [])
       this.names.expectCallSiteNames(free)

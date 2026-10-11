@@ -41,18 +41,23 @@
  * before the first byte changes, and the post-build gate below restores the
  * page's in-memory text before returning. Nothing is saved on any refusal.
  *
- *  - `package-component` / `unresolvable` / `not-a-component` — the call
- *    target is not a local component with a readable declaration.
- *  - `uses-hooks` — a hook that holds state or runs effects needs a component
- *    to mount in. A CONTEXT READER (`useLanguage()`, `useContext(Ctx)`) is
- *    not refused: its call moves to the top of the component that encloses
- *    the call site (DET-3, `detachHooks.ts`) — unless there is no such
- *    component (a module-level JSX const), which refuses.
- *  - `maps-over-props` — the JSX `.map`s over one of its own props: inlining
- *    one static copy would drop that data-drivenness.
- *  - `unsupported-params` — an undestructured `props`, a nested destructure,
- *    a prop used somewhere its call-site value cannot be written (a JSX tag
- *    name that is not a component name, a type position).
+ *  - `package-component` / `unresolvable` / `not-a-component` - the call
+ *    target is not a local component with a readable declaration. The
+ *    project's own `design-system/` folder IS local code (OD-21): it detaches
+ *    like any other component, and every refusal below applies to it too.
+ *  - `uses-hooks` - a hook that is neither a context reader nor a state holder
+ *    (`useEffect`, `useMemo`, an arbitrary custom hook), or one the page cannot
+ *    take. A CONTEXT READER (`useLanguage()`, `useContext(Ctx)`) and a STATE
+ *    HOLDER (`useState`, `useReducer`, `useRef`, `useId`) are not refused:
+ *    their call moves to the top of the component that encloses the call site
+ *    (DET-3 / G-3, `detachHooks.ts`) - unless there is no such component (a
+ *    module-level JSX const), the call site is inside a function (a `.map` row
+ *    would share one hoisted state), or the component is async.
+ *  - `unsupported-params` - a nested destructure, a parameter other than the
+ *    props, a prop used somewhere its call-site value cannot be written (a JSX
+ *    tag name that is not a component name, a type position). An undestructured
+ *    `props` is read as `{ ...props }`, and a component that `.map`s over its
+ *    own props keeps its `.map` over the call site's array: neither refuses.
  *  - `spread-ambiguous` — which value a prop has cannot be known from source:
  *    an explicit attribute BEFORE a spread, two spreads, a spread of a
  *    non-identifier, or a call-site spread into a component that forwards

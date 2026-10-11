@@ -247,7 +247,7 @@ function followIntoFragment(
     // The instance as a whole has no single place in a fragment: leave it unmapped.
     if (nodeId === callSite || newRoots.length !== rootIds.length) return nodeId
     let current: string | undefined = nodeId
-    while (current !== undefined && !rootIds.includes(current)) current = before.nodes[current]?.parentId
+    while (current !== undefined && !rootIds.includes(current)) current = before.nodes[current]?.parentId ?? undefined
     if (current === undefined) return nodeId
     return followIntoDetached(before, callSite, current, after, newRoots[rootIds.indexOf(current)]!)(nodeId)
   }

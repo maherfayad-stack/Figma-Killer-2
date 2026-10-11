@@ -17,7 +17,6 @@ export type DetachRefusalReason =
   | 'package-component'
   | 'unresolvable'
   | 'uses-hooks'
-  | 'maps-over-props'
   | 'unsupported-params'
   | 'no-renderable-jsx'
   | 'spread-ambiguous'
