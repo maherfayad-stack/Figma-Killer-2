@@ -637,11 +637,35 @@ describe('detachComponentInstance — sub-component import reconciliation', () =
     expect(text).toContain('<ul>{FIXED.map((item) => <li key={item}>{item}</li>)}</ul>')
   })
 
-  it('refuses `unbound-reference` for a module-scope const the component file does not export', () => {
+  it('copies a pure module-scope const the component file does not export, instead of importing a name that module does not have', () => {
     // The pre-DET-1 codemod wrote `import { FIXED } from '../components/List'`
-    // here — an import of a name that module does not export.
+    // here - an import of a name that module does not export. G-3 copies the
+    // declaration into the page's module scope instead.
     write('components/List.tsx', [
       "const FIXED = ['x', 'y']",
+      'export function List() {',
+      '  return <ul>{FIXED.map((item) => <li key={item}>{item}</li>)}</ul>',
+      '}',
+      '',
+    ].join('\n'))
+    const source = [
+      "import { List } from '../components/List'",
+      'export default function Home() {',
+      '  return <List />',
+      '}',
+      '',
+    ].join('\n')
+    const { result, text } = detachTag('pages/Home.tsx', source, 'List')
+    expect(result.ok).toBe(true)
+    expect(text).not.toContain("from '../components/List'")
+    expect(text).toContain("const FIXED = ['x', 'y']")
+    expect(text).toContain('<ul>{FIXED.map((item) => <li key={item}>{item}</li>)}</ul>')
+  })
+
+  it('refuses `unbound-reference` for a module-scope const whose initializer runs code, naming it', () => {
+    write('components/List.tsx', [
+      "function build() { return ['x'] }",
+      'const FIXED = build()',
       'export function List() {',
       '  return <ul>{FIXED.map((item) => <li key={item}>{item}</li>)}</ul>',
       '}',

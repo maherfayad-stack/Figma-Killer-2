@@ -27,7 +27,7 @@ import { bindingKindAt, freeReferenceNames, isReferenceIdentifier, tagReferenceR
 import { DetachNameResolver, type Expectation, type PendingImport } from './detachNames'
 import { DetachHookPlan, type MovableHook, type PageTextEdit } from './detachHooks'
 import { CallSiteValues } from './detachCallSiteValues'
-import { isPureInitializer } from './detachPurity'
+import { ScopeLifts } from './detachScopeLifts'
 import { foldClassName, readFoldPart } from './detachClassNameFold'
 import { DetachConditionals, type Unit } from './detachConditionals'
 import {
@@ -85,10 +85,7 @@ export class DetachPlanner {
   private readonly refCache = new Map<Node, Ref>()
   private readonly paramCache = new Map<ParamEntry, Value>()
   private readonly inProgress = new Set<Node>()
-  private readonly hoisted = new Map<VariableDeclaration, Value>()
-  /** G-3 - declarations carried into the page's module scope, by the component file's declaration. */
-  private readonly carried = new Map<Node, string>()
-  private readonly carriedText: { name: string; text: string }[] = []
+  private readonly lifts: ScopeLifts
   private readonly scopeCache = new Map<Node, Map<string, MorphSymbol>>()
   private fragmentLocal: string | undefined
   private readonly conditionals: DetachConditionals
@@ -120,7 +117,16 @@ export class DetachPlanner {
     this.fnIdentifierNames = new Set(fn.getDescendantsOfKind(SyntaxKind.Identifier).map((id) => id.getText()))
     this.names = new DetachNameResolver(this.checker, page, componentFile, componentName, opening, this.fnIdentifierNames)
     this.values = new CallSiteValues(this.callSite, this.names, componentName, (node) => this.componentValue(node))
-    this.names.useCarrier((name, decl) => this.carryDeclaration(name, decl))
+    this.lifts = new ScopeLifts({
+      page,
+      componentFile,
+      componentName,
+      names: this.names,
+      renderNode: (node, unit) => this.renderNode(node, unit),
+      componentValue: (node) => this.componentValue(node),
+      emitLocal: (preferred, initializer) => this.hooks.emitLocal(preferred, initializer),
+    })
+    this.names.useCarrier((name, decl) => this.lifts.carryDeclaration(name, decl))
     this.hooks = new DetachHookPlan(hooks, page, opening, this.names, componentName, (arg) => this.hookArgument(arg))
     this.conditionals = new DetachConditionals({
       readProp: (reference, unit) => {
@@ -165,7 +171,8 @@ export class DetachPlanner {
     }
     this.hooks.finish()
     const { edits: hookEdits, movedHooks, useClient } = this.hooks
-    const pageEdits = this.carriedText.length > 0 ? [...hookEdits, this.carriedDeclarationsEdit()] : hookEdits
+    const carriedEdit = this.lifts.carriedDeclarationsEdit()
+    const pageEdits = carriedEdit ? [...hookEdits, carriedEdit] : hookEdits
     return {
       siteText: text,
       imports: this.names.imports,
@@ -568,68 +575,6 @@ export class DetachPlanner {
   }
 
   /**
-   * A helper the component's file declares at module level and does not export
-   * (`CopyIcon`, `SPONSORED`, `BottomSheetShell`) is copied into the page's own
-   * module scope, so the detached markup can read it. Never exported from the
-   * component's file instead: that file may be Studio's (`design-system/`), and
-   * even a user's own is not ours to edit for a detach.
-   *
-   * What may be copied is what has no life of its own: a function, or a `const`
-   * whose initializer is pure (`detachPurity.ts`) - a second copy is the same
-   * value, or the same component rendering the same markup. Its own names are
-   * written for the page exactly like the markup's (imports planned, further
-   * private helpers carried first, so declarations come out in dependency
-   * order). A page that already declares the name with the same text (an
-   * earlier detach of the same component) reuses it; with different text the
-   * name is not ours to take, and detach refuses `name-collision`.
-   */
-  private carryDeclaration(name: string, decl: Node): string {
-    const done = this.carried.get(decl)
-    if (done !== undefined) return done
-    const statement = Node.isVariableDeclaration(decl) ? decl.getVariableStatement() : decl
-    const copyable =
-      (Node.isFunctionDeclaration(decl) && decl.getName() === name) ||
-      (Node.isVariableDeclaration(decl) &&
-        decl.getVariableStatement()?.getDeclarationKind() === VariableDeclarationKind.Const &&
-        decl.getVariableStatement()?.getDeclarations().length === 1 &&
-        Node.isIdentifier(decl.getNameNode()) &&
-        decl.getInitializer() !== undefined &&
-        isPureInitializer(decl.getInitializerOrThrow()))
-    if (!statement || !copyable) {
-      fail(
-        'unbound-reference',
-        `${this.componentName}'s markup reads \`${name}\`, which ${this.componentFile.getBaseName()} declares but does not export, and it is not a plain function or constant detach can copy.`,
-      )
-    }
-    // Registered first: a helper that reads itself, or a cycle of helpers, finds its own name.
-    this.carried.set(decl, name)
-    const text = this.renderNode(statement, { node: statement, free: new Set() })
-    const existing = this.page.getFunction(name)?.getText() ?? this.page.getVariableDeclaration(name)?.getVariableStatement()?.getText()
-    if (existing !== undefined) {
-      if (existing.replace(/\s+/g, '') === text.replace(/\s+/g, '')) {
-        this.names.expect(name, 'module')
-        return name
-      }
-      fail('name-collision', `${this.componentName} reads its own \`${name}\`, and this page already declares a different \`${name}\` - a name cannot be aliased in copied code.`)
-    }
-    if (!this.names.isNameAvailable(name, name)) {
-      fail('name-collision', `${this.componentName} reads its own \`${name}\`, and this page already uses that name for something else.`)
-    }
-    this.names.reserve(name)
-    this.carriedText.push({ name, text })
-    return name
-  }
-
-  /** The one text edit that writes every carried declaration: after the page's imports (and its directive), before its own code. */
-  private carriedDeclarationsEdit(): PageTextEdit {
-    const last = this.page.getImportDeclarations().at(-1)
-    const directive = this.page.getStatements().filter((statement) => Node.isExpressionStatement(statement) && Node.isStringLiteral(statement.getExpression())).at(-1)
-    const anchor = last ?? directive
-    const body = this.carriedText.map((entry) => entry.text).join('\n\n')
-    return anchor ? { pos: anchor.getEnd(), remove: 0, text: '\n\n' + body } : { pos: 0, remove: 0, text: body + '\n\n' }
-  }
-
-  /**
    * A body `const` the JSX reads. Read once at the top of the markup, it is
    * inlined as its initializer (the cleanest page). Read twice, inside a
    * callback, or built from another body value, it is hoisted instead (G-3):
@@ -638,7 +583,7 @@ export class DetachPlanner {
    */
   private localValue(decl: VariableDeclaration, site: Node, unit: Unit): Value {
     if (this.canInlineLocal(decl, site, unit)) return this.componentValue(decl.getInitializerOrThrow())
-    return this.hoistLocal(decl)
+    return this.lifts.hoistLocal(decl)
   }
 
   private canInlineLocal(decl: VariableDeclaration, site: Node, unit: Unit): boolean {
@@ -652,41 +597,6 @@ export class DetachPlanner {
       if (Node.isArrowFunction(ancestor) || Node.isFunctionExpression(ancestor) || Node.isFunctionDeclaration(ancestor)) return false
     }
     return true
-  }
-
-  /**
-   * The value of a body `const` computed once in the page: the initializer is
-   * written in terms of the page (its props are the call site's values, its
-   * hooks and other body values are hoisted first, so statements come out in
-   * dependency order) and emitted as `const <fresh> = ...`. Refused, `body-local`,
-   * when the initializer could do something by being computed early
-   * (`detachPurity.ts`), or reads a name only the call site's own scope has.
-   */
-  private hoistLocal(decl: VariableDeclaration): Value {
-    const cached = this.hoisted.get(decl)
-    if (cached) return cached
-    const name = decl.getName()
-    const initializer = decl.getInitializerOrThrow()
-    if (!isPureInitializer(initializer)) {
-      fail(
-        'body-local',
-        `${this.componentName} computes \`${name}\` in its body with a call detach cannot move without running it earlier than it was meant to run. Duplicate the component and edit the copy instead.`,
-      )
-    }
-    const written = this.componentValue(initializer)
-    for (const read of written.free) {
-      if (this.names.expected.get(read)?.has('call-site')) {
-        fail(
-          'body-local',
-          `${this.componentName} computes \`${name}\` from a value this call site passes (\`${read}\`), which the enclosing component may not have at the top of its body.`,
-        )
-      }
-    }
-    const local = this.hooks.emitLocal(name, written.expr())
-    this.names.expect(local, 'hook')
-    const value: Value = { expr: () => local, primary: true, free: new Set([local]) }
-    this.hoisted.set(decl, value)
-    return value
   }
 
   /** `rest.x` / `props.x` — the call site's own `x`, unless a named param consumed it. */
