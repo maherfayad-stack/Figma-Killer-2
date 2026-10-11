@@ -120,6 +120,8 @@ import { AlignStartVerticalSolidIcon } from 'pixel-art-icons/icons/align-start-v
 import { AlignCenterVerticalSolidIcon } from 'pixel-art-icons/icons/align-center-vertical-solid'
 import { AlignEndVerticalSolidIcon } from 'pixel-art-icons/icons/align-end-vertical-solid'
 import { useSelectionModel } from '../selectionModel'
+import { AppliedStyleRow, StyleLibraryButton } from './StyleLibrary'
+import { useStyleLibrary } from './useStyleLibrary'
 import { useInspectorCommit } from '../commitApi'
 import { buildContextOnlyClassChain, buildCollapsedCurrentStyles, buildCollapsedStoredStyles } from '../collapsedStyleBag'
 import { StackedPropertyGrid, type StackedGridEntry } from '../../panels/PropertiesPanel/StackedPropertyGrid'
@@ -198,6 +200,7 @@ export function TextSection() {
 
   const [settingsOpen, setSettingsOpen] = useState(false)
   const settingsTriggerRef = useRef<HTMLButtonElement>(null)
+  const styleLibrary = useStyleLibrary('text')
 
   // Every derived value below runs unconditionally, same order every render,
   // with safe empty fallbacks pre-selection — `useFontVariationAxes` is a
@@ -268,8 +271,9 @@ export function TextSection() {
     : verticalAlignFromAlignItems(storedStyles.alignItems)
 
   return (
-    <Section title="Text" forceOpen flush>
+    <Section title="Text" forceOpen flush actions={<StyleLibraryButton library={styleLibrary} />}>
       <div className={styles.section}>
+        <AppliedStyleRow library={styleLibrary} />
         <StackedPropertyGrid
           spec={TOP_SPEC}
           visibleProperties={TEXT_PROPERTIES}

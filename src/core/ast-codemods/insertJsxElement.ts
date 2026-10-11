@@ -77,6 +77,7 @@ import { bindAssetImports, collectAssetImports } from './jsxAssetImports'
 import {
   collectSubtreeImports,
   indentBlock,
+  liftVoidChildren,
   refuse,
   renameSubtreeComponents,
   renderJsxNode,
@@ -173,8 +174,10 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
   const project = params.project ?? createProject()
   const sourceFile = loadSourceFile(project, file)
 
-  // The run this call writes: the element itself, then every sibling.
-  const run: InsertJsxNode[] = [
+  // The run this call writes: the element itself, then every sibling. A void
+  // element asked to hold elements (`<img>` + children) is written bare with its
+  // children as the siblings that follow it - they have no home inside it.
+  const run: InsertJsxNode[] = liftVoidChildren([
     {
       name,
       props: params.props,
@@ -183,7 +186,7 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
       ...(children === undefined ? {} : { children }),
     },
     ...(params.siblings ?? []),
-  ]
+  ])
 
   // IMG-10 — every image import the run's props ask for (`src={__assetImport}`)
   // joins the component imports below, so ONE binding plan names them all and
@@ -239,6 +242,9 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
           ? { line: params.anchorLine, col: params.anchorCol }
           : null,
       ...(params.position ? { position: params.position } : {}),
+      // G-7 - insert-as-sibling: an anchor the source nests elsewhere (inside a
+      // `<Fragment>` the canvas flattens) gets the newcomer beside it.
+      besideAnchorInItsParent: true,
     },
     (indent, unit) => renderSiblingRun(renamed, indent, unit),
   )

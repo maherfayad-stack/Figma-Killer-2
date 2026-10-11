@@ -241,6 +241,8 @@ export interface SiteSlice {
   /** Multi-delete: removes every id and its descendants in one undo step. */
   deleteNodes: (nodeIds: string[]) => void
   updateNodeProps: (nodeId: string, patch: Record<string, unknown>) => void
+  /** G-6: the user typed over code-bound text/attr; one journaled write with a notice and Undo (`unbindActions.ts`). `false` when nothing started. */
+  unbindNodeValue: (nodeId: string, prop: string, value: string) => boolean
   /**
    * instance-ui-01 — write ONE call-site prop on a `studio.instance` node
    * (`props.callSiteProps.<propName>`), the WS-4.2/4.3 instance model's

@@ -11,7 +11,7 @@
  * rejecting in-flight promises — is correct in isolation.
  */
 import { afterEach, describe, expect, it } from 'bun:test'
-import { toOutboundEnvelope, type InboundEnvelope, type OutboundEnvelope } from '@core/studio-runtime'
+import { GEOMETRY_NODES_MAX, toOutboundEnvelope, type InboundEnvelope, type OutboundEnvelope } from '@core/studio-runtime'
 import { BridgeFrameAdapter, type BridgeFrameChannel } from '@site/canvas/frameAdapter/BridgeFrameAdapter'
 import { runFrameDocumentAdapterContract } from './frameDocumentAdapter.contract'
 
@@ -45,6 +45,16 @@ function makeStubChannel(options: { autoReplyMeasure?: boolean; autoReplyDropCan
             rect: { x: 0, y: 0, width: 10, height: 10 },
             computedStyle: {},
           })),
+        })
+        queueMicrotask(() => handler?.({ origin: FRAME_ORIGIN, source: undefined, data: reply } as MessageEvent))
+      }
+      if (options.autoReplyMeasure && envelope.message.type === 'measureAll') {
+        const reply = toOutboundEnvelope({
+          type: 'measureAll:result',
+          requestId: envelope.message.requestId,
+          origin: { x: 0, y: 0 },
+          nodes: [{ nodeId: 'n1', occurrenceIndex: 0, rect: { x: 0, y: 0, width: 10, height: 10 }, parent: -1, clips: false, inert: false, transformed: false, paint: 0 }],
+          truncated: false,
         })
         queueMicrotask(() => handler?.({ origin: FRAME_ORIGIN, source: undefined, data: reply } as MessageEvent))
       }
@@ -540,6 +550,112 @@ describe('BridgeFrameAdapter — measureDropCandidates lifecycle', () => {
     const pending = adapter.measureDropCandidates()
     adapter.dispose()
 
+    await expect(pending).rejects.toThrow()
+  })
+})
+
+// SB-3
+describe('BridgeFrameAdapter — measureAll lifecycle', () => {
+  const wire = (nodeId: string, occurrenceIndex: number, parent: number, extra: Partial<{ clips: boolean; inert: boolean; transformed: boolean; paint: number }> = {}) => ({
+    nodeId,
+    occurrenceIndex,
+    rect: { x: 1, y: 2, width: 30, height: 40 },
+    parent,
+    clips: false,
+    inert: false,
+    transformed: false,
+    paint: 0,
+    ...extra,
+  })
+
+  function lastMeasureAllId(stub: StubChannel): string {
+    const message = stub.posted.at(-1)!.message
+    if (message.type !== 'measureAll') throw new Error(`expected measureAll, got ${message.type}`)
+    return message.requestId
+  }
+
+  it('posts one measureAll and resolves with the batched reply in canonical ids', async () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['root', 'row#0', 'row#1'] })
+    adapters.push(adapter)
+    const pending = adapter.measureAll()
+    expect(stub.posted.filter((envelope) => envelope.message.type === 'measureAll')).toHaveLength(1)
+    // `.map()` rows share one stamp; their canonical ids are the tree-order bucket entries.
+    stub.dispatch(
+      toOutboundEnvelope({
+        type: 'measureAll:result',
+        requestId: lastMeasureAllId(stub),
+        origin: { x: 8, y: 0 },
+        nodes: [wire('root', 0, -1), wire('row', 0, 0), wire('row', 1, 0, { inert: true, paint: 3 })],
+        truncated: false,
+      }),
+    )
+    const snapshot = await pending
+    expect(snapshot.origin).toEqual({ x: 8, y: 0 })
+    expect(snapshot.nodes.map((node) => [node.nodeId, node.parent])).toEqual([['root', -1], ['row#0', 0], ['row#1', 0]])
+    expect(snapshot.nodes[2]).toMatchObject({ inert: true, paint: 3, clips: false, transformed: false })
+    expect(snapshot.truncated).toBe(false)
+  })
+
+  it('folds a stamp the page tree does not know into its nearest known ancestor', async () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['root', 'leaf'] })
+    adapters.push(adapter)
+    const pending = adapter.measureAll()
+    // `internal` is a design-system component's own element: unknown to the tree, but it parents `leaf`.
+    stub.dispatch(
+      toOutboundEnvelope({
+        type: 'measureAll:result',
+        requestId: lastMeasureAllId(stub),
+        origin: { x: 0, y: 0 },
+        nodes: [wire('root', 0, -1), wire('internal', 0, 0), wire('leaf', 0, 1)],
+        truncated: true,
+      }),
+    )
+    const snapshot = await pending
+    expect(snapshot.nodes.map((node) => [node.nodeId, node.parent])).toEqual([['root', -1], ['leaf', 0]])
+    expect(snapshot.truncated).toBe(true)
+  })
+
+  it('forwards the runtime geometry:dirty, and reports a reloaded document as dirty once geometry was asked for', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['n1'] })
+    adapters.push(adapter)
+    let fired = 0
+    adapter.on('geometry:dirty', () => {
+      fired += 1
+    })
+    // A second `ready` before any measureAll: the new document owes the parent nothing.
+    stub.dispatch(toOutboundEnvelope({ type: 'ready' }))
+    expect(fired).toBe(0)
+    stub.dispatch(toOutboundEnvelope({ type: 'geometry:dirty' }))
+    expect(fired).toBe(1)
+    void adapter.measureAll().catch(() => {})
+    stub.dispatch(toOutboundEnvelope({ type: 'ready' }))
+    expect(fired).toBe(2)
+  })
+
+  it('rejects on timeout, and dispose() rejects an in-flight read', async () => {
+    const stub = makeStubChannel()
+    const timed = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['n1'], measureTimeoutMs: 5 })
+    adapters.push(timed)
+    await expect(timed.measureAll()).rejects.toThrow()
+
+    const other = makeStubChannel()
+    const disposed = new BridgeFrameAdapter({ channel: other.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['n1'], measureTimeoutMs: 60_000 })
+    const pending = disposed.measureAll()
+    disposed.dispose()
+    await expect(pending).rejects.toThrow()
+  })
+
+  it('does not resolve a read from a reply that exceeds the wire bound', async () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['n1'], measureTimeoutMs: 20 })
+    adapters.push(adapter)
+    const pending = adapter.measureAll()
+    const nodes = Array.from({ length: GEOMETRY_NODES_MAX + 1 }, () => wire('n1', 0, -1))
+    // The envelope schema rejects it before any handler reads a field, so the read times out instead of resolving.
+    stub.dispatch(toOutboundEnvelope({ type: 'measureAll:result', requestId: lastMeasureAllId(stub), origin: { x: 0, y: 0 }, nodes, truncated: false }))
     await expect(pending).rejects.toThrow()
   })
 })

@@ -27,17 +27,29 @@
  *     text cannot say becomes one, in the file's own quote
  *     (`stringSpelling.ts`'s `preferredQuote`).
  *
+ * ## ...unless the caller says it means to (G-6, OD-20)
+ *
+ * Typing over text that is set in code (`<p>{count}</p>`, `<p>{t('x')}</p>`)
+ * is explicit intent, so `unbind: true` replaces the ONE expression child with
+ * the text, in the spelling above; the whitespace around it stays. Only a
+ * plain value is replaced (`unbindableExpression.ts`): markup, a function or a
+ * whole array/object is not text the field showed, and `Hello {name}!` (text
+ * AND code) is still mixed content - there is no single thing to replace.
+ *
  * See `locateJsxElement.ts` for the (line, col) → node resolution algorithm.
  */
 import { Node, Project, SyntaxKind, type JsxElement, type JsxText, type SourceFile } from 'ts-morph'
 import { createProject, findJsxElementAtLocationOrThrow, loadSourceFile } from './locateJsxElement'
 import { JSX_ENTITY_RE, jsStringSpelling, preferredQuote, quoteOf } from './stringSpelling'
+import { isUnbindableExpression } from './unbindableExpression'
 
 export interface SetJsxTextParams {
   file: string
   line: number
   col: number
   text: string
+  /** G-6 - replace the one code-bound child with `text`. Without it, code is never overwritten. */
+  unbind?: boolean
   /** Optional pre-existing project to reuse (e.g. across multiple edits). */
   project?: Project
 }
@@ -84,6 +96,18 @@ function assertTextOnlyChildren(jsxElement: JsxElement, path: string): void {
     'element has non-text children (nested elements or mixed content) — refusing to overwrite structural JSX',
     path,
   )
+}
+
+/**
+ * The ONE child that is a plain value expression (`{count}`), ignoring the
+ * whitespace-only text around it - or `undefined` when the element holds
+ * anything else (text beside the code, several expressions, markup).
+ */
+function unbindableChild(jsxElement: JsxElement): Node | undefined {
+  const significant = jsxElement.getJsxChildren().filter((child) => !(Node.isJsxText(child) && child.getText().trim() === ''))
+  const only = significant[0]
+  if (significant.length !== 1 || !only || !Node.isJsxExpression(only)) return undefined
+  return isUnbindableExpression(only.getExpression()) ? only : undefined
 }
 
 /** True when `text`, written as raw JSX text, reads back (`decodeJsxTextEntities(getText().trim())`) as exactly `text`. */
@@ -181,6 +205,18 @@ export function setJsxText(params: SetJsxTextParams): void {
   }
 
   const jsxElement = opening.getParentIfKindOrThrow(SyntaxKind.JsxElement)
+  const code = params.unbind === true ? unbindableChild(jsxElement) : undefined
+  if (code) {
+    // The expression child alone is replaced; the layout around it stays.
+    if (text.length === 0) {
+      sourceFile.replaceText([jsxElement.getOpeningElement().getEnd(), jsxElement.getClosingElement().getStart()], '')
+    } else {
+      const spelled = isRawJsxTextSafe(text) && !text.includes('\n') ? text : containerSpelling(text, sourceFile)
+      sourceFile.replaceText([code.getStart(), code.getEnd()], spelled)
+    }
+    sourceFile.saveSync()
+    return
+  }
   assertTextOnlyChildren(jsxElement, path)
   const openingEnd = jsxElement.getOpeningElement().getEnd()
   const closingStart = jsxElement.getClosingElement().getStart()

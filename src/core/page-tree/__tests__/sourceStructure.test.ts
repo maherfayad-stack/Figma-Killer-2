@@ -52,9 +52,10 @@ describe('studio node id grammar', () => {
 describe('refuseStructuralEdit', () => {
   it('never narrows an ordinary CMS node', () => {
     const node = { id: 'V1StGXR8_Z5jdHi6B-myT' }
-    for (const kind of ['reorder', 'reparent', 'delete', 'insert', 'duplicate', 'wrap'] as const) {
+    for (const kind of ['reorder', 'delete', 'insert', 'duplicate', 'wrap'] as const) {
       expect(refuseStructuralEdit({ kind, node, anchor: node })).toBeNull()
     }
+    expect(refuseStructuralEdit({ kind: 'reparent', node, destination: node })).toBeNull()
   })
 
   it('allows a plain sibling reorder and a plain delete', () => {
@@ -109,10 +110,6 @@ describe('refuseStructuralEdit', () => {
     expect(
       refuseStructuralEdit({ kind: 'reparent', node: { id: PLAIN }, destination: { id: SIBLING } }),
     ).toBeNull()
-  })
-
-  it('refuses a reparent with no container to write into', () => {
-    expect(refuseStructuralEdit({ kind: 'reparent', node: { id: PLAIN } })?.reason).toBe('reparent')
   })
 
   it('refuses a reparent into a container that is not an ordinary element', () => {

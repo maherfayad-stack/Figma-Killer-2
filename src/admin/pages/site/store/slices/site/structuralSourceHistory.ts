@@ -226,7 +226,8 @@ function unresolvedNodeIds(
 ): string[] {
   const missing: string[] = []
   for (const edit of edits) {
-    if (addressesSourceLiteral(edit) || addressesJournalEntry(edit)) continue
+    // A `css` edit (CT-5, a style created with its rule) names a stylesheet + selector; its id is a join key, never a board node.
+    if (addressesSourceLiteral(edit) || addressesJournalEntry(edit) || edit.kind === 'css') continue
     for (const id of structuralEditNodeIds(edit)) {
       if (!state._nodeIdToPageIds.has(id) && !onFreeCanvas(state, id) && !missing.includes(id)) missing.push(id)
     }
