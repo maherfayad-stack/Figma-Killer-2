@@ -37,6 +37,18 @@ export {
 } from './setDeclaration'
 export { removeDeclaration } from './removeDeclaration'
 export {
+  classNamesInStylesheet,
+  modifierSelector,
+  parseModifierSelector,
+  readRuleDeclarations,
+  removeModifierDeclarations,
+  ruleExists,
+  setModifierDeclarations,
+  singleClassName,
+  type ModifierConvention,
+  type ModifierWriteResult,
+} from './modifierRule'
+export {
   AT_RULE_SCOPE_PATTERN,
   formatAtRuleScope,
   parseAtRuleScope,

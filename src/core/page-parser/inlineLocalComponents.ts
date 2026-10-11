@@ -91,7 +91,7 @@ import { INLINE_ID_SEPARATOR } from '@core/page-tree'
 import { parseJsxTree } from './parsePageFile'
 import { getReturnedJsxRoots } from './branchSelection'
 import { findNamedComponentDeclaration, getFunctionLikeNode } from './componentDeclaration'
-import { applySubstitutions, buildSubstitutionEnv } from './componentSubstitution'
+import { applySubstitutions, buildSpreadForward, buildSubstitutionEnv } from './componentSubstitution'
 import {
   reexportChainFiles,
   resolveComponentSources,
@@ -287,8 +287,12 @@ function expandCallSite(
 
     const targetRelFromRoot = path.relative(state.workspaceRoot, target.sourceFile.getFilePath()).split(path.sep).join('/')
     let subPage = parseJsxTree(roots, target.sourceFile, targetRelFromRoot, fn, state.evalOptions)
-    const env = buildSubstitutionEnv(fn, callSiteNode, depth === 0)
-    subPage = applySubstitutions(roots, subPage, env, callSiteNode.children, target.sourceFile, targetRelFromRoot, fn, state.evalOptions)
+    // G-2b - a call site that only forwards its component's own props with a
+    // spread still belongs to the page's instance: what the page passed is what
+    // this component receives.
+    const atPage = depth === 0 || callSiteNode.spreadForwarded === true
+    const env = buildSubstitutionEnv(fn, callSiteNode, atPage)
+    subPage = applySubstitutions(roots, subPage, env, callSiteNode.children, target.sourceFile, targetRelFromRoot, fn, state.evalOptions, buildSpreadForward(fn, callSiteNode, atPage))
 
     // §2.5 — tag every node this call site's subtree produces with the
     // component whose file it came from. These nodes are EDITABLE: their
