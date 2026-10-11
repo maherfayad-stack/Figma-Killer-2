@@ -562,15 +562,93 @@ describe("OD-21 - a component from the project's design-system/ folder detaches 
     expect(second).toContain('const d2 = useDir("rtl")')
   })
 
-  it('still names what cannot be inlined: a private helper the design system does not export', () => {
+  it("copies the private helpers a design-system component reads (Dialog's shell) into the page", () => {
     placeDesignSystem()
-    const message = expectRefusedUntouched(
+    const text = expectDetached(
       'pages/Home.tsx',
       ["import { Dialog } from '../design-system'", 'export default function Home() {', '  return <Dialog />', '}', ''].join('\n'),
       'Dialog',
-      'unbound-reference',
     )
-    expect(message).toContain('does not export')
+    expect(text).not.toMatch(/<Dialog[ />]/)
+    expect(text).toMatch(/const DialogShell = /)
+  })
+
+  it('still names what cannot be inlined: a `let` the body assigns in branches', () => {
+    placeDesignSystem()
+    const message = expectRefusedUntouched(
+      'pages/Home.tsx',
+      ["import { Badge } from '../design-system'", 'export default function Home() {', '  return <Badge />', '}', ''].join('\n'),
+      'Badge',
+      'body-local',
+    )
+    expect(message).toContain('label')
+  })
+})
+
+describe('G-3 - a helper the component\'s file does not export is copied into the page', () => {
+  const SHEET = [
+    "import { Chevron } from '../icons'",
+    "const TONES = { info: 'sheet--info', warn: 'sheet--warn' }",
+    'function SheetFrame({ tone, children }: { tone: string; children?: React.ReactNode }) {',
+    '  return <section className={`sheet ${tone}`}>{children}<Chevron /></section>',
+    '}',
+    'export function Sheet({ kind, label }: { kind: "info" | "warn"; label: string }) {',
+    '  return <SheetFrame tone={TONES[kind]}><p>{label}</p></SheetFrame>',
+    '}',
+    '',
+  ].join('\n')
+
+  function place(): void {
+    write('components/Sheet.tsx', SHEET)
+    write('icons.tsx', 'export function Chevron() { return <b>&gt;</b> }\n')
+  }
+
+  const PAGE = [
+    "import { Sheet } from '../components/Sheet'",
+    'export default function Home() {',
+    '  return <main><Sheet kind="warn" label="Careful" /><Sheet kind="info" label="FYI" /></main>',
+    '}',
+    '',
+  ].join('\n')
+
+  it('writes the private function and constant after the page\'s imports, and the markup reads them', () => {
+    place()
+    const text = expectDetached('pages/Home.tsx', PAGE, 'Sheet')
+    expect(text).toContain("const TONES = { info: 'sheet--info', warn: 'sheet--warn' }")
+    expect(text).toContain('function SheetFrame({ tone, children }')
+    expect(text).toContain("import { Chevron } from '../icons'")
+    expect(text).toContain('<SheetFrame tone={TONES["warn"]}><p>Careful</p></SheetFrame>')
+    // After the imports, before the page's own component.
+    expect(text.indexOf('function SheetFrame')).toBeGreaterThan(text.indexOf('import { Chevron }'))
+    expect(text.indexOf('function SheetFrame')).toBeLessThan(text.indexOf('export default function Home'))
+    expect(read('components/Sheet.tsx')).toBe(SHEET)
+  })
+
+  it('a second detach of the same component reuses the copies instead of writing them again', () => {
+    place()
+    const once = expectDetached('pages/Home.tsx', PAGE, 'Sheet')
+    const twice = expectDetached('pages/Home.tsx', once, 'Sheet')
+    expect(twice.match(/function SheetFrame/g)).toHaveLength(1)
+    expect(twice.match(/const TONES/g)).toHaveLength(1)
+    expect(twice).not.toMatch(/<Sheet[ />]/)
+    expect(twice).toContain('<p>FYI</p>')
+  })
+
+  it('refuses, byte-identical, when the page already has a different declaration under that name', () => {
+    place()
+    const message = expectRefusedUntouched(
+      'pages/Home.tsx',
+      ["import { Sheet } from '../components/Sheet'", "const TONES = { other: 'x' }", 'export default function Home() {', '  return <main data-x={TONES.other}><Sheet kind="warn" label="Careful" /></main>', '}', ''].join('\n'),
+      'Sheet',
+      'name-collision',
+    )
+    expect(message).toContain('TONES')
+  })
+
+  it('refuses a private constant whose initializer could do something by running in the page', () => {
+    write('components/Tag.tsx', ["import { stamp } from '../stamp'", 'const NOW = stamp()', 'export function Tag() {', '  return <i>{NOW}</i>', '}', ''].join('\n'))
+    write('stamp.ts', 'export function stamp() { return Date.now() }\n')
+    expectRefusedUntouched('pages/Home.tsx', ["import { Tag } from '../components/Tag'", 'export default function Home() {', '  return <Tag />', '}', ''].join('\n'), 'Tag', 'unbound-reference')
   })
 })
 

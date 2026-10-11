@@ -8,7 +8,7 @@
  * nothing here writes.
  */
 import { Node, SyntaxKind, VariableDeclarationKind, type BindingElement, type JsxAttribute, type ParameterDeclaration } from 'ts-morph'
-import type { FunctionLike } from '@core/page-parser'
+import { reactExportNameOf, type FunctionLike } from '@core/page-parser'
 import type { JsxOpeningLikeElement } from './locateJsxElement'
 import { literalField, type Literal } from './detachConstantFold'
 
@@ -73,6 +73,7 @@ function propertyNameText(node: Node): string | undefined {
 
 export function readParamTable(fn: FunctionLike): ParamTable {
   const table: ParamTable = { entries: new Map(), nested: new Set(), consumed: new Set(), restExcludes: new Set() }
+  readForwardedRef(fn, table)
   const parameter = fn.getParameters()[0]
   const pattern = parameter?.getNameNode()
   if (!parameter || !pattern) return table
@@ -85,6 +86,23 @@ export function readParamTable(fn: FunctionLike): ParamTable {
   readBindingElements(pattern.getElements(), table)
   for (const name of table.consumed) table.restExcludes.add(name)
   return table
+}
+
+/**
+ * `forwardRef((props, ref) => ...)`: React hands the call site's own `ref`
+ * attribute to the SECOND parameter and keeps it out of `props`. So `ref` is a
+ * prop the call site supplies like any other - `ref={inputRef}` is what the
+ * markup's `ref={ref}` becomes, an absent one is `undefined` (the attribute is
+ * dropped) - and `...rest` does not hold it.
+ */
+function readForwardedRef(fn: FunctionLike, table: ParamTable): void {
+  const parameter = fn.getParameters()[1]
+  if (!parameter || !Node.isIdentifier(parameter.getNameNode())) return
+  const wrapper = fn.getParent()
+  if (!Node.isCallExpression(wrapper) || reactExportNameOf(wrapper.getExpression()) !== 'forwardRef') return
+  table.entries.set(parameter, { attrName: 'ref' })
+  table.consumed.add('ref')
+  table.restExcludes.add('ref')
 }
 
 function readBindingElements(elements: readonly BindingElement[], table: ParamTable): void {

@@ -45,6 +45,13 @@ export class DetachNameResolver {
   private readonly componentFile: SourceFile
   private readonly componentName: string
   private readonly fnIdentifierNames: ReadonlySet<string>
+  /**
+   * G-3 - how a helper the component's file declares but does not export reaches
+   * the page: the planner copies its declaration into the page's module scope
+   * (`DetachPlanner.carryDeclaration`) and answers with the name it now has.
+   * Absent, such a name refuses `unbound-reference` as it always did.
+   */
+  private carry: ((name: string, decl: Node) => string) | undefined
 
   constructor(
     checker: TypeChecker,
@@ -65,6 +72,19 @@ export class DetachNameResolver {
     }
     this.pageTopLevel = topLevelBindingNames(page)
     this.pageFreeNames = new Set(freeReferenceNames(page))
+  }
+
+  /** Installs the planner's way of carrying an unexported module-scope declaration across. */
+  useCarrier(carry: (name: string, decl: Node) => string): void {
+    this.carry = carry
+  }
+
+  /** Whether `decl` is something the component's file exports (so the page can simply import it). */
+  exportsDeclaration(decl: Node): boolean {
+    for (const declarations of this.componentFile.getExportedDeclarations().values()) {
+      if ((declarations as Node[]).includes(decl)) return true
+    }
+    return false
   }
 
   expect(name: string, kind: Expectation): void {
@@ -118,6 +138,11 @@ export class DetachNameResolver {
         'name-collision',
         `${this.componentName} reads \`${name}\` from this file's module scope, and the call site's component declares its own \`${name}\` — inlined, the markup would read the wrong one.`,
       )
+    }
+    if (this.carry && decl && isTopLevelDeclaration(decl) && !isImportBinding(decl) && !this.exportsDeclaration(decl)) {
+      const carried = this.carry(name, decl)
+      this.expect(carried, 'module')
+      return carried
     }
     const request = this.importRequestFor(name, decl)
     const planned = planImportBinding(this.page, request, {

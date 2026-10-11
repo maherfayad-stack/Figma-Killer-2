@@ -86,6 +86,9 @@ export class DetachPlanner {
   private readonly paramCache = new Map<ParamEntry, Value>()
   private readonly inProgress = new Set<Node>()
   private readonly hoisted = new Map<VariableDeclaration, Value>()
+  /** G-3 - declarations carried into the page's module scope, by the component file's declaration. */
+  private readonly carried = new Map<Node, string>()
+  private readonly carriedText: { name: string; text: string }[] = []
   private readonly scopeCache = new Map<Node, Map<string, MorphSymbol>>()
   private fragmentLocal: string | undefined
   private readonly conditionals: DetachConditionals
@@ -117,6 +120,7 @@ export class DetachPlanner {
     this.fnIdentifierNames = new Set(fn.getDescendantsOfKind(SyntaxKind.Identifier).map((id) => id.getText()))
     this.names = new DetachNameResolver(this.checker, page, componentFile, componentName, opening, this.fnIdentifierNames)
     this.values = new CallSiteValues(this.callSite, this.names, componentName, (node) => this.componentValue(node))
+    this.names.useCarrier((name, decl) => this.carryDeclaration(name, decl))
     this.hooks = new DetachHookPlan(hooks, page, opening, this.names, componentName, (arg) => this.hookArgument(arg))
     this.conditionals = new DetachConditionals({
       readProp: (reference, unit) => {
@@ -160,7 +164,8 @@ export class DetachPlanner {
       if (kinds.has('call-site')) callSiteKinds.set(name, bindingKindAt(this.callSite.site, name, this.page))
     }
     this.hooks.finish()
-    const { edits: pageEdits, movedHooks, useClient } = this.hooks
+    const { edits: hookEdits, movedHooks, useClient } = this.hooks
+    const pageEdits = this.carriedText.length > 0 ? [...hookEdits, this.carriedDeclarationsEdit()] : hookEdits
     return {
       siteText: text,
       imports: this.names.imports,
@@ -560,6 +565,68 @@ export class DetachPlanner {
       }
     }
     return value.expr()
+  }
+
+  /**
+   * A helper the component's file declares at module level and does not export
+   * (`CopyIcon`, `SPONSORED`, `BottomSheetShell`) is copied into the page's own
+   * module scope, so the detached markup can read it. Never exported from the
+   * component's file instead: that file may be Studio's (`design-system/`), and
+   * even a user's own is not ours to edit for a detach.
+   *
+   * What may be copied is what has no life of its own: a function, or a `const`
+   * whose initializer is pure (`detachPurity.ts`) - a second copy is the same
+   * value, or the same component rendering the same markup. Its own names are
+   * written for the page exactly like the markup's (imports planned, further
+   * private helpers carried first, so declarations come out in dependency
+   * order). A page that already declares the name with the same text (an
+   * earlier detach of the same component) reuses it; with different text the
+   * name is not ours to take, and detach refuses `name-collision`.
+   */
+  private carryDeclaration(name: string, decl: Node): string {
+    const done = this.carried.get(decl)
+    if (done !== undefined) return done
+    const statement = Node.isVariableDeclaration(decl) ? decl.getVariableStatement() : decl
+    const copyable =
+      (Node.isFunctionDeclaration(decl) && decl.getName() === name) ||
+      (Node.isVariableDeclaration(decl) &&
+        decl.getVariableStatement()?.getDeclarationKind() === VariableDeclarationKind.Const &&
+        decl.getVariableStatement()?.getDeclarations().length === 1 &&
+        Node.isIdentifier(decl.getNameNode()) &&
+        decl.getInitializer() !== undefined &&
+        isPureInitializer(decl.getInitializerOrThrow()))
+    if (!statement || !copyable) {
+      fail(
+        'unbound-reference',
+        `${this.componentName}'s markup reads \`${name}\`, which ${this.componentFile.getBaseName()} declares but does not export, and it is not a plain function or constant detach can copy.`,
+      )
+    }
+    // Registered first: a helper that reads itself, or a cycle of helpers, finds its own name.
+    this.carried.set(decl, name)
+    const text = this.renderNode(statement, { node: statement, free: new Set() })
+    const existing = this.page.getFunction(name)?.getText() ?? this.page.getVariableDeclaration(name)?.getVariableStatement()?.getText()
+    if (existing !== undefined) {
+      if (existing.replace(/\s+/g, '') === text.replace(/\s+/g, '')) {
+        this.names.expect(name, 'module')
+        return name
+      }
+      fail('name-collision', `${this.componentName} reads its own \`${name}\`, and this page already declares a different \`${name}\` - a name cannot be aliased in copied code.`)
+    }
+    if (!this.names.isNameAvailable(name, name)) {
+      fail('name-collision', `${this.componentName} reads its own \`${name}\`, and this page already uses that name for something else.`)
+    }
+    this.names.reserve(name)
+    this.carriedText.push({ name, text })
+    return name
+  }
+
+  /** The one text edit that writes every carried declaration: after the page's imports (and its directive), before its own code. */
+  private carriedDeclarationsEdit(): PageTextEdit {
+    const last = this.page.getImportDeclarations().at(-1)
+    const directive = this.page.getStatements().filter((statement) => Node.isExpressionStatement(statement) && Node.isStringLiteral(statement.getExpression())).at(-1)
+    const anchor = last ?? directive
+    const body = this.carriedText.map((entry) => entry.text).join('\n\n')
+    return anchor ? { pos: anchor.getEnd(), remove: 0, text: '\n\n' + body } : { pos: 0, remove: 0, text: body + '\n\n' }
   }
 
   /**
