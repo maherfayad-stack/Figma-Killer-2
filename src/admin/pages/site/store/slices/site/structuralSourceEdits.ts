@@ -443,6 +443,8 @@ export const STRUCTURAL_REFUSAL_TITLE = {
   freeMove: 'Cannot place this by hand',
   /** PA-4 — "Ignore auto layout" whose container cannot take the `position: relative` it needs, or whose own position cannot be written. */
   ignoreAutoLayout: 'Cannot ignore auto layout here',
+  /** PA-7 / PA-8 — Add / Remove auto layout rewrites a container and all its children; one element that cannot take the write refuses the lot. */
+  layoutConversion: 'Cannot change auto layout here',
   /** P5-C — the Detach verb (`instanceActions.ts`): a refusal names why this instance's markup can't be written in place. */
   detach: 'Detach refused',
   /** A canvas resize / Hug on markup that lives in a shared component (`inlineStyleActions.ts`). */

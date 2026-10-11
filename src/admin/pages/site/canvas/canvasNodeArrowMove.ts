@@ -80,6 +80,10 @@ import {
 } from '@core/page-tree'
 import {
   inlineOffsetProperty,
+  offsetTerm,
+  type OffsetPlan,
+  type OffsetProperty,
+  type OffsetTerm,
   autoLayoutFamily,
   isAutoLayoutDisplay,
   isPositionedFreely,
@@ -89,20 +93,8 @@ import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 import { measureInRenderingFrame } from './canvasSelectionMeasure'
 import type { NodeMeasurement } from './frameAdapter/FrameDocumentAdapter'
 
-/** An offset a nudge may write — a key of the element's `style={{…}}` object, so camelCase. */
-export type NudgeOffsetProperty = 'left' | 'right' | 'insetInlineStart' | 'insetInlineEnd' | 'top' | 'bottom'
 
-/** One offset a nudge moves: `base + sign × delta`, in CSS px. */
-export interface NudgeTerm {
-  property: NudgeOffsetProperty
-  /** `+1` when a move to visual right / down GROWS this offset (`left`, `top`), `-1` when it shrinks it (`right`, `bottom`). */
-  sign: 1 | -1
-  base: number
-}
-
-export interface NudgePlan {
-  horizontal: NudgeTerm[]
-  vertical: NudgeTerm[]
+export interface NudgePlan extends OffsetPlan {
   /**
    * Declarations every non-empty patch carries, under the moving terms: a flow
    * nudge's `position: relative`, and the `0px` pins that keep an offset the
@@ -190,7 +182,7 @@ function insetSides(value: unknown): Record<'top' | 'right' | 'bottom' | 'left',
 export function authoredOffsetValues(
   node: Pick<PageNode, 'classIds' | 'inlineStyles'>,
   styleRules: Readonly<Record<string, StyleRule>> | undefined,
-): Map<NudgeOffsetProperty, unknown> {
+): Map<OffsetProperty, unknown> {
   const merged = new Map<string, unknown>()
   const apply = (bag: Readonly<Record<string, unknown>> | CSSPropertyBag | undefined) => {
     if (!bag) return
@@ -205,9 +197,9 @@ export function authoredOffsetValues(
   for (const classId of node.classIds) apply(styleRules?.[classId]?.styles)
   apply(node.inlineStyles)
 
-  const authored = new Map<NudgeOffsetProperty, unknown>()
+  const authored = new Map<OffsetProperty, unknown>()
   for (const [property, value] of merged) {
-    if (isSetValue(value)) authored.set(property as NudgeOffsetProperty, value)
+    if (isSetValue(value)) authored.set(property as OffsetProperty, value)
   }
   return authored
 }
@@ -216,44 +208,17 @@ export function authoredOffsetValues(
 export function authoredOffsets(
   node: Pick<PageNode, 'classIds' | 'inlineStyles'>,
   styleRules: Readonly<Record<string, StyleRule>> | undefined,
-): Set<NudgeOffsetProperty> {
+): Set<OffsetProperty> {
   return new Set(authoredOffsetValues(node, styleRules).keys())
 }
 
-/** The computed px value, or `0` for one the element does not resolve (it is not rendered). */
-function px(value: string): number {
-  const parsed = Number.parseFloat(value)
-  return Number.isFinite(parsed) ? parsed : 0
-}
-
-function horizontalTerm(property: NudgeOffsetProperty, style: ArrowTargetStyle): NudgeTerm {
-  const rtl = style.direction === 'rtl'
-  // A logical inset IS one physical side for this element's direction: the
-  // inline start is the right edge under RTL.
-  const physical =
-    property === 'insetInlineStart' ? (rtl ? 'right' : 'left')
-      : property === 'insetInlineEnd' ? (rtl ? 'left' : 'right')
-        : property
-  return {
-    property,
-    sign: physical === 'left' ? 1 : -1,
-    base: px(physical === 'left' ? style.left : style.right),
-  }
-}
-
 /** Which offsets a nudge writes, and from what — see the module doc. */
-export function planNudge(style: ArrowTargetStyle, authored: ReadonlySet<NudgeOffsetProperty>): NudgePlan {
+export function planNudge(style: ArrowTargetStyle, authored: ReadonlySet<OffsetProperty>): NudgePlan {
   const horizontalProperties = HORIZONTAL_OFFSETS.filter((property) => authored.has(property))
   const verticalProperties = VERTICAL_OFFSETS.filter((property) => authored.has(property))
   const horizontal = (horizontalProperties.length > 0 ? horizontalProperties : [inlineOffsetProperty(style.direction)])
-    .map((property) => horizontalTerm(property, style))
-  const vertical = (verticalProperties.length > 0 ? verticalProperties : ['top' as const]).map(
-    (property): NudgeTerm => ({
-      property,
-      sign: property === 'top' ? 1 : -1,
-      base: px(property === 'top' ? style.top : style.bottom),
-    }),
-  )
+    .map((property) => offsetTerm(property, style))
+  const vertical = (verticalProperties.length > 0 ? verticalProperties : ['top' as const]).map((property) => offsetTerm(property, style))
   return { horizontal, vertical }
 }
 
@@ -264,7 +229,7 @@ export function planNudge(style: ArrowTargetStyle, authored: ReadonlySet<NudgeOf
  */
 export function nudgeStylePatch(plan: NudgePlan, dx: number, dy: number): Record<string, string> {
   const patch: Record<string, string> = dx !== 0 || dy !== 0 ? { ...plan.fixed } : {}
-  const write = (terms: readonly NudgeTerm[], delta: number) => {
+  const write = (terms: readonly OffsetTerm[], delta: number) => {
     for (const term of terms) patch[term.property] = `${Math.round(term.base + term.sign * delta)}px`
   }
   if (dx !== 0) write(plan.horizontal, dx)
@@ -280,7 +245,7 @@ export function nudgeStylePatch(plan: NudgePlan, dx: number, dy: number): Record
  * its default offsets from zero, and every axis the source authored an offset
  * on (ignored until now) pinned to `0px`, so only the arrow's axis moves.
  */
-export function planFlowNudge(style: ArrowTargetStyle, authored: ReadonlySet<NudgeOffsetProperty>): NudgePlan {
+export function planFlowNudge(style: ArrowTargetStyle, authored: ReadonlySet<OffsetProperty>): NudgePlan {
   if (style.position === 'relative') return planNudge(style, authored)
   const horizontalProperty = inlineOffsetProperty(style.direction)
   const fixed: Record<string, string> = { position: 'relative' }

@@ -10,11 +10,11 @@
  * question a portal frame does) and speaks to the user.
  */
 import { getParent } from '@core/page-tree'
-import { establishesContainingBlock } from '@core/studio-runtime'
+import { establishesContainingBlock, type OffsetProperty } from '@core/studio-runtime'
 import { pushToast } from '@ui/components/Toast'
 import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 import type { FrameRequest } from '@site/store/slices/site/frameRequest'
-import { authoredOffsetValues, OWN_PROPERTIES, readOwn, type NudgeOffsetProperty } from './canvasNodeArrowMove'
+import { authoredOffsetValues, OWN_PROPERTIES, readOwn } from './canvasNodeArrowMove'
 import { planFrameSelection, type FrameMemberFacts, type FrameParentFacts } from './canvasFrameSelectionPlan'
 import { measureInRenderingFrame } from './canvasSelectionMeasure'
 import type { NodeMeasurement } from './frameAdapter/FrameDocumentAdapter'
@@ -114,7 +114,7 @@ export async function frameSelection(nodeIds?: readonly string[]): Promise<void>
       style: readOwn(measurement),
       flexGrow: measurement.computedStyle['flex-grow'] ?? '0',
       authored: new Set(values.keys()),
-      expressive: new Set<NudgeOffsetProperty>(
+      expressive: new Set<OffsetProperty>(
         [...values].filter(([, value]) => !PLAIN_LENGTH.test(String(value).trim())).map(([property]) => property),
       ),
     })

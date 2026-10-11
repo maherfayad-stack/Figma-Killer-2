@@ -74,6 +74,7 @@ import type {
  * door — every consumer already imports them from `./types`.
  */
 import type { HistoryEntry } from './historyTypes'
+import type { LayoutConversionRequest } from './layoutConversionPlan'
 import type { TransplantDestination } from './transplantDestination'
 
 export type {
@@ -321,6 +322,8 @@ export interface SiteSlice {
       | { ignore: true; parentContains: boolean; offsets: { left: number; top: number } }
       | { ignore: false; releaseParent: boolean },
   ) => 'applied' | 'refused' | 'noop'
+  /** PA-7 / PA-8 — Add / Remove auto layout: the container and every child in ONE undo step, all or nothing (`layoutConversionActions.ts`). */
+  convertLayout: (request: LayoutConversionRequest) => 'applied' | 'refused' | 'noop'
   setBreakpointOverride: (nodeId: string, breakpointId: string, patch: Record<string, unknown>) => void
   clearBreakpointOverride: (nodeId: string, breakpointId: string) => void
   renameNode: (nodeId: string, label: string) => void

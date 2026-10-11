@@ -37,8 +37,9 @@ import {
   autoLayoutFamily,
   type BoxRect,
   type ContainingBlockBox,
+  type OffsetProperty,
 } from '@core/studio-runtime'
-import { planNudge, type ArrowTargetStyle, type NudgeOffsetProperty } from './canvasNodeArrowMove'
+import { planNudge, type ArrowTargetStyle } from './canvasNodeArrowMove'
 
 /** One selected layer, as measured. */
 export interface FrameMemberFacts {
@@ -49,9 +50,9 @@ export interface FrameMemberFacts {
   /** Computed `flex-grow`. */
   flexGrow: string
   /** The offsets the layer's source sets (`authoredOffsets`). */
-  authored: ReadonlySet<NudgeOffsetProperty>
+  authored: ReadonlySet<OffsetProperty>
   /** The authored offsets whose value is not a plain length — a percentage, `calc()`, `var()`. */
-  expressive: ReadonlySet<NudgeOffsetProperty>
+  expressive: ReadonlySet<OffsetProperty>
 }
 
 /** The members' shared parent, as measured. */
@@ -85,7 +86,7 @@ const refuse = (message: string): FrameSelectionPlan => ({ ok: false, message })
 const px = (value: number) => `${Math.round(value)}px`
 
 /** The physical side an offset property names for a given direction. */
-function physicalSide(property: NudgeOffsetProperty, direction: string): 'left' | 'right' | 'top' | 'bottom' {
+function physicalSide(property: OffsetProperty, direction: string): 'left' | 'right' | 'top' | 'bottom' {
   const rtl = direction === 'rtl'
   switch (property) {
     case 'insetInlineStart':

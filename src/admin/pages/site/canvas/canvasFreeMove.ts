@@ -86,6 +86,8 @@ import {
   computeSnap,
   containingBlockOffsets,
   inlineOffsetProperty,
+  type OffsetProperty,
+  type OffsetTerm,
   isPositionedFreely,
   parentPlacementKind,
   parentSnapRects,
@@ -118,7 +120,7 @@ import type { CanvasDropCandidate, CanvasRect } from './canvasDnd'
 import { paintCanvasDrag, type CanvasDragGhost } from './canvasDragPainter'
 import { presentedElementForNode } from './canvasNodeLookup'
 import { createInlineStylePreview, type InlineStylePreview } from './elementResizeInlinePreview'
-import { authoredOffsets, planNudge, type NudgeOffsetProperty, type NudgePlan, type NudgeTerm } from './canvasNodeArrowMove'
+import { authoredOffsets, planNudge, type NudgePlan } from './canvasNodeArrowMove'
 
 /** One layer a free move writes: its element, the offsets it moves, and whether it becomes absolute. */
 export interface FreeMoveMember {
@@ -241,11 +243,11 @@ export function planFreeMoveProperties(
 export function planFreeMoveOffsets(
   offsets: ContainingBlockOffsets,
   own: FreeMoveStyleInput,
-  authored: ReadonlySet<NudgeOffsetProperty>,
+  authored: ReadonlySet<OffsetProperty>,
   needsAbsolute: boolean,
 ): NudgePlan {
   if (!needsAbsolute) return planNudge(own, authored)
-  const horizontal: NudgeTerm =
+  const horizontal: OffsetTerm =
     inlineOffsetProperty(own.direction) === 'left'
       ? { property: 'left', sign: 1, base: offsets.left }
       : { property: 'insetInlineStart', sign: -1, base: offsets.right }
@@ -335,7 +337,7 @@ function resolveMember(
   const node = tree.nodes[nodeId]
   const authored = node
     ? authoredOffsets(node, useEditorStore.getState().site?.styleRules)
-    : new Set<NudgeOffsetProperty>()
+    : new Set<OffsetProperty>()
   const elementRect = element.getBoundingClientRect()
   const offsets: ContainingBlockOffsets = containing
     ? containingBlockOffsets(
@@ -496,7 +498,7 @@ export function stepFreeMove(
  */
 function offsetsPatch(member: FreeMoveMember, step: FreeMoveStep): Record<string, string> {
   const patch: Record<string, string> = {}
-  const write = (terms: readonly NudgeTerm[], delta: number) => {
+  const write = (terms: readonly OffsetTerm[], delta: number) => {
     for (const term of terms) patch[term.property] = `${Math.round(term.base + term.sign * delta)}px`
   }
   if (member.needsAbsolute || step.dx !== 0) write(member.offsets.horizontal, step.dx)
