@@ -70,7 +70,10 @@ export function VariablesPanel({ variant = 'docked' }: VariablesPanelProps) {
     setStatus(null)
     try {
       const result = await applyStudioTokenEdits(request.edits, request.undoLabel)
-      setStatus(request.summary({ renamed: result.renamed[0]?.mentions ?? 0, moved: result.removed[0]?.movedReaders ?? 0 }))
+      const summary = request.summary({ renamed: result.renamed[0]?.mentions ?? 0, moved: result.removed[0]?.movedReaders ?? 0 })
+      // A class built at runtime (`bg-${tone}`) names no literal a rename can move: say so, beside the Undo.
+      const unfollowed = result.renamed[0]?.unfollowed ?? []
+      setStatus(unfollowed.length > 0 ? `${summary} Classes built in code at ${unfollowed.join(', ')} were not changed - check them.` : summary)
     } finally {
       setBusy(false)
     }
