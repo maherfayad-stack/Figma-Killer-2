@@ -62,6 +62,7 @@ import { writeListRowPlan } from './listRowSourceWrites'
 import { tagStructuralGesture } from './structuralHistory'
 import { trackStructuralTreeCommit } from './structuralCommitRollback'
 import { createStudioSourceWrites } from './studioSourceWrites'
+import { createStudioHtmlWrite } from './studioHtmlWrites'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
 import { createImportedNodesActions } from './importedNodesActions'
 import type { InstanceOverrideRouter } from './instanceOverrideActions'
@@ -75,7 +76,7 @@ type NodeActions = Pick<
   | 'insertComponentRef'
   | 'insertProjectComponent'
   | 'insertImportedNodes'
-  | 'refuseImportedNodesInto'
+  | 'writeHtmlToSource'
   | 'deleteNode'
   | 'deleteNodes'
   | 'updateNodeProps'
@@ -218,6 +219,9 @@ export function createNodeActions(helpers: SiteSliceHelpers, overrides: Instance
     // `mcp-21` — an HTML fragment merged into the active tree, or refused on a
     // studio-imported one. See `importedNodesActions.ts`.
     ...createImportedNodesActions(helpers, sourceWrites.refuseImportedNodesInto),
+
+    // G-10 — pasted HTML on a studio-imported tree is a source write.
+    writeHtmlToSource: createStudioHtmlWrite(helpers, readTree),
 
     insertProjectComponent: (component, parentId, index, style) =>
       writeInsertProjectComponentToSource(component, parentId, index, style),

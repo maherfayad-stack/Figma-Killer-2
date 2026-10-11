@@ -625,3 +625,25 @@ export function applyCssEdit(dir: string, edit: CssEdit): CssEditOutcome {
   if (result.changed) writeSourceFile(filePath, result.css)
   return { applied: true }
 }
+
+/**
+ * G-10 - the class rules of a pasted HTML fragment, into the stylesheet the page
+ * imports: one read, every rule through `insertRule`, one write. The file is
+ * resolved through the same containment guard as every other write here, and
+ * `studioInsertHtml.ts` has already made each selector unique to the paste, so
+ * `insertRule`'s merge-into-an-existing-selector never fires.
+ */
+export function insertPastedRules(
+  dir: string,
+  fileRel: string,
+  rules: readonly { selector: string; declarations: Record<string, string>; atRule?: string }[],
+): CssEditOutcome {
+  const editability = classifyStylesheetEditability(fileRel)
+  if (editability.kind === 'compiled') return { applied: false, refusal: { reason: 'compiled-stylesheet', message: editability.reason } }
+  const filePath = resolveContainedCssPath(dir, fileRel)
+  if (filePath === null) return { applied: false }
+  let css = readFileSync(filePath, 'utf8')
+  for (const rule of rules) css = insertRule(css, rule.selector, rule.declarations, { atRule: rule.atRule }).css
+  writeSourceFile(filePath, css)
+  return { applied: true }
+}

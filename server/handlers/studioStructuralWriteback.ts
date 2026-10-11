@@ -52,7 +52,7 @@ import {
 import { designSystemImportSpecifier } from '@core/page-parser'
 import { isInlinedNodeId } from '@core/page-tree'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { DesignSystemImportSchema, InsertNodeSchema, InsertPropsSchema } from './studioInsertJsxSchemas'
+import { DesignSystemImportSchema, InsertNodeSchema, InsertPropsSchema, PastedHtmlSchema } from './studioInsertJsxSchemas'
 
 /**
  * One sibling reorder (`struct-01`) — `moveJsxElement`. `nodeId` is the moved
@@ -142,6 +142,7 @@ const InsertEditSchema = Type.Object({
    * every one of them, in order.
    */
   siblings: Type.Optional(Type.Array(InsertNodeSchema, { minItems: 1 })),
+  pastedHtml: Type.Optional(PastedHtmlSchema), // G-10 - see studioInsertHtml.ts
   /**
    * The editor's ⌘Z for this insert is the undo journal's `restore`, not a
    * `delete` of what it made: the parent had no children, so the write may have

@@ -489,6 +489,7 @@ export async function tryServeStudio(
         retargeted,
         listArrays,
         carried,
+        pastedHtml,
         undoToken,
       } = await (body.sequence ? applyStudioEditSequenceLocked : applyStudioEditBatchLocked)(dir, edits, body.expect ?? {}, {
         canvasLayers: 'allow',
@@ -538,6 +539,8 @@ export async function tryServeStudio(
         // G-1 — what a cross-file move copied to its destination besides the
         // markup (state, row data, constants), for the board's one-line notice.
         ...(carried ? { carried } : {}),
+        // G-10 - where a pasted HTML fragment's styles went, for the board's one-line notice.
+        ...(pastedHtml ? { pastedHtml } : {}),
         // P3-F — the undo-journal token for a delete/detach/swap/extract, the
         // ONLY thing its ⌘Z has to name. The lesson `store-15` learned here:
         // this route lists its fields by hand, and a field the batch computed

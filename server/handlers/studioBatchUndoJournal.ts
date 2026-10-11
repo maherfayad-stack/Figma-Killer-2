@@ -68,7 +68,9 @@ export function isJournaled(edit: StudioEdit): boolean {
     // An insert into a childless parent expands `<X />` to `<X>…</X>`; deleting
     // the insert leaves `<X>` + newline + `</X>`, which is not what was there.
     // The client asks for the pre-image exactly when the parent had no children.
-    ((edit.kind === 'insert' || edit.kind === 'duplicate') && edit.exactUndo === true)
+    ((edit.kind === 'insert' || edit.kind === 'duplicate') && edit.exactUndo === true) ||
+    // G-10 - a pasted HTML fragment writes the page AND its stylesheet; only the pre-image names both.
+    (edit.kind === 'insert' && edit.pastedHtml !== undefined)
   )
 }
 

@@ -35,6 +35,7 @@ import type { FrameRequest } from './frameRequest'
 import type { PendingStructuralHistory } from '@site/studio/pendingStructuralOutcome'
 import type { SlotOwnerEntry } from './nodeIndex'
 import type { ImportedNodesResult } from './importedNodesResult'
+import type { HtmlSourceWriteResult, PasteHtmlOptions } from './studioHtmlWrites'
 import type { ImageDropRequest, LandableImageSource, SubtreeInsertRequest, UploadProgressPainter } from './imageDropShapes'
 
 // ---------------------------------------------------------------------------
@@ -201,8 +202,8 @@ export interface SiteSlice {
    * of `parentId` at `opts.index` (appended when omitted). One undo step.
    * `ok: false` when nothing was inserted, carrying the reason — the parent
    * does not accept children, or (`mcp-21`) this is a studio-imported tree,
-   * where a block of HTML has no honest source form and a merged fragment
-   * would be deleted by the next parse. See `refuseImportedNodesInto`.
+   * where a merged fragment would be deleted by the next parse. HTML for such a
+   * tree goes through `writeHtmlToSource` instead.
    *
    * `opts.styleRules` / `opts.conditions` are rules parsed from `<style>` blocks
    * in the imported HTML (via `cssToStyleRules`); they are committed into the
@@ -216,17 +217,12 @@ export interface SiteSlice {
   ) => ImportedNodesResult
 
   /**
-   * `mcp-21` — why an HTML import cannot land under `parentId`, or `null` when
-   * it can. Presents the refusal as it answers, exactly as `insertImportedNodes`
-   * does, so asking first costs the user nothing extra.
-   *
-   * Exists because `site_replace_node_html` DELETES the target's existing
-   * children before inserting: without a way to ask first, a refused replace
-   * on a studio-imported tree emptied the node and then wrote nothing — the
-   * half-applied outcome this store refuses everywhere else. Every other
-   * caller can simply read `insertImportedNodes`' own result.
+   * G-10 — paste a block of HTML under `parentId` on a studio-imported tree:
+   * converted to JSX and written as one insert, its CSS into the page's own
+   * stylesheet. `{ kind: 'cms' }` for an ordinary tree (the caller imports the
+   * HTML into the tree as before). See `studioHtmlWrites.ts`.
    */
-  refuseImportedNodesInto: (parentId: string) => string | null
+  writeHtmlToSource: (html: string, parentId: string, options?: PasteHtmlOptions) => HtmlSourceWriteResult
 
   /**
    * Insert a `base.visual-component-ref` node into the active document.

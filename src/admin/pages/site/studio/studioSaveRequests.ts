@@ -175,6 +175,26 @@ export const StudioSaveResponseSchema = Type.Object({
     ),
   ),
   /**
+   * G-10 - where each pasted HTML fragment's styles went: the stylesheet the
+   * rules were written into (or none), how many rules, how many resolved onto
+   * the elements as inline style, the classes renamed to avoid a clash, and what
+   * was left out. The board reports it (`pastedHtmlNotice.ts`). `Type.Optional`,
+   * same tolerant-rollout reasoning.
+   */
+  pastedHtml: Type.Optional(
+    Type.Array(
+      Type.Object({
+        stylesheet: Type.Union([Type.String(), Type.Null()]),
+        mode: Type.Union([Type.Literal('module'), Type.Literal('global'), Type.Literal('inline'), Type.Literal('none')]),
+        rules: Type.Number(),
+        inlined: Type.Number(),
+        renamed: Type.Array(Type.Object({ from: Type.String(), to: Type.String() })),
+        skipped: Type.Array(Type.String()),
+        droppedDeclarations: Type.Number(),
+      }),
+    ),
+  ),
+  /**
    * P5-G — every `canvas-layer-delete` in the batch that SUCCEEDED, with the
    * module bytes it removed, keyed by the edit's own `nodeId` — its ⌘Z
    * (`canvas-layer-restore`) is built from these once the resync lands.

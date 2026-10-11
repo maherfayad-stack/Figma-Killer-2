@@ -18,7 +18,8 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { insertJsxElement } from '@core/ast-codemods'
-import { htmlToJsx, MAX_PASTED_ELEMENTS } from '@site/studio/htmlToJsx'
+import { MAX_PASTED_ELEMENTS } from '@core/utils/pastedHtmlLimits'
+import { htmlToJsx } from '@site/studio/htmlToJsx'
 import type { SlotJsxNode } from '@site/studio/studioSaveRequests'
 
 function convert(html: string) {

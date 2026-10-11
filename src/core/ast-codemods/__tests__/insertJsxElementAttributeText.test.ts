@@ -43,7 +43,7 @@ function write(source: string): string {
 
 const read = (file: string) => fs.readFileSync(file, 'utf8')
 
-function insertInto(file: string, props: Record<string, never | string | number | boolean | ClassNameTokens>) {
+function insertInto(file: string, props: Record<string, string | ClassNameTokens>) {
   return insertJsxElement({ file, ...locateTag(PAGE, 'main'), name: 'a', props, children: 'link' })
 }
 

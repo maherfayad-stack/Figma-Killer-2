@@ -24,6 +24,7 @@ import { INLINE_ID_SEPARATOR, isUnlinkedWorkspacePath, realWorkspaceRel, unwrita
 import { inlineSegments, isInlinedNodeId, isRouteChromeNodeId } from '@core/page-tree'
 import { CANVAS_LAYER_REL_PATTERN } from '@core/studio-board'
 import { cssCreateImportTarget } from './studioCssWriteback'
+import { pastedHtmlStylesheet } from './studioInsertHtml'
 import { collapseSameTargetEdits, type DedupedStudioEdit } from './studioEditMerge'
 import { isSlotEditKind } from './studioSlotWriteback'
 import { isStructuralEditKind } from './studioStructuralWriteback'
@@ -497,6 +498,12 @@ export function studioEditsTouchedFiles(
     if (edit.kind === 'css' && edit.op === 'create') {
       const importer = cssCreateImportTarget(dir, edit)
       if (importer) touchedFiles.add(join(dir, importer))
+    }
+    // G-10 - a pasted HTML fragment with CSS also writes the stylesheet the page imports.
+    if (edit.kind === 'insert' && edit.pastedHtml?.css?.trim()) {
+      const location = studioEditLocation(dir, edit.nodeId, scope)
+      const stylesheet = location ? pastedHtmlStylesheet(dir, location.rel) : null
+      if (stylesheet) touchedFiles.add(stylesheet)
     }
     // D2 G3 — a transplant writes TWO files, and only the origin is named by
     // `edit.nodeId`. The destination has to be in this set or the batch's

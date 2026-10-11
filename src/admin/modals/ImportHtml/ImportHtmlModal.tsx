@@ -206,6 +206,7 @@ export function ImportHtmlModal() {
   const storePrefill = useEditorStore((s) => s.importHtmlModalPrefill)
   const closeModal = useEditorStore((s) => s.closeImportHtmlModal)
   const insertImportedNodes = useEditorStore((s) => s.insertImportedNodes)
+  const writeHtmlToSource = useEditorStore((s) => s.writeHtmlToSource)
   const breakpoints = useEditorStore((s) => s.site?.breakpoints)
   const canvasPage = useEditorStore(selectActiveCanvasPage)
   const showIcon = useEditorPreference('layersShowIcon')
@@ -240,6 +241,19 @@ export function ImportHtmlModal() {
     if (!targetParentId) return
 
     try {
+      // G-10 - on a board written in the project's files the HTML is converted
+      // to JSX and written with its styles; the store reports what it left out
+      // and where the styles went, so there is nothing more to announce here.
+      const sourced = writeHtmlToSource(html, targetParentId, { undoLabel: 'Import HTML' })
+      if (sourced.kind === 'refused') {
+        setErrorMsg(sourced.message)
+        return
+      }
+      if (sourced.kind === 'written') {
+        closeModal()
+        return
+      }
+
       // Parse any <style> CSS into registry rules using the site's breakpoints
       // so @media folds into the matching breakpoint's contextStyles.
       const bpHints = (breakpoints ?? []).map((b) => ({

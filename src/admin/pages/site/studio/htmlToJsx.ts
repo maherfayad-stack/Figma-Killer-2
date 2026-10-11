@@ -49,20 +49,15 @@
 import { sanitiseCssValue } from '@core/css-sanitize'
 import { cssPropertyToStyleKey } from '@core/css-codemods/browser'
 import { isSafeUrl } from '@core/html-sanitize'
-import { isEventHandlerAttributeName } from '@core/htmlAttributes'
+import { isEventHandlerAttributeName, isReservedRuntimeDataAttributeName } from '@core/htmlAttributes'
 import { sanitizePastedHtml } from '@core/sanitize'
 import { isSafeIntrinsicTagName, VOID_HTML_ELEMENTS } from '@core/utils/htmlTags'
+import { MAX_PASTED_CSS_CHARS, MAX_PASTED_DEPTH, MAX_PASTED_ELEMENTS, MAX_PASTED_HTML_CHARS } from '@core/utils/pastedHtmlLimits'
 import type { JsonDataValue } from '@core/utils/jsonData'
 import { cssValueLoadsExternalResource, markupToJsxAttributeName } from '@core/vector'
 import type { SlotJsxNode } from './studioSaveRequests'
 import { parseDeclarations } from './svgImportStyles'
 import { svgToJsxNode } from './svgToJsxNode'
-
-/** Pasted markup longer than this is refused: a page at a time, not a whole site. */
-export const MAX_PASTED_HTML_CHARS = 512 * 1024
-/** Elements one paste may write. The server enforces its own, tighter-than-needed copy. */
-export const MAX_PASTED_ELEMENTS = 1500
-const MAX_DEPTH = 40
 
 /** What the converter left out. Shown to the user, never silent. */
 export interface HtmlToJsxReport {
@@ -151,6 +146,9 @@ export function htmlToJsx(html: string): HtmlToJsxResult {
   const nonce = randomNonce()
   const svgs = cutOutSvgs(parsed, nonce)
   const css = takeStyleText(parsed)
+  if (css.length > MAX_PASTED_CSS_CHARS) {
+    return { ok: false, message: 'The stylesheet in that HTML is too large to write into your project in one paste.' }
+  }
 
   const sanitized = sanitizePastedHtml(parsed.body.innerHTML)
   if (!sanitized.trim()) {
@@ -173,7 +171,7 @@ export function htmlToJsx(html: string): HtmlToJsxResult {
   if (context.tooLarge) {
     return {
       ok: false,
-      message: `That HTML has more than ${MAX_PASTED_ELEMENTS} elements, or nests deeper than ${MAX_DEPTH} levels - too large to write into your source in one paste. Paste a section at a time.`,
+      message: `That HTML has more than ${MAX_PASTED_ELEMENTS} elements, or nests deeper than ${MAX_PASTED_DEPTH} levels - too large to write into your source in one paste. Paste a section at a time.`,
     }
   }
   if (nodes.length === 0) {
@@ -277,7 +275,7 @@ function convertElement(element: Element, context: ConversionContext, depth: num
     return []
   }
 
-  if (depth > MAX_DEPTH || context.elements >= MAX_PASTED_ELEMENTS) {
+  if (depth > MAX_PASTED_DEPTH || context.elements >= MAX_PASTED_ELEMENTS) {
     context.tooLarge = true
     return []
   }
@@ -375,6 +373,7 @@ function convertAttributes(element: Element, tag: string, context: ConversionCon
       continue // counted from the raw document; the sanitizer removed it already
     }
     if (name === 'xmlns' || name.startsWith('xmlns:') || name === 'is' || name === SVG_MARK_ATTRIBUTE) continue
+    if (isReservedRuntimeDataAttributeName(name)) continue // the canvas's own `data-node-id` / `data-studio-*`
     if (name === 'class') {
       const tokens = value.split(WHITESPACE).filter(Boolean)
       if (tokens.length > 0) props.className = tokens.join(' ')

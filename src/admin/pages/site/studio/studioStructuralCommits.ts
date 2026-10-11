@@ -514,7 +514,17 @@ export async function commitStudioInsert(insert: {
    * images are one insert, one resync and one undo step, whose inverse deletes
    * all three (`delete-created` reads every created id).
    */
-  siblings?: readonly { name: string; props: Record<string, InsertPropValue> }[]
+  siblings?: readonly SlotJsxNode[]
+  /**
+   * G-10 - this insert is a pasted HTML fragment: `css` is the text of the
+   * `<style>` blocks that came with it. The server writes the elements AND the
+   * styles (into the page's own stylesheet, else inline) as one journaled step,
+   * so its ⌘Z is always the journal's `restore`.
+   */
+  pastedHtml?: { css?: string }
+  /** Told the server's answer (the paste reads where its styles went), and again once the board has re-read the write. */
+  onAnswer?: (answer: StudioSaveResponse) => void
+  onLanded?: StructuralCommitOptions['onLanded']
   /** What ⌘Z names this step. Defaults to `Add <name>`. */
   undoLabel?: string
   optimistic?: OptimisticPreviewHandle
@@ -527,6 +537,7 @@ export async function commitStudioInsert(insert: {
         ...(insert.anchorNodeId ? { anchorNodeId: insert.anchorNodeId, position: insert.position } : {}),
         name: insert.name,
         ...(insert.parentIsEmpty ? { exactUndo: true } : {}),
+        ...(insert.pastedHtml ? { pastedHtml: insert.pastedHtml } : {}),
         // Spread conditionally, never passed as `undefined`: the codemod
         // branches on `importSpecifier === undefined` to choose intrinsic vs
         // component, and the wire schema has it optional for the same reason.
@@ -540,8 +551,13 @@ export async function commitStudioInsert(insert: {
     ],
     'Add refused',
     {
-      undo: { label: insert.undoLabel ?? `Add ${insert.name}`, template: insert.parentIsEmpty ? { kind: 'restore-journal' } : { kind: 'delete-created' } },
+      undo: {
+        label: insert.undoLabel ?? `Add ${insert.name}`,
+        template: insert.parentIsEmpty || insert.pastedHtml ? { kind: 'restore-journal' } : { kind: 'delete-created' },
+      },
       ...(insert.optimistic ? { optimistic: insert.optimistic } : {}),
+      ...(insert.onAnswer ? { onAnswer: insert.onAnswer } : {}),
+      ...(insert.onLanded ? { onLanded: insert.onLanded } : {}),
     },
   )
 }

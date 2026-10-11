@@ -53,6 +53,7 @@ import { SvgEditSchemas } from './studioSvgWriteback'
 import { ListItemEditSchema } from './studioListItemWriteback'
 import { UndoJournalTokenSchema } from './studio/undoJournalToken'
 import type { CreatedJsxLocation } from '@core/ast-codemods'
+import type { PastedHtmlSummary } from './studioPastedHtmlStyles'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
 /**
@@ -491,6 +492,8 @@ export interface StudioEditApplyOutcome {
    * destination already had.
    */
   carried?: readonly StudioCarriedDeclaration[]
+  /** G-10 - where a pasted HTML fragment's styles went (an `insert` with `pastedHtml`). */
+  pastedHtml?: PastedHtmlSummary
 }
 
 /** One thing a move copied to the destination - see {@link StudioEditApplyOutcome.carried}. */
@@ -683,4 +686,6 @@ export interface StudioEditBatchResult {
    * tells the user when state or data was copied. Absent when nothing was.
    */
   carried?: StudioCarriedDeclaration[]
+  /** G-10 - where each pasted HTML fragment's styles went; the board tells the user. */
+  pastedHtml?: PastedHtmlSummary[]
 }

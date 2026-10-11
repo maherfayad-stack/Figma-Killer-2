@@ -9,6 +9,7 @@
  * One-way dependency: this module imports nothing from
  * `studioStructuralWriteback.ts`, which imports these back.
  */
+import { MAX_PASTED_CSS_CHARS } from '@core/utils/pastedHtmlLimits'
 import { Type } from '@core/utils/typeboxHelpers'
 
 /**
@@ -106,3 +107,17 @@ export const InsertNodeSchema = Type.Recursive((Self) =>
     children: Type.Optional(Type.Union([Type.String(), Type.Array(Self)])),
   }),
 )
+
+/**
+ * G-10 - marks an `insert` as a PASTED HTML fragment. The elements are the
+ * insert's own `name`/`props`/`children`/`siblings`; this carries what cannot be
+ * an element: the `<style>` text that came with them. Its presence changes how
+ * the insert is written (`studioInsertHtml.ts`): the tree is validated as a
+ * paste (no handlers, no unsafe URLs), the CSS is scoped and written into the
+ * page's own stylesheet - or resolved onto the elements when the page imports
+ * none - and the write is one journaled step covering both files. Honoured on
+ * an `insert` only, and never with a component import.
+ */
+export const PastedHtmlSchema = Type.Object({
+  css: Type.Optional(Type.String({ maxLength: MAX_PASTED_CSS_CHARS, description: 'The text of the <style> blocks that came with the pasted markup. Optional.' })),
+})
