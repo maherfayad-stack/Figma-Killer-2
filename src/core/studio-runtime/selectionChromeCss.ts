@@ -120,6 +120,12 @@ export const SELECTION_CHROME_RULES = `
   box-shadow: var(--canvas-hover-ring);
 }
 
+/* A press borrows the hover ring as the selection ring for the frames the
+   selection takes to render (\`pressRing.ts\`). */
+[data-canvas-hover-ring][data-canvas-press-ring] {
+  box-shadow: var(--canvas-selection-ring);
+}
+
 [data-canvas-selector-highlight-ring] {
   box-shadow: var(--canvas-selector-ring);
 }

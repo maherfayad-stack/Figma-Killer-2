@@ -425,6 +425,7 @@ export function LayoutSection() {
               currentStyles={currentStyles}
               tokens={spacingTokens}
               onChange={onChange}
+              onChangeMany={onChangeMany}
               onPreview={onPreview}
               onClearPreview={onClearPreview}
             />

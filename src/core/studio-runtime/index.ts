@@ -269,6 +269,7 @@ export {
 } from './placementKind'
 
 export {
+  containingBlockBoxOf,
   containingBlockOffsets,
   establishesContainingBlock,
   readContainingBlock,

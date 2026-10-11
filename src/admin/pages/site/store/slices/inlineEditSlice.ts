@@ -29,11 +29,14 @@
  */
 import { registry } from '@core/module-engine'
 import { isPropWritableToSource } from '@core/page-tree'
+import { isCanvasLayerPageId } from '@core/studio-board'
 import { pushToast } from '@ui/components/Toast'
 import type { EditorStore, EditorStoreSliceCreator } from '@site/store/types'
 import { getActiveTree } from './selectionResolve'
 import { selectActiveBoard } from './boardSelectors'
 import { localizedPageKey } from './localizedPageSlice'
+import { mintPendingCommitId } from './site/structuralCommitRollback'
+import { commitCanvasLayerText } from '@site/studio/canvasLayerTextCommit'
 
 interface ActiveInlineEdit {
   nodeId: string
@@ -126,7 +129,10 @@ function resolveSessionNode(
   state: EditorStore,
   nodeId: string,
   localeOverride: { pageId: string; locale: string } | null,
+  frameId: string | null | undefined,
 ) {
+  // A loose layer's node lives in its own module's tree, not the active page's.
+  if (frameId && isCanvasLayerPageId(frameId)) return state.canvasLayerPages[frameId]?.nodes[nodeId]
   if (localeOverride) {
     return state.localizedPages[localizedPageKey(localeOverride.pageId, localeOverride.locale)]?.nodes[nodeId]
   }
@@ -139,7 +145,7 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
   startInlineEdit: (nodeId, breakpointId, frameId = null, options) => {
     const state = get()
     const localeOverride = resolveLocaleOverride(state, frameId)
-    const node = resolveSessionNode(state, nodeId, localeOverride)
+    const node = resolveSessionNode(state, nodeId, localeOverride, frameId)
     if (!node) return false
     const def = registry.get(node.moduleId)
     const spec = def?.inlineTextEdit
@@ -226,6 +232,12 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
       s._historyCoalesceKey = null
     })
     if (session.draft === session.initialValue) return
+    if (session.frameId && isCanvasLayerPageId(session.frameId)) {
+      // A loose layer's module is not in the page tree: its draft is committed
+      // once, as a source write of its own (see `commitLayerSession`).
+      commitLayerSession(set, get, session)
+      return
+    }
     if (session.localeOverride) {
       // WS-10 §4.4 — a separate, undo-EXEMPT mutation on the localized tree.
       state.updateLocalizedNodeText(session.localeOverride.pageId, session.localeOverride.locale, session.nodeId, session.prop, session.draft)
@@ -245,6 +257,45 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
     })
   },
 })
+
+type Set = Parameters<EditorStoreSliceCreator<EditorStore>>[0]
+type Get = Parameters<EditorStoreSliceCreator<EditorStore>>[1]
+
+/**
+ * Post a loose layer's finished text session as one write. The layer's tree is
+ * updated first so the text does not flash back to the old value until the
+ * resync; a write that does not land puts the old text back.
+ */
+function commitLayerSession(set: Set, get: Get, session: NonNullable<EditorStore['activeInlineEdit']>): void {
+  const after = session.draft
+  const pageId = session.frameId
+  if (after === undefined || after === session.initialValue || !pageId) return
+  const node = get().canvasLayerPages[pageId]?.nodes[session.nodeId]
+  if (!node) return
+  const writeProp = (value: string) =>
+    set((s) => {
+      const target = s.canvasLayerPages[pageId]?.nodes[session.nodeId]
+      if (target) target.props[session.prop] = value
+    })
+  writeProp(after)
+  let done = false
+  void commitCanvasLayerText({
+    node,
+    before: session.initialValue,
+    after,
+    rollback: {
+      id: mintPendingCommitId(),
+      settle: () => {
+        done = true
+      },
+      rollback: () => {
+        if (done) return
+        done = true
+        writeProp(session.initialValue)
+      },
+    },
+  })
+}
 
 /** `value from c.hotelsTitle` -> `Value from c.hotelsTitle`, for use mid-sentence. */
 function capitalise(text: string): string {

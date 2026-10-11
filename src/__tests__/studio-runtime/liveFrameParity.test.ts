@@ -11,7 +11,9 @@
  *  - store-17: `optimistic.revert` puts back exactly the nodes a refused
  *    write hid or moved, and nothing else;
  *  - canvas-24: a double-click's request carries its stamped ancestors, and a
- *    reply naming the ancestor edits the ancestor.
+ *    reply naming the ancestor edits the ancestor;
+ *  - a text the PARENT starts (the text tool, Enter) opens with no request
+ *    outstanding, and waits for an element that has not reached the DOM yet.
  */
 import { afterEach, describe, expect, it } from 'bun:test'
 import { createStudioRuntimeBridge, LIVE_FRAME_FIT_STRUCTURAL_DEBOUNCE_MS, type StudioRuntimeBridge } from '@core/studio-runtime'
@@ -216,5 +218,49 @@ describe('live frame — selection chrome is not content (canvas-23)', () => {
     expect(heights.length).toBeGreaterThan(0)
     expect(heights).not.toContain(904)
     expect(chromeShown()).toBe(true)
+  })
+})
+
+describe('live frame — an edit the parent starts (text tool, Enter)', () => {
+  const NEW_TEXT = 'pages/Home.tsx:9:5'
+
+  it('opens at once when the element is already in the frame, with no text:editStart before it', () => {
+    const posted = boot()
+    document.body.innerHTML = `<p data-node-id="${NEW_TEXT}">old</p>`
+    bridge!.handleMessage({ type: 'text:edit', nodeId: NEW_TEXT, occurrenceIndex: 0, allowed: true, text: 'Text', begin: true })
+    const el = document.querySelector<HTMLElement>('p')!
+    expect(el.getAttribute('contenteditable')).not.toBeNull()
+    expect(el.textContent).toBe('Text')
+    expect(posted.filter((m) => m.type === 'text:editStart')).toEqual([])
+  })
+
+  it('waits for the element to arrive (the write is still reaching Vite), then opens it', async () => {
+    boot()
+    bridge!.handleMessage({ type: 'text:edit', nodeId: NEW_TEXT, occurrenceIndex: 0, allowed: true, text: 'Text', begin: true })
+    const el = document.createElement('p')
+    el.setAttribute('data-node-id', NEW_TEXT)
+    document.body.appendChild(el)
+    await sleep(20)
+    expect(el.getAttribute('contenteditable')).not.toBeNull()
+    expect(el.textContent).toBe('Text')
+  })
+
+  it('an unsolicited reply WITHOUT begin is still ignored', () => {
+    boot()
+    document.body.innerHTML = `<p data-node-id="${NEW_TEXT}">old</p>`
+    bridge!.handleMessage({ type: 'text:edit', nodeId: NEW_TEXT, occurrenceIndex: 0, allowed: true, text: 'Text' })
+    expect(document.querySelector('p')!.getAttribute('contenteditable')).toBeNull()
+  })
+
+  it('the typed text goes back as text:commit', () => {
+    const posted = boot()
+    document.body.innerHTML = `<p data-node-id="${NEW_TEXT}">old</p>`
+    bridge!.handleMessage({ type: 'text:edit', nodeId: NEW_TEXT, occurrenceIndex: 0, allowed: true, text: 'Text', begin: true })
+    const el = document.querySelector<HTMLElement>('p')!
+    el.textContent = 'Hello'
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    expect(posted.filter((m) => m.type === 'text:commit')).toEqual([
+      { type: 'text:commit', nodeId: NEW_TEXT, occurrenceIndex: 0, text: 'Hello' },
+    ])
   })
 })

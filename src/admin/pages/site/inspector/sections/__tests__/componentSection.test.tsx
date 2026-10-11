@@ -23,7 +23,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ComponentSection } from '../ComponentSection'
 import { INSPECTOR_SECTIONS } from '..'
@@ -115,9 +115,17 @@ beforeEach(() => {
               file: 'src/components/Card.tsx',
               exportName: 'default',
               isDefaultExport: true,
+              role: 'component',
               props: [
                 { name: 'title', kind: { kind: 'string' }, required: true },
-                { name: 'variant', kind: { kind: 'enum', values: ['primary', 'ghost'] }, required: false },
+                {
+                  name: 'variant',
+                  kind: { kind: 'enum', values: ['primary', 'ghost'] },
+                  required: false,
+                  defaultValue: 'primary',
+                },
+                { name: 'size', kind: { kind: 'enum', values: ['xs', 'sm', 'md', 'lg', 'xl'] }, required: false },
+                { name: 'pinned', kind: { kind: 'boolean' }, required: false, defaultValue: true },
               ],
             },
           ],
@@ -145,10 +153,39 @@ describe('ComponentSection (E2.5 — catalog-driven Component section)', () => {
     render(<ComponentSection />)
 
     await waitFor(() => expect(screen.getByTestId('instance-call-site-prop-variant')).toBeTruthy())
-    // A named union alias (`enum` PropKind) renders a real dropdown — a
-    // `<select>` element — not a free-text box.
+    // A named union alias (`enum` PropKind) of 2..4 members is a segmented
+    // control, not a free-text box and not a dropdown.
     const row = screen.getByTestId('instance-call-site-prop-variant')
+    expect(row.querySelector('select')).toBeNull()
+    expect(within(row).getByTestId('segmented-variant')).toBeTruthy()
+    expect(within(row).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['primary', 'ghost'])
+  })
+
+  it('draws an enum of more than four members as a dropdown', async () => {
+    seedInstance()
+    render(<ComponentSection />)
+
+    const row = await screen.findByTestId('instance-call-site-prop-size')
     expect(row.querySelector('select')).not.toBeNull()
+    expect(within(row).queryByTestId('segmented-size')).toBeNull()
+  })
+
+  it('shows the component default for an unset prop, and writes nothing until the user picks', async () => {
+    const owner = seedInstance()
+    render(<ComponentSection />)
+
+    const row = await screen.findByTestId('instance-call-site-prop-variant')
+    const pressed = within(row)
+      .getAllByRole('button')
+      .filter((b) => b.getAttribute('aria-pressed') === 'true')
+      .map((b) => b.getAttribute('aria-label'))
+    expect(pressed).toEqual(['primary'])
+    const pinned = await screen.findByTestId('instance-call-site-prop-pinned')
+    expect(pinned.querySelector('[role="switch"]')?.getAttribute('aria-checked')).toBe('true')
+    const callSiteProps = (useEditorStore.getState().site?.pages[0]?.nodes[owner.id]?.props as { callSiteProps: Record<string, unknown> })
+      .callSiteProps
+    expect(callSiteProps.variant).toBeUndefined()
+    expect(callSiteProps.pinned).toBeUndefined()
   })
 
   it('writing the declared-but-unset prop actually updates the node', async () => {
@@ -157,8 +194,7 @@ describe('ComponentSection (E2.5 — catalog-driven Component section)', () => {
     render(<ComponentSection />)
 
     await waitFor(() => expect(screen.getByTestId('instance-call-site-prop-variant')).toBeTruthy())
-    const select = screen.getByTestId('instance-call-site-prop-variant').querySelector('select')!
-    await user.selectOptions(select, 'ghost')
+    await user.click(within(screen.getByTestId('instance-call-site-prop-variant')).getByRole('button', { name: 'ghost' }))
 
     await waitFor(() => {
       const updated = useEditorStore.getState().site?.pages[0]?.nodes[owner.id]
@@ -326,7 +362,8 @@ describe('ComponentSection — while the catalog is in flight (panel-44)', () =>
 
     releaseCatalog()
     const row = await screen.findByTestId('instance-call-site-prop-variant')
-    expect(row.querySelector('select')).not.toBeNull()
+    // The two-member union is a segmented control: no free-text box.
+    expect(row.querySelector('[data-testid="segmented-variant"]')).not.toBeNull()
     expect(row.querySelector('input[type="text"]')).toBeNull()
     expect(screen.queryByTestId('instance-call-site-props-loading')).toBeNull()
   })
@@ -340,6 +377,6 @@ describe('ComponentSection — while the catalog is in flight (panel-44)', () =>
 
     render(<ComponentSection />)
     expect(screen.queryByTestId('instance-call-site-props-loading')).toBeNull()
-    expect(screen.getByTestId('instance-call-site-prop-variant').querySelector('select')).not.toBeNull()
+    expect(screen.getByTestId('instance-call-site-prop-variant').querySelector('[data-testid="segmented-variant"]')).not.toBeNull()
   })
 })

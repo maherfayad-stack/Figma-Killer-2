@@ -1108,3 +1108,33 @@ describe('LayerNodeContextMenu — refusal footer', () => {
     expect(screen.getByRole('menuitem', { name: /delete/i }).getAttribute('aria-disabled')).toBeNull()
   })
 })
+
+describe('LayerNodeContextMenu — arrange block (Figma parity)', () => {
+  it('always offers Paste, disabled while the clipboard is empty', () => {
+    renderMenu()
+    act(() => { useEditorStore.setState({ clipboardEntry: null } as Parameters<typeof useEditorStore.setState>[0]) })
+    const paste = screen.getByRole('menuitem', { name: /^paste$/i })
+    expect((paste as HTMLButtonElement).disabled || paste.getAttribute('aria-disabled') === 'true').toBe(true)
+  })
+
+  it('offers Group on a single element', () => {
+    renderMenu()
+    expect(screen.getByRole('menuitem', { name: /^group/i })).toBeDefined()
+  })
+
+  it('does not offer Ungroup on a container that is not a bare group', () => {
+    resetStore()
+    const state = useEditorStore.getState()
+    const page = state.site!.pages[0]!
+    const styled = { ...page.nodes['container-node']!, classIds: ['card'], children: ['kid'] }
+    const kid = makeNode({ id: 'kid', moduleId: 'base.text', parentId: 'container-node' })
+    useEditorStore.setState({
+      site: { ...state.site!, pages: [{ ...page, nodes: { ...page.nodes, 'container-node': styled, kid } }] },
+    } as Parameters<typeof useEditorStore.setState>[0])
+    render(
+      <LayerNodeContextMenu x={1} y={1} nodeId="container-node" onClose={noop} onDelete={noop} onDuplicate={noop}
+        onRename={noop} onWrapInContainer={noop} onCopy={noop} onCut={noop} onPaste={noop} />,
+    )
+    expect(screen.queryByRole('menuitem', { name: /^ungroup/i })).toBeNull()
+  })
+})

@@ -36,6 +36,27 @@
 }
 
 /*
+ * A drop at an index inside a flow container (the container's own space):
+ * the line sits in the gap between the neighbours, a horizontal rule across
+ * stacked children and a vertical one beside side-by-side ones. The box the
+ * container's outline would draw is not painted at all.
+ */
+.dropPreview[data-position="gap"] {
+    border: 0;
+    background: var(--canvas-selection-ring-color);
+}
+
+.dropPreview[data-position="gap"][data-axis="vertical"] {
+    height: 2px;
+    transform: translateY(-1px);
+}
+
+.dropPreview[data-position="gap"][data-axis="horizontal"] {
+    width: 2px;
+    transform: translateX(-1px);
+}
+
+/*
  * The empty board (P5-G): the element becomes a loose layer with its top-left
  * at the pointer. There is no box to outline yet — a small mark where the
  * corner goes, and the tag saying it lands on the canvas, not in a page.

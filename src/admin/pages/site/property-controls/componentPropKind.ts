@@ -28,6 +28,7 @@
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import type { PropertyControl } from '@core/module-engine'
+import { PropVariantFieldsSchema } from '@core/component-variants'
 
 export const PropKindSchema = Type.Union([
   Type.Object({ kind: Type.Literal('string') }),
@@ -74,6 +75,19 @@ export const PropSpecSchema = Type.Object({
 export type PropSpec = Static<typeof PropSpecSchema>
 
 /**
+ * A LOCAL component's declared prop: `PropSpec` plus the variant read model
+ * (`defaultValue`, union `members` with their source ranges, the `binding`
+ * analysis) the server derives from the component's own source. Package and
+ * design-system components have none of the extra fields — they have no source
+ * to read.
+ */
+export const LocalPropSpecSchema = Type.Object({
+  ...PropSpecSchema.properties,
+  ...PropVariantFieldsSchema.properties,
+})
+export type LocalPropSpec = Static<typeof LocalPropSpecSchema>
+
+/**
  * The wire mirror of `server/handlers/studio/componentSpecExtract.ts`'s
  * `LocalComponentSpec` — every exported, PascalCase-named component
  * declared anywhere in the workspace, off `GET /admin/api/studio/components`.
@@ -83,7 +97,8 @@ export const LocalComponentSpecSchema = Type.Object({
   file: Type.String(),
   exportName: Type.String(),
   isDefaultExport: Type.Boolean(),
-  props: Type.Array(PropSpecSchema),
+  role: Type.Union([Type.Literal('component'), Type.Literal('page'), Type.Literal('provider')]),
+  props: Type.Array(LocalPropSpecSchema),
 })
 export type LocalComponentSpec = Static<typeof LocalComponentSpecSchema>
 
@@ -238,4 +253,35 @@ export function controlForPropKind(name: string, kind: PropKind): PropertyContro
     default:
       return { type: 'text', label: name }
   }
+}
+
+/**
+ * The most members a variant axis may have and still draw as a segmented
+ * control. Past this the segments stop fitting the inspector's width, so the
+ * axis is a select — Figma's variant-property picker makes the same cut.
+ */
+export const SEGMENTED_VARIANT_MAX_MEMBERS = 4
+
+/**
+ * The control for one prop of a LOCAL component's call site — the instance
+ * property rows. It is `controlForPropKind` with one refinement owned by the
+ * variant read model: a string-literal union of 2..4 members is a segmented
+ * control (a choice among a few visible options is one click, not two), above
+ * that a select. Design-system (`pkg.*`/`alm.*`) rows keep the plain select —
+ * they go through `controlForPropKind` directly and are not variant axes.
+ *
+ * Everything else keeps its mapping: a boolean is a toggle, a string a text
+ * box, `ReactNode` a slot (whose row also offers Swap when it holds a lone
+ * component, see `SlotControl`).
+ */
+export function controlForVariantProp(prop: LocalPropSpec): PropertyControl | undefined {
+  const control = controlForPropKind(prop.name, prop.kind)
+  if (
+    control?.type === 'select' &&
+    control.options.length >= 2 &&
+    control.options.length <= SEGMENTED_VARIANT_MAX_MEMBERS
+  ) {
+    return { ...control, display: 'segmented' }
+  }
+  return control
 }

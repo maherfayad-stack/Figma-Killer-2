@@ -50,6 +50,10 @@
  * alike — it is the only thing on the board that is ABOUT the board rather
  * than part of it. It also self-gates on `selectActiveBoard`, so this is still
  * a stack of layers that all render `null` outside Studio.
+ *
+ * `BoardPeersLayer` (live presence: other people's cursors and selection rings)
+ * mounts after it - a peer's cursor travels over everything, pins included - and
+ * is click-through, so it can never block a pin.
  */
 import { BoardFramesLayer } from './BoardFramesLayer/BoardFramesLayer'
 import { BoardCanvasLayer } from './BoardCanvasLayer/BoardCanvasLayer'
@@ -62,6 +66,7 @@ import { BoardFlowLayer } from './BoardFlowLayer/BoardFlowLayer'
 import { BoardPrototypeLayer } from './BoardPrototypeLayer/BoardPrototypeLayer'
 import { BoardCommentsLayer } from './BoardCommentsLayer/BoardCommentsLayer'
 import { BoardVectorLayer } from './BoardVectorLayer/BoardVectorLayer'
+import { BoardPeersLayer } from './BoardPeersLayer/BoardPeersLayer'
 
 export function StudioBoardLayers() {
   return (
@@ -77,6 +82,7 @@ export function StudioBoardLayers() {
       <BoardFlowLayer />
       <BoardPrototypeLayer />
       <BoardCommentsLayer />
+      <BoardPeersLayer />
     </>
   )
 }

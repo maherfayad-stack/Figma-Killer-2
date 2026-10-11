@@ -49,6 +49,9 @@ const SPECIMEN_BODY =
 // Stable empty fallbacks — returning a fresh `?? []` from a Zustand selector
 // changes the snapshot identity every render and loops forever.
 const EMPTY_TOKENS: readonly FrameworkColorToken[] = []
+/** The overview card's chart is a thumbnail: its tallest bar (either device) is capped here. */
+const OVERVIEW_CHART_MAX_BAR_PX = 72
+
 const EMPTY_SPACING: readonly FrameworkSpacingGroup[] = []
 const EMPTY_FONT_ITEMS: readonly FontEntry[] = []
 const EMPTY_FONT_TOKENS: readonly FontToken[] = []
@@ -187,7 +190,7 @@ export function FrameworkHome() {
           RulerDimensionSolidIcon,
           spacingPoints ? (
             <span className={styles.scale}>
-              <SpacingBarChart points={spacingPoints} />
+              <SpacingBarChart points={spacingPoints} maxBarPx={OVERVIEW_CHART_MAX_BAR_PX} />
             </span>
           ) : (
             <span className={styles.cardEmpty}>Click here to create your spacing scale</span>

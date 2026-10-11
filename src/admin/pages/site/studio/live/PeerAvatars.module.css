@@ -1,0 +1,35 @@
+/*
+ * The toolbar's avatar stack. Each avatar wears its member's identity colour
+ * (`--peer-color`, a `var(--accent-N)` set per button) as a ring: colour is
+ * identity here, never decoration.
+ */
+
+.stack {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2xs);
+    padding: 0 var(--space-2xs);
+}
+
+.avatar {
+    border-radius: 999px;
+    box-shadow: 0 0 0 2px var(--peer-color);
+}
+
+.following {
+    box-shadow: 0 0 0 3px var(--peer-color);
+}
+
+.overflow {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    user-select: none;
+}
+
+.status {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    white-space: nowrap;
+    padding: 0 var(--space-2xs);
+    user-select: none;
+}

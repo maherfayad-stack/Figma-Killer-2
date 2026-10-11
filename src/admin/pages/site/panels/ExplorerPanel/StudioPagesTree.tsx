@@ -36,7 +36,7 @@
  * site document. The active page auto-expands the first time it becomes
  * active so opening/switching pages always reveals their layers.
  */
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSelectors'
 import { selectPageDirectory, type PageDirectoryEntry } from '@site/store/slices/pageDirectory'
@@ -124,9 +124,9 @@ export function StudioPagesTree({ editable = true }: StudioPagesTreeProps) {
               isActive={page.id === activePageId}
               expanded={expandedIds.has(page.id)}
               editable={editable}
-              onToggleExpand={() => toggleExpanded(page.id)}
-              onActivate={() => openPageInCanvas(page.id)}
-              onRename={(title) => renamePage(page.id, title)}
+              onToggleExpand={toggleExpanded}
+              onActivate={openPageInCanvas}
+              onRename={renamePage}
             />
           ))}
         </TreeContainer>
@@ -140,20 +140,30 @@ interface PageRowProps {
   isActive: boolean
   expanded: boolean
   editable: boolean
-  onToggleExpand: () => void
-  onActivate: () => void
-  onRename: (title: string) => void
+  /** Handlers take the page id, so ONE stable function serves every row (see `PageRow`). */
+  onToggleExpand: (pageId: string) => void
+  onActivate: (pageId: string) => void
+  onRename: (pageId: string, title: string) => void
 }
 
-function PageRow({ page, isActive, expanded, editable, onToggleExpand, onActivate, onRename }: PageRowProps) {
-  const [rename, renameInputRef] = useInlineRename({ onCommit: onRename })
+/**
+ * `memo()` is the list-row bailout (CLAUDE.md "React Compiler and
+ * memoization", exception 2): the compiler memoizes inside a component, never
+ * across the rows a `.map` makes, so without it a selection that changes the
+ * active page re-rendered ALL forty rows (each a TreeRow, chevron, icon and
+ * label) when two of them - the page that stopped being active and the one
+ * that started - actually changed. Its props are therefore primitives and
+ * store-stable handlers that take the page id.
+ */
+const PageRow = memo(function PageRow({ page, isActive, expanded, editable, onToggleExpand, onActivate, onRename }: PageRowProps) {
+  const [rename, renameInputRef] = useInlineRename({ onCommit: (title) => onRename(page.id, title) })
 
   // Capture phase — fires before any click inside this row (the header, or a
   // node row in the revealed subtree), so `activePageId` is already this
   // page by the time selection/mutation logic runs. Mirrors
   // `BoardFramesLayer`'s `handleActivateCapture`.
   const handleActivateCapture = () => {
-    if (!isActive) onActivate()
+    if (!isActive) onActivate(page.id)
   }
 
   return (
@@ -165,7 +175,7 @@ function PageRow({ page, isActive, expanded, editable, onToggleExpand, onActivat
         aria-selected={isActive}
         aria-expanded={expanded}
         tabIndex={0}
-        onClick={onToggleExpand}
+        onClick={() => onToggleExpand(page.id)}
         onDoubleClick={(e) => {
           e.preventDefault()
           e.stopPropagation()
@@ -174,10 +184,10 @@ function PageRow({ page, isActive, expanded, editable, onToggleExpand, onActivat
         onKeyDown={(e) => {
           // Only the row's own keys: a key bubbling from the rename input is the input's.
           if (e.target !== e.currentTarget) return
-          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggleExpand() }
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggleExpand(page.id) }
         }}
       >
-        <TreeChevron expanded={expanded} onClick={(e) => { e.stopPropagation(); onToggleExpand() }} />
+        <TreeChevron expanded={expanded} onClick={(e) => { e.stopPropagation(); onToggleExpand(page.id) }} />
         <TreeIconSlot icon={FileTextSolidIcon} iconSize={11} iconColor="var(--text-disabled)" />
         {rename.isRenaming ? (
           <Input
@@ -208,4 +218,4 @@ function PageRow({ page, isActive, expanded, editable, onToggleExpand, onActivat
       )}
     </div>
   )
-}
+})

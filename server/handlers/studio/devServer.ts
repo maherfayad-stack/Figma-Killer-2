@@ -92,7 +92,7 @@ import {
   writeDevServerRecord,
 } from './devServerRecords'
 import { MAX_LOG_BYTES, spawnDevServerProcess, tailAndWatch, type DevServerSpawnOptions } from './devServerOutput'
-import { resolveDevScript, resolveLiveCapability } from './liveCapability'
+import { describeLiveRefusal, resolveDevScript, resolveLiveCapability } from './liveCapability'
 import { detectPackageManager, type PackageManager } from './packageManager'
 import { minimalSubprocessEnv, type SpawnedProcessLike } from './subprocessRunner'
 import { pathWithBinDirs, viteLaunch } from './viteLaunch'
@@ -276,12 +276,13 @@ function spawnEntry(appRoot: string, dir: string, overrides: DevServerOverrides)
   // repository's `dev`/`start` script the moment it opens: Studio only ever
   // runs `vite`, because `vite` is the only thing it can frame (`sec-20`;
   // the rule and its reasons live in `liveCapability.ts`).
-  if (!resolveLiveCapability(dir).capable) {
-    return { ok: false, error: `Live needs Vite: this project's dev/start script is not a vite invocation, so Studio does not run it (${appRoot}).` }
+  const capability = resolveLiveCapability(dir)
+  if (!capability.capable) {
+    return { ok: false, error: describeLiveRefusal(dir, capability.reason ?? 'not-vite') }
   }
   const devScript = resolveDevScript(appRoot)
   if (!devScript) {
-    return { ok: false, error: `No "dev" or "start" script found in package.json at ${appRoot}.` }
+    return { ok: false, error: 'No "dev" or "start" script found in package.json.' }
   }
 
   // The project's own Vite, run directly — never `<pm> run dev`, which would

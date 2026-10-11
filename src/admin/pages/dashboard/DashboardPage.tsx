@@ -157,7 +157,7 @@ export function DashboardPage() {
   function openProject(project: StudioProject, options: { prototype?: boolean } = {}) {
     // Force the next Site-editor mount to reload from disk instead of
     // short-circuiting on a previous project's still-mounted `existingSite`.
-    requestCmsSiteReload()
+    requestCmsSiteReload({ siteShellUnchanged: true })
     setStudioWorkspaceDir(project.dir)
     // `?mode=prototype` is consumed once and stripped by `useSiteEditorUrlSync`
     // — an instruction to arrive in prototype mode, which is what the
@@ -519,7 +519,7 @@ export function DashboardPage() {
         onClose={() => setImportSummary(null)}
         onOpen={(summary) => {
           setImportSummary(null)
-          requestCmsSiteReload()
+          requestCmsSiteReload({ siteShellUnchanged: true })
           setStudioWorkspaceDir(summary.dir)
           navigate('/admin/site')
         }}

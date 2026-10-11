@@ -10,7 +10,7 @@
  * __tests__/strokeSection.test.tsx`:
  *   1. Law 1 — nothing set renders the empty header (title + a single "+"),
  *      no resident controls, no chevron; clicking "+" writes a real default
- *      stroke (1px solid #000000, every side) and shows the resident row.
+ *      stroke (1px solid #808080, every side) and shows the resident row.
  *   2. The colour entry appears once any border longhand is set, and its
  *      inline `%` opacity field (`02-measurements.md`'s "Color field
  *      chrome" — NEW in this migration, closing the same gap Fill's own
@@ -100,8 +100,17 @@ describe('StrokeSection — Law 1', () => {
     for (const side of ['Top', 'Right', 'Bottom', 'Left']) {
       expect(styles?.[`border${side}Width` as 'borderTopWidth']).toBe('1px')
       expect(styles?.[`border${side}Style` as 'borderTopStyle']).toBe('solid')
-      expect(styles?.[`border${side}Color` as 'borderTopColor']).toBe('#000000')
+      expect(styles?.[`border${side}Color` as 'borderTopColor']).toBe('#808080')
     }
+  })
+
+  it('reads a `border` shorthand back into the stroke rows', () => {
+    selectNode({ inlineStyles: { border: '2px solid #ff0000' } })
+    render(<StrokeSection />)
+
+    expect(screen.queryByRole('button', { name: /add stroke/i })).toBeNull()
+    expect(screen.getByTestId('stroke-position')).toBeTruthy()
+    expect((screen.getByLabelText('Stroke color') as HTMLInputElement).value).toBe('#ff0000')
   })
 
   it('shows the resident row directly (no "+" needed) once any border longhand is set', () => {

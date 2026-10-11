@@ -70,15 +70,11 @@ import { explainPropConstraint, type PageNode } from '@core/page-tree'
 import { PropertyControlRenderer } from '@site/property-controls/PropertyControlRenderer'
 import { buildComponentCallSiteRows } from '../../panels/PropertiesPanel/componentCallSiteRows'
 import { useLocalComponentCatalog, findLocalComponentSpec } from '@site/studio/componentCatalog'
-import { swapInstance } from '@site/studio/studioSaveRequests'
-import { getErrorMessage } from '@core/utils/errorMessage'
+import { InstanceSwapPopover } from '@site/property-controls/InstanceSwapPopover'
 import { Button } from '@ui/components/Button'
 import { ControlRow } from '@ui/components/ControlRow'
-import { InspectorPopover } from '@ui/components/InspectorPopover'
-import { SearchBar } from '@ui/components/SearchBar'
 import { SectionStaticHeader } from '@ui/components/Section'
 import { Skeleton } from '@ui/components/Skeleton'
-import { pushToast } from '@ui/components/Toast'
 import { BoxStackSolidIcon } from 'pixel-art-icons/icons/box-stack-solid'
 import { ArrowsHorizontalIcon } from 'pixel-art-icons/icons/arrows-horizontal'
 import { Copy2SolidIcon } from 'pixel-art-icons/icons/copy-2-solid'
@@ -91,32 +87,6 @@ interface InstanceProps {
   source?: 'local' | 'package'
   sourceFile?: string
   callSiteProps?: Record<string, unknown>
-}
-
-interface LocalSwapCandidate {
-  componentName: string
-  sourceFile: string
-}
-
-/**
- * The toast after a successful swap: what it changed about the call site's
- * props. Factored out of `handleSwap`'s try block on purpose — the React
- * Compiler bails out of a try/catch that contains a conditional VALUE
- * (a ternary, here) directly inline (`react-compiler-bailouts.test.ts`); a
- * plain function call has no such value block.
- */
-function swappedToast(
-  componentName: string,
-  detail: { removedProps: string[]; unfilledRequiredProps: string[] } | undefined,
-): Parameters<typeof pushToast>[0] {
-  const notes: string[] = []
-  if (detail && detail.removedProps.length > 0) notes.push(`removed: ${detail.removedProps.join(', ')}`)
-  if (detail && detail.unfilledRequiredProps.length > 0) notes.push(`needs a value: ${detail.unfilledRequiredProps.join(', ')}`)
-  return {
-    kind: notes.length > 0 ? 'warning' : 'success',
-    title: `Swapped to ${componentName}`,
-    body: notes.length > 0 ? notes.join(' · ') : 'No prop changes were needed.',
-  }
 }
 
 export function ComponentSection() {
@@ -157,8 +127,6 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
   const detachRefusal = detachRefusalFor(node)
   const [detaching, setDetaching] = useState(false)
   const [swapOpen, setSwapOpen] = useState(false)
-  const [swapQuery, setSwapQuery] = useState('')
-  const [swappingKey, setSwappingKey] = useState<string | null>(null)
   const swapButtonRef = useRef<HTMLButtonElement>(null)
 
   async function handleDetach() {
@@ -171,50 +139,9 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
     setDetaching(false)
   }
 
-  // Every OTHER local component the catalog knows about — local-only
-  // (package components aren't in this catalog; the empty state says so).
-  const swapCandidates: LocalSwapCandidate[] = (catalog ?? [])
-    .filter((c) => !(c.name === componentName && c.file === sourceFile))
-    .map((c) => ({ componentName: c.name, sourceFile: c.file }))
-
   function toggleSwapPicker() {
-    if (swapOpen) {
-      setSwapOpen(false)
-      return
-    }
-    setSwapQuery('')
-    setSwapOpen(true)
+    setSwapOpen((open) => !open)
   }
-
-  async function handleSwap(candidate: LocalSwapCandidate) {
-    const key = `${candidate.sourceFile}#${candidate.componentName}`
-    setSwappingKey(key)
-    // No `finally`: a try/catch/finally is a React Compiler bailout
-    // (`react-compiler-bailouts.test.ts`) — `setSwappingKey(null)` runs
-    // unconditionally after the try/catch instead, which needs the refusal
-    // branch below to fall through (an `else`) rather than `return` early.
-    try {
-      const result = await swapInstance(nodeId, {
-        newComponentName: candidate.componentName,
-        newComponentSource: 'local',
-        newComponentFile: candidate.sourceFile,
-      })
-      if (!result.ok) {
-        pushToast({ kind: 'error', title: 'Swap refused', body: result.message })
-      } else {
-        pushToast(swappedToast(candidate.componentName, result.swapDetail))
-        setSwapOpen(false)
-      }
-    } catch (err) {
-      pushToast({ kind: 'error', title: 'Swap failed', body: getErrorMessage(err, 'Unknown error') })
-    }
-    setSwappingKey(null)
-  }
-
-  const query = swapQuery.trim().toLowerCase()
-  const filteredCandidates = query
-    ? swapCandidates.filter((c) => c.componentName.toLowerCase().includes(query))
-    : swapCandidates
 
   const headerActions = (
     <>
@@ -269,7 +196,7 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
           <p className={styles.noParams}>This component takes no props.</p>
         ) : (
           <div className={styles.propsList} role="list" aria-label="Component props">
-            {rows.map(({ key, control, value }) => {
+            {rows.map(({ key, control, value, defaultValue }) => {
               // A slot value is a navigation/write affordance (`SlotControl`'s
               // own "Edit contents"/"Add"), not an editable scalar — always
               // reachable, same as `pkg-02`'s unconditional `node`-kind
@@ -283,7 +210,9 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
                   <PropertyControlRenderer
                     propKey={key}
                     control={control}
-                    value={value}
+                    // An unset prop shows the component's own default (what it
+                    // renders as) but writes nothing until the user picks.
+                    value={value ?? defaultValue}
                     onChange={(propKey, next) => updateCallSiteProp(nodeId, propKey, next)}
                     constraint={constraint}
                     ownerNodeId={nodeId}
@@ -296,46 +225,14 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
       </div>
 
       {swapOpen && (
-        <InspectorPopover
+        <InstanceSwapPopover
           id="instance-swap"
           anchorRef={swapButtonRef}
+          nodeId={nodeId}
+          componentName={componentName}
+          sourceFile={sourceFile}
           onClose={() => setSwapOpen(false)}
-          title="Swap instance"
-          width={248}
-        >
-          <div className={styles.swapPicker} data-testid="instance-swap-picker">
-            <SearchBar
-              value={swapQuery}
-              onValueChange={setSwapQuery}
-              placeholder="Search components…"
-              aria-label="Search components to swap to"
-              autoFocus
-            />
-            {filteredCandidates.length === 0 ? (
-              <p className={styles.swapEmpty}>No other local component found in this project yet.</p>
-            ) : (
-              <ul className={styles.swapList} role="listbox" aria-label="Swap target">
-                {filteredCandidates.map((candidate) => {
-                  const key = `${candidate.sourceFile}#${candidate.componentName}`
-                  return (
-                    <li key={key}>
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        className={styles.swapCandidate}
-                        onClick={() => handleSwap(candidate)}
-                        disabled={swappingKey !== null}
-                        data-testid={`instance-swap-candidate-${candidate.componentName}`}
-                      >
-                        {swappingKey === key ? `Swapping to ${candidate.componentName}…` : candidate.componentName}
-                      </Button>
-                    </li>
-                  )
-                })}
-              </ul>
-            )}
-          </div>
-        </InspectorPopover>
+        />
       )}
     </div>
   )

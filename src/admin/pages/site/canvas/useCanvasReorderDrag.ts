@@ -72,7 +72,9 @@ import { beginCanvasGesture, endCanvasGesture } from './canvasGesture'
 import { useCanvasBodyDragTrigger } from './useCanvasBodyDragTrigger'
 import { useBridgeBodyDragTrigger } from './useBridgeBodyDragTrigger'
 import { markCanvasPressDragged } from './canvasNodeGestureLatch'
+import { flushPressQueue } from './pressRing'
 import { useInFrameMarquee } from './useInFrameMarquee'
+import { useBridgeFrameMarquee } from './useBridgeFrameMarquee'
 import { subscribeReparseFollow, type NodeIdFollower } from '@site/store/slices/site/reparseNodeFollow'
 import { clearCanvasPointerRelay, markCanvasPointerRelay } from './canvasPointerRelay'
 import { guardDragSession } from '@core/studio-runtime'
@@ -268,6 +270,9 @@ export function useCanvasReorderDrag({
       // The press is a drag now: the click its release raises in the frame
       // must not select anything (`canvasPressBecameDrag`).
       markCanvasPressDragged()
+      // What the press queued (its frame's page activation, its selection)
+      // is owed before the drag reads either - `pressRing.ts`.
+      flushPressQueue()
       // The single React commit of the whole gesture — see `dragging`.
       setDragging(true)
       // A body drag that started on an UNSELECTED element selects it now, at
@@ -586,6 +591,8 @@ export function useCanvasReorderDrag({
   // P5-E (IX-16, OD-6) — a press on the page ROOT that travels is a marquee,
   // not a drag (the root never moves). Same document, same gate.
   useInFrameMarquee({ enabled: bodyDragEnabled, overlayRoot, frameId })
+  // The same sweep in a Tier 2 BRIDGE frame, drawn in the parent over the iframe.
+  useBridgeFrameMarquee({ enabled: bodyDragEnabled, iframeElement, pageId, frameId })
 
   useEffect(() => resetDrag, [resetDrag])
 

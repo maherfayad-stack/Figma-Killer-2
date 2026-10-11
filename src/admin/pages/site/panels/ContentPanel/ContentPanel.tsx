@@ -63,6 +63,8 @@ import {
   type ContentSnapshot,
 } from '@site/studio/translationCatalogClient'
 import { isUntranslated } from '@core/i18n'
+import { useEditorStore } from '@site/store/store'
+import { Panel } from '@admin/shared/Panel'
 import { Button } from '@ui/components/Button'
 import { SearchBar } from '@ui/components/SearchBar'
 import { Input } from '@ui/components/Input'
@@ -102,7 +104,17 @@ async function readSnapshot(): Promise<ContentSnapshot> {
   }
 }
 
+/** The docked shell every other panel wears: a title, and a close button that works. */
 export function ContentPanel() {
+  const setOpen = useEditorStore((s) => s.setContentPanelOpen)
+  return (
+    <Panel panelId="content" title="Content" testId="content-panel" body="bare" onClose={() => setOpen(false)}>
+      <ContentPanelBody />
+    </Panel>
+  )
+}
+
+function ContentPanelBody() {
   const [snapshot, setSnapshot] = useState<ContentSnapshot | undefined>(undefined)
   const [query, setQuery] = useState('')
   const [untranslatedOnly, setUntranslatedOnly] = useState(false)

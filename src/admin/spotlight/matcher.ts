@@ -173,8 +173,13 @@ function scoreCommand(
     score += decay
   }
 
+  // A destructive command never earns the context bonus below, and with no
+  // query it sinks to the bottom: the pre-highlighted first row is what Enter
+  // runs, so it must never be "Delete current page".
+  if (command.destructive && q === '') score -= 1000
+
   // +250 when(ctx) returns true
-  if (command.when) {
+  if (command.when && !command.destructive) {
     try {
       if (command.when(ctx)) {
         score += 250
@@ -193,7 +198,7 @@ function scoreCommand(
 
 // ─── Sort comparator ──────────────────────────────────────────────────────────
 
-function groupOrder(group: CommandGroup): number {
+export function groupOrder(group: CommandGroup): number {
   const idx = GROUP_ORDER.indexOf(group)
   return idx === -1 ? 999 : idx
 }

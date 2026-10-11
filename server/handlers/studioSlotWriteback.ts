@@ -53,8 +53,8 @@
  * against THAT node, reusing `list-row`/`shared-component`/`route-chrome`/
  * `code-placed` for the identical reason a real delete would refuse: the
  * target's own markup is being removed from this component's inline render.
- * `no-jsx-parent`/`unsupported-params`/`unsupported-props-type`/
- * `prop-name-taken` stay codemod-only refusals — `refuseStructuralEdit` has
+ * `no-jsx-parent`/`unsupported-params`/`unsupported-props-type`
+ * stay codemod-only refusals — `refuseStructuralEdit` has
  * no vocabulary for them, the same way `deleteJsxElement`'s own
  * `no-jsx-parent` stays an AST-only residual in `struct-01`.
  */

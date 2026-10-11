@@ -66,6 +66,8 @@ const STUDIO_ENTRY = join(REPO_ROOT, 'server', 'handlers', 'studio.ts')
  */
 const SHARED_ROUTE_CONSTANT_FILES = [
   join(REPO_ROOT, 'src', 'core', 'studio-share', 'shareWire.ts'),
+  // The presence socket's route: client and server both build/match it.
+  join(REPO_ROOT, 'src', 'core', 'studio-live', 'protocol.ts'),
 ]
 
 const STUDIO_PATH_CHARS = '[a-z0-9\\-/]*'

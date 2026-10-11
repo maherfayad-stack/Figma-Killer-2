@@ -53,10 +53,12 @@ import { useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Button } from '@ui/components/Button'
 import { BracesIcon } from 'pixel-art-icons/icons/braces'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
+import { getErrorMessage } from '@core/utils/errorMessage'
 import { formatVarBinding, parseVarBinding, variableChipLabel } from './varBinding'
-import { useVariableCatalog, useVariableOptions } from './VariableSourceContext'
+import { useVariableActions, useVariableCatalog, useVariableOptions } from './VariableSourceContext'
 import { VariablePickerPopover } from './VariablePickerPopover'
-import type { VariableKind } from './variableKind'
+import { isValidVariableName, normalizeVariableName, suggestVariableName } from './suggestVariableName'
+import { classifyVariableValue, type VariableKind } from './variableKind'
 import styles from './VariableField.module.css'
 
 export interface UseVariableAffordanceOptions {
@@ -115,8 +117,12 @@ export function useVariableAffordance({
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
 
+  const [creating, setCreating] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
+
   const options = useVariableOptions(accept)
   const catalog = useVariableCatalog()
+  const actions = useVariableActions()
 
   const binding = mixed ? null : parseVarBinding(value)
   const bound = binding !== null
@@ -173,10 +179,43 @@ export function useVariableAffordance({
     </span>
   ) : null
 
-  // Nothing to offer and nothing bound → render no affordance at all. An icon
-  // that opens an empty list is exactly the control-that-lies this panel
-  // refuses; a project with no custom properties simply has no variables.
-  const hasAffordance = !disabled && (options.length > 0 || bound)
+  // "Create variable from this value": only for a literal the field's own
+  // kinds can take (a `width: auto` field has nothing to turn into a
+  // variable), and only where the editor can actually write one.
+  const literal = mixed || bound || value === undefined ? '' : value.trim()
+  const literalKind = literal === '' ? 'other' : classifyVariableValue(literal)
+  const canCreate = actions !== null && !disabled && literalKind !== 'other' && accept.includes(literalKind)
+
+  const handleCreate = async (typedName: string) => {
+    if (!actions) return
+    const name = normalizeVariableName(typedName)
+    if (!isValidVariableName(name)) {
+      setCreateError('Use letters, numbers, "-" and "_" - for example --color-brand.')
+      return
+    }
+    if (catalog.some((entry) => entry.name === name && entry.source !== 'framework')) {
+      setCreateError(`${name} already exists. Pick it from the list instead.`)
+      return
+    }
+    setCreating(true)
+    setCreateError(null)
+    try {
+      const created = await actions.createVariable({ name, value: literal })
+      setCreating(false)
+      setOpen(false)
+      onCommit(formatVarBinding(created))
+    } catch (err) {
+      console.error('[VariableField] could not create the variable:', err)
+      setCreating(false)
+      setCreateError(getErrorMessage(err, 'Could not create the variable.'))
+    }
+  }
+
+  // Nothing to offer, nothing bound and nothing to create → render no
+  // affordance at all. An icon that opens an empty list is exactly the
+  // control-that-lies this panel refuses; a project with no custom properties
+  // simply has no variables to pick, though it may still create its first.
+  const hasAffordance = !disabled && (options.length > 0 || bound || canCreate)
 
   const trigger = hasAffordance ? (
     <>
@@ -205,7 +244,30 @@ export function useVariableAffordance({
             setOpen(false)
             onCommit(formatVarBinding(option.name))
           }}
-          onClose={() => setOpen(false)}
+          onClose={() => {
+            setOpen(false)
+            setCreateError(null)
+          }}
+          onDetach={
+            bound && resolvedBoundValue
+              ? () => {
+                  setOpen(false)
+                  onCommit(resolvedBoundValue)
+                }
+              : undefined
+          }
+          create={
+            canCreate
+              ? {
+                  value: literal,
+                  suggestedName: suggestVariableName(literalKind, literal, catalog),
+                  sameValue: options.filter((entry) => entry.resolvedValue.trim().toLowerCase() === literal.toLowerCase()),
+                  pending: creating,
+                  error: createError,
+                  onCreate: (name) => void handleCreate(name),
+                }
+              : undefined
+          }
         />
       ) : null}
     </>

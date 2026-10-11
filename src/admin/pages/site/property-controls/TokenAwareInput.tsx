@@ -362,9 +362,16 @@ export function TokenAwareInput({
         disabled={disabled}
         data-testid={dataTestId}
         className={cn(styles.input, inputClassName)}
-        onFocus={() => {
+        onFocus={(e) => {
           setIsEditing(true)
           onFocus?.()
+          // Figma: entering a field selects its whole value, so the first
+          // keystroke REPLACES it. Without this a click lands a caret after
+          // `0px` and typing `16` wrote `0px16` into the user's stylesheet.
+          // Deferred one frame because the click that focused the field
+          // places the caret after this handler runs.
+          const input = e.currentTarget
+          requestAnimationFrame(() => input.select())
         }}
         onChange={(e) => {
           const next = e.target.value

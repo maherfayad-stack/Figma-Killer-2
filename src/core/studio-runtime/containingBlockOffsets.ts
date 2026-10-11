@@ -86,6 +86,22 @@ const px = (value: string) => {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
+/** The measured box of `node` as a containing block — its padding-box origin, scale and scroll. */
+export function containingBlockBoxOf(view: Window, node: HTMLElement): ContainingBlockBox {
+  const style = view.getComputedStyle(node)
+  const rect = node.getBoundingClientRect()
+  return {
+    rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+    borderLeft: px(style.borderLeftWidth),
+    borderTop: px(style.borderTopWidth),
+    borderRight: px(style.borderRightWidth),
+    borderBottom: px(style.borderBottomWidth),
+    scale: node.offsetWidth > 0 ? rect.width / node.offsetWidth : 1,
+    scrollLeft: node.scrollLeft,
+    scrollTop: node.scrollTop,
+  }
+}
+
 /**
  * The element that actually contains `element` once it is absolute, with its
  * measured box — or `null` when no ancestor establishes one (the initial
@@ -96,22 +112,8 @@ export function readContainingBlock(
   element: HTMLElement,
 ): { element: HTMLElement; box: ContainingBlockBox } | null {
   for (let node = element.parentElement; node; node = node.parentElement) {
-    const style = view.getComputedStyle(node)
-    if (!establishesContainingBlock(style)) continue
-    const rect = node.getBoundingClientRect()
-    return {
-      element: node,
-      box: {
-        rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
-        borderLeft: px(style.borderLeftWidth),
-        borderTop: px(style.borderTopWidth),
-        borderRight: px(style.borderRightWidth),
-        borderBottom: px(style.borderBottomWidth),
-        scale: node.offsetWidth > 0 ? rect.width / node.offsetWidth : 1,
-        scrollLeft: node.scrollLeft,
-        scrollTop: node.scrollTop,
-      },
-    }
+    if (!establishesContainingBlock(view.getComputedStyle(node))) continue
+    return { element: node, box: containingBlockBoxOf(view, node) }
   }
   return null
 }

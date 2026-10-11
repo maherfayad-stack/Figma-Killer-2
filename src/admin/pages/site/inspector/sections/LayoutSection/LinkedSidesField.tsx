@@ -50,8 +50,16 @@ export function LinkedSidesField({
   'data-testid': dataTestId,
 }: LinkedSidesFieldProps) {
   // Any side disagreeing makes the linked field mixed — it writes all four at
-  // once, so it cannot honestly show one side's value.
-  const mixed = properties.some((prop) => isMixedStyleValue(storedStyles, currentStyles, String(prop)))
+  // once, so it cannot honestly show one side's value. "Disagreeing" is judged
+  // on what each side renders (its own declaration, else the frame's computed
+  // value): `padding-inline: 16px` alone leaves top/bottom at 0, so showing
+  // "16" for all sides would be a lie.
+  const effective = properties.map(
+    (prop) => readString(storedStyles, String(prop)) ?? readString(currentStyles, String(prop)),
+  )
+  const mixed =
+    properties.some((prop) => isMixedStyleValue(storedStyles, currentStyles, String(prop))) ||
+    effective.some((value) => value !== effective[0])
 
   // The one display rule (`styleFieldDisplay.ts`): the first side that
   // declares something, else the padding the element actually renders.

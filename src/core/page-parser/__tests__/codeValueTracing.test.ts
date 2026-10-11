@@ -183,7 +183,7 @@ describe('an unresolvable inline-style property leaves a trace instead of vanish
     )
     const div = named(loadNodes('pages/Bar.jsx', evalOptions()), 'div')
     expect(div.inlineStyles?.width).toBeUndefined()
-    expect(div.inlineStyles?.padding).toBe(4)
+    expect(div.inlineStyles).toMatchObject({ paddingTop: 4, paddingRight: 4, paddingBottom: 4, paddingLeft: 4 })
     expect(div.codeProps).toContain('style:width')
     expect(div.codeProps ?? []).not.toContain('style:padding')
     expect(isStyleWritableToSource(div, 'width')).toBe(false)
@@ -231,7 +231,7 @@ describe('an unresolvable inline-style property leaves a trace instead of vanish
       ].join('\n'),
     )
     const div = named(loadNodes('pages/Spread.jsx', evalOptions()), 'div')
-    expect(div.inlineStyles?.padding).toBe(4)
+    expect(div.inlineStyles).toMatchObject({ paddingTop: 4, paddingRight: 4, paddingBottom: 4, paddingLeft: 4 })
     expect(div.codeProps ?? []).not.toContain('style:padding')
   })
 })

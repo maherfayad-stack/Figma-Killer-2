@@ -106,7 +106,7 @@ export function getFrameworkCommands(): Command[] {
 
     {
       id: 'framework.manage',
-      title: 'Manage Core Framework',
+      title: 'Manage framework tokens',
       subtitle: 'Import, re-import, or remove the Core Framework preset',
       group: 'framework',
       iconName: 'sliders-horizontal',

@@ -28,7 +28,7 @@
  *        (P3-F) names the undo-journal entry that puts the call site back
  *        and removes the copy: the editor posts it as a `restore` edit.
  *     -> `{ ok: false, reason, message }` on refusal (`not-a-component`,
- *        `unresolvable`, `copy-exists`) — never a silent no-op.
+ *        `unresolvable`) — never a silent no-op.
  */
 import { join } from 'node:path'
 import { extractComponentCopy } from '@core/ast-codemods'

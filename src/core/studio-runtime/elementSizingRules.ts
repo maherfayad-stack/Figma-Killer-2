@@ -16,6 +16,14 @@
  * three intents is it expressing; and given a chosen intent, what CSS
  * expresses it.
  *
+ * ## An absolute element has no parent layout (PA-5)
+ *
+ * `absolute` / `fixed` takes an element out of its parent's flex or grid, so
+ * the role is `absolute` whatever the parent is. Fill there is the
+ * Left-and-right / Top-and-bottom constraint (both insets, size cleared),
+ * Hug is `fit-content` with one inset, Fixed is a literal length — the same
+ * three intents, and Fill shares the constraints crosshair's write.
+ *
  * ## Why the parent has to be an input (W8-4)
  *
  * The first version of this module wrote `fit-content` / `100%`
@@ -63,6 +71,7 @@
  * numbers, not mode words.
  */
 import type { CSSPropertyBag } from '@core/page-tree'
+import { isOutOfFlow } from './placementKind'
 
 /** A stored declaration that says something: not absent, `null` or the empty string. */
 function hasStyleValue(value: unknown): value is string | number {
@@ -85,13 +94,21 @@ export interface SizingParentLayout {
   display: string
   /** Computed `flex-direction` of the parent. Only consulted for flex parents. */
   flexDirection: string
+  /**
+   * Computed `position` of the sized element ITSELF (PA-5). An `absolute` /
+   * `fixed` element has left its parent's layout, so the parent's `display`
+   * says nothing about its size: the role is `absolute` whatever the parent
+   * is. Absent means "in flow" (the resize drag, which only sizes in-flow
+   * elements, never sets it).
+   */
+  childPosition?: string
 }
 
 /**
  * How ONE axis of a child relates to its parent's layout. This is the single
  * fact that decides which CSS Hug/Fill write is honest.
  */
-export type SizingAxisRole = 'flex-main' | 'flex-cross' | 'grid' | 'block'
+export type SizingAxisRole = 'flex-main' | 'flex-cross' | 'grid' | 'block' | 'absolute'
 
 export interface SizingModeOption {
   value: SizingMode
@@ -177,6 +194,7 @@ export function sizingAxisRole(
   parent: SizingParentLayout | null,
 ): SizingAxisRole | null {
   if (!parent) return null
+  if (isOutOfFlow(normalize(parent.childPosition))) return 'absolute'
   const display = normalize(parent.display)
   if (display === 'grid' || display === 'inline-grid') return 'grid'
   if (display === 'flex' || display === 'inline-flex') {
@@ -186,6 +204,16 @@ export function sizingAxisRole(
     return axis === mainAxis ? 'flex-main' : 'flex-cross'
   }
   return 'block'
+}
+
+/**
+ * The two insets that pin an absolute element along `axis`. Both declared and
+ * the size cleared IS the Left-and-right / Top-and-bottom constraint
+ * (`constraintMapping.ts`'s `stretch`), which is what Fill means there.
+ */
+const ABSOLUTE_INSETS: Readonly<Record<SizingAxis, { start: keyof CSSPropertyBag; end: keyof CSSPropertyBag }>> = {
+  width: { start: 'left', end: 'right' },
+  height: { start: 'top', end: 'bottom' },
 }
 
 /**
@@ -216,6 +244,12 @@ export function currentSizingMode(
 
   const own = normalize(stored[axis])
 
+  if (role === 'absolute') {
+    if (own === HUG_VALUE) return 'hug'
+    const { start, end } = ABSOLUTE_INSETS[axis]
+    return !hasStyleValue(stored[axis]) && hasStyleValue(stored[start]) && hasStyleValue(stored[end]) ? 'fill' : 'fixed'
+  }
+
   if (role === 'block') {
     if (own === BLOCK_FILL_VALUE) return 'fill'
     if (own === HUG_VALUE) return 'hug'
@@ -241,6 +275,20 @@ function frozenLength(measuredValue: unknown): string {
     return /^-?\d+(\.\d+)?$/.test(measuredValue) ? `${measuredValue}px` : measuredValue
   }
   return '0px'
+}
+
+/**
+ * Leaving the stretch constraint: with a size declared, the end inset would
+ * over-constrain the box (and be ignored), so the patch drops it and the
+ * element keeps its start edge.
+ */
+function releaseEndInset(
+  patch: Partial<Record<keyof CSSPropertyBag, string | undefined>>,
+  axis: SizingAxis,
+  stored: Record<string, unknown>,
+): void {
+  const { start, end } = ABSOLUTE_INSETS[axis]
+  if (hasStyleValue(stored[start]) && hasStyleValue(stored[end])) patch[end] = undefined
 }
 
 /**
@@ -278,6 +326,7 @@ export function sizingPatch(
 
   if (mode === 'fixed') {
     patch[axis] = frozenLength(measuredValue)
+    if (role === 'absolute') releaseEndInset(patch, axis, stored)
     if (role === 'flex-main' && FILL_FLEX_VALUES.has(normalize(stored.flex))) {
       patch.flex = undefined
     }
@@ -298,7 +347,9 @@ export function sizingPatch(
 
   if (mode === 'hug') {
     patch[axis] = HUG_VALUE
-    if (role === 'flex-main') {
+    if (role === 'absolute') {
+      releaseEndInset(patch, axis, stored)
+    } else if (role === 'flex-main') {
       // Content-sized AND non-shrinking: `flex-basis: auto` defers to the
       // `fit-content` above, and `flex-shrink: 0` keeps a crowded row from
       // squeezing the box below the content it was told to hug.
@@ -314,6 +365,11 @@ export function sizingPatch(
   }
 
   // mode === 'fill'
+  // Fill on an absolute axis is the stretch constraint, which needs the
+  // element's measured insets. That plan lives in `constraintMapping`
+  // (`planConstraintChange(axis, 'stretch')`) so the size field and the
+  // crosshair share ONE write; an empty patch here is "not mine to write".
+  if (role === 'absolute') return patch
   if (role === 'block') {
     patch[axis] = BLOCK_FILL_VALUE
     return patch

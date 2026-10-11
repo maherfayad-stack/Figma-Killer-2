@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useEditorPreference } from '@site/preferences/editorPreferences'
 import { MIXED_PLACEHOLDER } from '@ui/components/MixedValue'
+import { colorDisplayText } from './colorDisplayText'
 import { TokenizedColorField } from './TokenizedColorField'
 
 interface ColorValueInputProps {
@@ -90,15 +91,19 @@ export function ColorValueInput({
   // when it changes (parent commit, undo, external patch, or — in BorderControl
   // — switching the active side). React's "store info from previous renders"
   // pattern, preferred over a useEffect+setState that would add a render pass.
-  const [text, setText] = useState(value)
+  const shown = colorDisplayText(value)
+  const [text, setText] = useState(shown)
   const [lastSyncedValue, setLastSyncedValue] = useState(value)
   if (lastSyncedValue !== value) {
     setLastSyncedValue(value)
-    setText(value)
+    setText(shown)
   }
 
   function handleTextBlur() {
     const s = text.trim()
+    // An untouched field writes nothing: blur after a commit (Tab, Enter) or a
+    // cancel (Esc) must not re-send what the source already holds.
+    if (s === shown.trim()) return
     const isTokenReference = /^var\(\s*--[a-z0-9_-]+\s*\)$/i.test(s)
     const cssSupportsColor =
       typeof CSS !== 'undefined' && typeof CSS.supports === 'function'
@@ -108,7 +113,7 @@ export function ColorValueInput({
       onChange(s)
     } else {
       // Revert to last known-good value
-      setText(value)
+      setText(shown)
     }
   }
 
@@ -132,6 +137,7 @@ export function ColorValueInput({
       monospace
       onTextChange={setText}
       onTextBlur={handleTextBlur}
+      onTextCancel={() => setText(shown)}
       onSwatchChange={handleCommit}
       onTokenSelect={handleCommit}
       onTokenPreview={previewActive ? onPreview : undefined}

@@ -17,6 +17,12 @@
  *     field) -> the four longhands AND the shorthand removed, because the
  *     shorthand is what an earlier save of this same rule wrote.
  *
+ * The `border` stroke follows the same rule with twelve longhands (four sides
+ * x width/style/color): when every side carries the same width, the same style
+ * and the same colour in one save, ONE `border: W S C` goes over the wire.
+ * Adding a stroke used to write twelve declarations for what a human writes as
+ * `border: 1px solid #808080`.
+ *
  * Fewer than four sides is left alone: one longhand next to a hand-written
  * shorthand is how CSS wants an override written, and collapsing a partial
  * patch would reset the sides it did not mention.
@@ -28,6 +34,22 @@ import { buildSidesShorthand } from '@core/publisher'
 
 const BOXES = ['padding', 'margin'] as const
 const SIDES = ['Top', 'Right', 'Bottom', 'Left'] as const
+const BORDER_FIELDS = ['Width', 'Style', 'Color'] as const
+
+/** `borderTopWidth` ... `borderLeftColor`, in `width style color` order per side. */
+const BORDER_LONGHANDS: readonly string[] = SIDES.flatMap((side) => BORDER_FIELDS.map((field) => `border${side}${field}`))
+
+/** Per field, the one value all four sides share - or `null` when the sides disagree / one is missing. */
+function uniformBorderShorthand(valueOf: (side: (typeof SIDES)[number], field: (typeof BORDER_FIELDS)[number]) => string | undefined): string | null {
+  const parts: string[] = []
+  for (const field of BORDER_FIELDS) {
+    const values = SIDES.map((side) => valueOf(side, field))
+    const first = values[0]
+    if (first === undefined || first === '' || !values.every((value) => value === first)) return null
+    parts.push(first)
+  }
+  return parts.join(' ')
+}
 
 type Box = (typeof BOXES)[number]
 
@@ -58,6 +80,17 @@ export function coalesceInlineSideWrites(
       remove.push(box)
     }
   }
+  const border = uniformBorderShorthand((side, field) => {
+    const value = changed[`border${side}${field}`]
+    return typeof value === 'string' ? value : undefined
+  })
+  if (border !== null) {
+    for (const prop of BORDER_LONGHANDS) delete style[prop]
+    remove.push(...BORDER_LONGHANDS)
+    style.border = border
+  } else if (BORDER_LONGHANDS.every((prop) => removed.includes(prop))) {
+    remove.push('border')
+  }
   return { style, remove }
 }
 
@@ -79,6 +112,24 @@ export function coalesceCssSideChanges(changes: readonly DeclarationChange[]): D
     } else if (sides.every((change) => change !== undefined && change.value === null)) {
       result = [...result, { property: box, value: null }]
     }
+  }
+  const borderProp = (side: (typeof SIDES)[number], field: (typeof BORDER_FIELDS)[number]) =>
+    `border-${side.toLowerCase()}-${field.toLowerCase()}`
+  const borderLonghands = SIDES.flatMap((side) => BORDER_FIELDS.map((field) => borderProp(side, field)))
+  const border = uniformBorderShorthand((side, field) => {
+    const change = result.find((candidate) => candidate.property === borderProp(side, field))
+    return typeof change?.value === 'string' ? change.value : undefined
+  })
+  if (border !== null) {
+    result = [
+      ...result.filter((change) => !borderLonghands.includes(change.property)),
+      ...borderLonghands.map((property): DeclarationChange => ({ property, value: null })),
+      { property: 'border', value: border },
+    ]
+  } else if (
+    borderLonghands.every((property) => result.some((change) => change.property === property && change.value === null))
+  ) {
+    result = [...result, { property: 'border', value: null }]
   }
   return result
 }

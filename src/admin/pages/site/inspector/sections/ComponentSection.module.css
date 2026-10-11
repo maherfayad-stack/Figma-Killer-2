@@ -30,39 +30,6 @@
     margin-inline-end: var(--inspector-space-2xs);
 }
 
-/* ── Swap picker (inside its InspectorPopover) ───────────────────────────── */
-
-.swapPicker {
-    display: flex;
-    flex-direction: column;
-    gap: var(--inspector-space-2xs);
-}
-
-.swapEmpty {
-    margin: 0;
-    padding: var(--inspector-space-m) 0;
-    font-size: var(--text-2xs);
-    color: var(--text-subtle);
-    text-align: center;
-    line-height: 1.5;
-}
-
-.swapList {
-    display: flex;
-    flex-direction: column;
-    gap: var(--inspector-space-4xs);
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    max-height: 180px;
-    overflow-y: auto;
-}
-
-.swapCandidate {
-    width: 100%;
-    justify-content: flex-start;
-}
-
 /* ── No props — one quiet row, not a padded empty state (UX-4) ─────────── */
 
 .noParams {

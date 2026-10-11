@@ -44,6 +44,7 @@ import {
 import { iframeLocalPointToParentClientPoint } from './iframeEventCoordinates'
 import { isCanvasSpacePanActive, shouldStartCanvasPointerPan } from './canvasPanInput'
 import { beginCanvasPress, markCanvasPressDragged } from './canvasNodeGestureLatch'
+import { createBareWrapperProbe } from './canvasBareWrapperProbe'
 import { canvasPressContext, planCanvasPressDrag } from './canvasPressTarget'
 import type { CanvasDragOrigin } from './canvasDragSession'
 
@@ -122,6 +123,10 @@ export function useCanvasBodyDragTrigger({
       // drag right after a double-click edit must not be eaten.
       if (state.activeInlineEdit) {
         if (isPressInsideInlineEditor(event.target)) return
+        // The edited element itself, even where the caret host is not the
+        // pressed descendant (a padded text box, a child span).
+        const editedId = state.activeInlineEdit.nodeId
+        if (isElementLike(event.target) && event.target.closest(CANVAS_NODE_SELECTOR)?.getAttribute('data-node-id') === editedId) return
         state.endInlineEdit()
         state = useEditorStore.getState()
       }
@@ -151,6 +156,7 @@ export function useCanvasBodyDragTrigger({
       if (!page) return
       const plan = planCanvasPressDrag(page, nodeId, canvasPressContext(state, frameId), {
         deep: event.metaKey || event.ctrlKey,
+        isBareWrapper: createBareWrapperProbe(doc, page),
       })
       // The frame's own background: nothing to move — the press is the in-frame marquee's.
       if (!plan) return
