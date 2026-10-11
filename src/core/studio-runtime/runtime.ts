@@ -47,6 +47,7 @@
  *     which is why the parent validates the bounds rather than trusting it.
  */
 import { Value } from '@sinclair/typebox/value'
+import { applyModeRootPlan, type ModeRootPlan } from '@core/studio-tokens'
 import {
   InboundEnvelopeSchema,
   RUNTIME_MESSAGE_SOURCE,
@@ -416,8 +417,10 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
   // dark-mode gate" branch needs a `ColorSchemeCapability` probe result this
   // message does not carry — deferred to L5, which can extend `setAxes`'s
   // payload once the parent-side adapter has that probe result to send.
-  function handleSetAxes(axes: { direction: 'ltr' | 'rtl'; colorScheme: 'light' | 'dark' }): void {
+  function handleSetAxes(axes: { direction: 'ltr' | 'rtl'; colorScheme: 'light' | 'dark' }, modeRoot: ModeRootPlan | undefined): void {
     const html = doc.documentElement
+    // CT-4: the catalog-resolved mode gates first; the generic writes below land last.
+    if (modeRoot) applyModeRootPlan(html, modeRoot)
     html.setAttribute('dir', axes.direction)
     if (axes.direction === 'rtl') html.setAttribute('lang', RTL_PREVIEW_LANG)
     else html.removeAttribute('lang')
@@ -575,7 +578,7 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
         handleMeasure(message.requestId, message.refs, message.properties)
         return
       case 'setAxes':
-        handleSetAxes(message.axes)
+        handleSetAxes(message.axes, message.modeRoot)
         return
       case 'setMode':
         applyMode(message.mode)

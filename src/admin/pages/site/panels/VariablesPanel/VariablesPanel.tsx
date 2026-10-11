@@ -22,12 +22,8 @@ import { SearchBar } from '@ui/components/SearchBar'
 import { ChevronDown2Icon } from 'pixel-art-icons/icons/chevron-down-2'
 import { ChevronRightIcon } from 'pixel-art-icons/icons/chevron-right'
 import { getStudioAuthoredCss, getStudioVendorCss, subscribeStudioAuthoredCss, subscribeStudioVendorCss } from '@site/studio/studioRawCssStores'
-import {
-  applyStudioTokenEdits,
-  getStudioTokenState,
-  refreshStudioTokenCatalog,
-  subscribeStudioTokenCatalog,
-} from '@site/studio/studioTokenCatalog'
+import { applyStudioTokenEdits, refreshStudioTokenCatalog } from '@site/studio/studioTokenCatalog'
+import { getStudioTokenState, subscribeStudioTokenCatalog } from '@site/studio/studioTokenCatalogStore'
 import { VariableRow, type VariableRowWrite } from './VariableRow'
 import { buildColumns, buildVariableGroups, replacementCandidates } from './variablesModel'
 import styles from './VariablesPanel.module.css'

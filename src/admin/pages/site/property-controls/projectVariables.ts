@@ -40,11 +40,8 @@ import {
 import { classifyVariableValue, type VariableOption } from '@ui/components/VariableField'
 import { useEditorStore } from '@site/store/store'
 import { getStudioAuthoredCss, getStudioVendorCss, subscribeStudioAuthoredCss, subscribeStudioVendorCss } from '@site/studio/studioRawCssStores'
-import {
-  getStudioTokenCatalog,
-  refreshStudioTokenCatalog,
-  subscribeStudioTokenCatalog,
-} from '@site/studio/studioTokenCatalog'
+import { refreshStudioTokenCatalog } from '@site/studio/studioTokenCatalog'
+import { getStudioTokenCatalog, subscribeStudioTokenCatalog } from '@site/studio/studioTokenCatalogStore'
 
 /** The declaration a picker row shows: the default value, else the one that paints, else the first. */
 function representativeDecl(token: CatalogToken): TokenDecl | undefined {

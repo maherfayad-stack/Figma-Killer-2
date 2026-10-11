@@ -38,7 +38,7 @@ import { createPortal } from 'react-dom'
 import { useAdminUi } from '@admin/state/adminUi'
 import { useEditorStore } from '@site/store/store'
 import type { Breakpoint, Page } from '@core/page-tree'
-import { MIN_FRAME_SIZE, type BoardFrame, type PreviewAxes } from '@core/studio-board'
+import { MIN_FRAME_SIZE, mergePreviewAxes, type BoardFrame, type PreviewAxes } from '@core/studio-board'
 import { Input } from '@ui/components/Input'
 import { ContextMenu, ContextMenuItem } from '@ui/components/ContextMenu'
 import { useInlineRename } from '@site/hooks/useInlineRename'
@@ -59,12 +59,11 @@ import { afterPressPaint } from '../pressRing'
 import { FramePosterPlaceholder } from './FramePosterPlaceholder'
 import { LiveBoardFrame } from './LiveBoardFrame'
 import { resolveFrameMount } from './framePool'
+import { FrameModeChips } from './FrameModeChips'
 import { FrameDiagnosticsBadge } from './FrameDiagnosticsBadge'
 import { describePinnedAxes } from './pinnedAxesLabel'
 import {
-  getColorSchemeCapability,
   getLocalesCapability,
-  subscribeColorSchemeCapability,
   subscribeLocalesCapability,
 } from '@site/studio/previewAxesCapability'
 import { getStudioTrustTier, subscribeStudioTrustTier } from '@site/studio/studioProjectTrust'
@@ -229,18 +228,12 @@ function BoardFrameViewImpl({
   // otherwise duplicating an already-overridden RTL frame "as RTL" would be
   // a no-op flip instead of producing the LTR sibling the label promises.
   const boardAxes = useEditorStore((s) => s.previewAxes)
-  const effectiveAxes: PreviewAxes = { ...boardAxes, ...frame.axes }
+  const effectiveAxes = mergePreviewAxes(boardAxes, frame.axes)
   // Header badge — the ONLY thing that makes a pinned frame visibly
   // different from an unpinned one (see `pinnedAxesLabel.ts`'s doc). `null`
   // whenever `frame.axes` is absent or empty, so an ordinary frame renders
   // no badge at all rather than an empty one.
   const pinnedAxesLabel = describePinnedAxes(frame.axes)
-  const colorSchemeCapability = useSyncExternalStore(
-    subscribeColorSchemeCapability,
-    getColorSchemeCapability,
-    getColorSchemeCapability,
-  )
-  const schemeVariantApplies = colorSchemeCapability !== null && colorSchemeCapability.mechanism !== 'none'
   // WS-10 §4.4 (Phase 4) — locale duplicate variant, same probe-honesty gate
   // (§7.4) the scheme variant above uses: omitted (not disabled) when the
   // probe found no locale dictionary at all, or found only one locale (a
@@ -455,6 +448,7 @@ function BoardFrameViewImpl({
             `CanvasDiagnosticsInjector`, a Tier-2 live one through
             `useBridgeFrameDiagnostics`), so the badge does not branch on
             trust. */}
+        <FrameModeChips frame={frame} />
         <FrameDiagnosticsBadge scopeKey={frame.id} />
       </div>
 
@@ -481,10 +475,9 @@ function BoardFrameViewImpl({
           {/* WS-10 Phase 2 (§4.3-§4.4) — "duplicate as variant": a second
               frame of the SAME page, beside this one, with one preview axis
               flipped. Direction always applies (no probe gate — `dir`
-              always works, same as the toolbar toggle); the color-scheme
-              variant is omitted (not disabled) when the probe found no
-              dark-mode mechanism, so the menu never offers a duplicate that
-              would look identical to its source. */}
+              always works, same as the toolbar toggle). Duplicating into a
+              colour scheme or any other project mode is the header's
+              "+ Mode" (`FrameModeChips`), driven by the token catalog. */}
           <ContextMenuItem
             onClick={() => {
               setContextMenu(null)
@@ -494,17 +487,6 @@ function BoardFrameViewImpl({
             <span aria-hidden="true"><CopyPlusSolidIcon size={13} /></span>
             Duplicate as {effectiveAxes.direction === 'rtl' ? 'LTR' : 'RTL'}
           </ContextMenuItem>
-          {schemeVariantApplies && (
-            <ContextMenuItem
-              onClick={() => {
-                setContextMenu(null)
-                handleDuplicateAsVariant({ colorScheme: effectiveAxes.colorScheme === 'dark' ? 'light' : 'dark' })
-              }}
-            >
-              <span aria-hidden="true"><CopyPlusSolidIcon size={13} /></span>
-              Duplicate as {effectiveAxes.colorScheme === 'dark' ? 'Light' : 'Dark'}
-            </ContextMenuItem>
-          )}
           {localeVariantApplies && (
             <ContextMenuItem
               onClick={() => {

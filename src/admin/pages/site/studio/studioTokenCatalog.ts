@@ -17,7 +17,8 @@
  */
 import { apiRequest } from '@core/http'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { TokenCatalogSchema, type TokenCatalog, type TokenEdit, type TokenUsage } from '@core/studio-tokens'
+import { TokenCatalogSchema, type TokenCatalog, type TokenEdit } from '@core/studio-tokens'
+import { getStudioTokenState, publishStudioTokenState } from './studioTokenCatalogStore'
 import { journaledWriteOutcome } from './journaledUndo'
 import { resyncBoardAfterWrite } from './studioBoardResync'
 import { studioWriteDir } from './studioWorkspaceDir'
@@ -36,33 +37,6 @@ const WriteResponseSchema = Type.Object({
 
 export type StudioTokenWriteResult = Static<typeof WriteResponseSchema>
 
-/** What the editor knows about the project's tokens: the catalog, and (once the Variables panel asked) where each is read. */
-export interface StudioTokenState {
-  readonly catalog: TokenCatalog | null
-  readonly usage: ReadonlyMap<string, TokenUsage> | null
-}
-
-let state: StudioTokenState = { catalog: null, usage: null }
-const listeners = new Set<() => void>()
-
-export function getStudioTokenCatalog(): TokenCatalog | null {
-  return state.catalog
-}
-
-export function getStudioTokenState(): StudioTokenState {
-  return state
-}
-
-export function subscribeStudioTokenCatalog(listener: () => void): () => void {
-  listeners.add(listener)
-  return () => listeners.delete(listener)
-}
-
-function publish(next: StudioTokenState): void {
-  state = next
-  for (const listener of listeners) listener()
-}
-
 /**
  * Re-reads the catalog. Never throws: a project whose styles cannot be read
  * simply has no variables to offer, which is a real answer, and the picker's
@@ -80,12 +54,12 @@ export async function refreshStudioTokenCatalog(options: { usage?: boolean } = {
     })
     const usage = options.usage
       ? new Map(fresh.tokens.flatMap((token) => (token.usage ? [[token.name, token.usage] as const] : [])))
-      : state.usage
-    publish({ catalog: fresh, usage })
+      : getStudioTokenState().usage
+    publishStudioTokenState({ catalog: fresh, usage })
     return fresh
   } catch (err) {
     console.error('[studioTokenCatalog] could not read the token catalog:', err)
-    return state.catalog
+    return getStudioTokenState().catalog
   }
 }
 
@@ -107,7 +81,7 @@ export async function applyStudioTokenEdits(edits: readonly TokenEdit[], undoLab
   await resyncBoardAfterWrite(result.files.map((file) => file.path), {
     structuralOutcome: journaledWriteOutcome(undoLabel, [], result.undoToken ?? undefined),
   })
-  await refreshStudioTokenCatalog({ usage: state.usage !== null })
+  await refreshStudioTokenCatalog({ usage: getStudioTokenState().usage !== null })
   return result
 }
 
