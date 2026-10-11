@@ -223,6 +223,37 @@ own disclosure (`N more`). Three rules make it honest:
   with the same `ParamPromotableRow` wiring the Visual-Component param surface
   drives.
 
+
+**...except a component instance (O6, 2026-10).** A design-system or package
+component (`definition.sourceImport`) lists **every** prop it takes, set or not,
+as Figma's instance panel does. The fold hid an unset boolean and the selected
+tab behind a 14px header button, and the owner read that as "this component has
+no such control". Only a plain element's optional attributes fold.
+
+### An instance lists every prop, and every literal inside one
+
+Rows come from the component's spec: `manifest.generated.json` for the built-in
+design system, `componentSpecExtract.ts` for the project's own components.
+
+| Prop kind | Control |
+|---|---|
+| boolean | switch |
+| string-literal union | select (2-4 members: segmented) |
+| number that names an entry of a list (`TabBar.value`, a local `activeIndex` next to `items`) | select of the list's labels (`collectionIndex`; local components by name, `collectionIndexNames.ts`) |
+| other number, string | number / text field |
+| list or object (`items`, `chips`, `segmentedControl`) | `code` row: the read-only "N items, set in code" summary |
+| a callback | no row (behaviour, not a property) |
+
+A list or object **written inline** in the call site (`inlineLiteralProps`) is
+not read-only: `StructuredValueControl` draws one nested row per scalar literal
+(a chip's `selected` a switch, `segmentedControl.value` a select of
+`segmentedControl.items`, a tab label a text field), and a documented key the
+call site lacks (`example`) is offered unset. A write is one `prop` edit with a
+`path` (`setJsxPropPath`): one literal replaced, or one key appended in the
+object's own layout, journaled so Ctrl+Z restores the file byte for byte. A list
+that is a binding (`items={TABS}`), a leaf that is code, or an inlined
+component's element stays read-only, with the usual one-remedy sentence.
+
 ### Law 4 — Multi-value properties expand in place, and remember (F9, F11, F18–F19)
 
 Padding is one pair of fields with a toggle to four. Corner radius is one field

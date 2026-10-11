@@ -128,3 +128,39 @@ describe('the Module block folds what the source does not set', () => {
     expect(screen.getByTestId('module-more-properties-toggle').textContent).toContain('1 more')
   })
 })
+
+describe('a component instance lists every prop it takes', () => {
+  /**
+   * The owner could not find an on/off switch or the selected tab on a
+   * design-system instance: every prop the source left unset sat behind a
+   * 14px header button. A component instance (`sourceImport`) is not a plain
+   * element - its props ARE what you select it to change - so nothing folds.
+   */
+  it('keeps unset props resident for a design-system component, with no disclosure', () => {
+    const component = {
+      ...DEFINITION,
+      id: 'alm.Toggle',
+      sourceImport: { kind: 'design-system', name: 'Toggle' },
+    } as AnyModuleDefinition
+    const node = { ...imageNode({ alt: 'A chip' }), moduleId: 'alm.Toggle' } as PageNode
+    render(
+      <>
+        {renderModuleTabContent({
+          selectedNode: node,
+          selectedNodeId: node.id,
+          definition: component,
+          resolvedPropsForBreakpoint: { alt: '', loading: 'lazy', decoding: 'async', ...node.props },
+          overrideKeys: new Set(),
+          activeDocument: null,
+          activePage: PAGE,
+          handleChange: () => undefined,
+          handlePatch: () => undefined,
+        })}
+      </>,
+    )
+
+    expect(screen.getByTestId('property-control-loading')).toBeDefined()
+    expect(screen.getByTestId('property-control-decoding')).toBeDefined()
+    expect(screen.queryByTestId('module-more-properties-toggle')).toBeNull()
+  })
+})

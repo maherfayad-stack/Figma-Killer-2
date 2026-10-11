@@ -157,3 +157,31 @@ describe('buildComponentCallSiteRows', () => {
     })
   })
 })
+
+describe('buildComponentCallSiteRows - lists and indexes', () => {
+  const tabsSpec: LocalComponentSpec = {
+    name: 'Tabs',
+    file: 'src/components/Tabs.tsx',
+    exportName: 'Tabs',
+    isDefaultExport: false,
+    line: 1,
+    column: 1,
+    role: 'component',
+    props: [
+      { name: 'items', kind: { kind: 'collection' }, required: true },
+      { name: 'activeIndex', kind: { kind: 'collectionIndex', collection: 'items' }, required: false },
+      { name: 'compact', kind: { kind: 'boolean' }, required: false },
+    ],
+  }
+
+  it('lists a list prop as a read-only code row, never a text box', () => {
+    const row = buildComponentCallSiteRows(tabsSpec, {}).find((r) => r.key === 'items')
+    expect(row?.control.type).toBe('code')
+  })
+
+  it('draws the selected tab as a collection-index control and a boolean as a toggle, set or not', () => {
+    const rows = buildComponentCallSiteRows(tabsSpec, { items: ['a', 'b'] })
+    expect(rows.find((r) => r.key === 'activeIndex')?.control).toEqual({ type: 'collection-index', label: 'activeIndex', collection: 'items' })
+    expect(rows.find((r) => r.key === 'compact')?.control.type).toBe('toggle')
+  })
+})

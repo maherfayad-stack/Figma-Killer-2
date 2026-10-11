@@ -296,3 +296,46 @@ describe('extractLocalComponentCatalog roles', () => {
     expect(roles).toEqual({ LanguageProvider: 'provider', Shell: 'component', Providers: 'provider' })
   })
 })
+
+describe('extractLocalComponentCatalog - lists and the index into them', () => {
+  it('classifies T[], Array<T> and readonly T[] as a collection', () => {
+    write(
+      'src/components/List.tsx',
+      [
+        'export function List({ items, rows, cells }: { items: string[]; rows?: Array<{ id: string }>; cells?: readonly number[] }) {',
+        '  return null',
+        '}',
+      ].join('\n'),
+    )
+    const list = catalog().find((c) => c.name === 'List')!
+    expect(list.props.map((p) => [p.name, p.kind.kind])).toEqual([
+      ['items', 'collection'],
+      ['rows', 'collection'],
+      ['cells', 'collection'],
+    ])
+  })
+
+  it('marks a selection-named number next to the one list as an index into it', () => {
+    write(
+      'src/components/Tabs.tsx',
+      [
+        'export function Tabs({ items, activeIndex = 0, gap }: { items: string[]; activeIndex?: number; gap?: number }) {',
+        '  return null',
+        '}',
+      ].join('\n'),
+    )
+    const tabs = catalog().find((c) => c.name === 'Tabs')!
+    expect(tabs.props.find((p) => p.name === 'activeIndex')?.kind).toEqual({ kind: 'collectionIndex', collection: 'items' })
+    // A number that does not name a selection stays a number.
+    expect(tabs.props.find((p) => p.name === 'gap')?.kind).toEqual({ kind: 'number' })
+  })
+
+  it('leaves the number alone when two unrelated lists leave no honest choice', () => {
+    write(
+      'src/components/Grid.tsx',
+      ['export function Grid({ a, b, value }: { a: string[]; b: string[]; value?: number }) {', '  return null', '}'].join('\n'),
+    )
+    const grid = catalog().find((c) => c.name === 'Grid')!
+    expect(grid.props.find((p) => p.name === 'value')?.kind).toEqual({ kind: 'number' })
+  })
+})

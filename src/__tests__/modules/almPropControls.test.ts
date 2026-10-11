@@ -80,15 +80,18 @@ describe('alm module prop controls', () => {
   })
 })
 
-describe('structured props offer no control', () => {
+describe('structured props are listed read-only or edited per literal, never as a text box', () => {
   /**
    * THE BUG: `items={[{ icon: <HomeIcon/>, label: 'Home' }]}` was classified
    * `undefined` by the docs pass and fell through to a TEXT BOX. The module
    * doc called that "the honest failure mode"; it is not. Every value the box
    * accepts is wrong — typing `5` reached `items.map(...)` inside the real
    * component and put "TabBar (render error)" on the canvas. A write with no
-   * honest target is one the editor is supposed to REFUSE, which for a
-   * property row means not offering the row.
+   * honest target is one the editor is supposed to REFUSE. The panel still
+   * LISTS every prop the component takes, so a list is a `code` row (the
+   * read-only "N items, set in code" summary; its literals are edited one by one
+   * where the source writes them inline, `StructuredValueControl`) - never a
+   * field that takes a scalar.
    */
   const manifest = manifestJson as ComponentManifest
 
@@ -97,17 +100,23 @@ describe('structured props offer no control', () => {
     expect(tabBar?.props.find((p) => p.name === 'items')?.kind).toBe('collection')
   })
 
-  it('offers no property row for any collection prop', () => {
+  it('lists every collection prop as a read-only code row, never a scalar control', () => {
     const offenders: string[] = []
     for (const component of manifest.components) {
       const mod = registry.get(`alm.${component.name}`)
       if (!mod) continue
       for (const prop of component.props) {
         if (prop.kind !== 'collection') continue
-        if (prop.name in mod.schema) offenders.push(`${component.name}.${prop.name}`)
+        const control = (mod.schema as Record<string, { type: string }>)[prop.name]
+        if (control?.type !== 'code') offenders.push(`${component.name}.${prop.name}`)
       }
     }
     expect(offenders).toEqual([])
+  })
+
+  it("carries a collection's documented example, so the keys a call site lacks can be offered", () => {
+    const chips = (registry.get('alm.Navbar')!.schema as Record<string, { type: string; example?: unknown }>).chips
+    expect(chips?.example).toEqual([{ label: 'Dates', dropdown: true, selected: false }])
   })
 
   it('still finds collection props at all, so the classifier cannot silently stop working', () => {

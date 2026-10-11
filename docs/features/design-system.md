@@ -35,6 +35,14 @@ import { Button } from '../design-system'
 
 `isDesignSystemBacked(projectDir)` (`server/handlers/studio/builtinDesignSystem.ts`) is true when `<project>/design-system/index.js` exists. A project with the folder renders the canvas from Studio's vendored copy, not from the project's copy.
 
+### The first insert into a project without the folder
+
+Assets offers the design system in every project. An insert writes a relative import (`designSystemImport`, spelled by the server from the file being written), so on a project with no `design-system/` folder the import would resolve to nothing: the real app stops building and the canvas shows a placeholder for ever. So `applyStudioEditBatch` makes the project design-system-backed **in the same batch** (`server/handlers/studio/designSystemMaterialize.ts`): `designSystem: 'alm'` in `.studio/meta.json`, then `ensureDesignSystemFiles`. Any edit of the batch that names `designSystemImport` (an insert, a wrap, a slot fill) triggers it; an agent's batch gets the folder too, without an undo.
+
+The editor's batch is journaled with `designSystemCreated: true` (`undoJournal.ts`), and the insert's undo is `restore-journal-else-delete-created` (`structuralUndoPlan.ts`): one Ctrl+Z puts the page back byte for byte, removes exactly the files `.studio/design-system.json` lists, the folders they leave empty, the manifest and the meta field. The folder stays when another file still imports it (Studio's generated `prototype/*.generated.*` do not count), and an insert that lands nothing leaves nothing behind. `tests/e2e/owner-components.e2e.ts` replays it.
+
+A `pkg.*` node whose bundle answered and registered everything it holds, and is still unregistered, says "can't be found: check its import path" (`PackageComponentPlaceholder.tsx`) instead of "Loading".
+
 ## Migrating a project off the retired package
 
 A project written before the npm was retired still imports it and no longer builds. The load path changes nothing. `GET /admin/api/studio/design-system/migrate` reports what the board banner needs; the banner's button calls `POST`, which records `designSystem: 'alm'` in `.studio/meta.json`, writes the folder, rewrites every import of the retired package in the project's own source, and removes the dependency entry. It is a rewrite of the user's source, so it only happens when a person asks for it.

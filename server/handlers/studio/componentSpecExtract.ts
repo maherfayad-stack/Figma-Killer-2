@@ -31,7 +31,6 @@
  * is read by NAME off the `Project`'s own source files, and its `getTypeNode()`
  * is the literal text the author wrote.
  */
-import { INDEX_PROP_NAME_RE, pickIndexedCollection } from '@core/utils/collectionIndexNames'
 import { basename } from 'node:path'
 import {
   Node,
@@ -58,6 +57,7 @@ import { Type, type Static } from '@core/utils/typeboxHelpers'
 import type { ComponentSpec, PropKind, PropSpec } from './packageManifestSchema'
 import { PropSpecSchema } from './packageManifestSchema'
 import { componentRole } from './componentRole'
+import { isArrayTypeNode, markCollectionIndexes } from './componentPropLists'
 
 // ---------------------------------------------------------------------------
 // Path helper — shared by both producers
@@ -185,20 +185,6 @@ export function enumLiteralNodes(project: Project, typeNode: TypeNode | undefine
     return nonNullish.length > 1 ? allStringLiterals(nonNullish) : undefined
   }
   return resolveNamedUnionAliasNodes(project, typeNode, 0)
-}
-
-/** `T[]`, `readonly T[]`, `Array<T>`, `ReadonlyArray<T>` - a list the call site passes whole. */
-function isArrayTypeNode(node: TypeNode): boolean {
-  if (node.getKind() === SyntaxKind.ArrayType) return true
-  if (node.getKind() === SyntaxKind.TypeOperator) {
-    const operand = node.asKindOrThrow(SyntaxKind.TypeOperator).getTypeNode()
-    return operand.getKind() === SyntaxKind.ArrayType
-  }
-  if (node.getKind() === SyntaxKind.TypeReference) {
-    const typeName = node.asKindOrThrow(SyntaxKind.TypeReference).getTypeName().getText()
-    return typeName === 'Array' || typeName === 'ReadonlyArray'
-  }
-  return false
 }
 
 /** A single (already non-nullish) type node -> `PropKind`. Never touches the checker — see module doc. */
@@ -380,20 +366,6 @@ function pascalCaseFromFileBase(relPath: string): string | undefined {
   if (!cleaned) return undefined
   const capitalized = cleaned[0]!.toUpperCase() + cleaned.slice(1)
   return PASCAL_CASE_RE.test(capitalized) ? capitalized : undefined
-}
-
-/**
- * A number named like a selection, next to ONE list the component takes, is an
- * index into that list: the panel then offers the list's own entries to choose
- * from instead of a bare number (`collectionIndex`, the same kind the built-in
- * design system's manifest records). See `collectionIndexNames.ts` for the rule.
- */
-function markCollectionIndexes(props: PropSpec[]): PropSpec[] {
-  const target = pickIndexedCollection(props.filter((prop) => prop.kind.kind === 'collection').map((prop) => prop.name))
-  if (target === undefined) return props
-  return props.map((prop) =>
-    prop.kind.kind === 'number' && INDEX_PROP_NAME_RE.test(prop.name) ? { ...prop, kind: { kind: 'collectionIndex', collection: target } } : prop,
-  )
 }
 
 export function extractPropsFromMembers(project: Project, members: MemberedNode): PropSpec[] {
