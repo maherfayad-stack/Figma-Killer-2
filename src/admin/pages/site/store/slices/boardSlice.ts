@@ -204,6 +204,8 @@ interface BoardSlice {
    * remaining board. Never removes the last board (no-op).
    */
   removeBoard: (boardId: string) => void
+  /** Add the boards the server made since this editor last read (it keeps them across a save) without dirtying anything. */
+  adoptServerBoards: (file: BoardsFile) => void
   /** Switch which board is active. No-op for an unknown id. */
   setActiveBoard: (boardId: string) => void
   // ── Annotations: sticky notes + doc cards ───────────────────────────────
@@ -576,6 +578,17 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
   ...createFrameMutationActions(set, get),
 
   markBoardsClean: () => set({ boardsDirty: false, boardsPendingExplicitRemoval: false }),
+
+  adoptServerBoards: (file) => {
+    const { boards } = get()
+    const have = new Set(boards.boards.map((b) => b.id))
+    const arrived = file.boards.filter((b) => !have.has(b.id))
+    if (arrived.length === 0) return
+    // Not a user edit: no history entry, and nothing to save back.
+    set((state) => {
+      state.boards = { ...state.boards, boards: [...state.boards.boards, ...arrived] }
+    })
+  },
 
   endBoardGesture: () => {
     if (get()._historyCoalesceKey === null) return

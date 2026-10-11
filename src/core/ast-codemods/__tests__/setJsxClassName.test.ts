@@ -154,11 +154,48 @@ describe('setJsxClassName', () => {
       const file = writeFixture('template-remove.tsx', source)
       const { line, col } = locateTag(source, 'div')
 
-      const result = setJsxClassName({ file, line, col, add: t(), remove: t('a') })
+      // `b` is not written in the template, so it could be anything `${x}` produces.
+      const result = setJsxClassName({ file, line, col, add: t(), remove: t('b') })
 
       expect(result.ok).toBe(false)
       if (!result.ok) expect(result.refusal.reason).toBe('template-dynamic')
       expect(fs.readFileSync(file, 'utf8')).toBe(source)
+    })
+  })
+
+  describe('a template that is a plain class list - className={`${styles.a} ${styles.b} c`}', () => {
+    const file = (source: string, name: string) => writeFixture(name, source)
+    const page = (value: string) =>
+      ["import styles from './Card.module.css'", 'export function Card() {', `  return <div className=${value}>Hi</div>`, '}', ''].join('\n')
+
+    it('removes a module token that is one whole span and keeps the rest', () => {
+      const source = page('{`${styles.a} ${styles.b} c`}')
+      const path = file(source, 'tpl-list-1.tsx')
+      const { line, col } = locateTag(source, 'div')
+      expect(setJsxClassName({ file: path, line, col, add: [], remove: [mod('./Card.module.css', 'a')] }).ok).toBe(true)
+      expect(fs.readFileSync(path, 'utf8')).toBe(page('{`${styles.b} c`}'))
+    })
+
+    it('collapses to the bare binding or a plain string when one kind of token is left', () => {
+      const source = page('{`${styles.a} ${styles.b}`}')
+      const path = file(source, 'tpl-list-2.tsx')
+      const { line, col } = locateTag(source, 'div')
+      expect(setJsxClassName({ file: path, line, col, add: [], remove: [mod('./Card.module.css', 'a')] }).ok).toBe(true)
+      expect(fs.readFileSync(path, 'utf8')).toBe(page('{styles.b}'))
+
+      const source2 = page('{`${styles.a} c`}')
+      const path2 = file(source2, 'tpl-list-3.tsx')
+      expect(setJsxClassName({ file: path2, line, col, add: [], remove: [mod('./Card.module.css', 'a')] }).ok).toBe(true)
+      expect(fs.readFileSync(path2, 'utf8')).toBe(page('"c"'))
+    })
+
+    it('refuses a span glued to text, which is not a token list', () => {
+      const source = page('{`btn-${size} ${styles.a}`}')
+      const path = file(source, 'tpl-list-4.tsx')
+      const { line, col } = locateTag(source, 'div')
+      const result = setJsxClassName({ file: path, line, col, add: [], remove: [mod('./Card.module.css', 'a')] })
+      expect(result.ok).toBe(false)
+      expect(fs.readFileSync(path, 'utf8')).toBe(source)
     })
   })
 
@@ -278,6 +315,38 @@ describe('setJsxClassName', () => {
       // Node ids are `rel:line:col`; a newline here would shift every node
       // below this one in the same file.
       expect(written.split('\n').length).toBe(source.split('\n').length)
+    })
+
+    it('SWAPS the binding for another module class: remove + add in one write', () => {
+      const source = [
+        "import styles from './Card.module.css'",
+        'export function Card() {',
+        '  return <div className={styles.greet}>Hi</div>',
+        '}',
+        '',
+      ].join('\n')
+      const file = writeFixture('css-module-swap.tsx', source)
+      const { line, col } = locateTag(source, 'div')
+
+      const result = setJsxClassName({ file, line, col, add: [mod('./Card.module.css', 'counter')], remove: [mod('./Card.module.css', 'greet')] })
+
+      expect(result.ok).toBe(true)
+      expect(fs.readFileSync(file, 'utf8')).toBe(source.replace('{styles.greet}', '{styles.counter}'))
+    })
+
+    it('SWAPS the binding for a literal class too', () => {
+      const source = [
+        "import styles from './Card.module.css'",
+        'export function Card() {',
+        '  return <div className={styles.greet}>Hi</div>',
+        '}',
+        '',
+      ].join('\n')
+      const file = writeFixture('css-module-swap-literal.tsx', source)
+      const { line, col } = locateTag(source, 'div')
+
+      expect(setJsxClassName({ file, line, col, add: t('display'), remove: [mod('./Card.module.css', 'greet')] }).ok).toBe(true)
+      expect(fs.readFileSync(file, 'utf8')).toContain('className="display"')
     })
 
     it('still refuses to REMOVE a token the module produces', () => {
