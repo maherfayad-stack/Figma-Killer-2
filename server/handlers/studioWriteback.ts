@@ -69,7 +69,7 @@ import {
   syncProjectWithDisk,
   type ModuleImportPlan,
 } from '@core/ast-codemods'
-import { callSitePosition, inlineDepth, type SourceFingerprintExpectations } from '@core/page-tree'
+import { callSitePosition, inlineDepth, inlineSegments, type SourceFingerprintExpectations } from '@core/page-tree'
 import type { Project } from 'ts-morph'
 import { applyCssEdit } from './studioCssWriteback'
 import { withProjectWriteLock } from './studio/projectWriteLock'
@@ -333,17 +333,21 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
     }
     case 'expose-prop': {
       // P5-C (DET-7) — two files: the component (this id's tail, `loc`) and
-      // the ONE call site (its head). One level deep only: a deeper element's
-      // nearest call site sits in a shared component's own file.
-      if (inlineDepth(edit.nodeId) !== 1) {
-        throw new StudioEditRefusalError('not-in-component', 'Only an element of a component placed directly on this page can become a prop of that component.')
+      // the ONE call site (its head). G-2b: an element deeper than one call
+      // site also names the call site inside each component on the way down
+      // (`page~Card~Badge`); each is decoded on its own, so each file is
+      // contained on its own, and the codemod threads the value through them.
+      if (inlineDepth(edit.nodeId) < 1) {
+        throw new StudioEditRefusalError('not-in-component', 'Only an element of a component can become a prop of that component.')
       }
-      const callSite = studioEditLocation(dir, callSitePosition(edit.nodeId), scope)
-      if (!callSite) return { applied: false, unwritable: 'no-source-location' }
+      const sites = inlineSegments(edit.nodeId).slice(0, -1).map((segment) => studioEditLocation(dir, segment, scope))
+      const [callSite, ...inner] = sites
+      if (!callSite || inner.some((site) => site === null)) return { applied: false, unwritable: 'no-source-location' }
       const result = exposeLiteralAsProp({
         callSiteFile: join(dir, callSite.rel),
         callSiteLine: callSite.line,
         callSiteCol: callSite.col,
+        via: inner.flatMap((site) => (site ? [{ file: join(dir, site.rel), line: site.line, col: site.col }] : [])),
         elementFile: loc.file,
         line: loc.line,
         col: loc.col,

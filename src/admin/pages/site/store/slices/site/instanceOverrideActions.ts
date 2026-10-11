@@ -35,7 +35,7 @@
  * Posts edits, never mints a tree: `no-vc-mode-branches-in-mutations` does not
  * apply (the posture `instanceActions.ts` has).
  */
-import { callSitePosition, isInlinedNodeId, styleValueKey, type NodeTree, type PageNode } from '@core/page-tree'
+import { callSitePosition, inlineDepth, isInlinedNodeId, styleValueKey, type NodeTree, type PageNode } from '@core/page-tree'
 import { registry } from '@core/module-engine'
 import { pushToast } from '@ui/components/Toast'
 import { invalidateLocalComponentCatalog } from '@site/studio/componentCatalog'
@@ -113,7 +113,20 @@ export function createInstanceOverrideActions(helpers: SiteSliceHelpers): {
     return Object.keys(props?.callSiteProps ?? {})
   }
 
+  /** How many places "Apply to all" reaches: the page's component is what gains the default, wherever it is used. */
   function instancesOnBoard(nodeId: string): number {
+    if (inlineDepth(nodeId) > 1) {
+      const instance = findNode(callSitePosition(nodeId))?.props as { componentName?: string; sourceFile?: string } | undefined
+      if (!instance) return 1
+      let count = 0
+      for (const page of get().site?.pages ?? []) {
+        for (const node of Object.values(page.nodes)) {
+          const props = node.moduleId === 'studio.instance' ? (node.props as { componentName?: string; sourceFile?: string }) : undefined
+          if (props !== undefined && props.componentName === instance.componentName && props.sourceFile === instance.sourceFile) count += 1
+        }
+      }
+      return Math.max(count, 1)
+    }
     const tail = inlineTailKey(nodeId)
     return tail ? (get()._inlineTailToCount.get(tail) ?? 1) : 1
   }

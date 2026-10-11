@@ -288,11 +288,11 @@ describe('what stays as it was, with the reason', () => {
     expect(read('pages/Rooms.tsx')).toBe(ROOMS)
   })
 
-  it('an element two components deep, or in a list row, cannot carry a per-instance value', async () => {
-    const nested = 'pages/Rooms.tsx:5:8~components/RoomCard.tsx:5:8~components/Badge.tsx:2:10'
+  it('an element in a chain longer than the limit, or in a list row, cannot carry a per-instance value', async () => {
+    const nested = ['pages/Rooms.tsx:5:8', ...Array.from({ length: 5 }, (_, i) => `components/Level${i}.tsx:5:8`), 'components/Badge.tsx:2:10'].join('~')
     const node = { id: nested, moduleId: 'base.text', props: { text: 'New', tag: 'span' }, fromComponent: 'Badge' } as unknown as PageNode
     const plan = planInstanceOverride({ node, nodeId: nested, change: { props: { text: 'Newer' } }, textProp: 'text', baseline: { text: 'New', tag: 'span' }, callSite: undefined })
-    expect(plan.kind).toBe('whole-component')
+    expect(plan).toEqual({ kind: 'whole-component', reason: 'This sits 6 components deep, and a value is only passed down 5 levels, so this changes every Badge.' })
     const row = 'pages/Rooms.tsx:5:8#2~components/RoomCard.tsx:5:8'
     const rowPlan = planInstanceOverride({ node: { ...node, id: row } as PageNode, nodeId: row, change: { props: { text: 'Newer' } }, textProp: 'text', baseline: { text: 'New', tag: 'span' }, callSite: undefined })
     expect(rowPlan).toEqual({ kind: 'whole-component', reason: 'Badge is repeated by a list here, and one piece of code renders every item, so this changes every Badge.' })

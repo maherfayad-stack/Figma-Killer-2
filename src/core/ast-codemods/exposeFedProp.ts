@@ -25,9 +25,8 @@
  */
 import { Node } from 'ts-morph'
 import { paramReadCount, type FunctionLike } from '@core/page-parser'
-import { jsStringLiteral, isJsxAttributeSafe } from './detachSource'
 import type { JsxOpeningLikeElement } from './locateJsxElement'
-import type { ExposeTarget } from './exposeLiteralAsProp'
+import { attributeText, type ExposeTarget } from './exposeLiteralSites'
 
 export type FedValueType = 'string' | 'number' | 'boolean'
 
@@ -85,12 +84,6 @@ function defaultType(defaultText: string | undefined): FedValueType | undefined 
   if (/^(['"`]).*\1$/s.test(text)) return 'string'
   if (/^-?\d+(\.\d+)?$/.test(text)) return 'number'
   return text === 'true' || text === 'false' ? 'boolean' : undefined
-}
-
-function attributeText(name: string, value: string | number | boolean): string {
-  if (value === true) return name
-  if (typeof value === 'string') return isJsxAttributeSafe(value) ? `${name}="${value}"` : `${name}={${jsStringLiteral(value)}}`
-  return `${name}={${String(value)}}`
 }
 
 /** The type of a call site's own literal attribute, or `undefined` for anything that is not one. */

@@ -49,247 +49,46 @@
  * `heading` that `...rest` forwards today would otherwise start setting it.
  */
 import * as path from 'node:path'
-import { Node, QuoteKind, SyntaxKind, type Project, type SourceFile } from 'ts-morph'
-import { createWorkspaceProject, type FunctionLike } from '@core/page-parser'
+import { Node, QuoteKind, SyntaxKind, type SourceFile } from 'ts-morph'
+import { createWorkspaceProject } from '@core/page-parser'
 import { buildParamBindings } from './detachComponent'
-import { findComponentCallSites } from './componentCallSites'
 import { addOptionalPropToSignature, widenPropType } from './componentPropSignature'
 import { fedIdentifier, needsWidening, planFedOverride, type FedPlan } from './exposeFedProp'
-import { jsStringLiteral, jsxTextValue, isJsxAttributeSafe } from './detachSource'
+import {
+  ExposeRefusal,
+  IDENTIFIER_RE,
+  RESERVED_PROPS,
+  allCallSites,
+  assertNotMappedOverProps,
+  attributeText,
+  exportNameOf,
+  functionAtIndex,
+  functionLikesOf,
+  isTypedThroughVariable,
+  literalFor,
+  propType,
+  refuse,
+  targetKey,
+  type ExposeLiteralAsPropParams,
+  type ExposeLiteralAsPropResult,
+  type LiteralSite,
+} from './exposeLiteralSites'
+import { exposeThroughLevels } from './exposeThroughLevels'
 import { topLevelBindingNames } from './importReconcile'
-import { findJsxElementAtLocationOrThrow, loadSourceFile, type JsxOpeningLikeElement } from './locateJsxElement'
+import { findJsxElementAtLocationOrThrow, loadSourceFile } from './locateJsxElement'
 import { resolveComponentCallSite } from './resolveComponentCallSite'
 import { introducesSyntaxErrors } from './syntaxRegression'
-
-export type ExposeTarget = { kind: 'text' } | { kind: 'attribute'; name: string } | { kind: 'style'; property: string }
-
-export type ExposeLiteralRefusalReason =
-  | 'unresolvable'
-  | 'package-component'
-  | 'not-in-component'
-  | 'not-a-literal'
-  | 'unsupported-params'
-  | 'unsupported-props-type'
-  | 'maps-over-props'
-  | 'call-site-spread'
-  | 'shared-prop'
-
-/** One literal of the element, the prop it becomes, and (optionally) this call site's own value for it. */
-export interface ExposeOverride {
-  target: ExposeTarget
-  /** The preferred prop name — a free variant is chosen when it is taken. */
-  propName: string
-  /** Written at THIS call site when given; otherwise every call site, this one included, renders the default. */
-  value?: string | number | boolean
-}
-
-export interface ExposeLiteralAsPropParams {
-  /** The call site: absolute file and its tag-name `line:col`. */
-  callSiteFile: string
-  callSiteLine: number
-  callSiteCol: number
-  /** The element inside the component's markup: absolute file and its tag-name `line:col`. */
-  elementFile: string
-  line: number
-  col: number
-  workspaceRoot: string
-  /** The literals of that one element to expose — each target at most once. */
-  overrides: readonly ExposeOverride[]
-  project?: Project
-}
-
-export type ExposeLiteralAsPropResult =
-  /** `propNames` — the name each override was given, in `overrides` order. */
-  | { ok: true; propNames: string[]; callSites: number }
-  | { ok: false; refusal: { reason: ExposeLiteralRefusalReason; message: string } }
-
-const IDENTIFIER_RE = /^[A-Za-z_$][\w$]*$/
-const RESERVED_PROPS = new Set(['children', 'key', 'ref', 'class', 'for', 'style', 'className'])
-const HTML_ENTITY_RE = /&(#\d+|#x[0-9a-f]+|[a-z][a-z0-9]*);/i
-
-class ExposeRefusal extends Error {
-  readonly reason: ExposeLiteralRefusalReason
-  constructor(reason: ExposeLiteralRefusalReason, message: string) {
-    super(message)
-    this.reason = reason
-  }
-}
-
-function refuse(reason: ExposeLiteralRefusalReason, message: string): never {
-  throw new ExposeRefusal(reason, message)
-}
 
 /** One override, planned: a literal that becomes a prop, or a value that already IS a prop (only the call site changes). */
 type PlannedOverride = { fed: false; literal: LiteralSite } | { fed: true; plan: Extract<FedPlan, { ok: true }>; name: string }
 
-/** One literal, and what replaces it once it is a prop. */
-interface LiteralSite {
-  /** The range the prop reference replaces, in the component file's full text. */
-  start: number
-  end: number
-  /** How the prop is read there: `{name}` in JSX, `name` in an expression. */
-  asJsx: boolean
-  /** The default, as JS source. */
-  defaultText: string
-  type: 'string' | 'number' | 'boolean'
-  /** A node inside the literal's position, for the `.map`-over-props check. */
-  anchor: Node
-}
-
-function literalExpression(expr: Node): { text: string; type: LiteralSite['type'] } | undefined {
-  if (Node.isStringLiteral(expr) || Node.isNoSubstitutionTemplateLiteral(expr)) {
-    return { text: jsStringLiteral(expr.getLiteralValue()), type: 'string' }
-  }
-  if (Node.isNumericLiteral(expr)) return { text: expr.getText(), type: 'number' }
-  if (Node.isTrueLiteral(expr) || Node.isFalseLiteral(expr)) return { text: expr.getText(), type: 'boolean' }
-  return undefined
-}
-
-function textLiteral(opening: JsxOpeningLikeElement, file: SourceFile): LiteralSite {
-  const element = Node.isJsxOpeningElement(opening) ? opening.getParent() : undefined
-  if (!element || !Node.isJsxElement(element)) refuse('not-a-literal', 'This element has no text to expose.')
-  const children = element.getJsxChildren().filter((child) => {
-    if (Node.isJsxText(child)) return !child.containsOnlyTriviaWhiteSpaces()
-    return !(Node.isJsxExpression(child) && child.getExpression() === undefined)
-  })
-  const only = children.length === 1 ? children[0]! : undefined
-  if (only && Node.isJsxText(only)) {
-    const raw = file.getFullText().slice(only.getPos(), only.getEnd())
-    const lead = raw.length - raw.trimStart().length
-    const span = raw.trim()
-    if (HTML_ENTITY_RE.test(span)) refuse('not-a-literal', 'This text contains an HTML entity, which means something different once it is a prop value.')
-    const start = only.getPos() + lead
-    return { start, end: start + span.length, asJsx: true, defaultText: jsStringLiteral(jsxTextValue(span)), type: 'string', anchor: only }
-  }
-  const expr = only && Node.isJsxExpression(only) ? only.getExpression() : undefined
-  const literal = expr ? literalExpression(expr) : undefined
-  if (!expr || !literal || literal.type !== 'string') {
-    refuse('not-a-literal', 'Only an element whose whole content is one piece of literal text can expose it as a prop.')
-  }
-  return { start: expr.getStart(), end: expr.getEnd(), asJsx: false, defaultText: literal.text, type: 'string', anchor: expr }
-}
-
-function attributeLiteral(opening: JsxOpeningLikeElement, name: string): LiteralSite {
-  const attribute = opening.getAttributes().find((attr) => Node.isJsxAttribute(attr) && attr.getNameNode().getText() === name)
-  const initializer = attribute && Node.isJsxAttribute(attribute) ? attribute.getInitializer() : undefined
-  if (initializer && Node.isStringLiteral(initializer)) {
-    const value = initializer.getLiteralText()
-    if (value.includes('&')) refuse('not-a-literal', `The ${name} value contains an HTML entity, which means something different once it is a prop value.`)
-    return { start: initializer.getStart(), end: initializer.getEnd(), asJsx: true, defaultText: jsStringLiteral(value), type: 'string', anchor: initializer }
-  }
-  const expr = initializer && Node.isJsxExpression(initializer) ? initializer.getExpression() : undefined
-  const literal = expr ? literalExpression(expr) : undefined
-  if (!expr || !literal) refuse('not-a-literal', `\`${name}\` is not a literal on this element — it already reads a value, which stays as it is.`)
-  return { start: expr.getStart(), end: expr.getEnd(), asJsx: false, defaultText: literal.text, type: literal.type, anchor: expr }
-}
-
-function styleLiteral(opening: JsxOpeningLikeElement, property: string): LiteralSite {
-  const attribute = opening.getAttributes().find((attr) => Node.isJsxAttribute(attr) && attr.getNameNode().getText() === 'style')
-  const initializer = attribute && Node.isJsxAttribute(attribute) ? attribute.getInitializer() : undefined
-  const object = initializer && Node.isJsxExpression(initializer) ? initializer.getExpression() : undefined
-  if (!object || !Node.isObjectLiteralExpression(object)) refuse('not-a-literal', 'This element has no inline style object to expose a value from.')
-  for (const member of object.getProperties()) {
-    if (!Node.isPropertyAssignment(member)) continue
-    const key = member.getNameNode()
-    const keyText = Node.isIdentifier(key) ? key.getText() : Node.isStringLiteral(key) ? key.getLiteralValue() : undefined
-    if (keyText !== property) continue
-    const value = member.getInitializer()
-    const literal = value ? literalExpression(value) : undefined
-    if (!value || !literal || literal.type === 'boolean') break
-    return { start: value.getStart(), end: value.getEnd(), asJsx: false, defaultText: literal.text, type: literal.type, anchor: value }
-  }
-  refuse('not-a-literal', `\`${property}\` is not a literal value in this element's inline style.`)
-}
-
-function rootIdentifier(expr: Node): string | undefined {
-  if (Node.isIdentifier(expr)) return expr.getText()
-  if (Node.isPropertyAccessExpression(expr) || Node.isElementAccessExpression(expr)) return rootIdentifier(expr.getExpression())
-  return undefined
-}
-
-/** The literal sits inside a `.map` over one of the component's own props: a default would stand in for data. */
-function assertNotMappedOverProps(anchor: Node, fn: FunctionLike, propNames: ReadonlySet<string>): void {
-  for (const ancestor of anchor.getAncestors()) {
-    if (ancestor === fn) return
-    if (!Node.isCallExpression(ancestor)) continue
-    const callee = ancestor.getExpression()
-    if (!Node.isPropertyAccessExpression(callee) || callee.getName() !== 'map') continue
-    const root = rootIdentifier(callee.getExpression())
-    if (root && propNames.has(root)) refuse('maps-over-props', 'This literal is rendered once per item of a list the component is handed, so a single prop cannot override it.')
-  }
-}
-
-/** The component is typed through its VARIABLE (`const Card: FC<Props> = …`): a binding added to an untyped parameter would not type-check. */
-function isTypedThroughVariable(fn: FunctionLike): boolean {
-  let holder: Node | undefined = fn.getParent()
-  while (holder && (Node.isParenthesizedExpression(holder) || Node.isCallExpression(holder) || Node.isAsExpression(holder))) holder = holder.getParent()
-  return holder !== undefined && Node.isVariableDeclaration(holder) && holder.getTypeNode() !== undefined
-}
-
-/** The name the component's file exports it under, or `undefined` for a private, same-file component. */
-function exportNameOf(componentFile: SourceFile, declaration: Node): string | undefined {
-  for (const [name, declarations] of componentFile.getExportedDeclarations()) {
-    if (declarations.some((decl) => decl === declaration || decl.getStart() === declaration.getStart())) return name
-  }
-  return undefined
-}
-
-/** Every call site of the component: imports anywhere in the workspace, plus uses in its own file. */
-function allCallSites(project: Project, workspaceRoot: string, componentFile: SourceFile, localName: string | undefined, exportName: string | undefined): JsxOpeningLikeElement[] {
-  const openings: JsxOpeningLikeElement[] = []
-  if (exportName) {
-    for (const site of findComponentCallSites(project, workspaceRoot, componentFile.getFilePath(), exportName)) {
-      const abs = path.join(workspaceRoot, ...site.file.split('/'))
-      if (path.relative(abs, componentFile.getFilePath()) === '') continue
-      openings.push(findJsxElementAtLocationOrThrow(loadSourceFile(project, abs), abs, site.line, site.col))
-    }
-  }
-  if (localName) {
-    for (const kind of [SyntaxKind.JsxOpeningElement, SyntaxKind.JsxSelfClosingElement] as const) {
-      for (const opening of componentFile.getDescendantsOfKind(kind)) {
-        if (opening.getTagNameNode().getText() === localName) openings.push(opening)
-      }
-    }
-  }
-  return openings
-}
-
-/** Every function-like of `file`, in document order — what a component is found among again after a splice forgot every node. */
-function functionLikesOf(file: SourceFile): FunctionLike[] {
-  return file.getDescendants().filter((node): node is FunctionLike => Node.isFunctionDeclaration(node) || Node.isArrowFunction(node) || Node.isFunctionExpression(node))
-}
-
-/** The component, found again by its place among the file's functions: neither a splice nor a signature edit above it adds or removes one. */
-function functionAtIndex(file: SourceFile, index: number): FunctionLike {
-  const found = functionLikesOf(file)[index]
-  if (!found) throw new Error('[exposeLiteralAsProp] the component could not be found again after its literal was replaced.')
-  return found
-}
-
-function attributeText(name: string, value: string | number | boolean): string {
-  if (value === true) return name
-  if (typeof value === 'string') return isJsxAttributeSafe(value) ? `${name}="${value}"` : `${name}={${jsStringLiteral(value)}}`
-  return `${name}={${String(value)}}`
-}
-
-/** The type a prop is declared with: the literal's own, widened when this call site hands a value of another type (`padding: 8` overridden with `'12px'`). */
-function propType(literal: LiteralSite, value: ExposeOverride['value']): string {
-  return value === undefined || typeof value === literal.type ? literal.type : `${literal.type} | ${typeof value}`
-}
-
-function targetKey(target: ExposeTarget): string {
-  return target.kind === 'text' ? 'text' : target.kind === 'attribute' ? `attribute:${target.name}` : `style:${target.property}`
-}
-
-function literalFor(element: JsxOpeningLikeElement, componentFile: SourceFile, target: ExposeTarget): LiteralSite {
-  return target.kind === 'text' ? textLiteral(element, componentFile) : target.kind === 'attribute' ? attributeLiteral(element, target.name) : styleLiteral(element, target.property)
-}
 
 export function exposeLiteralAsProp(params: ExposeLiteralAsPropParams): ExposeLiteralAsPropResult {
   if (params.overrides.length === 0) throw new Error('[exposeLiteralAsProp] nothing to expose.')
   for (const override of params.overrides) {
     if (!IDENTIFIER_RE.test(override.propName)) throw new Error(`[exposeLiteralAsProp] "${override.propName}" is not a valid prop name.`)
   }
+  if (params.via && params.via.length > 0) return exposeThroughLevels(params, params.via)
   const project = params.project ?? createWorkspaceProject(params.workspaceRoot)
   project.manipulationSettings.set({ quoteKind: QuoteKind.Single })
   const callFile = loadSourceFile(project, params.callSiteFile)

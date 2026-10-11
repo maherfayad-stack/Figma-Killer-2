@@ -36,10 +36,11 @@
  * style (`style:<property>`), which the ordinary lock never lifts.
  */
 import {
-  callSitePosition,
   hasWritableSourceLocation,
   inlineDepth,
+  inlineSegments,
   isInlinedNodeId,
+  MAX_INSTANCE_OVERRIDE_DEPTH,
   isPropWritableToSource,
   styleValueKey,
   type PageNode,
@@ -207,10 +208,11 @@ export function planInstanceOverride(input: OverridePlanInput): OverridePlan {
   if (unsupported.length > 0) return { kind: 'whole-component', reason: unsupported[0]! }
   if (overrides.length === 0) return { kind: 'direct' }
   if (direct > 0) return { kind: 'whole-component', reason: everywhere(name, `Part of this edit is a value ${name} does not state in its own markup`) }
-  if (inlineDepth(nodeId) !== 1) {
-    return { kind: 'whole-component', reason: everywhere(name, `This sits inside a component within another one, and only the outer instance can carry a value`) }
+  if (inlineDepth(nodeId) > MAX_INSTANCE_OVERRIDE_DEPTH) {
+    return { kind: 'whole-component', reason: everywhere(name, `This sits ${inlineDepth(nodeId)} components deep, and a value is only passed down ${MAX_INSTANCE_OVERRIDE_DEPTH} levels`) }
   }
-  if (!hasWritableSourceLocation(callSitePosition(nodeId))) {
+  // Every call site on the way down must be one placed piece of JSX; a list renders N of them from one.
+  if (!inlineSegments(nodeId).slice(0, -1).every(hasWritableSourceLocation)) {
     return { kind: 'whole-component', reason: everywhere(name, `${name} is repeated by a list here, and one piece of code renders every item`) }
   }
   return { kind: 'override', overrides }

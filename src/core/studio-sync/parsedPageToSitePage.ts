@@ -9,7 +9,7 @@
  */
 import { CUSTOM_HTML_TAG_VALUE, TEXT_HTML_TAG_SET, htmlTagControl } from '@modules/base/utils/htmlTag'
 import type { ParsedPage, ParsedNode, ParsedPropValue } from '../page-parser'
-import { callSitePosition, hasWritableSourceLocation, inlineDepth, isInlinedNodeId, loopTemplateNodeId, styleValueKey } from '../page-tree'
+import { hasWritableSourceLocation, inlineSegments, isInlinedNodeId, loopTemplateNodeId, styleValueKey } from '../page-tree'
 import type { Page, PageNode } from '../page-tree'
 
 export interface ParsedPageToSitePageOptions {
@@ -198,10 +198,11 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
     // (the surfaces ask `isPropWritableToSource`) and the editor's override
     // router reads `propFeeds` to write the call site instead of the component.
     // Only where that call site is a single, placed JSX element on the page:
-    // one level deep (a deeper one's call site is inside another component) and
-    // not in a `.map` row (one piece of JSX renders every row).
+    // not in a `.map` row (one piece of JSX renders every row) at ANY level of
+    // the chain. The prop named is always the one the PAGE's call site passes:
+    // a component deeper down only keeps a feed its outer component forwarded.
     const propFeeds: Record<string, string> = {}
-    if (node.propFeeds && isInlinedNodeId(id) && inlineDepth(id) === 1 && hasWritableSourceLocation(callSitePosition(id))) {
+    if (node.propFeeds && !node.instanceOf && isInlinedNodeId(id) && inlineSegments(id).slice(0, -1).every(hasWritableSourceLocation)) {
       for (const [key, prop] of Object.entries(node.propFeeds)) {
         const nodeKey = key === 'text' ? textProp : key
         if (nodeKey === null) continue

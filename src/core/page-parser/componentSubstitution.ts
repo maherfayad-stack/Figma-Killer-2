@@ -60,16 +60,21 @@ type JsxOpeningLike = JsxElement | JsxSelfClosingElement
  * value), and `fromDefault` marks a value the call site did NOT pass, so the
  * component's destructure default fed it. Neither changes what renders; they
  * are what lets the editor write the call site for a value that has no literal
- * of its own (OD-19). `viaCode` marks a call site that passes the prop as an
- * expression the parser could not trace to one literal (or could not resolve at
- * all, so the default stands in): such a value is never a place to write.
+ * of its own (OD-19). `untraceable` marks a value that is not the INSTANCE's to
+ * set: the call site passes the prop as an expression the parser could not
+ * trace to one literal (or could not resolve at all, so the default stands in),
+ * or the call site sits inside another component, so a literal there (or the
+ * inner component's default) is shared by every instance of the outer one. The
+ * one exception is a value the outer component itself forwards from its own
+ * prop (`ParsedNode.propFeeds` on the call site), which keeps that prop's name
+ * and is still the page instance's to set.
  */
 export type Substitution =
-  | { kind: 'value'; value: ParsedPropValue; prop: string; origin?: ValueOrigin; fromDefault?: true; viaCode?: true }
+  | { kind: 'value'; value: ParsedPropValue; prop: string; origin?: ValueOrigin; fromDefault?: true; untraceable?: true }
   | { kind: 'children' }
 
 /** The call-site facts `buildSubstitutionEnv` reads. */
-export type SubstitutionCallSite = Pick<ParsedNode, 'props' | 'literalPropOrigins' | 'resolvedProps' | 'codeProps'>
+export type SubstitutionCallSite = Pick<ParsedNode, 'props' | 'literalPropOrigins' | 'resolvedProps' | 'codeProps' | 'propFeeds'>
 
 /**
  * Lifts a call site's already-captured prop value back into a `StaticValue`, so
@@ -113,7 +118,7 @@ function callSiteOrigin(callSite: SubstitutionCallSite, attrName: string, value:
  * yields no entry for that param, so any `{paramName}` reference to it is
  * simply left unresolved (existing lock/drop path), never guessed at.
  */
-export function buildSubstitutionEnv(fn: FunctionLike, callSite: SubstitutionCallSite): Map<string, Substitution> {
+export function buildSubstitutionEnv(fn: FunctionLike, callSite: SubstitutionCallSite, atPage: boolean): Map<string, Substitution> {
   const callSiteProps = callSite.props
   const env = new Map<string, Substitution>()
   const first = fn.getParameters()[0]
@@ -138,10 +143,13 @@ export function buildSubstitutionEnv(fn: FunctionLike, callSite: SubstitutionCal
     }
 
     const passedAsCode = callSite.codeProps?.includes(attrName) === true
+    // A call site inside another component: its value is the page instance's to set only if the outer component forwarded one of its own props.
+    const inherited = callSite.propFeeds?.[attrName]
     if (Object.hasOwn(callSiteProps, attrName)) {
       const value = callSiteProps[attrName]!
       const origin = callSiteOrigin(callSite, attrName, value)
-      env.set(paramName, { kind: 'value', value, prop: attrName, ...(origin ? { origin } : passedAsCode ? { viaCode: true as const } : {}) })
+      const untraceable = !origin && inherited === undefined && (passedAsCode || !atPage)
+      env.set(paramName, { kind: 'value', value, prop: inherited ?? attrName, ...(untraceable ? { untraceable: true as const } : {}) , ...(origin ? { origin } : {}) })
       continue
     }
 
@@ -149,9 +157,9 @@ export function buildSubstitutionEnv(fn: FunctionLike, callSite: SubstitutionCal
     const initializer = element.getInitializer()
     if (!initializer) continue
     if (Node.isStringLiteral(initializer) || Node.isNumericLiteral(initializer)) {
-      env.set(paramName, { kind: 'value', value: initializer.getLiteralValue(), prop: attrName, fromDefault: true, ...(passedAsCode ? { viaCode: true as const } : {}) })
+      env.set(paramName, { kind: 'value', value: initializer.getLiteralValue(), prop: attrName, fromDefault: true, ...(passedAsCode || !atPage ? { untraceable: true as const } : {}) })
     } else if (initializer.getKind() === SyntaxKind.TrueKeyword || initializer.getKind() === SyntaxKind.FalseKeyword) {
-      env.set(paramName, { kind: 'value', value: initializer.getKind() === SyntaxKind.TrueKeyword, prop: attrName, fromDefault: true, ...(passedAsCode ? { viaCode: true as const } : {}) })
+      env.set(paramName, { kind: 'value', value: initializer.getKind() === SyntaxKind.TrueKeyword, prop: attrName, fromDefault: true, ...(passedAsCode || !atPage ? { untraceable: true as const } : {}) })
     }
     // Any other default (a call, a template literal, …) is not a literal —
     // intentionally left unresolved, same policy as `extractProps`.
@@ -255,7 +263,7 @@ export function applySubstitutions(
       const recordFeed = (key: string, paramName: string): void => {
         const sub = env.get(paramName)
         // A call-site LITERAL string already has its own write target (`origin`); a children slot is not a value.
-        if (sub?.kind !== 'value' || sub.origin || sub.viaCode || typeof sub.value === 'object' || !readsOnce(paramName)) return
+        if (sub?.kind !== 'value' || sub.origin || sub.untraceable || typeof sub.value === 'object' || !readsOnce(paramName)) return
         patchedFeeds ??= { ...existing.propFeeds }
         patchedFeeds[key] = sub.prop
       }
