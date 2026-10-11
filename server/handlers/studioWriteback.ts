@@ -72,6 +72,7 @@ import {
 } from '@core/ast-codemods'
 import { callSitePosition, inlineDepth, inlineSegments, type SourceFingerprintExpectations, type StyleLanding } from '@core/page-tree'
 import type { Project } from 'ts-morph'
+import { applyClassOverrideEdit } from './studioClassOverride'
 import { applyCssEdit } from './studioCssWriteback'
 import { withProjectWriteLock } from './studio/projectWriteLock'
 import { snapshotImportsBeforeRemoval } from './studioBatchImportPrune'
@@ -383,6 +384,10 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
       if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
       return { applied: true }
     }
+    case 'expose-class':
+    case 'promote-class-override':
+      // G-2b — a class edit for one instance: the page, the component and the stylesheet, each position through the one decoder.
+      return applyClassOverrideEdit(dir, edit, (id) => studioEditLocation(dir, id, scope), project)
     case 'swap': {
       const result = swapComponentInstance({
         ...loc,

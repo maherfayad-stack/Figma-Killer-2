@@ -43,6 +43,7 @@
  */
 import { AtRuleScopeSchema, CssEditSchema } from './studioCssWriteback'
 import { ClassEditSchema } from './studioClassEditSchema'
+import { ExposeClassEditSchema, PromoteClassOverrideEditSchema } from './studioClassOverrideSchemas'
 import {
   SlotEditSchemas,
   type StudioAddSlotPropDetail,
@@ -321,6 +322,8 @@ export const StudioEditSchema = Type.Union([
   DetachEditSchema,
   ExposePropEditSchema,
   PromoteOverrideEditSchema,
+  ExposeClassEditSchema,
+  PromoteClassOverrideEditSchema,
   SwapEditSchema,
   RestoreEditSchema,
   ...StructuralEditSchemas,

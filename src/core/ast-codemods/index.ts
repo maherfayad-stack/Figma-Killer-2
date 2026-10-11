@@ -175,6 +175,9 @@ export { addSlotPropToComponent } from './addSlotPropToComponent'
 // P5-C (DET-7) — "Expose as prop": a literal in a component becomes an optional prop whose default is that literal.
 export { exposeLiteralAsProp } from './exposeLiteralAsProp'
 export type { CallSiteLocation, ExposeLiteralAsPropParams, ExposeLiteralAsPropResult, ExposeLiteralRefusalReason, ExposeOverride, ExposeTarget } from './exposeLiteralSites'
+// G-2b — a class-styled value edited in one instance: a modifier class on the call site and a rule one class more specific.
+export { classNamesOfStylesheets, exposeClassOverride, promoteClassOverride } from './classOverride'
+export type { ClassOverrideRefusal, ClassOverrideResult, ExposeClassOverrideParams, PromoteClassOverrideParams } from './classOverride'
 // OD-19 — "Apply to all": the value one instance overrides becomes the component's own default.
 export { promoteOverrideToDefault } from './promoteOverrideToDefault'
 export type { PromoteOverrideParams, PromoteOverrideRefusalReason, PromoteOverrideResult } from './promoteOverrideToDefault'

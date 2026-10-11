@@ -163,3 +163,34 @@ export function ensureRootTakesClassName(sourceFile: SourceFile, fn: FunctionLik
   }
   return { ok: true, changed: true }
 }
+
+/**
+ * Every class an element names in its `className`, without evaluating anything:
+ * the words of each string in it (`literals`), and the member a CSS Module
+ * binding is read at (`members`: `styles.card` and `styles['card']` give `card`).
+ * What the element carries when that name is true in the DOM is the page's
+ * business; this is only "does the source name this class".
+ */
+export function classNamesOnElement(element: JsxOpeningLikeElement): { literals: Set<string>; members: Set<string> } {
+  const literals = new Set<string>()
+  const members = new Set<string>()
+  const attribute = element.getAttribute('className')
+  if (!attribute || !Node.isJsxAttribute(attribute)) return { literals, members }
+  const initializer = attribute.getInitializer()
+  if (!initializer) return { literals, members }
+  const addWords = (text: string): void => {
+    for (const word of text.split(/\s+/)) if (word) literals.add(word)
+  }
+  const visit = (node: Node): void => {
+    if (Node.isStringLiteral(node) || Node.isNoSubstitutionTemplateLiteral(node)) addWords(node.getLiteralValue())
+    else if (Node.isTemplateHead(node) || Node.isTemplateMiddle(node) || Node.isTemplateTail(node)) addWords(node.getLiteralText())
+    else if (Node.isPropertyAccessExpression(node)) members.add(node.getName())
+    else if (Node.isElementAccessExpression(node)) {
+      const argument = node.getArgumentExpression()
+      if (argument && Node.isStringLiteral(argument)) members.add(argument.getLiteralValue())
+    }
+    node.forEachChild(visit)
+  }
+  visit(initializer)
+  return { literals, members }
+}

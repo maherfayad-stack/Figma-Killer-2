@@ -23,6 +23,7 @@ import { join } from 'node:path'
 import { INLINE_ID_SEPARATOR, isUnlinkedWorkspacePath, realWorkspaceRel, unwritableWorkspaceSegment } from '@core/page-parser'
 import { inlineSegments, isInlinedNodeId, isRouteChromeNodeId } from '@core/page-tree'
 import { CANVAS_LAYER_REL_PATTERN } from '@core/studio-board'
+import { classOverrideTouchedFiles } from './studioClassOverride'
 import { cssCreateImportTarget } from './studioCssWriteback'
 import { collapseSameTargetEdits, type DedupedStudioEdit } from './studioEditMerge'
 import { isSlotEditKind } from './studioSlotWriteback'
@@ -441,6 +442,8 @@ export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(
       // dedupe key) but are two call sites, two writes.
       edit.kind === 'expose-prop' ||
       edit.kind === 'promote-override' ||
+      edit.kind === 'expose-class' ||
+      edit.kind === 'promote-class-override' ||
       // P5-D — every part of one `<svg>` shares its host's location; two
       // edits on different parts are two writes, and two on one part apply
       // in order (each only sets what it names).
@@ -519,6 +522,10 @@ export function studioEditsTouchedFiles(
         const file = studioEditFile(dir, segment, scope)
         if (file) touchedFiles.add(file)
       }
+    }
+    // G-2b — a class override writes the page, the component and the stylesheet.
+    if (edit.kind === 'expose-class' || edit.kind === 'promote-class-override') {
+      for (const file of classOverrideTouchedFiles(dir, edit, (id) => studioEditLocation(dir, id, scope))) touchedFiles.add(file)
     }
     // CV-3 — the stylesheet / union file / lookup object a variant edit also writes.
     if (isVariantEdit(edit)) {

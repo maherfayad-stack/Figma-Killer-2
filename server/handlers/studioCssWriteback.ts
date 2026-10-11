@@ -342,7 +342,7 @@ function resolveWritableExistingFile(dir: string, fileRel: string, extensionTest
  * required: the codemod parses real CSS syntax, and `studioCss.ts` never maps
  * a `.scss`/`.sass`/`.less` file for exactly this reason (see its doc).
  */
-function resolveContainedCssPath(dir: string, fileRel: string): string | null {
+export function resolveContainedCssPath(dir: string, fileRel: string): string | null {
   return resolveWritableExistingFile(dir, fileRel, /\.css$/i)
 }
 
