@@ -8,9 +8,10 @@
 /**
  * What one `detachInstances` call came to. `handed-off`: a nested instance's
  * detach went to OD-7's "this instance only" path (`instanceOnlyGesture.ts`),
- * which reports its own outcome.
+ * which reports its own outcome. `copied` (G-3): the markup could not be
+ * inlined, so the call site now uses its own copy of the component instead.
  */
-export type DetachInstancesOutcome = 'detached' | 'refused' | 'cancelled' | 'nothing' | 'handed-off'
+export type DetachInstancesOutcome = 'detached' | 'refused' | 'cancelled' | 'nothing' | 'handed-off' | 'copied'
 
 /** The pre-commit confirm `DetachConfirmDialog` shows: only ever opened when a detach LOSES something. */
 export interface InstanceDetachConfirmState {

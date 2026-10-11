@@ -21,18 +21,24 @@
  *      template: one ⌘Z puts every file back byte for byte, however many
  *      instances the gesture detached (a multi-selection is ONE server
  *      `sequence`, journaled once).
- *   3. **The refusal.** A refused detach is shown through
- *      `presentStructuralRefusal` with `explainDetachConstraint` — the dialog
- *      with "Duplicate as a new file" for the reasons a copy would fix, a
- *      toast for the rest.
+ *   3. **The refusal - or, for the ones a copy fixes, no refusal (G-3).** A
+ *      detach the markup cannot be inlined for (`uses-hooks`, `body-local`,
+ *      `spread-ambiguous`, ...) is answered with the thing the user needs:
+ *      a COPY of the component for this one call site (`Card` -> `Card2`,
+ *      `extractInstanceCopy`), one journaled step, and a one-line notice that
+ *      says what happened. Only when the copy refuses too - or the component
+ *      is not the project's own to copy (a design-system or package one) - is
+ *      the refusal shown, through `presentStructuralRefusal` with
+ *      `explainDetachConstraint`.
  *   4. **The selection.** The resync selects what replaced each call site
  *      (`select: 'created'`).
  *
  * Which nodes it is about (`instanceDetachability.ts`): every component call
- * site — a `studio.instance`, and the opaque `alm.*` / `pkg.*` ones. A
- * design-system or package component is refused before anything is posted,
- * with the reason; an opaque LOCAL call site (inlining declined) is posted
- * like an instance and the codemod decides.
+ * site - a `studio.instance`, and the opaque `alm.*` / `pkg.*` ones. A package
+ * component is refused before anything is posted, with the reason; a
+ * design-system component (OD-21: the folder is the project's own code) and an
+ * opaque LOCAL call site (inlining declined) are posted like an instance and
+ * the codemod decides.
  *
  * Which call site a node names:
  *   - a plain instance: its own id;
@@ -61,7 +67,7 @@ import { pushToast } from '@ui/components/Toast'
 import { flushEditorSave } from '@site/hooks/editorSaveRef'
 import { captureIdentities } from '@site/studio/sourceIdentity'
 import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
-import { postEdits, type StudioSaveResponse } from '@site/studio/studioSaveRequests'
+import { extractInstanceCopy, postEdits, type StudioSaveResponse } from '@site/studio/studioSaveRequests'
 import { commitStudioDetach } from '@site/studio/studioStructuralCommits'
 import { resolveActiveTreeTarget } from './helpers'
 import { detachComponentLabel, detachRefusalFor, isDetachCandidate } from './instanceDetachability'
@@ -112,6 +118,12 @@ function lossSentences(target: DetachTarget, detail: DetachDetail, prefix: boole
   return out
 }
 
+/** The refusal's first sentence - what went wrong, without the codemod's own "Duplicate the component..." advice. */
+function firstSentence(message: string): string {
+  const end = message.search(/[.!?](\s|$)/)
+  return end < 0 ? message : message.slice(0, end + 1)
+}
+
 function warn(title: string, body: string): void {
   pushToast({ kind: 'warning', title, body, location: 'site-editor' })
 }
@@ -131,22 +143,51 @@ export function createInstanceActions(helpers: SiteSliceHelpers): InstanceAction
     })
   }
 
-  function presentRefusal(refusal: { reason: string; message: string }, target: DetachTarget): void {
+  /**
+   * G-3 - a refused detach of ONE call site becomes a component copy when a
+   * copy fixes it: nothing it reads has to rebind, because it is repointed,
+   * never inlined. `null` when the copy is not the answer (not that kind of
+   * refusal) or refuses too (a design-system component is not the project's to
+   * copy) - the caller then shows the detach refusal as it always did.
+   */
+  async function copyInstead(refusal: { reason: string; message: string }, target: DetachTarget): Promise<DetachInstancesOutcome | null> {
+    if (!explainDetachConstraint(refusal.reason, refusal.message).actions.some((action) => action.kind === 'extract')) return null
+    try {
+      const copy = await extractInstanceCopy(target.site)
+      if (!copy.ok || !copy.newComponentName) return null
+      pushToast({
+        kind: 'info',
+        title: `Made ${copy.newComponentName} for this ${target.label}`,
+        body: `${firstSentence(refusal.message)} This one now has its own copy, so editing it changes nothing else. Undo puts it back.`,
+        location: 'site-editor',
+      })
+      return 'copied'
+    } catch (err) {
+      console.error('[instanceActions] component copy failed:', err)
+      return null
+    }
+  }
+
+  async function presentRefusal(refusal: { reason: string; message: string }, target: DetachTarget, single: boolean): Promise<DetachInstancesOutcome> {
+    if (single) {
+      const copied = await copyInstead(refusal, target)
+      if (copied) return copied
+    }
     presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.detach, explainDetachConstraint(refusal.reason, refusal.message), {
       // The CALL SITE, not a row's id: the remedy (a component copy) repoints one call site.
       nodeId: target.site,
       getState: get,
       set,
     })
+    return 'refused'
   }
 
-  /** What a landed/refused/held answer means — and the refusal, shown, when there is one. */
-  function settle(answer: StudioSaveResponse | null, targets: readonly DetachTarget[]): DetachInstancesOutcome | DetachDetail[] {
+  /** What a landed/refused/held answer means — and the refusal, shown (or answered with a copy), when there is one. */
+  async function settle(answer: StudioSaveResponse | null, targets: readonly DetachTarget[]): Promise<DetachInstancesOutcome | DetachDetail[]> {
     if (!answer) return 'refused'
     const refusal = answer.refusals?.[0]
     if (refusal) {
-      presentRefusal(refusal, targets.find((target) => target.site === refusal.nodeId) ?? targets[0]!)
-      return 'refused'
+      return presentRefusal(refusal, targets.find((target) => target.site === refusal.nodeId) ?? targets[0]!, targets.length === 1)
     }
     if (answer.written > 0) return 'detached'
     return answer.detachDetails ?? []
@@ -164,10 +205,10 @@ export function createInstanceActions(helpers: SiteSliceHelpers): InstanceAction
 
   async function detachOne(target: DetachTarget): Promise<DetachInstancesOutcome> {
     const label = `Detach ${target.label}`
-    const first = settle(await commitStudioDetach([{ kind: 'detach', nodeId: target.site, dryRun: 'if-lossy' }], label), [target])
+    const first = await settle(await commitStudioDetach([{ kind: 'detach', nodeId: target.site, dryRun: 'if-lossy' }], label), [target])
     if (typeof first === 'string') return first
     if (!(await confirmLosses([target], first))) return 'cancelled'
-    const second = settle(await commitStudioDetach([{ kind: 'detach', nodeId: target.site }], label), [target])
+    const second = await settle(await commitStudioDetach([{ kind: 'detach', nodeId: target.site }], label), [target])
     return typeof second === 'string' ? second : 'refused'
   }
 
@@ -185,11 +226,11 @@ export function createInstanceActions(helpers: SiteSliceHelpers): InstanceAction
       warn('Detach refused', getErrorMessage(err, 'Studio could not reach your project. Nothing was written.'))
       return 'refused'
     }
-    const previewed = settle(preview, ordered)
+    const previewed = await settle(preview, ordered)
     if (typeof previewed === 'string') return previewed
     if (!(await confirmLosses(ordered, previewed))) return 'cancelled'
     const label = `Detach ${ordered.length} instances`
-    const written = settle(await commitStudioDetach(ordered.map((target) => ({ kind: 'detach', nodeId: target.site })), label), ordered)
+    const written = await settle(await commitStudioDetach(ordered.map((target) => ({ kind: 'detach', nodeId: target.site })), label), ordered)
     return typeof written === 'string' ? written : 'refused'
   }
 
