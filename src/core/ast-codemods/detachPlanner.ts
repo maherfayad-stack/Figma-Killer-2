@@ -14,7 +14,6 @@ import {
   SyntaxKind,
   VariableDeclarationKind,
   type Identifier,
-  type JsxAttribute,
   type JsxAttributeLike,
   type Project,
   type SourceFile,
@@ -26,12 +25,12 @@ import type { FunctionLike } from '@core/page-parser'
 import type { JsxOpeningLikeElement } from './locateJsxElement'
 import { bindingKindAt, freeReferenceNames, isReferenceIdentifier, tagReferenceRoot, type BindingKind } from './subtreeFreeVariables'
 import { DetachNameResolver, type Expectation, type PendingImport } from './detachNames'
-import { DetachHookPlan, type ComponentHook, type PageTextEdit } from './detachHooks'
+import { DetachHookPlan, type MovableHook, type PageTextEdit } from './detachHooks'
+import { CallSiteValues } from './detachCallSiteValues'
+import { ScopeLifts } from './detachScopeLifts'
 import { foldClassName, readFoldPart } from './detachClassNameFold'
 import { DetachConditionals, type Unit } from './detachConditionals'
 import {
-  NO_NAMES,
-  TRUE_VALUE,
   UNDEFINED_VALUE,
   fail,
   attributeText,
@@ -39,16 +38,11 @@ import {
   nodeValue,
   isJsxNode,
   isJsxTextSafe,
-  isNeverUndefined,
   isWithin,
-  jsStringLiteral,
-  jsxStringValue,
-  jsxTextValue,
   needsParens,
   readCallSite,
   readParamTable,
   type CallSite,
-  type CallSiteAttr,
   type ParamEntry,
   type ParamTable,
   type Value,
@@ -71,6 +65,8 @@ export interface DetachPlan {
   pageEdits: PageTextEdit[]
   /** DET-3 — hooks a NEW call was written for; what a pre-commit confirm names. */
   movedHooks: string[]
+  /** G-3 — the `'use client'` directive the page must start with once component state moved into it. */
+  useClient?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -85,9 +81,11 @@ export class DetachPlanner {
   private readonly fnIdentifierNames: Set<string>
   private readonly names: DetachNameResolver
   private readonly hooks: DetachHookPlan
+  private readonly values: CallSiteValues
   private readonly refCache = new Map<Node, Ref>()
   private readonly paramCache = new Map<ParamEntry, Value>()
   private readonly inProgress = new Set<Node>()
+  private readonly lifts: ScopeLifts
   private readonly scopeCache = new Map<Node, Map<string, MorphSymbol>>()
   private fragmentLocal: string | undefined
   private readonly conditionals: DetachConditionals
@@ -105,7 +103,7 @@ export class DetachPlanner {
     root: Node,
     opening: JsxOpeningLikeElement,
     componentName: string,
-    hooks: readonly ComponentHook[],
+    hooks: readonly MovableHook[],
   ) {
     this.page = page
     this.componentFile = componentFile
@@ -118,7 +116,18 @@ export class DetachPlanner {
     this.callSite = readCallSite(opening)
     this.fnIdentifierNames = new Set(fn.getDescendantsOfKind(SyntaxKind.Identifier).map((id) => id.getText()))
     this.names = new DetachNameResolver(this.checker, page, componentFile, componentName, opening, this.fnIdentifierNames)
-    this.hooks = new DetachHookPlan(hooks, page, opening, this.names, componentName)
+    this.values = new CallSiteValues(this.callSite, this.names, componentName, (node) => this.componentValue(node))
+    this.lifts = new ScopeLifts({
+      page,
+      componentFile,
+      componentName,
+      names: this.names,
+      renderNode: (node, unit) => this.renderNode(node, unit),
+      componentValue: (node) => this.componentValue(node),
+      emitLocal: (preferred, initializer) => this.hooks.emitLocal(preferred, initializer),
+    })
+    this.names.useCarrier((name, decl) => this.lifts.carryDeclaration(name, decl))
+    this.hooks = new DetachHookPlan(hooks, page, opening, this.names, componentName, (arg) => this.hookArgument(arg))
     this.conditionals = new DetachConditionals({
       readProp: (reference, unit) => {
         if (Node.isIdentifier(reference)) {
@@ -161,16 +170,18 @@ export class DetachPlanner {
       if (kinds.has('call-site')) callSiteKinds.set(name, bindingKindAt(this.callSite.site, name, this.page))
     }
     this.hooks.finish()
-    const { edits: pageEdits, movedHooks } = this.hooks
-    return { siteText: text, imports: this.names.imports, expected: this.names.expected, callSiteKinds, pageEdits, movedHooks }
-  }
-
-  // --- call-site values ----------------------------------------------------
-
-  private callSiteValue(node: Node): Value {
-    const free = new Set(freeReferenceNames(node))
-    this.names.expectCallSiteNames(free)
-    return nodeValue(node, node.getText(), free)
+    const { edits: hookEdits, movedHooks, useClient } = this.hooks
+    const carriedEdit = this.lifts.carriedDeclarationsEdit()
+    const pageEdits = carriedEdit ? [...hookEdits, carriedEdit] : hookEdits
+    return {
+      siteText: text,
+      imports: this.names.imports,
+      expected: this.names.expected,
+      callSiteKinds,
+      pageEdits,
+      movedHooks,
+      ...(useClient ? { useClient } : {}),
+    }
   }
 
   // --- classification ------------------------------------------------------
@@ -363,14 +374,11 @@ export class DetachPlanner {
     if (!Node.isJsxExpression(node)) return undefined
     const expr = node.getExpression()
     if (!expr || node.getDotDotDotToken()) return undefined
-    if (Node.isIdentifier(expr) && this.callSite.children && isReferenceIdentifier(expr)) {
-      const ref = this.classify(expr, unit)
-      if (ref.kind === 'param' && ref.entry.attrName === 'children') {
-        const free = new Set(this.callSite.children.nodes.flatMap((child) => freeReferenceNames(child)))
-        this.names.expectCallSiteNames(free)
-        this.admit(expr, free, unit)
-        return this.callSite.children.rawText
-      }
+    if (this.callSite.children && this.readsChildren(expr, unit)) {
+      const free = new Set(this.callSite.children.nodes.flatMap((child) => freeReferenceNames(child)))
+      this.names.expectCallSiteNames(free)
+      this.admit(expr, free, unit)
+      return this.callSite.children.rawText
     }
     const folded = this.conditionals.child(expr, unit)
     if (folded !== undefined) return folded
@@ -385,6 +393,20 @@ export class DetachPlanner {
     }
     if (value.jsx) return value.expr()
     return `{${value.expr()}}`
+  }
+
+  /** `{children}` (a destructured `children` param) or `{props.children}` — the call site's own children, placed as written. */
+  private readsChildren(expr: Node, unit: Unit): boolean {
+    if (Node.isIdentifier(expr)) {
+      if (!isReferenceIdentifier(expr)) return false
+      const ref = this.classify(expr, unit)
+      return ref.kind === 'param' && ref.entry.attrName === 'children'
+    }
+    if (!Node.isPropertyAccessExpression(expr) || expr.getName() !== 'children') return false
+    const object = expr.getExpression()
+    if (!Node.isIdentifier(object) || !isReferenceIdentifier(object) || this.classify(object, unit).kind !== 'rest') return false
+    this.assertRestIsReadable('member')
+    return true
   }
 
   /** An opening, self-closing or closing tag: its name and its attributes rewritten. */
@@ -516,83 +538,8 @@ export class DetachPlanner {
     }
     // React never passes `key` to a component.
     if (entry.attrName === 'key') return entry.default ? this.componentValue(entry.default) : UNDEFINED_VALUE
-    if (entry.attrName === 'children' && this.callSite.children) return this.childrenValue()
-    return this.attributeValue(entry.attrName, entry.default)
-  }
-
-  private lastAttribute(name: string): CallSiteAttr | undefined {
-    return this.callSite.attrs.filter((a) => a.name === name).at(-1)
-  }
-
-  private attributeValue(name: string, fallback: Node | undefined): Value {
-    const explicit = this.lastAttribute(name)
-    const spreads = this.callSite.spreads
-    const lastSpread = spreads.at(-1)
-    if (lastSpread && (!explicit || explicit.index < lastSpread.index)) {
-      if (explicit) {
-        fail(
-          'spread-ambiguous',
-          `This call site sets \`${name}\` and then spreads {...${lastSpread.expr.getText()}}, which may or may not override it — which value renders can't be known from source.`,
-        )
-      }
-      if (spreads.length > 1) {
-        fail('spread-ambiguous', `This call site spreads ${spreads.length} objects, and \`${name}\` could come from any of them.`)
-      }
-      if (!Node.isIdentifier(lastSpread.expr)) {
-        fail('spread-ambiguous', `This call site spreads {...${lastSpread.expr.getText()}}, which detach can't read a prop out of — spread a named object instead.`)
-      }
-      const base = lastSpread.expr.getText()
-      const text = /^[A-Za-z_$][\w$]*$/.test(name) ? `${base}.${name}` : `${base}[${jsStringLiteral(name)}]`
-      const free = new Set([base])
-      this.names.expectCallSiteNames(free)
-      const member: Value = { expr: () => text, primary: true, free }
-      return fallback ? this.defaulted(member, fallback) : member
-    }
-    if (explicit) return this.explicitValue(explicit.attr, fallback)
-    return fallback ? this.componentValue(fallback) : UNDEFINED_VALUE
-  }
-
-  private explicitValue(attr: JsxAttribute, fallback: Node | undefined): Value {
-    const initializer = attr.getInitializer()
-    if (!initializer) return TRUE_VALUE
-    if (Node.isStringLiteral(initializer)) {
-      const text = initializer.getText()
-      return jsxStringValue(initializer.getLiteralText(), text, NO_NAMES, text.charAt(0))
-    }
-    if (Node.isJsxExpression(initializer)) {
-      const expr = initializer.getExpression()
-      if (!expr || (Node.isIdentifier(expr) && expr.getText() === 'undefined')) {
-        return fallback ? this.componentValue(fallback) : UNDEFINED_VALUE
-      }
-      const value = this.callSiteValue(expr)
-      return fallback && !isNeverUndefined(expr) ? this.defaulted(value, fallback) : value
-    }
-    return this.callSiteValue(initializer)
-  }
-
-  /** A destructured default applies exactly when the value is `undefined` — so that is what gets written. */
-  private defaulted(value: Value, fallback: Node): Value {
-    const alternative = this.componentValue(fallback)
-    const operand = value.primary ? value.expr() : `(${value.expr()})`
-    return {
-      expr: () => `${operand} === undefined ? ${alternative.expr()} : ${value.expr()}`,
-      primary: false,
-      free: new Set([...value.free, ...alternative.free]),
-    }
-  }
-
-  /** `children` as a VALUE (anywhere but a `{children}` child slot): one element, one expression, or one run of text. */
-  private childrenValue(): Value {
-    const nodes = this.callSite.children!.nodes
-    const only = nodes.length === 1 ? nodes[0]! : undefined
-    if (only && isJsxNode(only)) return this.callSiteValue(only)
-    if (only && Node.isJsxExpression(only) && only.getExpression()) return this.callSiteValue(only.getExpression()!)
-    if (only && Node.isJsxText(only)) {
-      const raw = jsxTextValue(only.getText())
-      const attrText = raw.includes('"') ? (raw.includes("'") ? undefined : `'${raw}'`) : `"${raw}"`
-      return jsxStringValue(raw, /[\r\n]/.test(raw) ? undefined : attrText, NO_NAMES)
-    }
-    fail('unsupported-params', `${this.componentName} uses its children as a value, and this call site passes more than one child.`)
+    if (entry.attrName === 'children' && this.callSite.children) return this.values.childrenValue()
+    return this.values.attributeValue(entry.attrName, entry.default)
   }
 
   /** The component's own source for a default or a body value, rewritten for the page. */
@@ -607,52 +554,71 @@ export class DetachPlanner {
     return nodeValue(node, text, unit.free)
   }
 
-  /** A body `const` the JSX reads: inlined as its initializer when that is a faithful rewrite, refused otherwise. */
-  private localValue(decl: VariableDeclaration, site: Node, unit: Unit): Value {
-    const name = decl.getName()
-    if (unit.node !== this.root) {
-      const owner = unit.node.getParent()
-      const what = Node.isVariableDeclaration(owner) ? `\`${owner.getName()}\`` : 'a prop default'
-      fail(
-        'body-local',
-        `${this.componentName} computes ${what} from \`${name}\`, another value in its body — detach inlines one level only. Duplicate the component and edit the copy instead.`,
-      )
-    }
-    const uses = this.root
-      .getDescendantsOfKind(SyntaxKind.Identifier)
-      .filter((id) => isReferenceIdentifier(id) && this.symbolOf(id)?.getDeclarations().includes(decl))
-    if (uses.length !== 1) {
-      fail(
-        'body-local',
-        `${this.componentName} computes \`${name}\` in its body and its markup reads it ${uses.length} times — inlining would repeat the computation. Duplicate the component and edit the copy instead.`,
-      )
-    }
-    for (const ancestor of site.getAncestors()) {
-      if (ancestor === this.root) break
-      if (Node.isArrowFunction(ancestor) || Node.isFunctionExpression(ancestor) || Node.isFunctionDeclaration(ancestor)) {
+  /**
+   * An argument of a hook the plan writes at the top of the enclosing
+   * component, in terms of the call site's props (`useDir(dir)` with no `dir`
+   * is `useDir(undefined)`). It lands where the call site's own names may not
+   * be bound yet, so it can read nothing the call site computes: a literal, an
+   * omitted prop, a default, or a module-scope name.
+   */
+  private hookArgument(arg: Node): string {
+    const value = this.componentValue(arg)
+    for (const name of value.free) {
+      if (this.names.expected.get(name)?.has('call-site')) {
         fail(
-          'body-local',
-          `${this.componentName} computes \`${name}\` once per render but reads it inside a callback — inlined, it would be recomputed on every call. Duplicate the component and edit the copy instead.`,
+          'uses-hooks',
+          `${this.componentName} hands a hook a prop, and this call site gives it a value (\`${name}\`) the enclosing component may not have at the top of its body.`,
         )
       }
     }
-    return this.componentValue(decl.getInitializerOrThrow())
+    return value.expr()
   }
 
-  /** `rest.x` — the call site's own `x`, unless a named param consumed it. */
+  /**
+   * A body `const` the JSX reads. Read once at the top of the markup, it is
+   * inlined as its initializer (the cleanest page). Read twice, inside a
+   * callback, or built from another body value, it is hoisted instead (G-3):
+   * computed once at the top of the page's component, under a fresh name, so
+   * nothing is recomputed and nothing is written twice.
+   */
+  private localValue(decl: VariableDeclaration, site: Node, unit: Unit): Value {
+    if (this.canInlineLocal(decl, site, unit)) return this.componentValue(decl.getInitializerOrThrow())
+    return this.lifts.hoistLocal(decl)
+  }
+
+  private canInlineLocal(decl: VariableDeclaration, site: Node, unit: Unit): boolean {
+    if (unit.node !== this.root) return false
+    const uses = this.root
+      .getDescendantsOfKind(SyntaxKind.Identifier)
+      .filter((id) => isReferenceIdentifier(id) && this.symbolOf(id)?.getDeclarations().includes(decl))
+    if (uses.length !== 1) return false
+    for (const ancestor of site.getAncestors()) {
+      if (ancestor === this.root) break
+      if (Node.isArrowFunction(ancestor) || Node.isFunctionExpression(ancestor) || Node.isFunctionDeclaration(ancestor)) return false
+    }
+    return true
+  }
+
+  /** `rest.x` / `props.x` — the call site's own `x`, unless a named param consumed it. */
   private restMemberValue(node: Node, unit: Unit): Value | undefined {
     if (!Node.isPropertyAccessExpression(node)) return undefined
     const object = node.getExpression()
     if (!Node.isIdentifier(object) || !isReferenceIdentifier(object) || this.classify(object, unit).kind !== 'rest') return undefined
-    this.assertRestIsReadable()
+    this.assertRestIsReadable('member')
     const name = node.getName()
-    if (this.params.consumed.has(name) || name === 'key') return UNDEFINED_VALUE
-    if (name === 'children' && this.callSite.children) return this.childrenValue()
-    const explicit = this.lastAttribute(name)
-    return explicit ? this.explicitValue(explicit.attr, undefined) : UNDEFINED_VALUE
+    if (this.params.restExcludes.has(name) || name === 'key') return UNDEFINED_VALUE
+    if (name === 'children' && this.callSite.children) return this.values.childrenValue()
+    const explicit = this.values.lastAttribute(name)
+    return explicit ? this.values.explicitValue(explicit.attr, undefined) : UNDEFINED_VALUE
   }
 
-  private assertRestIsReadable(): void {
+  /**
+   * Which props `rest` holds can be known only when the call site has no
+   * spread. Reading ONE member needs nothing more; forwarding the whole object
+   * (`<div {...rest}/>`) also forwards `children`, which the leftover
+   * attributes cannot carry — so a call site that passes children refuses there.
+   */
+  private assertRestIsReadable(use: 'member' | 'forward' = 'forward'): void {
     const spread = this.callSite.spreads[0]
     if (spread) {
       fail(
@@ -660,7 +626,7 @@ export class DetachPlanner {
         `This call site spreads {...${spread.expr.getText()}} into ${this.componentName}, which forwards \`...rest\` — which props land where can't be known from source.`,
       )
     }
-    if (this.callSite.children && !this.params.consumed.has('children')) {
+    if (use === 'forward' && this.callSite.children && !this.params.restExcludes.has('children')) {
       fail('spread-ambiguous', `This call site passes children, and ${this.componentName} forwards them through \`...rest\` rather than placing them.`)
     }
   }
@@ -670,7 +636,7 @@ export class DetachPlanner {
     this.assertRestIsReadable()
     const out: { name: string; text: string; free: ReadonlySet<string> }[] = []
     for (const attr of this.callSite.attrs) {
-      if (this.params.consumed.has(attr.name) || this.lastAttribute(attr.name) !== attr) continue
+      if (this.params.restExcludes.has(attr.name) || this.values.lastAttribute(attr.name) !== attr) continue
       const initializer = attr.attr.getInitializer()
       const free = new Set(initializer ? freeReferenceNames(initializer) : [])
       this.names.expectCallSiteNames(free)
