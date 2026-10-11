@@ -126,7 +126,8 @@ describe('CSS var() fallback policy — no `var(--name, fallback)`', () => {
     const offenders: string[] = []
 
     for (const root of SCAN_ROOTS) {
-      for (const filePath of collectFiles(root, ['.ts', '.tsx'])) {
+      // A `__tests__` file's var() strings are fixtures of the user's source, not Studio's styling.
+      for (const filePath of collectFiles(root, ['.ts', '.tsx']).filter((f) => !/[\\/]__tests__[\\/]/.test(f))) {
         const stripped = stripComments(readSource(filePath))
         for (const hit of findVarFallbackHits(stripped)) {
           offenders.push(`  ${relative(SRC_ROOT, filePath)}:${hit.line} -> ${hit.snippet}`)

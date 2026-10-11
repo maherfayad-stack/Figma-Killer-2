@@ -29,10 +29,10 @@ const collectFiles = (dir: string, exts: string[]): string[] => walkSourceTree(d
 
 function collectTsFiles(): string[] {
   // Scan all source dirs that contain production code.
-  // Exclude __tests__ — test files contain banned strings as regex patterns
-  // and would false-positive.
+  // Exclude __tests__ — test files hold banned strings as regex patterns and
+  // as fixtures of the user's own source (a project may well use clsx).
   const PROD_DIRS = ['admin', 'core', 'modules', 'ui'].map((d) => join(SRC_ROOT, d))
-  return PROD_DIRS.flatMap((dir) => collectFiles(dir, ['.ts', '.tsx']))
+  return PROD_DIRS.flatMap((dir) => collectFiles(dir, ['.ts', '.tsx'])).filter((f) => !/[\\/]__tests__[\\/]/.test(f))
 }
 
 function collectCssFiles(): string[] {
