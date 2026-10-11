@@ -148,6 +148,38 @@ describe('a class edit inside one instance changes only that instance', () => {
     expect(snapshot(ALL)).toEqual(original)
   })
 
+  it('a colour over a var() binding writes the literal to the instance's own rule and leaves the component's variable alone', async () => {
+    write('components/Tier.css', `:root {
+  --probe-accent: #cc0000;
+}
+
+.tier {
+  padding: 8px;
+  color: var(--probe-accent);
+}
+`)
+    const before = await board()
+    const result = applyStudioEditBatch(dir, [exposeClass(before.instances[0]!.children[0]!, { color: '#00aa00' })], {}, EDITOR)
+    expect(result.refusals).toEqual([])
+    expect(read('components/Tier.css')).toBe(
+      `:root {
+  --probe-accent: #cc0000;
+}
+
+.tier {
+  padding: 8px;
+  color: var(--probe-accent);
+}
+
+.tier.tier-home-1 {
+  color: #00aa00;
+}
+`,
+    )
+    const after = await board()
+    expect(Object.values(after.styleRules).find((rule) => rule.name === 'tier')!.styles).toMatchObject({ color: 'var(--probe-accent)' })
+  })
+
   it('a second edit of the same instance converges on the one modifier rule', async () => {
     const first = await board()
     applyStudioEditBatch(dir, [exposeClass(first.instances[1]!.children[0]!, { padding: '20px' })], {}, EDITOR)

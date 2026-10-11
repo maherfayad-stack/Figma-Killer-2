@@ -222,6 +222,31 @@ describe('a class edit on the root of a component instance', () => {
     expect(saveCalls[1]!.edits).toEqual([{ kind: 'promote-class-override', nodeId: ROOT_A, file: 'components/Tier.css', selector: '.tier', properties: ['gap'] }])
   })
 
+  it('a colour set over a variable binding is the instance's alone, and the notice says the component keeps the variable', async () => {
+    stubFetch([{ undoToken: TOKEN }])
+    const bound = { ...tierRule, styles: { padding: '8px', color: 'var(--probe-accent)' } } as StyleRule
+    store().loadSite(makeSite({ pages: [page()], styleRules: { [RULE_ID]: bound } }))
+    store().setActivePage(PAGE_ID)
+    store().overrideClassOnInstance({ nodeId: ROOT_A, classId: RULE_ID, patch: { color: '#00aa00' }, contextId: null })
+    await waitFor(() => saveCalls.length === 1)
+    // The shared rule keeps its binding in the store as on disk; only the override edit carries the literal.
+    expect(store().site!.styleRules[RULE_ID]!.styles).toMatchObject({ color: 'var(--probe-accent)' })
+    expect(saveCalls[0]!.edits[0]).toMatchObject({ kind: 'expose-class', declarations: { color: '#00aa00' } })
+    await waitFor(() => currentToasts().some((toast) => toast.title === 'Changed on this Tier only'))
+    const body = currentToasts().find((candidate) => candidate.title === 'Changed on this Tier only')!.body
+    expect(body).toContain('color is #00aa00 here instead of var(--probe-accent); Tier keeps the variable.')
+  })
+
+  it('a value set to another variable is not reported as a replaced binding', async () => {
+    stubFetch([{ undoToken: TOKEN }])
+    const bound = { ...tierRule, styles: { color: 'var(--probe-accent)' } } as StyleRule
+    store().loadSite(makeSite({ pages: [page()], styleRules: { [RULE_ID]: bound } }))
+    store().setActivePage(PAGE_ID)
+    store().overrideClassOnInstance({ nodeId: ROOT_A, classId: RULE_ID, patch: { color: 'var(--brand)' }, contextId: null })
+    await waitFor(() => currentToasts().some((toast) => toast.title === 'Changed on this Tier only'))
+    expect(currentToasts().find((candidate) => candidate.title === 'Changed on this Tier only')!.body).not.toContain('keeps the variable')
+  })
+
   it('a refusal the codemod names takes the preview back, applies the ordinary class write, and says why in one sentence', async () => {
     stubFetch([{ refusals: [{ nodeId: ROOT_A, kind: 'expose-class', reason: 'class-filtered', message: 'x' }] }])
     store().overrideClassOnInstance({ nodeId: ROOT_A, classId: RULE_ID, patch: { gap: '12px' }, contextId: null })

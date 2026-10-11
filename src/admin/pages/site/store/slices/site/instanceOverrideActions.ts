@@ -281,16 +281,35 @@ export function createInstanceOverrideActions(helpers: SiteSliceHelpers): {
     invalidateLocalComponentCatalog()
   }
 
-  function announceClassOnly(nodeId: string, edit: ClassOverrideEdit, componentName: string): void {
+  /**
+   * The variables an override replaced on this instance: a value the class binds to `var(--x)` that the user set to
+   * something else. The component's rule keeps the binding (the override lives in the instance's own rule), and the
+   * notice says so instead of leaving a literal that looks like it ate the variable.
+   */
+  function replacedVariables(request: ClassOverrideRequest): { property: string; variable: string; value: string }[] {
+    const rule = get().site?.styleRules[request.classId]
+    const base = (request.contextId ? rule?.contextStyles?.[request.contextId] : undefined) ?? rule?.styles ?? {}
+    const replaced: { property: string; variable: string; value: string }[] = []
+    for (const [property, value] of Object.entries(request.patch)) {
+      const current = (base as Record<string, unknown>)[property]
+      if (typeof current !== 'string' || typeof value !== 'string' || value.trim().startsWith('var(')) continue
+      const variable = /^\s*var\(\s*(--[\w-]+)/.exec(current)?.[1]
+      if (variable) replaced.push({ property, variable, value })
+    }
+    return replaced
+  }
+
+  function announceClassOnly(nodeId: string, edit: ClassOverrideEdit, componentName: string, replaced: readonly { property: string; variable: string; value: string }[]): void {
     const callSiteId = callSitePosition(nodeId)
     const count = instancesOnBoard(nodeId)
     const others = count - 1
+    const kept = replaced.map((entry) => `${entry.property} is ${entry.value} here instead of var(${entry.variable}); ${componentName} keeps the variable.`).join(' ')
     pushToast({
       kind: 'info',
       title: `Changed on this ${componentName} only`,
-      ...(others > 0 ? { body: `The other ${others} ${others === 1 ? 'place' : 'places'} on the board stay as they were.` } : {}),
+      ...(others > 0 || kept ? { body: [others > 0 ? `The other ${others} ${others === 1 ? 'place' : 'places'} on the board stay as they were.` : '', kept].filter(Boolean).join(' ') } : {}),
       location: 'site-editor',
-      durationMs: 9000,
+      durationMs: replaced.length > 0 ? 14000 : 9000,
       dedupeKey: `instance-class-override:${callSiteId}`,
       ...(others > 0
         ? {
@@ -311,6 +330,7 @@ export function createInstanceOverrideActions(helpers: SiteSliceHelpers): {
     const { nodeId } = request
     const componentName = findNode(nodeId)?.fromComponent ?? 'component'
     const styles = Object.fromEntries(Object.entries(request.patch).map(([property, value]) => [property, String(value)]))
+    const replaced = replacedVariables(request)
     // The canvas shows the instance's new look at once, as an inline preview (outside history and dirty tracking): the
     // shared class is not touched, so no other instance moves while the write is on the wire.
     const rollbackPreview = previewActiveTreeMutation((tree) => {
@@ -338,7 +358,7 @@ export function createInstanceOverrideActions(helpers: SiteSliceHelpers): {
     }
     if (outcome.landed) {
       invalidateLocalComponentCatalog()
-      announceClassOnly(nodeId, edit, componentName)
+      announceClassOnly(nodeId, edit, componentName, replaced)
       return
     }
     const refusal = outcome.answer?.refusals?.[0]
