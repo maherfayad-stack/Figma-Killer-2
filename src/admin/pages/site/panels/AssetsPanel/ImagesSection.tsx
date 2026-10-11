@@ -99,10 +99,14 @@ export function ImagesSection({ query, collapsed, onToggle }: ImagesSectionProps
   const drag = useCanvasInsertionDrag<ImageDragGhost>({
     // `useCanvasInsertionDrag` has already made the dropped-on frame's page
     // the active one, so the location's ids are that page's.
-    onDrop: (ghost, location) => {
+    onDrop: (ghost, location, placement) => {
       const pageId = useEditorStore.getState().activePageId
       if (!pageId) return false
-      insertImagesAtTarget({ pageId, parentId: location.parentId, index: location.index }, [sourceOf(ghost)])
+      insertImagesAtTarget(
+        { pageId, parentId: location.parentId, index: location.index },
+        [sourceOf(ghost)],
+        placement ? { property: placement.property, inline: placement.inline, top: placement.top } : null,
+      )
       return true
     },
   })

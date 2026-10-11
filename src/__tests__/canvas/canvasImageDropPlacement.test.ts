@@ -3,11 +3,9 @@
  *
  * The size is the file's own, never wider than the container's content box,
  * aspect kept; unknown means no attributes at all. The position is K6's rule:
- * the pointer's offset from the padding box, only inside a positioned
- * container, written as the logical inline start under RTL.
+ * the pointer's offset from the padding box (now `canvasNewLayerPlacement.test.ts`).
  */
 import { describe, expect, it } from 'bun:test'
-import { resolveAbsolutePlacement, type DropContainerBox } from '@site/canvas/canvasImageDropPlacement'
 import {
   IMAGE_CASCADE_STEP_PX,
   absolutePlacementStyle,
@@ -39,45 +37,7 @@ describe('clampImageSize', () => {
   })
 })
 
-describe('resolveAbsolutePlacement — K6', () => {
-  const box = (overrides: Partial<DropContainerBox> = {}): DropContainerBox => ({
-    contentWidth: 360,
-    block: {
-      rect: { left: 20, top: 30, width: 400, height: 300 },
-      borderLeft: 0,
-      borderTop: 0,
-      borderRight: 0,
-      borderBottom: 0,
-      scale: 1,
-      scrollLeft: 0,
-      scrollTop: 0,
-    },
-    containsAbsolute: true,
-    direction: 'ltr',
-    ...overrides,
-  })
-
-  it('measures from the padding box', () => {
-    expect(resolveAbsolutePlacement(box(), { x: 120, y: 80 })).toEqual({
-      ok: true,
-      placement: { property: 'left', inline: 100, top: 50 },
-    })
-  })
-
-  it('writes inset-inline-start, measured from the right edge, under RTL', () => {
-    expect(resolveAbsolutePlacement(box({ direction: 'rtl' }), { x: 120, y: 80 })).toEqual({
-      ok: true,
-      placement: { property: 'insetInlineStart', inline: 300, top: 50 },
-    })
-  })
-
-  it('refuses a static container — the image would escape it', () => {
-    expect(resolveAbsolutePlacement(box({ containsAbsolute: false }), { x: 120, y: 80 })).toEqual({
-      ok: false,
-      reason: 'static-parent',
-    })
-  })
-
+describe('absolutePlacementStyle', () => {
   it('cascades each further image by one step', () => {
     const placement = { property: 'left' as const, inline: 10, top: 20 }
     expect(absolutePlacementStyle(placement, 2)).toEqual({

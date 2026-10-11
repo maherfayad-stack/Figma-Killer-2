@@ -186,7 +186,13 @@ export interface SiteSlice {
     inlineStyles?: Record<string, string>,
   ) => string
   /** Writes `<Card />` + its import for a component the project declares itself; `false` on a CMS tree (no source). */
-  insertProjectComponent: (component: LocalComponentSpec, parentId: string, index?: number) => boolean
+  insertProjectComponent: (
+    component: LocalComponentSpec,
+    parentId: string,
+    index?: number,
+    /** PA-3 — inline styles written as the call site's `style` prop (a layer dropped into a free frame). */
+    style?: Record<string, string>,
+  ) => boolean
 
   /**
    * Insert a fragment of imported HTML nodes into the active tree under `parentId`.

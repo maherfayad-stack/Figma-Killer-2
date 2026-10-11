@@ -255,6 +255,7 @@ describe('resolveCanvasFileDropIntent — cmd places absolutely, the K6 rule (IM
       scrollLeft: 0,
       scrollTop: 0,
     },
+    kind: position === 'free' ? 'free-frame' : 'flow',
     containsAbsolute: position !== 'static',
     direction: 'ltr',
   })
@@ -276,18 +277,31 @@ describe('resolveCanvasFileDropIntent — cmd places absolutely, the K6 rule (IM
     })
   })
 
-  it('refuses a static container with the K6 remedy, and never measures without cmd', () => {
-    let measured = 0
+  it('writes a plain drop into a free frame absolute at the pointer, no cmd (PA-3)', () => {
+    const intent = resolveCanvasFileDropIntent({
+      tree: tree(),
+      candidates,
+      point: { x: 120, y: 60 },
+      zoom: 1,
+      facts: { types: ['image/png'] },
+      modifiers: NO_DROP_MODIFIERS,
+      measureContainer: () => box('free'),
+    })
+    expect(intent.ok && intent.action.kind === 'insert' && intent.action.absolute).toEqual({
+      property: 'left',
+      inline: 120,
+      top: 60,
+    })
+  })
+
+  it('refuses a static container with the K6 remedy, and a plain drop into flow stays flow', () => {
     const input = {
       tree: tree(),
       candidates,
       point: { x: 120, y: 60 },
       zoom: 1,
       facts: { types: ['image/png'] },
-      measureContainer: () => {
-        measured += 1
-        return box('static')
-      },
+      measureContainer: () => box('static'),
     }
     const refused = resolveCanvasFileDropIntent({ ...input, modifiers: { ...NO_DROP_MODIFIERS, absolute: true } })
     expect(refused.ok).toBe(false)
@@ -296,10 +310,8 @@ describe('resolveCanvasFileDropIntent — cmd places absolutely, the K6 rule (IM
     expect(refused.refusal.staticParent?.parentNodeId).toBe(MAIN)
     expect(refused.refusal.message).toContain('position: relative')
 
-    measured = 0
     const flow = resolveCanvasFileDropIntent({ ...input, modifiers: NO_DROP_MODIFIERS })
     expect(flow.ok && flow.action.kind === 'insert' && flow.action.absolute).toBe(null)
-    expect(measured).toBe(0)
   })
 })
 

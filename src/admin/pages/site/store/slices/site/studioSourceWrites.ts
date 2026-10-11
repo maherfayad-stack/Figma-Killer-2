@@ -114,7 +114,12 @@ export interface StudioSourceWrites extends StudioSourceRefusals {
    * caller must stop (written, parked, or refused out loud), false on an ordinary
    * CMS tree.
    */
-  writeInsertProjectComponentToSource: (component: LocalComponentSpec, parentId: string, index?: number) => boolean
+  writeInsertProjectComponentToSource: (
+    component: LocalComponentSpec,
+    parentId: string,
+    index?: number,
+    style?: Record<string, string>,
+  ) => boolean
   /** K3 - Cmd+Shift+G: a container dissolved, its children taking its place. */
   writeUngroupToSource: (nodeId: string) => boolean
 }
@@ -200,9 +205,10 @@ export function createStudioSourceWrites(
     component: LocalComponentSpec,
     parentId: string,
     index?: number,
+    style?: Record<string, string>,
   ): boolean => {
     const planned = planInsertToSource(parentId, index, (relocated) => {
-      writeInsertProjectComponentToSource(component, relocated, index)
+      writeInsertProjectComponentToSource(component, relocated, index, style)
     })
     if (planned.kind === 'stop') return true
     if (planned.kind === 'cms') return false
@@ -221,7 +227,7 @@ export function createStudioSourceWrites(
       name: localComponentJsxName(component),
       importSpecifier: relativeImportSpecifier(targetFile, component.file),
       ...(component.isDefaultExport ? { importStyle: 'default' as const } : {}),
-      props: {},
+      props: style && Object.keys(style).length > 0 ? { style: { ...style } } : {},
     })
     return true
   }
