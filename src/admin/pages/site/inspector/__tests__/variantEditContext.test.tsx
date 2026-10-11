@@ -71,7 +71,7 @@ function seed(options: { gallery?: boolean } = {}) {
   const site = makeSite({
     pages: [page],
     styleRules: {
-      'sc-btn': rule('sc-btn', '.btn', { color: 'black', padding: '4px' }),
+      'sc-btn': rule('sc-btn', '.btn', { color: 'black', opacity: '1' }),
       'sc-ghost': rule('sc-ghost', '.btn-ghost', { background: 'transparent' }),
     },
   })
@@ -175,7 +175,7 @@ describe('useSelectionModel — the variant edit context', () => {
     expect(result.current.writeTargetFor('margin')).toEqual({ kind: 'class', classId: 'sc-ghost', selector: '.btn-ghost' })
     // the inline layer is never the answer inside a variant context
     expect(result.current.inlineWritable).toBe(true)
-    expect(result.current.writeTargetFor('padding', { values: ['2px'] }).kind).toBe('class')
+    expect(result.current.writeTargetFor('opacity', { values: ['0.5'] }).kind).toBe('class')
   })
 
   it('a gallery cell is the main component by construction: no mode needed', async () => {

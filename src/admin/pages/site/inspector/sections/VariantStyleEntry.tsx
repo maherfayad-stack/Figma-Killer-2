@@ -4,8 +4,8 @@
  *
  * A click anywhere inside an instance selects the instance, which owns no
  * element and no style of its own, so the style sections have nothing to edit
- * there. The element that carries the variant (`Button`'s `<button>`) is inside
- * it. This row says which rule a style edit will land in ("Style edits go to
+ * there. The element that carries the variant (a Button component's root element)
+ * is inside it. This row says which rule a style edit will land in ("Style edits go to
  * .btn-ghost in Button.css") and one press opens the instance and selects that
  * element, where the variant edit context (`variantEditContext.ts`) takes over:
  * the inspector's chip repeats the rule and every style control writes to it.
