@@ -49,9 +49,9 @@ const metaDesignSystem = (): unknown => {
 
 test.use({ viewport: { width: 1600, height: 1000 } })
 
-async function openBoard(page: Page): Promise<FrameLocator> {
+async function openBoard(page: Page, pageId = 'home'): Promise<FrameLocator> {
   const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: true })
-  const frame = page.locator('[data-page-id]').first()
+  const frame = page.locator(`[data-page-id="${pageId}"]`).first()
   await panIntoView(page, canvasRoot, frame)
   await expect(visibleCanvasIframe(frame), 'the fixture frame never mounted a canvas iframe').toBeVisible({ timeout: 60_000 })
   return canvasContentFrame(frame)
@@ -238,5 +238,82 @@ test.describe('O6: the literals inside a list or object prop are editable one by
     await expect.poll(() => topEntryLabel(page)).toBe('Set segmentedControl.value')
     await page.keyboard.press('Control+z')
     await expect.poll(() => read('pages', 'Home.tsx'), { timeout: 30_000 }).toBe(NAVBAR_PAGE)
+  })
+})
+
+const TABS_COMPONENT = `export function Tabs({
+  items,
+  activeIndex = 0,
+  compact = false,
+  tone = 'info',
+}: {
+  items: string[]
+  activeIndex?: number
+  compact?: boolean
+  tone?: 'info' | 'warn' | 'danger'
+}) {
+  return (
+    <div className={compact ? 'tabs compact' : 'tabs'} data-tone={tone}>
+      <span className="tab">{items[activeIndex]}</span>
+    </div>
+  )
+}`
+
+const TABS_PAGE = `import { Tabs } from '../components/Tabs'
+
+export default function Home() {
+  return (
+    <div className="wrap">
+      <Tabs items={['Home', 'Explore', 'Trips']} />
+    </div>
+  )
+}
+`
+
+test.describe('O6: a project component lists every prop it declares', () => {
+  test.setTimeout(240_000)
+
+  test.beforeEach(() => {
+    fixture = createAuthoredFixtureProject('__e2e-owner-local-props', {
+      'pages/Home.tsx': TABS_PAGE,
+      'components/Tabs.tsx': TABS_COMPONENT,
+    })
+  })
+  test.afterEach(() => {
+    removeFixtureProject(fixture)
+  })
+
+  test('a boolean is a switch, a union a select, the selected tab a select of the labels, a list its entries', async ({ page }) => {
+    const contentFrame = await openBoard(page)
+    const target = contentFrame.locator('[data-node-id="pages/Home.tsx:6:8~components/Tabs.tsx:14:8"]')
+    await panIntoView(page, page.getByTestId('canvas-root'), target)
+    await selectInFrame(page, target)
+
+    const section = page.getByTestId('instance-component-section')
+    await expect(section, 'selecting the Tabs element did not select the instance').toBeVisible({ timeout: 30_000 })
+
+    // A boolean the call site does not pass is still a switch.
+    await section.getByTestId('instance-call-site-prop-compact').getByRole('switch').click()
+    await expect.poll(() => read('pages', 'Home.tsx'), { timeout: 30_000 }).toContain("<Tabs items={['Home', 'Explore', 'Trips']} compact />")
+      .catch(async () => expect(read('pages', 'Home.tsx')).toContain('compact={true}'))
+
+    // The selected tab: a select of the list's own labels, not a number box.
+    const active = section.getByTestId('instance-call-site-prop-activeIndex')
+    await active.getByRole('combobox').click()
+    await page.getByRole('option', { name: 'Explore' }).click()
+    await expect.poll(() => read('pages', 'Home.tsx'), { timeout: 30_000 }).toContain('activeIndex={1}')
+
+    // The string union.
+    const tone = section.getByTestId('instance-call-site-prop-tone')
+    await expect(tone).toBeVisible()
+    await tone.getByRole('button', { name: 'warn' }).click()
+    await expect.poll(() => read('pages', 'Home.tsx'), { timeout: 30_000 }).toContain('tone="warn"')
+
+    // The list's entries are rows too: rename one tab in the source.
+    const second = section.getByTestId('property-control-items.1')
+    await expect(second).toBeVisible()
+    await second.getByRole('textbox').fill('Discover')
+    await second.getByRole('textbox').press('Enter')
+    await expect.poll(() => read('pages', 'Home.tsx'), { timeout: 30_000 }).toContain("items={['Home', 'Discover', 'Trips']}")
   })
 })
