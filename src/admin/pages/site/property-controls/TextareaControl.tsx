@@ -7,7 +7,8 @@
  * Enter inserted a newline, which turned `title="First"` into
  * `title={"Alpha\n"}`.
  *
- *   - typing edits the draft and writes nothing;
+ *   - typing edits the draft and writes nothing, but the canvas shows it live
+ *     (`previewNodeProps`: transient, no history, no source write);
  *   - Enter or blur commits it (one write, one history entry);
  *   - Shift+Enter inserts a newline, but only when `multiline` — a value that
  *     lands in a JSX attribute or another file's string literal (`multiline`
@@ -20,6 +21,8 @@
 import type { ControlProps } from './shared'
 import { Textarea } from '@ui/components/Input'
 import { ControlRow } from '@ui/components/ControlRow'
+import { useEffect } from 'react'
+import { useEditorStore } from '@site/store/store'
 import { useTextFieldDraft } from './textFieldDraft'
 
 interface TextareaControlProps extends ControlProps<string> {
@@ -45,14 +48,32 @@ export function TextareaControl({
   isOverride,
   disabled,
   layout,
+  ownerNodeId,
 }: TextareaControlProps) {
   const field = useTextFieldDraft({
     value: value ?? '',
     mixed: false,
     resolve: multiline ? (raw) => raw : foldLineBreaks,
     normalizeInput: multiline ? undefined : foldLineBreaks,
-    onCommit: (next) => onChange(propKey, next),
+    onCommit: (next) => {
+      onChange(propKey, next)
+      if (ownerNodeId) useEditorStore.getState().clearPreviewNodeProps(ownerNodeId)
+    },
   })
+
+  // Selection moving away mid-draft must not leave the typed text painted.
+  useEffect(() => {
+    if (!ownerNodeId) return
+    return () => useEditorStore.getState().clearPreviewNodeProps(ownerNodeId)
+  }, [ownerNodeId])
+
+  function previewDraft(raw: string) {
+    if (!ownerNodeId) return
+    useEditorStore.getState().setPreviewNodeProps(ownerNodeId, { [propKey]: multiline ? raw : foldLineBreaks(raw) })
+  }
+  function clearPreview() {
+    if (ownerNodeId) useEditorStore.getState().clearPreviewNodeProps(ownerNodeId)
+  }
 
   return (
     <ControlRow
@@ -73,8 +94,14 @@ export function TextareaControl({
         autoGrow
         placeholder={placeholder}
         disabled={disabled}
-        onChange={(e) => field.onChange(e.target.value)}
-        onBlur={(e) => field.onBlur(e.target.value)}
+        onChange={(e) => {
+          field.onChange(e.target.value)
+          previewDraft(e.target.value)
+        }}
+        onBlur={(e) => {
+          field.onBlur(e.target.value)
+          clearPreview()
+        }}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
             // A line break is Shift+Enter, and only where the value can hold one.
@@ -86,6 +113,7 @@ export function TextareaControl({
           if (e.key === 'Escape') {
             e.preventDefault()
             field.revert()
+            clearPreview()
             e.currentTarget.blur()
           }
         }}

@@ -31,6 +31,7 @@
 import { memo, use, useLayoutEffect, useRef, useSyncExternalStore } from 'react'
 import type { InlineEditBinding } from '@core/module-engine'
 import { enterCommitsInlineEdit, readInlineEditableText, seedInlineEditableContent } from '@modules/base/shared/inlineText'
+import { withPreviewedProps } from './previewedNodeProps'
 import { useEditorStore, selectCanvasPageFor } from '@site/store/store'
 import { isInlineEditSessionFor } from '@site/store/slices/inlineEditSlice'
 import { resolveProps } from '@core/page-tree'
@@ -130,8 +131,9 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
   // Per-node subscription — editing this node's props only re-renders THIS
   // component. `frameId` (§4.4/Phase 4) lets a locale-variant frame read
   // `localizedPageSlice.ts`'s tree instead of `site.pages` — see
-  // `selectCanvasPageFor`'s own doc.
-  const node = useCanvasNodeData((s) => selectCanvasPageFor(s, contextPageId, frameId)?.nodes[nodeId] ?? null, pageScoped)
+  // `selectCanvasPageFor`'s own doc. An inspector field's uncommitted text is
+  // laid over the stored props here (`previewedNodeProps.ts`).
+  const node = useCanvasNodeData((s) => withPreviewedProps(selectCanvasPageFor(s, contextPageId, frameId)?.nodes[nodeId], s.previewNodeProps), pageScoped)
   const templateContext = use(CanvasTemplateContext)
 
   // Keyed selection read (P2-I) — see the module doc. Multi-select: every node
@@ -153,12 +155,10 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
   // are used (the seeding effect, the Enter handler).
   const isInlineEditing = useCanvasNodeData((s) => isInlineEditSessionFor(s.activeInlineEdit, nodeId, breakpointId, frameId), pageScoped)
   const editableRef = useRef<HTMLElement | null>(null)
-  // Canvas preview state for THIS node — the class-target hover preview
-  // (`previewClassAssignment`) and its Rule 7 (panel-22) Element-target
-  // mirror (`previewNodeStyles`). Two plain selectors, each returning the
-  // store's own object or `null`, so neither allocates (P2-I). Both are
-  // filtered to this node's id so unrelated nodes never re-render while a
-  // preview is live elsewhere.
+  // Canvas preview state for THIS node: the class-target hover preview
+  // (`previewClassAssignment`) and its Element-target mirror
+  // (`previewNodeStyles`). Plain selectors returning the store's own object or
+  // `null` (P2-I), filtered to this node's id so others never re-render.
   const previewClassAssignment = useCanvasNodeData((s) => (s.previewClassAssignment?.nodeId === nodeId ? s.previewClassAssignment : null), pageScoped)
   const previewNodeStyles = useCanvasNodeData((s) => (s.previewNodeStyles?.nodeIds.includes(nodeId) ? s.previewNodeStyles : null), pageScoped)
   const editorFormPreviewState = useCanvasNodeData((s) => resolveEditorFormPreviewState(s, nodeId), pageScoped)
