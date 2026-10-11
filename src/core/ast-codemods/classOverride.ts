@@ -168,7 +168,7 @@ function assertForwarded(levels: readonly Level[]): void {
 
 /** Another call site that passes `className` (or an object that may carry one) would start applying it once the component takes the prop. */
 function assertNoStrayClassNames(project: Project, workspaceRoot: string, levels: readonly Level[]): void {
-  for (const [k, level] of levels.entries()) {
+  for (const level of levels) {
     const sites = allCallSites(project, workspaceRoot, level.componentFile, level.target.exportedName ?? level.identifier, exportNameOf(level.componentFile, level.target.declaration))
     for (const site of sites) {
       const sameAs = (other: JsxOpeningLikeElement): boolean => site.getSourceFile() === other.getSourceFile() && site.getStart() === other.getStart()
