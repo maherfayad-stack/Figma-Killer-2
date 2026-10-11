@@ -37,9 +37,10 @@ describe('Circular dependencies', () => {
     }
 
     expect(output).toContain('No circular dependency found')
-    // madge walks the whole ~2.5k-file src+server graph from cold; it costs
-    // ~13s of pure analysis on a dev machine before spawn overhead. The budget
-    // is a hang guard, not a perf assertion — keep it well clear of the real
-    // cost so a legitimately growing graph doesn't turn a green gate red.
-  }, 60000)
+    // madge walks the whole ~5k-file src+server graph from cold; it costs
+    // ~13s of pure analysis on an idle dev machine and measured 2m09s while
+    // several agents were building. The budget is a hang guard, not a perf
+    // assertion — keep it well clear of the real cost so a legitimately
+    // growing graph or a busy machine doesn't turn a green gate red.
+  }, 300_000)
 })
