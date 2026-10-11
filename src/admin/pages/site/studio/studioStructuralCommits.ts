@@ -186,9 +186,10 @@ export async function commitStudioTransplant(transplant: {
         carried = answer.carried
       },
       onLanded: () => announceCarried(carried),
-      // `captured-scope` - the element reads state that lives in its own
-      // screen's code (an input bound to `useState`). Nothing in the carry can
-      // move that binding, so the way forward is to show where it is declared.
+      // `captured-scope` - the element reads a value that lives in its own
+      // screen's code and nothing in the carry can write down (a prop nobody
+      // gives a value to, a custom hook's result). The way forward is to show
+      // where it is declared.
       refusalRemedy: (refusal) => {
         if (refusal.reason !== 'captured-scope') return null
         const origin = decodeSourceNodeId(refusal.nodeId)

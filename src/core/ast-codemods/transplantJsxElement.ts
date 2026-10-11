@@ -13,9 +13,11 @@
  * either travels with it or is already bound at the DESTINATION's. What
  * travels (`transplantBindings.ts` decides, name by name): an import, a
  * context-hook read, and the plain constants and handlers the element reads
- * (G-1a - COPIED into the destination, transitively). What the component OWNS
- * - a prop, state, a ref, a `.map` row's parameter, a `let` - cannot travel, so
- * the gesture refuses and names it.
+ * (G-1a - COPIED into the destination, transitively), the state it uses (G-1b -
+ * the destination gets its OWN copy of the statement), and the values a `.map`
+ * row or a prop default hands it (G-1c - written down as constants). What the
+ * component owns beyond that - a prop nothing gives a value to, a custom hook's
+ * result, a `let` - cannot travel, so the gesture refuses and names it.
  *
  * So the difference from a reparent is not the splice; it is one extra
  * question (which bindings travel) and one extra write (the destination's
