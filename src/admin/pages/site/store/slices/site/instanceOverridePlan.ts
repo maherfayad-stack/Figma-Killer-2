@@ -148,7 +148,7 @@ export function planInstanceOverride(input: OverridePlanInput): OverridePlan {
     }
     const isText = key === textProp
     const owned = isText ? node.textOrigin !== undefined : node.resolvedProps?.[key]?.origin !== undefined
-    const feed = owned ? undefined : node.propFeeds?.[isText ? 'text' : key]
+    const feed = owned ? undefined : node.propFeeds?.[key]
     if (feed !== undefined) {
       // The component passes this on from its own prop: the call site is the target.
       if (!callSiteTakesProp(feed)) return { kind: 'direct' }

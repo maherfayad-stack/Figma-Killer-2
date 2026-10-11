@@ -318,3 +318,46 @@ describe('what the codemod cannot prove keeps today\'s behaviour, with the reaso
     expect(currentToasts()).toHaveLength(0)
   })
 })
+
+/** The board after one override elsewhere: the second Card's heading reads the component default through `{heading}`, which its parser says is the prop `heading`. */
+function fedPage(): Page {
+  const base = page()
+  return { ...base, nodes: { ...base.nodes, [HEAD_B]: { ...base.nodes[HEAD_B]!, propFeeds: { text: 'heading' } } } }
+}
+
+describe('a value that is already a prop (the parser recorded its feed)', () => {
+  it('is an instance-only edit that writes the call site: one expose-prop naming the existing prop', async () => {
+    load(fedPage())
+    stubFetch([{ undoToken: TOKEN }])
+    store().updateNodeProps(HEAD_B, { text: 'Two!' })
+    expect(headText(HEAD_B)).toBe('Two!')
+    expect(headText(HEAD_A)).toBe('Current')
+    await waitFor(() => saveCalls.length === 1)
+    expect(saveCalls[0]!.edits).toEqual([
+      { kind: 'expose-prop', nodeId: HEAD_B, overrides: [{ target: { kind: 'text' }, propName: 'heading', value: 'Two!' }] },
+    ])
+  })
+
+  it('a refusal has no ordinary write to fall back to: the preview is taken back and the server\'s sentence is a warning', async () => {
+    load(fedPage())
+    stubFetch([{ refusals: [{ nodeId: HEAD_B, kind: 'expose-prop', reason: 'shared-prop', message: '`heading` feeds more than one place in this component.' }] }])
+    store().updateNodeProps(HEAD_B, { text: 'Two!' })
+    await waitFor(() => currentToasts().some((toast) => toast.title === 'Could not change this instance'))
+    const toast = currentToasts().find((candidate) => candidate.title === 'Could not change this instance')!
+    expect(toast.kind).toBe('warning')
+    expect(toast.body).toBe('`heading` feeds more than one place in this component.')
+    expect(headText(HEAD_B)).toBe('Current')
+    expect(store().canUndo).toBe(false)
+    expect(collectNodeDiffEdits(store().site!.pages, undefined).edits).toEqual([])
+  })
+
+  it('"Edit main component" does not write it: the value has no literal there, and the notice says where it lives', async () => {
+    load(fedPage())
+    stubFetch([{}])
+    store().setMainEditComponent('Card')
+    store().updateNodeProps(HEAD_B, { text: 'Two!' })
+    expect(headText(HEAD_B)).toBe('Current')
+    expect(saveCalls).toHaveLength(0)
+    expect(currentToasts().find((candidate) => candidate.title === 'Set by a prop')?.body).toBe('Card takes this value as `heading`. Change it on an instance, or its default in the code.')
+  })
+})

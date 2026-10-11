@@ -9,7 +9,7 @@
  */
 import { CUSTOM_HTML_TAG_VALUE, TEXT_HTML_TAG_SET, htmlTagControl } from '@modules/base/utils/htmlTag'
 import type { ParsedPage, ParsedNode, ParsedPropValue } from '../page-parser'
-import { hasWritableSourceLocation, loopTemplateNodeId, styleValueKey } from '../page-tree'
+import { callSitePosition, hasWritableSourceLocation, inlineDepth, isInlinedNodeId, loopTemplateNodeId, styleValueKey } from '../page-tree'
 import type { Page, PageNode } from '../page-tree'
 
 export interface ParsedPageToSitePageOptions {
@@ -192,6 +192,25 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       }
     }
 
+    // OD-19 — a value that is the bare forward of one of the component's props
+    // (`<h2>{heading}</h2>`) has an honest write target after all: the CALL
+    // SITE's attribute. It stays code in the markup, so it leaves `codeProps`
+    // (the surfaces ask `isPropWritableToSource`) and the editor's override
+    // router reads `propFeeds` to write the call site instead of the component.
+    // Only where that call site is a single, placed JSX element on the page:
+    // one level deep (a deeper one's call site is inside another component) and
+    // not in a `.map` row (one piece of JSX renders every row).
+    const propFeeds: Record<string, string> = {}
+    if (node.propFeeds && isInlinedNodeId(id) && inlineDepth(id) === 1 && hasWritableSourceLocation(callSitePosition(id))) {
+      for (const [key, prop] of Object.entries(node.propFeeds)) {
+        const nodeKey = key === 'text' ? textProp : key
+        if (nodeKey === null) continue
+        propFeeds[nodeKey] = prop
+        const at = codeProps.indexOf(nodeKey)
+        if (at >= 0) codeProps.splice(at, 1)
+      }
+    }
+
     // Every tag-bearing module must keep rendering as its real host tag, or a
     // module default silently rewrites the element: `base.container` would turn
     // an `<h1>`/`<li>`/`<section>` into a `<div>`, `base.text` would turn a
@@ -318,8 +337,8 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       // not a lock: the properties panel warns that an edit here rewrites that
       // component's file and so lands on every instance of it.
       ...(node.fromComponent ? { fromComponent: node.fromComponent } : {}),
-      // OD-19 — which component prop each value is the bare forward of. See `PageNode.propFeeds`.
-      ...(node.propFeeds ? { propFeeds: node.propFeeds } : {}),
+      // OD-19 — which component prop each value is the bare forward of, keyed like `codeProps`. See `PageNode.propFeeds`.
+      ...(Object.keys(propFeeds).length > 0 ? { propFeeds } : {}),
       // OD-8 — a `.map` row root's array element, straight copy. See `PageNode.listRow`.
       ...(node.listRow ? { listRow: node.listRow } : {}),
     }

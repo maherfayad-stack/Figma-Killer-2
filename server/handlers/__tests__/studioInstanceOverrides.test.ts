@@ -311,8 +311,8 @@ describe('after one override, every other instance stays editable per instance',
     const { after, card } = await afterFirstOverride()
     const other = elementOf(after, after.instances[1]!, 'h3')
     expect(other.propFeeds).toEqual({ text: 'heading' })
-    // Still code in the markup, with no origin: the feed is the write target, not a baked literal.
-    expect(other.codeProps).toContain('text')
+    // The markup holds `{heading}` and no origin: the feed (the call site) is the write target, so the text is not code to the panel.
+    expect(other.codeProps ?? []).not.toContain('text')
     expect(other.textOrigin).toBeUndefined()
 
     const plan = planFor(after, other, { props: { text: 'Another' } })

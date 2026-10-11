@@ -60,14 +60,16 @@ type JsxOpeningLike = JsxElement | JsxSelfClosingElement
  * value), and `fromDefault` marks a value the call site did NOT pass, so the
  * component's destructure default fed it. Neither changes what renders; they
  * are what lets the editor write the call site for a value that has no literal
- * of its own (OD-19).
+ * of its own (OD-19). `viaCode` marks a call site that passes the prop as an
+ * expression the parser could not trace to one literal (or could not resolve at
+ * all, so the default stands in): such a value is never a place to write.
  */
 export type Substitution =
-  | { kind: 'value'; value: ParsedPropValue; prop: string; origin?: ValueOrigin; fromDefault?: true }
+  | { kind: 'value'; value: ParsedPropValue; prop: string; origin?: ValueOrigin; fromDefault?: true; viaCode?: true }
   | { kind: 'children' }
 
 /** The call-site facts `buildSubstitutionEnv` reads. */
-export type SubstitutionCallSite = Pick<ParsedNode, 'props' | 'literalPropOrigins' | 'resolvedProps'>
+export type SubstitutionCallSite = Pick<ParsedNode, 'props' | 'literalPropOrigins' | 'resolvedProps' | 'codeProps'>
 
 /**
  * Lifts a call site's already-captured prop value back into a `StaticValue`, so
@@ -135,10 +137,11 @@ export function buildSubstitutionEnv(fn: FunctionLike, callSite: SubstitutionCal
       continue
     }
 
+    const passedAsCode = callSite.codeProps?.includes(attrName) === true
     if (Object.hasOwn(callSiteProps, attrName)) {
       const value = callSiteProps[attrName]!
       const origin = callSiteOrigin(callSite, attrName, value)
-      env.set(paramName, { kind: 'value', value, prop: attrName, ...(origin ? { origin } : {}) })
+      env.set(paramName, { kind: 'value', value, prop: attrName, ...(origin ? { origin } : passedAsCode ? { viaCode: true as const } : {}) })
       continue
     }
 
@@ -146,9 +149,9 @@ export function buildSubstitutionEnv(fn: FunctionLike, callSite: SubstitutionCal
     const initializer = element.getInitializer()
     if (!initializer) continue
     if (Node.isStringLiteral(initializer) || Node.isNumericLiteral(initializer)) {
-      env.set(paramName, { kind: 'value', value: initializer.getLiteralValue(), prop: attrName, fromDefault: true })
+      env.set(paramName, { kind: 'value', value: initializer.getLiteralValue(), prop: attrName, fromDefault: true, ...(passedAsCode ? { viaCode: true as const } : {}) })
     } else if (initializer.getKind() === SyntaxKind.TrueKeyword || initializer.getKind() === SyntaxKind.FalseKeyword) {
-      env.set(paramName, { kind: 'value', value: initializer.getKind() === SyntaxKind.TrueKeyword, prop: attrName, fromDefault: true })
+      env.set(paramName, { kind: 'value', value: initializer.getKind() === SyntaxKind.TrueKeyword, prop: attrName, fromDefault: true, ...(passedAsCode ? { viaCode: true as const } : {}) })
     }
     // Any other default (a call, a template literal, …) is not a literal —
     // intentionally left unresolved, same policy as `extractProps`.
@@ -252,7 +255,7 @@ export function applySubstitutions(
       const recordFeed = (key: string, paramName: string): void => {
         const sub = env.get(paramName)
         // A call-site LITERAL string already has its own write target (`origin`); a children slot is not a value.
-        if (sub?.kind !== 'value' || sub.origin || typeof sub.value === 'object' || !readsOnce(paramName)) return
+        if (sub?.kind !== 'value' || sub.origin || sub.viaCode || typeof sub.value === 'object' || !readsOnce(paramName)) return
         patchedFeeds ??= { ...existing.propFeeds }
         patchedFeeds[key] = sub.prop
       }

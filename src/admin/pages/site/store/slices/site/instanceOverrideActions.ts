@@ -35,7 +35,7 @@
  * Posts edits, never mints a tree: `no-vc-mode-branches-in-mutations` does not
  * apply (the posture `instanceActions.ts` has).
  */
-import { callSitePosition, isInlinedNodeId, type NodeTree, type PageNode } from '@core/page-tree'
+import { callSitePosition, isInlinedNodeId, styleValueKey, type NodeTree, type PageNode } from '@core/page-tree'
 import { registry } from '@core/module-engine'
 import { pushToast } from '@ui/components/Toast'
 import { invalidateLocalComponentCatalog } from '@site/studio/componentCatalog'
@@ -73,6 +73,27 @@ const FALLBACK_REASONS = new Set(['not-a-literal', 'maps-over-props', 'call-site
 
 function wireOf(override: PlannedOverride): InstanceOverrideWire {
   return { target: override.target, propName: override.propName, value: override.value }
+}
+
+/**
+ * "Edit main component" writes the component's own markup, and a value that is
+ * a prop (`{heading}`) has no literal there to write: its home is an instance's
+ * call site, or the default in the code. Say so instead of sending a write the
+ * server would refuse. True when this edit touches such a value (and was answered).
+ */
+function declinesFedEdit(node: PageNode, change: OverrideChange): boolean {
+  const feeds = node.propFeeds
+  if (!feeds) return false
+  const touched = [...Object.keys(change.props ?? {}), ...Object.keys(change.styles ?? {}).map(styleValueKey)].find((key) => feeds[key] !== undefined)
+  if (touched === undefined) return false
+  pushToast({
+    kind: 'info',
+    title: 'Set by a prop',
+    body: `${node.fromComponent ?? 'This component'} takes this value as \`${feeds[touched]}\`. Change it on an instance, or its default in the code.`,
+    location: 'site-editor',
+    dedupeKey: `instance-fed-main:${node.id}:${touched}`,
+  })
+  return true
 }
 
 export function createInstanceOverrideActions(helpers: SiteSliceHelpers): {
@@ -206,7 +227,7 @@ export function createInstanceOverrideActions(helpers: SiteSliceHelpers): {
       if (!target || target.vc) return false
       const node = target.tree.nodes[request.nodeId]
       if (!node || !isInlinedNodeId(request.nodeId)) return false
-      if (state.mainEditComponent !== null && state.mainEditComponent === node.fromComponent) return false
+      if (state.mainEditComponent !== null && state.mainEditComponent === node.fromComponent) return declinesFedEdit(node, request.change)
 
       const textProp = registry.get(node.moduleId)?.inlineTextEdit?.prop
       const plan = planInstanceOverride({
