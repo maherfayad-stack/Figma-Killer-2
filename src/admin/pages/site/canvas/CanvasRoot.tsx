@@ -34,7 +34,7 @@ import { ChromeBoundary } from '@site/ui/ChromeBoundary'
 import { useCanvas } from '@site/hooks/useCanvas'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import { CanvasTransformLayer } from './CanvasTransformLayer'
-import { resolveCanvasFocusTarget } from './canvasFocusTarget'
+import { resolveCanvasFocusTarget, startCanvasFraming } from './canvasFocusTarget'
 import { CanvasLiveSurface } from './CanvasLiveSurface'
 import { AgentSnapshotFrame } from './AgentSnapshotFrame'
 import { useRuntimeScriptBuild } from './useRuntimeScriptBuild'
@@ -274,27 +274,21 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
     })
     if (!shouldCenter) return
 
-    let timerId: ReturnType<typeof setTimeout> | undefined
-    let attempts = 0
-    const MAX_ATTEMPTS = 200 // ~3s at 16ms — frames are ready well within this
-    const RETRY_MS = 16
-    const tryCenter = () => {
+    return startCanvasFraming({
       // Loaded: the resolved active breakpoint. Skeleton (no page yet): the
       // preferred default breakpoint, which is what active WILL resolve to.
-      const targetId = canvasPageId
-        ? useEditorStore.getState().activeBreakpointId
-        : readEditorSelectPreference('defaultBreakpoint')
-      if (centerOnBreakpointFrame(targetId)) {
-        // Record only on success: a failed attempt must not consume the key, or
-        // a board whose frames were not laid out yet would never get framed.
+      center: () =>
+        centerOnBreakpointFrame(
+          canvasPageId ? useEditorStore.getState().activeBreakpointId : readEditorSelectPreference('defaultBreakpoint'),
+        ),
+      readView: () => {
+        const { zoom, panX, panY } = useEditorStore.getState()
+        return `${zoom}:${panX}:${panY}`
+      },
+      settle: () => {
         lastCenteredKeyRef.current = centerKey
-        return
-      }
-      if ((attempts += 1) > MAX_ATTEMPTS) return // not `++`: see react-compiler-bailouts.test.ts
-      timerId = setTimeout(tryCenter, RETRY_MS)
-    }
-    tryCenter()
-    return () => clearTimeout(timerId)
+      },
+    })
   }, [canvasPageId, activeBoardId, isLive, centerOnBreakpointFrame])
 
   // ─── Modals & overlays ─────────────────────────────────────────────────────

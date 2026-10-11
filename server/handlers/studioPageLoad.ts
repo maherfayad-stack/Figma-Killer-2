@@ -91,6 +91,7 @@ import { styledStyleRuleSources } from './studio/styledStyleRuleSources'
 import type { RoutePageEntry } from './studio/routePageEntry'
 import { discoverStories, storyFilesIn, type DiscoveredStory } from './studio/storyDiscovery'
 import { buildStoryRouteEntries } from './studio/storyPages'
+import { buildGalleryRouteEntries, discoverGalleries } from './studio/componentGallery'
 import { discoverAppRouterRoutes, discoverPageFiles, projectPagesDir, projectPreviewLocale } from './studioProjects'
 import { assignAppRouterPageIds, assignPageIds } from './studioPageIds'
 
@@ -237,7 +238,7 @@ async function computeStudioPages(dir: string): Promise<ComputedStudioLoad> {
   const pagesDir = projectPagesDir(dir)
   if (!existsSync(pagesDir)) {
     return {
-      result: { pages: [], canvasLayers: [], componentSources: {}, styleRules: {}, styleRuleSources: {}, styledStyleRuleSources: {}, conditions: [], vendorCss: '', authoredCss: '', stories: [], warnings: [] },
+      result: { pages: [], canvasLayers: [], componentSources: {}, styleRules: {}, styleRuleSources: {}, styledStyleRuleSources: {}, conditions: [], vendorCss: '', authoredCss: '', stories: [], galleries: [], warnings: [] },
       dependencies: new Map(),
     }
   }
@@ -330,7 +331,17 @@ async function computeStudioPagesWith(
   // producers derive ids from different rules and could otherwise collide.
   const stories = discoverProjectStories(dir, project, pageEntries, meta.stories?.enabled !== false)
   const storyEntries = buildStoryRouteEntries(context.scope, workspace, stories, compiledStyles.moduleClassMaps)
-  const routeEntries = [...pageEntries, ...storyEntries]
+  // CV-2 — the variants gallery, a FOURTH producer of route entries: one derived
+  // page per component that declares enum/boolean props. Page ids are deduped
+  // against pages and stories, and a route file is never its own gallery.
+  const galleries = discoverGalleries(
+    project,
+    dir,
+    new Set(pageEntries.map((entry) => entry.relFile)),
+    new Set([...pageEntries, ...storyEntries].map((entry) => entry.pageId)),
+  )
+  const galleryEntries = buildGalleryRouteEntries(context.scope, workspace, galleries, compiledStyles.moduleClassMaps)
+  const routeEntries = [...pageEntries, ...storyEntries, ...galleryEntries]
   // P5-G — the free canvas's layer modules, parsed like pages (same parse,
   // same style pass, same convert) and returned APART from them, in
   // `canvasLayers`. See `studio/canvasLayerLoad.ts`.
@@ -389,6 +400,12 @@ async function computeStudioPagesWith(
     .filter((story) => builtStoryPageIds.has(story.summary.pageId))
     .map((story) => story.summary)
 
+  // Same rule for galleries: only those that became a page get a frame.
+  const builtGalleryPageIds = new Set(galleryEntries.map((entry) => entry.pageId))
+  const gallerySummaries = galleries
+    .filter((gallery) => builtGalleryPageIds.has(gallery.summary.pageId))
+    .map((gallery) => gallery.summary)
+
   return {
     result: {
       pages,
@@ -404,6 +421,7 @@ async function computeStudioPagesWith(
       vendorCss: compiledStyles.vendorCss,
       authoredCss,
       stories: storySummaries,
+      galleries: gallerySummaries,
       warnings: collectLoadWarnings(dir, project, workspace.warnings, routeEntries),
     },
     dependencies: loadDependencies(

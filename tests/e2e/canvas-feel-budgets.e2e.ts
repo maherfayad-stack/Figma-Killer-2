@@ -107,6 +107,14 @@ const WARM_CLICK_SAMPLES = 8
 const BUDGET_WARM_CLICK_TO_RING_MEAN_MS = E2E_VITE_MODE === 'preview' ? 75 : 120
 
 /**
+ * **First press -> selection ring, on the press itself** (the button still
+ * held), cold: the session's first selection also opens the docked inspector.
+ * Selection used to wait for the release, so this was a whole press-and-release
+ * plus the long task that began there.
+ */
+const BUDGET_FIRST_PRESS_TO_RING_MS = E2E_VITE_MODE === 'preview' ? 75 : 150
+
+/**
  * **Post-edit pause** — how long the board is watched after an edit commits:
  * the poster queue's 700 ms quiet period plus one ~1 s rasterization of a
  * 310-element frame (measured: 880–1,160 ms each). Before P2-I the edited
@@ -431,6 +439,73 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
     annotate('warm click -> ring paint: samples', samples.map((n) => n.toFixed(1)).join(', '))
     annotate('warm click -> ring paint: mean / worst', `${mean.toFixed(1)}ms / ${Math.max(...samples).toFixed(1)}ms`)
     expect(mean).toBeLessThan(BUDGET_WARM_CLICK_TO_RING_MEAN_MS)
+  })
+
+  test('first press: ONE selection, on the way down, and nothing on the board moves', async ({ page }) => {
+    // The reported two-phase selection: pointerdown selected nothing (or an
+    // ancestor) and the real layer arrived a release later, behind a long task;
+    // and on the FIRST selection of a session the docked Properties panel
+    // opens, narrowing the canvas. Selection now happens on the press
+    // (`canvasPressSelect.ts`), so with the button STILL DOWN the ring is
+    // already on its final layer, and neither the press, the release nor the
+    // click that follows changes it. The first selection also must not move a
+    // single mounted frame (opening the inspector never moves the board under
+    // the user).
+    const { frameEl, content } = await openAtWorkingZoom(page)
+    const iframeBox = await visibleCanvasIframe(frameEl).boundingBox()
+    if (!iframeBox) throw new Error('the target iframe has no bounding box')
+    const target = await content.evaluate(() => {
+      const el = document.querySelector('.block__heading')!
+      const r = el.getBoundingClientRect()
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2, clientWidth: document.documentElement.clientWidth }
+    })
+    // The canvas zoom is a CSS scale on the iframe.
+    const scale = iframeBox.width / target.clientWidth
+    const point = { x: iframeBox.x + target.x * scale, y: iframeBox.y + target.y * scale }
+
+    const rects = () =>
+      page.evaluate(() =>
+        Array.from(document.querySelectorAll('iframe')).map((f) => {
+          const r = f.getBoundingClientRect()
+          return [r.x, r.y, r.width]
+        }),
+      )
+    const before = await rects()
+
+    await content.evaluate(() => {
+      const state = { downAt: 0, ringAt: 0, ids: new Set<string>(), longest: 0 }
+      ;(window as unknown as { __p1: typeof state }).__p1 = state
+      document.addEventListener('pointerdown', () => { if (state.downAt === 0) state.downAt = performance.now() }, { capture: true, once: true })
+      const read = () => {
+        const rings = Array.from(document.querySelectorAll('[data-canvas-selection-ring="true"]')).filter((el) => (el as HTMLElement).style.display !== 'none')
+        for (const ring of rings) state.ids.add(ring.getAttribute('data-canvas-overlay-node-id') ?? '')
+        if (rings.length > 0 && state.ringAt === 0 && state.downAt !== 0) state.ringAt = performance.now()
+      }
+      new MutationObserver(read).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['style', 'data-canvas-overlay-node-id'] })
+      new PerformanceObserver((list) => { for (const e of list.getEntries()) state.longest = Math.max(state.longest, e.duration) }).observe({ type: 'longtask', buffered: false })
+    })
+    await page.mouse.move(point.x, point.y)
+    await page.mouse.down()
+    // Button held: the selection is already made.
+    await expect.poll(
+      () => content.evaluate(() => (window as unknown as { __p1: { ringAt: number } }).__p1.ringAt),
+      { timeout: 5_000, message: 'no selection ring while the press is still held' },
+    ).toBeGreaterThan(0)
+    const heldIds = await content.evaluate(() => Array.from((window as unknown as { __p1: { ids: Set<string> } }).__p1.ids))
+    await page.mouse.up()
+    await page.waitForTimeout(800)
+    const result = await content.evaluate(() => {
+      const s = (window as unknown as { __p1: { downAt: number; ringAt: number; ids: Set<string>; longest: number } }).__p1
+      return { ms: s.ringAt - s.downAt, ids: Array.from(s.ids), longest: s.longest }
+    })
+    const after = await rects()
+    const drift = Math.max(...before.map((b, i) => Math.max(Math.abs(b[0]! - after[i]![0]!), Math.abs(b[1]! - after[i]![1]!))))
+    annotate('first press: ring from pointerdown / long task / board drift', `${result.ms.toFixed(1)}ms / ${result.longest.toFixed(0)}ms / ${drift.toFixed(1)}px`)
+
+    expect(heldIds.length, 'the ring named more than one layer while the button was held').toBe(1)
+    expect(result.ids, 'the release or the click changed the selection the press made').toEqual(heldIds)
+    expect(result.ms).toBeLessThan(BUDGET_FIRST_PRESS_TO_RING_MS)
+    expect(drift, 'selecting moved a mounted frame').toBeLessThan(0.5)
   })
 
   test('post-edit pause: the frame being edited is not rasterized under the user', async ({ page }) => {

@@ -17,10 +17,12 @@ import { ImportProjectButton } from './ImportProjectButton'
 import { PreviewAxesControls } from './PreviewAxesControls'
 import { ShareBoardButton } from './ShareBoardButton'
 import { DownloadCodeButton } from './DownloadCodeButton'
+import { PeerAvatars } from '../studio/live/PeerAvatars'
 
 export function StudioToolbarActions() {
   return (
     <>
+      <PeerAvatars />
       <ImportProjectButton />
       <PreviewAxesControls />
       <ShareBoardButton />

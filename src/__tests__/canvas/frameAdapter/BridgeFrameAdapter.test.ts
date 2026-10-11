@@ -417,6 +417,15 @@ describe('BridgeFrameAdapter — canonical <-> wire occurrenceIndex translation'
     ])
   })
 
+  it('beginTextEdit posts an allowed reply flagged begin, with the wire ref and the seed text', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['row:1:1#0', 'row:1:1#1'] })
+    adapters.push(adapter)
+    adapter.beginTextEdit('row:1:1#1', 'Text')
+    expect(stub.posted.at(-1)!.message).toEqual({ type: 'text:edit', nodeId: 'row:1:1', occurrenceIndex: 1, allowed: true, text: 'Text', begin: true })
+    expect(adapter.isFrameReady()).toBe(true)
+  })
+
   it('emits inbound text:editStart/text:commit/text:cancel with the canonical row id', () => {
     const stub = makeStubChannel()
     const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['row:1:1#0', 'row:1:1#1'] })

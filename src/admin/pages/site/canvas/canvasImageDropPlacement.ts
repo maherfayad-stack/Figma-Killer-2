@@ -30,7 +30,12 @@
  * props with; this module is the canvas half — the container measurement and
  * the K6 decision. Everything but {@link measureDropContainer} is pure.
  */
-import { inlineOffsetProperty } from '@core/studio-runtime'
+import {
+  containingBlockOffsets,
+  establishesContainingBlock,
+  inlineOffsetProperty,
+  type ContainingBlockBox,
+} from '@core/studio-runtime'
 import type { AbsoluteImagePlacement } from '@site/store/slices/site/imageDropShapes'
 import type { ClientPoint } from './canvasDragSession'
 import { presentedElementForNode } from './canvasNodeLookup'
@@ -39,12 +44,10 @@ import { presentedElementForNode } from './canvasNodeLookup'
 export interface DropContainerBox {
   /** Content-box width in CSS px — the widest an image can be without overflowing. */
   contentWidth: number
-  /** The padding box's top-left, in frame-viewport coordinates. */
-  paddingOrigin: ClientPoint
-  /** Padding-box width, to mirror an RTL inline offset from the right edge. */
-  paddingWidth: number
-  /** Computed `position` — `static` means an absolutely placed child would escape it. */
-  position: string
+  /** The container's box in frame-viewport coordinates, for `containingBlockOffsets`. */
+  block: ContainingBlockBox
+  /** Does an absolute child of this container stay inside it (positioned, transformed, …)? */
+  containsAbsolute: boolean
   /** Computed `direction`, for the inline offset property. */
   direction: string
 }
@@ -67,16 +70,24 @@ export function measureDropContainer(doc: Document, nodeId: string): DropContain
   }
   const borderLeft = px(style.borderLeftWidth)
   const borderRight = px(style.borderRightWidth)
-  const borderTop = px(style.borderTopWidth)
-  const paddingWidth = Math.max(0, rect.width - borderLeft - borderRight)
+  const scale = element.offsetWidth > 0 ? rect.width / element.offsetWidth : 1
+  const paddingWidth = Math.max(0, rect.width / scale - borderLeft - borderRight)
   return {
     contentWidth: Math.max(0, paddingWidth - px(style.paddingLeft) - px(style.paddingRight)),
     // Frame-viewport coordinates — the space the drop's candidate rects and
     // `indexLocalPoint` speak (a frame grows to its content, so it does not
     // scroll).
-    paddingOrigin: { x: rect.left + borderLeft, y: rect.top + borderTop },
-    paddingWidth,
-    position: style.position,
+    block: {
+      rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+      borderLeft,
+      borderTop: px(style.borderTopWidth),
+      borderRight,
+      borderBottom: px(style.borderBottomWidth),
+      scale,
+      scrollLeft: element.scrollLeft,
+      scrollTop: element.scrollTop,
+    },
+    containsAbsolute: establishesContainingBlock(style),
     direction: style.direction,
   }
 }
@@ -96,17 +107,17 @@ export function resolveAbsolutePlacement(
   point: ClientPoint,
 ): AbsolutePlacementResolution {
   if (!box) return { ok: false, reason: 'unmeasured' }
-  // `static` is the only value that fails to establish a containing block for
-  // an absolute child; `relative`/`absolute`/`fixed`/`sticky` all do.
-  if (box.position === 'static') return { ok: false, reason: 'static-parent' }
+  // A container that does not establish a containing block would hand the
+  // absolute image to some distant ancestor.
+  if (!box.containsAbsolute) return { ok: false, reason: 'static-parent' }
   const property = inlineOffsetProperty(box.direction)
-  const fromLeft = point.x - box.paddingOrigin.x
+  const offsets = containingBlockOffsets({ left: point.x, top: point.y, width: 0, height: 0 }, box.block)
   return {
     ok: true,
     placement: {
       property,
-      inline: Math.round(property === 'left' ? fromLeft : box.paddingWidth - fromLeft),
-      top: Math.round(point.y - box.paddingOrigin.y),
+      inline: property === 'left' ? offsets.left : offsets.right,
+      top: offsets.top,
     },
   }
 }

@@ -34,6 +34,33 @@ export const LARGE_BOARD_FRAME_COUNT = 40
 const SECTIONS_PER_SCREEN = 9
 const ITEMS_PER_SECTION = 10
 const FRAMES_PER_ROW = 5
+
+/**
+ * The shape of one generated board. The default is the 40 x 310 board the P2-A
+ * budgets were calibrated on; `board-scale-budgets.e2e.ts` (SB-0) asks for the
+ * 100 x ~150 board the board-speed plan names.
+ */
+export interface BoardCorpusShape {
+  name: string
+  frameCount: number
+  sectionsPerScreen: number
+  framesPerRow: number
+}
+
+export const LARGE_BOARD_SHAPE: BoardCorpusShape = {
+  name: LARGE_BOARD_CORPUS_NAME,
+  frameCount: LARGE_BOARD_FRAME_COUNT,
+  sectionsPerScreen: SECTIONS_PER_SCREEN,
+  framesPerRow: FRAMES_PER_ROW,
+}
+
+/** 100 frames x (1 + 3 + 4 x (4 + 30)) = 140 elements: the board-speed plan's SB-0 corpus. */
+export const SCALE_BOARD_SHAPE: BoardCorpusShape = {
+  name: '__scale-board-corpus',
+  frameCount: 100,
+  sectionsPerScreen: 4,
+  framesPerRow: 10,
+}
 const FRAME_WIDTH = 1024
 const COLUMN_PITCH = FRAME_WIDTH + 80
 /** A screen renders ~2,550 px tall (measured on `canvas-feel-budgets.e2e.ts`'s first run); 3,000 keeps rows apart. */
@@ -50,9 +77,9 @@ export function largeBoardPageId(index: number): string {
   return screenName(index).toLowerCase()
 }
 
-function screenSource(index: number): string {
+function screenSource(index: number, shape: BoardCorpusShape): string {
   const sections: string[] = []
-  for (let s = 0; s < SECTIONS_PER_SCREEN; s += 1) {
+  for (let s = 0; s < shape.sectionsPerScreen; s += 1) {
     const items: string[] = []
     for (let i = 0; i < ITEMS_PER_SECTION; i += 1) {
       const word = WORDS[(index + s + i) % WORDS.length]
@@ -78,7 +105,7 @@ function screenSource(index: number): string {
     `    <main className="screen">\n` +
     `      <header className="screen__bar">\n` +
     `        <span className="screen__title">Screen ${index + 1}</span>\n` +
-    `        <span className="screen__badge">Frame ${index + 1} of ${LARGE_BOARD_FRAME_COUNT}</span>\n` +
+    `        <span className="screen__badge">Frame ${index + 1} of ${shape.frameCount}</span>\n` +
     `      </header>\n` +
     `${sections.join('\n')}\n` +
     `    </main>\n` +
@@ -100,13 +127,13 @@ const CORPUS_CSS = `.screen { font-family: system-ui, sans-serif; padding: 24px;
 .row__value { font-variant-numeric: tabular-nums; color: #3a4356; }
 `
 
-export function writeLargeBoardCorpus(): FixtureProject {
+export function writeLargeBoardCorpus(shape: BoardCorpusShape = LARGE_BOARD_SHAPE): FixtureProject {
   const files: Record<string, string> = {
     '.studio/meta.json': JSON.stringify(
       {
         // Sorts after every real project and after the other `__` fixtures, so
         // it never becomes the workspace's default project.
-        displayName: 'Zz Large Board Corpus',
+        displayName: `Zz ${shape.name}`,
         platform: 'web',
         pagesDir: 'pages',
         trust: 'static',
@@ -122,11 +149,11 @@ export function writeLargeBoardCorpus(): FixtureProject {
           {
             id: 'lbc-board-1',
             name: 'Large',
-            frames: Array.from({ length: LARGE_BOARD_FRAME_COUNT }, (_, index) => ({
+            frames: Array.from({ length: shape.frameCount }, (_, index) => ({
               id: `lbc-frame-${String(index + 1).padStart(2, '0')}`,
               pageId: largeBoardPageId(index),
-              x: (index % FRAMES_PER_ROW) * COLUMN_PITCH,
-              y: Math.floor(index / FRAMES_PER_ROW) * ROW_PITCH,
+              x: (index % shape.framesPerRow) * COLUMN_PITCH,
+              y: Math.floor(index / shape.framesPerRow) * ROW_PITCH,
               width: FRAME_WIDTH,
             })),
             notes: [],
@@ -140,10 +167,10 @@ export function writeLargeBoardCorpus(): FixtureProject {
     ),
     'pages/corpus.css': CORPUS_CSS,
   }
-  for (let index = 0; index < LARGE_BOARD_FRAME_COUNT; index += 1) {
-    files[`pages/${screenName(index)}.tsx`] = screenSource(index)
+  for (let index = 0; index < shape.frameCount; index += 1) {
+    files[`pages/${screenName(index)}.tsx`] = screenSource(index, shape)
   }
-  return createAuthoredFixtureProject(LARGE_BOARD_CORPUS_NAME, files)
+  return createAuthoredFixtureProject(shape.name, files)
 }
 
 /** A frame renders about this wide at the working zoom — ~4 columns of the 5-column board on screen. */

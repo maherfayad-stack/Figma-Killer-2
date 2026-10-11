@@ -254,7 +254,7 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
 
   {
     commandId: 'layers.delete',
-    shortcut: { mac: '⌘⌫', win: 'Ctrl+Backspace' },
+    shortcut: { mac: '⌫', win: 'Delete' },
     ariaKeyshortcuts: isPlatformMac() ? 'Meta+Backspace' : 'Control+Backspace',
     match: (e) =>
       ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === 'Backspace') ||

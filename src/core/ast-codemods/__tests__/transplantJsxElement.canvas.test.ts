@@ -190,7 +190,7 @@ describe('placeCanvasLayerRoot', () => {
       position: 'before',
     })
 
-    expect(result).toEqual({ ok: true, carriedImports: ['Badge'], created: { line: 8, col: 8 } })
+    expect(result).toEqual({ ok: true, carriedImports: ['Badge'], carriedDeclarations: [], created: { line: 8, col: 8 } })
     expect(read(home)).toBe(HOME)
     // The module is the caller's to delete — this codemod never touches .studio/canvas.
     expect(read(moduleFile)).toBe(BADGE_LAYER)

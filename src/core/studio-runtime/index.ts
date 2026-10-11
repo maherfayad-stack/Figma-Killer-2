@@ -259,6 +259,27 @@ export {
 } from './elementSizingRules'
 
 export {
+  autoLayoutFamily,
+  isAutoLayoutDisplay,
+  isOutOfFlow,
+  parentPlacementKind,
+  resolvePlacement,
+  type ParentPlacementKind,
+  type PlacementOutcome,
+  type PlacementParentInput,
+} from './placementKind'
+
+export {
+  containingBlockBoxOf,
+  containingBlockOffsets,
+  establishesContainingBlock,
+  readContainingBlock,
+  type BoxRect,
+  type ContainingBlockBox,
+  type ContainingBlockOffsets,
+} from './containingBlockOffsets'
+
+export {
   cssPropertyName,
   planResizeSizing,
   readClearedValues,

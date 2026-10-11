@@ -56,8 +56,11 @@ export {
   type DeclarationTargetRefusal,
 } from './analyzeDeclarationTarget'
 export {
+  insertCustomProperty,
   listCustomPropertyDeclarations,
   setCustomPropertyValueAtLine,
   type CustomPropertyDeclaration,
   type CustomPropertyEditResult,
+  type CustomPropertyInsertResult,
+  type InsertCustomPropertyOptions,
 } from './customProperty'

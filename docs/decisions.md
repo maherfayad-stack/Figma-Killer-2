@@ -1,7 +1,7 @@
 # Owner decisions
 > **Purpose:** every settled owner decision, with its date, source and consequence · **Read when:** before re-opening a product question, or when a work order cites a decision id (OD-n, D-n, FEEL §6.n, BUILTIN §0.n) · **Trust:** current · **Owner:** studio-architect · **Verified:** 2026-09-23
 
-The product calls the owner has made, in one place, newest first. A decision recorded here is settled: do not re-open it in a work order, and do not build against its opposite. Open questions that still need the owner are in [`ROADMAP.md`](../ROADMAP.md), never here.
+The product calls the owner has made, in one place, newest first. A decision recorded here is settled: do not re-open it in a work order, and do not build against its opposite. The one exception is the "Proposed — owner to confirm" section, whose rows are recommendations awaiting an answer. Other open owner questions are in [`ROADMAP.md`](../ROADMAP.md).
 
 ---
 
@@ -9,11 +9,14 @@ The product calls the owner has made, in one place, newest first. A decision rec
 
 - **The standing authorization holds** (2026-07-31, re-confirmed 2026-09-23): agents finish their bundle without stopping to ask, inside fixed limits (no push to `main`, draft PRs, no merges, security review where the plan says so).
 - **Every project is Tier 2 (`run-project`) by default** (2026-09-20). How the tiers work: [`docs/features/trust-tiers.md`](features/trust-tiers.md).
+- **Figma parity program (2026-10-10):** OD-17, OD-19, OD-21, OD-22 and SB-D1..D3 are decided; the rest of its questions are proposed and not settled.
 - **The canvas excellence program's sixteen decisions** (OD-1…OD-16, OD-FC-1/2) are below; `ROADMAP.md` bundles cite them by id.
 - Older decision sets are kept with their original ids (FEEL §6.n, BUILTIN §0.n, NEXT-WS Dn) because code comments and archived plans cite those ids. A superseded row says what replaced it.
 
 | Id | Date | Topic |
 |---|---|---|
+| OD-17, OD-19, OD-21, OD-22, SB-D1…3 | 2026-10-10 | **Decided**: the Figma parity program ([below](#figma-parity-decided-2026-10-10)) |
+| OD-18, OD-20, OD-23, OD-24, SB-D4…7, OD-P1…7, CT-OD, CV-OD, OD-MP | 2026-10-10 | **Proposed, not settled**: the Figma parity program ([below](#proposed--owner-to-confirm-2026-10-10)) |
 | OD-1 … OD-16, OD-FC-1/2 | 2026-09-23 (OD-15, OD-16: 2026-09-24) | The canvas excellence program ([below](#the-canvas-excellence-program-2026-09-23)) |
 | Standing authorization | 2026-07-31, re-confirmed 2026-09-23 | [below](#the-standing-authorization) |
 | Trust default | 2026-09-20 | [below](#every-project-starts-at-tier-2-2026-09-20) |
@@ -22,6 +25,91 @@ The product calls the owner has made, in one place, newest first. A decision rec
 | LIVE §7.1, §7.3, §7.4 | 2026-09-08 | Live canvas ([below](#live-canvas-2026-09-08)) |
 | PROTO §1 | 2026-09-02 | Prototype links ([below](#prototype-links-2026-09-02)) |
 | NEXT-WS D1 … D5 | 2026-08-01 | Agent, canonical JSX, preview axes ([below](#next-workstreams-2026-08-01)) |
+
+---
+
+## Figma parity: decided (2026-10-10)
+
+Source: the plans in [`programs/`](programs/), answered by the owner on 2026-10-10 and relayed by the coordinating agent. The rest of that program's questions are still open, in "Proposed — owner to confirm" below.
+
+| # | Decision | How it was settled |
+|---|---|---|
+| OD-17 | Moving an element that uses state (`useState`/`useReducer`/`useRef`) gives it its own copy of that state, with a notice and Undo. The original keeps its own | **owner:** yes |
+| OD-19 | Editing a value (text, attribute, inline style) inside a shared component changes only that instance by default. This amends OD-7's second sentence. Mechanism per [`programs/refusals.md`](programs/refusals.md): an auto-added optional prop whose default is the current value, and an "Apply to all (N)" action | **owner:** yes |
+| OD-21 | Design-system (`alm.*`) components can be detached as local code. This also settles the detach question STATE `meta-20` left open; real `node_modules` packages keep refusing | **owner:** yes |
+| OD-22 | Inserting into a component keeps detaching it, with a one-line notice. **Exception:** when the component accepts elements through a slot (`children` or a `ReactNode` prop, for example a layout component), the insert lands in that slot at the call site and nothing is detached | **owner:** yes, refined |
+| SB-D1 | The live-frame cap is **adaptive**: keep as many screens live as the machine can afford. Default 20, scaling up with available memory and the measured live-frame budget (for example `navigator.deviceMemory` and the live-frame heap measurement), never below 12. Frames beyond the cap, or below the zoom threshold, are posters | **owner:** "overall the more screens the better" ("10–20 is a safe bet") |
+| SB-D2 | A bitmap poster is acceptable for screens the user is not editing; it refreshes on idle | decided by delegation (plan recommendation) |
+| SB-D3 | Editing a node on a poster frame auto-promotes it to live (wait of at most 250 ms); the zoom threshold below which a frame is a poster is 0.35 | decided by delegation (plan recommendation) |
+
+---
+
+## Proposed — owner to confirm (2026-10-10)
+
+Source: the five plans in [`docs/programs/`](programs/), indexed by [`ROADMAP.md`](../ROADMAP.md) §14. **Nothing in this section is settled.** "Provisionally adopted" means a bundle already in flight assumes the recommendation; if the owner answers differently, that bundle changes. "Open" means no in-flight bundle depends on it. An id here moves into a dated settled section when the owner answers. The board-speed plan numbers its questions D1..D7; they are written `SB-D1..SB-D7` here so they do not collide with NEXT-WS D1..D5.
+
+### Refusals ([`programs/refusals.md`](programs/refusals.md))
+
+| # | Question | Recommendation | Status |
+|---|---|---|---|
+| OD-18 | Does a move carry props and `.map` row values? | Yes: bake the resolved literal as a named `const` at the destination; a function, JSX or object-ref prop that cannot be serialized still refuses, naming it. A row element moved out of a template is a copy of that row | open |
+| OD-20 | Typing into a code-bound field replaces the binding with the literal? | Yes, with an info notice and Undo; the field stays read-only with an "Unbind" button otherwise | open |
+| OD-23 | Detach hoists state hooks into the enclosing component when the call site is hook-legal? | Yes, with fresh names per instance; otherwise the component-copy fallback runs | open |
+| OD-24 | "Unroll list" as an explicit, lossy, menu-only action? | Yes | open |
+| Brief-1 | Amend [`PROJECT-BRIEF.md`](../PROJECT-BRIEF.md) invariant 2 (needed by OD-17, OD-18, OD-20). Proposed sentence, to be added by the owner or on their go-ahead: "a write has one honest target, or one named consequence the user is shown and can undo" | Adopt after OD-17/18/20 are answered. The brief is **not** changed until then | open |
+
+### Board speed ([`programs/board-speed.md`](programs/board-speed.md))
+
+| # | Question | Recommendation | Status |
+|---|---|---|---|
+| SB-D4 | Persist posters to `.studio/cache/posters/` (gitignored, LRU-capped)? Cap size? | Yes, default 500 MB, per project, never uploaded | open |
+| SB-D5 | Tier-2 posters: rasterize inside the dev-server document, or from the static fallback? Cap of 3 live bridge frames? | Inside the dev-server document (runtime-side, only where Tier 2 already runs); cap 3 | open |
+| SB-D6 | Rasterizer path | Studio-owned foreignObject serializer on the board; revisit if a browser-native HTML-in-Canvas API proves available | open |
+| SB-D7 | WebGL scene | Not now: 2D canvas first; revisit only if SB-6 measures more than 4 ms at 300 frames | open |
+
+### Positioning ([`programs/positioning.md`](programs/positioning.md))
+
+| # | Question | Recommendation | Status |
+|---|---|---|---|
+| OD-P1 | Free frame detected from computed style, or marked in source? | Derived, no marker | provisionally adopted (PA-1, PA-2) |
+| OD-P2 | Ignore auto layout / cmd-drag when the auto-layout parent is static: refuse with remedy, or write `position:relative` on the parent? | Auto-write in the same undo step when the parent's style site is single and unshared; refuse with a remedy otherwise | open |
+| OD-P3 | Frame selection on in-flow members | Bare `<div>`, members unchanged; only absolute members get a positioned wrapper; never freeze flow children into pixels | open |
+| OD-P4 | Drawing in a plain flow (block) frame | Keep flow insert; cmd places freely | provisionally adopted (PA-3 scope) |
+| OD-P5 | A fifth "Free" layout-mode button? | No: a derived chip plus Add/Remove auto layout menu items | open |
+| OD-P6 | Default unit for a newly absolute layer | px; % only through the Scale constraint | open |
+| OD-P7 | Modifier key for free placement | Keep cmd/ctrl (already shipped); no Alt (Alt means copy) | provisionally adopted (PA-2) |
+
+### Components and tokens ([`programs/components-tokens.md`](programs/components-tokens.md))
+
+| # | Question | Recommendation | Status |
+|---|---|---|---|
+| CT-OD-1 | Source of truth for tokens | The project's own CSS custom properties plus Tailwind v4 `@theme`; Studio's Framework scales stay a separate generator, shown as a read-only "Framework" collection | provisionally adopted (CT-1, CT-2) |
+| CT-OD-2 | Modes | Inferred from existing selectors (`[data-theme]`, `.dark`, `@media`); "+ Mode" writes a gate block, reusing the detected colour-scheme gate, else `[data-theme="<name>"]` | provisionally adopted (CT-1 gate classification); the "+ Mode" write is open until CT-4 |
+| CT-OD-3 | Text and effect styles | Text style is a CSS class; effect style is a `--shadow-*` token | open |
+| CT-OD-4 | Renaming a token | Rewrites every `var()` use in project source in one undo step, with "Updated N uses · Undo"; refuses when a use is in package or compiled source | open |
+| CT-OD-5 | Editing a read-only token (package, vendor, Framework, ALM) | Offer "Override in <entry stylesheet>"; never edit the package | open |
+| CV-OD-1 | Which patterns are writable variants | css-module class map, `data-*` attribute selector, lookup object, cva/tv, boolean class; everything else is `opaque` (renders, refuses Add variant with the line number) | open |
+| CV-OD-2 | Where the main component lives on the board | A derived "Components" frame group opened from Assets, separate from curated boards (needs scout verification that a definition root can be selected with a writable id) | open |
+| CV-OD-3 | "Add variant" | Clones the currently shown member's styling; an empty variant is a second button | open |
+| CV-OD-4 | Removing or renaming a variant member or prop that call sites use | Refuse and list the sites; never rewrite N call sites silently | open |
+| CV-OD-5 | Design-system (`alm.*`) and package components | Call-site properties only, no Add variant | open |
+| OD-X | Ordering | Ship tokens (CT-1..CT-4) before variant writes (CV-3/CV-4) | open |
+
+### Multiplayer ([`programs/multiplayer.md`](programs/multiplayer.md))
+
+| # | Question | Recommendation | Status |
+|---|---|---|---|
+| OD-MP-1 | CRDT or server-ordered ops | Server-ordered ops; refuse on structural conflict | open |
+| OD-MP-2 | Transport | One WebSocket for presence and notifications; writes stay HTTP | provisionally adopted (MP-1) |
+| OD-MP-3 | Who sees presence | Viewers yes; share-link guests only on comment-capable shares, as anonymous "Guest N"; no new capability, reuse `site.read` | viewers: provisionally adopted (MP-1); guests: open |
+| OD-MP-4 | Same-prop conflict | Silent last-writer-wins plus an info chip, not a blocking prompt | open |
+| OD-MP-5 | Undo scope | Per-user, hunk-level, never undoes a peer's change; refuses with a name when a peer touched the region | open |
+| OD-MP-6 | Soft locks | Advisory rings only; no hard element locks in v1 | open |
+| OD-MP-7 | Agent visibility | The agent is a named member with its current target, visible to the room | open |
+| OD-MP-8 | Git verbs while others edit | Allowed, busy chip, saves queue behind the lock | open |
+| OD-MP-9 | Room size | Max 12, soft warning at 8 | provisionally adopted (MP-1) |
+| OD-MP-10 | Deployment | Single instance per project; high availability deferred | provisionally adopted (MP-1) |
+| OD-MP-11 | Phasing | Ship presence (MP-1, MP-2) as its own release before touching the write path | open |
 
 ---
 

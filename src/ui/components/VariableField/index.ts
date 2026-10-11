@@ -8,12 +8,23 @@
  */
 export { useVariableAffordance } from './useVariableAffordance'
 export type { UseVariableAffordanceOptions, VariableAffordance } from './useVariableAffordance'
-export { VariableSourceContext, useVariableOptions, useVariableCatalog } from './VariableSourceContext'
+export {
+  VariableSourceContext,
+  VariableActionsContext,
+  useVariableOptions,
+  useVariableCatalog,
+  useVariableActions,
+} from './VariableSourceContext'
+export type { VariableActions } from './VariableSourceContext'
+export { isValidVariableName, normalizeVariableName, suggestVariableName } from './suggestVariableName'
 export {
   classifyVariableValue,
   filterVariablesByKind,
   COLOR_VARIABLE_KINDS,
+  DURATION_VARIABLE_KINDS,
+  FONT_FAMILY_VARIABLE_KINDS,
   LENGTH_VARIABLE_KINDS,
+  SHADOW_VARIABLE_KINDS,
   VARIABLE_SOURCE_LABEL,
 } from './variableKind'
 export type { VariableKind, VariableOption, VariableSource } from './variableKind'

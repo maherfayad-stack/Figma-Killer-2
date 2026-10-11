@@ -28,6 +28,7 @@ import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { getStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
+import { refreshProjectAfterInstall } from '@site/studio/projectInstallRefresh'
 import { resyncActiveProjectModules } from '@site/studio/registerProjectModules'
 import { invalidateLocalComponentCatalog } from '@site/studio/componentCatalog'
 import { invalidateStudioIconCatalog } from '@site/studio/iconCatalog'
@@ -91,6 +92,7 @@ export function useDependencyInstallJob() {
             body: job.warnings[0] ?? `Done with ${job.packageManager}.`,
           })
           requestCmsSiteReload()
+          refreshProjectAfterInstall()
           resyncActiveProjectModules()
           // Both panel catalogues are cached per project for the whole
           // session, so an install/remove that changes which components and

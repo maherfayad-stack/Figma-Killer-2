@@ -63,7 +63,7 @@
  *
  * ## Double-click: Hug (P5-F, IX-6f)
  *
- * A double-click on a handle sets Hug contents on the axes it owns
+ * A double-click on a corner handle sets Hug contents on the axes it owns
  * (`hugPatchForHandle`) — one `setNodeInlineStyles`, one undo entry. It is
  * detected here, as a SECOND PRESS on the same handle within
  * {@link DOUBLE_PRESS_MS} of a first press that moved nothing, never from the
@@ -114,6 +114,16 @@ import { iframeZoom, paintResizeGuides, resizeGuideLines, resolveResizeGuideSurf
 
 /** A node with no `style={{…}}` of its own — stable, so no fallback object is built per press. */
 const NO_INLINE_STYLES: Readonly<Record<string, unknown>> = {}
+
+/**
+ * Only the four corner grips are visible handles. The edge handles are
+ * invisible strips along the whole side (`selectionChromeCss.ts`), so a
+ * double-click anywhere along the selection ring's edge is not a double-click
+ * on a handle and must not Hug.
+ */
+export function isHugHandle(handle: ResizeHandle): boolean {
+  return handle.length === 2
+}
 
 /** Two presses on one handle this close together are a double-click (the OS default is ~500 ms). */
 export const DOUBLE_PRESS_MS = 400
@@ -179,9 +189,10 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
         })
         return
       }
-      state.setNodeInlineStyles(
+      state.setNodeInlineStylesFromGesture(
         nodeId,
         Object.fromEntries(Object.entries(patch).map(([key, value]) => [key, value ?? null])),
+        'Resized',
       )
     }
     iframeDoc.addEventListener('click', swallowHandleClick, true)
@@ -203,7 +214,7 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
         event.preventDefault()
         event.stopPropagation()
 
-        if (isSecondPress(handle, event)) {
+        if (isHugHandle(handle) && isSecondPress(handle, event)) {
           lastStillPress = null
           hugFromHandle(handle)
           return
@@ -305,9 +316,10 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
                 ? { handle, at: performance.now(), x: event.clientX, y: event.clientY }
                 : null
               if (patch) {
-                useEditorStore.getState().setNodeInlineStyles(
+                useEditorStore.getState().setNodeInlineStylesFromGesture(
                   nodeId,
                   Object.fromEntries(Object.entries(patch).map(([key, value]) => [key, value ?? null])),
+                  'Resized',
                 )
               }
             },

@@ -38,6 +38,13 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
   const [loadFailed, setLoadFailed] = useState(false)
   /** The token currently being captured, `'new'` while minting, or null. */
   const [busyToken, setBusyToken] = useState<string | null>(null)
+  /**
+   * Why the last attempt failed, shown inside the dialog next to the button that
+   * was pressed. The toast says it too, but a toast is a bystander of a modal
+   * dialog: a failure after a 60 s wait must still be readable where the person
+   * is looking.
+   */
+  const [captureError, setCaptureError] = useState<string | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -71,6 +78,7 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
 
   async function capture(token?: string) {
     setBusyToken(token ?? 'new')
+    setCaptureError(null)
     try {
       const result = await createShare(activeBoardId, token)
       setShares(result.shares)
@@ -81,10 +89,12 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
       }
     } catch (err) {
       console.error('[ShareDialog] could not capture the board:', err)
+      const message = getErrorMessage(err, 'Unknown error photographing the board')
+      setCaptureError(message)
       pushToast({
         kind: 'error',
         title: token ? 'Could not update the share' : 'Could not share this board',
-        body: getErrorMessage(err, 'Unknown error photographing the board'),
+        body: message,
       })
     } finally {
       setBusyToken(null)
@@ -140,6 +150,12 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
         layout, and their names. No sign-in, no editing, and no access to the code.
         A share is a snapshot: update it to re-capture, revoke it to turn it off.
       </p>
+
+      {captureError && (
+        <p className={styles.captureError} role="alert" data-testid="share-capture-error">
+          {captureError}
+        </p>
+      )}
 
       {shares === null && <p className={styles.empty}>Loading…</p>}
 

@@ -54,7 +54,7 @@ export function PluginsSection() {
   return (
     <div className={styles.pluginsBody} data-testid="plugins-admin-canvas">
       <p className={s.sectionDescription}>
-        Install admin extensions and control what they add to the CMS.
+        Install extensions and control what they add to Studio.
       </p>
 
       {canInstall && (

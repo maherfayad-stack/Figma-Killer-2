@@ -10,55 +10,40 @@
  * they all share one breakpoint id and the centering query always resolves to the
  * first frame in DOM order.
  *
- * The rule under test: the board is the unit of "a document opened" when there is
- * one, the page otherwise, and each unit is framed at most once.
+ * The rule under test, in two steps. The first fix made each unit framed at most
+ * once (board, else page). That still left a hole: framing looks the frame up by
+ * the STORE's active breakpoint id, and a board's frames carry the synthetic
+ * `'studio'` id instead - so the lookup found nothing at open, and succeeded
+ * only after the user's first press set `activeBreakpointId` to `'studio'`,
+ * framing the board under that first selection (every frame jumped, ~340 px
+ * and ~500 px on test4). A board is therefore never framed from here: its view
+ * is the user's (or Shift+1).
  */
 import { describe, expect, it } from 'bun:test'
 import { resolveCanvasFocusTarget } from '@site/canvas/canvasFocusTarget'
 
 describe('resolveCanvasFocusTarget — board mode', () => {
-  it('frames the board once when it opens', () => {
-    expect(
-      resolveCanvasFocusTarget({
-        activeBoardId: 'board-1',
-        canvasPageId: 'home',
-        lastCenteredKey: null,
-      }),
-    ).toEqual({ centerKey: 'board-1', shouldCenter: true })
-  })
-
-  it('does NOT re-frame when selection moves the active page within the same board', () => {
-    // This is the regression. `canvasPageId` changed from `home` to `checkout`
-    // purely because the user clicked an element in another frame.
-    expect(
-      resolveCanvasFocusTarget({
-        activeBoardId: 'board-1',
-        canvasPageId: 'checkout',
-        lastCenteredKey: 'board-1',
-      }),
-    ).toEqual({ centerKey: 'board-1', shouldCenter: false })
-  })
-
-  it('does NOT re-frame no matter how many times the page changes', () => {
-    for (const canvasPageId of ['a', 'b', 'c', 'a']) {
+  it('never frames a board: not when it opens, and not when its first frame is pressed', () => {
+    for (const lastCenteredKey of [null, 'board-1']) {
       expect(
-        resolveCanvasFocusTarget({
-          activeBoardId: 'board-1',
-          canvasPageId,
-          lastCenteredKey: 'board-1',
-        }).shouldCenter,
+        resolveCanvasFocusTarget({ activeBoardId: 'board-1', canvasPageId: 'home', lastCenteredKey }).shouldCenter,
       ).toBe(false)
     }
   })
 
-  it('frames again when a DIFFERENT board is opened', () => {
+  it('does NOT frame when selection moves the active page within the board', () => {
+    // `canvasPageId` changes purely because the user pressed an element in another frame.
+    for (const canvasPageId of ['home', 'checkout', 'a', 'b', 'c', 'a']) {
+      expect(
+        resolveCanvasFocusTarget({ activeBoardId: 'board-1', canvasPageId, lastCenteredKey: null }).shouldCenter,
+      ).toBe(false)
+    }
+  })
+
+  it('does not frame a DIFFERENT board either', () => {
     expect(
-      resolveCanvasFocusTarget({
-        activeBoardId: 'board-2',
-        canvasPageId: 'home',
-        lastCenteredKey: 'board-1',
-      }),
-    ).toEqual({ centerKey: 'board-2', shouldCenter: true })
+      resolveCanvasFocusTarget({ activeBoardId: 'board-2', canvasPageId: 'home', lastCenteredKey: 'board-1' }),
+    ).toEqual({ centerKey: 'board-2', shouldCenter: false })
   })
 })
 

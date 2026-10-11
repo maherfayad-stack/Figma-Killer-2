@@ -11,15 +11,21 @@
  * `data-field-skin="inspector"`, and for the same reason: the affordance has
  * to reach the ~40 components between the shell and a leaf `Input` without
  * being threaded as a prop through all of them. Computing it once here also
- * means the CSS scan runs once per panel render, not once per field.
+ * means the catalog is derived once per panel render, not once per field.
  */
 import type { ReactNode } from 'react'
-import { VariableSourceContext } from '@ui/components/VariableField'
+import { VariableActionsContext, VariableSourceContext, type VariableActions } from '@ui/components/VariableField'
+import { createStudioVariable } from '@site/studio/studioTokenCatalog'
 import { useProjectVariables } from './projectVariables'
+
+/** The one write a field can ask for: declare a new variable in a project stylesheet (the server's token planner decides where). */
+const VARIABLE_ACTIONS: VariableActions = { createVariable: createStudioVariable }
 
 export function ProjectVariablesProvider({ children }: { children: ReactNode }) {
   const variables = useProjectVariables()
   return (
-    <VariableSourceContext.Provider value={variables}>{children}</VariableSourceContext.Provider>
+    <VariableSourceContext.Provider value={variables}>
+      <VariableActionsContext.Provider value={VARIABLE_ACTIONS}>{children}</VariableActionsContext.Provider>
+    </VariableSourceContext.Provider>
   )
 }

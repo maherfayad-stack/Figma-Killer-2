@@ -32,8 +32,8 @@ export function getVisualComponentsCommands(): Command[] {
     // creates the VC once the editor store has hydrated.
     {
       id: 'visualComponents.create',
-      title: 'New Visual Component…',
-      subtitle: 'Add a new reusable Visual Component to the site',
+      title: 'New component…',
+      subtitle: 'Add a new reusable component to the project',
       group: 'visualComponents',
       iconName: 'box-solid',
       keywords: ['visual component', 'vc', 'component', 'create', 'new', 'add'],

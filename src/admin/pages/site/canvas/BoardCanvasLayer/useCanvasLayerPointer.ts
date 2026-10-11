@@ -60,6 +60,7 @@ import type { CanvasTransform } from '../math'
 import { STUDIO_BREAKPOINT_ID, canvasLayerAtPoint, canvasLayerRects, clientToBoardPoint, readBoardOrigin, type CanvasLayerRect } from './canvasLayerGeometry'
 import { resolveCanvasLayerDrop, type CanvasLayerDropState, type CanvasLayerFrameTarget } from './canvasLayerDropPreview'
 import { setHoveredCanvasLayer } from './canvasLayerHover'
+import { startLayerTextEditAtPoint } from './canvasLayerTextEdit'
 
 /** Screen px a press travels before it is a drag — the element drag's own activation distance. */
 const DRAG_ACTIVATE_PX = 4
@@ -365,6 +366,17 @@ export function useCanvasLayerPointer({
       event.stopImmediatePropagation()
     }
 
+    // Double-click a text layer: edit it in place. The surface takes no input,
+    // so the board hears the gesture and hit-tests the layer itself.
+    const onDoubleClick = (event: MouseEvent) => {
+      if (event.target !== root || event.button !== 0 || isCanvasSpacePanActive(document)) return
+      const hit = layerAt({ x: event.clientX, y: event.clientY })
+      if (!hit) return
+      if (!startLayerTextEditAtPoint(surfaceDocumentRef.current, hit.id, { x: event.clientX, y: event.clientY })) return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+    }
+
     const onPointerLeave = () => setHoveredCanvasLayer(null)
 
     root.addEventListener('pointerdown', onPointerDown, true)
@@ -372,6 +384,7 @@ export function useCanvasLayerPointer({
     root.addEventListener('pointerup', onPointerUp, true)
     root.addEventListener('pointercancel', cancel, true)
     root.addEventListener('click', onClick, true)
+    root.addEventListener('dblclick', onDoubleClick, true)
     root.addEventListener('pointerleave', onPointerLeave)
     return () => {
       cancel()
@@ -381,6 +394,7 @@ export function useCanvasLayerPointer({
       root.removeEventListener('pointerup', onPointerUp, true)
       root.removeEventListener('pointercancel', cancel, true)
       root.removeEventListener('click', onClick, true)
+      root.removeEventListener('dblclick', onDoubleClick, true)
       root.removeEventListener('pointerleave', onPointerLeave)
     }
   }, [enabled, canvasRootRef, transformRef, surfaceDocumentRef, surfaceElementRef, boardOriginRef])

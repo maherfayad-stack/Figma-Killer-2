@@ -19,6 +19,35 @@ describe('withDeadline', () => {
   })
 })
 
+describe('withDeadline late results', () => {
+  it('hands a result that arrives after the deadline to onLateResult, so a launched browser is closed instead of leaked', async () => {
+    let resolveWork!: (value: string) => void
+    const work = new Promise<string>((resolve) => { resolveWork = resolve })
+    const released: string[] = []
+    const err = await withDeadline(work, 10, 'Launching', { onLateResult: (value) => { released.push(value) } }).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(DeadlineExceededError)
+    expect(released).toEqual([])
+    resolveWork('browser')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(released).toEqual(['browser'])
+  })
+
+  it('does not call onLateResult for a result that arrived in time', async () => {
+    const released: string[] = []
+    expect(await withDeadline(Promise.resolve('ok'), 1_000, 'Step', { onLateResult: (value) => { released.push(value) } })).toBe('ok')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(released).toEqual([])
+  })
+
+  it('does not turn a late rejection into an unhandled one', async () => {
+    let rejectWork!: (reason: Error) => void
+    const work = new Promise<string>((_, reject) => { rejectWork = reject })
+    await withDeadline(work, 10, 'Launching', { onLateResult: () => undefined }).catch(() => undefined)
+    rejectWork(new Error('late failure'))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+})
+
 describe('capture origin in dev', () => {
   // `STATIC_DIR` points at a directory with no index.html, i.e. "not built".
   const notBuilt = { STATIC_DIR: './definitely-not-a-build-dir' }

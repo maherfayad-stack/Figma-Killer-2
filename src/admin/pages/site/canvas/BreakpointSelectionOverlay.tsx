@@ -81,6 +81,7 @@ import { isCanvasGestureActive } from './canvasGesture'
 import { useCanvasAnimationScrub } from './animationScrubStore'
 import { createOverlayMeasureScheduler, type OverlayMeasureScheduler } from './overlayMeasureScheduler'
 import { InPlaceInspectorAnchor } from './InPlaceInspectorAnchor'
+import { useInspectorClosedAfterDrag } from './useInspectorClosedAfterDrag'
 import { CanvasDropIndicators } from './CanvasDropIndicators'
 import { useCanvasDropSurfaceRegistration } from './useCanvasDropSurfaceRegistration'
 import { isBridgeChromeAdapter, useBridgeSelectionChrome } from './useBridgeSelectionChrome'
@@ -202,8 +203,7 @@ export function BreakpointSelectionOverlay({
   const toolbarRef = useRef<HTMLDivElement>(null)
   const inspectorRef = useRef<HTMLDivElement>(null)
   const [portalCanvasRoot, setPortalCanvasRoot] = useState<HTMLElement | null>(null)
-  // nodeId → rendered iframe element, reused across RAF ticks so the
-  // steady-state tick never pays a per-frame `querySelector` document scan.
+  // nodeId → rendered iframe element, reused across RAF ticks (no per-frame scan).
   const nodeElementCacheRef = useRef<CanvasNodeElementCache | null>(null)
   if (nodeElementCacheRef.current === null) nodeElementCacheRef.current = new CanvasNodeElementCache()
   // Gates the EXPENSIVE parent-doc anchor computation (iframe.getBoundingClientRect()
@@ -676,9 +676,9 @@ export function BreakpointSelectionOverlay({
     />
   ) : null
 
-  // Studio-only mini-inspector (Phase 2), anchored just below the selection
-  // ring by the measure pass and the pan/zoom follower — see its own doc.
-  const inspector = inspectorNodeId ? (
+  // Studio-only mini-inspector (Phase 2), anchored below the selection ring; any drag end closes it.
+  const inspectorClosed = useInspectorClosedAfterDrag(reorderDrag.dragging, selectedNodeIdsSignature, selectedNodeIds.length > 0)
+  const inspector = inspectorNodeId && !inspectorClosed ? (
     <InPlaceInspectorAnchor anchorRef={inspectorRef} nodeId={inspectorNodeId} mode={toolbarMode} breakpointId={breakpointId} />
   ) : null
 

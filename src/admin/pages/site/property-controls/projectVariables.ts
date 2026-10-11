@@ -1,177 +1,129 @@
 /**
- * projectVariables — the catalog behind the inspector's "Apply variable"
- * picker: every CSS custom property the OPEN project actually declares.
+ * projectVariables - the catalog behind the inspector's "Apply variable"
+ * picker: every CSS custom property the OPEN project declares, plus Studio's
+ * own Framework scales as a separate, read-only group.
  *
- * ## Why the project's own properties, and not just the framework scales
+ * ## One catalog, from the server
  *
- * `tokenUtils.ts`'s `Token` is a step in one of STUDIO's generated framework
- * scales. That is the right vocabulary for the spacing/typography
- * autocomplete, and the wrong one for "show me my variables": a user who
- * opened a real React repo has `--color-primary`, `--space-4`,
- * `--radius-card` in their own stylesheets, and none of those are framework
- * steps. Offering only the framework scales would answer "what variables do
- * I have" with a list the user did not write.
+ * This module used to scan the two concatenated stylesheet strings the canvas
+ * carries with its own regex. That could not say which FILE a variable lives
+ * in, which declaration is its dark value, or whether a package owns it - and
+ * it was a second scanner beside the one the agent writes through. The picker
+ * now reads the token catalog (`GET /admin/api/studio/token-catalog`,
+ * `server/handlers/studio/tokenCatalog.ts`): the exact stylesheet stack the
+ * canvas loads, in cascade order, every declaration gated by the mode it sits
+ * under. There is no CSS scan in this file.
  *
- * ## Where the bytes come from — an existing channel, not a new one
+ * ## Framework scales are a generator, not the user's tokens (CT-OD-1)
  *
- * `studioRawCssStores.ts` already holds the two raw CSS strings a Studio
- * load carries: `authoredCss` (the project's own `.css`, concatenated in
- * cascade order) and `vendorCss` (a design system's package stylesheets).
- * Both are already on the client for `ProjectCssInjector`/
- * `AuthoredCssInjector`. This module scans them; no server change, no second
- * wire format, and — importantly — the catalog can never disagree with what
- * the canvas is rendering, because it IS what the canvas is rendering.
+ * `@core/framework` generates `--text-xs...`, colour shades and spacing steps
+ * from the Framework panel's settings. Those are not declared in any file of
+ * the project, so they are not in the server catalog; their `:root` block is
+ * generated here, read with the SAME pure gated scan the server uses, and
+ * listed as a read-only "Framework" group that never shadows a project token
+ * of the same name.
  *
- * The framework scales are folded in as a third source by generating their
- * `:root` block with `generateFrameworkRootCss` and scanning it too — the
- * same generator `canvasClassCss.ts` feeds the canvas. That gives framework
- * steps a RESOLVED value (so they get a swatch and a correct kind) through
- * exactly the same code path as everything else, instead of a second,
- * name-based classification that could disagree with the first.
- *
- * ## What is deliberately NOT here
- *
- * A per-variable source FILE. The client receives the project's stylesheets
- * already concatenated (see `studioCss.ts`'s `authoredCssParts.join`), so
- * there is no honest file attribution to show. The picker groups by bundle
- * (Project / Package / Framework) instead of inventing one.
+ * Which value a variable shows: its default (`:root`) declaration, else the
+ * declaration that paints, with its value in every other mode on the row's
+ * tooltip.
  */
-import { useSyncExternalStore } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
+import { filterReemittableColorTokens, generateFrameworkRootCss } from '@core/framework'
 import {
-  filterReemittableColorTokens,
-  generateFrameworkRootCss,
-} from '@core/framework'
-import {
-  classifyVariableValue,
-  type VariableOption,
-  type VariableSource,
-} from '@ui/components/VariableField'
+  modeOfGate,
+  resolveVarValue,
+  scanGatedDeclarations,
+  type CatalogToken,
+  type TokenCatalog,
+  type TokenDecl,
+} from '@core/studio-tokens'
+import { classifyVariableValue, type VariableOption } from '@ui/components/VariableField'
 import { useEditorStore } from '@site/store/store'
+import { getStudioAuthoredCss, getStudioVendorCss, subscribeStudioAuthoredCss, subscribeStudioVendorCss } from '@site/studio/studioRawCssStores'
 import {
-  getStudioAuthoredCss,
-  getStudioVendorCss,
-  subscribeStudioAuthoredCss,
-  subscribeStudioVendorCss,
-} from '@site/studio/studioRawCssStores'
+  getStudioTokenCatalog,
+  refreshStudioTokenCatalog,
+  subscribeStudioTokenCatalog,
+} from '@site/studio/studioTokenCatalog'
 
-/**
- * A custom-property declaration anywhere in the sheet — not only in `:root`.
- * A design system routinely declares its dark values under
- * `[data-theme='dark']` and its component tokens on a component class, and
- * all of those are variables the user can legitimately reference. Selector
- * scope is not modelled: the picker's job is "which names exist and roughly
- * what do they hold", and the last declaration wins, matching the cascade
- * for the common case (two `:root` blocks declaring the same name).
- */
-const DECLARATION_RE = /(--[A-Za-z0-9_-]+)\s*:\s*([^;{}]+)/g
-
-/** Matches a value that is exactly one `var()` reference, for chain resolution. */
-const LONE_VAR_RE = /^var\(\s*(--[A-Za-z0-9_-]+)\s*(?:,\s*([^)]*))?\)$/
-
-/**
- * Cap the scan. A minified design-system bundle can carry thousands of
- * declarations, and a picker listing 4,000 rows is not a picker. Far above
- * any hand-authored token set.
- */
-const MAX_VARIABLES_PER_SOURCE = 500
-
-/** Bound `var()` → `var()` chains so a cyclic stylesheet cannot hang the panel. */
-const MAX_RESOLUTION_DEPTH = 8
-
-/**
- * Every custom property declared in `css`, in declaration order, last
- * declaration winning for a repeated name (the insertion order of the first
- * occurrence is kept — a scale declared small-to-large stays in that order
- * even if a later block overrides one step).
- */
-export function scanCssCustomProperties(css: string): Map<string, string> {
-  const found = new Map<string, string>()
-  if (!css) return found
-  DECLARATION_RE.lastIndex = 0
-  let match = DECLARATION_RE.exec(css)
-  while (match !== null) {
-    const value = match[2].trim()
-    if (value.length > 0) found.set(match[1], value)
-    if (found.size >= MAX_VARIABLES_PER_SOURCE) break
-    match = DECLARATION_RE.exec(css)
-  }
-  return found
+/** The declaration a picker row shows: the default value, else the one that paints, else the first. */
+function representativeDecl(token: CatalogToken): TokenDecl | undefined {
+  return (
+    token.decls.findLast((decl) => decl.gate.kind === 'base' && decl.winning) ??
+    token.decls.findLast((decl) => decl.winning) ??
+    token.decls[0]
+  )
 }
 
-/**
- * Follows `var(--a)` → `var(--b)` → `4px` to a concrete value, falling back
- * to the chain's own `var(--x, FALLBACK)` argument when a link is missing.
- * Returns the last expression reached when the chain does not terminate in a
- * literal — that value still classifies as `other`, which is honest.
- */
-export function resolveVariableValue(
-  raw: string,
-  declarations: ReadonlyMap<string, string>,
-): string {
-  let current = raw.trim()
-  for (let depth = 0; depth < MAX_RESOLUTION_DEPTH; depth += 1) {
-    const lone = LONE_VAR_RE.exec(current)
-    if (!lone) return current
-    const next = declarations.get(lone[1])
-    if (next === undefined) return (lone[2] ?? '').trim() || current
-    current = next.trim()
-  }
-  return current
+function collectionLabels(catalog: TokenCatalog): ReadonlyMap<string, string> {
+  return new Map(catalog.collections.map((collection) => [collection.id, collection.label]))
 }
 
-/**
- * Builds the picker catalog from the three CSS bundles. Order matters: later
- * sources do NOT overwrite an earlier source's entry for the same name,
- * because the user's own stylesheet is the one they will recognise, and a
- * package re-declaring `--color-primary` should not relabel it "Package".
- */
-export function buildVariableCatalog(sources: {
-  projectCss: string
-  vendorCss: string
-  frameworkCss: string
-}): VariableOption[] {
-  const entries: Array<{ source: VariableSource; declarations: Map<string, string> }> = [
-    { source: 'project', declarations: scanCssCustomProperties(sources.projectCss) },
-    { source: 'vendor', declarations: scanCssCustomProperties(sources.vendorCss) },
-    { source: 'framework', declarations: scanCssCustomProperties(sources.frameworkCss) },
-  ]
-
-  // One merged map for resolution, so a project variable pointing at a
-  // package variable (`--btn-bg: var(--color-primary)`) still resolves.
-  const all = new Map<string, string>()
-  for (const entry of entries) {
-    for (const [name, value] of entry.declarations) {
-      if (!all.has(name)) all.set(name, value)
-    }
-  }
-
-  const catalog: VariableOption[] = []
-  const claimed = new Set<string>()
-  for (const entry of entries) {
-    for (const [name, raw] of entry.declarations) {
-      if (claimed.has(name)) continue
-      claimed.add(name)
-      const resolvedValue = resolveVariableValue(raw, all)
-      catalog.push({
-        name,
-        resolvedValue,
-        kind: classifyVariableValue(resolvedValue),
-        source: entry.source,
+/** The picker rows for the project's own tokens. */
+export function projectVariableOptions(catalog: TokenCatalog): VariableOption[] {
+  const labels = collectionLabels(catalog)
+  const options: VariableOption[] = []
+  for (const token of catalog.tokens) {
+    const shown = representativeDecl(token)
+    if (!shown) continue
+    const modes = token.decls
+      .filter((decl) => decl.winning && decl !== shown)
+      .flatMap((decl) => {
+        const mode = modeOfGate(decl.gate)
+        return mode ? [{ label: mode.modeLabel, value: decl.resolvedValue }] : []
       })
-    }
+    options.push({
+      name: token.name,
+      resolvedValue: shown.resolvedValue,
+      kind: classifyVariableValue(shown.resolvedValue),
+      // A package's tokens are the "Package" group; the project's own, and the
+      // output of its Sass/PostCSS/Tailwind build, are the project's.
+      source: shown.origin === 'package' || shown.origin === 'studio-design-system' ? 'vendor' : 'project',
+      file: shown.file,
+      ...(labels.get(token.collection) ? { collection: labels.get(token.collection) } : {}),
+      ...(modes.length > 0 ? { modes } : {}),
+    })
   }
-  return catalog
+  return options
+}
+
+/** The picker rows for Studio's generated Framework scales: values resolved, no file. */
+export function frameworkVariableOptions(frameworkCss: string): VariableOption[] {
+  const base = new Map<string, string>()
+  const declared = scanGatedDeclarations(frameworkCss).filter((decl) => decl.gate.kind === 'base')
+  for (const decl of declared) base.set(decl.name, decl.raw)
+  return [...base].map(([name, raw]) => {
+    const resolvedValue = resolveVarValue(raw, base)
+    return { name, resolvedValue, kind: classifyVariableValue(resolvedValue), source: 'framework' as const }
+  })
 }
 
 /**
- * The live catalog for the open project. Re-derived when the load's raw CSS
- * changes (once per project load) or when the framework settings change —
- * both of which are exactly when the set of declared variables can differ.
+ * Builds the picker catalog. The project's own tokens come first and are never
+ * relabelled by a Framework step of the same name: the user's stylesheet is the
+ * one they will recognise.
+ */
+export function buildVariableCatalog(catalog: TokenCatalog | null, frameworkCss: string): VariableOption[] {
+  const project = catalog ? projectVariableOptions(catalog) : []
+  const claimed = new Set(project.map((option) => option.name))
+  return [...project, ...frameworkVariableOptions(frameworkCss).filter((option) => !claimed.has(option.name))]
+}
+
+/**
+ * The live catalog for the open project. The server catalog is re-read once
+ * per load - whenever the load's raw CSS changes, which is exactly when the
+ * set of declared variables can differ - and the Framework group is
+ * re-derived when the framework settings change.
  */
 export function useProjectVariables(): VariableOption[] {
-  const projectCss = useSyncExternalStore(subscribeStudioAuthoredCss, getStudioAuthoredCss)
+  const catalog = useSyncExternalStore(subscribeStudioTokenCatalog, getStudioTokenCatalog)
+  const authoredCss = useSyncExternalStore(subscribeStudioAuthoredCss, getStudioAuthoredCss)
   const vendorCss = useSyncExternalStore(subscribeStudioVendorCss, getStudioVendorCss)
   const framework = useEditorStore((state) => state.site?.settings?.framework)
+
+  useEffect(() => {
+    void refreshStudioTokenCatalog()
+  }, [authoredCss, vendorCss])
 
   const frameworkCss = generateFrameworkRootCss({
     colors: filterReemittableColorTokens(framework?.colors),
@@ -180,5 +132,5 @@ export function useProjectVariables(): VariableOption[] {
     preferences: framework?.preferences,
   })
 
-  return buildVariableCatalog({ projectCss, vendorCss, frameworkCss })
+  return buildVariableCatalog(catalog, frameworkCss)
 }

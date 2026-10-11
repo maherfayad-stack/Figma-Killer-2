@@ -21,7 +21,11 @@ import {
   type CanvasFitRect,
   type ZoomFitMode,
 } from '@site/canvas/canvasZoomFit'
-import { measureCanvasFrameRects, measureCanvasSelectionRects } from '@site/canvas/canvasViewportCommands'
+import {
+  measureCanvasFitInsets,
+  measureCanvasFrameRects,
+  measureCanvasSelectionRects,
+} from '@site/canvas/canvasViewportCommands'
 import type { CanvasTransform } from '@site/canvas/math'
 
 interface UseCanvasZoomToFitOptions {
@@ -68,7 +72,7 @@ const applyZoomToFitRects = useCallback(
       { width: rootRect.width, height: rootRect.height },
       targetRects,
       transformRef.current,
-      DEFAULT_ZOOM_FIT_PADDING_PX,
+      measureCanvasFitInsets(root, DEFAULT_ZOOM_FIT_PADDING_PX),
       mode,
     )
     if (!next) return false

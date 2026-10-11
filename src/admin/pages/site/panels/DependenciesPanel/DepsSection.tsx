@@ -32,6 +32,8 @@
  */
 import { useRef, useState, useId } from 'react'
 import { useEditorStore } from '@site/store/store'
+import { useAdminUi } from '@admin/state/adminUi'
+import { useProjectManifest } from '@site/studio/projectManifestStore'
 import { Button } from '@ui/components/Button'
 import { Input } from '@ui/components/Input'
 import { SearchBar } from '@ui/components/SearchBar'
@@ -81,6 +83,13 @@ interface RuntimeDependencyIssue {
 
 export function DepsSection() {
   const site = useEditorStore((s) => s.site)
+  // The list is the OPEN PROJECT's package.json (dependencies + devDependencies)
+  // and what is installed of it. `packageJson` below is only the CMS site's
+  // in-memory mirror: it feeds the runtime-dependency lock and script analysis,
+  // and listing it here is how a project with four packages read "No
+  // dependencies yet."
+  const projectDir = useAdminUi((s) => s.studioProject?.dir ?? null)
+  const manifest = useProjectManifest(projectDir)
   const packageJson = useEditorStore((s) => s.packageJson)
   const siteRuntime = useEditorStore((s) => s.siteRuntime)
   const setDependency = useEditorStore((s) => s.setDependency)
@@ -110,8 +119,9 @@ export function DepsSection() {
     return Object.entries(deps).filter(([name]) => name.toLowerCase().includes(q))
   }
 
-  const filteredDeps = filterDeps(packageJson.dependencies)
-  const filteredDevDeps = filterDeps(packageJson.devDependencies)
+  const filteredDeps = filterDeps(manifest?.dependencies ?? {})
+  const filteredDevDeps = filterDeps(manifest?.devDependencies ?? {})
+  const installedNames = manifest ? new Set(manifest.installedPackages) : null
   const dependencyUsage = combineDependencyUsage(
     getSiteModuleDependencyUsage(site, registry),
     analyzeRuntimeScriptImports(site?.files ?? [], packageJson).usage,
@@ -122,8 +132,8 @@ export function DepsSection() {
 
   const totalFiltered = filteredDeps.length + filteredDevDeps.length
   const totalAll =
-    Object.keys(packageJson.dependencies).length +
-    Object.keys(packageJson.devDependencies).length
+    Object.keys(manifest?.dependencies ?? {}).length +
+    Object.keys(manifest?.devDependencies ?? {}).length
 
   const lockedPackages = siteRuntime.dependencyLock.packages
   const lockStatus = evaluateDependencyLockStatus(packageJson, lockedPackages)
@@ -288,6 +298,7 @@ export function DepsSection() {
                 version={version}
                 lockedVersion={lockedPackages[name]?.version}
                 dev={false}
+                installed={installedNames ? installedNames.has(name) : null}
                 usage={dependencyUsage.get(name)}
                 onRemove={requestRemove}
                 confirmState={removeConfirm}
@@ -311,6 +322,7 @@ export function DepsSection() {
                 name={name}
                 version={version}
                 dev={true}
+                installed={installedNames ? installedNames.has(name) : null}
                 usage={dependencyUsage.get(name)}
                 onRemove={requestRemove}
                 confirmState={removeConfirm}
@@ -327,7 +339,11 @@ export function DepsSection() {
         {/* Empty / no-results state */}
         {filteredDeps.length === 0 && filteredDevDeps.length === 0 && (
           <div className={styles.emptyMsg}>
-            {searchQuery ? `No packages matching "${searchQuery}"` : 'No dependencies yet.'}
+            {searchQuery
+              ? `No packages matching "${searchQuery}"`
+              : manifest === null
+                ? 'Reading package.json…'
+                : 'No dependencies yet.'}
           </div>
         )}
       </div>
@@ -440,6 +456,8 @@ interface DepRowProps {
   name: string
   version: string
   lockedVersion?: string
+  /** On disk under node_modules; `null` while the project's manifest has not been read. */
+  installed: boolean | null
   dev: boolean
   usage?: DependencyUsageSummary
   onRemove: (name: string, dev: boolean) => void
@@ -456,6 +474,7 @@ function DepRow({
   name,
   version,
   lockedVersion,
+  installed,
   dev,
   usage,
   onRemove,
@@ -531,6 +550,11 @@ function DepRow({
           </>
         )}
       </span>
+      {installed === false && (
+        <span className={styles.depNotInstalled} title="Declared in package.json but not installed in node_modules">
+          not installed
+        </span>
+      )}
       {usage && (
         <span
           className={styles.depUsage}

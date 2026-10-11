@@ -35,6 +35,7 @@ import { useSyncExternalStore } from 'react'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { getDevServerStatus, type DevServerStatus } from './devServerRequests'
 import { getStudioTrustTier, subscribeStudioTrustTier } from './studioProjectTrust'
+import { useLiveCapability } from './liveCapabilityStore'
 
 /** The first interval, and the one a phase change returns to. */
 export const POLL_INTERVAL_START_MS = 1000
@@ -195,13 +196,39 @@ function getSubscription(dir: string): SubscriptionPair {
   return pair
 }
 
-/** `dir === null` (no project open yet) or `trust !== 'run-project'` both return the default `'stopped'` readiness and never poll. */
+/**
+ * `dir === null` (no project open yet), `trust !== 'run-project'`, or a project
+ * the server has said cannot run (`live.capable === false`: nothing was started,
+ * so nothing will ever answer) all return the default `'stopped'` readiness and
+ * never poll. An unanswered capability polls: the answer is one request away and
+ * a booting server should not wait for it.
+ */
 export function useDevServerReadiness(dir: string | null): DevServerReadiness {
   const trust = useSyncExternalStore(subscribeStudioTrustTier, getStudioTrustTier, getStudioTrustTier)
-  const active = Boolean(dir) && trust === 'run-project'
+  const capability = useLiveCapability(trust === 'run-project' ? dir : null)
+  const active = Boolean(dir) && trust === 'run-project' && capability?.capable !== false
   const { subscribe, getSnapshot } = active && dir ? getSubscription(dir) : INACTIVE_SUBSCRIPTION
 
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+}
+
+/**
+ * Forget what was learned about `dir` and poll again. After an install the dev
+ * server that could not start now can; a stale `failed` would otherwise stop the
+ * poll for good (a settled phase never polls again).
+ */
+export function resetDevServerReadiness(dir: string): void {
+  const entry = entries.get(dir)
+  if (!entry) return
+  if (entry.timer) {
+    clearTimeout(entry.timer)
+    entry.timer = null
+  }
+  entry.state = DEFAULT_READINESS
+  entry.delayMs = POLL_INTERVAL_START_MS
+  entry.lastLogged = null
+  notify(entry)
+  if (entry.listeners.size > 0) ensurePolling(dir, entry)
 }
 
 // ---------------------------------------------------------------------------

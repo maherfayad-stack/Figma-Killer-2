@@ -102,4 +102,19 @@ describe('computeZoomToFitTransform', () => {
     const explicit = computeZoomToFitTransform({ width: 1000, height: 800 }, rects, IDENTITY, 0, 'contain')
     expect(implicit).toEqual(explicit)
   })
+
+  it('keeps the fitted content clear of a top inset (the notch), not just the edge padding', () => {
+    const rects = [{ left: 0, top: 0, width: 1000, height: 1600 }]
+    const result = computeZoomToFitTransform(
+      { width: 1000, height: 800 },
+      rects,
+      IDENTITY,
+      { top: 120, right: 64, bottom: 64, left: 64 },
+    )
+    expect(result).not.toBeNull()
+    // Height-limited: (800 - 120 - 64) / 1600.
+    expect(result!.zoom).toBeCloseTo(616 / 1600, 5)
+    // The content's top edge lands exactly at the top inset, never above it.
+    expect(result!.panY).toBeCloseTo(120, 5)
+  })
 })

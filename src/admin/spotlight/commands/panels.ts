@@ -102,7 +102,7 @@ export function getPanelsCommands(): Command[] {
     {
       id: 'panels.toggleDependencies',
       title: 'Toggle Dependencies panel',
-      subtitle: 'Show or hide the site dependencies panel',
+      subtitle: 'Show or hide the packages panel',
       group: 'editor',
       iconName: 'package-solid',
       keywords: ['panel', 'dependencies', 'packages', 'plugins', 'toggle'],

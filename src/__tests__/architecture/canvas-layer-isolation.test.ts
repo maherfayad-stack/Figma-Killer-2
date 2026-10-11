@@ -61,6 +61,9 @@ describe('canvas-layer isolation (P5-G)', () => {
       'src/admin/pages/site/store/slices/site/studioPasteWrites.ts',
       // The Properties body for a selected loose layer (its Vector controls).
       'src/admin/pages/site/panels/PropertiesPanel/CanvasLayerInspector.tsx',
+      // Editing a loose layer's text in place: the session addresses the layer's own node.
+      'src/admin/pages/site/store/slices/inlineEditSlice.ts',
+      'src/admin/pages/site/canvas/BoardCanvasLayer/canvasLayerTextEdit.ts',
     ])
     const readers = sourceFiles()
       .filter((file) => withoutComments(readSource(file)).includes('canvasLayerPages'))

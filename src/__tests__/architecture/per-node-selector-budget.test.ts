@@ -26,7 +26,10 @@ import { join } from 'path'
 const SRC_ROOT = join(import.meta.dir, '../../')
 
 /**
- * Current: 7. History: 13 → 11 when the `activeInlineEdit` triple was
+ * Current: 7, all of them `useCanvasNodeData(` - the filtered per-node read
+ * (`canvasNodeData.ts`), which a selection-only write (select, activate,
+ * focus) does not wake - so a press no longer runs ~20,000 selectors per
+ * write. History: 13 → 11 when the `activeInlineEdit` triple was
  * collapsed into one `useShallow`; 11 → 7 in P2-I (PERF-1), which moved hover
  * off the store (`canvasHover.ts` — the per-node hover read fed a dead
  * `data-hovered`), made the selection a keyed read (`canvasNodeSelection.ts`),
@@ -39,8 +42,8 @@ const SRC_ROOT = join(import.meta.dir, '../../')
 const NODE_RENDERER_SUBSCRIPTION_BUDGET = 7
 
 function countReactiveSubscriptions(source: string): number {
-  // `useEditorStore(` but not `useEditorStore.getState(`.
-  return source.match(/useEditorStore\(/g)?.length ?? 0
+  // The filtered per-node hook - and, below, the raw one it replaced.
+  return source.match(/useCanvasNodeData\(/g)?.length ?? 0
 }
 
 describe('per-node selector budget', () => {
@@ -53,6 +56,12 @@ describe('per-node selector budget', () => {
     // Pinned from below too: if a refactor removes subscriptions, LOWER the
     // budget in the same commit so the gate keeps its teeth.
     expect(count).toBe(NODE_RENDERER_SUBSCRIPTION_BUDGET)
+  })
+
+  it('NodeRenderer subscribes through the filtered per-node hook, never the raw store', () => {
+    // `useEditorStore(` but not `useEditorStore.getState(`: a raw selector here
+    // runs on EVERY write (a press makes three or four), once per mounted node.
+    expect(source.match(/useEditorStore\(/g)?.length ?? 0).toBe(0)
   })
 
   it('NodeRenderer has no object-returning (useShallow) selector', () => {
