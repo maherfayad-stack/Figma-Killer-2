@@ -120,7 +120,7 @@ export class DetachPlanner {
     this.callSite = readCallSite(opening)
     this.fnIdentifierNames = new Set(fn.getDescendantsOfKind(SyntaxKind.Identifier).map((id) => id.getText()))
     this.names = new DetachNameResolver(this.checker, page, componentFile, componentName, opening, this.fnIdentifierNames)
-    this.hooks = new DetachHookPlan(hooks, page, opening, this.names, componentName)
+    this.hooks = new DetachHookPlan(hooks, page, opening, this.names, componentName, (arg) => this.hookArgument(arg))
     this.conditionals = new DetachConditionals({
       readProp: (reference, unit) => {
         if (Node.isIdentifier(reference)) {
@@ -626,6 +626,26 @@ export class DetachPlanner {
     const text = this.renderNode(node, unit)
     this.inProgress.delete(node)
     return nodeValue(node, text, unit.free)
+  }
+
+  /**
+   * An argument of a hook the plan writes at the top of the enclosing
+   * component, in terms of the call site's props (`useDir(dir)` with no `dir`
+   * is `useDir(undefined)`). It lands where the call site's own names may not
+   * be bound yet, so it can read nothing the call site computes: a literal, an
+   * omitted prop, a default, or a module-scope name.
+   */
+  private hookArgument(arg: Node): string {
+    const value = this.componentValue(arg)
+    for (const name of value.free) {
+      if (this.names.expected.get(name)?.has('call-site')) {
+        fail(
+          'uses-hooks',
+          `${this.componentName} hands a hook a prop, and this call site gives it a value (\`${name}\`) the enclosing component may not have at the top of its body.`,
+        )
+      }
+    }
+    return value.expr()
   }
 
   /** A body `const` the JSX reads: inlined as its initializer when that is a faithful rewrite, refused otherwise. */

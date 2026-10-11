@@ -72,6 +72,7 @@ import {
 } from 'ts-morph'
 import { getFunctionLikeNode, isContextReaderHook, reactExportNameOf, type FunctionLike } from '@core/page-parser'
 import { fail, isWithin, type Value } from './detachSource'
+import { isReferenceIdentifier } from './subtreeFreeVariables'
 import type { DetachNameResolver } from './detachNames'
 
 const HOOK_CALL_RE = /^use[A-Z0-9]/
@@ -104,8 +105,14 @@ export interface ComponentHook {
   binding: HookBinding
   /** The declaration the callee resolves to — two calls are the same hook when these match. `undefined` for a state holder, which is never shared. */
   identity: unknown
-  /** `useState` / `useReducer` / `useRef`: the instance's own state, hoisted under fresh names and never reused. */
+  /** `useState` / `useReducer` / `useRef` / `useId`: the instance's own state, hoisted under fresh names and never reused. */
   state: boolean
+  /**
+   * Arguments computed from the component's own props (`useDir(dir)`): the call
+   * site's values are written in their place, which the planner renders
+   * (`DetachHookPlan`'s `renderArgument`). Every other argument is copied as is.
+   */
+  fromProps: ReadonlySet<Node>
 }
 
 /** A text edit to the page, applied by `detachComponent.ts` (descending by `pos`). */
@@ -187,7 +194,7 @@ function isLiteralArgument(arg: Node): boolean {
   )
 }
 
-const STATE_HOOKS: ReadonlySet<string> = new Set(['useState', 'useReducer', 'useRef'])
+const STATE_HOOKS: ReadonlySet<string> = new Set(['useState', 'useReducer', 'useRef', 'useId'])
 
 /** `useState` / `useReducer` / `useRef` when `call` is React's own (through `React.useState` or a renamed import), else `undefined`. */
 function stateHookName(call: CallExpression): string | undefined {
@@ -263,6 +270,27 @@ function isSelfContainedInitializer(arg: Node, fn: FunctionLike): boolean {
 }
 
 /**
+ * An argument made only of the component's own props, module-scope names and
+ * literals (`dir`, `props.initial`, `size ?? 'm'`): the call site supplies the
+ * props, so the planner can write the same argument in terms of it. A body
+ * value, or anything with a function in it, has no such reading.
+ */
+function isDerivedFromProps(arg: Node, fn: FunctionLike): boolean {
+  if (arg.getDescendantsOfKind(SyntaxKind.ArrowFunction).length > 0 || arg.getDescendantsOfKind(SyntaxKind.FunctionExpression).length > 0) return false
+  const identifiers = Node.isIdentifier(arg) ? [arg] : arg.getDescendantsOfKind(SyntaxKind.Identifier)
+  let readsProp = false
+  for (const id of identifiers) {
+    if (!isReferenceIdentifier(id)) continue
+    const declaration = resolvedDeclaration(id.getSymbol())
+    if (!declaration || !isWithin(declaration, fn)) continue
+    const parameter = declaration.getFirstAncestor((ancestor) => Node.isParameterDeclaration(ancestor)) ?? (Node.isParameterDeclaration(declaration) ? declaration : undefined)
+    if (!parameter || !fn.getParameters().includes(parameter as never)) return false
+    readsProp = true
+  }
+  return readsProp
+}
+
+/**
  * Every hook call in `fn`'s body, each one checked movable - or a
  * `uses-hooks` refusal naming the first that is not.
  */
@@ -297,20 +325,25 @@ export function readComponentHooks(fn: FunctionLike, componentName: string): Com
           fail('uses-hooks', `${componentName} types ${name}<${type.getText()}> with a type the page does not have, which detach can't carry over.`)
         }
       }
-      for (const arg of call.getArguments()) {
-        if (!isSelfContainedInitializer(arg, fn)) {
-          fail('uses-hooks', `${componentName} starts ${name} from a value its own props or body compute, which the enclosing component does not have.`)
-        }
-      }
-    } else {
-      for (const arg of call.getArguments()) {
-        const outerName = Node.isIdentifier(arg) && !isWithin(resolvedDeclaration(arg.getSymbol()) ?? fn, fn)
-        if (!isLiteralArgument(arg) && !(identity === 'react:useContext' && outerName)) {
-          fail('uses-hooks', `${componentName} passes ${name} a value its own props or body compute, which the enclosing component does not have.`)
-        }
-      }
     }
-    hooks.push({ statement, call, label: name, binding: readHookBinding(decl.getNameNode(), componentName, name, state), identity, state })
+    const fromProps = new Set<Node>()
+    for (const arg of call.getArguments()) {
+      const own = state
+        ? isSelfContainedInitializer(arg, fn)
+        : isLiteralArgument(arg) || (identity === 'react:useContext' && Node.isIdentifier(arg) && !isWithin(resolvedDeclaration(arg.getSymbol()) ?? fn, fn))
+      if (own) continue
+      if (isDerivedFromProps(arg, fn)) {
+        fromProps.add(arg)
+        continue
+      }
+      fail(
+        'uses-hooks',
+        state
+          ? `${componentName} starts ${name} from a value its body computes, which the enclosing component does not have.`
+          : `${componentName} passes ${name} a value its body computes, which the enclosing component does not have.`,
+      )
+    }
+    hooks.push({ statement, call, label: name, binding: readHookBinding(decl.getNameNode(), componentName, name, state), identity, state, fromProps })
   }
   return hooks
 }
@@ -379,7 +412,7 @@ export function findHookBindingForName(fn: FunctionLike, name: string): Componen
       if (!isLiteralArgument(arg)) return 'unmovable'
     }
     try {
-      return { statement, call, label, binding: readHookBinding(nameNode, '', label, false), identity, state: false }
+      return { statement, call, label, binding: readHookBinding(nameNode, '', label, false), identity, state: false, fromProps: new Set() }
     } catch {
       return 'unmovable'
     }
@@ -523,7 +556,14 @@ export class DetachHookPlan {
   private takenNames: Set<string> | undefined
   private concise: { newStatements: string[] } | undefined
 
-  constructor(hooks: readonly ComponentHook[], page: SourceFile, callSite: Node, names: DetachNameResolver, componentName: string) {
+  constructor(
+    hooks: readonly ComponentHook[],
+    page: SourceFile,
+    callSite: Node,
+    names: DetachNameResolver,
+    componentName: string,
+    private readonly renderArgument: (arg: Node) => string,
+  ) {
     this.page = page
     this.names = names
     this.componentName = componentName
@@ -672,7 +712,10 @@ export class DetachHookPlan {
       : this.outer(callee)
     const typeArguments = hook.call.getTypeArguments()
     const typeText = typeArguments.length > 0 ? `<${typeArguments.map((type) => type.getText()).join(', ')}>` : ''
-    const args = hook.call.getArguments().map((arg) => (Node.isIdentifier(arg) && arg.getText() !== 'undefined' ? this.outer(arg) : arg.getText()))
+    const args = hook.call.getArguments().map((arg) => {
+      if (hook.fromProps.has(arg)) return this.renderArgument(arg)
+      return Node.isIdentifier(arg) && arg.getText() !== 'undefined' ? this.outer(arg) : arg.getText()
+    })
     const locals = new Map<string | undefined, string>()
     let pattern: string
     if (hook.binding.kind === 'whole') {

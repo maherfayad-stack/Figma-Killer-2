@@ -286,7 +286,7 @@ export function detachComponentInstance(params: DetachComponentParams): DetachRe
     return refuse('not-a-component', `<${fullTagName}> is a plain HTML element, not a component instance.`)
   }
 
-  const resolved = resolveComponentCallSite(project, sourceFile, workspaceRoot, identifier, file, line, col)
+  const resolved = resolveComponentCallSite(project, sourceFile, workspaceRoot, identifier, file, line, col, { designSystem: 'local' })
   if (!resolved.ok) {
     if (resolved.failure.reason === 'package-component') {
       return refuse(

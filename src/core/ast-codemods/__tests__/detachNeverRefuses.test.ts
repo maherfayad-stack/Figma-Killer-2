@@ -263,7 +263,22 @@ describe('G-3 - a component that keeps state detaches: the state moves up under 
     expect(message).toContain('once per row')
   })
 
-  it('refuses a state that starts from a prop, an effect, and a type only the component knows', () => {
+  it("starts the hoisted state from the call site's own value when the component starts it from a prop", () => {
+    write('components/Start.tsx', [
+      "import { useState } from 'react'",
+      'export function Start({ initial = 7 }: { initial?: number }) {',
+      '  const [n, setN] = useState(initial)',
+      '  return <button onClick={() => setN(n + 1)}>{n}</button>',
+      '}',
+      '',
+    ].join('\n'))
+    const page = ["import { Start } from '../components/Start'", 'export default function A() {', '  return <main><Start initial={3} /><Start /></main>', '}', ''].join('\n')
+    const once = expectDetached('pages/A.tsx', page, 'Start')
+    expect(once).toContain('const [n, setN] = useState(3)')
+    expect(expectDetached('pages/A.tsx', once, 'Start')).toContain('const [n2, setN2] = useState(7)')
+  })
+
+  it('refuses, byte-identical, a state that starts from a value the call site computes, an effect, and a type only the component knows', () => {
     write('components/Start.tsx', [
       "import { useState } from 'react'",
       'export function Start({ initial }: { initial: number }) {',
@@ -272,7 +287,12 @@ describe('G-3 - a component that keeps state detaches: the state moves up under 
       '}',
       '',
     ].join('\n'))
-    expectRefusedUntouched('pages/A.tsx', ["import { Start } from '../components/Start'", 'export default function A() {', '  return <Start initial={3} />', '}', ''].join('\n'), 'Start', 'uses-hooks')
+    expectRefusedUntouched(
+      'pages/A.tsx',
+      ["import { Start } from '../components/Start'", 'export default function A({ seed }: { seed: number }) {', '  return <Start initial={seed} />', '}', ''].join('\n'),
+      'Start',
+      'uses-hooks',
+    )
 
     write('components/Ticker.tsx', [
       "import { useEffect, useState } from 'react'",
@@ -463,5 +483,81 @@ describe('G-3 - a component that maps over its own props keeps the .map over the
       'Capture',
       'name-collision',
     )
+  })
+})
+
+describe("OD-21 - a component from the project's design-system/ folder detaches as local code", () => {
+  /** The real vendored design system, placed where Studio writes it - a fixture that is not ours to simplify. */
+  function placeDesignSystem(): void {
+    const vendor = path.resolve(import.meta.dir, '..', '..', '..', '..', 'vendor', 'alm-design-system', 'src')
+    fs.cpSync(vendor, path.join(tmpDir, 'design-system'), { recursive: true })
+  }
+
+  it("inlines the design system's Chip into the page, bound to the call site's own props", () => {
+    placeDesignSystem()
+    const text = expectDetached(
+      'pages/Home.tsx',
+      ["import { Chip } from '../design-system'", 'export default function Home() {', '  return <main><Chip label="Sale" selected /></main>', '}', ''].join('\n'),
+      'Chip',
+    )
+    expect(text).not.toContain('<Chip')
+    expect(text).toContain('chip--selected')
+    expect(text).toContain('<span className="chip__label">Sale</span>')
+    expect(text).toContain("import '../design-system/components/Chip.css'")
+  })
+
+  it('leaves the design-system folder byte-identical, whatever it inlines', () => {
+    placeDesignSystem()
+    const before = snapshotWorkspace()
+    expectDetached(
+      'pages/Home.tsx',
+      ["import { Separator } from '../design-system'", 'export default function Home() {', '  return <Separator variant="dashed" />', '}', ''].join('\n'),
+      'Separator',
+    )
+    for (const [file, text] of before) {
+      if (file.includes('design-system')) expect(fs.readFileSync(file, 'latin1')).toBe(text)
+    }
+  })
+
+  it("hands a context reader the call site's prop: useDir(dir) with no dir is useDir(undefined) at the top of the page's component", () => {
+    write('design-system/context.js', [
+      "import { createContext, useContext } from 'react'",
+      "export const DirContext = createContext('ltr')",
+      'export const useDir = (propDir) => {',
+      '  const fromProvider = useContext(DirContext)',
+      '  return propDir ?? fromProvider',
+      '}',
+      '',
+    ].join('\n'))
+    write('design-system/components/Panel.jsx', [
+      "import { useDir } from '../context'",
+      'export function Panel({ dir, title }) {',
+      '  const d = useDir(dir)',
+      '  return <section dir={d}><h2>{title}</h2></section>',
+      '}',
+      '',
+    ].join('\n'))
+    write('design-system/index.js', "export { Panel } from './components/Panel'" + '\n')
+    const text = expectDetached(
+      'pages/Home.tsx',
+      ["import { Panel } from '../design-system'", 'export default function Home() {', '  return <main><Panel title="Hi" /><Panel title="Yo" dir="rtl" /></main>', '}', ''].join('\n'),
+      'Panel',
+    )
+    expect(text).toContain('const d = useDir(undefined)')
+    expect(text).toContain('<section dir={d}><h2>Hi</h2></section>')
+    expect(text).toMatch(/import { useDir } from '..\/design-system\/context'/)
+    const second = expectDetached('pages/Home.tsx', text, 'Panel')
+    expect(second).toContain('const d2 = useDir("rtl")')
+  })
+
+  it('still names what cannot be inlined: a private helper the design system does not export', () => {
+    placeDesignSystem()
+    const message = expectRefusedUntouched(
+      'pages/Home.tsx',
+      ["import { Dialog } from '../design-system'", 'export default function Home() {', '  return <Dialog />', '}', ''].join('\n'),
+      'Dialog',
+      'unbound-reference',
+    )
+    expect(message).toContain('does not export')
   })
 })

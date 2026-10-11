@@ -485,6 +485,24 @@ export function resolveCallTarget(
 }
 
 /**
+ * The file that DECLARES the component `tagName` names at a call site in
+ * `callerSourceFile`, followed through every barrel - or `undefined` when the
+ * tag is not an import this can follow. What detach needs for a design-system
+ * component (OD-21): `componentSources.ts` classifies it by the folder it
+ * lands in and does not keep the file, because the parse never reads it.
+ */
+export function resolveImportedDeclaringFile(callerSourceFile: SourceFile, tagName: string): SourceFile | undefined {
+  const [identifier, member, ...deeper] = tagName.split('.')
+  if (!identifier || deeper.length > 0) return undefined
+  for (const decl of callerSourceFile.getImportDeclarations()) {
+    const exported = importedExportName(decl, identifier, member)
+    if (exported === undefined) continue
+    return resolveExportedDeclaration(decl.getModuleSpecifierSourceFile(), exported)?.sourceFile
+  }
+  return undefined
+}
+
+/**
  * The export `decl` binds `identifier` to — `'default'` for a default import,
  * the imported name for a named one (`Foo` for `import { Foo as Bar }` seen as
  * `Bar`), the member for `<NS.Member/>` off a namespace import — or `undefined`
