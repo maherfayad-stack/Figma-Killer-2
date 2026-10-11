@@ -74,6 +74,8 @@ export type {
   WrapJsxRefusalReason,
 } from './wrapJsxElement'
 export { wrapJsxElements } from './wrapJsxElements'
+export { frameJsxElements } from './frameJsxElements'
+export type { FrameJsxElementsParams, MemberStylePatch } from './frameJsxElements'
 export type {
   WrapJsxElementsParams,
   WrapJsxElementsRefusal,

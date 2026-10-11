@@ -31,6 +31,7 @@ import type { NewStyleRule, SiteImportTransaction } from '@core/siteImport'
 import type { FrameworkChangeImpact, FrameworkPreset } from '@core/framework'
 import type { EditorStore } from '@site/store/types'
 import type { LocalComponentSpec } from '@site/property-controls/componentPropKind'
+import type { FrameRequest } from './frameRequest'
 import type { PendingStructuralHistory } from '@site/studio/pendingStructuralOutcome'
 import type { SlotOwnerEntry } from './nodeIndex'
 import type { ImportedNodesResult } from './importedNodesResult'
@@ -185,7 +186,13 @@ export interface SiteSlice {
     inlineStyles?: Record<string, string>,
   ) => string
   /** Writes `<Card />` + its import for a component the project declares itself; `false` on a CMS tree (no source). */
-  insertProjectComponent: (component: LocalComponentSpec, parentId: string, index?: number) => boolean
+  insertProjectComponent: (
+    component: LocalComponentSpec,
+    parentId: string,
+    index?: number,
+    /** PA-3 — inline styles written as the call site's `style` prop (a layer dropped into a free frame). */
+    style?: Record<string, string>,
+  ) => boolean
 
   /**
    * Insert a fragment of imported HTML nodes into the active tree under `parentId`.
@@ -389,7 +396,8 @@ export interface SiteSlice {
    * produces. Refuses out loud unless the selection is a contiguous run of
    * siblings in the code. See `groupActions.ts`.
    */
-  groupNodes: (nodeIds: string[], containerModuleId?: string, defaults?: Record<string, unknown>) => string | null
+  /** `frame` (PA-6, Frame selection): the container is sized and placed and the members rebased, in this same write. */
+  groupNodes: (nodeIds: string[], containerModuleId?: string, defaults?: Record<string, unknown>, frame?: FrameRequest) => string | null
   /**
    * K3 — ⌘⇧G. The container goes; its children take its place at its own index.
    * On a studio tree that is `unwrapJsxElement`, which refuses a container

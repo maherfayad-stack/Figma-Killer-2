@@ -187,10 +187,10 @@ function insetSides(value: unknown): Record<'top' | 'right' | 'bottom' | 'left',
  * The `inset` shorthand sets the sides its values do not leave `auto`, and
  * a longhand after it overrides its side.
  */
-export function authoredOffsets(
+export function authoredOffsetValues(
   node: Pick<PageNode, 'classIds' | 'inlineStyles'>,
   styleRules: Readonly<Record<string, StyleRule>> | undefined,
-): Set<NudgeOffsetProperty> {
+): Map<NudgeOffsetProperty, unknown> {
   const merged = new Map<string, unknown>()
   const apply = (bag: Readonly<Record<string, unknown>> | CSSPropertyBag | undefined) => {
     if (!bag) return
@@ -205,11 +205,19 @@ export function authoredOffsets(
   for (const classId of node.classIds) apply(styleRules?.[classId]?.styles)
   apply(node.inlineStyles)
 
-  const authored = new Set<NudgeOffsetProperty>()
+  const authored = new Map<NudgeOffsetProperty, unknown>()
   for (const [property, value] of merged) {
-    if (isSetValue(value)) authored.add(property as NudgeOffsetProperty)
+    if (isSetValue(value)) authored.set(property as NudgeOffsetProperty, value)
   }
   return authored
+}
+
+/** The offsets the node's source sets — {@link authoredOffsetValues}' keys. */
+export function authoredOffsets(
+  node: Pick<PageNode, 'classIds' | 'inlineStyles'>,
+  styleRules: Readonly<Record<string, StyleRule>> | undefined,
+): Set<NudgeOffsetProperty> {
+  return new Set(authoredOffsetValues(node, styleRules).keys())
 }
 
 /** The computed px value, or `0` for one the element does not resolve (it is not rendered). */

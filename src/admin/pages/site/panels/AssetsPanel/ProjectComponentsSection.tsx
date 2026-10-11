@@ -26,7 +26,9 @@ import type { LocalComponentSpec } from '@site/property-controls/componentPropKi
 import { placeProjectComponentOnCanvas } from '@site/hooks/placeModuleOnCanvas'
 import { useCanvasInsertionDrag } from '@site/canvas/useCanvasInsertionDrag'
 import { CanvasInsertionDragOverlay } from '@site/canvas/CanvasInsertionDragOverlay'
+import { newLayerPlacementStyles } from '@site/canvas/canvasNewLayerPlacement'
 import { Button } from '@ui/components/Button'
+import { pushToast } from '@ui/components/Toast'
 import { AssetGrid, AssetSection } from './AssetSection'
 import { insertableProjectComponents, matchProjectComponents } from './projectComponents'
 import cardStyles from './AssetCard.module.css'
@@ -42,7 +44,21 @@ export function ProjectComponentsSection({ query, collapsed, onToggle }: Project
   const insertProjectComponent = useEditorStore((s) => s.insertProjectComponent)
 
   const drag = useCanvasInsertionDrag<LocalComponentSpec>({
-    onDrop: (component, location) => insertProjectComponent(component, location.parentId, location.index),
+    onDrop: (component, location, placement) => {
+      if (!placement) return insertProjectComponent(component, location.parentId, location.index)
+      // A component is placed by its call site's `style` prop, which only works
+      // when the component takes one; otherwise it stays in flow, said out loud.
+      if (!component.props.some((prop) => prop.name === 'style')) {
+        pushToast({
+          kind: 'warning',
+          title: `${component.name} added in flow`,
+          body: `${component.name} takes no style prop, so Studio cannot place it at the pointer. Add a style prop to it, or wrap it in a frame and position that.`,
+          location: 'site-editor',
+        })
+        return insertProjectComponent(component, location.parentId, location.index)
+      }
+      return insertProjectComponent(component, location.parentId, location.index, newLayerPlacementStyles(placement))
+    },
     freeCanvas: {
       accepts: () => true,
       onDrop: placeProjectComponentOnCanvas,

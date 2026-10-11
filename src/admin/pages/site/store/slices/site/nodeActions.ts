@@ -216,8 +216,8 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
     // studio-imported one. See `importedNodesActions.ts`.
     ...createImportedNodesActions(helpers, sourceWrites.refuseImportedNodesInto),
 
-    insertProjectComponent: (component, parentId, index) =>
-      writeInsertProjectComponentToSource(component, parentId, index),
+    insertProjectComponent: (component, parentId, index, style) =>
+      writeInsertProjectComponentToSource(component, parentId, index, style),
 
     insertComponentRef: (parentId, componentId, index) => {
       if (!componentId) return null

@@ -18,7 +18,7 @@
  * a same-file `move` / `reparent` (the splice leaves a blank line and an
  * indentation no inverse move reproduces),
  * a free-canvas `canvas-layer-lift` / `canvas-layer-place` that MOVES (the page
- * and the layer module), and an `insert` that asked for an exact undo
+ * and the layer module), a Frame selection (a `group` with a `frame`, PA-6), and an `insert` that asked for an exact undo
  * (`exactUndo`, also asked of a `duplicate` and a copying `transplant`: it writes into a childless parent). A batch holding any of them records ONE
  * entry covering every file the batch changed, so one gesture is one token,
  * however many elements a multi-select delete removed and across however
@@ -46,6 +46,9 @@ const JOURNALED_KINDS = new Set<StudioEdit['kind']>(['delete', 'detach', 'expose
 export function isJournaled(edit: StudioEdit): boolean {
   return (
     JOURNALED_KINDS.has(edit.kind) ||
+    // PA-6 — a frame rewrites the wrapper AND every member's offsets; no `ungroup`
+    // gives those back, the pre-image does.
+    (edit.kind === 'group' && edit.frame !== undefined) ||
     (edit.kind === 'list-item' && edit.op.kind === 'remove') ||
     // A cross-file MOVE (a COPY is taken back by deleting what it made). The
     // move cuts markup from one file, prunes the import only that markup used,
