@@ -89,6 +89,7 @@ import {
   type OffsetProperty,
   type OffsetTerm,
   isPositionedFreely,
+  childPlacementPositions,
   parentPlacementKind,
   parentSnapRects,
   readBoxInsets,
@@ -302,9 +303,7 @@ function resolveMember(
 
   const parentElement = element.parentElement
   const parentStyle = parentElement ? view.getComputedStyle(parentElement) : null
-  const siblingPositions = parentElement
-    ? Array.from(parentElement.children, (child) => view.getComputedStyle(child).position)
-    : null
+  const siblingPositions = parentElement ? childPlacementPositions(view, parentElement) : null
   const parentKind = parentStyle
     ? parentPlacementKind({ display: parentStyle.display, position: parentStyle.position }, siblingPositions)
     : 'flow'

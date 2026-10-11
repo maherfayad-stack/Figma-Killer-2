@@ -138,21 +138,6 @@
     overscroll-behavior: contain;
 }
 
-.location {
-    margin: var(--space-4xs) 0 0;
-    color: var(--text-subtle);
-    font-family:
-        ui-monospace,
-        SFMono-Regular,
-        SF Mono,
-        Menlo,
-        Consolas,
-        "Liberation Mono",
-        monospace;
-    font-size: var(--text-2xs);
-    letter-spacing: 0.01em;
-}
-
 .actions {
     display: inline-flex;
     align-items: center;

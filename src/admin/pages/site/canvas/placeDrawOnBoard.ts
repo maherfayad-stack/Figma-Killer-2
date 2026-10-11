@@ -17,12 +17,17 @@ import { useEditorStore } from '@site/store/store'
 import { moduleSourceElement } from '@site/store/slices/site/moduleSourceElement'
 import { DRAW_TOOL_SPECS, drawInsertStyles, type DrawRect } from './canvasDrawTool'
 import type { DrawTool } from '@site/store/slices/canvasSlice'
+import { projectBodyTextStyles } from './projectTextDefaults'
 import { startLayerTextEdit, whenLayerReady } from './BoardCanvasLayer/canvasLayerTextEdit'
 
 /** Create the loose layer. True when one was created (no active board → false). */
 export function placeDrawOnBoard(tool: DrawTool, boardRect: DrawRect, dragged: boolean): boolean {
   const spec = DRAW_TOOL_SPECS[tool]
-  const styles = drawInsertStyles(spec, dragged ? boardRect : null, 1)
+  // A loose text inherits nothing: give it the project's body typography.
+  const styles = {
+    ...(tool === 'text' ? projectBodyTextStyles() : {}),
+    ...drawInsertStyles(spec, dragged ? boardRect : null, 1),
+  }
   const element = moduleSourceElement(spec.moduleId, undefined, styles)
   if (!element) return false
   const { intrinsic: _intrinsic, ...layerElement } = element

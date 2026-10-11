@@ -10,23 +10,19 @@
  * — the parent (`bodyRelativeRectToFrameSpace` in `canvasDomGeometry.ts`)
  * converts it into the frame-space unit system the drop resolver assumes.
  *
- * **Known simplification vs. the portal scan.** A node whose own element has
- * no box (`display: contents`) is skipped here rather than falling back to
- * the union of its children's boxes the way `nodeVisualRect` does for the
- * portal scan. That fallback is a real, ~25-line recursive DOM walk this
- * module would otherwise have to duplicate: the runtime bundle cannot import
- * admin code, and moving `nodeVisualRect` itself into `@core/studio-runtime`
- * would touch the dozen-plus admin/module files that import it today — well
- * outside this change's scope. Its CHILDREN remain individually offered as
- * their own candidates; only the transparent wrapper itself is not. Flagged
- * here and in `STATE.md`, not silently dropped.
+ * **A box-less node is measured as its children's union.** A design-system
+ * call site is hosted on a `display: contents` element that has no rect of its
+ * own; `nodeVisualRect` (shared with the portal scan) falls back to the union
+ * of its boxed children. Skipping such a node left every component instance
+ * without a candidate, so `nearestFlowIndex` saw only the plain siblings above
+ * the pointer and a drop beside an instance landed at the end of the column.
  *
  * **Bounded per `sec-06`'s posture.** The wire reply schema caps the
  * candidate list and each candidate's `childRects`; this module caps what it
  * even tries to compute, so a page with more stamped nodes than the cap
  * costs no more DOM work than the cap allows.
  */
-import { rectRelativeToBody } from './nodeDom'
+import { nodeVisualRect } from './nodeVisualRect'
 import { NODE_ID_ATTR, occurrenceIndexOf } from './nodeIdIndexing'
 import { resolveCanvasInsertionAxis, type CanvasDropAxis } from './dropAxisRules'
 import type { NodeRect } from './messages'
@@ -50,6 +46,14 @@ function isEmptyRect(rect: NodeRect): boolean {
   return rect.width === 0 && rect.height === 0
 }
 
+/** `el`'s visual box relative to `body`'s border box, or an empty rect when it has none. */
+function visualRectRelativeToBody(el: Element, body: HTMLElement): NodeRect {
+  const visual = nodeVisualRect(el)
+  if (!visual) return { x: 0, y: 0, width: 0, height: 0 }
+  const bodyRect = body.getBoundingClientRect()
+  return { x: visual.left - bodyRect.left, y: visual.top - bodyRect.top, width: visual.width, height: visual.height }
+}
+
 /** Every stamped node's drop-target geometry in `doc`, capped at {@link MAX_DROP_CANDIDATES}. */
 export function collectDropCandidates(doc: Document): DropCandidateGeometry[] {
   if (!doc.body) return []
@@ -59,13 +63,13 @@ export function collectDropCandidates(doc: Document): DropCandidateGeometry[] {
     if (out.length >= MAX_DROP_CANDIDATES) break
     const occurrence = occurrenceIndexOf(doc, el)
     if (!occurrence) continue
-    const rect = rectRelativeToBody(el, body)
+    const rect = visualRectRelativeToBody(el, body)
     if (isEmptyRect(rect)) continue
     const { axis, reversed } = resolveCanvasInsertionAxis(el as HTMLElement)
     const childRects: NodeRect[] = []
     for (const child of el.children) {
       if (childRects.length >= MAX_DROP_CANDIDATE_CHILD_RECTS) break
-      const childRect = rectRelativeToBody(child, body)
+      const childRect = visualRectRelativeToBody(child, body)
       if (isEmptyRect(childRect)) continue
       childRects.push(childRect)
     }

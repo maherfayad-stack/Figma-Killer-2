@@ -555,6 +555,8 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
     zoomToFit,
     zoomToFill,
     zoomToSelection,
+    /** Adopt a camera outright (ref, DOM and store, in that order) - the open-time restore of a remembered view. */
+    applyCamera: commitTransform,
     /** Whether a space-pan drag is in progress */
     isDragging: isDraggingRef,
     /**

@@ -28,6 +28,7 @@
  * Everything but the two `measure…` functions is pure.
  */
 import {
+  childPlacementPositions,
   containingBlockBoxOf,
   containingBlockOffsets,
   establishesContainingBlock,
@@ -39,6 +40,7 @@ import {
   type InlineOffsetProperty,
   type ParentPlacementKind,
 } from '@core/studio-runtime'
+import type { InsertLocation } from '@site/store/insertLocation'
 import { resolvePortalDocument } from './frameAdapter/resolvePortalDocument'
 import { ownElementForNode } from './canvasNodeLookup'
 
@@ -87,6 +89,18 @@ export function planNewLayerPlacement(
 }
 
 /** The inline styles that pin a new layer at its placement, React-style keys. */
+/**
+ * Where among the parent's children a layer PLACED by position goes: the end.
+ * A free frame has no reading order - every child is placed by its own insets -
+ * so the pointer-derived flow index means nothing there, and the end is the top
+ * of the stacking order, which is where a layer just drawn belongs. (It also
+ * keeps a new node from taking over the source id of the sibling it was
+ * inserted before.) A flow landing keeps the index the drop line showed.
+ */
+export function locationForPlacement(location: InsertLocation, placement: NewLayerPlacement): InsertLocation {
+  return placement.kind === 'absolute' ? { parentId: location.parentId, index: undefined } : location
+}
+
 export function newLayerPlacementStyles(placement: NewLayerPlacement | null): Record<string, string> {
   if (placement?.kind !== 'absolute') return {}
   return { position: 'absolute', [placement.property]: `${placement.inline}px`, top: `${placement.top}px` }
@@ -101,13 +115,7 @@ export function newLayerPlacementStyles(placement: NewLayerPlacement | null): Re
  */
 export function placementKindOfElement(view: Window, element: HTMLElement): ParentPlacementKind {
   const style = view.getComputedStyle(element)
-  const childPositions: string[] = []
-  for (const child of Array.from(element.children)) {
-    const childStyle = view.getComputedStyle(child)
-    if (childStyle.display === 'none') continue
-    childPositions.push(childStyle.position)
-  }
-  return parentPlacementKind({ display: style.display, position: style.position }, childPositions)
+  return parentPlacementKind({ display: style.display, position: style.position }, childPlacementPositions(view, element))
 }
 
 /** One computed-style read of the parent and its children, one rect read — at gesture end, never per move. */

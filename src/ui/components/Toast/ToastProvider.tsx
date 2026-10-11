@@ -201,9 +201,6 @@ function ToastItem({ toast }: { toast: Toast }) {
           )}
         </p>
         {toast.body && <p className={styles.body}>{toast.body}</p>}
-        {toast.location && (
-          <p className={styles.location}>{toast.location}</p>
-        )}
       </div>
       <div className={styles.actions}>
         {toast.action && (

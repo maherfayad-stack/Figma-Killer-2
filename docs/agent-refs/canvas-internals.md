@@ -205,7 +205,7 @@ drag cannot disagree:
   double-click from typing.
 - A closed `studio.instance` / an inlined VC body is one layer until entered —
   clamped before any of the above.
-- The keyboard's Enter/Space activates the FOCUSED node itself (deep).
+- The keyboard's Enter/Space activates the FOCUSED node itself (deep) - but only Space, and Enter with NOTHING selected and no modifier (R3). DOM focus after a click sits on the iframe `<body>`, itself a canvas node with this handler, so "click the focused node" fired on the body for Enter (select children) and Shift+Enter (select parent) and replaced the selection with the page root; with a selection, Enter is `useCanvasSelectionKeyboard`'s, which gets the same keystroke through the keyboard bridge.
 - Live mode keeps the element pressed: it is the page as a visitor gets it.
 
 **A press that became a drag is not a click.** Its release raises a `click` on
@@ -1067,11 +1067,21 @@ by **mount order**. There is now exactly one:
 - Shared guards live in `canvas/editorKeyGuards.ts` (`isTextInputTarget`,
   `isInsideKeyOwningOverlay`) — the overlay selector used to be copy-pasted into
   four files under two names.
+- **The camera on open (R3).** `useBoardOpenCamera` frames a board ONCE, keyed
+  on the board id and in its own effect (the page-keyed framing effect re-runs on
+  every selection and would cancel a fit still waiting for its frames):
+  the camera last left on this project + board (`canvasCameraMemory.ts`,
+  `localStorage`, written from every committed transform after framing) is
+  restored as is, else the board is fitted (`zoomToFit`). `startCanvasFraming`
+  ends framing when the user already moved the view, so their pan is never
+  overwritten. `resolveCanvasFocusTarget` still never frames a board.
 - `useCanvas` registers the `global`-rung viewport scope
   (`hooks/useCanvasViewportKeys.ts`, P2-B / IX-15): + / = / − / _ zoom, ⌘0 and
   ⇧0 zoom to 100%, ⇧1 fit (W3-d: measures the whole frame CARD, title bar
   included, plus sticky notes and docs, and keeps `measureCanvasFitInsets`
-  clear of the notch at the top), ⇧2 fit the selection, Space held to pan. They were a
+  clear of the notch at the top, and - R3 - of the docked Properties sidebar
+  that opens on selection: a closed docked `right-sidebar` reserves its
+  layout width on the right, an open one has already shrunk the root), ⇧2 fit the selection, Space held to pan. They were a
   React `onKeyDown` on the canvas div (dead after one click into a panel) and
   two raw `document` listeners. The canvas div binds no key handler at all now,
   and `@use-gesture`'s own arrow-key drag is off (`drag.keys: false`).
@@ -1379,7 +1389,13 @@ free-canvas layer (`createCanvasLayer`) when it started on the empty board.
 `resolveCanvasInsertionTarget` (draw tools, pen, Assets drag) inserts BEFORE
 the first child that follows the point in reading order (`nearestFlowIndex`:
 y for a vertical flow, row then x for a horizontal one, flipped for reversed),
-and only appends past the last; the transplant/move resolvers are unchanged.
+and only appends past the last. R3: the cross-frame resolver
+(`resolveCanvasTransplantTarget`, through `resolveTransplantDropOver`'s
+`indexAmongChildren` / `nearerSide`) asks the same question - it used to take
+the append default, so a drop released between two siblings in another frame
+landed at the container's end with no line. Its target carries `gap` too, and
+`canvasDragFrame.paintTargetOf` hands the painter the gap's zero-thickness rect
+as an `after` edge. The same-frame move resolver is unchanged.
 The target also carries `gap` (`flowGapLine`): the line between the two
 neighbours it falls between (the first child's top / the last child's bottom at
 the ends; vertical for a row, spanning the row's height). The drag overlay
@@ -1514,6 +1530,7 @@ comment (`server/handlers/studio/prototypeShell/shellFiles.ts`).
 - `core/studio-runtime/containingBlockOffsets.ts` turns a rect into `left/top/right/bottom` against the block that REALLY contains an absolute box (`readContainingBlock`: nearest ancestor that is positioned, or has transform / perspective / filter / contain / will-change), minus its border, plus its scroll, divided by its scale. Never use `offsetLeft` against `offsetParent`: `offsetParent` ignores transformed ancestors, so the inset is measured from the wrong box (the `left:-421px` class). Used by `canvasFreeMove.ts` and `canvasNewLayerPlacement.ts`.
 - `canvas/canvasNewLayerPlacement.ts` (PA-3) is the ONE decision for where a NEW layer goes when a pointer gesture creates it (draw tool, Assets/notch drop, OS file drop): `planNewLayerPlacement(parent, rect, modifierHeld)` -> `flow` | `absolute` | `refused`. A free-frame parent places absolute at the pointer with no modifier; a flow or auto-layout parent inserts in flow unless Cmd/Ctrl is held; a parent that is not a containing block refuses with K6's remedy. `resolveCanvasPointerInsertionDrop` hands `useCanvasInsertionDrag` a lazy `placeLayer(modifierHeld)`, measured once at release; `onDrop(ghost, location, placement)` gets a non-null placement only for an absolute landing. Modules and images honour it; saved layouts, Visual Components and SVG icons stay flow, and a project component is placed only if it declares a `style` prop (else a warning toast says it landed in flow). The frame document is reached through `resolvePortalDocument`, never `contentDocument` (gate `frame-document-adapter-isolation`).
 - Frame selection (PA-6, opt+cmd+G / Ctrl+Alt+G, `layers.frameSelection`): `canvasFrameSelection.ts` measures through the frame adapters, `canvasFrameSelectionPlan.ts` (pure) plans, `groupNodes(ids, undefined, undefined, frame)` writes ONE `group` edit with a `frame` (wrapper style + one patch per member) -> `frameJsxElements` (wrap + `setJsxStyle` per member, all-or-nothing). The batch is journaled, so undo is `restore-journal`. All-absolute selections get an absolute wrapper at the union rect and every authored inset rebased (a right-anchored layer stays right-anchored); all-flow selections get a bare wrapper (a flex parent's layout is copied); mixed, fixed, percent/calc/var-positioned, grid, space-* justified and flex-grow members refuse by name.
+- **A component is a box, not its host (R3).** A design-system call site is hosted on a `display: contents` element: its own `position` is always `static` and its rect is zero. `childPlacementPositions(view, parent)` (`placementKind.ts`) therefore reads the box the host RENDERS, which is what `placementKindOfElement`, `useParentPlacementKind` and the free-move resolver pass to `parentPlacementKind`. Reading the host made a screen of absolute layers with one absolute component (the SMS TabBar) a `flow` parent, so a draw, a notch drop and the Text tool wrote no position and landed at (0, 0). The drop-candidate scan (`dropCandidates.ts`) likewise measures a box-less host as the union of its children (`nodeVisualRect`), so an instance is a candidate and an insert beside it lands beside it, not at the column end.
 - A free-move onto a static parent that is not the containing block still refuses (`planFreeMoveProperties(own, parentContains)`); a transformed parent now counts as containing.
 
 ## Vector editing (P5-D)
@@ -1592,6 +1609,17 @@ element to reach its DOM — the write is still on its way through Vite — and
 answers `text:cancel` if it never does, so the store session cannot sit open
 swallowing keys. The pending start survives the HMR update that brings the
 element; an open edit does not.
+
+**The Text tool opens its edit once the frame has the element (R3).** The
+created-node follow-up runs the moment the store SELECTS the new text, a render
+before the frame paints it, so `startCanvasTextEdit` found no rendering and the
+edit never opened (typed text went nowhere). The tool uses
+`startCanvasTextEditWhenRendered`, which polls on a timer (not rAF) until the
+element is in the frame, and gives up if the selection moves, another edit
+opens, or 4 s pass. On the empty board a loose text is written with the
+project's body typography (`projectTextDefaults.ts`: family, size, weight, line
+height, colour, computed from a mounted portal frame's `<body>`), because a
+loose layer's document inherits nothing and came out as black default serif.
 
 **A loose layer's text** (`BoardCanvasLayer/canvasLayerTextEdit.ts`): a
 double-click on a layer (the surface takes no input, so `useCanvasLayerPointer`

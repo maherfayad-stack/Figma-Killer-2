@@ -74,8 +74,27 @@ export function findTextEditRendering(nodeId: string, frameId: string | null): T
   return fallback
 }
 
+type TextEditAttempt = 'started' | 'unrendered' | 'refused'
+
+function attemptCanvasTextEdit(
+  nodeId: string,
+  preferredFrameId: string | null | undefined,
+  options: { selectAll?: boolean } | undefined,
+): TextEditAttempt {
+  const state = useEditorStore.getState()
+  const node = selectActiveCanvasPage(state)?.nodes[nodeId]
+  if (!node || !registry.get(node.moduleId)?.inlineTextEdit) return 'refused'
+  const rendering = findTextEditRendering(nodeId, preferredFrameId ?? state.selectedNodeFrameId)
+  if (!rendering) return 'unrendered'
+  const started = state.startInlineEdit(nodeId, rendering.breakpointId, rendering.frameId, options)
+  if (started && rendering.bridge) {
+    rendering.bridge.beginTextEdit(nodeId, useEditorStore.getState().activeInlineEdit?.initialValue ?? '')
+  }
+  return started ? 'started' : 'refused'
+}
+
 /**
- * Start a text edit on `nodeId`. `false` — and no session — when it is not a
+ * Start a text edit on `nodeId`. `false` - and no session - when it is not a
  * text layer, no portal frame renders it, or `startInlineEdit` refuses (a
  * text set in code says so out loud). `selectAll` opens with the whole text
  * selected (the text tool's placeholder).
@@ -85,14 +104,35 @@ export function startCanvasTextEdit(
   preferredFrameId?: string | null,
   options?: { selectAll?: boolean },
 ): boolean {
-  const state = useEditorStore.getState()
-  const node = selectActiveCanvasPage(state)?.nodes[nodeId]
-  if (!node || !registry.get(node.moduleId)?.inlineTextEdit) return false
-  const rendering = findTextEditRendering(nodeId, preferredFrameId ?? state.selectedNodeFrameId)
-  if (!rendering) return false
-  const started = state.startInlineEdit(nodeId, rendering.breakpointId, rendering.frameId, options)
-  if (started && rendering.bridge) {
-    rendering.bridge.beginTextEdit(nodeId, useEditorStore.getState().activeInlineEdit?.initialValue ?? '')
+  return attemptCanvasTextEdit(nodeId, preferredFrameId, options) === 'started'
+}
+
+/** How long a just-created text may take to reach its frame's DOM before the edit is given up. */
+const RENDER_WAIT_MS = 4_000
+const RENDER_POLL_MS = 30
+
+/**
+ * {@link startCanvasTextEdit} for a node the gesture has only just created.
+ *
+ * The follow-up runs the moment the store SELECTS the new node, which is a
+ * render before the frame has painted it: no frame yet contains its element, so
+ * "no portal frame renders it" was the answer and the text tool never opened
+ * its edit (typed text went nowhere). The node is in the store, so it WILL be
+ * rendered - poll (a timer, not rAF: a backgrounded tab never runs rAF) until
+ * it is, then start. Gives up when the node leaves the selection, another edit
+ * opened, or the wait runs out.
+ */
+export function startCanvasTextEditWhenRendered(
+  nodeId: string,
+  preferredFrameId?: string | null,
+  options?: { selectAll?: boolean },
+): void {
+  const deadline = Date.now() + RENDER_WAIT_MS
+  const attempt = () => {
+    const state = useEditorStore.getState()
+    if (state.activeInlineEdit || state.selectedNodeId !== nodeId) return
+    const result = attemptCanvasTextEdit(nodeId, preferredFrameId, options)
+    if (result === 'unrendered' && Date.now() < deadline) setTimeout(attempt, RENDER_POLL_MS)
   }
-  return started
+  attempt()
 }

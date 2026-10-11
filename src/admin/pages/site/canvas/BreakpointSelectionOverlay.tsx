@@ -263,7 +263,13 @@ export function BreakpointSelectionOverlay({
     permissions.canEditStructure || permissions.canEditContent || permissions.canEditStyle
   const showSelectorHighlight = showRings && Boolean(highlightedSelector)
   // The toolbar additionally needs a selection; body press-and-drag does not.
-  const canEditStructureHere = permissions.canEditStructure && activeBreakpointId === breakpointId
+  // A board frame (`frameId` set) is always an editing surface: every frame of a
+  // board shares the synthetic 'studio' breakpoint while the store's active one
+  // is the site's own until the first press on a frame, so this gate left a
+  // board's body drag and in-frame marquee OFF until something was clicked
+  // first - a press-drag on a frame's background did nothing. Outside a board
+  // the page is mirrored across breakpoint frames and only the active one edits.
+  const canEditStructureHere = permissions.canEditStructure && (frameId !== null || activeBreakpointId === breakpointId)
   const showToolbar = canEditStructureHere && selectedNodeIds.length > 0
 
   // In-place mini-inspector (Phase 2): single-select only. Unlike
@@ -675,6 +681,19 @@ export function BreakpointSelectionOverlay({
       onResizeFrameReady={setResizeFrameElement}
     />
   ) : null
+
+  // The floating toolbar is anchored to where the element WAS; a dragged one
+  // moves away from it and the bar sat over its neighbours for the whole drag.
+  // Hidden for the gesture, back on release (`positionToolbar` owns `display` and the
+  // placement, never `visibility`, so the two cannot fight).
+  useEffect(() => {
+    const toolbar = toolbarRef.current
+    if (!toolbar || !reorderDrag.dragging) return
+    toolbar.style.visibility = 'hidden'
+    return () => {
+      toolbar.style.visibility = ''
+    }
+  }, [reorderDrag.dragging])
 
   // Studio-only mini-inspector (Phase 2), anchored below the selection ring; any drag end closes it.
   const inspectorClosed = useInspectorClosedAfterDrag(reorderDrag.dragging, selectedNodeIdsSignature, selectedNodeIds.length > 0)

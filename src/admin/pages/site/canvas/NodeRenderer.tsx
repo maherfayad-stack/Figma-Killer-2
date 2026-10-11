@@ -378,16 +378,20 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
       if (isClosestCanvasNodeTarget(e.target, e.currentTarget) && !isCanvasEditorControlTarget(e.target, e.currentTarget)) {
         onNodePointerDown(nodeId)
       }
-      if (!suppressesFormControls || !shouldSuppressAuthoredFormControlEvent(e.target, e.currentTarget)) {
-        // A press this node does not suppress still STARTS a new gesture, so
-        // whatever the last one latched is over.
-        setSuppressedPointerTarget(null)
-        const pressed = ownsAuthoredEvents && !isInlineEditing ? resolvePressSelection(useEditorStore.getState(), contextPageId, frameId, nodeId, e) : null
-        if (pressed !== null) selectOnPress(e.currentTarget as Element, pressed, () => onFrameNodeClick(pressed, NO_MODIFIERS, breakpointId, frameId))
-        return
-      }
-      // Cancel the control's own activation (focus, a picker) now; SELECT on
-      // release — the press may still become a drag.
+      const suppressed = suppressesFormControls && shouldSuppressAuthoredFormControlEvent(e.target, e.currentTarget)
+      // A press this node does not suppress still STARTS a new gesture, so
+      // whatever the last one latched is over.
+      if (!suppressed) setSuppressedPointerTarget(null)
+      // The press rings the layer it means - on a form control too. A press on
+      // an `<input>` used to show nothing until release (the ring is the
+      // answer to "did it take?", and a control is where people press most).
+      // The press may still become a drag: `selectOnPress` queues the selection
+      // and a drag flushes it first, exactly as for any other element.
+      const pressed = ownsAuthoredEvents && !isInlineEditing ? resolvePressSelection(useEditorStore.getState(), contextPageId, frameId, nodeId, e) : null
+      if (pressed !== null) selectOnPress(e.currentTarget as Element, pressed, () => onFrameNodeClick(pressed, NO_MODIFIERS, breakpointId, frameId))
+      if (!suppressed) return
+      // Cancel the control's own activation (focus, a picker) now; the release
+      // still claims the click.
       e.preventDefault()
       e.stopPropagation()
       setSuppressedPointerTarget(e.currentTarget)
@@ -518,12 +522,17 @@ function NodeRenderer({ nodeId }: NodeRendererProps) {
       // was entered and the following Escape had nothing to step out of.
       // Yielding here cannot strand the keystroke: `useCanvasSelectionKeyboard`
       // is unconditionally mounted for the same editable, non-live canvas.
-      if (e.key === 'Enter') {
-        const state = useEditorStore.getState()
-        const selectedId = state.selectedNodeId
-        const selected = selectedId ? selectCanvasPageFor(state, contextPageId, frameId)?.nodes[selectedId] : null
-        if (selected?.moduleId === 'studio.instance') return
-      }
+      //
+      // The same applies to EVERY Enter while something is selected, and to
+      // Enter with a modifier at all. DOM focus after a canvas click sits on
+      // the iframe `<body>` (itself a canvas node with this handler), so this
+      // "click me" fired on the body for Shift+Enter (select parent) and Enter
+      // (select children) and replaced the selection with the page root - one
+      // press jumped to the frame body instead of walking one level. With a
+      // selection, Enter is the selection keyboard's
+      // (`useCanvasSelectionKeyboard`), which receives the same keystroke
+      // through the keyboard bridge.
+      if (e.key === 'Enter' && (e.shiftKey || e.altKey || e.metaKey || e.ctrlKey || useEditorStore.getState().selectedNodeId !== null)) return
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault()
         handleNodeClick(nodeId, e as unknown as React.MouseEvent, true)

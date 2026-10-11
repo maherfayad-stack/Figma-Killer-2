@@ -9,7 +9,7 @@
  * frame, an unmounted board) — the caller shows nothing rather than guessing.
  */
 import { getParent } from '@core/page-tree'
-import { isAutoLayoutDisplay, parentPlacementKind, type ParentPlacementKind, type SizingParentLayout } from '@core/studio-runtime'
+import { childPlacementPositions, isAutoLayoutDisplay, parentPlacementKind, type ParentPlacementKind, type SizingParentLayout } from '@core/studio-runtime'
 import { findRenderedCanvasElements, presentedElementForNode } from '@site/canvas/canvasNodeLookup'
 import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
 import { useFrameComputedStyleValues } from '@site/panels/InspectPanel/useInspectComputedStyle'
@@ -33,6 +33,6 @@ export function useParentPlacementKind(parentLayout: SizingParentLayout | null):
   if (!view || !parentElement) return null
   return parentPlacementKind(
     { display: parentLayout.display, position: parentComputed.position },
-    Array.from(parentElement.children, (child) => view.getComputedStyle(child).position),
+    childPlacementPositions(view, parentElement),
   )
 }

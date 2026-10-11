@@ -69,6 +69,7 @@ import { useBoardFrameNudge } from './useBoardFrameNudge'
 import { useCanvasToolShortcuts } from './useCanvasToolShortcuts'
 import { useCanvasLayerCommandKeys } from './useCanvasLayerCommandKeys'
 import { useCreatedNodeFollowUp } from './createdNodeFollowUp'
+import { useBoardOpenCamera } from './useBoardOpenCamera'
 import { isArmedTool } from './canvasDrawTool'
 import { SelectionStyleCommandHost } from './SelectionStyleCommandHost'
 import { useCanvasHandTool } from './useCanvasHandTool'
@@ -205,6 +206,7 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
     zoomToFit,
     zoomToFill,
     zoomToSelection,
+    applyCamera,
   } = useCanvas({
     canvasRootRef: canvasRef,
     transformLayerRef,
@@ -223,6 +225,8 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
     setCanvasViewportCommands({ zoomToFit, zoomToFill, zoomToSelection })
     return () => setCanvasViewportCommands(null)
   }, [isLive, zoomToFit, zoomToFill, zoomToSelection, setCanvasViewportCommands])
+
+  useBoardOpenCamera({ enabled: !isLive, zoomToFit, applyCamera })
 
   // ─── Focus the chosen viewport frame: loading skeleton → page → switches ───
   // The canvas always mounts at pan (0,0), which shows the left-most (mobile)

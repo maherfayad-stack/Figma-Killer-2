@@ -6,6 +6,7 @@ import {
   nearerSiblingSide,
   resolveCanvasInsertionTarget,
   resolveCanvasDropTarget,
+  resolveCanvasTransplantTarget,
   type CanvasDropCandidate,
 } from '@admin/pages/site/canvas/canvasDnd'
 
@@ -499,5 +500,56 @@ describe('canvasDnd', () => {
       expect(nearerSiblingSide(l3!, { x: 0, y: 101 })).toBe('before')
       expect(nearerSiblingSide(l3!, { x: 0, y: 139 })).toBe('after')
     })
+  })
+})
+
+describe('a cross-frame drop lands where the pointer is, with its line', () => {
+  const origin = page({
+    root: node('root', 'base.body', ['moved']),
+    moved: node('moved', 'base.text'),
+  })
+  const destination = page({
+    root: node('root', 'base.body', ['main']),
+    main: node('main', 'base.container', ['a', 'b', 'c']),
+    a: node('a', 'base.text'),
+    b: node('b', 'base.text'),
+    c: node('c', 'base.text'),
+  })
+  const stack = [
+    candidate('main', 1, { left: 0, top: 0, width: 200, height: 600 }),
+    candidate('a', 2, { left: 0, top: 0, width: 200, height: 50 }),
+    candidate('b', 2, { left: 0, top: 200, width: 200, height: 50 }),
+    candidate('c', 2, { left: 0, top: 400, width: 200, height: 50 }),
+  ]
+  const resolve = (point: { x: number; y: number }, candidates = stack) =>
+    resolveCanvasTransplantTarget({
+      originTree: origin,
+      destinationTree: destination,
+      draggedIds: ['moved'],
+      candidates,
+      point,
+      canHaveChildren,
+      copy: false,
+    })
+
+  it('released in the gap between two siblings it goes between them, not at the end', () => {
+    const { target } = resolve({ x: 100, y: 120 })
+    expect(target).toMatchObject({ parentId: 'main', index: 1, position: 'inside' })
+    // The line sits in the middle of the gap: between a's bottom (50) and b's top (200).
+    expect(target?.gap?.axis).toBe('vertical')
+    expect(target?.gap?.rect.top).toBe(125)
+  })
+
+  it('released below the last child it still appends, and the line sits under it', () => {
+    const { target } = resolve({ x: 100, y: 550 })
+    expect(target).toMatchObject({ parentId: 'main', index: 3 })
+    expect(target?.gap?.rect.top).toBe(450)
+  })
+
+  it('released on the near half of a leaf it lands on that side of the leaf', () => {
+    const upper = resolve({ x: 100, y: 410 }).target
+    expect(upper).toMatchObject({ parentId: 'main', index: 2, position: 'before' })
+    const lower = resolve({ x: 100, y: 440 }).target
+    expect(lower).toMatchObject({ parentId: 'main', index: 3, position: 'after' })
   })
 })

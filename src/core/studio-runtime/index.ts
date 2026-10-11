@@ -269,6 +269,7 @@ export {
 
 export {
   autoLayoutFamily,
+  childPlacementPositions,
   isAutoLayoutDisplay,
   isOutOfFlow,
   parentPlacementKind,

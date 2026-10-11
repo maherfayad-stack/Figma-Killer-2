@@ -47,7 +47,14 @@ import { guideLinesInSpace, type SnapLine } from '@core/studio-runtime'
 import { readBoardScreenOrigin, rulerGuideLines } from './boardSnapping'
 import { getNodeDisplayName } from '@core/page-tree'
 import type { EditConstraint, NodeTree, PageNode } from '@core/page-tree'
-import type { CanvasDropCandidate, CanvasDropResolution, CanvasTransplantResolution } from './canvasDnd'
+import type {
+  CanvasDragPaintTarget,
+  CanvasDropAxis,
+  CanvasDropCandidate,
+  CanvasDropResolution,
+  CanvasRect,
+  CanvasTransplantResolution,
+} from './canvasDnd'
 import { resolveCanvasDropTarget, resolveCanvasTransplantTarget } from './canvasDnd'
 import { autoPanDelta } from './canvasDragAutoPan'
 import {
@@ -330,8 +337,10 @@ export function runCanvasDragFrame(session: DragSession, env: CanvasDragFrameEnv
   if (session.paintedLayer && session.paintedLayer !== layer) paintCanvasDrag(session.paintedLayer, null)
   session.foreign = foreign
   session.paintedLayer = layer
+  const resolution = foreign ? session.foreignResolution : session.resolution
   paintCanvasDrag(layer, {
-    ...(foreign ? session.foreignResolution : session.resolution),
+    ...resolution,
+    target: resolution.target && paintTargetOf(resolution.target),
     ghost,
     reflow: session.reflow,
     parent,
@@ -345,6 +354,17 @@ export function runCanvasDragFrame(session: DragSession, env: CanvasDragFrameEnv
     // transform on their own.
     env.scheduleFrame()
   }
+}
+
+/**
+ * What the drop line is drawn from. A drop among a flow container's children
+ * (`gap`) is a line between the two neighbours it falls between; the painter
+ * only knows how to draw a line on the edge of a rect, so the gap's zero-thickness
+ * rect is handed to it as the `after` edge.
+ */
+function paintTargetOf(target: CanvasDragPaintTarget & { gap?: { rect: CanvasRect; axis: CanvasDropAxis } }): CanvasDragPaintTarget {
+  if (!target.gap) return target
+  return { rect: target.gap.rect, axis: target.gap.axis, position: 'after' }
 }
 
 export const EMPTY_REFLOW: readonly CanvasReflowShift[] = []

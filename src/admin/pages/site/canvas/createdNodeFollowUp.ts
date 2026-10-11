@@ -20,6 +20,7 @@
  *     (nothing new ever arrives before the window closes).
  */
 import { useEffect } from 'react'
+import type { PageNode } from '@core/page-tree'
 import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 
 /** Long enough for a slow source write + resync; short enough that a stale arming cannot surprise anyone. */
@@ -27,26 +28,40 @@ export const FOLLOW_UP_WINDOW_MS = 8_000
 
 interface PendingFollowUp {
   /**
-   * Every node id at arming time — anything in it is not "new". A COPY: the
+   * What stood at each node id at arming time, as a fingerprint of the node
+   * ({@link fingerprintOf}); `''` for an id that is only known from the page
+   * index. A node at an id with the SAME fingerprint is not "new". A COPY: the
    * store's `_nodeIdToPageIds` is maintained in place (`nodeIndex.ts`), so a
    * reference to it would already contain the new node by the time it lands.
    * One pass over the ids per gesture, never per render.
+   *
+   * By fingerprint and not by id alone because a studio node's id IS its source
+   * position (`rel:line:col`): a node inserted BEFORE an existing sibling
+   * takes over the id that sibling had, so "this id already existed" was true of
+   * the node the gesture had just created, and the follow-up (the text tool's
+   * edit) was dropped as if the user had clicked something else.
    */
-  existing: ReadonlySet<string>
+  existing: ReadonlyMap<string, string>
   expiresAt: number
   run: (nodeId: string) => void
 }
 
 let pending: PendingFollowUp | null = null
 
+/** Enough of a node to tell the one that stood at an id before a write from the one that stands there after. */
+function fingerprintOf(node: PageNode | undefined): string {
+  return node ? `${node.moduleId}|${JSON.stringify(node.props)}|${node.children.length}` : ''
+}
+
 /** Arm a follow-up for the node the gesture that is about to run creates. Replaces any earlier one. */
 export function armCreatedNodeFollowUp(run: (nodeId: string) => void, now: number = Date.now()): void {
   const state = useEditorStore.getState()
   // The page index, plus the active tree's own ids: a Visual Component's
   // nodes are not in the page index.
-  const existing = new Set(state._nodeIdToPageIds.keys())
+  const existing = new Map<string, string>()
+  for (const id of state._nodeIdToPageIds.keys()) existing.set(id, '')
   const tree = selectActiveCanvasPage(state)
-  if (tree) for (const id of Object.keys(tree.nodes)) existing.add(id)
+  if (tree) for (const [id, node] of Object.entries(tree.nodes)) existing.set(id, fingerprintOf(node))
   pending = { existing, expiresAt: now + FOLLOW_UP_WINDOW_MS, run }
 }
 
@@ -69,7 +84,9 @@ export function offerSelectionToFollowUp(selectedNodeIds: readonly string[], now
   const [nodeId] = selectedNodeIds as [string]
   // The selection moved to something that was already there: the user did
   // something else, and the follow-up belongs to nothing any more.
-  if (current.existing.has(nodeId)) {
+  const before = current.existing.get(nodeId)
+  const now = fingerprintOf(selectActiveCanvasPage(useEditorStore.getState())?.nodes[nodeId])
+  if (before !== undefined && before === now) {
     pending = null
     return false
   }

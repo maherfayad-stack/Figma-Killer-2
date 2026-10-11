@@ -133,14 +133,7 @@ interface ResolveCanvasDropTargetInput {
  * is the same one — see `resolveCanvasTransplantTarget` — and named separately
  * because a reader tracing a DRAG should not have to know that.
  */
-export interface CanvasTransplantTarget {
-  parentId: string
-  index: number
-  position: PageTreeDropPosition
-  overId: string
-  rect: CanvasRect
-  axis: CanvasDropAxis
-}
+export type CanvasTransplantTarget = CanvasInsertionTarget
 
 export interface CanvasTransplantResolution {
   target: CanvasTransplantTarget | null
@@ -342,6 +335,10 @@ export function resolveCanvasTransplantTarget({
     draggedIds,
     overId: candidate.nodeId,
     zone,
+    nearerSide: nearerSiblingSide(candidate, point),
+    // The same question `resolveCanvasInsertionTarget` asks of a press in a
+    // container's own space: among which children, not always after the last.
+    indexAmongChildren: (containerId) => nearestFlowIndex(destinationTree, containerId, candidates, point),
     canHaveChildren,
     copy,
   })
@@ -370,7 +367,21 @@ export function resolveCanvasTransplantTarget({
     }
   }
 
-  return { target: { ...verdict.target, rect: candidate.rect, axis: candidate.axis }, invalid: null }
+  const { target } = verdict
+  const gap =
+    target.position === 'inside' && target.overId === target.parentId
+      ? flowGapLine(destinationTree, target.parentId, candidates, target.index, candidate)
+      : null
+  return {
+    target: {
+      ...target,
+      rect: candidate.rect,
+      axis: candidate.axis,
+      ...(candidate.reversed ? { reversed: true } : {}),
+      ...(gap ? { gap } : {}),
+    },
+    invalid: null,
+  }
 }
 
 interface ResolveTransplantDropOverInput {
@@ -380,6 +391,14 @@ interface ResolveTransplantDropOverInput {
   /** The destination node the pointer is over. */
   overId: string
   zone: PageTreeDropPosition
+  /** Which side a drop on the middle of a leaf lands on; a caller with no pointer keeps the append convention. */
+  nearerSide?: 'before' | 'after'
+  /**
+   * Where among a container's children a press in its OWN space lands, or
+   * `null` when none were measured. A caller with no geometry (the Layers
+   * panel) omits it and keeps the append.
+   */
+  indexAmongChildren?: (containerId: string) => number | null
   canHaveChildren: (moduleId: string) => boolean
   copy: boolean
 }
@@ -402,19 +421,27 @@ export function resolveTransplantDropOver({
   draggedIds,
   overId,
   zone,
+  nearerSide,
+  indexAmongChildren,
   canHaveChildren,
   copy,
 }: ResolveTransplantDropOverInput): {
   target: Omit<CanvasInsertionTarget, 'rect' | 'axis'> | null
   preview: StructuralTransplantPreview | null
 } {
-  const target = resolvePageTreeInsertionTarget({
+  const resolved = resolvePageTreeInsertionTarget({
     tree: destinationTree,
     overId,
     zone,
+    nearerSide,
     canHaveChildren,
   })
-  if (!target) return { target: null, preview: null }
+  if (!resolved) return { target: null, preview: null }
+  const amongChildren =
+    resolved.position === 'inside' && resolved.overId === resolved.parentId
+      ? indexAmongChildren?.(resolved.parentId)
+      : null
+  const target = amongChildren == null ? resolved : { ...resolved, index: amongChildren }
   const preview = previewStructuralTransplant({
     originTree,
     nodeIds: draggedIds,
