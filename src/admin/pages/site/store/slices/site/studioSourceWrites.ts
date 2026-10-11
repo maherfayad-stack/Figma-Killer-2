@@ -351,7 +351,7 @@ export function createStudioSourceWrites(
       ? planListRowCopyTo(tree, rowNodes, destination.parentId, destination.index)
       : planListRowCopy(rowNodes)
     if (rows) {
-      writeListRowPlan(rows, STRUCTURAL_REFUSAL_TITLE.duplicate, { get, set })
+      writeListRowPlan(rows, STRUCTURAL_REFUSAL_TITLE.duplicate, { get, set, retry: retryWithMap })
       return true
     }
 

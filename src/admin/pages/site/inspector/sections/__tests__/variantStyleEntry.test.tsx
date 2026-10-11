@@ -58,7 +58,7 @@ function seed(callSiteProps: Record<string, unknown> = { tone: 'loud' }) {
     selectedNodeId: instance.id,
     selectedNodeIds: [instance.id],
     enteredInstanceIds: [],
-    mainEditComponent: null,
+    mainEditTarget: null,
     variantEditAxis: null,
     _nodeIdToPageIds: new Map([
       [body.id, [page.id]],
@@ -120,7 +120,7 @@ describe('ComponentSection — the style entry in Main component mode', () => {
     await user.click(screen.getByTestId('variant-style-entry-edit'))
 
     const state = useEditorStore.getState()
-    expect(state.mainEditComponent).toBe('Pill')
+    expect(state.mainEditTarget).toEqual({ kind: 'component', name: 'Pill' })
     expect(state.enteredInstanceIds).toEqual([INSTANCE_ID])
     expect(state.selectedNodeId).toBe(ROOT_EL)
   })

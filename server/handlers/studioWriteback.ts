@@ -87,6 +87,7 @@ import { dispatchStructuralEdit } from './studioStructuralDispatch'
 import { applyVariantEdit } from './studioVariantWriteback'
 import { applySvgAttrEdit } from './studioSvgWriteback'
 import { applyListItemEdit } from './studioListItemWriteback'
+import { applyUnrollListEdit } from './studioUnrollWriteback'
 import { applyCanvasLayerEdit, isCanvasLayerEdit } from './studioCanvasLayerWriteback'
 import { createCanvasLayerScope } from './studioCanvasLayerScope'
 import { createSyntaxGuard } from './studioSyntaxGuard'
@@ -321,11 +322,15 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
       return { applied: true }
     }
     case 'list-item': {
-      // OD-8 — `loc` is the array literal's `[`, not an element: a `.map`
-      // row's reorder/delete/duplicate rewrites the array it iterates.
+      // OD-8 — `loc` is the array's `[`: a row's reorder/delete/duplicate rewrites it.
       const result = applyListItemEdit(loc, edit, project)
       if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
       return { applied: true }
+    }
+    case 'unroll-list': { // G-9 — `loc` is the row template; the array goes through the same path guard
+      const result = applyUnrollListEdit(loc, target.rel, studioEditLocation(dir, edit.array, scope), edit, project)
+      if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
+      return { applied: true, created: result.created }
     }
     case 'detach': {
       // P3-D (OD-7) — the import is retired by this batch's prune pass

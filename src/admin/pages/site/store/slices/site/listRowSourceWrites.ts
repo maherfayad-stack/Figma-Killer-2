@@ -40,13 +40,22 @@ type RefusalTitle = (typeof STRUCTURAL_REFUSAL_TITLE)[keyof typeof STRUCTURAL_RE
 export function writeListRowPlan(
   plan: ListRowPlan,
   title: RefusalTitle,
-  context: { get: () => EditorStore; set: EditorStoreSetter },
+  context: {
+    get: () => EditorStore
+    set: EditorStoreSetter
+    /**
+     * Run the refused gesture again with every id it named passed through `mapId` — what lets
+     * G-9's "Unroll list" remedy (`unrollListActions.ts`) finish the gesture it was offered for.
+     */
+    retry?: (mapId: (nodeId: string) => string) => void
+  },
 ): void {
-  const { get, set } = context
+  const { get, set, retry } = context
   if (!plan.ok) {
     const node = nodeOnBoard(get(), plan.nodeId)
     presentStructuralRefusal(title, describeStructuralRefusal({ refusal: plan.refusal, ...(node ? { node } : {}) }), {
       nodeId: plan.nodeId,
+      ...(retry ? { retry } : {}),
       getState: get,
       set,
     })

@@ -31,7 +31,7 @@ interface VariantStyleEntryProps {
 export function VariantStyleEntry({ instanceId, callSite, spec }: VariantStyleEntryProps) {
   const elementId = useEditorStore((s) => variantElementIdOf(selectActiveCanvasPage(s)?.nodes, instanceId, spec))
   const chosenAxis = useEditorStore((s) => s.variantEditAxis)
-  const setMainEditComponent = useEditorStore((s) => s.setMainEditComponent)
+  const setMainEditTarget = useEditorStore((s) => s.setMainEditTarget)
   const enterInstance = useEditorStore((s) => s.enterInstance)
   const selectNode = useEditorStore((s) => s.selectNode)
   if (elementId === null) return null
@@ -41,7 +41,7 @@ export function VariantStyleEntry({ instanceId, callSite, spec }: VariantStyleEn
 
   function editStyle() {
     // The all-instances mode (OD-19) is what makes an element of a component the main component's.
-    setMainEditComponent(callSite.componentName)
+    setMainEditTarget({ kind: 'component', name: callSite.componentName })
     enterInstance(instanceId)
     selectNode(elementId)
   }

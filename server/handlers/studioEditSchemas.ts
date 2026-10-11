@@ -53,6 +53,7 @@ import { VariantEditSchemas } from './studioVariantWriteback'
 import { CanvasLayerEditSchemas, type CanvasLayerRemovedText } from './studioCanvasLayerWriteback'
 import { SvgEditSchemas } from './studioSvgWriteback'
 import { ListItemEditSchema } from './studioListItemWriteback'
+import { UnrollListEditSchema } from './studioUnrollWriteback'
 import { UndoJournalTokenSchema } from './studio/undoJournalToken'
 import type { CreatedJsxLocation } from '@core/ast-codemods'
 import type { StyleLanding, StyleLandingRung } from '@core/page-tree'
@@ -326,6 +327,8 @@ export const StudioEditSchema = Type.Union([
   ...StructuralEditSchemas,
   // OD-8 — a `.map` row's structure, written to its array (`studioListItemWriteback.ts`).
   ListItemEditSchema,
+  // G-9 / OD-24 — "Unroll list": a `.map` over an array literal becomes its rows (`studioUnrollWriteback.ts`).
+  UnrollListEditSchema,
   ...SlotEditSchemas,
   // CV-3 — add / remove a variant, add a component property (`studioVariantWriteback.ts`).
   ...VariantEditSchemas,

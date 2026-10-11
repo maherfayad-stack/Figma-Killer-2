@@ -309,7 +309,7 @@ function isStudioAuthoredSourceRel(rel: string): boolean {
  */
 export function isSharedSourceNodeId(nodeId: string, kind?: StudioEdit['kind']): boolean {
   // `list-item` (OD-8): an array another route may import renders there too.
-  if (kind === 'asset' || kind === 'literal' || kind === 'detach' || kind === 'swap' || kind === 'list-item' || kind === 'restore') return true
+  if (kind === 'asset' || kind === 'literal' || kind === 'detach' || kind === 'swap' || kind === 'list-item' || kind === 'unroll-list' || kind === 'restore') return true
   // P5-G — every canvas-layer kind creates, removes or moves a whole element
   // across files, exactly like `transplant`.
   if (kind !== undefined && (isStructuralEditKind(kind) || isSlotEditKind(kind) || isVariantEditKind(kind) || isCanvasLayerEditKind(kind))) return true
@@ -449,6 +449,8 @@ export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(
       // planned against the literal the previous left, and refuses honestly
       // (`list-changed`) rather than being dropped.
       edit.kind === 'list-item' ||
+      // G-9 — an unroll rewrites the list the board read; never the "same write" as a value edit on it.
+      edit.kind === 'unroll-list' ||
       // CV-3 — two adds to one component are two values, never the same write.
       isVariantEditKind(edit.kind) ||
       // P5-G — a place or lift names a real element but is never the "same

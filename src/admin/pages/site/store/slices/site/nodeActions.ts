@@ -295,7 +295,7 @@ export function createNodeActions(helpers: SiteSliceHelpers, overrides: Instance
       // OD-8 — a `.map` row is deleted from its array, not from the JSX.
       const rowNode = tree?.nodes[nodeId]
       const rows = rowNode ? planListRowRemove([rowNode]) : null
-      if (rows) return writeListRowPlan(rows, STRUCTURAL_REFUSAL_TITLE.delete, { get, set })
+      if (rows) return writeListRowPlan(rows, STRUCTURAL_REFUSAL_TITLE.delete, { get, set, retry: (mapId) => actions.deleteNode(mapId(nodeId)) })
       const plan = planSourceDelete([tree?.nodes[nodeId]])
       if (!plan.ok) {
         presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.delete, plan.constraint, {

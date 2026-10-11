@@ -174,6 +174,21 @@ export interface EditConstraintAction {
      * a node id.
      */
     | 'duplicate-into-frame'
+    /**
+     * G-9 (OD-24) — write the `.map` the refused row belongs to out as explicit
+     * elements, then run the refused gesture again on them. Only offered for a
+     * list whose array is a literal in the same file (`planUnrollList`). A
+     * write, so its handler is supplied by the surface that renders the button
+     * (or, from the refusal dialog, by the store action that refused — it holds
+     * the gesture to replay), like `position-parent-relative`.
+     */
+    | 'unroll-list'
+    /**
+     * G-8 — start the "Edit layout" mode for the layout file the refused node is
+     * written in, then run the refused gesture again. The mode is
+     * `mainEditMode.ts`'s, the same one "Edit main component" uses.
+     */
+    | 'edit-layout'
   /**
    * Where this action points, when it points at a file — `origin`'s own
    * shape, so a caller can wire `jump-to-source` without re-deriving it.

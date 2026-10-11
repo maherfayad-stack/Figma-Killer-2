@@ -226,12 +226,13 @@ describe('explainStructuralConstraint', () => {
     expect(constraint.actions.some((a) => a.kind === 'extract')).toBe(true)
   })
 
-  it('row 9 — route-chrome now offers a jump-to-source action, not the old empty terminal refusal', () => {
+  it('row 9 — route-chrome offers "Edit layout" (G-8) and a jump-to-source action, not the old empty terminal refusal', () => {
     const node = { id: 'app/layout.tsx:5:3' }
     const constraint = explainStructuralConstraint({ kind: 'delete', node })
     assertWellFormed(constraint)
     expect(constraint.reason).toBe('route-chrome')
     expect(constraint.actions).toEqual([
+      { label: 'Edit layout', kind: 'edit-layout' },
       { label: 'Open it in code', kind: 'jump-to-source', target: { rel: 'app/layout.tsx', line: 5, col: 3 } },
     ])
   })

@@ -83,7 +83,9 @@ const STRUCTURAL_ACTIONS: Record<StructuralRefusalReason, (node?: SourceStructur
   // `select-container` action (R8's fix — see `bestEffortRowLocation`'s
   // sibling doc above for why the identical action wasn't wired for these
   // two before).
-  'route-chrome': jumpToSourceAction,
+  // G-8 — "Edit layout" is the way forward for a gesture on a layout's markup; the jump stays
+  // for the user who would rather read the file.
+  'route-chrome': (node) => (node ? [{ label: 'Edit layout', kind: 'edit-layout' }, ...jumpToSourceAction(node)] : []),
   'code-placed': jumpToSourceAction,
   // W4-1 — a reparent refused for crossing files, or a reorder whose anchor
   // is in another file. The one useful next step is to look at where the

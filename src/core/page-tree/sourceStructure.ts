@@ -35,7 +35,9 @@
  *     markup lives in the component's own file, so moving it here moves it for
  *     every instance on the board.
  *   - **`route-chrome`** — a Next `layout`/`template` file, composed into
- *     every route beneath it. Same "one file, many frames" problem.
+ *     every route beneath it. Same "one file, many frames" problem. G-8: the
+ *     user can opt in to editing ONE layout file ("Edit layout (N routes)"),
+ *     and until they end that mode its nodes are ordinary placements.
  *   - **`code-placed`** — the parser recorded a structural `lockReason`: a
  *     spread, a dynamic child, a branch the source chooses at runtime. The
  *     source does not place this element at a fixed position, so neither can
@@ -88,6 +90,7 @@ import {
   isSourceDerivedNodeId,
 } from './sourceNodeId'
 import { listRowRefusalMessage, type ListRowSource } from './listRowSource'
+import { isEditedLayoutNodeId } from './layoutEdit'
 
 /**
  * What `refuseStructuralEdit` is asked. A `reparent` names the container it
@@ -330,7 +333,8 @@ export function refusePlacement(node: SourceStructureNode, gesture: string): Str
       message: `${gesture} markup that lives in a shared component's own file, so the change would apply to every place that component is used, not just here.`,
     }
   }
-  if (isRouteChromeNodeId(node.id)) {
+  // G-8 — not while the user is explicitly editing THIS layout file (`layoutEdit.ts`).
+  if (isRouteChromeNodeId(node.id) && !isEditedLayoutNodeId(node.id)) {
     return {
       reason: 'route-chrome',
       message: `${gesture} markup from a layout file, which every page below it renders — the change would apply to all of them, not just this frame.`,

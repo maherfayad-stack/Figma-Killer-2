@@ -90,7 +90,7 @@ function seed(options: { gallery?: boolean } = {}) {
     activeConditionId: null,
     selectedNodeId: ROOT_EL,
     selectedNodeIds: [ROOT_EL],
-    mainEditComponent: null,
+    mainEditTarget: null,
     variantEditAxis: null,
   } as Parameters<typeof useEditorStore.setState>[0])
 }
@@ -165,7 +165,7 @@ describe('useSelectionModel — the variant edit context', () => {
 
   it('"Edit main component": the same edit lands in the shown variant rule, never in .btn', async () => {
     seed()
-    useEditorStore.setState({ mainEditComponent: 'Button' })
+    useEditorStore.setState({ mainEditTarget: { kind: 'component', name: 'Button' } })
     const { result } = renderHook(() => useSelectionModel())
     await waitFor(() => expect(result.current.variantContext).not.toBeNull())
     expect(result.current.variantContext?.chosen).toMatchObject({ kind: 'rule', prop: 'variant', member: 'ghost', selector: '.btn-ghost', label: 'Editing variant ghost: .btn-ghost in Button.css' })

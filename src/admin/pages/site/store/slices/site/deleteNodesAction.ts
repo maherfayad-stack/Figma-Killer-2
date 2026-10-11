@@ -79,7 +79,7 @@ export function createDeleteNodesAction(helpers: SiteSliceHelpers): SiteSlice['d
     // OD-8 — `.map` rows are removed from their array, in one write.
     const rows = planListRowRemove(nodes.filter((node): node is PageNode => node !== undefined))
     if (rows) {
-      writeListRowPlan(rows, STRUCTURAL_REFUSAL_TITLE.delete, { get, set })
+      writeListRowPlan(rows, STRUCTURAL_REFUSAL_TITLE.delete, { get, set, retry: (mapId) => get().deleteNodes(nodeIds.map(mapId)) })
       return
     }
     const plan = planSourceDelete(nodes)

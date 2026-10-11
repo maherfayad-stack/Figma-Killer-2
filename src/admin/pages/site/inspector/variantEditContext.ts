@@ -15,7 +15,7 @@
  *     `~` tail), and
  *   - the person is editing the MAIN component — the variants gallery on the
  *     Components board always is; anywhere else it is "Edit main component"
- *     (`mainEditComponent`) — and
+ *     (`mainEditTarget`, component case) — and
  *   - the component's variant props style THAT element (the binding's
  *     `element` is the selected node's own tail). An inner icon or wrapper has
  *     no variant rule of its own and keeps the ordinary behaviour.
@@ -38,6 +38,7 @@ import { decodeSourceNodeId, INLINE_ID_SEPARATOR, isInlinedNodeId, type StyleRul
 import type { LocalComponentSpec } from '@site/property-controls/componentPropKind'
 import { findLocalComponentSpec, useLocalComponentCatalog } from '@site/studio/componentCatalog'
 import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
+import { isEditingComponent } from '@site/store/slices/site/mainEditMode'
 import type { WriteTarget } from './resolveWriteTarget'
 
 /** What the call site that inlined a component says about it. */
@@ -130,7 +131,7 @@ export function findStyleRuleIdForSource(
  */
 export function useVariantEditContext(selectedNodeId: string | null, fromComponent: string | undefined, isMultiSelect: boolean): VariantStyleContext | null {
   const inlined = !isMultiSelect && selectedNodeId !== null && fromComponent !== undefined && isInlinedNodeId(selectedNodeId)
-  const editingMain = useEditorStore((s) => s.mainEditComponent !== null && s.mainEditComponent === fromComponent)
+  const editingMain = useEditorStore((s) => isEditingComponent(s.mainEditTarget, fromComponent))
   const inGallery = useEditorStore((s) => {
     const page = selectActiveCanvasPage(s)
     return page !== null && isGalleryPage(page)
