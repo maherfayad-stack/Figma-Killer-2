@@ -24,7 +24,8 @@
  *   - **Otherwise**: INSERT every image, in order, as one run of siblings at
  *     the drop position (IMG-2) — one write and one undo step, however many
  *     files. ⌘/Ctrl places the run ABSOLUTELY at the pointer, K6's rule
- *     (IMG-9, `canvasImageDropPlacement.ts`).
+ *     (IMG-9, `canvasImageDropPlacement.ts`); so does a drop into a FREE FRAME
+ *     with no modifier (PA-3, `canvasNewLayerPlacement.ts`).
  *
  * The EMPTY BOARD of a Studio board is the FREE CANVAS (P5-G): every image
  * released there becomes a loose layer, never part of a page
@@ -64,9 +65,9 @@ import { canvasSurfaceAtPoint, measureBoardDropSurfaces } from './canvasDragBoar
 import { buildFrameCandidateIndex, indexLocalPoint, type ClientPoint } from './canvasDragSession'
 import {
   measureDropContainer,
-  resolveAbsolutePlacement,
   type DropContainerBox,
 } from './canvasImageDropPlacement'
+import { planNewLayerPlacement } from './canvasNewLayerPlacement'
 import { resolvePortalDocument } from './frameAdapter/resolvePortalDocument'
 import type { AbsoluteImagePlacement, LandableImageSource } from '@site/store/slices/site/imageDropShapes'
 import type { DroppedImageIntake } from './canvasDropIntake'
@@ -282,7 +283,7 @@ export interface CanvasFileDropIntentInput {
   zoom: number
   facts: DroppedFileFacts
   modifiers: CanvasFileDropModifiers
-  /** The container's box, read at most once per container (`measureDropContainer`); only asked for a ⌘-drop. */
+  /** The container's box, read at most once per container (`measureDropContainer`). */
   measureContainer: (nodeId: string) => DropContainerBox | null
 }
 
@@ -322,13 +323,13 @@ export function resolveCanvasFileDropIntent(input: CanvasFileDropIntentInput): C
 
   const container = resolveSourceContainer(tree, target.parentId)
   const containerNode = container.ok ? container.node : null
-  if (!modifiers.absolute) {
-    return { ok: true, action: { kind: 'insert', target, maxWidth: null, absolute: null } }
-  }
   const box = containerNode ? input.measureContainer(containerNode.id) : null
-  const placement = resolveAbsolutePlacement(box, point)
-  if (!placement.ok) return { ok: false, refusal: staticParentRefusal(containerNode), target }
-  return { ok: true, action: { kind: 'insert', target, maxWidth: null, absolute: placement.placement } }
+  const placement = planNewLayerPlacement(box, { left: point.x, top: point.y, width: 0, height: 0 }, modifiers.absolute)
+  if (placement.kind === 'refused') return { ok: false, refusal: staticParentRefusal(containerNode), target }
+  return {
+    ok: true,
+    action: { kind: 'insert', target, maxWidth: null, absolute: placement.kind === 'absolute' ? { property: placement.property, inline: placement.inline, top: placement.top } : null },
+  }
 }
 
 /** The deepest measured node whose rect contains the point — what the pointer is ON. */

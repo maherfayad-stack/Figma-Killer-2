@@ -179,6 +179,26 @@ export function inlineDepth(nodeId: string): number {
 }
 
 /**
+ * The most call sites deep a value edit is still made on ONE instance: the
+ * page's component passes the value down through every component between it and
+ * the element (`exposeThroughLevels`). Past this a chain is a layout, not an
+ * instance, and the edit is the ordinary one with its sentence.
+ */
+export const MAX_INSTANCE_OVERRIDE_DEPTH = 5
+
+/**
+ * Every position an inlined id names, outermost first: the page's call site,
+ * the call site inside each component that renders the next one, and last the
+ * element itself — `[page, Card's <Badge/>, Badge's element]` for
+ * `page~Card~Badge`. Each is a plain `rel:line:col` id, so each goes through
+ * the one path decoder on its own (containment is per file). A plain id is
+ * its own single segment.
+ */
+export function inlineSegments(nodeId: string): string[] {
+  return nodeId.split(INLINE_ID_SEPARATOR)
+}
+
+/**
  * True when the studio importer minted this id at all — a source location,
  * with or without `.map` iteration suffixes, with or without a call-site
  * prefix. `false` for a CMS node (a nanoid, which has no `:`) and for the

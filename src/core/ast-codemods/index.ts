@@ -49,6 +49,8 @@ export {
   liftJsxElementToCanvasModule,
   canvasLayerModuleRoot,
 } from './transplantJsxElement'
+export type { CarriedDeclaration } from './transplantBindings'
+export type { RowRef } from './transplantPropBake'
 export { buildCanvasLayerModule, canvasLayerModuleFromSpec, type CanvasLayerModule } from './canvasLayerModule'
 export type {
   LiftJsxElementParams,
@@ -74,6 +76,8 @@ export type {
   WrapJsxRefusalReason,
 } from './wrapJsxElement'
 export { wrapJsxElements } from './wrapJsxElements'
+export { frameJsxElements } from './frameJsxElements'
+export type { FrameJsxElementsParams, MemberStylePatch } from './frameJsxElements'
 export type {
   WrapJsxElementsParams,
   WrapJsxElementsRefusal,
@@ -170,7 +174,10 @@ export type { ListSlotChildCandidatesParams, ResolvedSlotChildCandidate, SlotChi
 export { addSlotPropToComponent } from './addSlotPropToComponent'
 // P5-C (DET-7) — "Expose as prop": a literal in a component becomes an optional prop whose default is that literal.
 export { exposeLiteralAsProp } from './exposeLiteralAsProp'
-export type { ExposeLiteralAsPropParams, ExposeLiteralAsPropResult, ExposeLiteralRefusalReason, ExposeTarget } from './exposeLiteralAsProp'
+export type { CallSiteLocation, ExposeLiteralAsPropParams, ExposeLiteralAsPropResult, ExposeLiteralRefusalReason, ExposeOverride, ExposeTarget } from './exposeLiteralSites'
+// OD-19 — "Apply to all": the value one instance overrides becomes the component's own default.
+export { promoteOverrideToDefault } from './promoteOverrideToDefault'
+export type { PromoteOverrideParams, PromoteOverrideRefusalReason, PromoteOverrideResult } from './promoteOverrideToDefault'
 export type {
   AddSlotPropRefusal,
   AddSlotPropRefusalReason,
@@ -206,3 +213,10 @@ export { readSourceFingerprintAt } from './sourceFingerprintAt'
  */
 export { resolveJsxChildRange } from './jsxChildRange'
 export type { JsxChildRange, JsxChildUnit } from './jsxChildRange'
+// CV-3 — Add / remove a variant, add a component property (`variantMembers.ts`, `addComponentProp.ts`).
+export { planAddVariant, planRemoveVariant } from './variantMembers'
+export type { ReadWorkspaceText, VariantPlan, VariantPlanRefusal, VariantPlanRefusalReason, VariantPropInput, VariantStyling } from './variantMembers'
+export { addComponentProp } from './addComponentProp'
+export type { AddComponentPropRefusal, AddComponentPropRefusalReason, AddComponentPropResult, NewComponentProp } from './addComponentProp'
+export { callSitesPassingVariant, typeAliasReferences } from './variantCallSites'
+export type { VariantUse } from './variantCallSites'

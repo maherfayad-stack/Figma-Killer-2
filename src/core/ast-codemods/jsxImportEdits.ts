@@ -8,7 +8,7 @@
  * are computed together and spliced in the same pass — never leaving the file
  * in the half-written state.
  */
-import { SyntaxKind, type Node, type SourceFile } from 'ts-morph'
+import { Node, SyntaxKind, type SourceFile } from 'ts-morph'
 import type { TextEdit } from './jsxChildRange'
 
 /**
@@ -35,6 +35,17 @@ export interface ImportRequirement {
    * already takes any local name.
    */
   imported?: string
+}
+
+/** The start of the line after the file's leading directives (`'use client'`), or 0 when it has none. */
+function afterDirectives(sourceFile: SourceFile, text: string): number {
+  let end = 0
+  for (const statement of sourceFile.getStatements()) {
+    if (!Node.isExpressionStatement(statement) || !Node.isStringLiteral(statement.getExpression())) break
+    const newlineAfter = text.indexOf(String.fromCharCode(10), statement.getEnd())
+    end = newlineAfter === -1 ? text.length : newlineAfter + 1
+  }
+  return end
 }
 
 /**
@@ -132,7 +143,10 @@ export function resolveImportEdits(
     const lines = newLines.join('')
     const lastDeclaration = declarations[declarations.length - 1]
     if (!lastDeclaration) {
-      edits.push({ start: 0, end: 0, text: lines })
+      // Below a directive prologue (`'use client'`): a directive stops being one
+      // the moment anything is written above it.
+      const at = afterDirectives(sourceFile, text)
+      edits.push({ start: at, end: at, text: lines })
     } else {
       // Start of the line after the last import, so the new lines join the block.
       const newlineAfter = text.indexOf('\n', lastDeclaration.getEnd())

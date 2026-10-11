@@ -45,7 +45,7 @@ import {
 import type { FrameDocumentAdapter, NodeRect } from './frameAdapter/FrameDocumentAdapter'
 import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
 import { findNodeById } from './InPlaceInspector/findNodeById'
-import { resizeSnapPeersKey, resizeTargetOptions, storedSizingMarker } from './resizeTargetContext'
+import { resizeAnchorsKey, resizeSnapPeersKey, resizeTargetOptions, storedSizingMarker } from './resizeTargetContext'
 import type { RecordSelectionChromeAnchor } from './selectionChromeViewportFollow'
 
 /** The `applyOverlay` id the forwarded ring tokens are mounted under inside the frame. */
@@ -111,6 +111,7 @@ export function useBridgeSelectionChrome(adapter: FrameDocumentAdapter | null, o
   const alignSelfMarker = useEditorStore((s) => storedSizingMarker(s, resizeNodeId, 'alignSelf'))
   const justifySelfMarker = useEditorStore((s) => storedSizingMarker(s, resizeNodeId, 'justifySelf'))
   const snapPeers = useEditorStore((s) => resizeSnapPeersKey(s, resizeNodeId))
+  const anchors = useEditorStore((s) => resizeAnchorsKey(s, resizeNodeId))
   const zoom = committedTransform[0]
 
   // Ring tokens, once per adapter (a reload re-plays every queued post — see
@@ -132,9 +133,9 @@ export function useBridgeSelectionChrome(adapter: FrameDocumentAdapter | null, o
   useEffect(() => {
     bridge?.setResizeTarget(
       resizeNodeId ? { nodeId: resizeNodeId } : null,
-      resizeTargetOptions({ proportional, markers: [flexMarker, alignSelfMarker, justifySelfMarker], snapPeers, zoom }),
+      resizeTargetOptions({ proportional, markers: [flexMarker, alignSelfMarker, justifySelfMarker], snapPeers, anchors, zoom }),
     )
-  }, [bridge, resizeNodeId, proportional, flexMarker, alignSelfMarker, justifySelfMarker, snapPeers, zoom])
+  }, [bridge, resizeNodeId, proportional, flexMarker, alignSelfMarker, justifySelfMarker, snapPeers, anchors, zoom])
 
   // Toolbar + inspector anchor. Async by nature (a real round trip), so a
   // reply that arrives after a newer request was sent is dropped.

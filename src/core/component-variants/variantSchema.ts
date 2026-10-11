@@ -80,6 +80,9 @@ const VariantBindingSchema = Type.Union([
     kind: Type.Literal('css-module-class'),
     scope: Type.Union([Type.Literal('module'), Type.Literal('global')]),
     expr: Type.String(),
+    /** The text around the prop in the class name: ``styles[`btn-${variant}`]`` is `btn-` / `''`; bare `styles[variant]` is `''` / `''`. A member's class is `<classPrefix><member><classSuffix>`. */
+    classPrefix: Type.String(),
+    classSuffix: Type.String(),
     range: SourceRangeSchema,
     rules: Type.Array(VariantRuleSchema),
   }),

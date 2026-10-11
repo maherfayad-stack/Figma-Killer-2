@@ -94,6 +94,26 @@ describe('installResizeHandles — the runtime drag', () => {
     expect(commits).toEqual([{ width: '120px', left: '30px' }])
   })
 
+  it('writes the edge the source anchors by: a W drag on a `right`-anchored layer is the width alone (PA-8)', () => {
+    const { root } = install('position: absolute; right: 24px; top: 30px; box-sizing: border-box; width: 100px; height: 60px', {
+      context: { sizing: {}, snap: null, anchors: { horizontal: ['right'], vertical: ['top'] } },
+    })
+    pointer(handle(root, 'w'), 'pointerdown', {})
+    pointer(document.body, 'pointermove', { clientX: -20 })
+    pointer(document.body, 'pointerup', { clientX: -20, buttons: 0 })
+    expect(commits).toEqual([{ width: '120px' }])
+  })
+
+  it('an E drag on a `right`-anchored layer moves `right` in by the growth (PA-8)', () => {
+    const { root } = install('position: absolute; right: 24px; top: 30px; box-sizing: border-box; width: 100px; height: 60px', {
+      context: { sizing: {}, snap: null, anchors: { horizontal: ['right'], vertical: ['top'] } },
+    })
+    pointer(handle(root, 'e'), 'pointerdown', {})
+    pointer(document.body, 'pointermove', { clientX: 10 })
+    pointer(document.body, 'pointerup', { clientX: 10, buttons: 0 })
+    expect(commits).toEqual([{ width: '110px', right: '14px' }])
+  })
+
   it('reads ⇧ from a key press mid-drag (IX-6c)', () => {
     const { root } = install('box-sizing: border-box; width: 200px; height: 100px')
     pointer(handle(root, 'e'), 'pointerdown', {})
@@ -151,7 +171,7 @@ describe('installResizeHandles — a flex item goes Fixed, as in a portal frame 
   it('drops an inline `flex: 1` Fill marker with the width, and previews the cleared value', async () => {
     const { root } = install('flex: 1; width: 100px; height: 40px; box-sizing: border-box', {
       container: flexRow(),
-      context: { sizing: { flex: '1' }, snap: null },
+      context: { sizing: { flex: '1' }, snap: null, anchors: null },
     })
     pointer(handle(root, 'e'), 'pointerdown', {})
     pointer(document.body, 'pointermove', { clientX: 40 })
@@ -169,7 +189,7 @@ describe('installResizeHandles — a flex item goes Fixed, as in a portal frame 
     const style = document.createElement('style')
     style.textContent = '.grow { flex: 1 1 0%; }'
     document.head.appendChild(style)
-    const { root, target } = install('width: 100px; height: 40px; box-sizing: border-box', { container: flexRow(), context: { sizing: {}, snap: null } })
+    const { root, target } = install('width: 100px; height: 40px; box-sizing: border-box', { container: flexRow(), context: { sizing: {}, snap: null, anchors: null } })
     target.className = 'grow'
     pointer(handle(root, 'e'), 'pointerdown', {})
     pointer(document.body, 'pointermove', { clientX: 40 })
@@ -184,7 +204,7 @@ describe('installResizeHandles — the moving edge snaps, as in a portal frame (
     document.body.appendChild(sibling)
     placeAt(sibling, 110, 0, 100, 50)
     const { root, target } = install('width: 100px; height: 50px; box-sizing: border-box', {
-      context: { sizing: {}, snap: { siblings: [{ nodeId: 'sibling', occurrenceIndex: 0 }], parent: null, zoom: 1 } },
+      context: { sizing: {}, snap: { siblings: [{ nodeId: 'sibling', occurrenceIndex: 0 }], parent: null, zoom: 1 }, anchors: null },
       peers: { sibling },
     })
     placeAt(target, 0, 0, 100, 50)

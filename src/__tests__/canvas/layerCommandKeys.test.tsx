@@ -227,6 +227,59 @@ describe('⇧A flex layout (IX-10)', () => {
   })
 })
 
+describe('Frame selection (PA-6)', () => {
+  const chord = { key: '©', code: 'KeyG', altKey: true, shiftKey: false }
+
+  it('⌥⌘G on macOS and Ctrl+Alt+G on Windows are Frame selection, and never Group or Ungroup', () => {
+    const frameBinding = getKeybindingForCommand('layers.frameSelection')!
+    expect(frameBinding.match({ ...chord, metaKey: true, ctrlKey: false })).toBe(true)
+    expect(frameBinding.match({ ...chord, metaKey: false, ctrlKey: true })).toBe(true)
+    expect(frameBinding.match({ ...chord, altKey: false, metaKey: true, ctrlKey: false })).toBe(false)
+    expect(getKeybindingForCommand('layers.group')!.match({ ...chord, metaKey: true, ctrlKey: false })).toBe(false)
+    expect(getKeybindingForCommand('layers.ungroup')!.match({ ...chord, metaKey: true, ctrlKey: false, shiftKey: true })).toBe(false)
+  })
+
+  it('frames two absolute layers: the frame is the union, the members keep their place, ONE undo entry', async () => {
+    render(<Harness />)
+    select('abs', 'abs2')
+    expect(press({ ...chord, metaKey: true })).toBe(true)
+    await settle()
+    const stage = node('stage')
+    const frameId = stage.children.find((id) => id !== 'abs' && id !== 'abs2')!
+    expect([...node(frameId).children]).toEqual(['abs', 'abs2'])
+    // stage origin (0, 50); union x 100..270, y 90..160.
+    expect(node(frameId).inlineStyles).toEqual({ position: 'absolute', left: '100px', top: '40px', width: '170px', height: '70px' })
+    expect(node('abs').inlineStyles).toEqual({ position: 'absolute', left: '0px', top: '0px' })
+    // abs2 is right-anchored 30px from the stage; the frame's right inset is 30 too.
+    expect(node('abs2').inlineStyles).toEqual({ position: 'absolute', right: '0px', top: '50px' })
+    expect(historyLength()).toBe(1)
+
+    useEditorStore.getState().undo()
+    expect([...node('stage').children]).toEqual(['abs', 'abs2'])
+    expect(node('abs').inlineStyles).toEqual({ position: 'absolute', left: '100px', top: '40px' })
+    expect(node('abs2').inlineStyles).toEqual({ position: 'absolute', right: '30px', top: '90px' })
+  })
+
+  it('frames flowing layers as a bare container: no size, no pixels written', async () => {
+    render(<Harness />)
+    select('s1', 's2')
+    press({ ...chord, ctrlKey: true })
+    await settle()
+    const frameId = node('stack').children.find((id) => id !== 's1' && id !== 's2')!
+    expect([...node(frameId).children]).toEqual(['s1', 's2'])
+    expect(node(frameId).inlineStyles ?? {}).toEqual({})
+    expect(node('s1').inlineStyles).toBeUndefined()
+  })
+
+  it('refuses a mix of placed and flowing layers and writes nothing', async () => {
+    render(<Harness />)
+    select('abs', 'a')
+    press({ ...chord, metaKey: true })
+    await settle()
+    expect(historyLength()).toBe(0)
+  })
+})
+
 describe('copy / paste style (IX-props)', () => {
   it('REGRESSION: ⌘⌥V / Ctrl+Alt+V is paste STYLE, not paste layer', () => {
     const ctrlAltV = { key: 'v', code: 'KeyV', ctrlKey: true, altKey: true, metaKey: false, shiftKey: false }

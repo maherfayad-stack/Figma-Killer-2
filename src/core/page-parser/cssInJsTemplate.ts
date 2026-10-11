@@ -169,6 +169,16 @@ export interface TemplateDeclarationSpan {
   valueEnd: number
   important: boolean
   /**
+   * Where a NEW declaration for this span's rule goes (G-5's override rung): the
+   * offset in `body` right after the rule's last child, so it comes last in its
+   * block and wins among equals. Every span of one rule reports the same spot.
+   */
+  appendAt: number
+  /** The rule's last child is a declaration with no `;`, so the new one must be preceded by one. */
+  appendNeedsSemicolon: boolean
+  /** What separates the new declaration from the one before it: a newline plus the indent of the rule's own declarations, or a single space on a one-line block. */
+  appendLead: string
+  /**
    * True when this declaration carries an unresolved interpolation and was
    * therefore DROPPED from the rendered CSS. Reported rather than omitted
    * because "this property is set from a `${…}`" and "this property is not in
@@ -197,6 +207,8 @@ export function flattenTemplateDeclarations(
   const prefix = className.length + 2
   const spans: TemplateDeclarationSpan[] = []
   for (const rule of walked.rules) {
+    const append = appendPoint(rule.container, prefix)
+    if (!append) continue
     for (const declaration of rule.declarations) {
       const span = declarationValueSpan(declaration.node, body, prefix)
       if (!span) continue
@@ -206,6 +218,7 @@ export function flattenTemplateDeclarations(
         property: declaration.node.prop,
         important: declaration.node.important === true,
         interpolated: declaration.dropped,
+        ...append,
         ...span,
       })
     }
@@ -243,6 +256,29 @@ function declarationValueSpan(
 }
 
 /**
+ * Where a new declaration goes in `container`, in `body` offsets: right after
+ * its last child (a declaration, a nested rule, a spliced-mixin sentinel — all
+ * of them end at a statement boundary), led by the container's own line
+ * layout. `undefined` when postcss recorded no position for that child.
+ */
+function appendPoint(
+  container: Container<ChildNode>,
+  prefix: number,
+): { appendAt: number; appendNeedsSemicolon: boolean; appendLead: string } | undefined {
+  const last = container.last
+  const end = last?.source?.end?.offset
+  if (last === undefined || end === undefined) return undefined
+  const firstDeclaration = container.nodes?.find((node) => node.type === 'decl')
+  const before = firstDeclaration?.raws.before ?? ''
+  const lineStart = before.lastIndexOf('\n')
+  return {
+    appendAt: end - prefix,
+    appendNeedsSemicolon: last.type === 'decl' && container.raws.semicolon !== true,
+    appendLead: lineStart >= 0 ? `\n${before.slice(lineStart + 1)}` : ' ',
+  }
+}
+
+/**
  * One declaration the walk reached: the text `flattenTemplateCss` serialises,
  * the postcss node the write-back reads offsets off, and whether it was
  * DROPPED for carrying an interpolation. A dropped declaration is kept in the
@@ -260,6 +296,8 @@ interface FlatRule {
   /** `@media (…)`, outermost first. */
   conditions: string[]
   declarations: FlatDeclaration[]
+  /** The postcss block these declarations were read from — the write-back's append point. */
+  container: Container<ChildNode>
 }
 
 /** The one walk both public readers share — see this module's "Two readers of one walk". */
@@ -370,7 +408,7 @@ function flatten(
     if (node.type === 'rule' || node.type === 'atrule') children.push(node)
   }
 
-  if (declarations.length > 0) out.push({ selector, conditions: [...conditions], declarations })
+  if (declarations.length > 0) out.push({ selector, conditions: [...conditions], declarations, container })
 
   for (const node of children) {
     if (node.type === 'rule') {

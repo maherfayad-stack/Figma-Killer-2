@@ -103,6 +103,7 @@ export {
   DropCandidatesMessageSchema,
   DropCandidatesResultMessageSchema,
   DROP_CANDIDATES_MAX,
+  OPTIMISTIC_STYLE_CLEARED,
   DROP_CANDIDATE_CHILD_RECTS_MAX,
   toInboundEnvelope,
   toOutboundEnvelope,
@@ -277,6 +278,27 @@ export {
   type ContainingBlockBox,
   type ContainingBlockOffsets,
 } from './containingBlockOffsets'
+
+export { OffsetPropertySchema, ResizeAnchorsSchema, type OffsetProperty, type ResizeAnchors } from './resizeMessages'
+
+export {
+  anchorResizePatch,
+  offsetTerm,
+  resizeAnchorPlan,
+  resizeEdgeShifts,
+  type OffsetPlan,
+  type OffsetStyle,
+  type OffsetTerm,
+} from './elementResizeAnchors'
+
+export {
+  inferAutoLayout,
+  type CrossAlignment,
+  type InferOptions,
+  type InferredAutoLayout,
+  type InferredPadding,
+  type LayoutRect,
+} from './inferAutoLayout'
 
 export {
   cssPropertyName,

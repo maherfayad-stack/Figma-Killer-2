@@ -28,6 +28,8 @@
  */
 import { registry } from '@core/module-engine'
 import { unwrapNode, wrapNodes } from '@core/page-tree'
+import type { PageNode } from '@core/page-tree'
+import type { FrameRequest } from './frameRequest'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 import type { StudioSourceWrites } from './studioSourceWrites'
 
@@ -39,6 +41,22 @@ import type { StudioSourceWrites } from './studioSourceWrites'
  */
 export const GROUP_CONTAINER_MODULE_ID = 'base.container'
 
+/** The frame's style on the wrapper, each member's patch on the member — inside the group's own recipe. */
+function applyFrameStyles(nodes: Record<string, PageNode>, wrapperId: string, frame: FrameRequest): void {
+  const wrapper = nodes[wrapperId]
+  if (wrapper && Object.keys(frame.wrapperStyle).length > 0) wrapper.inlineStyles = { ...wrapper.inlineStyles, ...frame.wrapperStyle }
+  for (const [memberId, patch] of Object.entries(frame.memberStyles)) {
+    const member = nodes[memberId]
+    if (!member || Object.keys(patch).length === 0) continue
+    const next: Record<string, string | number> = { ...(member.inlineStyles as Record<string, string | number> | undefined) }
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === null) delete next[key]
+      else next[key] = value
+    }
+    member.inlineStyles = next
+  }
+}
+
 type GroupActions = Pick<SiteSlice, 'groupNodes' | 'ungroupNode'>
 
 export function createGroupActions(
@@ -48,7 +66,7 @@ export function createGroupActions(
   const { mutateActiveTree, mutateTreesForNodeIds } = helpers
 
   const actions: GroupActions = {
-    groupNodes: (nodeIds, containerModuleId = GROUP_CONTAINER_MODULE_ID, defaults = {}) => {
+    groupNodes: (nodeIds, containerModuleId = GROUP_CONTAINER_MODULE_ID, defaults = {}, frame) => {
       if (nodeIds.length === 0) return null
       // On a studio-imported tree the group is a SOURCE write, not a tree
       // mutation — `writeGroupToSource` returns true for both of its outcomes
@@ -56,7 +74,7 @@ export function createGroupActions(
       // there is no wrapper id to hand back: the container does not exist
       // until the codemod has written it, and its id is the `line:col` that
       // write produces.
-      if (sourceWrites.writeGroupToSource(nodeIds, containerModuleId, defaults)) return null
+      if (sourceWrites.writeGroupToSource(nodeIds, containerModuleId, defaults, frame)) return null
       // Same defaults-resolution rule as `wrapNode`/`wrapNodes` (Task #414 —
       // defaults must come from the module registry so the wrapper renders).
       const mod = registry.get(containerModuleId)
@@ -64,7 +82,11 @@ export function createGroupActions(
       let wrapperId: string | null = null
       mutateTreesForNodeIds(nodeIds, (tree, idsOnThisTree) => {
         const id = wrapNodes(tree, idsOnThisTree, containerModuleId, resolvedDefaults)
-        if (id) wrapperId = id
+        if (id) {
+          wrapperId = id
+          // PA-6 — a frame is sized and placed in the SAME mutation: one undo.
+          if (frame) applyFrameStyles(tree.nodes, id, frame)
+        }
         return true
       })
       return wrapperId

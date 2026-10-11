@@ -13,7 +13,7 @@ ROADMAP: not a bundle. Extends P2-C (arrow keys), P5-E (IX-21 authored offsets),
 | Constraints (5 modes, crosshair, refusals) | `panels/PropertiesPanel/constraintMapping.ts`, `useConstraintAxes.ts`, `PositionConstraints.tsx`, `ConstraintsDiagram.tsx` |
 | Absolute move, authored-offset aware, snap, RTL, multi-select | `canvas/canvasFreeMove.ts` (only with the cmd modifier, or if already absolute) |
 | Nudge: flow in auto-layout reorders, abs nudges, flow in non-AL promotes to `relative` | `canvasNodeArrowMove.ts` (`isAutoLayout`, `planFlowNudge`, `resolveArrowSelectionMove`) |
-| Resize keeps the authored anchor (right/bottom) | `elementResizeAnchoring.ts` (portal frames only; live frames still write `left`) |
+| Resize keeps the authored anchor (right/bottom) | `core/studio-runtime/elementResizeAnchors.ts` (both frame kinds since PA-8) |
 | Group / ungroup (cmd G) | `ast-codemods/wrapJsxElements.ts`, `groupActions.ts` |
 | "Add auto layout" (shift A) | `layers.toggleFlexLayout` in `keybindingLayerCommands.ts` / `layerCommands.ts`: sets display:flex in the direction children already run, groups several first |
 | Draw R/O/T | `canvasDrawTool.ts` (`drawInsertStyles` = width/height only, flow insert); `placeDrawOnBoard.ts` for the empty board |
@@ -106,12 +106,12 @@ All write through existing inline-style / class writers; no new server route, no
 |---|---|---|---|---|
 | PA-1 | `containingBlockOffsets` + repro and fix of the negative-inset write | create `core/studio-runtime/containingBlockOffsets.ts`; modify `canvasFreeMove.ts` (`planFreeMoveOffsets` -> box from it), `canvasImageDropPlacement.ts`; scout first reproduces `-421px` | `__tests__/studio-runtime/containingBlockOffsets.test.ts` (padding, border, scroll, zoom 0.5/1/2, transformed ancestor, RTL); e2e computed-rect spec: dropped rect == pointer rect +-1px | M |
 | PA-2 | `parentPlacementKind` + `resolvePlacement`; delete `isAutoLayout`; free-move works without cmd inside a free-frame | create `core/studio-runtime/placementKind.ts`; modify `canvasFreeMove.ts` (`resolveMember`), `canvasNodeArrowMove.ts`, `canvasDnd.ts` consumers | placementKind table test; free-move test in a free frame; arch gate `placement-kind-single-source` (no other file tests `display.includes('flex')` for placement) | M |
-| PA-3 | Draw / drop / insert into a free frame lands absolute; cmd-draw in a flow/AL parent | modify `canvasDrawTool.ts` (`drawInsertStyles` takes offsets), `CanvasDrawToolLayer.tsx`, `canvasInsertionDrop.ts`, `canvasFileDrop.ts` | draw test extension; e2e: draw in free frame, reload, computed position equals drawn rect | M |
+| PA-3 (DONE 2026-10-11, `feat/free-frame-insert`) | Draw / drop / insert into a free frame lands absolute; cmd-draw in a flow/AL parent | modify `canvasDrawTool.ts` (`drawInsertStyles` takes offsets), `CanvasDrawToolLayer.tsx`, `canvasInsertionDrop.ts`, `canvasFileDrop.ts` | draw test extension; e2e: draw in free frame, reload, computed position equals drawn rect | M |
 | PA-4 | Ignore auto layout / Reinstate (store action + inspector toggle) | create `store/slices/site/ignoreAutoLayoutActions.ts`; modify `PositionControls` section, `PositionConstraints.tsx` visibility | action test (one undo entry, parent+child), refusal tests (shared, map row), panel test | M |
 | PA-5 | Absolute sizing role so Fill/Hug and constraints agree | modify `elementSizingRules.ts` (`'absolute'` role), `SizeSection.tsx`, `constraintMapping.ts` (shared planner) | `elementSizingRules` table extension; panel parity test (Fill == stretch) | S/M |
-| PA-6 | Frame selection (opt cmd G) | modify `wrapJsxElements.ts` (`props`), `groupActions.ts` (`frameSelection`), `keybindings.ts`, `keybindingLayerCommands.ts`, spotlight `layers.ts` | codemod test (indent, content-model, props), store test (rebase in one undo), keybinding table test | L |
-| PA-7 | Add auto layout, full inference + `convertToFlow` | create `core/studio-runtime/inferAutoLayout.ts`; modify `layerCommands.ts` (`toggleFlexLayout`), `LayerArrangeMenuItems.tsx` | inference pure tests (uniform gap, mixed gap, padding, baseline), conversion refusal tests, e2e | L |
-| PA-8 | Remove auto layout keep positions (`freezePositions`) + docs + live-frame anchored resize | modify `resizeHandles.ts`/`resizeTargetContext.ts` (send authored offsets), `docs/features/inspector.md`, `docs/agent-refs/canvas-internals.md` | freeze test; live resize e2e | M |
+| PA-6 (DONE 2026-10-11, `feat/free-frame-insert`) | Frame selection (opt cmd G) | modify `wrapJsxElements.ts` (`props`), `groupActions.ts` (`frameSelection`), `keybindings.ts`, `keybindingLayerCommands.ts`, spotlight `layers.ts` | codemod test (indent, content-model, props), store test (rebase in one undo), keybinding table test | L |
+| PA-7 (done 2026-10-11, `feat/auto-layout-convert`) | Add auto layout, full inference + `convertToFlow` | create `core/studio-runtime/inferAutoLayout.ts`; modify `layerCommands.ts` (`toggleFlexLayout`), `LayerArrangeMenuItems.tsx` | inference pure tests (uniform gap, mixed gap, padding, baseline), conversion refusal tests, e2e | L |
+| PA-8 (done 2026-10-11, `feat/auto-layout-convert`; the Layout-section menu item is not built, ⇧A / the layer menu / the palette are) | Remove auto layout keep positions (`freezePositions`) + docs + live-frame anchored resize | modify `resizeHandles.ts`/`resizeTargetContext.ts` (send authored offsets), `docs/features/inspector.md`, `docs/agent-refs/canvas-internals.md` | freeze test; live resize e2e | M |
 
 Order: PA-1 -> PA-2 -> PA-3 -> PA-4 -> PA-5 -> PA-6 -> PA-7 -> PA-8. PA-1 and PA-2 are the foundation and independently shippable; PA-3/4 deliver the user-visible "place anywhere"; PA-6/7 are the Figma-parity codemods. Specialists: canvas-engineer (1, 2, 3, 8), store-engineer (4, 6), panel-designer (4, 5, 7 UI), parser-surgeon (6, 7 codemod), test-engineer (e2e computed-layout specs). Per BRIEF trap 13 the human dogfoods; static gates plus the computed-layout e2e where the rect math is the claim.
 
@@ -121,7 +121,7 @@ Order: PA-1 -> PA-2 -> PA-3 -> PA-4 -> PA-5 -> PA-6 -> PA-7 -> PA-8. PA-1 and PA
 - `contain`/`transform` ancestors change the containing block: `containingBlockOffsets` refuses by name rather than guess.
 - Converting 20 children writes 20 elements: all-or-nothing refusal (OD-7 path) and one undo.
 - Percent/Scale on non-measurable parents: existing refusal stands.
-- Live (Tier 2) frames cannot yet read authored offsets: PA-8 closes; until then live resize of a right-anchored layer still writes `left` (already documented in `elementResizeAnchoring.ts`).
+- Live (Tier 2) frames read authored offsets since PA-8: the parent sends which offsets the source authors with `setResizeTarget`, and a live resize of a right-anchored layer writes the width alone.
 
 ## 9. Owner decisions (recommendations)
 
