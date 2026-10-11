@@ -19,10 +19,16 @@
  *  - **Component scope, plain declaration** (`const total = a * b`,
  *    `function onPick() {}`) - COPIED into the destination component's body,
  *    after any hook it reads. G-1a.
- *  - **Component scope, anything the component owns** - a prop, state, a ref, a
- *    `.map` row, a `let`. Refuses `captured-scope` and names it. Moving state
- *    changes behaviour and is a separate decision (G-1b); baking a prop or row
- *    value is another (G-1c).
+ *  - **Component scope, state** (`const [open, setOpen] = useState(false)`,
+ *    `useReducer`, `useRef(init)`) - the STATEMENT is copied to the top of the
+ *    destination component under fresh names: the element gets its own copy of
+ *    the state (OD-17, G-1b; `transplantStateCarry.ts`). A custom hook's result
+ *    refuses by name, and so does a destination a hook cannot be written into.
+ *  - **Component scope, a value handed in** - a `.map` row's item and index, or
+ *    a prop with a default - becomes `const name = <literal>` at the destination,
+ *    read off the source text (G-1c; `transplantPropBake.ts`).
+ *  - **Component scope, anything else the component owns** - a prop nothing
+ *    gives a value to, a `let`. Refuses `captured-scope` and names it.
  *
  * Nothing is executed. A "plain" declaration is plain because of what it
  * READS, found by the same static scope walk as everything else here.
@@ -36,17 +42,20 @@ import { analyzeFreeVariables, bindingKindAt } from './subtreeFreeVariables'
 import { enclosingFunctionComponent, findHookBindingForName } from './detachHooks'
 import { materializeHookGroup, moduleDerivedAlias, type HookCarryGroup } from './transplantCarry'
 import { freshName } from './freshName'
+import { classifyOwned, stateStatementText, type OwnedBinding, type StateHook } from './transplantStateCarry'
+import { bakedStatementText, isDataValue, propDefaultOf, resolveRowBindings, type BakedSource, type RowRef } from './transplantPropBake'
 import {
   declarationText,
   declaresIdentically,
   findLocalBinding,
   findModuleDeclaration,
   isComponentName,
+  isModuleTypeName,
   namesInUse,
   type CarriableDeclaration,
 } from './transplantScopeCarry'
 
-/** One declaration copied to the destination, for the notice the gesture shows. */
+/** One thing copied to the destination, for the notice the gesture shows. */
 export interface CarriedDeclaration {
   /** The name it had in the origin. */
   name: string
@@ -55,6 +64,13 @@ export interface CarriedDeclaration {
   scope: 'body' | 'module'
   /** True when the destination already declared the identical thing, so nothing was written. */
   reused: boolean
+  /**
+   * `copy` - a plain constant or handler, the same bytes. `state` - a
+   * `useState`/`useReducer`/`useRef` the destination now owns its own copy of
+   * (G-1b). `value` - a row's item/index or a prop's default written down as a
+   * literal constant (G-1c).
+   */
+  how: 'copy' | 'state' | 'value'
 }
 
 export interface CarryDestination {
@@ -64,10 +80,20 @@ export interface CarryDestination {
   body?: Block
   /** The indent body-level declarations are written at (continuation lines; the first line sits at a statement start). */
   bodyIndent: string
+  /** Why a state hook cannot be written into the destination component, when it cannot (`stateHookRefusal`). */
+  hooksRefusal?: string
+}
+
+/** What the origin hands the carry beyond the markup itself (G-1c). Both are opt-in: absent, the value refuses by name. */
+export interface CarryOrigin {
+  /** The `.map` row the element is a copy of. */
+  row?: RowRef
+  /** Read a destructured prop's own default as its value. Only honest for an element written in the page's own file. */
+  propDefaults?: boolean
 }
 
 export interface CarryRefusal {
-  reason: 'captured-scope' | 'unexported-binding'
+  reason: 'captured-scope' | 'unexported-binding' | 'stale-source'
   message: string
 }
 
@@ -83,15 +109,32 @@ export type CarriedBindings =
       bodyStatements: string[]
       /** Copied module-level declarations, dependencies first. */
       moduleStatements: string[]
+      /** True when `bodyStatements` holds a state hook - which must be written above any early return (`hookInsertionAnchor`). */
+      hasState: boolean
       carried: CarriedDeclaration[]
     }
   | { ok: false; refusal: CarryRefusal }
 
-interface Pending {
-  name: string
-  node: CarriableDeclaration
-  /** Reads nothing but imports and globals - so an identical declaration already at the destination means the same thing. */
-  leaf: boolean
+type Pending =
+  | {
+      kind: 'declaration'
+      name: string
+      node: CarriableDeclaration
+      /** Reads nothing but imports and globals - so an identical declaration already at the destination means the same thing. */
+      leaf: boolean
+    }
+  /** A state statement: `used` are the slots the element (or a copied handler) reads. Never deduped - each copy is its own state. */
+  | { kind: 'state'; state: StateHook; used: Set<string> }
+  | { kind: 'value'; name: string; source: BakedSource; leaf: boolean }
+
+type StatePending = Extract<Pending, { kind: 'state' }>
+
+const OWNED_DESCRIPTION: Record<OwnedBinding['kind'], string> = {
+  state: 'state',
+  'hook-result': 'a hook result',
+  prop: 'a prop',
+  row: 'a list row',
+  variable: 'a variable the component owns',
 }
 
 export function resolveCarriedBindings(
@@ -99,6 +142,7 @@ export function resolveCarriedBindings(
   originSource: SourceFile,
   originText: string,
   destination: CarryDestination,
+  origin: CarryOrigin = {},
 ): CarriedBindings {
   const { source: destinationSource, file: destinationFile, body: destinationBody } = destination
   const originComponent = enclosingFunctionComponent(subtree)
@@ -106,11 +150,37 @@ export function resolveCarriedBindings(
 
   const requirements = new Map<string, ImportRequirement>()
   const hookGroups = new Map<CallExpression, HookCarryGroup>()
-  const captured: string[] = []
+  /** name -> what it is, for the refusal sentence. */
+  const captured = new Map<string, string>()
   const unexported: string[] = []
   const bodyDeclarations: Pending[] = []
   const moduleDeclarations: Pending[] = []
   const visited = new Set<string>()
+  const stateStatements = new Map<Node, StatePending>()
+  let staleRow: string | undefined
+
+  // The row's item and index, resolved once and only when something reads them.
+  let rowSources: Map<string, BakedSource> | undefined
+  function rowSource(name: string): BakedSource | undefined {
+    if (!origin.row) return undefined
+    if (!rowSources) {
+      const row = resolveRowBindings(subtree, originComponent, origin.row)
+      if (!row.ok) staleRow = row.message
+      rowSources = row.ok ? row.sources : new Map()
+    }
+    return rowSources.get(name)
+  }
+
+  /** A prop's own default, when it is data. A function default is behaviour: it is named, not copied. */
+  function propDefault(name: string): BakedSource | 'function' | undefined {
+    const initializer = origin.propDefaults && originComponent ? propDefaultOf(originComponent, name) : undefined
+    if (!initializer) return undefined
+    return isDataValue(initializer) ? { kind: 'node', node: initializer } : 'function'
+  }
+
+  function describeOwned(owned: OwnedBinding): string {
+    return owned.kind === 'hook-result' ? `the result of ${owned.hook}()` : OWNED_DESCRIPTION[owned.kind]
+  }
 
   /** Walks `root`'s free names; returns whether it reads only imports and globals. */
   function visit(root: Node, ownName: string | undefined): boolean {
@@ -119,7 +189,22 @@ export function resolveCarriedBindings(
       const { name } = variable
       if (name === ownName) continue
 
-      if (bindingKindAt(root, name, originSource) === 'module') {
+      const kind = bindingKindAt(root, name, originSource)
+      if (kind === 'none') {
+        // A type the origin declares (`type Action = ...`) has no runtime to
+        // share and nothing to import from a route file: it is copied, like a
+        // constant. An enum or namespace has a runtime and no copy that means
+        // the same thing. Anything else is declared nowhere in the file - a
+        // global (`HTMLInputElement`, `setTimeout`) the destination sees too.
+        if (isModuleTypeName(originSource, name)) {
+          carryModuleDeclaration(name, false)
+          leaf = false
+        } else if (originSource.getEnum(name) ?? originSource.getModule(name)) {
+          captured.set(name, 'an enum or namespace its file declares')
+        }
+        continue
+      }
+      if (kind === 'module') {
         const requirement = resolveCarriedBinding(name, originSource, destinationFile)
         if (requirement === UNEXPORTED) {
           if (carryModuleDeclaration(name, variable.isComponentTag)) leaf = false
@@ -134,7 +219,7 @@ export function resolveCarriedBindings(
       if (hook && hook !== 'unmovable') {
         const calleeRequirement = resolveCarriedBinding(hook.label, originSource, destinationFile)
         if (calleeRequirement === UNEXPORTED) {
-          captured.push(name)
+          captured.set(name, 'a hook result')
           continue
         }
         let group = hookGroups.get(hook.call)
@@ -150,8 +235,24 @@ export function resolveCarriedBindings(
       }
 
       const local = originComponent ? findLocalBinding(originComponent, name) : undefined
-      if (local?.kind === 'declaration' && carryBodyDeclaration(name, local.statement)) leaf = false
-      else captured.push(name)
+      if (local?.kind === 'declaration' && carryBodyDeclaration(name, local.statement)) {
+        leaf = false
+        continue
+      }
+
+      const owned: OwnedBinding = originComponent ? classifyOwned(originComponent, name, root) : { kind: 'variable' }
+      if (owned.kind === 'state') {
+        carryState(owned.state, name)
+        leaf = false
+        continue
+      }
+      const baked = owned.kind === 'row' ? rowSource(name) : owned.kind === 'prop' ? propDefault(name) : undefined
+      if (baked && baked !== 'function') {
+        carryValue(name, baked)
+        leaf = false
+        continue
+      }
+      captured.set(name, baked === 'function' ? 'a function prop' : describeOwned(owned))
     }
     return leaf
   }
@@ -161,7 +262,7 @@ export function resolveCarriedBindings(
     if (visited.has(key)) return true
     visited.add(key)
     const leaf = visit(statement, name)
-    bodyDeclarations.push({ name, node: statement, leaf })
+    bodyDeclarations.push({ kind: 'declaration', name, node: statement, leaf })
     return true
   }
 
@@ -169,24 +270,48 @@ export function resolveCarriedBindings(
     const key = `module:${name}`
     if (visited.has(key)) return true
     const statement = findModuleDeclaration(originSource, name)
-    if (!statement || usedAsTag || isComponentName(name)) return false
+    // A component is never copied (two copies are two components); a type merely looks like one.
+    if (!statement || usedAsTag || (isComponentName(name) && !isModuleTypeName(originSource, name))) return false
     visited.add(key)
     const leaf = visit(statement, name)
-    moduleDeclarations.push({ name, node: statement, leaf })
+    moduleDeclarations.push({ kind: 'declaration', name, node: statement, leaf })
     return true
+  }
+
+  function carryState(state: StateHook, name: string): void {
+    const existing = stateStatements.get(state.statement)
+    if (existing) {
+      existing.used.add(name)
+      return
+    }
+    const pending: StatePending = { kind: 'state', state, used: new Set([name]) }
+    stateStatements.set(state.statement, pending)
+    visit(state.statement, undefined) // its initializer's own reads, carried first
+    bodyDeclarations.push(pending)
+  }
+
+  function carryValue(name: string, source: BakedSource): void {
+    const key = `value:${name}`
+    if (visited.has(key)) return
+    visited.add(key)
+    const leaf = source.kind === 'node' ? visit(source.node, name) : true
+    bodyDeclarations.push({ kind: 'value', name, source, leaf })
   }
 
   visit(subtree, undefined)
 
-  if (captured.length > 0) {
-    const names = [...new Set(captured)].map((name) => `"${name}"`).join(', ')
+  if (staleRow !== undefined) {
+    return { ok: false, refusal: { reason: 'stale-source', message: staleRow } }
+  }
+  if (captured.size > 0) {
+    const names = [...captured].map(([name, what]) => `"${name}" (${what})`).join(', ')
     return {
       ok: false,
       refusal: {
         reason: 'captured-scope',
         message:
-          `It reads ${names}, which belong to the component it is written in (a prop, state, a list row) and cannot follow it to another file. ` +
-          `Keep it inside its own frame, or move ${captured.length === 1 ? 'that value' : 'those values'} into a shared file first.`,
+          `It reads ${names}, which belong to the component it is written in and cannot follow it to another file. ` +
+          `Keep it inside its own frame, or move ${captured.size === 1 ? 'that value' : 'those values'} into a shared file first.`,
       },
     }
   }
@@ -200,8 +325,21 @@ export function resolveCarriedBindings(
       },
     }
   }
+  const states = [...stateStatements.values()]
+  if (states.length > 0 && (!destinationBody || destination.hooksRefusal)) {
+    const names = states.flatMap((entry) => [...entry.used]).map((name) => `"${name}"`).join(', ')
+    return {
+      ok: false,
+      refusal: {
+        reason: 'captured-scope',
+        message: destinationBody
+          ? `It uses the state ${names}, and Studio cannot give the other file its own copy: ${destination.hooksRefusal}`
+          : `It uses the state ${names}, which needs a component to live in, and the place it is going to has none. Drop it into a component.`,
+      },
+    }
+  }
   if (bodyDeclarations.length > 0 && !destinationBody) {
-    const names = bodyDeclarations.map((declaration) => `"${declaration.name}"`).join(', ')
+    const names = bodyDeclarations.map((declaration) => `"${pendingName(declaration)}"`).join(', ')
     return {
       ok: false,
       refusal: {
@@ -264,25 +402,58 @@ export function resolveCarriedBindings(
   const carried: CarriedDeclaration[] = []
   const moduleStatements: string[] = []
   const bodyStatements: string[] = []
+  const takeName = (name: string): string => {
+    const as = freshName(name, (candidate) => used.has(candidate))
+    used.add(as)
+    if (as !== name) renames.set(name, as)
+    return as
+  }
   const copy = (pending: Pending, scope: 'body' | 'module'): void => {
     const container = scope === 'module' ? destinationSource : destinationBody!
     const indent = scope === 'module' ? '' : destination.bodyIndent
-    const plain = declarationText(pending.node, originText, renames, indent)
-    if (pending.leaf && declaresIdentically(container, pending.name, plain)) {
-      carried.push({ name: pending.name, as: pending.name, scope, reused: true })
+    const out = scope === 'module' ? moduleStatements : bodyStatements
+    if (pending.kind === 'state') {
+      // Its own state, always: even an identical `useState(false)` the
+      // destination already has is a DIFFERENT state, and reusing it would tie
+      // the element to a value that was never its own.
+      const slots = pending.state.slots.filter((slot) => pending.used.has(slot))
+      const names = slots.map((slot) => ({ slot, as: takeName(slot) }))
+      out.push(stateStatementText(pending.state, pending.used, originText, renames, indent))
+      for (const { slot, as } of names) carried.push({ name: slot, as, scope, reused: false, how: 'state' })
       return
     }
-    const as = freshName(pending.name, (candidate) => used.has(candidate))
-    used.add(as)
-    if (as !== pending.name) renames.set(pending.name, as)
-    const text = as === pending.name ? plain : declarationText(pending.node, originText, renames, indent)
-    ;(scope === 'module' ? moduleStatements : bodyStatements).push(text)
-    carried.push({ name: pending.name, as, scope, reused: false })
+    const render = (as: string): string =>
+      pending.kind === 'value'
+        ? bakedStatementText(pending.source, as, originText, renames, indent)
+        : declarationText(pending.node, originText, renames, indent)
+    const plain = render(pending.name)
+    const how = pending.kind === 'value' ? 'value' : 'copy'
+    if (pending.leaf && declaresIdentically(container, pending.name, plain)) {
+      carried.push({ name: pending.name, as: pending.name, scope, reused: true, how })
+      return
+    }
+    const as = takeName(pending.name)
+    out.push(as === pending.name ? plain : render(as))
+    carried.push({ name: pending.name, as, scope, reused: false, how })
   }
   for (const pending of moduleDeclarations) copy(pending, 'module')
   for (const pending of bodyDeclarations) copy(pending, 'body')
 
-  return { ok: true, requirements: bindings.required, renames, hookEdits, hookStatements, bodyStatements, moduleStatements, carried }
+  return {
+    ok: true,
+    requirements: bindings.required,
+    renames,
+    hookEdits,
+    hookStatements,
+    bodyStatements,
+    moduleStatements,
+    hasState: states.length > 0,
+    carried,
+  }
+}
+
+function pendingName(pending: Pending): string {
+  return pending.kind === 'state' ? [...pending.used].join(', ') : pending.name
 }
 
 /**

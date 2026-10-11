@@ -303,6 +303,26 @@ export default function RecipeCard({ dish, steps }: Props) {
 `
 
 describe('lift onto the free canvas — a generic context shape', () => {
+  it('gives the layer its own copy of the state the element reads (G-1b)', () => {
+    writeFixture('lib/theme.ts', THEME)
+    const recipe = writeFixture('src/recipes/RecipeCard.tsx', RECIPE)
+    const { moduleFile, result } = lift(recipe, RECIPE, 'footer', true)
+
+    expect(result.ok).toBe(true)
+    expect(read(moduleFile)).toBe(`/* eslint-disable */
+// Studio free-canvas layer. Not part of your app: nothing imports this file.
+import { useState } from 'react'
+
+export default function CanvasLayer() {
+  const [open] = useState(false)
+  return (
+    <footer>{open ? 'open' : 'closed'}</footer>
+  )
+}
+`)
+    expect(read(recipe)).toBe(RECIPE)
+  })
+
   it('carries a whole-value and an aliased destructured hook read, each under its own local name', () => {
     writeFixture('lib/theme.ts', THEME)
     const recipe = writeFixture('src/recipes/RecipeCard.tsx', RECIPE)
@@ -347,7 +367,6 @@ export default function CanvasLayer() {
   for (const [what, tag, name] of [
     ['a prop', 'header', 'dish'],
     ['a `.map` row', 'b', 'step'],
-    ['a non-context hook (useState)', 'footer', 'open'],
   ] as const) {
     it(`still refuses ${what}, writes nothing, and says so in plain words`, () => {
       writeFixture('lib/theme.ts', THEME)
