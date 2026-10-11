@@ -548,7 +548,8 @@ export function applyStudioEditBatch(
 
   importPrune.prune()
   // P3-F — after the prune and the module imports: the entry is what the files are NOW.
-  const undoToken = journal.commit(written, promoteDetails.map((detail) => detail.newFile), styleLandings)
+  // A stylesheet a `css`/`create` edit invented did not exist before the batch: recorded as such, so a restore removes it with the import it needed.
+  const undoToken = journal.commit(written, [...promoteDetails.map((detail) => detail.newFile), ...createdStylesheets.map((sheet) => sheet.file)], styleLandings)
 
   // A re-found edit means the caller's ids for its file were already stale
   // before this batch wrote anything — `shifted` is how every caller learns

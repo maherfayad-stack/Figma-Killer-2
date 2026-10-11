@@ -57,6 +57,12 @@ describe('StyleLandingChip', () => {
     expect(screen.getByTestId('style-landing-chip').textContent).toBe('Saved inline')
   })
 
+  it("speaks for a .map row through the row template its inline style was written to", () => {
+    render(<StyleLandingChip nodeId="pages/List.tsx:7:9#2" classIds={[]} />)
+    act(() => recordStyleLandings([{ nodeId: 'pages/List.tsx:7:9', rung: 'inline', file: 'pages/List.tsx' }], {}, undefined))
+    expect(screen.getByTestId('style-landing-chip').textContent).toBe('Saved inline')
+  })
+
   it('ignores a landing for a different node or class', () => {
     render(<StyleLandingChip nodeId="a.tsx:1:1" classIds={['sc-card']} />)
     act(() => {

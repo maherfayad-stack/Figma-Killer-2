@@ -30,7 +30,7 @@
  * chip reads it with `useSyncExternalStore` instead of subscribing to a
  * document whose reference changes on every unrelated edit.
  */
-import { styleLandingNeedsJournal, type StyleLanding, type StyleLandingRung } from '@core/page-tree'
+import { loopTemplateNodeId, styleLandingNeedsJournal, type StyleLanding, type StyleLandingRung } from '@core/page-tree'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { pushToast } from '@ui/components/Toast'
 import { restoreEdit } from './structuralUndoPlan'
@@ -69,9 +69,18 @@ export function styleLandingsVersion(): number {
 export const ruleLandingSubject = (ruleId: string): string => `rule:${ruleId}`
 export const nodeLandingSubject = (nodeId: string): string => `node:${nodeId}`
 
-/** What to ask about for a selected node: its own inline layer, then each class it carries. */
+/**
+ * What to ask about for a selected node: its own inline layer (a `.map` row's
+ * inline style is written to its row TEMPLATE, so that id too), then each class
+ * it carries.
+ */
 export function styleLandingSubjects(nodeId: string | null, classIds: readonly string[]): string[] {
-  return [...(nodeId === null ? [] : [nodeLandingSubject(nodeId)]), ...classIds.map(ruleLandingSubject)]
+  const template = nodeId === null ? null : loopTemplateNodeId(nodeId)
+  return [
+    ...(nodeId === null ? [] : [nodeLandingSubject(nodeId)]),
+    ...(template === null ? [] : [nodeLandingSubject(template)]),
+    ...classIds.map(ruleLandingSubject),
+  ]
 }
 
 /**

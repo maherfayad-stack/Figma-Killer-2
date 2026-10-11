@@ -21,8 +21,14 @@ field model into it, which added a section without renumbering one.)
 > one `INSPECTOR_SECTIONS` manifest entry per section, each re-skinned to the
 > measured Penpot baseline (`docs/audits/penpot-inspector-baseline/`); the write
 > target is resolved by `resolveWriteTarget.ts` ("the write target is a rule, not
-> a mode"), and computed values are read through `SelectionModel` (from the live
-> DOM at Tier 2). `SelectorInspector.tsx`, the separate surface for a bare CSS
+> a mode"; G-5: a class that cannot hold the typed value — a styled template
+> cannot spell a `;` or a backtick — steps aside through `holds`, so the value
+> lands on the element instead of being refused), a style edit never refuses
+> and `StyleLandingChip` says where it went after the write ("Saved in
+> `Card.module.css`" / "as an override" / "shorthand expanded" / "inline", with
+> an Undo for the two rungs a value-set cannot take back — see
+> `docs/features/studio-import.md` "CSS write-back"), and computed values are read
+> through `SelectionModel` (from the live DOM at Tier 2). `SelectorInspector.tsx`, the separate surface for a bare CSS
 > selector, keeps its search bar and category rail. Every law and primitive below
 > applies to all of it. The same rules in design language are in
 > [`docs/design.md`](../design.md) → "The inspector"; why the panel was rebuilt this

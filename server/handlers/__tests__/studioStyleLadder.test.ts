@@ -160,6 +160,31 @@ describe('the .css rungs, on the wire', () => {
     expect(read('styles/Plan.css')).toBe(css)
   })
 
+  it('a batch that also invents a stylesheet restores to a project without it', () => {
+    const page = "export default function Home() {\n  return <main className=\"fresh\">Hi</main>\n}\n"
+    const plan = '.plan {\n  padding: 8px;\n}\n'
+    write('pages/Home.tsx', page)
+    write('styles/Plan.css', plan)
+    const result = applyStudioEditBatch(
+      dir,
+      [
+        { kind: 'css', op: 'create', nodeId: 'css:create:fresh', pageFile: 'pages/Home.tsx', selector: '.fresh', declarations: { color: 'red' } },
+        cssSet('padding-top', '20px'),
+      ],
+      {},
+      EDITOR,
+    )
+    expect(result.refusals).toEqual([])
+    expect(fs.existsSync(abs('pages/Home.css'))).toBe(true)
+    expect(read('pages/Home.tsx')).toContain("import './Home.css'")
+    expect(result.undoToken).toBeDefined()
+
+    expect(applyStudioEditBatch(dir, [restore(result.undoToken!)], {}, EDITOR).refusals).toEqual([])
+    expect(fs.existsSync(abs('pages/Home.css'))).toBe(false)
+    expect(read('pages/Home.tsx')).toBe(page)
+    expect(read('styles/Plan.css')).toBe(plan)
+  })
+
   it('an agent batch (no journal option) reports the landing but records no entry', () => {
     write('styles/Plan.css', '.plan {\n  padding: 8px;\n}\n')
     const result = applyStudioEditBatch(dir, [cssSet('padding-top', '20px')], {}, { canvasLayers: 'allow' })
