@@ -36,18 +36,6 @@ import {
 } from './structuralUndoPlan'
 import type { InsertPropValue, SlotJsxNode, StudioSaveResponse } from './studioSaveRequests'
 
-/**
- * P3-D — ONE gesture written as several edits applied IN ORDER, each against
- * the file the previous ones left, all or nothing: a multi-selection drag, the
- * arrow-key step of a selection, a non-adjacent group ("bring them together,
- * then wrap"), several copies dropped at one place. The server's
- * `studioEditSequence.ts` re-addresses every step and restores every file when
- * any step is refused, so the board's one rollback (and one toast) is the
- * whole story — the same contract as a single write.
- *
- * `undo`/`rollback`/`optimistic`/`select` mean what they mean for every other
- * commit (`StructuralCommitOptions`).
- */
 /** Where one Alt-dragged or pasted COPY is written: inside which container, beside which existing child. */
 export interface SourceDuplicateToCommit {
   /** The element being copied. */
@@ -71,6 +59,18 @@ export interface SourceDuplicateToCommit {
   parentIsEmpty?: true
 }
 
+/**
+ * P3-D — ONE gesture written as several edits applied IN ORDER, each against
+ * the file the previous ones left, all or nothing: a multi-selection drag, the
+ * arrow-key step of a selection, a non-adjacent group ("bring them together,
+ * then wrap"), several copies dropped at one place. The server's
+ * `studioEditSequence.ts` re-addresses every step and restores every file when
+ * any step is refused, so the board's one rollback (and one toast) is the
+ * whole story — the same contract as a single write.
+ *
+ * `undo`/`rollback`/`optimistic`/`select` mean what they mean for every other
+ * commit (`StructuralCommitOptions`).
+ */
 export async function commitStudioSequence(
   edits: readonly StructuralEditPayload[],
   refusalTitle: string,
