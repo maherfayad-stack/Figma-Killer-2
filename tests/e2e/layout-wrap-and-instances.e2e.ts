@@ -82,22 +82,33 @@ async function open(page: Page): Promise<{ content: FrameLocator; button: (n: nu
   const content = canvasContentFrame(frame)
   // The drawn button of the Nth design-system instance.
   const button = (n: number) =>
-    content.locator(`[data-node-id="${sourceNodeId(FIXTURE_PAGE, REL, 'Button', n)}"] button`).first()
+    content.locator(`[data-node-id="${sourceNodeId(readPage(), REL, 'Button', n)}"] button`).first()
   await expect(button(1)).toBeVisible({ timeout: 30_000 })
   await panIntoView(page, canvasRoot, button(2), 120)
   return { content, button }
 }
 
-async function pressCentre(page: Page, target: Locator, modifier?: 'Shift'): Promise<void> {
+/** Ctrl-click (deep select) on the centre of `target`; with `add`, a plain Shift-click extends the selection at the same depth. */
+async function pressCentre(page: Page, target: Locator, add = false): Promise<void> {
   const rect = await target.boundingBox()
   expect(rect, 'target has no box').not.toBeNull()
-  if (modifier) await page.keyboard.down(modifier)
+  const modifier = add ? 'Shift' : 'ControlOrMeta'
+  await page.keyboard.down(modifier)
   try {
     await page.mouse.click(rect!.x + rect!.width / 2, rect!.y + rect!.height / 2)
   } finally {
-    if (modifier) await page.keyboard.up(modifier)
+    await page.keyboard.up(modifier)
   }
 }
+
+/** Both Buttons are in the selection before a command runs (the Layers tree marks every selected row). */
+async function expectBothSelected(page: Page): Promise<void> {
+  for (const n of [1, 2]) {
+    await expect(page.getByTestId(`dom-tree-item-${sourceNodeId(readPage(), REL, 'Button', n)}`)).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 })
+  }
+}
+
+const divCount = (source: string) => (source.match(/<div/g) ?? []).length
 
 test.describe('r3-layout', () => {
   test.setTimeout(180_000)
@@ -105,11 +116,15 @@ test.describe('r3-layout', () => {
   test('Shift+A on two Buttons keeps their spacing; Shift+A again pins them in whole pixels', async ({ page }) => {
     const { button } = await open(page)
     const before = await Promise.all([1, 2, 3].map((n) => box(button(n))))
-    await pressCentre(page, button(1))
-    await pressCentre(page, button(2), 'Shift')
+    // The first press opens the instance's props popover BELOW it, over the next Button: press upwards.
+    await pressCentre(page, button(2))
+    await pressCentre(page, button(1), true)
+    await expectBothSelected(page)
 
     await page.keyboard.press('Shift+A')
-    await expect.poll(readPage, { timeout: 30_000 }).toMatch(/<div[^>]*display: "flex"[^>]*>\s*<Button[^>]*label="One"/)
+    // A NEW container around exactly the two Buttons (the stack is untouched, not converted).
+    await expect.poll(() => divCount(readPage()), { timeout: 30_000 }).toBe(divCount(FIXTURE_PAGE) + 1)
+    expect(readPage()).toMatch(/<div[^>]*display: ['"]flex['"][^>]*>\s*<Button[^>]*label="One"[^>]*\/>\s*<Button[^>]*label="Second one"[^>]*\/>\s*<\/div>/)
     await expect.poll(() => box(button(3)).then((b) => b.top), { timeout: 15_000 }).toBeLessThan(before[2]!.top + 1.01)
     const added = await Promise.all([1, 2, 3].map((n) => box(button(n))))
     added.forEach((now, i) => {
@@ -119,7 +134,7 @@ test.describe('r3-layout', () => {
 
     // The wrapper is selected: Shift+A removes the auto layout, keeping positions.
     await page.keyboard.press('Shift+A')
-    await expect.poll(readPage, { timeout: 30_000 }).toContain('position: "absolute"')
+    await expect.poll(readPage, { timeout: 30_000 }).toMatch(/position: ['"]absolute['"]/)
     const removed = await Promise.all([1, 2].map((n) => box(button(n))))
     removed.forEach((now, i) => {
       near(now.left, before[i]!.left, `pinned button ${i + 1} left`)
@@ -132,10 +147,12 @@ test.describe('r3-layout', () => {
   test('Ctrl+Alt+G frames two Buttons and an arrow nudges an absolute Button', async ({ page }) => {
     const { button } = await open(page)
     const before = await Promise.all([1, 2].map((n) => box(button(n))))
-    await pressCentre(page, button(1))
-    await pressCentre(page, button(2), 'Shift')
+    // The first press opens the instance's props popover BELOW it, over the next Button: press upwards.
+    await pressCentre(page, button(2))
+    await pressCentre(page, button(1), true)
+    await expectBothSelected(page)
     await page.keyboard.press('Control+Alt+g')
-    await expect.poll(readPage, { timeout: 30_000 }).not.toBe(FIXTURE_PAGE)
+    await expect.poll(() => divCount(readPage()), { timeout: 30_000 }).toBe(divCount(FIXTURE_PAGE) + 1)
     const framed = await Promise.all([1, 2].map((n) => box(button(n))))
     framed.forEach((now, i) => {
       near(now.left, before[i]!.left, `framed button ${i + 1} left`)
