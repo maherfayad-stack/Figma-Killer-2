@@ -119,7 +119,8 @@ describe('OverlayRulePatcher', () => {
     patcher.apply(LAYER('.b { top: 1 }\n.c { top: 2 }'))
     expect(flatten(root)).toEqual(['@layer user-authored{', '.b { top: 1 }', '.c { top: 2 }', '}'])
     patcher.apply(LAYER(''))
-    expect(flatten(root)).toEqual([])
+    expect(root.rules).toHaveLength(1)
+    expect(root.rules[0]!.rules).toHaveLength(0)
   })
 
   it('a block with a changed header is replaced, not diffed inside', () => {

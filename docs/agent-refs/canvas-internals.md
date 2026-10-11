@@ -2000,6 +2000,34 @@ What it found, and the rule each finding became:
   reassigning a `<style>`'s text re-parses it and invalidates style for the
   whole frame document even when the text is identical. Measured: 3 identical
   rewrites per keystroke → 0.
+- **A class edit is a rule-level CSSOM edit, not a rewritten `<style>`**
+  (SB-7). `ClassStyleInjector` passes `{ incremental: true }` to
+  `applyOverlay`; `PortalFrameAdapter` then diffs the new `mc-classes` text
+  against the last one (`frameAdapter/overlayRuleDiff.ts`: top-level chunks,
+  LCS alignment, recursion into `@layer`/`@media`/`@supports`/`@container`
+  blocks whose header is unchanged) and applies `insertRule`/`deleteRule` to the
+  live sheet. A rewritten `<style>` makes Blink invalidate by BOTH whole rule
+  sets, so one edited class restyled every element any rule of the overlay
+  could match, in every frame; a rule edit invalidates what that rule matches.
+  Measured on the 100-frame scale board (8 mounted frames, 8 session-edited
+  classes in the overlay, production bundle, median of 3 runs x 3 edits):
+  Recalculate Style 9.7-12.2 -> 3.2-3.5 ms, elements restyled 804-1075 ->
+  53-352, documents restyled 9-10 -> 4-5, scripting 114-122 -> 71-79 ms.
+  Contract: the patched `<style>` has NO text (its rules are the only copy), so
+  anything that read `style.textContent` must read `sheet.cssRules` (the poster
+  serializer already falls through to rules; hover suppression takes its
+  uncached walk), and anything that listened for a text rewrite under `<head>`
+  listens with `STYLE_CHANGE_OBSERVER_OPTIONS` (`studio-runtime/overlayStyleAttr.ts`),
+  because each patch bumps `OVERLAY_REVISION_ATTR` on the element. The
+  observers that do: frame-fit budget reset (`iframeFrameObservers.ts`),
+  `geometryDirtySignal.ts`, hover suppression. A new observer of "the page's
+  style changed" must use the same options. If the browser refuses a rule edit
+  the overlay falls back to a text rewrite for good (one `console.warn`). Every
+  mounted frame still receives the one-rule edit; whether a frame USES the
+  class is left to the browser's own invalidation (0 elements restyled where
+  nothing matches), because the page tree does not know the classes a project
+  component renders internally, so a tree-based skip would be unsound.
+  `studio:class-css-apply` (User Timing) records each frame's write.
 - **Every canvas, UI-primitive and inspector function must actually be
   compiled.** The React Compiler silently skips a function it cannot lower and
   nothing fails. `CanvasRoot` was skipped, so its context values were rebuilt
@@ -2585,6 +2613,7 @@ frame's adapter); the rest name their caller:
 | Adapter call | What the runtime does with it |
 |---|---|
 | `applyOverlay('selection-chrome-tokens', …)` | mounts the editor's `--canvas-selection-ring`/… token block — the runtime's own ring stylesheet references them, and a cross-origin document cannot read the parent's computed styles, so without this the rings position correctly and paint nothing |
+| `applyOverlay(id, css, { incremental })` | the whole text, always: the runtime owns the sheet, so `incremental` (the portal's rule-level diff, SB-7) has no meaning on a bridge adapter |
 | `select(refs)` / `hover(ref)` | draws and positions the rings in its own overlay root (the `live-05` design; this is the caller it was waiting for) |
 | `setResizeTarget(ref, { proportional, sizing, snap })` | draws the eight handles (`resizeHandles.ts`) on the node's presented element when its computed display takes a size; the parent already applied the module half of `resizeOffer.ts` (`canOfferResizeForModule`). `sizing` is the node's STORED `flex`/`alignSelf`/`justifySelf` (canvas-23) and `snap` its tree siblings, tree parent and the committed zoom (canvas-26) — `resizeTargetContext.ts` reads them as primitives, so an unrelated store write re-sends nothing. A drag reads both once, at pointerdown |
 | `optimistic.revert(nodeIds)` (store-17) | puts back the optimistic hide and move of exactly those nodes (`revertOptimisticNodes`) — called from `structuralCommitRollback.ts` when a structural write is refused or never answered, because no HMR follows a write that did not land. Other nodes keep their optimistic state: a second gesture still in flight keeps its preview |

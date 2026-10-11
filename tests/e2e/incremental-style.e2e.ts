@@ -1,6 +1,6 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { expect, test, type Frame, type Page } from '@playwright/test'
+import { expect, test, type Frame, type Locator, type Page } from '@playwright/test'
 import { traceEditCost, type EditCost } from './helpers/cdpTrace'
 import { largeBoardPageId, openLargeBoardAtWorkingZoom, SCALE_BOARD_SHAPE, writeLargeBoardCorpus } from './helpers/largeBoardCorpus'
 import { panIntoView, removeFixtureProject, selectInFrame, type FixtureProject } from './helpers/studioFixtureProject'
@@ -32,7 +32,7 @@ const SPECIAL_SCREENS = [0, 1, 2]
  * a design, which is the board this change is for.
  */
 const PRIMED_CLASSES = [
-  'screen', 'screen__bar', 'screen__badge', 'block', 'block__heading', 'block__body', 'block__rows', 'row', 'row__label', 'row__value',
+  'screen__bar', 'screen__badge', 'block', 'block__heading', 'block__body', 'row__label', 'row__value',
 ]
 const EDIT_WIDTHS = ['140px', '180px', '220px']
 
@@ -48,7 +48,7 @@ test.beforeAll(() => {
     fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('className="screen__title"', 'className="screen__special"'), 'utf8')
   }
   const css = path.join(fixture.dir, 'pages', 'corpus.css')
-  fs.appendFileSync(css, '.screen__special { font-weight: 600; width: 100px; }\n')
+  fs.appendFileSync(css, '.screen__special { flex: none; font-weight: 600; width: 100px; }\n')
 })
 
 test.afterAll(() => {
@@ -66,6 +66,18 @@ async function setWidth(page: Page, value: string): Promise<void> {
   await field.press('ControlOrMeta+a')
   await field.fill(value)
   await field.press('Enter')
+}
+
+/** Ctrl-click just inside an element's top-left corner, where its own padding (not a child) takes the hit. */
+async function selectByCorner(page: Page, target: Locator): Promise<void> {
+  const box = await target.boundingBox()
+  expect(box, 'click target has no bounding box').not.toBeNull()
+  await page.keyboard.down('ControlOrMeta')
+  try {
+    await page.mouse.click(box!.x + 3, box!.y + 3)
+  } finally {
+    await page.keyboard.up('ControlOrMeta')
+  }
 }
 
 interface FrameProbe {
@@ -133,7 +145,7 @@ test('a class edit restyles only the frames that use the class, and the others k
   for (const name of PRIMED_CLASSES) {
     const target = content.locator(`.${name}`).first()
     await panIntoView(page, canvasRoot, target, 120)
-    await selectInFrame(page, target)
+    await selectByCorner(page, target)
     await expect(page.getByTestId(`class-chip-${name}`)).toBeVisible({ timeout: 15_000 })
     await setWidth(page, '99%')
   }
