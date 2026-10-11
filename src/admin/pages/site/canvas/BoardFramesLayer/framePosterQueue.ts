@@ -248,6 +248,19 @@ export function requestFramePoster(token: object, capture: Capture): void {
   armQuietTimer(Math.max(ARRIVAL_SETTLE_MS, msUntilQuiet()))
 }
 
+/** `setTimeout` that also ends the moment `signal` aborts, so a cancelled waiter lets go of its listeners at once. */
+function sleepUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', done)
+      resolve()
+    }
+    const timer = setTimeout(done, ms)
+    signal.addEventListener('abort', done)
+  })
+}
+
 /**
  * Resolve once nothing has touched the board for the quiet period. `false`
  * when `signal` aborts first. The background fill waits here before it mounts
@@ -261,7 +274,7 @@ export async function waitForBoardQuiet(signal: AbortSignal): Promise<boolean> {
       if (signal.aborted) return false
       const waitMs = msUntilQuiet()
       if (waitMs <= 0) return true
-      await new Promise((resolve) => setTimeout(resolve, waitMs))
+      await sleepUnlessAborted(waitMs, signal)
     }
   } finally {
     quietWaiters -= 1
