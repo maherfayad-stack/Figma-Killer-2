@@ -129,6 +129,32 @@ describe('canvasDnd', () => {
     })
   })
 
+  it('never resolves a drop into the dragged element own descendant, in any zone - the write could not honour it (G-7)', () => {
+    const tree = page({
+      root: node('root', 'base.body', ['dragged']),
+      dragged: node('dragged', 'base.container', ['child']),
+      child: node('child', 'base.container', ['grandchild']),
+      grandchild: node('grandchild', 'base.container'),
+    })
+    const over = (id: string, depth: number) => candidate(id, depth, { left: 0, top: 0, width: 100, height: 100 })
+
+    // Near the top edge (before), the middle (inside), the bottom edge (after).
+    for (const y of [4, 50, 96]) {
+      for (const id of ['child', 'grandchild']) {
+        const result = resolveCanvasDropTarget({
+          tree,
+          draggedId: 'dragged',
+          draggedIds: ['dragged'],
+          candidates: [over(id, 2)],
+          point: { x: 50, y },
+          canHaveChildren,
+        })
+        expect(result.target).toBeNull()
+        expect(result.invalid?.overId).toBe(id)
+      }
+    }
+  })
+
   it('scales the edge-hit band by the live zoom (0.8 — collapsed drop-edge hit zones)', () => {
     // `candidate.rect` is frame-space (unscaled) — the same space at every
     // zoom level. The edge band is authored in SCREEN pixels
