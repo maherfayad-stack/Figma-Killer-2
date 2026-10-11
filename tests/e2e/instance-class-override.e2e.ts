@@ -115,7 +115,8 @@ test.describe('G-2b - a class edit inside one instance changes only that instanc
     // Padding lives in the Layout section, collapsed until opened.
     if (!(await field.isVisible())) await page.getByText('Layout', { exact: true }).first().click()
     await expect(field, 'the inspector did not offer a padding control for the selected card').toBeVisible({ timeout: 20_000 })
-    const input = field.getByRole('textbox').first()
+    // The test id is on the input itself.
+    const input = field
     await input.click()
     await input.press('ControlOrMeta+a')
     await input.fill('24px')
