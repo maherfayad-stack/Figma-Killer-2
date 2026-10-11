@@ -182,7 +182,7 @@ export function classNamesOnElement(element: JsxOpeningLikeElement): { literals:
     for (const word of text.split(/\s+/)) if (word) literals.add(word)
   }
   const visit = (node: Node): void => {
-    if (Node.isStringLiteral(node) || Node.isNoSubstitutionTemplateLiteral(node)) addWords(node.getLiteralValue())
+    if ((Node.isStringLiteral(node) || Node.isNoSubstitutionTemplateLiteral(node)) && !Node.isElementAccessExpression(node.getParent())) addWords(node.getLiteralValue())
     else if (Node.isTemplateHead(node) || Node.isTemplateMiddle(node) || Node.isTemplateTail(node)) addWords(node.getLiteralText())
     else if (Node.isPropertyAccessExpression(node)) members.add(node.getName())
     else if (Node.isElementAccessExpression(node)) {
