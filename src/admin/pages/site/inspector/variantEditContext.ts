@@ -83,6 +83,28 @@ export function resolveVariantEditContext(params: {
   return deriveVariantStyleContext({ line: tail.line, column: tail.col }, axes, chosenAxis)
 }
 
+/**
+ * The id of the element an instance's component styles by its variant props:
+ * the instance's own id, the separator, then the element's tail. The first
+ * variant prop (declaration order) whose element exists in the instance's
+ * expanded tree wins; `null` when none does (a component with no variant
+ * binding, or one the parser could not expand).
+ */
+export function variantElementIdOf(
+  nodes: Readonly<Record<string, unknown>> | undefined,
+  instanceId: string,
+  spec: Pick<LocalComponentSpec, 'file' | 'props'>,
+): string | null {
+  if (nodes === undefined) return null
+  for (const prop of spec.props) {
+    const element = prop.binding?.element
+    if (!element) continue
+    const id = `${instanceId}${INLINE_ID_SEPARATOR}${spec.file}:${element.line}:${element.column}`
+    if (nodes[id] !== undefined) return id
+  }
+  return null
+}
+
 /** Collapses whitespace and quote style: a selector as postcss wrote it and as the CSSOM serialised it name the same rule. */
 function selectorKey(selector: string): string {
   return selector.replace(/\s+/g, ' ').replace(/'/g, '"').trim()

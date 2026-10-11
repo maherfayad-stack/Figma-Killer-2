@@ -688,6 +688,26 @@ records every file the plan will write before the first write, and ⌘Z is
 Full contract and refusals: `docs/features/studio-import.md`, "Add variant,
 Remove variant, Add property (CV-3)".
 
+### Style edits per variant (CV-4) — no new edit kind
+
+A style edit on a component's element lands in the shown variant's rule
+through the ORDINARY class write: `selectionModel.writeTargetFor` returns the
+member's `StyleRule` (found by its write-back source) while a variant edit
+context is active, the store diff turns it into a `css` edit, and the server
+runs `setDeclaration`. Things you will trip over:
+
+- The rule is decided in `@core/component-variants/variantStyleContext.ts`
+  from the CV-1 binding. A binding's `element` (tag-name `line:col`) is what
+  says WHICH element it styles; without it an axis never applies. Adding a
+  binding kind means adding its case to `variantStyleTargetFor`, with its refusal.
+- It never falls back to the base class or to inline: that fallback is the leak.
+  A refusal is `{ kind: 'none', reason }`, and `commitApi` turns it into a
+  `warning` toast (not a red one).
+- `variantRuleBlocker`: a rule the board did not load (no `styleRuleSources`
+  entry) is a refusal too, not a silent write elsewhere.
+- `mainEditComponent` (OD-19) is the "main component" switch outside the
+  gallery; the instance row `VariantStyleEntry` sets it.
+
 ---
 
 ## Structure decisions you will trip over
