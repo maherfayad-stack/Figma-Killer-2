@@ -61,6 +61,7 @@ import {
   type OutboundRuntimeMessage,
 } from '@core/studio-runtime'
 import type { PreviewAxes } from '@core/studio-board'
+import { currentModeAxes, modeRootPlanFor } from '../modeRootPlan'
 import type {
   DropCandidateGeometry,
   FrameDocumentAdapter,
@@ -306,7 +307,13 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
   }
 
   setAxes(axes: PreviewAxes): void {
-    this.post({ type: 'setAxes', axes: { direction: axes.direction, colorScheme: axes.colorScheme, locale: axes.locale } })
+    this.post({
+      type: 'setAxes',
+      axes: { direction: axes.direction, colorScheme: axes.colorScheme, locale: axes.locale },
+      // The catalog decides which attribute/class each mode means; the frame's
+      // runtime has no catalog, so the plan is resolved here and shipped.
+      modeRoot: modeRootPlanFor(currentModeAxes(), axes),
+    })
   }
 
   setInteractionMode(mode: 'design' | 'live'): void {

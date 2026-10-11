@@ -46,11 +46,12 @@ import { useEditorLayoutPersistence } from '@admin/pages/site/hooks/useEditorLay
 import { useEditorStore } from '@admin/pages/site/store/store'
 import { fsCodemodAdapter, STUDIO_AUTOSAVE_DELAY_MS } from '@site/studio/fsCodemodAdapter'
 import { getStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
-import { selectActiveBoard, selectSeedablePageIds } from '@site/store/slices/boardSelectors'
+import { selectActiveBoard } from '@site/store/slices/boardSelectors'
 import { shouldSeedDefaultBoard } from './studioDefaultBoardSeed'
 import { collectFrameIds, shouldRefuseBoardsSave } from './boardsSaveGuard'
 import { pushToast } from '@ui/components/Toast'
 import { retryWhileUnreachable } from '@core/http'
+import { selectBoardPageCount, selectSeedablePageIds } from '@site/store/slices/pageDirectory'
 import { useAdminUi } from '@admin/state/adminUi'
 import { CMS_SITE_RELOAD_EVENT, requestCmsSiteReload } from '@admin/state/adminEvents'
 import {
@@ -583,8 +584,8 @@ function useStudioDefaultBoardSeed(): void {
   const boardCount = useEditorStore((s) => s.boards.boards.length)
   const activeBoard = useEditorStore(selectActiveBoard)
   const activeBoardFrameCount = activeBoard?.frames.length ?? null
-  // A variants gallery is never seeded onto this board (see `selectSeedablePageIds`).
-  const pageCount = useEditorStore((s) => selectSeedablePageIds(s).length)
+  // A variants gallery is derived and lives on the server-placed Components board: never seeded onto this one.
+  const pageCount = useEditorStore(selectBoardPageCount)
   const frameDefaultsSettled = useEditorStore((s) => s.frameDefaultsSettled)
   const pagesArriving = useEditorStore((s) => s.pendingPages.length > 0)
 

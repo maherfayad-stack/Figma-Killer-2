@@ -39,6 +39,7 @@ const inboundSamples: InboundRuntimeMessage[] = [
   },
   { type: 'setAxes', axes: { direction: 'ltr', colorScheme: 'light' } },
   { type: 'setAxes', axes: { direction: 'rtl', colorScheme: 'dark', locale: 'ar' } },
+  { type: 'setAxes', axes: { direction: 'ltr', colorScheme: 'dark' }, modeRoot: { attrs: { 'data-theme': 'dark', 'data-density': null }, classes: { dark: true } } },
   { type: 'setMode', mode: 'design' },
   { type: 'setResizeTarget', ref: { nodeId: 'n1', occurrenceIndex: 0 }, proportional: false },
   { type: 'setResizeTarget', ref: null, proportional: true },
