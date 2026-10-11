@@ -84,6 +84,13 @@ function frameRect(element: Locator): Promise<Box> {
   })
 }
 
+/** A rect in PAGE px, for comparing the chrome (parent-document DOM) with a frame element on one scale. */
+async function pageRect(element: Locator): Promise<Box> {
+  const box = await element.boundingBox()
+  if (!box) throw new Error('the element has no bounding box')
+  return { left: box.x, top: box.y, right: box.x + box.width, bottom: box.y + box.height, width: box.width, height: box.height }
+}
+
 interface Opened {
   content: FrameLocator
   zoom: number
@@ -157,23 +164,24 @@ test.describe('P5-F — snapping, multi-select, Hug and rotation (computed layou
   })
 
   test('IX-6g — two selected layers get ONE handle set on their union, and a drag scales both', async ({ page }) => {
-    const { content, node, zoom } = await open(page)
+    const { node, zoom } = await open(page)
     await selectInFrame(page, node('a'))
     await page.keyboard.down('Shift')
     await selectInFrame(page, node('b'))
     await page.keyboard.up('Shift')
-    const group = content.locator('[data-canvas-resize-group]')
+    const group = page.locator('[data-canvas-resize-group]')
     await expect(group).toBeAttached({ timeout: 15_000 })
-    const a = await frameRect(node('a'))
-    const b = await frameRect(node('b'))
-    const union = await frameRect(group)
+    // The group frame is parent-document chrome, so it is compared with the members in PAGE px.
+    const a = await pageRect(node('a'))
+    const b = await pageRect(node('b'))
+    const union = await pageRect(group)
     near(union.left, a.left)
     near(union.right, b.right)
     near(union.top, a.top)
     near(union.bottom, a.bottom)
 
     // Union 180 wide → 270: every member ×1.5 about the union's left edge.
-    const handle = await centre(content.locator('[data-canvas-resize-group] [data-canvas-resize-handle="e"]'))
+    const handle = await centre(page.locator('[data-canvas-resize-group] [data-canvas-resize-handle="e"]'))
     await page.mouse.move(handle.x, handle.y)
     await page.mouse.down()
     await page.mouse.move(handle.x + 90 * zoom, handle.y, { steps: 10 })
@@ -182,13 +190,13 @@ test.describe('P5-F — snapping, multi-select, Hug and rotation (computed layou
     await expect.poll(readPage, { timeout: 30_000 }).toMatch(/className="b"[^>]*left: "170px"/)
     near((await frameRect(node('a'))).width, 120)
     near((await frameRect(node('b'))).width, 120)
-    near((await frameRect(node('b'))).left, a.left + 150)
+    near((await pageRect(node('b'))).left, a.left + 150)
   })
 
   test('IX-6f — double-clicking an edge handle hugs that axis', async ({ page }) => {
-    const { content, node } = await open(page)
+    const { node } = await open(page)
     await selectInFrame(page, node('d'))
-    const handle = content.locator('[data-canvas-resize-handle="e"]')
+    const handle = page.locator('[data-canvas-resize-handle="e"]')
     await expect(handle).toBeVisible({ timeout: 15_000 })
     await handle.dblclick()
     await expect.poll(readPage, { timeout: 30_000 }).toMatch(/className="d"[^>]*width: "fit-content"/)
@@ -197,10 +205,10 @@ test.describe('P5-F — snapping, multi-select, Hug and rotation (computed layou
   })
 
   test('IX-25 — the rotation zones sit outside the corners, and a drag writes `rotate`', async ({ page }) => {
-    const { content, node } = await open(page)
+    const { node } = await open(page)
     await selectInFrame(page, node('d'))
-    const zone = content.locator('[data-canvas-rotate-handle="se"]')
-    const corner = content.locator('[data-canvas-resize-handle="se"]')
+    const zone = page.locator('[data-canvas-rotate-handle="se"]')
+    const corner = page.locator('[data-canvas-resize-handle="se"]')
     await expect(corner).toBeVisible({ timeout: 15_000 })
     const zoneBox = await frameRect(zone)
     const cornerBox = await frameRect(corner)

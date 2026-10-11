@@ -113,7 +113,7 @@ const NO_INLINE_STYLES: Readonly<Record<string, unknown>> = {}
 
 /**
  * Only the four corner grips are visible handles. The edge handles are
- * invisible strips along the whole side (`selectionChromeCss.ts`), so a
+ * invisible strips along the whole side (`FrameChrome.module.css`), so a
  * double-click anywhere along the selection ring's edge is not a double-click
  * on a handle and must not Hug.
  */

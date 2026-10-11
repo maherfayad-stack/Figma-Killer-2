@@ -148,7 +148,7 @@ Examples: `useInstalledEditorPlugins`, `SpotlightRoot`.
 
 rAF loops, debounced builders, dynamic module imports, boot orchestration, preference sync with debounced save, or a status poll that seeds an action state machine.
 
-Examples: `BreakpointSelectionOverlay` (rAF loop), `useRuntimeScriptBuild` (debounced bundler), `PluginPageRenderer` (dynamic module import), `useAdminBoot` (`flushSync` paint timing).
+Examples: `BreakpointSelectionOverlay` (rect-index placement scheduler), `useRuntimeScriptBuild` (debounced bundler), `PluginPageRenderer` (dynamic module import), `useAdminBoot` (`flushSync` paint timing).
 
 ---
 

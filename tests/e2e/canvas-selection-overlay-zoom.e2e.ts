@@ -195,7 +195,7 @@ test.describe('canvas-05 / WS-5.1: selection ring and inspector must not drift a
 
     // Selection ring: portaled INSIDE the iframe now (WS-5.1), so it's
     // queried through contentFrame, not the parent document.
-    const ring = contentFrame.locator('[data-canvas-selection-ring="true"]')
+    const ring = page.locator('[data-canvas-selection-ring="true"]')
     await expect(ring, 'no selection ring appeared inside the iframe after selecting the button').toBeVisible({
       timeout: 5_000,
     })

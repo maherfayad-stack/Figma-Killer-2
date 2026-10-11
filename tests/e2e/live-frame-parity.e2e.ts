@@ -125,7 +125,7 @@ async function openLiveSms(page: Page): Promise<LiveSms> {
 async function selectWithHandles(page: Page, live: LiveSms, element: Locator): Promise<number> {
   await panIntoView(page, live.canvasRoot, element, 80)
   await selectInFrame(page, element)
-  await expect(live.content.locator('[data-canvas-resize-handle="e"]'), 'the live frame drew no resize handles').toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('[data-canvas-resize-handle="e"]'), 'the parent drew no resize handles for the live frame').toBeVisible({ timeout: 15_000 })
   // Screen px per frame px: the canvas zoom is a transform on the iframe.
   const pageBox = await element.boundingBox()
   const frameBox = await measure(element)
@@ -133,8 +133,8 @@ async function selectWithHandles(page: Page, live: LiveSms, element: Locator): P
 }
 
 /** Press the centre of `handle`, move by (`dx`, `dy`) FRAME px in steps; the caller releases. */
-async function pressHandle(page: Page, content: FrameLocator, handle: string, dx: number, dy: number, zoom: number): Promise<void> {
-  const box = await content.locator(`[data-canvas-resize-handle="${handle}"]`).boundingBox()
+async function pressHandle(page: Page, handle: string, dx: number, dy: number, zoom: number): Promise<void> {
+  const box = await page.locator(`[data-canvas-resize-handle="${handle}"]`).boundingBox()
   expect(box, `the ${handle} handle has no box`).not.toBeNull()
   const x = box!.x + box!.width / 2
   const y = box!.y + box!.height / 2
@@ -192,7 +192,7 @@ test.describe('Live-frame parity (Tier 2)', () => {
     await panIntoView(page, live.canvasRoot, resend, 80)
     const below = await resend.boundingBox()
     await page.mouse.click(below!.x + 4, below!.y + below!.height + 80)
-    const handle = live.content.locator('[data-canvas-resize-handle="e"]')
+    const handle = page.locator('[data-canvas-resize-handle="e"]')
     await expect(handle, 'selecting the page’s <main> drew no handles').toBeAttached({ timeout: 15_000 })
     await panIntoView(page, live.canvasRoot, handle)
     await expect(handle).toBeVisible()
@@ -205,7 +205,7 @@ test.describe('Live-frame parity (Tier 2)', () => {
     // A few px out and back: the badge shows, the element ends where it began.
     await page.mouse.move(box!.x + box!.width / 2 + 6, box!.y + box!.height / 2, { steps: 3 })
     await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2, { steps: 3 })
-    await expect(live.content.locator('[data-canvas-resizing] [data-canvas-size-badge]')).toBeVisible()
+    await expect(page.locator('[data-canvas-resizing] [data-canvas-size-badge]')).toBeVisible()
     // The app changes its DOM mid-drag (a carousel, a clock): the frame
     // re-measures its content — and must not measure the badge.
     await live.content.locator('body').evaluate((body) => {
@@ -226,7 +226,7 @@ test.describe('Live-frame parity (Tier 2)', () => {
     const zoom = await selectWithHandles(page, live, input)
     const before = await measure(input)
 
-    await pressHandle(page, live.content, 'e', 30, 0, zoom)
+    await pressHandle(page, 'e', 30, 0, zoom)
     near((await measure(input)).width, before.width + 30, 'the preview did not follow the pointer')
     await page.mouse.up()
 
@@ -253,8 +253,8 @@ test.describe('Live-frame parity (Tier 2)', () => {
     // Aim 4 frame px short of the sibling's right edge — inside the 8 SCREEN px
     // pull at any zoom up to 200%, outside the 1 px this spec tolerates.
     const aim = peer.right - 4 - before.right
-    await pressHandle(page, live.content, 'e', aim, 0, zoom)
-    await expect(live.content.locator('[data-canvas-resize-handle="e"]')).toBeVisible()
+    await pressHandle(page, 'e', aim, 0, zoom)
+    await expect(page.locator('[data-canvas-resize-handle="e"]')).toBeVisible()
     await page.mouse.up()
 
     await expect(input).not.toHaveAttribute('data-studio-resize-preview', { timeout: 30_000 })

@@ -112,9 +112,9 @@ export function useSelectionChromeViewportFollow({
     })
   }, [transformRef, toolbarRef, inspectorRef])
 
-  // Exception #1 (CLAUDE.md, React Compiler): `useBridgeSelectionChrome`'s
-  // anchor effect lists this in its dependency array, so its identity must be
-  // stable or that effect re-runs — a postMessage round trip — every render.
+  // useCallback kept: react-hooks/refs escape hatch — the function this hook
+  // hands out writes `anchorRef`, which a plain render-scoped closure may not
+  // do without tripping the "ref access during render" rule.
   return useCallback<RecordSelectionChromeAnchor>(
     (placed) => {
       if (!placed || !transformRef || (!placed.toolbar && !placed.inspector)) {

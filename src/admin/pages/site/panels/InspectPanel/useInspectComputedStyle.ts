@@ -87,9 +87,7 @@
  * blindly trusted) on every call — every element must still be `.isConnected`
  * and the live canvas-iframe count must be unchanged — so it self-heals on a
  * real remount (a structural edit, a frame reload, a breakpoint frame
- * opened/closed) instead of ever returning a stale element. See that class's
- * own doc for why `CanvasNodeElementCache` (the selection overlay's cache)
- * isn't directly reusable here.
+ * opened/closed) instead of ever returning a stale element.
  *
  * `getComputedStyle(element)` itself still runs on every call that reaches
  * it — it must, to stay correct, since the whole point of this hook firing
@@ -181,11 +179,8 @@ function resolveElement(
 
 /**
  * Lazily-initialized, render-persistent cache — the lazy initializer runs
- * exactly once per mounted hook call site, same one-per-caller scoping
- * `BreakpointSelectionOverlay` gets from its own `CanvasNodeElementCache`
- * (that component uses `useRef` for it because it only ever reads the cache
- * from an effect/RAF tick, never during render itself — this hook needs the
- * opposite, see `useMutableBox`'s doc above for why that's `useState` here).
+ * exactly once per mounted hook call site (this hook reads the cache during
+ * render, so it is `useState` here — see `useMutableBox`'s doc above).
  */
 function useRenderedCanvasNodeCache(): RenderedCanvasNodeCache {
   const [cache] = useState(() => new RenderedCanvasNodeCache())

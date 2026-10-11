@@ -57,8 +57,8 @@ export interface HandleDragInput {
    * `RESIZE_ACTIVE_ATTR` for a resize (it shows the W×H badge), or `null`.
    */
   activeAttr: string | null
-  /** The frame's document: it holds keyboard focus after a click on the page, so it hears the drag's keys too. */
-  iframeDoc: Document
+  /** The frame's document: it holds keyboard focus after a click on the page, so it hears the drag's keys too. `null` for a cross-origin frame, whose keys the runtime relays to the parent already. */
+  iframeDoc: Document | null
   /** The canvas zoom the frame is drawn at; a screen-px pointer delta over it is the frame-px delta. */
   zoom: number
   /** `K4`'s scale tool, latched for the gesture: ⇧ as if held. */
@@ -118,7 +118,7 @@ export function startHandleDrag(input: HandleDragInput): () => void {
   // both, in the capture phase, and CLAIMS what it uses: an Escape that ends
   // the drag must not also deselect through the dispatcher, and a ⌥ that
   // means "from the centre" must not also open the Alt-hover tree ladder.
-  const keyDocuments = pointerDoc === iframeDoc ? [pointerDoc] : [pointerDoc, iframeDoc]
+  const keyDocuments = iframeDoc === null || pointerDoc === iframeDoc ? [pointerDoc] : [pointerDoc, iframeDoc]
   const onKey = (keyEvent: KeyboardEvent) => {
     if (keyEvent.type === 'keydown' && keyEvent.key === 'Escape') {
       keyEvent.preventDefault()

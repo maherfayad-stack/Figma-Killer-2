@@ -1,17 +1,18 @@
 /**
- * PERF-2 — a hover starting or ending is a style write on a ring that stays
- * mounted, never a `childList` mutation under the frame's observed `<body>`.
+ * PERF-2 / SB-4 — a hover starting or ending touches NOTHING inside the frame
+ * document.
  *
- * The hover ring used to be conditionally mounted, so every hover crossing
- * added or removed a node inside the frame document. Two frame observers
- * (the auto-height refit and the scroll unroll) treated that as "the page
- * changed" and re-ran a full-document forced layout each. Those observers now
- * ignore chrome (`isSelectionChromeMutation`); this pins the other half — the
- * chrome itself no longer churns the DOM for hover.
+ * The hover ring used to be conditionally mounted inside the frame, so every
+ * hover crossing added or removed a node there and two frame observers (the
+ * auto-height refit and the scroll unroll) re-ran a full-document forced layout
+ * for each. The ring then stayed mounted but was still written inside the
+ * frame, which every observer had to learn to filter out as "chrome". Since
+ * SB-4 the ring is parent-document DOM beside the iframe, so the pin is the
+ * strong one: hover on, off and on again produces ZERO mutation records of any
+ * kind in the frame's document, and the ring is the same element throughout.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { act, cleanup, render, waitFor } from '@testing-library/react'
-import { SELECTION_OVERLAY_ROOT_ID, isSelectionChromeMutation } from '@core/studio-runtime'
 import { BreakpointFrame } from '@site/canvas/BreakpointFrame'
 import { setCanvasHover } from '@site/canvas/canvasHover'
 import { useEditorStore } from '@site/store/store'
@@ -59,25 +60,23 @@ describe('BreakpointSelectionOverlay — the hover ring stays mounted (PERF-2)',
     const frameDoc = await waitFor(() => {
       const iframe = document.querySelector('iframe[srcdoc]') as HTMLIFrameElement | null
       const doc = iframe?.contentDocument
-      expect(doc?.getElementById(SELECTION_OVERLAY_ROOT_ID)).toBeTruthy()
+      expect(doc?.querySelector('[data-node-id="heading"]')).toBeTruthy()
       return doc!
     })
     const hoverRing = await waitFor(() => {
-      const ring = frameDoc.querySelector('[data-canvas-hover-ring]') as HTMLElement | null
+      const ring = document.querySelector('[data-canvas-hover-ring]') as HTMLElement | null
       expect(ring).not.toBeNull()
       return ring!
     })
     expect(hoverRing.style.display).toBe('none')
 
-    // Only the CHROME's own tree mutations count. (A `base.text` module
-    // re-rendering on hover replaces its own text node — that is the
-    // per-node hover subscription P2-I deletes, not selection chrome.)
-    let chromeChildListRecords = 0
+    // EVERY mutation in the frame document counts: the chrome is not in it.
+    let frameMutationRecords = 0
     const count = (records: MutationRecord[]) => {
-      chromeChildListRecords += records.filter((r) => r.type === 'childList' && isSelectionChromeMutation(r)).length
+      frameMutationRecords += records.length
     }
     const observer = new (frameDoc.defaultView as unknown as { MutationObserver: typeof MutationObserver }).MutationObserver(count)
-    observer.observe(frameDoc.body, { childList: true, subtree: true })
+    observer.observe(frameDoc.documentElement, { childList: true, subtree: true, attributes: true, characterData: true })
     try {
       for (const hovered of ['heading', null, 'copy', null, 'heading']) {
         act(() => {
@@ -91,8 +90,9 @@ describe('BreakpointSelectionOverlay — the hover ring stays mounted (PERF-2)',
       await new Promise((resolve) => setTimeout(resolve, 20))
       count(observer.takeRecords())
 
-      expect(chromeChildListRecords).toBe(0)
-      expect(frameDoc.querySelector('[data-canvas-hover-ring]')).toBe(hoverRing)
+      expect(frameMutationRecords).toBe(0)
+      expect(frameDoc.querySelector('[data-canvas-hover-ring]')).toBeNull()
+      expect(document.querySelector('[data-canvas-hover-ring]')).toBe(hoverRing)
       expect(hoverRing.style.display).toBe('none')
     } finally {
       observer.disconnect()

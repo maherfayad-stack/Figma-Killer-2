@@ -328,7 +328,8 @@ describe('IX-24 — a before/after drop outlines the container it lands in', () 
         viewportRef: { current: viewport },
         canvasRootRef: { current: viewport },
         iframeElement: null,
-        overlayRoot: null,
+        frameDocument: null,
+        chromeRoot: null,
         selectedNodeIds: ['a'],
         enabled: true,
         bodyDragEnabled: false,
@@ -426,10 +427,22 @@ describe('IX-19 — the MeasureLayer draws selection → parent with nothing hov
     registerFrameAdapter(
       iframe,
       {
+        // The rects come from the frame's rect index (`measureAll`); `measure` is asked only for the
+        // measured node's padding.
         measure: async (refs: { nodeId: string }[]): Promise<NodeMeasurement[]> => {
           measured.push(refs.map((ref) => ref.nodeId))
           return refs.map(({ nodeId }) => ({ nodeId, rect: rects[nodeId] ?? null, computedStyle: {} }))
         },
+        measureAll: async () => ({
+          origin: { x: 0, y: 0 },
+          truncated: false,
+          nodes: [
+            { nodeId: 'card', rect: rects.card!, parent: -1, clips: false, inert: false, transformed: false, paint: 0 },
+            { nodeId: 'a', rect: rects.a!, parent: 0, clips: false, inert: false, transformed: false, paint: 0 },
+          ],
+        }),
+        measureAllNow: () => null,
+        on: () => () => {},
       } as unknown as FrameDocumentAdapter,
       'desktop',
     )
@@ -440,19 +453,9 @@ describe('IX-19 — the MeasureLayer draws selection → parent with nothing hov
   })
 
   function mountLayer(hoveredNodeId: string | null) {
-    const target = document.createElement('div')
-    document.body.appendChild(target)
-    const props = {
-      iframeElement: iframe,
-      overlayRoot: null,
-      portalTarget: target,
-      portalMode: 'scoped' as const,
-      canvasRoot: null,
-      selectedNodeIds: ['a'],
-      enabled: true,
-    }
+    const props = { iframeElement: iframe, selectedNodeIds: ['a'] }
     const view = render(<MeasureLayer {...props} hoveredNodeId={hoveredNodeId} />)
-    return { target, rerender: (hovered: string | null) => view.rerender(<MeasureLayer {...props} hoveredNodeId={hovered} />) }
+    return { target: view.container, rerender: (hovered: string | null) => view.rerender(<MeasureLayer {...props} hoveredNodeId={hovered} />) }
   }
 
   async function holdAltAndSettle() {
@@ -469,7 +472,8 @@ describe('IX-19 — the MeasureLayer draws selection → parent with nothing hov
   it('measures the selection against its parent, with the four insets as pills', async () => {
     const { target } = mountLayer(null)
     await holdAltAndSettle()
-    expect(measured.at(-1)).toEqual(['a', 'card'])
+    // Only the measured node's padding is asked of the frame; both boxes come from the index.
+    expect(measured.at(-1)).toEqual(['card'])
     const labels = [...target.querySelectorAll<HTMLElement>('[data-measure-kind="distance"]')]
       .filter((label) => label.style.display !== 'none')
       .map((label) => `${label.getAttribute('data-side')}:${label.textContent}`)

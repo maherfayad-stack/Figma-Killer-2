@@ -1,8 +1,8 @@
 /**
  * runtimeErrorRules — the ONE implementation of "what did this frame's runtime
  * just say went wrong, in words", shared by both halves of the canvas exactly
- * like `hoverSuppressionRules`/`scrollUnrollRules`/`animationFreezeRules`/
- * `selectionChromeCss` already are:
+ * like `hoverSuppressionRules`/`scrollUnrollRules`/`animationFreezeRules`
+ * already are:
  *
  *   - `src/admin/pages/site/canvas/CanvasDiagnosticsInjector.tsx` — portal mode
  *     (Tier 0/1), reading the frame's `Window` directly.

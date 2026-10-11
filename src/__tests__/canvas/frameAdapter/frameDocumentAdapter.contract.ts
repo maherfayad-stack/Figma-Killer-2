@@ -25,7 +25,7 @@ import type { FrameDocumentAdapter, NodeRef } from '@site/canvas/frameAdapter/Fr
 
 export interface AdapterTestHarness {
   adapter: FrameDocumentAdapter
-  /** A real node ref this harness's frame actually contains, so measure()/select()/hover() have something real to act on. */
+  /** A real node ref this harness's frame actually contains, so measure() has something real to act on. */
   existingRef: NodeRef
   cleanup(): void
 }
@@ -38,27 +38,6 @@ export function runFrameDocumentAdapterContract(name: string, makeHarness: () =>
         expect(() => adapter.applyOverlay('contract-overlay', '.x { color: red }')).not.toThrow()
         expect(() => adapter.removeOverlay('contract-overlay')).not.toThrow()
         expect(() => adapter.removeOverlay('never-applied')).not.toThrow()
-      } finally {
-        cleanup()
-      }
-    })
-
-    it('select accepts an empty array and a real ref without throwing', () => {
-      const { adapter, existingRef, cleanup } = makeHarness()
-      try {
-        expect(() => adapter.select([])).not.toThrow()
-        expect(() => adapter.select([existingRef])).not.toThrow()
-        expect(() => adapter.select([])).not.toThrow()
-      } finally {
-        cleanup()
-      }
-    })
-
-    it('hover accepts null and a real ref without throwing', () => {
-      const { adapter, existingRef, cleanup } = makeHarness()
-      try {
-        expect(() => adapter.hover(existingRef)).not.toThrow()
-        expect(() => adapter.hover(null)).not.toThrow()
       } finally {
         cleanup()
       }
@@ -104,6 +83,22 @@ export function runFrameDocumentAdapterContract(name: string, makeHarness: () =>
           expect(node.nodeId.length).toBeGreaterThan(0)
           expect([node.rect.x, node.rect.y, node.rect.width, node.rect.height].every(Number.isFinite)).toBe(true)
           expect(node.parent).toBeGreaterThanOrEqual(-1)
+          expect(node.parent).toBeLessThan(i)
+        })
+      } finally {
+        cleanup()
+      }
+    })
+
+    // SB-4
+    it('measureAllNow is either a well-formed snapshot (a frame this side can read) or null (a frame it can only ask)', () => {
+      const { adapter, cleanup } = makeHarness()
+      try {
+        const snapshot = adapter.measureAllNow()
+        if (snapshot === null) return
+        expect(typeof snapshot.truncated).toBe('boolean')
+        snapshot.nodes.forEach((node, i) => {
+          expect([node.rect.x, node.rect.y, node.rect.width, node.rect.height].every(Number.isFinite)).toBe(true)
           expect(node.parent).toBeLessThan(i)
         })
       } finally {

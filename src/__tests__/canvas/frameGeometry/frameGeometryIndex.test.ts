@@ -145,6 +145,19 @@ describe('FrameGeometryIndex — board space', () => {
   })
 })
 
+describe('FrameGeometryIndex — frame-local boxes (SB-4)', () => {
+  it("localRectOf is the box in the frame viewport: the body inset counts, the frame's place on the board does not", () => {
+    const index = FrameGeometryIndex.fromSnapshot(
+      snapshot([node('page', 0, 0, 200, 100, -1), node('card', 10, 10, 50, 50, 0)], { origin: { x: 8, y: 0 } }),
+      { x: 1000, y: 500 },
+    )
+    expect(index.localRectOf('card')).toEqual({ x: 18, y: 10, width: 50, height: 50 })
+    index.setOrigin({ x: -300, y: 40 })
+    expect(index.localRectOf('card')).toEqual({ x: 18, y: 10, width: 50, height: 50 })
+    expect(index.localRectOf('nope')).toBeNull()
+  })
+})
+
 describe('FrameGeometryIndex — other queries', () => {
   it('ancestorsOf walks listed parents nearest first', () => {
     const index = FrameGeometryIndex.fromSnapshot(page(), { x: 0, y: 0 })

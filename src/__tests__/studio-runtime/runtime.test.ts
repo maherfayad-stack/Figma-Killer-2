@@ -7,8 +7,10 @@
  * NOT exercised here — see `STATE.md`'s `live-04` handoff, "Pending dogfood".
  */
 import { afterEach, describe, expect, it } from 'bun:test'
+import { Value } from '@sinclair/typebox/value'
 import {
   createStudioRuntimeBridge,
+  InboundRuntimeMessageSchema,
   DEFAULT_FRAME_FIT_HEIGHT,
   LIVE_FRAME_FIT_STRUCTURAL_DEBOUNCE_MS,
   RUNTIME_MESSAGE_SOURCE,
@@ -118,53 +120,35 @@ describe('createStudioRuntimeBridge — setMode', () => {
   })
 })
 
-describe('createStudioRuntimeBridge — selection / hover rings', () => {
-  it('select creates a ring element per node id and removes rings for deselected nodes', () => {
-    document.body.innerHTML = `<div data-node-id="n1"></div><div data-node-id="n2"></div>`
+describe('createStudioRuntimeBridge — draws nothing in the document (SB-4)', () => {
+  it("an overlay, a resize target and a drag add no element to the frame: the chrome is the parent's", () => {
+    document.body.innerHTML = `<div data-node-id="n1" style="width: 100px; height: 50px"></div>`
+    const before = document.documentElement.outerHTML
     const { fakeWindow } = makeFakeParentWindow()
     bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
 
-    bridge.handleMessage({ type: 'select', refs: [{ nodeId: 'n1', occurrenceIndex: 0 }, { nodeId: 'n2', occurrenceIndex: 0 }] })
-    expect(document.querySelectorAll('[data-canvas-selection-ring]')).toHaveLength(2)
+    bridge.handleMessage({ type: 'setResizeTarget', ref: { nodeId: 'n1', occurrenceIndex: 0 }, proportional: false })
+    bridge.handleMessage({ type: 'resize:begin', handle: 'e' })
+    bridge.handleMessage({ type: 'resize:step', dx: 10, dy: 0, shiftKey: false, altKey: false })
+    bridge.handleMessage({ type: 'resize:end', commit: false })
 
-    bridge.handleMessage({ type: 'select', refs: [{ nodeId: 'n1', occurrenceIndex: 0 }] })
-    expect(document.querySelectorAll('[data-canvas-selection-ring]')).toHaveLength(1)
-
-    bridge.handleMessage({ type: 'select', refs: [] })
-    expect(document.querySelectorAll('[data-canvas-selection-ring]')).toHaveLength(0)
+    expect(document.querySelector('[data-canvas-selection-ring], [data-canvas-hover-ring], [data-canvas-resize-frame], [data-studio-canvas-overlay-root]')).toBeNull()
+    expect(document.documentElement.outerHTML).toBe(before)
   })
 
-  it('hides a ring for a node id that does not exist in the DOM, without throwing', () => {
-    const { fakeWindow } = makeFakeParentWindow()
+  it('a resize drag previews through a runtime stylesheet and posts the commit', () => {
+    document.body.innerHTML = `<div data-node-id="n1" style="box-sizing: border-box; width: 100px; height: 50px"></div>`
+    const { fakeWindow, posted } = makeFakeParentWindow()
     bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
 
-    expect(() => bridge!.handleMessage({ type: 'select', refs: [{ nodeId: 'missing', occurrenceIndex: 0 }] })).not.toThrow()
-    const ring = document.querySelector('[data-canvas-selection-ring]') as HTMLElement | null
-    expect(ring?.style.display).toBe('none')
-  })
+    bridge.handleMessage({ type: 'setResizeTarget', ref: { nodeId: 'n1', occurrenceIndex: 0 }, proportional: false })
+    bridge.handleMessage({ type: 'resize:begin', handle: 'e' })
+    bridge.handleMessage({ type: 'resize:step', dx: 40, dy: 0, shiftKey: false, altKey: false })
+    expect(document.getElementById('studio-runtime-resize-preview')?.textContent).toContain('width: 140px !important')
+    bridge.handleMessage({ type: 'resize:end', commit: true })
 
-  it('hover creates/positions a single ring and null clears it', () => {
-    document.body.innerHTML = `<div data-node-id="n1"></div>`
-    const { fakeWindow } = makeFakeParentWindow()
-    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
-
-    bridge.handleMessage({ type: 'hover', nodeId: 'n1', occurrenceIndex: 0 })
-    expect(document.querySelectorAll('[data-canvas-hover-ring]')).toHaveLength(1)
-
-    bridge.handleMessage({ type: 'hover', nodeId: null, occurrenceIndex: 0 })
-    expect((document.querySelector('[data-canvas-hover-ring]') as HTMLElement).style.display).toBe('none')
-  })
-
-  it('mounts exactly one overlay root even across multiple select calls', () => {
-    document.body.innerHTML = `<div data-node-id="n1"></div>`
-    const { fakeWindow } = makeFakeParentWindow()
-    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
-
-    bridge.handleMessage({ type: 'select', refs: [{ nodeId: 'n1', occurrenceIndex: 0 }] })
-    bridge.handleMessage({ type: 'select', refs: [] })
-    bridge.handleMessage({ type: 'select', refs: [{ nodeId: 'n1', occurrenceIndex: 0 }] })
-
-    expect(document.querySelectorAll('#studio-canvas-selection-overlay-root')).toHaveLength(1)
+    const commit = posted.map((p) => (p.data as { message: { type: string; patch?: unknown } }).message).find((m) => m.type === 'resize:commit')
+    expect(commit?.patch).toEqual({ width: '140px' })
   })
 })
 
@@ -433,36 +417,6 @@ describe('createStudioRuntimeBridge — optimistic style', () => {
     expect(document.getElementById(STYLE_TAG)).toBeNull()
     expect(document.querySelector('[data-node-id="n2"]')?.hasAttribute(STYLE_ATTR)).toBe(false)
   })
-
-  it('repositions the selection ring after an apply — inline target and class target both', async () => {
-    document.body.innerHTML = `<div data-node-id="n1" class="card"></div>`
-    const target = document.querySelector<HTMLElement>('[data-node-id="n1"]')!
-    let call = 0
-    target.getBoundingClientRect = () => {
-      call += 1
-      const x = call === 1 ? 0 : call * 10
-      return { left: x, top: 0, width: 10, height: 10, right: x + 10, bottom: 10, x, y: 0, toJSON: () => ({}) }
-    }
-    const { fakeWindow } = makeFakeParentWindow()
-    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
-    bridge.handleMessage({ type: 'select', refs: [{ nodeId: 'n1', occurrenceIndex: 0 }] })
-    const ring = document.querySelector<HTMLElement>('[data-canvas-selection-ring]')!
-    expect(ring.style.transform).toBe('translate(0px, 0px)')
-
-    bridge.handleMessage({ type: 'optimistic.style', ref: { nodeId: 'n1', occurrenceIndex: 0 }, patch: { color: 'red' } })
-    await new Promise((resolve) => requestAnimationFrame(resolve))
-    expect(ring.style.transform).not.toBe('translate(0px, 0px)')
-
-    const afterInline = ring.style.transform
-    bridge.handleMessage({
-      type: 'optimistic.style',
-      ref: { nodeId: 'n1', occurrenceIndex: 0 },
-      patch: { color: 'blue' },
-      className: 'card',
-    })
-    await new Promise((resolve) => requestAnimationFrame(resolve))
-    expect(ring.style.transform).not.toBe(afterInline)
-  })
 })
 
 describe('createStudioRuntimeBridge — measure', () => {
@@ -594,10 +548,10 @@ describe('createStudioRuntimeBridge — postMessage transport', () => {
     dispatch({
       origin: PARENT_ORIGIN,
       source: fakeWindow,
-      data: { source: RUNTIME_MESSAGE_SOURCE, direction: 'to-frame', message: { type: 'select', refs: [{ nodeId: 'n1', occurrenceIndex: 0 }] } },
+      data: { source: RUNTIME_MESSAGE_SOURCE, direction: 'to-frame', message: { type: 'applyOverlay', id: 'probe', css: '.a{}' } },
     })
 
-    expect(document.querySelectorAll('[data-canvas-selection-ring]')).toHaveLength(1)
+    expect(document.querySelector('[data-studio-overlay-id="probe"]')).not.toBeNull()
   })
 
   it('ignores a message from the wrong origin', () => {
@@ -608,10 +562,10 @@ describe('createStudioRuntimeBridge — postMessage transport', () => {
     dispatch({
       origin: 'https://attacker.test',
       source: fakeWindow,
-      data: { source: RUNTIME_MESSAGE_SOURCE, direction: 'to-frame', message: { type: 'select', refs: [{ nodeId: 'n1', occurrenceIndex: 0 }] } },
+      data: { source: RUNTIME_MESSAGE_SOURCE, direction: 'to-frame', message: { type: 'applyOverlay', id: 'probe', css: '.a{}' } },
     })
 
-    expect(document.querySelectorAll('[data-canvas-selection-ring]')).toHaveLength(0)
+    expect(document.querySelector('[data-studio-overlay-id="probe"]')).toBeNull()
   })
 
   it('ignores a message from a window that is not the configured parent', () => {
@@ -622,10 +576,10 @@ describe('createStudioRuntimeBridge — postMessage transport', () => {
     dispatch({
       origin: PARENT_ORIGIN,
       source: { postMessage: () => {} },
-      data: { source: RUNTIME_MESSAGE_SOURCE, direction: 'to-frame', message: { type: 'select', refs: [{ nodeId: 'n1', occurrenceIndex: 0 }] } },
+      data: { source: RUNTIME_MESSAGE_SOURCE, direction: 'to-frame', message: { type: 'applyOverlay', id: 'probe', css: '.a{}' } },
     })
 
-    expect(document.querySelectorAll('[data-canvas-selection-ring]')).toHaveLength(0)
+    expect(document.querySelector('[data-studio-overlay-id="probe"]')).toBeNull()
   })
 
   it('ignores unrelated postMessage traffic (wrong source tag)', () => {
@@ -636,10 +590,10 @@ describe('createStudioRuntimeBridge — postMessage transport', () => {
     dispatch({
       origin: PARENT_ORIGIN,
       source: fakeWindow,
-      data: { source: 'react-devtools-bridge', direction: 'to-frame', message: { type: 'select', refs: [{ nodeId: 'n1', occurrenceIndex: 0 }] } },
+      data: { source: 'react-devtools-bridge', direction: 'to-frame', message: { type: 'applyOverlay', id: 'probe', css: '.a{}' } },
     })
 
-    expect(document.querySelectorAll('[data-canvas-selection-ring]')).toHaveLength(0)
+    expect(document.querySelector('[data-studio-overlay-id="probe"]')).toBeNull()
   })
 
   it('ignores a malformed message payload without throwing', () => {
@@ -649,13 +603,13 @@ describe('createStudioRuntimeBridge — postMessage transport', () => {
 
     expect(() => dispatch({ origin: PARENT_ORIGIN, source: fakeWindow, data: 'not an object' })).not.toThrow()
     expect(() =>
-      dispatch({ origin: PARENT_ORIGIN, source: fakeWindow, data: { source: RUNTIME_MESSAGE_SOURCE, direction: 'to-frame', message: { type: 'select' } } }),
+      dispatch({ origin: PARENT_ORIGIN, source: fakeWindow, data: { source: RUNTIME_MESSAGE_SOURCE, direction: 'to-frame', message: { type: 'applyOverlay' } } }),
     ).not.toThrow()
   })
 })
 
 describe('createStudioRuntimeBridge — dispose', () => {
-  it('removes overlays, rings, the overlay root, and the message listener', () => {
+  it('removes overlays, the runtime stylesheets and the message listener', () => {
     document.body.innerHTML = `<div data-node-id="n1"></div>`
     const { fakeWindow } = makeFakeParentWindow()
 
@@ -669,7 +623,6 @@ describe('createStudioRuntimeBridge — dispose', () => {
     const localBridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
 
     localBridge.handleMessage({ type: 'applyOverlay', id: 'x', css: '.a{}' })
-    localBridge.handleMessage({ type: 'select', refs: [{ nodeId: 'n1', occurrenceIndex: 0 }] })
     localBridge.handleMessage({ type: 'setMode', mode: 'design' })
 
     localBridge.dispose()
@@ -677,8 +630,6 @@ describe('createStudioRuntimeBridge — dispose', () => {
 
     expect(removedMessageListener).toBe(true)
     expect(document.querySelector('[data-studio-overlay-id="x"]')).toBeNull()
-    expect(document.querySelectorAll('[data-canvas-selection-ring]')).toHaveLength(0)
-    expect(document.getElementById('studio-canvas-selection-overlay-root')).toBeNull()
     expect(document.getElementById('studio-runtime-scroll-unroll')).toBeNull()
     expect(document.getElementById('studio-runtime-animation-freeze')).toBeNull()
   })
@@ -963,25 +914,18 @@ describe('createStudioRuntimeBridge — move coalescing (`speed-03`)', () => {
   })
 })
 
-// `live-13` — the frame draws and drags the resize handles; the parent commits.
-describe('createStudioRuntimeBridge — resize handles', () => {
-  const FRAME = '[data-canvas-resize-frame]'
-  const HANDLE = '[data-canvas-resize-handle]'
+// `live-13` / SB-4 — the parent draws the handles and holds the pointer; the frame sizes the element.
+describe('createStudioRuntimeBridge — resize session', () => {
   const PREVIEW_ATTR = 'data-studio-resize-preview'
+  const NODE = 'pages/Home.tsx:3:4'
 
-  /**
-   * A move during a drag carries the held button, as a real browser reports
-   * it: a move with `buttons: 0` is how the drag guard (ERR-12) recognises a
-   * release it never heard, and ends the drag.
-   */
-  function pointerEvent(type: string, init: MouseEventInit): Event {
-    const Ctor = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent
-    return new Ctor(type, { bubbles: true, cancelable: true, ...(type === 'pointermove' ? { buttons: 1 } : {}), ...init })
-  }
   function mountBox(display = 'block'): HTMLElement {
     const box = document.createElement('div')
-    box.setAttribute('data-node-id', 'pages/Home.tsx:3:4')
+    box.setAttribute('data-node-id', NODE)
     box.style.display = display
+    box.style.boxSizing = 'border-box'
+    box.style.width = '100px'
+    box.style.height = '50px'
     box.getBoundingClientRect = () => ({ left: 10, top: 20, width: 100, height: 50, right: 110, bottom: 70, x: 10, y: 20, toJSON: () => ({}) })
     document.body.appendChild(box)
     return box
@@ -996,61 +940,42 @@ describe('createStudioRuntimeBridge — resize handles', () => {
       fireAfterUpdate: () => handlers.get('vite:afterUpdate')?.(),
     }
   }
+  const target = { nodeId: NODE, occurrenceIndex: 0 }
 
-  it('setResizeTarget draws eight handles around a sizeable element, and null hides them', () => {
-    const { fakeWindow } = makeFakeParentWindow()
-    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
-    bridge.handleMessage({ type: 'setMode', mode: 'design' })
-    mountBox()
-    bridge.handleMessage({ type: 'setResizeTarget', ref: { nodeId: 'pages/Home.tsx:3:4', occurrenceIndex: 0 }, proportional: false })
-    const frame = document.querySelector<HTMLElement>(FRAME)!
-    expect(frame.closest('#studio-canvas-selection-overlay-root')).not.toBeNull()
-    expect(frame.style.display).toBe('')
-    expect(frame.style.width).toBe('100px')
-    expect(frame.style.height).toBe('50px')
-    expect(frame.querySelectorAll(HANDLE)).toHaveLength(8)
-    bridge.handleMessage({ type: 'setResizeTarget', ref: null, proportional: false })
-    expect(frame.style.display).toBe('none')
-  })
-
-  it('offers nothing on an element whose display ignores a size', () => {
-    const { fakeWindow } = makeFakeParentWindow()
-    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
-    mountBox('inline')
-    bridge.handleMessage({ type: 'setResizeTarget', ref: { nodeId: 'pages/Home.tsx:3:4', occurrenceIndex: 0 }, proportional: false })
-    const frame = document.querySelector<HTMLElement>(FRAME)
-    expect(frame === null || frame.style.display === 'none').toBe(true)
-  })
-
-  it('a drag on the east handle previews through a stylesheet, is not forwarded as a pointer, and commits only the width', () => {
+  it('a drag previews through a stylesheet, draws nothing, and commits only the width', () => {
     const { fakeWindow, posted } = makeFakeParentWindow()
     bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
     bridge.handleMessage({ type: 'setMode', mode: 'design' })
     const box = mountBox()
-    let appPointerDowns = 0
-    box.addEventListener('pointerdown', () => { appPointerDowns += 1 })
-    bridge.handleMessage({ type: 'setResizeTarget', ref: { nodeId: 'pages/Home.tsx:3:4', occurrenceIndex: 0 }, proportional: false })
-    const east = document.querySelector<HTMLElement>('[data-canvas-resize-handle="e"]')!
+    bridge.handleMessage({ type: 'setResizeTarget', ref: target, proportional: false })
 
-    const down = pointerEvent('pointerdown', { clientX: 110, clientY: 40, button: 0 })
-    east.dispatchEvent(down)
-    expect(down.defaultPrevented).toBe(true)
-    expect(appPointerDowns).toBe(0)
-    // With the pointer captured, the handle stays the target of every move and
-    // the release — as a real browser delivers them.
-    east.dispatchEvent(pointerEvent('pointermove', { clientX: 150, clientY: 70 }))
-    east.dispatchEvent(pointerEvent('pointerup', { clientX: 150, clientY: 70 }))
+    bridge.handleMessage({ type: 'resize:begin', handle: 'e' })
+    bridge.handleMessage({ type: 'resize:step', dx: 40, dy: 0, shiftKey: false, altKey: false })
+    bridge.handleMessage({ type: 'resize:end', commit: true })
 
     expect(box.hasAttribute(PREVIEW_ATTR)).toBe(true)
     expect(document.getElementById('studio-runtime-resize-preview')?.textContent).toContain('width: 140px !important')
     expect(document.getElementById('studio-runtime-resize-preview')?.textContent).not.toContain('height')
     // The element's own inline style is untouched — React's later write is not something to clear.
-    expect(box.style.width).toBe('')
+    expect(box.style.width).toBe('100px')
+    // No handle frame, no badge: the parent draws them.
+    expect(document.querySelector('[data-canvas-resize-frame], [data-canvas-resize-handle], [data-canvas-size-badge]')).toBeNull()
     const all = messages(posted)
-    expect(all.filter((m) => m.type === 'pointer')).toHaveLength(0)
     expect(all.filter((m) => m.type === 'resize:commit')).toEqual([
-      { type: 'resize:commit', nodeId: 'pages/Home.tsx:3:4', occurrenceIndex: 0, patch: { width: '140px' } },
+      { type: 'resize:commit', nodeId: NODE, occurrenceIndex: 0, patch: { width: '140px' } },
     ])
+  })
+
+  it('offers nothing on an element whose display ignores a size: a drag on it never starts', () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    const box = mountBox('inline')
+    bridge.handleMessage({ type: 'setResizeTarget', ref: target, proportional: false })
+    bridge.handleMessage({ type: 'resize:begin', handle: 'e' })
+    bridge.handleMessage({ type: 'resize:step', dx: 40, dy: 0, shiftKey: false, altKey: false })
+    bridge.handleMessage({ type: 'resize:end', commit: true })
+    expect(box.hasAttribute(PREVIEW_ATTR)).toBe(false)
+    expect(messages(posted).filter((m) => m.type === 'resize:commit')).toHaveLength(0)
   })
 
   it('a cancelled drag commits nothing and drops the preview; a new target drops a held one', () => {
@@ -1058,22 +983,18 @@ describe('createStudioRuntimeBridge — resize handles', () => {
     bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
     bridge.handleMessage({ type: 'setMode', mode: 'design' })
     const box = mountBox()
-    bridge.handleMessage({ type: 'setResizeTarget', ref: { nodeId: 'pages/Home.tsx:3:4', occurrenceIndex: 0 }, proportional: false })
-    const south = document.querySelector<HTMLElement>('[data-canvas-resize-handle="s"]')!
-    // Dispatched on the DOCUMENT itself, deliberately: a browser that refused
-    // the pointer capture delivers the rest of the gesture to the page, where
-    // design mode stops propagation at the document — the capture-phase drag
-    // listeners must still see it.
-    south.dispatchEvent(pointerEvent('pointerdown', { clientX: 50, clientY: 70, button: 0 }))
-    document.dispatchEvent(pointerEvent('pointermove', { clientX: 50, clientY: 100 }))
-    document.dispatchEvent(pointerEvent('pointercancel', {}))
+    bridge.handleMessage({ type: 'setResizeTarget', ref: target, proportional: false })
+
+    bridge.handleMessage({ type: 'resize:begin', handle: 's' })
+    bridge.handleMessage({ type: 'resize:step', dx: 0, dy: 30, shiftKey: false, altKey: false })
+    bridge.handleMessage({ type: 'resize:end', commit: false })
     expect(box.hasAttribute(PREVIEW_ATTR)).toBe(false)
     expect(document.getElementById('studio-runtime-resize-preview')).toBeNull()
     expect(messages(posted).filter((m) => m.type === 'resize:commit')).toHaveLength(0)
 
-    south.dispatchEvent(pointerEvent('pointerdown', { clientX: 50, clientY: 70, button: 0 }))
-    document.dispatchEvent(pointerEvent('pointermove', { clientX: 50, clientY: 100 }))
-    document.dispatchEvent(pointerEvent('pointerup', { clientX: 50, clientY: 100 }))
+    bridge.handleMessage({ type: 'resize:begin', handle: 's' })
+    bridge.handleMessage({ type: 'resize:step', dx: 0, dy: 30, shiftKey: false, altKey: false })
+    bridge.handleMessage({ type: 'resize:end', commit: true })
     expect(box.hasAttribute(PREVIEW_ATTR)).toBe(true)
     bridge.handleMessage({ type: 'setResizeTarget', ref: null, proportional: false })
     expect(box.hasAttribute(PREVIEW_ATTR)).toBe(false)
@@ -1084,14 +1005,19 @@ describe('createStudioRuntimeBridge — resize handles', () => {
     const { hot, fireAfterUpdate } = makeFakeHot()
     bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document, hot })
     const box = mountBox()
-    bridge.handleMessage({ type: 'setResizeTarget', ref: { nodeId: 'pages/Home.tsx:3:4', occurrenceIndex: 0 }, proportional: false })
-    const east = document.querySelector<HTMLElement>('[data-canvas-resize-handle="e"]')!
-    east.dispatchEvent(pointerEvent('pointerdown', { clientX: 110, clientY: 40, button: 0 }))
-    document.dispatchEvent(pointerEvent('pointermove', { clientX: 150, clientY: 40 }))
-    document.dispatchEvent(pointerEvent('pointerup', { clientX: 150, clientY: 40 }))
+    bridge.handleMessage({ type: 'setResizeTarget', ref: target, proportional: false })
+    bridge.handleMessage({ type: 'resize:begin', handle: 'e' })
+    bridge.handleMessage({ type: 'resize:step', dx: 40, dy: 0, shiftKey: false, altKey: false })
+    bridge.handleMessage({ type: 'resize:end', commit: true })
     expect(box.hasAttribute(PREVIEW_ATTR)).toBe(true)
     fireAfterUpdate()
     expect(box.hasAttribute(PREVIEW_ATTR)).toBe(false)
+  })
+
+  it('a forged step is refused at the wire: a distance past a million frame px never reaches the session', () => {
+    expect(Value.Check(InboundRuntimeMessageSchema, { type: 'resize:step', dx: 5e9, dy: 0, shiftKey: false, altKey: false })).toBe(false)
+    expect(Value.Check(InboundRuntimeMessageSchema, { type: 'resize:begin', handle: 'x' })).toBe(false)
+    expect(Value.Check(InboundRuntimeMessageSchema, { type: 'resize:begin', handle: 'se' })).toBe(true)
   })
 })
 
@@ -1276,16 +1202,6 @@ describe('createStudioRuntimeBridge — inline text edit', () => {
     expect(messages(posted).filter((m) => m.type === 'text:cancel')).toEqual([
       { type: 'text:cancel', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0 },
     ])
-  })
-
-  it('a double-click on the runtime\'s own chrome is never a text edit', () => {
-    const { fakeWindow, posted } = makeFakeParentWindow()
-    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
-    bridge.handleMessage({ type: 'setMode', mode: 'design' })
-    bridge.handleMessage({ type: 'select', refs: [{ nodeId: 'n1', occurrenceIndex: 0 }] })
-    const ring = document.querySelector('[data-canvas-selection-ring]')!
-    ring.dispatchEvent(mouseEvent('dblclick'))
-    expect(messages(posted).some((m) => m.type === 'text:editStart')).toBe(false)
   })
 })
 

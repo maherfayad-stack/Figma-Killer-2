@@ -4,8 +4,9 @@
  * (`createStudioRuntimeBridge`), the way a Tier 2 live frame receives them:
  *
  *  - canvas-23: a resize carries the Fixed companions the parent's stored
- *    markers imply, and no height is reported while the W×H badge hangs
- *    under the element;
+ *    markers imply, and no height is reported while the parent's W×H badge
+ *    hangs under the element (the drag is driven by `resize:begin` /
+ *    `resize:step` / `resize:end` since SB-4: the handles are the parent's);
  *  - canvas-26: a resize edge snaps to the tree siblings the parent names,
  *    and the guides go back over the wire;
  *  - store-17: `optimistic.revert` puts back exactly the nodes a refused
@@ -54,11 +55,6 @@ function stamped(nodeId: string, style = ''): HTMLElement {
   return el
 }
 
-function pointerEvent(type: string, init: MouseEventInit): Event {
-  const Ctor = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent
-  return new Ctor(type, { bubbles: true, cancelable: true, ...(type === 'pointermove' ? { buttons: 1 } : {}), ...init })
-}
-
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 describe('live frame — resize parity (canvas-23, canvas-26)', () => {
@@ -70,16 +66,15 @@ describe('live frame — resize parity (canvas-23, canvas-26)', () => {
     document.body.appendChild(row)
     placeAt(box, 0, 0, 100, 40)
     bridge!.handleMessage({ type: 'setResizeTarget', ref: { nodeId: BOX, occurrenceIndex: 0 }, proportional: false, sizing: { flex: '1' } })
-    const east = document.querySelector<HTMLElement>('[data-canvas-resize-handle="e"]')!
-    east.dispatchEvent(pointerEvent('pointerdown', { clientX: 100, clientY: 20, button: 0 }))
-    document.dispatchEvent(pointerEvent('pointermove', { clientX: 140, clientY: 20 }))
-    document.dispatchEvent(pointerEvent('pointerup', { clientX: 140, clientY: 20 }))
+    bridge!.handleMessage({ type: 'resize:begin', handle: 'e' })
+    bridge!.handleMessage({ type: 'resize:step', dx: 40, dy: 0, shiftKey: false, altKey: false })
+    bridge!.handleMessage({ type: 'resize:end', commit: true })
     expect(posted.filter((m) => m.type === 'resize:commit')).toEqual([
       { type: 'resize:commit', nodeId: BOX, occurrenceIndex: 0, patch: { flex: null, width: '140px' } },
     ])
   })
 
-  it('the east edge snaps to a sibling the parent named, and the guides cross the wire', async () => {
+  it('the east edge snaps to a sibling the parent named, and the guides cross the wire', () => {
     const posted = boot()
     const box = stamped(BOX, 'width: 100px; height: 50px; box-sizing: border-box')
     const sibling = stamped('pages/Home.tsx:4:4')
@@ -92,11 +87,9 @@ describe('live frame — resize parity (canvas-23, canvas-26)', () => {
       proportional: false,
       snap: { siblings: [{ nodeId: 'pages/Home.tsx:4:4', occurrenceIndex: 0 }], parent: null, zoom: 1 },
     })
-    const east = document.querySelector<HTMLElement>('[data-canvas-resize-handle="e"]')!
-    east.dispatchEvent(pointerEvent('pointerdown', { clientX: 100, clientY: 20, button: 0 }))
-    document.dispatchEvent(pointerEvent('pointermove', { clientX: 206, clientY: 20 }))
-    await sleep(40)
-    document.dispatchEvent(pointerEvent('pointerup', { clientX: 206, clientY: 20 }))
+    bridge!.handleMessage({ type: 'resize:begin', handle: 'e' })
+    bridge!.handleMessage({ type: 'resize:step', dx: 106, dy: 0, shiftKey: false, altKey: false })
+    bridge!.handleMessage({ type: 'resize:end', commit: true })
     expect(posted.filter((m) => m.type === 'resize:guides')).toEqual([
       { type: 'resize:guides', guides: [{ axis: 'x', position: 210, start: 0, end: 50 }] },
       { type: 'resize:guides', guides: [] },
@@ -104,15 +97,16 @@ describe('live frame — resize parity (canvas-23, canvas-26)', () => {
     expect(posted.filter((m) => m.type === 'resize:commit').map((m) => m.patch)).toEqual([{ width: '210px' }])
   })
 
-  it('reports no height while the badge hangs under the element, and one after the drag', async () => {
+  it("reports no height while the parent's badge hangs under the element, and one after the drag", async () => {
     const posted = boot()
     const box = stamped(BOX, 'width: 100px; height: 40px; box-sizing: border-box')
     document.body.appendChild(box)
     placeAt(box, 0, 0, 100, 40)
     bridge!.handleMessage({ type: 'setResizeTarget', ref: { nodeId: BOX, occurrenceIndex: 0 }, proportional: false })
-    // The badge overflows the body while a drag is live — the one thing the
-    // body's scrollHeight grows by here.
-    const resizing = () => document.querySelector('[data-canvas-resizing]') !== null
+    // The parent's badge would overflow the body while a drag is live — the one thing the
+    // body's scrollHeight grows by here (the badge is not in this document; the test stands in for it).
+    let dragging = false
+    const resizing = () => dragging
     const descriptor = Object.getOwnPropertyDescriptor(document.body, 'scrollHeight')
     Object.defineProperty(document.body, 'scrollHeight', { configurable: true, get: () => (resizing() ? 930 : 900) })
     restoreScrollHeight = () => {
@@ -123,9 +117,9 @@ describe('live frame — resize parity (canvas-23, canvas-26)', () => {
     const heights = () => posted.filter((m) => m.type === 'frame:resize').map((m) => m.height)
     expect(heights().at(-1)).toBe(900)
 
-    const east = document.querySelector<HTMLElement>('[data-canvas-resize-handle="e"]')!
-    east.dispatchEvent(pointerEvent('pointerdown', { clientX: 100, clientY: 20, button: 0 }))
-    document.dispatchEvent(pointerEvent('pointermove', { clientX: 130, clientY: 20 }))
+    bridge!.handleMessage({ type: 'resize:begin', handle: 'e' })
+    dragging = true
+    bridge!.handleMessage({ type: 'resize:step', dx: 30, dy: 0, shiftKey: false, altKey: false })
     // The app churns a node mid-drag (a carousel, a clock) — the frame-fit
     // reset that follows would measure the badge.
     const dot = document.createElement('span')
@@ -135,7 +129,8 @@ describe('live frame — resize parity (canvas-23, canvas-26)', () => {
     await sleep(LIVE_FRAME_FIT_STRUCTURAL_DEBOUNCE_MS + 60)
     expect(heights()).not.toContain(930)
 
-    document.dispatchEvent(pointerEvent('pointerup', { clientX: 130, clientY: 20 }))
+    dragging = false
+    bridge!.handleMessage({ type: 'resize:end', commit: true })
     await sleep(40)
     expect(heights()).not.toContain(930)
     expect(heights().at(-1)).toBe(900)
@@ -187,37 +182,6 @@ describe('live frame — a double-click names what a click names (canvas-24)', (
     bridge!.handleMessage({ type: 'text:edit', nodeId: 'pages/Home.tsx:5:7', occurrenceIndex: 0, allowed: true, text: 'Label' })
     expect(outer.getAttribute('contenteditable')).not.toBeNull()
     expect(inner.getAttribute('contenteditable')).toBeNull()
-  })
-})
-
-describe('live frame — selection chrome is not content (canvas-23)', () => {
-  it('handles hanging past the body never count in the reported height', async () => {
-    const posted = boot()
-    const box = stamped(BOX, 'width: 100px; height: 40px; box-sizing: border-box')
-    document.body.appendChild(box)
-    placeAt(box, 0, 0, 100, 40)
-    bridge!.handleMessage({ type: 'setResizeTarget', ref: { nodeId: BOX, occurrenceIndex: 0 }, proportional: false })
-    // The S handles hang 4px under an element at the bottom of the body —
-    // whenever the overlay root is laid out.
-    const chromeShown = () => {
-      const root = document.getElementById('studio-canvas-selection-overlay-root')
-      return root !== null && root.style.display !== 'none'
-    }
-    const descriptor = Object.getOwnPropertyDescriptor(document.body, 'scrollHeight')
-    Object.defineProperty(document.body, 'scrollHeight', { configurable: true, get: () => (chromeShown() ? 904 : 900) })
-    restoreScrollHeight = () => {
-      if (descriptor) Object.defineProperty(document.body, 'scrollHeight', descriptor)
-      else delete (document.body as { scrollHeight?: number }).scrollHeight
-    }
-    const dot = document.createElement('span')
-    document.body.appendChild(dot)
-    await sleep(0)
-    dot.remove()
-    await sleep(LIVE_FRAME_FIT_STRUCTURAL_DEBOUNCE_MS + 60)
-    const heights = posted.filter((m) => m.type === 'frame:resize').map((m) => m.height)
-    expect(heights.length).toBeGreaterThan(0)
-    expect(heights).not.toContain(904)
-    expect(chromeShown()).toBe(true)
   })
 })
 

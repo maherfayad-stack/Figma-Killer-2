@@ -124,7 +124,7 @@ export async function settleCanvasFrameMode(
 
 const SELECTION_RING = '[data-canvas-selection-ring="true"]'
 
-/** The selection rings of `boardFrame` in the document `mode` draws them in: inside a portal frame's iframe, in the editor document for a live frame. */
-export function selectionRings(page: Page, boardFrame: Locator, mode: CanvasFrameMode): Locator {
-  return mode === 'live' ? page.locator(SELECTION_RING) : canvasContentFrame(boardFrame).locator(SELECTION_RING)
+/** The selection rings of `boardFrame`: parent-document chrome beside its iframe (SB-4), for a portal frame and a live one alike. */
+export function selectionRings(boardFrame: Locator): Locator {
+  return boardFrame.locator(SELECTION_RING)
 }

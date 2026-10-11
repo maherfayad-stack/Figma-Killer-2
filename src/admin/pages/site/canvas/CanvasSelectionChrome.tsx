@@ -36,6 +36,8 @@ interface CanvasSelectionChromeProps {
   resizeNodeIds: readonly string[]
   /** The frame's same-origin document, for the handles' element reads; `null` for a bridge frame. */
   frameDocument: Document | null
+  /** The frame's iframe element, for a wire-driven (bridge) resize's zoom. */
+  iframeElement: HTMLIFrameElement | null
   /** A design frame has the node badge and the handles; the live surface has rings only. */
   designMode: boolean
   selectorHighlightRef: RefObject<HTMLDivElement | null>
@@ -56,6 +58,7 @@ export function CanvasSelectionChrome({
   showSelectorHighlight,
   resizeNodeIds,
   frameDocument,
+  iframeElement,
   designMode,
   selectorHighlightRef,
   hoverRef,
@@ -115,6 +118,7 @@ export function CanvasSelectionChrome({
         <CanvasResizeHandles
           nodeId={resizeNodeIds[0]!}
           frameDocument={frameDocument}
+          iframeElement={iframeElement}
           onFrameReady={onResizeFrameReady}
         />
       )}

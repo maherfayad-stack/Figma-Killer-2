@@ -6,7 +6,7 @@
  * this change both ALWAYS mounted their own `BreakpointSelectionOverlay`
  * unconditionally — so a click that selected a node landed on the fallback's
  * real, working ring/toolbar/inspector AND on the bridge overlay's
- * `useBridgeSelectionChrome`, which opened a real `postMessage` round trip
+ * `useBridgeResizeTarget`, which opened a real `postMessage` round trip
  * into a still-loading cross-origin document and rendered a SECOND,
  * independently-positioned toolbar/inspector for the same selection.
  * `overlayEnabled={false}` is how `LiveBoardFrame` now defers the bridge
@@ -88,17 +88,16 @@ describe('BreakpointFrame — overlayEnabled', () => {
   it('defaults to true: an already-selected node gets its ring, toolbar and inspector', async () => {
     selectButtonAndRenderFrame(undefined)
 
-    // The ring is portaled INTO the iframe (WS-5.1, `overlayRoot`); the
-    // toolbar/inspector are portaled to `document.body` (no canvas-viewport
-    // context in this bare render — see `BreakpointSelectionOverlay`'s
-    // `portalTarget` fallback). Neither lands inside RTL's own `container`.
-    const iframe = await waitFor(() => {
+    // The ring is rendered in the PARENT document, beside the iframe (SB-4,
+    // the frame's chrome root); the toolbar/inspector are portaled to
+    // `document.body` (no canvas-viewport context in this bare render — see
+    // `BreakpointSelectionOverlay`'s `portalTarget` fallback).
+    await waitFor(() => {
       const el = document.querySelector('iframe') as HTMLIFrameElement | null
       expect(el?.contentDocument?.body).toBeTruthy()
-      return el!
     })
     await waitFor(() => {
-      expect(iframe.contentDocument!.querySelector('[data-canvas-selection-ring]')).not.toBeNull()
+      expect(document.querySelector('[data-canvas-selection-ring]')).not.toBeNull()
     })
     expect(document.querySelector('[data-canvas-selection-toolbar]')).not.toBeNull()
     expect(document.querySelector('[data-canvas-in-place-inspector]')).not.toBeNull()
@@ -115,11 +114,11 @@ describe('BreakpointFrame — overlayEnabled', () => {
       return el!
     })
 
-    // No overlay chrome at all: no ring (inside the iframe), no toolbar, no
-    // inspector (both would portal to `document.body`). Asserted after a
-    // real render pass (not just on mount) so a scheduler tick that fired
-    // late would still be caught.
+    // No overlay chrome at all: no ring, no toolbar, no inspector. Asserted
+    // after a real render pass (not just on mount) so a scheduler pass that
+    // fired late would still be caught.
     expect(iframe.contentDocument!.querySelector('[data-canvas-selection-ring]')).toBeNull()
+    expect(document.querySelector('[data-canvas-selection-ring]')).toBeNull()
     expect(document.querySelector('[data-canvas-selection-toolbar]')).toBeNull()
     expect(document.querySelector('[data-canvas-in-place-inspector]')).toBeNull()
   })

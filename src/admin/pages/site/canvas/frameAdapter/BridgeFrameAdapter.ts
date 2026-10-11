@@ -59,6 +59,7 @@ import {
   toStampId,
   type OutboundEnvelope,
   type OutboundRuntimeMessage,
+  type ResizeHandle,
 } from '@core/studio-runtime'
 import type { PreviewAxes } from '@core/studio-board'
 import { currentModeAxes, modeRootPlanFor } from '../modeRootPlan'
@@ -381,6 +382,18 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
             },
           }),
     })
+  }
+
+  resizeBegin(handle: ResizeHandle): void {
+    this.post({ type: 'resize:begin', handle })
+  }
+
+  resizeStep(dx: number, dy: number, { shiftKey, altKey }: { shiftKey: boolean; altKey: boolean }): void {
+    this.post({ type: 'resize:step', dx, dy, shiftKey, altKey })
+  }
+
+  resizeEnd(commit: boolean): void {
+    this.post({ type: 'resize:end', commit })
   }
 
   startTextEdit(nodeId: string, allowed: boolean, text?: string): void {

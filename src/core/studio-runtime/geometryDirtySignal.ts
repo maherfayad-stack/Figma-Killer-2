@@ -30,8 +30,6 @@
  * `measureAll`). A live app mutating every frame therefore costs one message
  * per measurement, not one per mutation.
  */
-import { isSelectionChromeMutation } from './selectionChromeMutation'
-
 export interface GeometryDirtySignal {
   /** The parent asked for geometry: arm the head / load / font / resize listeners. Idempotent. */
   track(): void
@@ -60,10 +58,7 @@ export function createGeometryDirtySignal(doc: Document, view: Window & typeof g
     const MutationObserverCtor = view.MutationObserver ?? MutationObserver
     if (doc.head) {
       try {
-        // The editor's own chrome stylesheet is mounted in the head; that is not the page changing.
-        const headObserver = new MutationObserverCtor((records) => {
-          if (!records.every(isSelectionChromeMutation)) notify()
-        })
+        const headObserver = new MutationObserverCtor(() => notify())
         headObserver.observe(doc.head, { childList: true, subtree: true, characterData: true })
         releases.push(() => headObserver.disconnect())
       } catch (_err) {

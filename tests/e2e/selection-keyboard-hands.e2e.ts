@@ -93,21 +93,23 @@ interface Rect {
   height: number
 }
 
-/** Every selection ring in the frame, in the frame's own CSS pixels. */
-async function ringRects(content: FrameLocator): Promise<Rect[]> {
-  return content.locator('body').evaluate((_body, selector: string) => {
-    return Array.from(document.querySelectorAll(selector)).map((el) => {
-      const r = el.getBoundingClientRect()
-      return { x: r.x, y: r.y, width: r.width, height: r.height }
-    })
+/** Every selection ring on the board, in page pixels. The rings are parent-document chrome beside the iframe (SB-4). */
+async function ringRects(page: Page): Promise<Rect[]> {
+  return page.evaluate((selector: string) => {
+    return Array.from(document.querySelectorAll<HTMLElement>(selector))
+      .filter((el) => el.style.display !== 'none')
+      .map((el) => {
+        const r = el.getBoundingClientRect()
+        return { x: r.x, y: r.y, width: r.width, height: r.height }
+      })
   }, RING)
 }
 
+/** The element's box in page pixels (Playwright resolves the iframe offset and the canvas zoom). */
 async function rectOf(target: Locator): Promise<Rect> {
-  return target.evaluate((el) => {
-    const r = el.getBoundingClientRect()
-    return { x: r.x, y: r.y, width: r.width, height: r.height }
-  })
+  const box = await target.boundingBox()
+  if (!box) throw new Error('the target has no bounding box')
+  return box
 }
 
 function sameRect(a: Rect, b: Rect): boolean {
@@ -120,10 +122,10 @@ function sameRect(a: Rect, b: Rect): boolean {
 }
 
 /** Waits until exactly one ring sits on `target`. */
-async function expectRingOn(content: FrameLocator, target: Locator, message: string): Promise<void> {
+async function expectRingOn(_content: FrameLocator, target: Locator, message: string): Promise<void> {
   await expect
     .poll(async () => {
-      const [rings, want] = await Promise.all([ringRects(content), rectOf(target)])
+      const [rings, want] = await Promise.all([ringRects(target.page()), rectOf(target)])
       return rings.length === 1 && sameRect(rings[0]!, want)
     }, { message, timeout: 10_000 })
     .toBe(true)

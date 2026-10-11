@@ -80,34 +80,19 @@ describe('PortalFrameAdapter — overlay stylesheets', () => {
   })
 })
 
-describe('PortalFrameAdapter — selection / hover rings', () => {
-  it('select creates a ring element per node and removes rings for deselected nodes', () => {
+describe('PortalFrameAdapter — draws nothing in the frame (SB-4)', () => {
+  it('measureAll reads the frame without adding a node, a style or an attribute to it', async () => {
     const doc = freshDoc()
     doc.body.innerHTML = `<div data-node-id="n1"></div><div data-node-id="n2"></div>`
+    const before = doc.documentElement.outerHTML
     const adapter = new PortalFrameAdapter(doc)
     adapters.push(adapter)
 
-    adapter.select([{ nodeId: 'n1' }, { nodeId: 'n2' }])
-    expect(doc.querySelectorAll('[data-canvas-selection-ring]')).toHaveLength(2)
-
-    adapter.select([{ nodeId: 'n1' }])
-    expect(doc.querySelectorAll('[data-canvas-selection-ring]')).toHaveLength(1)
-
-    adapter.select([])
-    expect(doc.querySelectorAll('[data-canvas-selection-ring]')).toHaveLength(0)
-  })
-
-  it('hover creates/positions a single ring and null clears it', () => {
-    const doc = freshDoc()
-    doc.body.innerHTML = `<div data-node-id="n1"></div>`
-    const adapter = new PortalFrameAdapter(doc)
-    adapters.push(adapter)
-
-    adapter.hover({ nodeId: 'n1' })
-    expect(doc.querySelectorAll('[data-canvas-hover-ring]')).toHaveLength(1)
-
-    adapter.hover(null)
-    expect((doc.querySelector('[data-canvas-hover-ring]') as HTMLElement).style.display).toBe('none')
+    const snapshot = await adapter.measureAll()
+    expect(snapshot.nodes.map((node) => node.nodeId)).toEqual([])
+    expect(adapter.measureAllNow()).not.toBeNull()
+    expect(doc.documentElement.outerHTML).toBe(before)
+    expect(doc.querySelector('[data-canvas-selection-ring], [data-canvas-hover-ring], [data-studio-canvas-overlay-root]')).toBeNull()
   })
 })
 
@@ -187,26 +172,24 @@ describe('PortalFrameAdapter — on(pointer)', () => {
 })
 
 describe('PortalFrameAdapter — dispose', () => {
-  it('removes overlays, rings, and the overlay root', () => {
+  it('removes overlays and the controllers it started', () => {
     const doc = freshDoc()
     doc.body.innerHTML = `<div data-node-id="n1"></div>`
     const adapter = new PortalFrameAdapter(doc)
 
     adapter.applyOverlay('x', '.a{}')
-    adapter.select([{ nodeId: 'n1' }])
     adapter.setInteractionMode('design')
 
     adapter.dispose()
 
     expect(doc.querySelector('[data-studio-overlay-id="x"]')).toBeNull()
-    expect(doc.querySelectorAll('[data-canvas-selection-ring]')).toHaveLength(0)
     expect(doc.getElementById('studio-portal-adapter-scroll-unroll')).toBeNull()
     expect(doc.getElementById('studio-portal-adapter-animation-freeze')).toBeNull()
   })
 })
 
-describe('PortalFrameAdapter — ring tracking is armed lazily (PERF-10)', () => {
-  it('constructs no MutationObserver until the first select/hover', () => {
+describe('PortalFrameAdapter — geometry tracking is armed lazily (PERF-10)', () => {
+  it('constructs no MutationObserver until the first measureAll, and one body observer for any number of them', async () => {
     const doc = freshDoc()
     doc.body.innerHTML = `<div data-node-id="n1"></div>`
     const view = doc.defaultView as unknown as { MutationObserver: typeof MutationObserver }
@@ -221,17 +204,43 @@ describe('PortalFrameAdapter — ring tracking is armed lazily (PERF-10)', () =>
     try {
       const adapter = new PortalFrameAdapter(doc)
       adapters.push(adapter)
-      // Portal mode's rings are `BreakpointSelectionOverlay`'s own portal, so
-      // on an ordinary board nothing calls select/hover — and nothing may be
-      // observing every attribute write in the frame on the adapter's behalf.
+      // A frame nobody indexes pays nothing: no observer on every attribute write in it.
       expect(constructed).toBe(0)
 
-      adapter.hover({ nodeId: 'n1' })
-      expect(constructed).toBe(1)
-      adapter.select([{ nodeId: 'n1' }])
-      expect(constructed).toBe(1)
+      await adapter.measureAll()
+      const armed = constructed
+      expect(armed).toBeGreaterThan(0)
+      await adapter.measureAll()
+      adapter.measureAllNow()
+      expect(constructed).toBe(armed)
     } finally {
       view.MutationObserver = RealMutationObserver
     }
+  })
+
+  it('reports geometry:dirty once per read when the body changes, text typed in a box included', async () => {
+    const doc = freshDoc()
+    doc.body.innerHTML = `<p data-node-id="n1">hi</p>`
+    const adapter = new PortalFrameAdapter(doc)
+    adapters.push(adapter)
+    let fired = 0
+    adapter.on('geometry:dirty', () => {
+      fired += 1
+    })
+    await adapter.measureAll()
+
+    doc.querySelector('p')!.firstChild!.textContent = 'hello'
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(fired).toBe(1)
+
+    // A latch: more changes before the next read are one signal, not many.
+    doc.querySelector('p')!.setAttribute('class', 'a')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(fired).toBe(1)
+
+    adapter.measureAllNow()
+    doc.querySelector('p')!.setAttribute('class', 'b')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(fired).toBe(2)
   })
 })

@@ -1,7 +1,10 @@
 /**
  * P2-D — the portal-mode element resize, at the layer the gesture lives at
  * (the hook), because the canvas DOM is inside an iframe and a component-level
- * test could not press a handle (`iframeCanvasQuery.ts`).
+ * test could not press a handle (`iframeCanvasQuery.ts`). The handles are
+ * parent-document chrome beside the iframe (SB-4), so they are mounted in the
+ * parent here, and the pointer and keys travel there; the element the drag
+ * sizes is still in the frame's document.
  *
  * Each case pins one audited defect (`docs/audits/2026-09-23-studio-audit/`):
  *
@@ -75,16 +78,16 @@ function mount(targetStyle: string, parentStyle = ''): Harness {
   parent.appendChild(target)
   frameDoc.body.appendChild(parent)
 
-  const handles = frameDoc.createElement('div')
+  const handles = document.createElement('div')
   for (const handle of RESIZE_HANDLES) {
-    const el = frameDoc.createElement('div')
+    const el = document.createElement('div')
     el.setAttribute(RESIZE_HANDLE_ATTR, handle)
     handles.appendChild(el)
   }
-  const badge = frameDoc.createElement('div')
+  const badge = document.createElement('div')
   badge.setAttribute(RESIZE_SIZE_BADGE_ATTR, 'true')
   handles.appendChild(badge)
-  frameDoc.body.appendChild(handles)
+  document.body.appendChild(handles)
   return { frameDoc, target, handles }
 }
 
@@ -104,17 +107,17 @@ function press(handle: string, x = 0, y = 0, init: Record<string, unknown> = {})
 }
 
 function moveTo(x: number, y: number, init: Record<string, unknown> = {}) {
-  pointer(harness.frameDoc.body, 'pointermove', { clientX: x, clientY: y, ...init })
+  pointer(document.body, 'pointermove', { clientX: x, clientY: y, ...init })
 }
 
 function release(x: number, y: number) {
-  pointer(harness.frameDoc.body, 'pointerup', { clientX: x, clientY: y, buttons: 0 })
+  pointer(document.body, 'pointerup', { clientX: x, clientY: y, buttons: 0 })
 }
 
 function key(type: 'keydown' | 'keyup', keyName: string, init: Record<string, unknown>) {
   const event = new Event(type, { bubbles: true, cancelable: true })
   Object.assign(event, { key: keyName, shiftKey: false, altKey: false, ...init })
-  harness.frameDoc.body.dispatchEvent(event)
+  document.body.dispatchEvent(event)
 }
 
 /** The drag writes its preview once per animation frame. */
@@ -308,19 +311,21 @@ describe('ERR-12 — a drag nobody finished', () => {
 })
 
 describe('the click that ends a drag stays on the handle', () => {
-  it('never reaches the page body, so the sized element stays selected', () => {
+  it('never bubbles past the handle frame, so the sized element stays selected', () => {
     seed()
     harness = mount('box-sizing: border-box; width: 200px; height: 100px')
     render()
     const reached: string[] = []
-    harness.frameDoc.body.addEventListener('click', () => reached.push('body'), true)
+    // Where the canvas's empty-board deselect listens: an ancestor of the chrome.
+    document.body.addEventListener('click', () => reached.push('canvas'))
+    document.body.addEventListener('dblclick', () => reached.push('canvas'))
     const handle = harness.handles.querySelector(`[${RESIZE_HANDLE_ATTR}="w"]`)!
     handle.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
     handle.dispatchEvent(new Event('dblclick', { bubbles: true, cancelable: true }))
     expect(reached).toEqual([])
-    // A click on the page itself is untouched.
-    harness.target.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
-    expect(reached).toEqual(['body'])
+    // A click elsewhere in the canvas is untouched.
+    document.body.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+    expect(reached).toEqual(['canvas'])
   })
 })
 

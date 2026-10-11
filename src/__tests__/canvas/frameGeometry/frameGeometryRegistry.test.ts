@@ -10,7 +10,14 @@ import type { FrameDocumentAdapter, FrameRuntimeEvent } from '@site/canvas/frame
 import type { FrameGeometrySnapshot, NodeGeometry } from '@site/canvas/frameGeometry/frameGeometryTypes'
 import { registerFrameAdapter, unregisterFrameAdapter } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
 import { BOARD_ORIGIN_SPAN } from '@site/canvas/BoardCanvasLayer/canvasLayerGeometry'
-import { getFrameGeometry, hitTestBoard, onFrameGeometryDirty, peekFrameGeometry } from '@site/canvas/frameGeometry/frameGeometryRegistry'
+import {
+  getFrameGeometry,
+  getFrameLocalGeometry,
+  hitTestBoard,
+  onFrameGeometryDirty,
+  peekFrameGeometry,
+  readFrameLocalGeometryNow,
+} from '@site/canvas/frameGeometry/frameGeometryRegistry'
 import { nodesUnderClientPoint } from '@site/canvas/canvasNodesUnderPoint'
 
 function node(nodeId: string, x: number, y: number, width: number, height: number, parent: number): NodeGeometry {
@@ -24,9 +31,20 @@ class StubAdapter {
   constructor(nodes: NodeGeometry[]) {
     this.nodes = nodes
   }
+  /** A same-origin frame can be read in the caller's task; a bridge frame cannot. */
+  synchronous = false
+  /** When set, `measureAll` waits for it (a bridge round trip), snapshotting the nodes AT the moment it resolves. */
+  gate: Promise<void> | null = null
   measureAll(): Promise<FrameGeometrySnapshot> {
     this.reads += 1
+    const gate = this.gate
+    if (gate) return gate.then(() => ({ origin: { x: 0, y: 0 }, nodes: this.nodes, truncated: false }))
     return Promise.resolve({ origin: { x: 0, y: 0 }, nodes: this.nodes, truncated: false })
+  }
+  measureAllNow(): FrameGeometrySnapshot | null {
+    if (!this.synchronous) return null
+    this.reads += 1
+    return { origin: { x: 0, y: 0 }, nodes: this.nodes, truncated: false }
   }
   on(event: FrameRuntimeEvent['type'], handler: () => void): () => void {
     if (event !== 'geometry:dirty') return () => {}
@@ -73,6 +91,74 @@ beforeEach(() => {
 
 afterEach(() => {
   for (const iframe of registered.splice(0)) unregisterFrameAdapter(iframe)
+})
+
+describe('frameGeometryRegistry — frame-local reads (SB-4: chrome beside the iframe)', () => {
+  it('a frame-local read needs no board origin and returns the frame-viewport box', async () => {
+    document.querySelector('[data-studio-board-origin]')?.remove()
+    const adapter = new StubAdapter([node('a', 10, 20, 100, 50, -1)])
+    const iframe = iframeAt(0, 0, 400, 400)
+    mount(iframe, adapter)
+    // A board-space ask has nothing to convert against; the frame-local one does not care.
+    expect(await getFrameGeometry(iframe)).toBeNull()
+    const index = await getFrameLocalGeometry(iframe)
+    expect(index?.localRectOf('a')).toEqual({ x: 10, y: 20, width: 100, height: 50 })
+  })
+
+  it('does not disturb the board origin a board-space caller set', async () => {
+    const adapter = new StubAdapter([node('a', 0, 0, 100, 100, -1)])
+    const iframe = iframeAt(300, 150, 400, 400)
+    mount(iframe, adapter)
+    const board = await getFrameGeometry(iframe)
+    expect(board?.origin).toEqual({ x: 400, y: 200 })
+    const local = await getFrameLocalGeometry(iframe)
+    expect(local).toBe(board)
+    expect(local?.origin).toEqual({ x: 400, y: 200 })
+  })
+
+  it('readFrameLocalGeometryNow: the fresh index as is, a stale same-origin frame re-read in this task, a stale bridge frame null', async () => {
+    const adapter = new StubAdapter([node('a', 0, 0, 100, 100, -1)])
+    const iframe = iframeAt(0, 0, 400, 400)
+    mount(iframe, adapter)
+    // Never built, and a bridge frame cannot answer synchronously.
+    expect(readFrameLocalGeometryNow(iframe)).toBeNull()
+    const built = await getFrameLocalGeometry(iframe)
+    expect(readFrameLocalGeometryNow(iframe)).toBe(built)
+    expect(adapter.reads).toBe(1)
+
+    adapter.markDirty()
+    expect(readFrameLocalGeometryNow(iframe)).toBeNull()
+
+    adapter.synchronous = true
+    adapter.nodes = [node('a', 0, 0, 100, 100, -1), node('b', 5, 5, 10, 10, 0)]
+    const rebuilt = readFrameLocalGeometryNow(iframe)
+    expect(rebuilt).not.toBe(built)
+    expect(rebuilt?.has('b')).toBe(true)
+    // And it is cached: the next call is free.
+    expect(readFrameLocalGeometryNow(iframe)).toBe(rebuilt)
+    expect(adapter.reads).toBe(2)
+  })
+
+  it('a dirty ping during a slow read queues a NEWER read: nobody is handed the picture the frame already left', async () => {
+    const adapter = new StubAdapter([node('a', 0, 0, 100, 100, -1)])
+    const iframe = iframeAt(0, 0, 400, 400)
+    mount(iframe, adapter)
+    let release: () => void = () => {}
+    adapter.gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const first = getFrameLocalGeometry(iframe)
+    adapter.nodes = [node('a', 0, 0, 100, 100, -1), node('late', 1, 1, 5, 5, 0)]
+    adapter.markDirty()
+    // The asker after the ping must not join the read that started before it.
+    const second = getFrameLocalGeometry(iframe)
+    release()
+    const [one, two] = await Promise.all([first, second])
+    expect(adapter.reads).toBe(2)
+    expect(two).not.toBe(one)
+    expect(two?.has('late')).toBe(true)
+    expect(peekFrameGeometry(iframe)).toBe(two)
+  })
 })
 
 describe('frameGeometryRegistry — building and freshness', () => {

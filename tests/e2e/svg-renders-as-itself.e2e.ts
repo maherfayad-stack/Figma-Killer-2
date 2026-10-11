@@ -187,18 +187,18 @@ test.describe('SVG-0 — a literal <svg> is the node, with the box the app gives
     // `body` and `main`, so this is also the regression case for a hover that
     // moves between nodes without a measure pass (the ring used to keep
     // `body`'s 1024x800 box under the svg's id).
-    const hoverRing = content.locator('[data-canvas-hover-ring="true"]').first()
+    const hoverRing = page.locator('[data-canvas-hover-ring="true"]').first()
     await expect(hoverRing).toHaveAttribute('data-canvas-overlay-node-id', ROW_SVG, { timeout: 10_000 })
     await expectRingOn(hoverRing, svg, 3, 'hover ring')
     await page.keyboard.up('ControlOrMeta')
 
     await selectInFrame(page, svg)
     await expect(svg).toHaveAttribute('data-canvas-selected', 'true', { timeout: 10_000 })
-    const selectionRing = content.locator(SELECTION_RING).first()
+    const selectionRing = page.locator(SELECTION_RING).first()
     await expect(selectionRing).toBeVisible({ timeout: 10_000 })
     await expectRingOn(selectionRing, svg, 3, 'selection ring')
     // An inline `<svg>` is a replaced element CSS sizes, so the resize offer
     // no longer refuses it.
-    await expect(content.locator('[data-canvas-resize-handle="e"]')).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('[data-canvas-resize-handle="e"]')).toBeVisible({ timeout: 15_000 })
   })
 })

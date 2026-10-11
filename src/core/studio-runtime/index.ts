@@ -62,8 +62,6 @@ export {
   OutboundEnvelopeSchema,
   ApplyOverlayMessageSchema,
   RemoveOverlayMessageSchema,
-  SelectMessageSchema,
-  HoverMessageSchema,
   MeasureMessageSchema,
   SetAxesMessageSchema,
   SetModeMessageSchema,
@@ -200,17 +198,6 @@ export {
   type MediaFreezeController,
   type AnimationFreezeController,
 } from './animationFreezeRules'
-
-export {
-  SELECTION_STYLE_TAG_ID,
-  SELECTION_OVERLAY_ROOT_ID,
-  SELECTION_CHROME_TOKENS,
-  SELECTION_CHROME_RULES,
-  buildSelectionChromeTokenBlock,
-  buildSelectionChromeStylesheet,
-} from './selectionChromeCss'
-
-export { isSelectionChromeMutation, isSelectionChromeNode } from './selectionChromeMutation'
 
 export {
   FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
@@ -371,17 +358,20 @@ export {
   writeSizeBadge,
   RESIZE_FRAME_ATTR,
   RESIZE_HANDLE_ATTR,
-  RESIZE_PREVIEW_ATTR,
-  RESIZE_PREVIEW_STYLE_ID,
   ROTATE_ACTIVE_ATTR,
   ROTATE_CORNERS,
   ROTATE_HANDLE_ATTR,
-  installResizeHandles,
-  type ResizeHandlesController,
-  type ResizeHandlesOptions,
+} from './resizeChromeAttrs'
+
+export {
+  RESIZE_PREVIEW_ATTR,
+  RESIZE_PREVIEW_STYLE_ID,
+  installResizeSession,
+  type ResizeSessionController,
+  type ResizeSessionOptions,
   type ResizeTargetContext,
   type ResizeTargetRef,
-} from './resizeHandles'
+} from './resizeSession'
 
 export { presentedElementOf, rectRelativeToBody } from './nodeDom'
 

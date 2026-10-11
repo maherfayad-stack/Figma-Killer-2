@@ -114,7 +114,7 @@ async function openAndSelect(page: Page, divIndex: number): Promise<{ content: F
   const element = content.locator(`[data-node-id="${sourceNodeId(FIXTURE_PAGE, REL, 'div', divIndex)}"]`).first()
   await panIntoView(page, canvasRoot, element, 80)
   await selectInFrame(page, element)
-  await expect(content.locator('[data-canvas-resize-handle="e"]')).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('[data-canvas-resize-handle="e"]')).toBeVisible({ timeout: 15_000 })
   // Screen px per frame px: the canvas zoom is a transform on the iframe.
   const pageBox = await element.boundingBox()
   const frameBox = await measure(element)
@@ -125,8 +125,8 @@ async function openAndSelect(page: Page, divIndex: number): Promise<{ content: F
  * Press the centre of `handle`, move by (`dx`, `dy`) FRAME px in steps, and
  * hand back control BEFORE releasing so a case can measure mid-drag.
  */
-async function dragHandle(page: Page, content: FrameLocator, handle: string, dx: number, dy: number, zoom: number) {
-  const box = await content.locator(`[data-canvas-resize-handle="${handle}"]`).boundingBox()
+async function dragHandle(page: Page, handle: string, dx: number, dy: number, zoom: number) {
+  const box = await page.locator(`[data-canvas-resize-handle="${handle}"]`).boundingBox()
   expect(box, `the ${handle} handle has no box`).not.toBeNull()
   const x = box!.x + box!.width / 2
   const y = box!.y + box!.height / 2
@@ -144,20 +144,20 @@ test.describe('P2-D — resize obeys CSS (computed layout)', () => {
   test.setTimeout(180_000)
 
   test('border-box: the box grows by exactly the drag', async ({ page }) => {
-    const { content, element, zoom } = await openAndSelect(page, DIV.bb)
+    const { element, zoom } = await openAndSelect(page, DIV.bb)
     const before = await measure(element)
-    const drag = await dragHandle(page, content, 'e', 40, 0, zoom)
+    const drag = await dragHandle(page, 'e', 40, 0, zoom)
     await drag.release()
     await expect.poll(() => measure(element).then((m) => Math.round(m.width))).toBe(Math.round(before.width + 40))
     await expect.poll(readPage, { timeout: 30_000 }).toContain('width: "240px"')
   })
 
   test('content-box (IX-6a): the box grows by the drag, mid-drag and after, and the source gets the CSS width', async ({ page }) => {
-    const { content, element, zoom } = await openAndSelect(page, DIV.cb)
+    const { element, zoom } = await openAndSelect(page, DIV.cb)
     const before = await measure(element)
     // 200 wide + 2×12 padding + 2×2 border.
     near(before.width, 228)
-    const drag = await dragHandle(page, content, 'e', 40, 0, zoom)
+    const drag = await dragHandle(page, 'e', 40, 0, zoom)
     // The preview — the old drag jumped by padding + border on the first frame.
     near((await measure(element)).width, before.width + 40)
     await drag.release()
@@ -173,11 +173,11 @@ test.describe('P2-D — resize obeys CSS (computed layout)', () => {
   })
 
   test('a `flex: 1` item (IX-6b) renders at the dragged width, not the one flexbox hands back', async ({ page }) => {
-    const { content, element, zoom } = await openAndSelect(page, DIV.grow)
+    const { element, zoom } = await openAndSelect(page, DIV.grow)
     const before = await measure(element)
     // 320 - 8 gap - 100 fixed.
     near(before.width, 212)
-    const drag = await dragHandle(page, content, 'e', -40, 0, zoom)
+    const drag = await dragHandle(page, 'e', -40, 0, zoom)
     near((await measure(element)).width, before.width - 40)
     await drag.release()
     await expect.poll(readPage, { timeout: 30_000 }).toContain('width: "172px"')
@@ -189,9 +189,9 @@ test.describe('P2-D — resize obeys CSS (computed layout)', () => {
   })
 
   test('an absolute element (IX-6d): W moves `left` and N moves `top`, the opposite edges stay', async ({ page }) => {
-    const { content, element, zoom } = await openAndSelect(page, DIV.abs)
+    const { element, zoom } = await openAndSelect(page, DIV.abs)
     const before = await measure(element)
-    const west = await dragHandle(page, content, 'w', -30, 0, zoom)
+    const west = await dragHandle(page, 'w', -30, 0, zoom)
     await west.release()
     await expect.poll(readPage, { timeout: 30_000 }).toContain('left: "70px"')
     const afterWest = await measure(element)
@@ -205,7 +205,7 @@ test.describe('P2-D — resize obeys CSS (computed layout)', () => {
       'true',
     )
 
-    const north = await dragHandle(page, content, 'n', 0, 10, zoom)
+    const north = await dragHandle(page, 'n', 0, 10, zoom)
     await north.release()
     await expect.poll(readPage, { timeout: 30_000 }).toContain('top: "70px"')
     const afterNorth = await measure(element)

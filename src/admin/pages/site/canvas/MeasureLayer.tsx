@@ -276,7 +276,7 @@ export function MeasureLayer({ iframeElement, selectedNodeIds, hoveredNodeId }: 
     // requests faster than the frame can answer them.
     if (measureInFlightRef.current) return
     measureInFlightRef.current = true
-    try {
+    const pass = async (): Promise<void> => {
       const index = await getFrameLocalGeometry(iframe)
       if (!index || token !== passTokenRef.current) return
       let cached = paddingRef.current
@@ -288,11 +288,10 @@ export function MeasureLayer({ iframeElement, selectedNodeIds, hoveredNodeId }: 
         paddingRef.current = cached
       }
       drawPass(index, cached.padding, hovered)
-    } catch (_err) {
-      // A frame that navigated mid-read rejects; the next rAF retries.
-    } finally {
-      measureInFlightRef.current = false
     }
+    // A frame that navigated mid-read rejects; the next rAF retries.
+    await pass().catch(() => undefined)
+    measureInFlightRef.current = false
   })
 
   useEffect(() => {

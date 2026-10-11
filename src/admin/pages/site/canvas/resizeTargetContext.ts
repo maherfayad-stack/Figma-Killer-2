@@ -1,6 +1,6 @@
 /**
  * resizeTargetContext — what a live (bridge) frame's resize needs from the
- * store, read as primitives for `useBridgeSelectionChrome` and assembled into
+ * store, read as primitives for `useBridgeResizeTarget` and assembled into
  * the adapter's `ResizeTargetOptions`.
  *
  * A portal drag reads all of this off the store at pointerdown

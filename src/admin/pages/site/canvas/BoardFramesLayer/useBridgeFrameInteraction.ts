@@ -97,7 +97,7 @@
  * Resize commit → the frame previewed the drag itself (`resizeHandles.ts`);
  * the parent makes the ONE write, `setNodeInlineStyles`, the portal path's
  * `useElementResizeDrag` makes for the same gesture — the size and the Fixed
- * companions the frame planned from the markers `useBridgeSelectionChrome`
+ * companions the frame planned from the markers `useBridgeResizeTarget`
  * sent it (canvas-23). Resize guides (canvas-26) → painted in this frame's
  * drag layer, exactly where a portal drag paints its own.
  *

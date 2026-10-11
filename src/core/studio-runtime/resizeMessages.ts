@@ -11,6 +11,7 @@
  * envelope directly, and `resize:commit` is written into the user's source.
  */
 import { Type, type Static } from '@sinclair/typebox'
+import { RESIZE_HANDLES } from './elementResizeRules'
 import { FLEX_MAIN_FIXED_VALUE } from './elementSizingRules'
 import { NodeRefSchema } from './messageShapes'
 
@@ -74,13 +75,13 @@ export const ResizeAnchorsSchema = Type.Object({
 export type ResizeAnchors = Static<typeof ResizeAnchorsSchema>
 
 /**
- * `live-13` — which node, if any, carries resize handles right now, decided
+ * `live-13` — which node, if any, a resize drag would size right now, decided
  * by the parent (a single selection whose module can carry an inline style —
- * `resizeOffer.ts`); the runtime draws and drags them (`resizeHandles.ts`)
- * and refuses on its own side when the element's computed display ignores a
- * size. `proportional` is `K4`'s scale tool, re-sent whenever it toggles.
- * `sizing` (canvas-23) and `snap` (canvas-26) are re-sent whenever they
- * change; a drag reads both once, at pointerdown.
+ * `resizeOffer.ts`); the parent draws the handles and the frame sizes the
+ * element (`resizeSession.ts`), refusing on its own side when the element's
+ * computed display ignores a size. `proportional` is `K4`'s scale tool,
+ * re-sent whenever it toggles. `sizing` (canvas-23) and `snap` (canvas-26) are
+ * re-sent whenever they change; a drag reads both once, when it begins.
  */
 export const SetResizeTargetMessageSchema = Type.Object({
   type: Type.Literal('setResizeTarget'),
@@ -89,6 +90,37 @@ export const SetResizeTargetMessageSchema = Type.Object({
   sizing: Type.Optional(ResizeSizingMarkersSchema),
   snap: Type.Optional(ResizeSnapContextSchema),
   anchors: Type.Optional(ResizeAnchorsSchema),
+})
+
+const ResizeHandleSchema = Type.Union(RESIZE_HANDLES.map((handle) => Type.Literal(handle)))
+
+/** A drag distance in frame px — bounded so a forged step cannot size an element past anything real. */
+const DragDeltaSchema = Type.Number({ minimum: -1_000_000, maximum: 1_000_000 })
+
+/**
+ * SB-4 — a handle on the parent's resize chrome was pressed: the frame reads
+ * the target's layout once and starts previewing. The pointer is the PARENT's
+ * (captured on its own handle), so what follows is `resize:step` / `resize:end`
+ * rather than pointer events inside the frame.
+ */
+export const ResizeBeginMessageSchema = Type.Object({
+  type: Type.Literal('resize:begin'),
+  handle: ResizeHandleSchema,
+})
+
+/** SB-4 — the pointer moved: its distance from the press in frame px (the parent has divided out the zoom), and ⇧ / ⌥ as held NOW. One per animation frame. */
+export const ResizeStepMessageSchema = Type.Object({
+  type: Type.Literal('resize:step'),
+  dx: DragDeltaSchema,
+  dy: DragDeltaSchema,
+  shiftKey: Type.Boolean(),
+  altKey: Type.Boolean(),
+})
+
+/** SB-4 — the drag ended: `commit` for a release, not for Escape / a lost pointer. */
+export const ResizeEndMessageSchema = Type.Object({
+  type: Type.Literal('resize:end'),
+  commit: Type.Boolean(),
 })
 
 /** A committed size, as the source will spell it: an integer pixel count. Bounded so a forged value can never reach the store as an absurd width. */

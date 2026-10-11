@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { useRef, type ReactNode } from 'react'
+import { useRef, type ReactElement, type ReactNode } from 'react'
 import { BreakpointFrame } from '@site/canvas/BreakpointFrame'
 import { AssetsPanel } from '@site/panels/AssetsPanel'
 import { CanvasViewportActionsContext } from '@site/canvas/CanvasContexts'
@@ -99,6 +99,9 @@ function createMultiSortableTextPage(): {
   return { page, rootId, firstId, secondId, thirdId, fourthId }
 }
 
+/** The box a node gets when a test does not state one. */
+const DEFAULT_NODE_RECT: DOMRectInit = { x: 0, y: 0, width: 100, height: 20 }
+
 function installCanvasRects(rects: Record<string, DOMRectInit>) {
   // The canvas now renders each breakpoint frame inside an iframe, and each
   // iframe has its OWN `HTMLElement` constructor (so a patch on the parent
@@ -131,7 +134,9 @@ function installCanvasRects(rects: Record<string, DOMRectInit>) {
       owner = owner.parentElement
     }
     const nodeId = owner?.dataset?.nodeId
-    const rect = nodeId ? rects[nodeId] : null
+    // A node with no stated rect still has a BOX: the overlay places its chrome from the frame's rect index,
+    // and a box-less node is (rightly) hidden, which would hide the toolbar these tests operate.
+    const rect = nodeId ? (rects[nodeId] ?? DEFAULT_NODE_RECT) : null
     return testRect(rect ?? { x: 0, y: 0, width: 0, height: 0 })
   }
   const restorers: Array<() => void> = []
@@ -243,17 +248,31 @@ function testRect(rect: DOMRectInit): DOMRect {
   } as DOMRect
 }
 
-beforeEach(resetStore)
+/** `render`, then lets the frame's document mount its tree and the chrome place itself (a few microtasks and a timer). */
+async function renderSettled(ui: ReactElement) {
+  const result = render(ui)
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+  return result
+}
+
+let restoreDefaultRects: () => void = () => {}
+beforeEach(() => {
+  resetStore()
+  restoreDefaultRects = installCanvasRects({})
+})
 afterEach(() => {
   cleanup()
+  restoreDefaultRects()
   resetStore()
 })
 
 describe('canvas selection toolbar', () => {
-  it('renders one drag handle on the active breakpoint frame only', () => {
+  it('renders one drag handle on the active breakpoint frame only', async () => {
     const { page } = createSelectedTextPage()
 
-    render(
+    await renderSettled(
       <>
         <BreakpointFrame
           page={page}
@@ -273,7 +292,7 @@ describe('canvas selection toolbar', () => {
     expect(screen.getAllByRole('button', { name: 'Drag selected layers' })).toHaveLength(1)
   })
 
-  it('renders selection actions and positions the toolbar above the selected layer even outside the frame', () => {
+  it('renders selection actions and positions the toolbar above the selected layer even outside the frame', async () => {
     const { page, textId } = createSelectedTextPage()
     const restoreRects = installCanvasRects({
       [textId]: { x: 20, y: 10, width: 160, height: 40 },
@@ -281,7 +300,7 @@ describe('canvas selection toolbar', () => {
     const raf = installRafQueue()
 
     try {
-      render(
+      await renderSettled(
         <BreakpointFrame
           page={page}
           breakpoint={{ id: 'desktop', label: 'Desktop', width: 1440, icon: 'monitor' }}
@@ -319,11 +338,11 @@ describe('canvas selection toolbar', () => {
     }
   })
 
-  it('duplicates selected layers from the selection toolbar', () => {
+  it('duplicates selected layers from the selection toolbar', async () => {
     const { page, textId } = createSelectedTextPage()
     const rootId = page.rootNodeId
 
-    render(
+    await renderSettled(
       <BreakpointFrame
         page={page}
         breakpoint={{ id: 'desktop', label: 'Desktop', width: 1440, icon: 'monitor' }}
@@ -343,11 +362,11 @@ describe('canvas selection toolbar', () => {
     expect(currentPage.nodes[children[1]].moduleId).toBe('base.text')
   })
 
-  it('deletes selected layers from the selection toolbar', () => {
+  it('deletes selected layers from the selection toolbar', async () => {
     const { page, textId } = createSelectedTextPage()
     const rootId = page.rootNodeId
 
-    render(
+    await renderSettled(
       <BreakpointFrame
         page={page}
         breakpoint={{ id: 'desktop', label: 'Desktop', width: 1440, icon: 'monitor' }}
@@ -366,10 +385,10 @@ describe('canvas selection toolbar', () => {
     expect(useEditorStore.getState().selectedNodeIds).toEqual([])
   })
 
-  it('renders the insert-module action in the second toolbar position', () => {
+  it('renders the insert-module action in the second toolbar position', async () => {
     const { page } = createSelectedTextPage()
 
-    render(
+    await renderSettled(
       <BreakpointFrame
         page={page}
         breakpoint={{ id: 'desktop', label: 'Desktop', width: 1440, icon: 'monitor' }}
@@ -501,7 +520,7 @@ describe('canvas selection toolbar', () => {
     expect(currentPage.nodes[children[1]].moduleId).toBe('base.text')
   })
 
-  it('moves the selected layer when its drag handle is released over a canvas after-zone', () => {
+  it('moves the selected layer when its drag handle is released over a canvas after-zone', async () => {
     const { page, rootId, firstId, secondId, thirdId } = createSortableTextPage()
     const restoreRects = installCanvasRects({
       [rootId]: { x: 0, y: 0, width: 400, height: 300 },
@@ -511,7 +530,7 @@ describe('canvas selection toolbar', () => {
     })
 
     try {
-      render(
+      await renderSettled(
         <BreakpointFrame
           page={page}
           breakpoint={{ id: 'desktop', label: 'Desktop', width: 1440, icon: 'monitor' }}
@@ -534,7 +553,7 @@ describe('canvas selection toolbar', () => {
     }
   })
 
-  it('moves a multi-selection as one ordered batch from the canvas drag handle', () => {
+  it('moves a multi-selection as one ordered batch from the canvas drag handle', async () => {
     const { page, rootId, firstId, secondId, thirdId, fourthId } = createMultiSortableTextPage()
     const restoreRects = installCanvasRects({
       [rootId]: { x: 0, y: 0, width: 400, height: 360 },
@@ -545,7 +564,7 @@ describe('canvas selection toolbar', () => {
     })
 
     try {
-      render(
+      await renderSettled(
         <BreakpointFrame
           page={page}
           breakpoint={{ id: 'desktop', label: 'Desktop', width: 1440, icon: 'monitor' }}

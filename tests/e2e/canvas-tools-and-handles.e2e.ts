@@ -124,8 +124,8 @@ test.describe('P5-E — tools and handles (computed layout + file bytes)', () =>
   test.setTimeout(180_000)
 
   test('IX-17: dragging the top padding band of a flex row grows padding-top by the drag, in ONE write', async ({ page }) => {
-    const { content, element, zoom } = await openAndSelect(page, DIV.row)
-    const band = content.locator('[data-canvas-spacing-band][data-spacing-kind="padding"][data-spacing-axis="row"]').first()
+    const { element, zoom } = await openAndSelect(page, DIV.row)
+    const band = page.locator('[data-canvas-spacing-band][data-spacing-kind="padding"][data-spacing-axis="row"]').first()
     await expect(band).toBeVisible({ timeout: 15_000 })
     const before = await computed(element)
     expect(before.paddingTop).toBe('10px')
@@ -154,10 +154,10 @@ test.describe('P5-E — tools and handles (computed layout + file bytes)', () =>
   })
 
   test('IX-17: ⌥-dragging a padding band writes all four sides', async ({ page }) => {
-    const { content, element, zoom } = await openAndSelect(page, DIV.row)
+    const { element, zoom } = await openAndSelect(page, DIV.row)
     // The RIGHT band (left, then right, in DOM order): the row's left edge can
     // sit under the ruler / Explorer at this viewport size.
-    const band = content.locator('[data-canvas-spacing-band][data-spacing-kind="padding"][data-spacing-axis="column"]').nth(1)
+    const band = page.locator('[data-canvas-spacing-band][data-spacing-kind="padding"][data-spacing-axis="column"]').nth(1)
     await expect(band).toBeVisible({ timeout: 15_000 })
     const box = (await band.boundingBox())!
     const x = box.x + box.width / 2

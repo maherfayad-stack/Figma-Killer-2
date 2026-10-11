@@ -60,8 +60,7 @@ import {
 import { installGestureForwarding } from './gestureForwarding'
 import { installKeyForwarding } from './keyForwarding'
 import { installInlineTextEdit } from './inlineTextEdit'
-import { rectRelativeToBody } from './nodeDom'
-import { installResizeHandles } from './resizeHandles'
+import { installResizeSession } from './resizeSession'
 import { measureNodes } from './measureNodes'
 import { collectDropCandidates } from './dropCandidates'
 import { createGeometryDirtySignal } from './geometryDirtySignal'
@@ -79,7 +78,6 @@ import { applyOptimisticStyle, clearOptimisticStyle, revertAllOptimisticStyle } 
 import { startHoverSuppression, type HoverSuppressionController } from './hoverSuppressionRules'
 import { startScrollUnroll, type ScrollUnrollController } from './scrollUnrollRules'
 import { startAnimationFreeze, type AnimationFreezeController } from './animationFreezeRules'
-import { SELECTION_CHROME_RULES, SELECTION_OVERLAY_ROOT_ID, SELECTION_STYLE_TAG_ID } from './selectionChromeCss'
 import { wireHmrStateAcrossUpdates, type ViteHotContext } from './hmrState'
 import { findNthNodeById } from './nodeIdIndexing'
 import { collectScrollDeficits, DEFAULT_FRAME_FIT_HEIGHT, resolveFrameFitHeight, type FrameFitMetrics } from './frameFitRules'
@@ -88,7 +86,6 @@ import {
   FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
   LIVE_FRAME_FIT_STRUCTURAL_DEBOUNCE_MS,
 } from './frameFitMutationScheduler'
-import { isSelectionChromeMutation } from './selectionChromeMutation'
 import { OVERLAY_ID_ATTR } from './overlayStyleAttr'
 
 const RUNTIME_SCROLL_UNROLL_STYLE_ID = 'studio-runtime-scroll-unroll'
@@ -125,8 +122,7 @@ function isRuntimeOwnedStyleOwner(owner: Element): boolean {
   return (
     owner.hasAttribute(OVERLAY_ID_ATTR) ||
     owner.id === RUNTIME_SCROLL_UNROLL_STYLE_ID ||
-    owner.id === RUNTIME_ANIMATION_STYLE_ID ||
-    owner.id === SELECTION_STYLE_TAG_ID
+    owner.id === RUNTIME_ANIMATION_STYLE_ID
   )
 }
 
@@ -254,144 +250,20 @@ export function createStudioRuntimeBridge(options: StudioRuntimeBridgeOptions): 
     resetFrameFit()
   }
 
-  // ---- selection / hover rings (new: the frame owns DOM + positioning) ----
-  let overlayRoot: HTMLDivElement | null = null
-
-  function ensureOverlayRoot(): HTMLDivElement | null {
-    if (!doc.body) return null
-    if (overlayRoot?.isConnected) return overlayRoot
-    let root = doc.getElementById(SELECTION_OVERLAY_ROOT_ID) as HTMLDivElement | null
-    if (!root) {
-      root = doc.createElement('div')
-      root.id = SELECTION_OVERLAY_ROOT_ID
-      Object.assign(root.style, {
-        position: 'absolute',
-        top: '0',
-        left: '0',
-        width: '0',
-        height: '0',
-        overflow: 'visible',
-        pointerEvents: 'none',
-        zIndex: '2147483647',
-      })
-      doc.body.appendChild(root)
-    }
-    // An absolutely-positioned overlay root needs a positioned containing
-    // block at `body` — otherwise it resolves against the initial
-    // containing block instead, which breaks the "rect relative to body"
-    // math every ring position below depends on. Only set when the author
-    // left `position` at the CSS default, so an already-positioned body
-    // (`relative`/`sticky`/`fixed`) keeps its own value.
-    if (view.getComputedStyle(doc.body).position === 'static') {
-      doc.body.style.position = 'relative'
-    }
-    if (!doc.getElementById(SELECTION_STYLE_TAG_ID)) {
-      const styleEl = doc.createElement('style')
-      styleEl.id = SELECTION_STYLE_TAG_ID
-      styleEl.setAttribute('data-source', 'studio-runtime')
-      // Token values (`--canvas-selection-ring` etc.) are NOT computed here —
-      // a cross-origin frame cannot read the parent's `getComputedStyle`.
-      // They arrive as an `applyOverlay` stylesheet from the parent (L5); see
-      // `selectionChromeCss.ts`'s module doc. Until that lands the rings
-      // still create/position correctly, just with whatever `box-shadow`
-      // the unresolved `var()` falls back to (none).
-      styleEl.textContent = SELECTION_CHROME_RULES
-      doc.head?.appendChild(styleEl)
-    }
-    overlayRoot = root
-    return root
-  }
-
-  function createRing(kind: 'selection' | 'hover'): HTMLDivElement {
-    const el = doc.createElement('div')
-    el.setAttribute(kind === 'selection' ? 'data-canvas-selection-ring' : 'data-canvas-hover-ring', '')
-    el.style.display = 'none'
-    ensureOverlayRoot()?.appendChild(el)
-    return el
-  }
-
-function ringKey(nodeId: string, occurrenceIndex: number): string {
-    return `${nodeId}#${occurrenceIndex}`
-  }
-
-  function positionRingOnNode(ringEl: HTMLDivElement, nodeId: string, occurrenceIndex: number): void {
-    const target = findByNodeId(doc, nodeId, occurrenceIndex)
-    if (!target || !doc.body) {
-      ringEl.style.display = 'none'
-      return
-    }
-    const rect = rectRelativeToBody(target, doc.body)
-    ringEl.style.display = ''
-    ringEl.style.width = `${rect.width}px`
-    ringEl.style.height = `${rect.height}px`
-    ringEl.style.transform = `translate(${rect.x}px, ${rect.y}px)`
-  }
-
-  const selectionRings = new Map<string, { nodeId: string; occurrenceIndex: number; el: HTMLDivElement }>()
-  let hoverRing: HTMLDivElement | null = null
-  let hoverRef: { nodeId: string; occurrenceIndex: number } | null = null
-
-  function repositionAllRings(): void {
-    for (const { nodeId, occurrenceIndex, el } of selectionRings.values()) positionRingOnNode(el, nodeId, occurrenceIndex)
-    if (hoverRing && hoverRef) positionRingOnNode(hoverRing, hoverRef.nodeId, hoverRef.occurrenceIndex)
-    resize.reposition()
-  }
-
-  let repositionRaf: number | null = null
-  function scheduleReposition(): void {
-    if (repositionRaf !== null) return
-    const raf = view.requestAnimationFrame?.bind(view) ?? requestAnimationFrame
-    repositionRaf = raf(() => {
-      repositionRaf = null
-      repositionAllRings()
-    })
-  }
-
-  function handleSelect(refs: readonly { nodeId: string; occurrenceIndex: number }[]): void {
-    const next = new Set(refs.map((ref) => ringKey(ref.nodeId, ref.occurrenceIndex)))
-    for (const [key, { el }] of selectionRings) {
-      if (!next.has(key)) {
-        el.remove()
-        selectionRings.delete(key)
-      }
-    }
-    for (const ref of refs) {
-      const key = ringKey(ref.nodeId, ref.occurrenceIndex)
-      let entry = selectionRings.get(key)
-      if (!entry) {
-        entry = { ...ref, el: createRing('selection') }
-        selectionRings.set(key, entry)
-      }
-      positionRingOnNode(entry.el, ref.nodeId, ref.occurrenceIndex)
-    }
-  }
-
-  // ---- resize handles (`live-13`) — drawn and dragged here, committed by the parent ----
+  // ---- resize session (`live-13`) — the parent draws the handles and holds the pointer; the frame sizes ----
   let resizeGestureActive = false
-  const resize = installResizeHandles({
+  const resize = installResizeSession({
     doc,
     view,
-    ensureOverlayRoot,
     resolveTarget: (target) => findByNodeId(doc, target.nodeId, target.occurrenceIndex),
     onCommit: (target, patch) => postOutbound({ type: 'resize:commit', nodeId: target.nodeId, occurrenceIndex: target.occurrenceIndex, patch }),
     onGuides: (guides) => postOutbound({ type: 'resize:guides', guides: [...guides] }),
-    // No height report while the badge hangs under the element (canvas-23) — one after.
+    // No height report while the parent's size badge hangs under the element (canvas-23) — one after.
     onGestureChange: (active) => {
       resizeGestureActive = active
       if (!active) scheduleFrameResize()
     },
-    onPreview: scheduleReposition,
   })
-
-  function handleHover(nodeId: string | null, occurrenceIndex: number): void {
-    hoverRef = nodeId === null ? null : { nodeId, occurrenceIndex }
-    if (nodeId === null) {
-      if (hoverRing) hoverRing.style.display = 'none'
-      return
-    }
-    hoverRing ??= createRing('hover')
-    positionRingOnNode(hoverRing, nodeId, occurrenceIndex)
-  }
 
   // ---- measure ------------------------------------------------------------
   // Split out (`measureNodes.ts`) with `dropCandidates.ts` (`speed-06`) to
@@ -456,15 +328,14 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
   // ---- outbound: runtime errors (Z5) — taps + bounds in `runtimeErrorTaps.ts` ----
   const disposeErrorTaps = startRuntimeErrorTaps(view, (finding) => postOutbound({ type: 'error', ...finding }))
 
-  // ---- resize / layout-driven ring repositioning ----------------------------
-  view.addEventListener('resize', scheduleReposition)
+  // ---- layout-driven fit --------------------------------------------------
   // A genuine content mutation may mean the page got shorter, so the fit pin
   // is re-derived from scratch instead of only ever growing — through the
   // SAME scheduler the portal frame uses (`frameFitMutationScheduler.ts`,
   // PERF-9). It ignores this runtime's own writes by construction: the pin
   // write on `body.style`, the resize preview's stamp and `speed-01`'s
   // optimistic style stamp are all ATTRIBUTE records, which never reset a
-  // fit, and the ring overlay is selection chrome. What is left — nodes
+  // fit, and the runtime draws no chrome in the document. What is left — nodes
   // added or removed — settles after a trailing debounce, because a live app
   // may add and remove nodes every frame on its own (a carousel, an
   // `AnimatePresence`) and each reset is a full-document forced layout.
@@ -478,18 +349,16 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
     const MutationObserverCtor = view.MutationObserver ?? MutationObserver
     try {
       layoutObserver = new MutationObserverCtor((records) => {
-        // The rings' own repositioning writes are chrome; repositioning for
-        // them would schedule another frame for nothing.
-        if (!records.every(isSelectionChromeMutation)) {
-          scheduleReposition()
-          geometrySignal.notify()
-        }
-        frameFitScheduler.handle(records)
+        geometrySignal.notify()
+        // A text change moves boxes (the geometry signal above) but never resets the fit pin: a live app may update a
+        // counter every frame, and each reset is a full-document forced layout.
+        frameFitScheduler.handle(records.filter((record) => record.type !== 'characterData'))
       })
-      layoutObserver.observe(doc.body, { childList: true, subtree: true, attributes: true })
+      // `characterData`: typing in an inline text edit resizes its box without adding or removing a node.
+      layoutObserver.observe(doc.body, { childList: true, subtree: true, attributes: true, characterData: true })
     } catch (_err) {
-      // Some browser realms reject observing a cross-realm node. Rings still
-      // reposition on the next explicit select/hover/resize.
+      // Some browser realms reject observing a cross-realm node. The head /
+      // load / font / resize listeners still cover everything but a body change.
       layoutObserver = null
     }
   }
@@ -516,12 +385,7 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       frameFitPassesUsed += 1
       doc.body.style.height = `${fitted}px`
     }
-    // Chrome is not content (canvas-23): handles and the W×H badge hang past
-    // an element at the body's bottom edge. Hidden for the read, same task.
-    const chrome = overlayRoot?.isConnected ? overlayRoot : null
-    if (chrome) chrome.style.display = 'none'
     const height = doc.body.scrollHeight
-    if (chrome) chrome.style.display = ''
     if (height === lastReportedHeight) return
     lastReportedHeight = height
     postOutbound({ type: 'frame:resize', height })
@@ -565,12 +429,6 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       case 'removeOverlay':
         removeOverlay(message.id)
         return
-      case 'select':
-        handleSelect(message.refs)
-        return
-      case 'hover':
-        handleHover(message.nodeId, message.occurrenceIndex)
-        return
       case 'measure':
         handleMeasure(message.requestId, message.refs, message.properties)
         return
@@ -582,6 +440,15 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
         return
       case 'setResizeTarget':
         resize.setTarget(message.ref, message.proportional, { sizing: message.sizing ?? {}, snap: message.snap ?? null, anchors: message.anchors ?? null })
+        return
+      case 'resize:begin':
+        resize.begin(message.handle)
+        return
+      case 'resize:step':
+        resize.step(message.dx, message.dy, { shiftKey: message.shiftKey, altKey: message.altKey })
+        return
+      case 'resize:end':
+        resize.end(message.commit)
         return
       case 'text:edit':
         textEdit.handleReply(message)
@@ -597,15 +464,12 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
         return
       case 'optimistic.revert':
         revertOptimisticNodes(doc, message.refs)
-        scheduleReposition()
         return
       case 'optimistic.style':
         applyOptimisticStyle(doc, message.ref, message.patch) // `message.className` is wire-informational only — see `optimisticStyle.ts`
-        scheduleReposition()
         return
       case 'optimistic.style:clear':
         clearOptimisticStyle(doc, message.ref)
-        scheduleReposition()
         return
       case 'dropCandidates':
         handleDropCandidates(message.requestId)
@@ -661,7 +525,6 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
     handleMessage,
     dispose() {
       view.removeEventListener('message', onWindowMessage)
-      view.removeEventListener('resize', scheduleReposition)
       disposeGestureForwarding()
       disposeKeyForwarding()
       resize.dispose()
@@ -670,7 +533,6 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       layoutObserver?.disconnect()
       geometrySignal.dispose()
       frameFitScheduler.dispose()
-      if (repositionRaf !== null) (view.cancelAnimationFrame?.bind(view) ?? cancelAnimationFrame)(repositionRaf)
       frameResizeObserver?.disconnect()
       if (resizeRaf !== null) (view.cancelAnimationFrame?.bind(view) ?? cancelAnimationFrame)(resizeRaf)
 
@@ -680,15 +542,6 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
 
       for (const el of overlayStyles.values()) el.remove()
       overlayStyles.clear()
-
-      for (const { el } of selectionRings.values()) el.remove()
-      selectionRings.clear()
-      hoverRing?.remove()
-      hoverRing = null
-
-      doc.getElementById(SELECTION_STYLE_TAG_ID)?.remove()
-      overlayRoot?.remove()
-      overlayRoot = null
     },
   }
 }

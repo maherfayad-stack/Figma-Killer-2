@@ -33,7 +33,7 @@
  */
 import type { PreviewAxes } from '@core/studio-board'
 import type { FrameGeometrySnapshot } from '../frameGeometry/frameGeometryTypes'
-import type { ResizeAnchors, ResizeCommitPatch, ResizeSizingMarkers, RuntimeErrorKind, SnapGuide } from '@core/studio-runtime'
+import type { ResizeAnchors, ResizeCommitPatch, ResizeHandle, ResizeSizingMarkers, RuntimeErrorKind, SnapGuide } from '@core/studio-runtime'
 
 /** A real, canonical parser/tree node id — the ONLY id shape any caller outside `frameAdapter/` ever sees. */
 export interface NodeRef {
@@ -157,8 +157,7 @@ export type FrameRuntimeEvent =
    * through the store (only the dimensions the drag changed, as `px`
    * strings, plus the Fixed companions a flex/grid child needs — `null`
    * clears one; canvas-23). Bridge mode only in practice: a portal frame's
-   * handles are the parent's own React elements (`CanvasResizeHandles`) and
-   * commit directly.
+   * drag runs in the parent and commits directly.
    */
   | { type: 'resize:commit'; nodeId: string; patch: ResizeCommitPatch }
   /** canvas-26 — the snap guides of the frame's resize step changed (`[]` when it ends), in frame-document px; the consumer paints them in the frame's drag layer. */
@@ -276,15 +275,24 @@ export interface FrameDocumentAdapter {
    */
   setInteractionMode(mode: 'design' | 'live'): void
   /**
-   * `live-13` — which node carries resize handles (`null` clears them), and
-   * whether `K4`'s scale tool is armed. The caller has already applied the
-   * module policy (`resizeOffer.ts`); the frame applies the geometric one
-   * (an element whose computed display ignores a size gets no handles).
-   * `options` also carries what the frame cannot know itself (canvas-23/26).
-   * Portal mode draws its handles as the parent's own React elements
-   * (`CanvasResizeHandles`) and ignores this call — see `PortalFrameAdapter`.
+   * `live-13` — which node a resize drag sizes (`null` clears it), and whether
+   * `K4`'s scale tool is armed. The caller has already applied the module
+   * policy (`resizeOffer.ts`); the frame applies the geometric one (an element
+   * whose computed display ignores a size refuses the drag). `options` also
+   * carries what the frame cannot know itself (canvas-23/26).
+   *
+   * The handles themselves are the PARENT's elements for every frame (SB-4,
+   * `CanvasResizeHandles`). A portal frame's drag runs in the parent against the
+   * same-origin element, so this call and the three below it are documented
+   * no-ops there; a bridge frame's drag is driven over the wire.
    */
   setResizeTarget(ref: NodeRef | null, options: ResizeTargetOptions): void
+  /** SB-4 — the parent pressed `handle` on the resize target: the frame reads its layout and starts previewing. Bridge mode only. */
+  resizeBegin(handle: ResizeHandle): void
+  /** SB-4 — the pointer is (`dx`, `dy`) frame px from the press, with ⇧ / ⌥ as held now. Bridge mode only; one call per animation frame. */
+  resizeStep(dx: number, dy: number, modifiers: { shiftKey: boolean; altKey: boolean }): void
+  /** SB-4 — the drag is over; `commit` for a release (the frame answers with `resize:commit` when it changed the size). Bridge mode only. */
+  resizeEnd(commit: boolean): void
   /**
    * `live-18` — replies to the frame's `text:editStart`: whether `nodeId`
    * may be edited inline (the same predicate the portal editor's

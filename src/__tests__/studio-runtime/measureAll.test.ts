@@ -154,16 +154,11 @@ describe('geometry:dirty', () => {
     expect(posted.filter((message) => message.type === 'geometry:dirty')).toHaveLength(2)
   })
 
-  it('a stylesheet written into the head dirties geometry, but the selection chrome stylesheet does not', async () => {
+  it('a stylesheet written into the head dirties geometry', async () => {
     document.body.innerHTML = `<div data-node-id="a"></div>`
     box(document.body, 0, 0, 100, 100)
     const posted = boot()
     bridge!.handleMessage({ type: 'measureAll', requestId: 'r' })
-
-    // The runtime mounts its own chrome stylesheet on the first select: not the page changing.
-    bridge!.handleMessage({ type: 'select', refs: [{ nodeId: 'a', occurrenceIndex: 0 }] })
-    await settle()
-    expect(posted.filter((message) => message.type === 'geometry:dirty')).toHaveLength(0)
 
     bridge!.handleMessage({ type: 'applyOverlay', id: 'mc-classes', css: '.a { width: 9px }' })
     await settle()

@@ -9,6 +9,7 @@ import {
 } from './helpers/studioFixtureProject'
 import { visibleCanvasIframe } from './helpers/canvasIframe'
 import { hittableTargets, installPressProbe, readPressProbe } from './helpers/pressRingProbe'
+import { armClickProbe, readRingProbe } from './helpers/chromeProbe'
 import { E2E_VITE_MODE } from '../../scripts/lib/e2eStack'
 
 /**
@@ -201,26 +202,14 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
       await page.waitForTimeout(30)
     }
 
-    // Diagnostic, not a budget: tree mutations INSIDE the hovered frame that
-    // are not the editor's own chrome. Each one reaches the frame's
-    // auto-height observer, which re-derives the fit with a full-document
-    // forced layout — so a non-zero count names a cost this sweep is paying.
+    // SB-4: the selection chrome is parent-document DOM beside the iframe, so a hover touches NOTHING inside the
+    // frame - not a node, not an attribute, not a character. Counted over the whole sweep.
     await content!.evaluate(() => {
-      const chromeRoot = 'studio-canvas-selection-overlay-root'
-      const inChrome = (node: Node | null) => {
-        const element = node && node.nodeType === 1 ? (node as Element) : (node?.parentElement ?? null)
-        return element?.closest(`#${chromeRoot}`) != null
-      }
-      const state = { contentChildList: 0, chromeChildList: 0, observer: null as MutationObserver | null }
+      const state = { records: 0, observer: null as MutationObserver | null }
       state.observer = new MutationObserver((records) => {
-        for (const record of records) {
-          if (record.type !== 'childList') continue
-          const touched = [...Array.from(record.addedNodes), ...Array.from(record.removedNodes)]
-          if (inChrome(record.target) || (touched.length > 0 && touched.every(inChrome))) state.chromeChildList += 1
-          else state.contentChildList += 1
-        }
+        state.records += records.length
       })
-      state.observer.observe(document.body, { childList: true, subtree: true })
+      state.observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, characterData: true })
       ;(window as unknown as { __p2aHoverMutations: typeof state }).__p2aHoverMutations = state
     })
     const sweep = await profileGesture(page, async () => {
@@ -230,14 +219,12 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
       }
     })
     const mutations = await content!.evaluate(() => {
-      const state = (window as unknown as { __p2aHoverMutations: { contentChildList: number; chromeChildList: number; observer: MutationObserver } })
-        .__p2aHoverMutations
+      const state = (window as unknown as { __p2aHoverMutations: { records: number; observer: MutationObserver } }).__p2aHoverMutations
       state.observer.disconnect()
-      return { content: state.contentChildList, chrome: state.chromeChildList }
+      return state.records
     })
-    annotate('hover sweep: frame tree mutations (content / chrome)', `${mutations.content} / ${mutations.chrome}`)
-    // PERF-2: the hover ring stays mounted, so hover never mutates the frame's tree.
-    expect(mutations.chrome).toBe(0)
+    annotate('hover sweep: mutation records inside the hovered frame', String(mutations))
+    expect(mutations, 'a hover wrote into the frame document').toBe(0)
     annotate('hover sweep: worst frame', `${sweep.worstFrameMs.toFixed(1)}ms`)
     annotate('hover sweep: mean frame', `${sweep.meanFrameMs.toFixed(1)}ms`)
     annotate('hover sweep: frames >20ms', `${sweep.framesOver20ms}/${sweep.frames}`)
@@ -259,27 +246,18 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
     }
     expect(boxes.length, 'fewer than 8 layer rows are on screen').toBeGreaterThanOrEqual(8)
 
-    // Diagnostic: tree mutations in EVERY mounted frame, split into page
-    // content and the editor's own chrome. A Layers hover carries no frame, so
-    // before PERF-13 it armed rings in every mounted frame — and before PERF-2
-    // each of those mounts re-ran that frame's two full-document layout passes.
+    // Diagnostic: mutations of ANY kind in EVERY mounted frame. A Layers hover carries no frame, so before PERF-13
+    // it armed rings in every mounted frame - and before SB-4 each of those wrote into its frame's document.
     const frames = page.frames().filter((frame) => frame !== page.mainFrame())
     await Promise.all(
       frames.map((frame) =>
         frame
           .evaluate(() => {
-            const inChrome = (node: Node | null) => {
-              const element = node && node.nodeType === 1 ? (node as Element) : (node?.parentElement ?? null)
-              return element?.closest('#studio-canvas-selection-overlay-root') != null
-            }
-            const state = { chrome: 0, observer: null as MutationObserver | null }
+            const state = { records: 0, observer: null as MutationObserver | null }
             state.observer = new MutationObserver((records) => {
-              for (const record of records) {
-                const touched = [...Array.from(record.addedNodes), ...Array.from(record.removedNodes)]
-                if (record.type === 'childList' && (inChrome(record.target) || (touched.length > 0 && touched.every(inChrome)))) state.chrome += 1
-              }
+              state.records += records.length
             })
-            if (document.body) state.observer.observe(document.body, { childList: true, subtree: true })
+            if (document.body) state.observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, characterData: true })
             ;(window as unknown as { __p2aLayerHover: typeof state }).__p2aLayerHover = state
           })
           .catch(() => undefined),
@@ -294,25 +272,25 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
         }
       }
     })
-    const chromeMutations = (
+    const frameMutations = (
       await Promise.all(
         frames.map((frame) =>
           frame
             .evaluate(() => {
-              const state = (window as unknown as { __p2aLayerHover?: { chrome: number; observer: MutationObserver } }).__p2aLayerHover
+              const state = (window as unknown as { __p2aLayerHover?: { records: number; observer: MutationObserver } }).__p2aLayerHover
               state?.observer.disconnect()
-              return state?.chrome ?? 0
+              return state?.records ?? 0
             })
             .catch(() => 0),
         ),
       )
     ).reduce((sum, n) => sum + n, 0)
     annotate('layers hover: rows swept', String(boxes.length * 2))
-    annotate('layers hover: chrome tree mutations across all frames', String(chromeMutations))
+    annotate('layers hover: mutation records across all frames', String(frameMutations))
     annotate('layers hover: worst frame', `${sweep.worstFrameMs.toFixed(1)}ms`)
     annotate('layers hover: mean frame', `${sweep.meanFrameMs.toFixed(1)}ms`)
     annotate('layers hover: frames >20ms', `${sweep.framesOver20ms}/${sweep.frames}`)
-    expect(chromeMutations).toBe(0)
+    expect(frameMutations, 'a Layers hover wrote into a frame document').toBe(0)
     expect(sweep.worstFrameMs).toBeLessThan(BUDGET_LAYERS_HOVER_WORST_FRAME_MS)
   })
 
@@ -320,34 +298,24 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
     const { canvasRoot, content } = await openAtWorkingZoom(page)
     const target = content.locator('.block__heading').nth(1)
     await selectInFrame(page, target)
-    await expect(content.locator(SELECTION_RING).first()).toBeAttached({ timeout: 10_000 })
+    await expect(page.locator(SELECTION_RING).first()).toBeAttached({ timeout: 10_000 })
     const toolbar = page.locator('[data-canvas-selection-toolbar="true"]')
     await expect(toolbar).toBeVisible({ timeout: 10_000 })
     await page.waitForTimeout(600)
 
     // Sample, every animation frame, where the toolbar is relative to where
-    // the ring is — both in page coordinates. The ring lives inside the
-    // iframe, so its page rect is the iframe's rendered box plus the ring's
-    // in-frame rect times the canvas zoom.
+    // the ring is - both in page coordinates. The ring is parent-document chrome
+    // beside the iframe, so its page rect is its own.
     await page.evaluate(() => {
-      const iframe = Array.from(document.querySelectorAll<HTMLIFrameElement>('iframe[title^="Canvas frame"]')).find(
-        (f) => f.contentDocument?.querySelector('[data-canvas-selection-ring="true"]'),
-      )
-      if (!iframe) throw new Error('no canvas iframe holds a selection ring')
       const state = { samples: [] as Array<{ dx: number; dy: number }>, handle: 0 }
       const tick = () => {
         const bar = document.querySelector('[data-canvas-selection-toolbar="true"]')
-        const ring = iframe.contentDocument?.querySelector('[data-canvas-selection-ring="true"]')
-        if (bar && ring && iframe.offsetWidth > 0) {
-          const frameRect = iframe.getBoundingClientRect()
-          const scale = frameRect.width / iframe.offsetWidth
+        const ring = Array.from(document.querySelectorAll<HTMLElement>('[data-canvas-selection-ring="true"]')).find((el) => el.style.display !== 'none')
+        if (bar && ring) {
           const ringRect = ring.getBoundingClientRect()
           const barRect = bar.getBoundingClientRect()
-          if (barRect.width > 0) {
-            state.samples.push({
-              dx: barRect.left - (frameRect.left + ringRect.left * scale),
-              dy: barRect.top - (frameRect.top + ringRect.top * scale),
-            })
+          if (barRect.width > 0 && ringRect.width > 0) {
+            state.samples.push({ dx: barRect.left - ringRect.left, dy: barRect.top - ringRect.top })
           }
         }
         state.handle = requestAnimationFrame(tick)
@@ -389,7 +357,7 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
     const warmUp = content.locator('.block__heading').nth(1)
     const warmUpId = await warmUp.getAttribute('data-node-id')
     await selectInFrame(page, warmUp)
-    await expect(content.locator(SELECTION_RING).first()).toBeAttached({ timeout: 10_000 })
+    await expect(page.locator(SELECTION_RING).first()).toBeAttached({ timeout: 10_000 })
     await page.waitForTimeout(500)
 
     // Targets that are actually under the viewport, in page coordinates (the
@@ -419,35 +387,14 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
     const samples: number[] = []
     for (const [i, target] of clickable.entries()) {
       const nodeId = target.id
-      await content.evaluate((id) => {
-        const state = { downAt: 0, ringAt: 0, paintAt: 0, observer: null as MutationObserver | null }
-        ;(window as unknown as { __p2iClick: typeof state }).__p2iClick = state
-        document.addEventListener('pointerdown', () => { if (state.downAt === 0) state.downAt = performance.now() }, { capture: true, once: true })
-        const check = () => {
-          if (state.ringAt !== 0) return
-          const ring = Array.from(document.querySelectorAll('[data-canvas-selection-ring="true"]')).find(
-            (el) => el.getAttribute('data-canvas-overlay-node-id') === id && (el as HTMLElement).style.display !== 'none',
-          )
-          if (!ring) return
-          state.ringAt = performance.now()
-          requestAnimationFrame(() => { state.paintAt = performance.now() })
-        }
-        state.observer = new MutationObserver(check)
-        state.observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['style', 'data-canvas-overlay-node-id'] })
-      }, nodeId)
-      // ⌘/Ctrl: deep select — a plain click selects at the selection DEPTH
+      await armClickProbe(visibleCanvasIframe(frameEl), nodeId, { acceptPressRing: false })
+      // ⌘/Ctrl: deep select - a plain click selects at the selection DEPTH
       // (`canvasPressTarget.ts`), i.e. the block around this heading, and the
       // ring this measures is the one for exactly `nodeId`.
       await page.keyboard.down('ControlOrMeta')
       await page.mouse.click(target.x, target.y)
       await page.keyboard.up('ControlOrMeta')
-      const ms = await content.evaluate(async () => {
-        const state = (window as unknown as { __p2iClick: { downAt: number; paintAt: number; observer: MutationObserver | null } }).__p2iClick
-        for (let wait = 0; wait < 100 && state.paintAt === 0; wait += 1) await new Promise((r) => setTimeout(r, 10))
-        state.observer?.disconnect()
-        if (state.downAt === 0 || state.paintAt === 0) return -1
-        return state.paintAt - state.downAt
-      })
+      const ms = await readRingProbe(page)
       expect(ms, `click ${i}: no ring for ${nodeId} painted within 1 s`).toBeGreaterThan(0)
       samples.push(ms)
       await page.waitForTimeout(250)
@@ -510,7 +457,7 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
           }),
         )
       const before = await rects()
-      await installPressProbe(content)
+      await installPressProbe(iframe)
       await content.evaluate(() => {
         const state = { longest: 0 }
         ;(window as unknown as { __pressLong: typeof state }).__pressLong = state
@@ -525,7 +472,7 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
       await page.mouse.down()
       // Held for half a second: ring on the first frame and never gone.
       await page.waitForTimeout(FIRST_PRESS_HOLD_MS)
-      const held = await readPressProbe(content)
+      const held = await readPressProbe(page)
       await page.mouse.up()
       await page.waitForTimeout(800)
       const longest = await content.evaluate(() => (window as unknown as { __pressLong: { longest: number } }).__pressLong.longest)
@@ -542,7 +489,7 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
       expect(held.realRingMs, 'the selection itself never rendered while the button was held').toBeGreaterThan(0)
       expect(held.realRingMs).toBeLessThan(BUDGET_FIRST_PRESS_TO_REAL_RING_MS)
       expect(held.realIds.length, 'the selection ring named more than one layer while the button was held').toBe(1)
-      const settled = await content.evaluate(() => Array.from(document.querySelectorAll('[data-canvas-selection-ring="true"]')).map((el) => el.getAttribute('data-canvas-overlay-node-id')))
+      const settled = await page.evaluate(() => Array.from(document.querySelectorAll('[data-canvas-selection-ring="true"]')).map((el) => el.getAttribute('data-canvas-overlay-node-id')))
       expect(settled, 'the release or the click changed the selection the press made').toEqual(held.realIds)
       expect(drift, 'selecting moved a mounted frame').toBeLessThan(0.5)
     })
@@ -557,7 +504,7 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
     const { content } = await openAtWorkingZoom(page)
     const heading = content.locator('.block__heading').nth(1)
     await selectInFrame(page, heading)
-    await expect(content.locator(SELECTION_RING).first()).toBeAttached({ timeout: 10_000 })
+    await expect(page.locator(SELECTION_RING).first()).toBeAttached({ timeout: 10_000 })
     // Edit it the way a user most often does: the inspector's Text field.
     const original = (await heading.textContent())?.trim() ?? ''
     const fields = page.locator('input:visible, textarea:visible')
@@ -622,7 +569,7 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
     })
     const { content } = await openAtWorkingZoom(page)
     await selectInFrame(page, content.locator('.block__heading').nth(1))
-    await expect(content.locator(SELECTION_RING).first()).toBeAttached({ timeout: 10_000 })
+    await expect(page.locator(SELECTION_RING).first()).toBeAttached({ timeout: 10_000 })
     // Let the click's own settle passes and the poster queue finish.
     await page.waitForTimeout(3000)
 

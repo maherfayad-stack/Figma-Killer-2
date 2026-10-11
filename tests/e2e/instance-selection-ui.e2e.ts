@@ -174,7 +174,7 @@ test.describe('instance-ui-01: click selects the instance, Enter/Esc step in and
     // The ring. A `studio.instance` renders no element of its own, so this
     // fails outright without `canvasNodeLookup`'s fragment-node rect fallback:
     // the node is selected, the panel is open, and the canvas shows nothing.
-    const ring = contentFrame.locator('[data-canvas-selection-ring="true"]')
+    const ring = page.locator('[data-canvas-selection-ring="true"]')
     await expect(
       ring,
       'the selected studio.instance drew no selection ring — a zero-DOM fragment node has no [data-node-id] element to measure',
@@ -208,7 +208,7 @@ test.describe('instance-ui-01: click selects the instance, Enter/Esc step in and
     // need the store — used below to prove Enter/Escape move the selection
     // ACROSS the instance boundary, not merely open and close a panel.
     const ringNodeIds = async (): Promise<(string | null)[]> =>
-      contentFrame
+      page
         .locator('[data-canvas-selection-ring="true"]')
         .evaluateAll((els) => els.map((el) => el.getAttribute('data-canvas-overlay-node-id')))
 

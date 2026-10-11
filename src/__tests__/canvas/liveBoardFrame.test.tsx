@@ -204,22 +204,20 @@ describe('LiveBoardFrame — selection chrome while not ready (speed-04)', () =>
       />,
     )
 
-    // The Tier-0 fallback's own overlay is real and working: its ring
-    // lands inside ITS OWN iframe document (WS-5.1).
+    // The Tier-0 fallback's own overlay is real and working: its ring is
+    // parent-document chrome in ITS OWN viewport, beside its iframe (SB-4).
     const fallbackIframe = await waitFor(() => {
       const el = document.querySelector('iframe[srcdoc]') as HTMLIFrameElement | null
       expect(el?.contentDocument?.body).toBeTruthy()
       return el!
     })
     await waitFor(() => {
-      expect(
-        fallbackIframe.contentDocument!.querySelector('[data-canvas-selection-ring]'),
-      ).not.toBeNull()
+      expect(fallbackIframe.parentElement?.querySelector('[data-canvas-selection-ring]')).not.toBeNull()
     })
 
     // Exactly one toolbar and one inspector wrapper in the whole document —
     // not two. Before this change the hidden bridge frame's OWN overlay
-    // (bridgeChrome=true, `useBridgeSelectionChrome`) mounted unconditionally
+    // (bridgeChrome=true, `useBridgeResizeTarget`) mounted unconditionally
     // and rendered a second, independently-positioned copy of both for the
     // SAME selection the instant it received a non-empty `selectedNodeIds`.
     expect(document.querySelectorAll('[data-canvas-selection-toolbar]').length).toBe(1)
@@ -228,6 +226,7 @@ describe('LiveBoardFrame — selection chrome while not ready (speed-04)', () =>
     // The hidden bridge container mounted its iframe (booting concurrently)
     // but carries no overlay chrome of its own while not ready.
     const bridgeContainer = document.querySelector('[data-testid="live-board-frame-bridge"]')
+    expect(bridgeContainer?.querySelector('[data-canvas-frame-chrome]')).toBeNull()
     expect(bridgeContainer?.querySelector('[data-canvas-selection-toolbar]')).toBeNull()
     expect(bridgeContainer?.querySelector('[data-canvas-in-place-inspector]')).toBeNull()
   })

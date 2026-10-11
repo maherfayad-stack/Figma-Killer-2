@@ -218,7 +218,7 @@ test.describe('press-and-drag moves the layer the press means', () => {
 
       // 2. That press was a click: it selected the TOP-LEVEL card — not the
       //    button (a real <button> used to select itself on pointerdown).
-      const ring = content.locator('[data-canvas-selection-ring="true"]')
+      const ring = page.locator('[data-canvas-selection-ring="true"]')
       await expect(ring).toHaveCount(1, { timeout: 15_000 })
       await expect(ring.first()).toHaveAttribute('data-canvas-overlay-node-id', cardId!)
 
@@ -245,7 +245,7 @@ test.describe('press-and-drag moves the layer the press means', () => {
       // A plain click on a row selects the list it sits in (the top level).
       const rowCenter = await centerOf(row)
       await page.mouse.click(rowCenter.x, rowCenter.y)
-      const ring = content.locator('[data-canvas-selection-ring="true"]')
+      const ring = page.locator('[data-canvas-selection-ring="true"]')
       await expect(ring.first()).toHaveAttribute('data-canvas-overlay-node-id', listId!, { timeout: 15_000 })
 
       // Press the ROW and drag above the card: the LIST moves, rows intact.
@@ -303,7 +303,7 @@ test.describe('press-and-drag moves the layer the press means', () => {
       const content = canvasContentFrame(boardFrame)
       const row = content.locator('.row').first()
       await expect(row).toBeVisible({ timeout: 30_000 })
-      const ring = content.locator('[data-canvas-selection-ring="true"]')
+      const ring = page.locator('[data-canvas-selection-ring="true"]')
 
       // Select something, then pan with Space held from the empty board: a pan
       // is not a click, and the selection survives it.
@@ -411,7 +411,7 @@ test.describe('press-and-drag moves the layer the press means', () => {
       const middleContent = canvasContentFrame(middle)
       const heading = middleContent.getByText('Screen two')
       await expect(heading).toBeVisible({ timeout: 30_000 })
-      const ring = middleContent.locator('[data-canvas-selection-ring="true"]')
+      const ring = page.locator('[data-canvas-selection-ring="true"]')
 
       const select = async () => {
         // Near the heading's left end: the Properties panel may cover the frame's right half.

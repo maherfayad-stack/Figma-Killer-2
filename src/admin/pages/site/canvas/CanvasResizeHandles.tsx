@@ -28,9 +28,15 @@
  * component's — see `resizeOffer.ts` for the three ways a drag can have no
  * honest target, and why offering one anyway is worse than offering nothing.
  */
-import { useState } from 'react'
+import { use, useEffect, useState } from 'react'
 import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
+import { registry } from '@core/module-engine'
+import { getNodeHtmlTag } from '@core/page-tree'
+import { CanvasFrameAdapterContext } from './CanvasContexts'
 import { presentedElementForNode } from './canvasNodeLookup'
+import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
+import { isBridgeChromeAdapter } from './useBridgeResizeTarget'
+import { useBridgeResizeDrag } from './useBridgeResizeDrag'
 import { findNodeById } from './InPlaceInspector/findNodeById'
 import { RESIZE_HANDLE_ATTR, RESIZE_HANDLES, RESIZE_SIZE_BADGE_ATTR, ROTATE_CORNERS, ROTATE_HANDLE_ATTR } from '@core/studio-runtime'
 import { useVectorEditTarget } from './BoardVectorLayer/vectorEditState'
@@ -47,6 +53,8 @@ interface CanvasResizeHandlesProps {
   nodeId: string
   /** The frame's document, so the element's display can be checked before rendering anything; `null` for a bridge frame. */
   frameDocument: Document | null
+  /** The frame's iframe element: the canvas zoom a wire-driven drag divides its pointer by. */
+  iframeElement: HTMLIFrameElement | null
   /**
    * Hands the frame element back to the overlay, which positions it in its RAF
    * tick. A callback rather than a forwarded ref because the overlay needs it
@@ -56,8 +64,39 @@ interface CanvasResizeHandlesProps {
   onFrameReady: (element: HTMLDivElement | null) => void
 }
 
-export function CanvasResizeHandles({ nodeId, frameDocument: iframeDoc, onFrameReady }: CanvasResizeHandlesProps) {
+/**
+ * A live frame's element is on the far side of the wire, so the geometric half of `canOfferResize` (its computed
+ * `display`) is asked of the frame once per selected node: `null` until the answer arrives, and for a frame that
+ * does not answer (then no handles are drawn, the honest result of not knowing the element can be sized).
+ */
+function useBridgeTargetDisplay(adapter: FrameDocumentAdapter | null, nodeId: string): string | null {
+  const [answer, setAnswer] = useState<{ nodeId: string; display: string | null } | null>(null)
+  useEffect(() => {
+    if (!adapter) return
+    let current = true
+    adapter
+      .measure([{ nodeId }], ['display'])
+      .then(([measurement]) => {
+        if (current) setAnswer({ nodeId, display: measurement?.rect ? (measurement.computedStyle.display ?? null) : null })
+      })
+      .catch((err: unknown) => {
+        // A frame mid-reload does not answer; the next selection asks again.
+        console.warn('[CanvasResizeHandles] display read failed:', err)
+      })
+    return () => {
+      current = false
+    }
+  }, [adapter, nodeId])
+  return answer?.nodeId === nodeId ? answer.display : null
+}
+
+export function CanvasResizeHandles({ nodeId, frameDocument: iframeDoc, iframeElement, onFrameReady }: CanvasResizeHandlesProps) {
   const [frame, setFrame] = useState<HTMLDivElement | null>(null)
+  // A cross-origin (bridge) frame has no document to read: the same handles are drawn, from what the frame says
+  // about the element, and the drag is driven over the wire (`useBridgeResizeDrag`).
+  const adapter = use(CanvasFrameAdapterContext)
+  const bridge = iframeDoc === null && isBridgeChromeAdapter(adapter) ? adapter : null
+  const bridgeDisplay = useBridgeTargetDisplay(bridge, nodeId)
 
   // The node itself, for its `moduleId` — the fact that decides whether a
   // width dragged here ever reaches the user's file. Without it the drag is
@@ -74,11 +113,12 @@ export function CanvasResizeHandles({ nodeId, frameDocument: iframeDoc, onFrameR
   // P5-D — while this svg's POINTS are being edited, a drag on it means a
   // point; its box handles would compete for the same presses.
   const editingPoints = useVectorEditTarget()?.hostNodeId === nodeId
+  const bridgeTag = bridge && node ? getNodeHtmlTag(node, registry.get(node.moduleId)) : ''
   const sizeable = !editingPoints && canOfferResize({
     moduleId: node?.moduleId ?? null,
-    hasOwnElement: target !== null,
-    display,
-    localName: target?.localName ?? '',
+    hasOwnElement: bridge ? bridgeDisplay !== null : target !== null,
+    display: bridge ? (bridgeDisplay ?? '') : display,
+    localName: bridge ? bridgeTag.toLowerCase() : (target?.localName ?? ''),
   })
 
   useElementResizeDrag({
@@ -92,6 +132,8 @@ export function CanvasResizeHandles({ nodeId, frameDocument: iframeDoc, onFrameR
     iframeDoc: sizeable ? iframeDoc : null,
     nodeId,
   })
+  // A live frame: the same handles, a different drag.
+  useBridgeResizeDrag({ frame, adapter: sizeable ? bridge : null, iframeElement })
 
   // Rendering nothing is the honest answer in every case `canOfferResize`
   // refuses — see that module for which three they are. The alternative is
@@ -115,7 +157,7 @@ export function CanvasResizeHandles({ nodeId, frameDocument: iframeDoc, onFrameR
       {iframeDoc && target && <CanvasSpacingHandles nodeId={nodeId} iframeDoc={iframeDoc} target={target} />}
       {/* P5-F / IX-25 — rotation zones just OUTSIDE each corner handle, so a
           press on the corner still resizes. Invisible; the cursor says it. */}
-      {ROTATE_CORNERS.map((corner) => (
+      {iframeDoc && ROTATE_CORNERS.map((corner) => (
         <div key={`rotate-${corner}`} className={styles.rotateZone} {...{ [ROTATE_HANDLE_ATTR]: corner }} />
       ))}
       {RESIZE_HANDLES.map((handle) => (

@@ -26,7 +26,7 @@
  * ## Two additions beyond the plan's literal message table
  *
  *   - `setMode` (inbound) — the runtime has no other way to know whether to
- *     run hover-suppression / scroll-unroll / animation-freeze / rings at
+ *     run hover-suppression / scroll-unroll / animation-freeze at
  *     all. A live Tier-2 frame is mounted for BOTH the still design board
  *     (`'design'`) and the real-size live/preview view (`'live'`) — exactly
  *     the same two `CanvasInteractionContext` values a Tier-0 portal frame
@@ -51,7 +51,7 @@
  * every row's element shares the identical stamp (`idStamp.ts` has no
  * per-iteration information to mint a unique one with; see
  * `liveNodeResolve.ts`'s module doc for the full picture). Every message
- * below that names a node — inbound (`select`'s `refs`, `hover`, `measure`,
+ * below that names a node — inbound (`measure`,
  * the four `optimistic.*`, the `text:edit` reply) and outbound (`pointer`,
  * `text:editStart`/`text:commit`/`text:cancel`,
  * `measure:result`'s echoed-back measurements) — pairs the stamp id with a
@@ -72,7 +72,14 @@ import { DropCandidatesMessageSchema, DropCandidatesResultMessageSchema } from '
 import { GeometryDirtyMessageSchema, MeasureAllMessageSchema, MeasureAllResultMessageSchema } from './geometryMessages'
 import { FrameBlurMessageSchema, KeyMessageSchema } from './keyMessages'
 import { NodeRectSchema, NodeRefSchema, PointerModifiersSchema } from './messageShapes'
-import { ResizeCommitMessageSchema, ResizeGuidesMessageSchema, SetResizeTargetMessageSchema } from './resizeMessages'
+import {
+  ResizeBeginMessageSchema,
+  ResizeCommitMessageSchema,
+  ResizeEndMessageSchema,
+  ResizeGuidesMessageSchema,
+  ResizeStepMessageSchema,
+  SetResizeTargetMessageSchema,
+} from './resizeMessages'
 import {
   OptimisticInsertMessageSchema,
   OptimisticDeleteMessageSchema,
@@ -102,9 +109,12 @@ export { NodeRectSchema, type NodeRect } from './messageShapes'
 export { FrameBlurMessageSchema, KEY_NAME_MAX, KeyMessageSchema, type KeyMessage } from './keyMessages'
 export {
   RESIZE_SNAP_SIBLINGS_MAX,
+  ResizeBeginMessageSchema,
   ResizeCommitMessageSchema,
   ResizeCommitPatchSchema,
+  ResizeEndMessageSchema,
   ResizeGuidesMessageSchema,
+  ResizeStepMessageSchema,
   ResizeSizingMarkersSchema,
   ResizeSnapContextSchema,
   SetResizeTargetMessageSchema,
@@ -135,7 +145,7 @@ export type RuntimeMode = Static<typeof RuntimeModeSchema>
 /**
  * The stylesheet an injector used to append to `<head>` in the portal world
  * (`EditorChrome`, `ClassStyle`, `CanvasAnimation`, `ScrollUnroll`,
- * `HoverSuppression`, selection ring CSS): the parent computes the CSS text
+ * `HoverSuppression`): the parent computes the CSS text
  * (reusing the SAME rule modules the portal injectors use) and the runtime
  * mounts/updates a `<style id={id}>` with it verbatim. Generic on purpose —
  * the runtime does not need to know what each `id` MEANS to manage it.
@@ -149,19 +159,6 @@ export const ApplyOverlayMessageSchema = Type.Object({
 export const RemoveOverlayMessageSchema = Type.Object({
   type: Type.Literal('removeOverlay'),
   id: Type.String({ minLength: 1 }),
-})
-
-/** Sets the `data-*` attributes the ring CSS keys on, and shows/positions the selection ring(s). */
-export const SelectMessageSchema = Type.Object({
-  type: Type.Literal('select'),
-  refs: Type.Array(NodeRefSchema),
-})
-
-/** Same, for the hover ring — `null` clears it. */
-export const HoverMessageSchema = Type.Object({
-  type: Type.Literal('hover'),
-  nodeId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
 })
 
 /**
@@ -239,12 +236,13 @@ export type TextEditReplyMessage = Static<typeof TextEditReplyMessageSchema>
 export const InboundRuntimeMessageSchema = Type.Union([
   ApplyOverlayMessageSchema,
   RemoveOverlayMessageSchema,
-  SelectMessageSchema,
-  HoverMessageSchema,
   MeasureMessageSchema,
   SetAxesMessageSchema,
   SetModeMessageSchema,
   SetResizeTargetMessageSchema,
+  ResizeBeginMessageSchema,
+  ResizeStepMessageSchema,
+  ResizeEndMessageSchema,
   TextEditReplyMessageSchema,
   OptimisticInsertMessageSchema,
   OptimisticDeleteMessageSchema,

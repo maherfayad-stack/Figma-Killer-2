@@ -121,7 +121,7 @@ test.describe('CV-2 — the variants gallery on the Components board', () => {
     // Selecting a cell selects that variant's root: a composite id whose tail is Button.tsx.
     const ghostSmall = content.locator('button.btn-ghost').first()
     await selectInFrame(page, ghostSmall)
-    await expect(content.locator(SELECTION_RING)).toHaveCount(1)
+    await expect(page.locator(SELECTION_RING)).toHaveCount(1)
     expect(await ghostSmall.getAttribute('data-node-id')).toContain('~components/Button.tsx:')
 
     const after = ['components/Button.tsx', 'components/Button.css', 'pages/Home.tsx'].map((rel) =>

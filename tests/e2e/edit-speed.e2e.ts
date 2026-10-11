@@ -53,7 +53,7 @@ test.describe('selecting an element opens the inspector without moving the board
     expect(before.length).toBeGreaterThan(0)
 
     await selectInFrame(page, content.locator('.block__heading').nth(1))
-    await expect(content.locator(SELECTION_RING).first()).toBeAttached({ timeout: 10_000 })
+    await expect(page.locator(SELECTION_RING).first()).toBeAttached({ timeout: 10_000 })
     await expect(sidebar).toHaveAttribute('data-expanded', 'true')
     await page.waitForTimeout(500)
 

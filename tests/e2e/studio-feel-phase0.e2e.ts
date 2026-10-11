@@ -211,7 +211,7 @@ test.describe('Phase 0 exit dogfood', () => {
 
     const run = await findSiblingRun(contentFrame)
     const targetId = run.childIds[0]!
-    const rings = contentFrame.locator(SELECTION_RING)
+    const rings = page.locator(SELECTION_RING)
     await panIntoView(page, canvasRoot, contentFrame.locator(`[data-node-id="${targetId}"]`).first(), 80)
     await selectAndConfirm(page, contentFrame, targetId)
 
@@ -366,14 +366,14 @@ test.describe('Phase 0 exit dogfood', () => {
         { steps: 6 },
       )
 
-      const anyLabel = contentFrame.locator('[data-canvas-measure-label][data-measure-kind="distance"]')
+      const anyLabel = page.locator('[data-canvas-measure-label][data-measure-kind="distance"]')
       await expect(
         anyLabel.first(),
         'Alt-hovering a second element drew no measurement label — the K5 overlay never appeared',
       ).toBeVisible({ timeout: 15_000 })
 
       for (const [side, distance] of Object.entries(expected)) {
-        const label = contentFrame.locator(
+        const label = page.locator(
           `[data-canvas-measure-label][data-measure-kind="distance"][data-side="${side}"]`,
         )
         await expect(
@@ -399,7 +399,7 @@ test.describe('Phase 0 exit dogfood', () => {
 
     // Releasing Alt ends the gesture — the overlay is a gesture, not a mode.
     await expect(
-      contentFrame.locator('[data-canvas-measure-label][data-measure-kind="distance"]').first(),
+      page.locator('[data-canvas-measure-label][data-measure-kind="distance"]').first(),
       'the measurement overlay stayed on screen after Alt was released',
     ).toBeHidden({ timeout: 10_000 })
   })
@@ -581,7 +581,7 @@ test.describe('Phase 0 exit dogfood', () => {
     await selectAndConfirm(page, contentFrame, firstId)
     await shiftClick(page, contentFrame.locator(`[data-node-id="${secondId}"]`).first())
     await expect(
-      contentFrame.locator(SELECTION_RING),
+      page.locator(SELECTION_RING),
       'Shift+click did not extend the selection to two elements, so ⌘G would be a wrap, not a group',
     ).toHaveCount(2, { timeout: 15_000 })
 
@@ -628,7 +628,7 @@ test.describe('Phase 0 exit dogfood', () => {
     // `siblingsBefore`" is undecidable (`meta-16` landmine 7). What is
     // decidable is that the selected node is the container that was just
     // written — the only `<span>` with no attributes on that line.
-    const wrapperId = await contentFrame
+    const wrapperId = await page
       .locator(SELECTION_RING)
       .first()
       .getAttribute('data-canvas-overlay-node-id')
@@ -666,7 +666,7 @@ test.describe('Phase 0 exit dogfood', () => {
     )
     await selectAndConfirm(page, contentFrame, runAgain.childIds[0]!)
     await shiftClick(page, contentFrame.locator(`[data-node-id="${runAgain.childIds[1]!}"]`).first())
-    await expect(contentFrame.locator(SELECTION_RING)).toHaveCount(2, { timeout: 15_000 })
+    await expect(page.locator(SELECTION_RING)).toHaveCount(2, { timeout: 15_000 })
 
     await canvasRoot.focus()
     await startToastRecorder(page)
@@ -690,7 +690,7 @@ test.describe('Phase 0 exit dogfood', () => {
     // find an empty undo stack and do nothing, which reads as "undo is broken"
     // rather than "the spec was early".
     await expect(
-      contentFrame.locator(SELECTION_RING),
+      page.locator(SELECTION_RING),
       'the second ⌘G never put the selection on its new wrapper, so its undo entry had not been recorded either',
     ).toHaveCount(1, { timeout: 60_000 })
 
@@ -1180,7 +1180,7 @@ function requireSourceLocation(nodeId: string): SourceNodeLocation {
  */
 async function selectAndConfirm(page: Page, contentFrame: FrameLocator, nodeId: string): Promise<void> {
   await selectInFrame(page, contentFrame.locator(`[data-node-id="${nodeId}"]`).first())
-  const rings = contentFrame.locator(SELECTION_RING)
+  const rings = page.locator(SELECTION_RING)
   await expect(rings, 'clicking the element drew no selection ring').toHaveCount(1, { timeout: 15_000 })
   await expect(
     rings.first(),

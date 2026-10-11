@@ -1,13 +1,10 @@
 /**
- * Overlay measurement primitives used by the BreakpointSelectionOverlay RAF
- * tick:
+ * Overlay measurement primitives used by the BreakpointSelectionOverlay's
+ * toolbar / inspector anchor pass:
  *
  *  - `createCanvasOverlayMeasureSession` must read the shared iframe /
- *    canvas-root geometry exactly ONCE per tick no matter how many rings it
- *    measures (the old code re-read them per ring).
- *  - `CanvasNodeElementCache` must resolve a tracked node's element without
- *    re-querying the document on every frame (the old code paid an
- *    O(document) `querySelector` scan per ring per frame).
+ *    canvas-root geometry exactly ONCE per pass no matter how many rects it
+ *    projects (the old code re-read them per ring).
  *
  * Everything is duck-typed DOM, so plain counting fakes keep these tests
  * deterministic — no happy-dom layout involved.
@@ -19,7 +16,6 @@ import {
   measureCanvasElementRect,
   unionCanvasOverlayRects,
 } from '@site/canvas/canvasOverlayGeometry'
-import { CanvasNodeElementCache } from '@site/canvas/canvasNodeLookup'
 
 interface RectInit {
   left: number
@@ -140,91 +136,5 @@ describe('unionCanvasOverlayRects', () => {
     expect(
       unionCanvasOverlayRects({ x: 0, y: 0, width: 10, height: 10 }, { x: 5, y: -5, width: 20, height: 10 }),
     ).toEqual({ x: 0, y: -5, width: 25, height: 15 })
-  })
-})
-
-// ---------------------------------------------------------------------------
-// CanvasNodeElementCache
-// ---------------------------------------------------------------------------
-
-interface FakeNodeElement {
-  isConnected: boolean
-  ownerDocument: unknown
-}
-
-function fakeDocument(elements: Record<string, FakeNodeElement | null>) {
-  let queries = 0
-  const doc = {
-    querySelector(selector: string) {
-      queries++
-      const match = /\[data-node-id="(.*)"\]/.exec(selector)
-      const el = match ? elements[match[1]] : null
-      return el ?? null
-    },
-  } as unknown as Document
-  // Wire ownerDocument so the cache's same-document check passes.
-  for (const el of Object.values(elements)) {
-    if (el) el.ownerDocument = doc
-  }
-  return { doc, queries: () => queries }
-}
-
-describe('CanvasNodeElementCache', () => {
-  it('queries the document once per node while the element stays connected', () => {
-    const el: FakeNodeElement = { isConnected: true, ownerDocument: null }
-    const { doc, queries } = fakeDocument({ a: el })
-    const cache = new CanvasNodeElementCache()
-
-    // 60 ticks of the steady-state RAF loop → exactly one document scan.
-    for (let i = 0; i < 60; i++) {
-      expect(cache.resolve(doc, 'a')).toBe(el as unknown as HTMLElement)
-    }
-    expect(queries()).toBe(1)
-  })
-
-  it('re-queries when the cached element is disconnected (node re-rendered)', () => {
-    const el: FakeNodeElement = { isConnected: true, ownerDocument: null }
-    const { doc, queries } = fakeDocument({ a: el })
-    const cache = new CanvasNodeElementCache()
-
-    cache.resolve(doc, 'a')
-    el.isConnected = false
-    cache.resolve(doc, 'a')
-    expect(queries()).toBe(2)
-  })
-
-  it('re-queries when the iframe swapped documents (stale ownerDocument)', () => {
-    const el: FakeNodeElement = { isConnected: true, ownerDocument: null }
-    const first = fakeDocument({ a: el })
-    const cache = new CanvasNodeElementCache()
-    cache.resolve(first.doc, 'a')
-
-    const replacement: FakeNodeElement = { isConnected: true, ownerDocument: null }
-    const second = fakeDocument({ a: replacement })
-    expect(cache.resolve(second.doc, 'a')).toBe(replacement as unknown as HTMLElement)
-    expect(second.queries()).toBe(1)
-  })
-
-  it('keeps re-querying (and drops the entry) while the node has no rendered element', () => {
-    const { doc, queries } = fakeDocument({ a: null })
-    const cache = new CanvasNodeElementCache()
-    expect(cache.resolve(doc, 'a')).toBeNull()
-    expect(cache.resolve(doc, 'a')).toBeNull()
-    expect(queries()).toBe(2)
-  })
-
-  it('retainOnly drops untracked entries so they re-query on next resolve', () => {
-    const a: FakeNodeElement = { isConnected: true, ownerDocument: null }
-    const b: FakeNodeElement = { isConnected: true, ownerDocument: null }
-    const { doc, queries } = fakeDocument({ a, b })
-    const cache = new CanvasNodeElementCache()
-    cache.resolve(doc, 'a')
-    cache.resolve(doc, 'b')
-
-    cache.retainOnly(new Set(['a']))
-    cache.resolve(doc, 'a') // still cached
-    expect(queries()).toBe(2)
-    cache.resolve(doc, 'b') // pruned → fresh query
-    expect(queries()).toBe(3)
   })
 })

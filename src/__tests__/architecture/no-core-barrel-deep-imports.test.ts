@@ -63,9 +63,9 @@ const BARRELLED_MODULES = [
   'studio-prototype',
   // The live-frame runtime bridge (Track L, `live-04`). `runtime.ts` is built
   // to one standalone ESM file served to a real browser from the live
-  // origin, and the four rule modules it shares with the portal-mode canvas
+  // origin, and the rule modules it shares with the portal-mode canvas
   // injectors (`hoverSuppressionRules`/`scrollUnrollRules`/
-  // `animationFreezeRules`/`selectionChromeCss`) must stay ONE implementation
+  // `animationFreezeRules`) must stay ONE implementation
   // each — a deep import is how a second, drifted copy would get made.
   'studio-runtime',
   // The pure vector engine (P5-D SVG-1): path data, geometry, and the ONE

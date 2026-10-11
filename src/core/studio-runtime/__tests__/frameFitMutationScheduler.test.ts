@@ -12,7 +12,6 @@ import {
   LIVE_FRAME_FIT_STRUCTURAL_DEBOUNCE_MS,
   type FrameFitMutationSchedulerOptions,
 } from '../frameFitMutationScheduler'
-import { SELECTION_OVERLAY_ROOT_ID } from '../selectionChromeCss'
 
 /**
  * Records shaped like the real thing: a target node and added/removed node
@@ -43,24 +42,6 @@ function characterDataRecord(): MutationRecord {
 function childListRecord(): MutationRecord {
   const added = document.createElement('section')
   return record({ type: 'childList', target: pageContent(), addedNodes: [added] as unknown as NodeList })
-}
-
-/** The in-frame overlay root, as `CanvasSelectionOverlayInjector` / the live runtime create it. */
-function overlayRoot(): HTMLElement {
-  let root = document.getElementById(SELECTION_OVERLAY_ROOT_ID)
-  if (!root) {
-    root = document.createElement('div')
-    root.id = SELECTION_OVERLAY_ROOT_ID
-    document.body.appendChild(root)
-  }
-  return root
-}
-
-/** A hover ring mounting in the overlay root — what every hover crossing used to produce. */
-function hoverRingMountRecord(): MutationRecord {
-  const ring = document.createElement('div')
-  ring.setAttribute('data-canvas-hover-ring', 'true')
-  return record({ type: 'childList', target: overlayRoot(), addedNodes: [ring] as unknown as NodeList })
 }
 
 /** Portal-frame options: text debounced, structure immediate. */
@@ -276,53 +257,7 @@ describe('createFrameFitMutationScheduler', () => {
   })
 })
 
-describe('createFrameFitMutationScheduler — what is never content (PERF-2, PERF-9)', () => {
-  it('a hover ring mounting in the overlay root neither settles nor schedules a settle (PERF-2)', () => {
-    const timer = createManualTimer()
-    let settleCount = 0
-    const scheduler = createFrameFitMutationScheduler(portalOptions(timer, () => (settleCount += 1)))
-
-    scheduler.handle([hoverRingMountRecord()])
-
-    expect(settleCount).toBe(0)
-    expect(timer.pendingCount()).toBe(0)
-  })
-
-  it('the overlay root itself being appended to <body> is chrome too', () => {
-    const timer = createManualTimer()
-    let settleCount = 0
-    const scheduler = createFrameFitMutationScheduler(portalOptions(timer, () => (settleCount += 1)))
-    const root = document.createElement('div')
-    root.id = SELECTION_OVERLAY_ROOT_ID
-
-    scheduler.handle([record({ type: 'childList', target: document.body, addedNodes: [root] as unknown as NodeList })])
-
-    expect(settleCount).toBe(0)
-  })
-
-  it('a chrome-only batch does not cancel a pending text-edit settle', () => {
-    const timer = createManualTimer()
-    let settleCount = 0
-    const scheduler = createFrameFitMutationScheduler(portalOptions(timer, () => (settleCount += 1)))
-
-    scheduler.handle([characterDataRecord()])
-    scheduler.handle([hoverRingMountRecord()])
-    expect(timer.pendingCount()).toBe(1)
-    timer.flush()
-
-    expect(settleCount).toBe(1)
-  })
-
-  it('a batch mixing chrome with real content is still content', () => {
-    const timer = createManualTimer()
-    let settleCount = 0
-    const scheduler = createFrameFitMutationScheduler(portalOptions(timer, () => (settleCount += 1)))
-
-    scheduler.handle([hoverRingMountRecord(), childListRecord()])
-
-    expect(settleCount).toBe(1)
-  })
-
+describe('createFrameFitMutationScheduler — what is never content (PERF-9)', () => {
   it('an attribute-only batch never resets the fit — a JS-animated app writes style every frame (PERF-9)', () => {
     const timer = createManualTimer()
     let settleCount = 0

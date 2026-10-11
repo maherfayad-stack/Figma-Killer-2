@@ -156,7 +156,7 @@ test.describe('P2-E — snapping feels the same at every zoom', () => {
       const board = await openBoard(page, zoomPct)
       const mover = board.content.locator(`[data-node-id="${nodeId(DIV.mover)}"]`).first()
       const zoom = await select(page, board, mover)
-      const handle = board.content.locator('[data-canvas-resize-handle="e"]')
+      const handle = page.locator('[data-canvas-resize-handle="e"]')
       await expect(handle).toBeVisible({ timeout: 15_000 })
       const frameDx = PEER_RIGHT - MOVER_RIGHT - 5 / zoom
       await dragBy(page, await centreOf(handle), frameDx * zoom, 0)
@@ -212,7 +212,7 @@ test.describe('P2-E — drop context and measuring', () => {
     await page.waitForTimeout(150)
 
     await page.keyboard.down('Alt')
-    const labels = board.content.locator('[data-canvas-measure-label][data-measure-kind="distance"]')
+    const labels = page.locator('[data-canvas-measure-label][data-measure-kind="distance"]')
     // `stage`'s border box is the padding box (no border): 640 × 340.
     await expect.poll(async () => (await labels.allTextContents()).filter(Boolean).sort()).toEqual(['260', '40', '480', '60'])
     await page.keyboard.up('Alt')

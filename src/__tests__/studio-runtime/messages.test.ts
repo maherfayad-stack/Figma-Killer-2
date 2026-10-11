@@ -21,15 +21,9 @@ import {
 const inboundSamples: InboundRuntimeMessage[] = [
   { type: 'applyOverlay', id: 'selection-chrome', css: '.x { color: red }' },
   { type: 'removeOverlay', id: 'selection-chrome' },
-  {
-    type: 'select',
-    refs: [
-      { nodeId: 'src/App.tsx:1:1', occurrenceIndex: 0 },
-      { nodeId: 'src/App.tsx:2:2', occurrenceIndex: 1 },
-    ],
-  },
-  { type: 'hover', nodeId: 'src/App.tsx:1:1', occurrenceIndex: 0 },
-  { type: 'hover', nodeId: null, occurrenceIndex: 0 },
+  { type: 'resize:begin', handle: 'se' },
+  { type: 'resize:step', dx: 12.5, dy: -4, shiftKey: true, altKey: false },
+  { type: 'resize:end', commit: true },
   { type: 'measure', requestId: 'r1', refs: [{ nodeId: 'src/App.tsx:1:1', occurrenceIndex: 0 }] },
   {
     type: 'measure',
@@ -242,16 +236,12 @@ describe('OutboundRuntimeMessageSchema', () => {
 })
 
 describe('occurrenceIndex (L5) — adversarial shape coverage on every node-naming message', () => {
-  it('rejects a select ref missing occurrenceIndex entirely', () => {
-    expect(Value.Check(InboundRuntimeMessageSchema, { type: 'select', refs: [{ nodeId: 'n1' }] })).toBe(false)
-  })
-
   it('rejects a negative occurrenceIndex', () => {
-    expect(Value.Check(InboundRuntimeMessageSchema, { type: 'hover', nodeId: 'n1', occurrenceIndex: -1 })).toBe(false)
+    expect(Value.Check(InboundRuntimeMessageSchema, { type: 'measure', requestId: 'r', refs: [{ nodeId: 'n1', occurrenceIndex: -1 }] })).toBe(false)
   })
 
   it('rejects a non-integer occurrenceIndex', () => {
-    expect(Value.Check(InboundRuntimeMessageSchema, { type: 'hover', nodeId: 'n1', occurrenceIndex: 1.5 })).toBe(false)
+    expect(Value.Check(InboundRuntimeMessageSchema, { type: 'measure', requestId: 'r', refs: [{ nodeId: 'n1', occurrenceIndex: 1.5 }] })).toBe(false)
   })
 
   it('rejects a string occurrenceIndex', () => {
@@ -551,7 +541,7 @@ describe('envelopes', () => {
   })
 
   it('rejects an envelope from an unrelated postMessage sender', () => {
-    const foreign = { source: 'react-devtools-bridge', direction: 'to-frame', message: { type: 'select', refs: [] } }
+    const foreign = { source: 'react-devtools-bridge', direction: 'to-frame', message: { type: 'measure', requestId: 'r', refs: [] } }
     expect(Value.Check(InboundEnvelopeSchema, foreign)).toBe(false)
   })
 })

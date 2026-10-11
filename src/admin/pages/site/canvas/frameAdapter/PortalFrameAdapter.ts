@@ -28,6 +28,7 @@ import {
   type AnimationFreezeController,
   type GeometryDirtySignal,
   type HoverSuppressionController,
+  type ResizeHandle,
   type ScrollUnrollController,
 } from '@core/studio-runtime'
 import type { FrameGeometrySnapshot } from '../frameGeometry/frameGeometryTypes'
@@ -280,14 +281,16 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
   }
 
   /**
-   * A portal frame's resize handles are the parent's own React elements
-   * (`CanvasResizeHandles`), dragged from the parent (`useElementResizeDrag`) —
-   * a same-origin document allows it, and that path commits synchronously in
-   * the same tick. The in-frame handles this call drives exist for the
-   * cross-origin bridge; a second set here would be two sets of handles on one
-   * element.
+   * A portal frame's resize drag runs in the parent against the same-origin
+   * element (`useElementResizeDrag`) — a same-origin document allows it, and
+   * that path commits synchronously in the same tick. The wire-driven resize
+   * exists for the cross-origin bridge; a second drag here would be two drags on
+   * one element. All four calls are documented no-ops.
    */
   setResizeTarget(_ref: NodeRef | null, _options: ResizeTargetOptions): void {}
+  resizeBegin(_handle: ResizeHandle): void {}
+  resizeStep(_dx: number, _dy: number, _modifiers: { shiftKey: boolean; altKey: boolean }): void {}
+  resizeEnd(_commit: boolean): void {}
 
   /**
    * `live-18` — a documented no-op. Nothing in portal mode ever emits

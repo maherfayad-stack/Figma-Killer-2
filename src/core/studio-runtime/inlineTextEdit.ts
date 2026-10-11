@@ -36,7 +36,6 @@
 import { TEXT_EDIT_MAX_LENGTH, type OutboundRuntimeMessage, type RuntimeMode, type TextEditReplyMessage } from './messages'
 import { stampedAncestors } from './nodeDom'
 import { NODE_ID_ATTR, findNthNodeById, type NodeIdOccurrence } from './nodeIdIndexing'
-import { SELECTION_OVERLAY_ROOT_ID } from './selectionChromeCss'
 
 export interface InlineTextEditOptions {
   doc: Document
@@ -55,11 +54,6 @@ export interface InlineTextEditController {
    */
   onHmrBefore(): void
   dispose(): void
-}
-
-/** The runtime's own chrome (rings, resize handles) lives inside the selection overlay root — a double-click there is never a text edit. Mirrors `gestureForwarding.ts`'s identical check (kept as a second, deliberately tiny copy rather than threading it as another dependency across the two modules). */
-function isRuntimeChrome(target: Element | null): boolean {
-  return target !== null && target.closest(`#${SELECTION_OVERLAY_ROOT_ID}`) !== null
 }
 
 /**
@@ -148,7 +142,6 @@ export function installInlineTextEdit(options: InlineTextEditOptions): InlineTex
     if (getMode() !== 'design') return
     if (session || pending) return // one edit request outstanding at a time
     const target = ev.target instanceof Element ? ev.target : null
-    if (isRuntimeChrome(target)) return
     const chain = stampedAncestors(doc, target)
     const occurrence = chain[0]
     if (!occurrence) return

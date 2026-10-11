@@ -75,13 +75,12 @@ import { InPlaceInspectorAnchor } from './InPlaceInspectorAnchor'
 import { useInspectorClosedAfterDrag } from './useInspectorClosedAfterDrag'
 import { CanvasDropIndicators } from './CanvasDropIndicators'
 import { useCanvasDropSurfaceRegistration } from './useCanvasDropSurfaceRegistration'
-import { isBridgeChromeAdapter, useBridgeSelectionChrome } from './useBridgeSelectionChrome'
+import { isBridgeChromeAdapter, useBridgeResizeTarget } from './useBridgeResizeTarget'
 import { MeasureLayer } from './MeasureLayer'
 import {
   createCanvasOverlayMeasureSession,
   measureIframeLocalRect,
   overlayRectIsFinite,
-  overlayRectsEqual,
   unionCanvasOverlayRects,
   type CanvasOverlayRect,
 } from './canvasOverlayGeometry'
@@ -199,6 +198,10 @@ export function BreakpointSelectionOverlay({
   // The zero-size chrome root beside the iframe. State, not a ref, because the
   // measure layer and the marquee need it as an effect input.
   const [chromeRoot, setChromeRoot] = useState<HTMLDivElement | null>(null)
+  // Whether the frame's index lists a box for EVERY selected node. The resize handles read the element in
+  // render (`canOfferResize` needs its display and tag), so they must not mount before the element exists: a
+  // selection made before the frame's tree has committed would otherwise find no element once and never ask again.
+  const [selectionBoxed, setSelectionBoxed] = useState(false)
   // Gates the EXPENSIVE parent-doc anchor computation (iframe.getBoundingClientRect()
   // + canvasRoot.getBoundingClientRect(), the zoom-multiplied math that caused
   // `standing-03`'s drift). Starts `true` so the toolbar/inspector get positioned
@@ -207,9 +210,10 @@ export function BreakpointSelectionOverlay({
   // changes (content reflow, e.g. editing a prop that resizes the element) —
   // both are real, infrequent events, never a per-pointermove one.
   const anchorDirtyRef = useRef(true)
-  // Last frame-local rect seen for `inspectorNodeId`, to detect (2) above
-  // without paying for the expensive conversion on passes where nothing moved.
-  const lastInspectorLocalRectRef = useRef<CanvasOverlayRect | null>(null)
+  // The selection's frame-local rects as of the last pass, as a string, to detect
+  // (2) above without paying for the expensive conversion on passes where
+  // nothing moved.
+  const lastPlacedRectsKeyRef = useRef('')
   // WHEN the pass below runs. Owned by the effect near the bottom of this
   // component; read here so the selection / hover effects can ask for a pass.
   const schedulerRef = useRef<FrameChromeScheduler | null>(null)
@@ -392,24 +396,13 @@ export function BreakpointSelectionOverlay({
   //     reflow — e.g. editing a prop through the inspector that resizes the
   //     element). This is the expensive path (`iframe.getBoundingClientRect()`
   //     + `canvasRoot.getBoundingClientRect()`).
-  const placeOnce = useEffectEvent((): void | Promise<void> => {
-    const iframe = iframeElement
-    // Same-origin: the index is read in this task, so the whole pass is synchronous. A bridge frame answers a
-    // round trip later; a pass started after this one supersedes it, so a slow answer can never overwrite a newer one.
-    const now = iframe ? readFrameLocalGeometryNow(iframe) : null
-    const generation = (passGenerationRef.current += 1)
-    if (!iframe || now) return place(iframe, now)
-    return getFrameLocalGeometry(iframe).then((index) => {
-      if (generation === passGenerationRef.current) place(iframe, index)
-    })
-  })
-
   const place = (iframe: HTMLIFrameElement | null, index: FrameGeometryIndex | null): void => {
     const canvasRoot = portalCanvasRoot
 
     if (!iframe || !index) {
       // Nothing measurable (iframe not mounted yet / reloading / no adapter):
       // hide everything the pass owns.
+      setSelectionBoxed(false)
       for (const ring of ringRefs.current?.values() ?? []) positionOverlayElement(ring, null)
       for (const badge of badgeRefs.current?.values() ?? []) positionNodeBadge(badge, null, null)
       positionOverlayElement(hoverRef.current, null)
@@ -421,6 +414,7 @@ export function BreakpointSelectionOverlay({
     }
 
     // ── READ phase: pure arithmetic over the index; the frame is not touched ──
+    setSelectionBoxed(selectedNodeIds.length > 0 && selectedNodeIds.every((id) => index.has(id)))
     const ringPlacements: Array<{ id: string; ring: HTMLDivElement | null; rect: CanvasOverlayRect | null }> = []
     for (const id of selectedNodeIds) {
       ringPlacements.push({ id, ring: ringRefs.current?.get(id) ?? null, rect: chromeRectOf(index, framePage, id) })
@@ -468,16 +462,16 @@ export function BreakpointSelectionOverlay({
     // `canvasGesture`'s settle pass recomputes them once. See `canvasGesture.ts`.
     if (isCanvasGestureActive()) return
 
-    // Content-reflow detection for the inspected node: compare THIS pass's rect
-    // against the last one seen. A real change (a value change, not a reference
-    // change) marks the anchor dirty for the branch below, in the SAME pass.
-    if (inspectorNodeId) {
-      const localRect = ringPlacements.find((p) => p.id === inspectorNodeId)?.rect ?? null
-      if (!overlayRectsEqual(lastInspectorLocalRectRef.current, localRect)) {
-        anchorDirtyRef.current = true
-      }
-      lastInspectorLocalRectRef.current = localRect
-    }
+    // Content-reflow detection: compare THIS pass's selection rects against the
+    // last pass's. A real change (a value change, not a reference change) marks
+    // the anchor dirty for the branch below, in the SAME pass. Over the whole
+    // selection, not just the inspected node: a multi-selection's toolbar must
+    // follow a layer that gains its box late (the tree mounting, an image
+    // loading), and a pass that found none of them hid the chrome and marked
+    // the anchor clean.
+    const rectsKey = ringPlacements.map((p) => (p.rect ? `${p.rect.x},${p.rect.y},${p.rect.width},${p.rect.height}` : '-')).join('|')
+    if (rectsKey !== lastPlacedRectsKeyRef.current) anchorDirtyRef.current = true
+    lastPlacedRectsKeyRef.current = rectsKey
 
     // ── Parent-doc anchor (expensive, rare) ───────────────────────────────
     const needsAnchor = showToolbar || Boolean(inspectorNodeId)
@@ -537,6 +531,18 @@ export function BreakpointSelectionOverlay({
     }
   }
 
+  const placeOnce = useEffectEvent((): void | Promise<void> => {
+    const iframe = iframeElement
+    // Same-origin: the index is read in this task, so the whole pass is synchronous. A bridge frame answers a
+    // round trip later; a pass started after this one supersedes it, so a slow answer can never overwrite a newer one.
+    const now = iframe ? readFrameLocalGeometryNow(iframe) : null
+    const generation = (passGenerationRef.current += 1)
+    if (!iframe || now) return place(iframe, now)
+    return getFrameLocalGeometry(iframe).then((index) => {
+      if (generation === passGenerationRef.current) place(iframe, index)
+    })
+  })
+
   // The inputs of a placement. A change to any of them places in THIS commit's
   // own task, before the browser paints it (a same-origin frame's index is read
   // synchronously); a bridge frame, whose index is a round trip, lands as soon
@@ -588,11 +594,14 @@ export function BreakpointSelectionOverlay({
 
   // One selected layer gets its own handles; several get ONE set on their
   // union (P5-F, IX-6g — `CanvasGroupResizeHandles`), which scales them as a
-  // group in one write. Design frames with a same-origin document only: a
-  // bridge frame's handles are still the runtime's own.
-  const resizeNodeIds = designMode && frameDocument && showRings ? selectedNodeIds : EMPTY_SELECTED_NODE_IDS
-  // `live-13` — a bridge frame's resize target (the runtime owns its handles).
-  useBridgeSelectionChrome(bridgeChrome ? adapter : null, {
+  // group in one write — a same-origin frame only. A live frame's single
+  // selection gets the same handles, its drag driven over the wire.
+  const resizeNodeIds =
+    designMode && showRings && selectionBoxed && (frameDocument ? true : bridgeChrome && selectedNodeIds.length === 1)
+      ? selectedNodeIds
+      : EMPTY_SELECTED_NODE_IDS
+  // `live-13` — a bridge frame's resize target: what its runtime needs to size the element the parent's handles drag.
+  useBridgeResizeTarget(bridgeChrome ? adapter : null, {
     selectedNodeIds: showRings ? selectedNodeIds : EMPTY_SELECTED_NODE_IDS,
     committedTransform,
   })
@@ -639,6 +648,7 @@ export function BreakpointSelectionOverlay({
             showSelectorHighlight={showSelectorHighlight}
             resizeNodeIds={resizeNodeIds}
             frameDocument={frameDocument}
+            iframeElement={iframeElement}
             designMode={designMode}
             selectorHighlightRef={selectorHighlightRef}
             hoverRef={hoverRef}

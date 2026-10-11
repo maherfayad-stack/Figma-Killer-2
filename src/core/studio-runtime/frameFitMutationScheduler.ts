@@ -13,10 +13,6 @@
  *
  * ## What never resets the fit
  *
- *   - **The editor's own selection chrome** (`isSelectionChromeMutation`,
- *     audit PERF-2). A hover ring appearing is a `childList` record under
- *     `<body>`; before this filter, every hover crossing re-ran the forced
- *     layout in every frame that mounted a ring.
  *   - **Attribute-only batches** (audit PERF-9). A JS-animated app
  *     (framer-motion, a carousel) writes `style`/`class` every frame; each
  *     one used to reset the live frame's fit and could make its height
@@ -43,7 +39,6 @@
  * A batch with nothing relevant in it is a no-op: it neither settles nor
  * cancels a pending settle.
  */
-import { isSelectionChromeMutation } from './selectionChromeMutation'
 
 export interface FrameFitMutationSchedulerOptions {
   /** Runs the reset-to-floor + re-measure. Called at most once per settle. */
@@ -111,7 +106,6 @@ export function createFrameFitMutationScheduler({
       let text = false
       for (const record of records) {
         if (record.type === 'attributes') continue
-        if (isSelectionChromeMutation(record)) continue
         if (record.type === 'childList') structural = true
         else text = true
       }

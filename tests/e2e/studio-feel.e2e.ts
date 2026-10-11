@@ -426,7 +426,7 @@ test.describe('V1: the studio feels like a design tool', () => {
     await panIntoView(page, canvasRoot, target, 80)
     await selectInFrame(page, target)
 
-    const rings = selectionRings(page, firstFrame, mode)
+    const rings = selectionRings(firstFrame)
     await expect(rings, 'clicking a leaf node drew no selection ring').toHaveCount(1, {
       timeout: 15_000,
     })
@@ -501,7 +501,7 @@ test.describe('V1: the studio feels like a design tool', () => {
     annotate('frame mode', mode)
 
     const contentFrame = canvasContentFrame(firstFrame)
-    const rings = selectionRings(page, firstFrame, mode)
+    const rings = selectionRings(firstFrame)
     const target = await firstLeafNode(contentFrame)
     await panIntoView(page, canvasRoot, target, 80)
     await selectInFrame(page, target)
@@ -692,7 +692,7 @@ test.describe('V1: the studio feels like a design tool', () => {
       'the first board frame never showed exactly one canvas iframe',
     ).toHaveCount(1, { timeout: 30_000 })
 
-    const mode = await settleCanvasFrameMode(page, firstFrame, FIXTURE_DIR)
+    await settleCanvasFrameMode(page, firstFrame, FIXTURE_DIR)
     const contentFrame = canvasContentFrame(firstFrame)
     const target = await structuralRefusalTarget(contentFrame)
     await panIntoView(page, canvasRoot, target, 80)
@@ -700,7 +700,7 @@ test.describe('V1: the studio feels like a design tool', () => {
     // An ordinary element, not an instance — one click selects it directly,
     // no level-opening dance needed.
     await selectInFrame(page, target)
-    const rings = selectionRings(page, firstFrame, mode)
+    const rings = selectionRings(firstFrame)
     await expect(rings, 'clicking the refusal target drew no selection ring').toHaveCount(1, {
       timeout: 15_000,
     })

@@ -64,7 +64,7 @@ function measureViaAdapter(
   return measureDropCandidatesThroughAdapter(adapter, viewport, iframe, tree)
     .catch((err: unknown) => {
       // A frame mid-reload (bridge) does not answer — same posture
-      // `useBridgeSelectionChrome` takes for a `measure` timeout: this ONE
+      // `frameChromeScheduler` takes for a failed placement pass: this ONE
       // refresh comes back empty rather than failing the whole drag: the
       // next trigger (or the next drag) re-asks.
       console.warn('[canvasInsertionDragSnapshot] measureDropCandidates failed:', err)

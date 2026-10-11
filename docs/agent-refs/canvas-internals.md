@@ -572,20 +572,20 @@ the unroll stylesheet forced `body, html { height: auto !important }` —
 have overridden the pin outright and collapsed every `height: 100%` chain.
 Regression coverage: `src/__tests__/canvas/canvasScrollUnrollPinInteraction.test.tsx`.
 
-**Selection chrome inside a live frame is content to `scrollHeight` (canvas-23).**
-A live frame's rings, handles and W×H badge live in the runtime's overlay root
-INSIDE `<body>`, so anything of theirs that hangs past the body's bottom edge
-counts in `body.scrollHeight` — which is exactly the number `runtime.ts`
-reports as `frame:resize`. The badge hangs ~24px under the element, so a resize
-at the very bottom of a hugging live frame, plus ANY app mutation mid-drag
-(the frame-fit reset re-measures), grew the frame by the badge — and the S handles alone (4px) grew it on any
-report while a bottom element was selected. The runtime now hides its overlay
-root for the `scrollHeight` read (same task, no paint), and freezes its height
-reports for the length of a resize (`resizeHandles.ts`' `onGestureChange`, the
-live twin of a portal frame's `beginCanvasGesture`), reporting once after the
-release. Anything the runtime draws must live in the overlay root, or it
-counts as content. Regression coverage: `liveFrameParity.test.ts`,
-`tests/e2e/live-frame-parity.e2e.ts`.
+**Selection chrome is never content to `scrollHeight` (canvas-23, SB-4).** A
+live frame used to draw its rings, handles and W×H badge in an overlay root
+INSIDE `<body>`, so anything of theirs that hung past the body's bottom edge
+counted in `body.scrollHeight` - the number `runtime.ts` reports as
+`frame:resize` - and a resize at the bottom of a hugging frame (plus any app
+mutation mid-drag) grew the frame by the badge. Since SB-4 nothing is drawn in
+the frame's document at all: the chrome is parent-document DOM beside the
+iframe, so it cannot count as content, and the runtime no longer needs to hide
+anything for the read. What survives is the other half: the runtime still
+freezes its height reports for the length of a resize
+(`resizeSession.ts`' `onGestureChange`, the live twin of a portal frame's
+`beginCanvasGesture`) and reports once after the release, so the parent's badge
+under the element cannot feed back through a mid-drag fit reset. Regression
+coverage: `liveFrameParity.test.ts`, `tests/e2e/live-frame-parity.e2e.ts`.
 
 ### A board frame hugs its content until the author sets a height
 
@@ -1132,7 +1132,7 @@ The rules the ladder replaced prose with:
   style keys come back at the END of the object on undo.
 - **Live-frame anchored resize (PA-8):** `setResizeTarget` carries
   `anchors` (which of left/right/top/bottom/inset-inline the SOURCE authors,
-  `resizeAnchorsKey` in `resizeTargetContext.ts`); `resizeHandles.ts` reads their
+  `resizeAnchorsKey` in `resizeTargetContext.ts`); `resizeSession.ts` reads their
   used values from the frame's computed style at pointerdown
   (`elementResizeAnchors.ts`, shared with the portal drag) so a W drag on a
   right-anchored layer writes the width alone. `ResizeCommitPatch` accepts
@@ -1617,10 +1617,13 @@ a component in a live frame selected the element inside it.
   writing to one). `presentedElementForNode` also descends through a
   layout-transparent (`display: contents`) host, because a module may carry the
   node id on a wrapper that produces no box — right to SELECT, wrong to SIZE.
-- **Element resize** — `CanvasResizeHandles` portals eight handles into the
-  iframe overlay root and `BreakpointSelectionOverlay` positions them off the
-  SAME measured rect as the selection ring, so they cannot drift off the box
-  they belong to. `resizeOffer.ts` decides whether they exist at all; the three
+- **Element resize** — `CanvasResizeHandles` renders eight handles in the
+  frame's chrome root (parent document, beside the iframe; see "Parent-side
+  selection chrome (SB-4)") and `BreakpointSelectionOverlay` places them off the
+  SAME index rect as the selection ring, so they cannot drift off the box they
+  belong to. A pointer delta over them is in SCREEN px: `startHandleDrag`
+  divides it by the canvas zoom before a hook sees it, so every resize rule
+  still works in frame px. `resizeOffer.ts` decides whether they exist at all; the three
   refusals (no element of its own, a `display` CSS ignores a size on, a module
   that does not own its own `style=""`) exist because handles that track the
   cursor for a whole drag and then snap back are worse than no handles.
@@ -1677,7 +1680,7 @@ a component in a live frame selected the element inside it.
     deliver after the handle's cancelled `pointerdown` (measured by the e2e).
   - **Rotation** (P5-F, IX-25, `useElementRotateDrag.ts`). Four invisible
     zones just OUTSIDE the corner handles (`ROTATE_HANDLE_ATTR`, placed by
-    `selectionChromeCss.ts`), so a press on the corner still resizes. The
+    `FrameChrome.module.css`), so a press on the corner still resizes. The
     angle is the pointer's turn about the element's bounding-box centre,
     added to its current rotation; ⇧ snaps to 15°. It writes the STANDALONE
     `rotate` property — never `transform` — and 0° clears it
@@ -1702,16 +1705,24 @@ a component in a live frame selected the element inside it.
     rotation. A new handle gesture supplies `step` / `paint` / `end` and
     gets all of it; it does not get a second copy.
   - **The W×H badge** (IX-18) is a child of the handle frame, shown by
-    `selectionChromeCss.ts` only while the frame carries
+    `FrameChrome.module.css` only while the frame carries
     `data-canvas-resizing`; its text is the ring's own measured rect, written
     by `positionResizeFrame` in the overlay's write phase.
-  - **The click that ends a drag is swallowed** at the frame document
-    (capture phase) when its target is inside the handle frame. The overlay
-    root lives in the page's `<body>`, so that click used to bubble into the
-    body node's click-to-select and every resize ended with the page selected.
-  - The live runtime's handles (`resizeHandles.ts`) run the same rules and
-    guard. Not yet there: the flex/grid companions, because the resolver needs
-    the node's stored styles, which the frame side of the wire does not have.
+  - **The click that ends a drag is swallowed** at the handle frame (a native
+    `click`/`dblclick` listener on it), so it never bubbles up the canvas to the
+    empty-board deselect and every resize ends with the sized element still
+    selected. (It used to be swallowed at the frame document, because the
+    handles lived in the page's `<body>`.)
+  - **A live frame's handles are the same elements.** `CanvasResizeHandles`
+    draws them from what the frame says about the element (one
+    `adapter.measure(..., ['display'])`, then `canOfferResize`), and
+    `useBridgeResizeDrag` runs the same `startHandleDrag` session with a
+    different `paint`: it posts `resize:begin` / `resize:step` (one per
+    animation frame, frame px, ⇧/⌥ as held) / `resize:end`. The runtime
+    (`resizeSession.ts`) runs the same rules and guard in the frame, previews
+    through its stylesheet, and posts `resize:guides` and `resize:commit` back.
+    Not there: the rotation zones, the spacing bands and the group box
+    (portal frames only).
 - **Padding and gap handles (P5-E, IX-17).** `CanvasSpacingHandles` renders
   INSIDE the resize-handle frame (before the handles, so an edge strip wins
   at the edge), so the bands ride the ring's one measurement. Shown for a
@@ -1724,9 +1735,7 @@ a component in a live frame selected the element inside it.
   (`spacingHandleMeasure.ts`) runs in a rAF on mount, on a store change to
   the node and on a `ResizeObserver` tick; during a drag the bands follow the
   preview arithmetically. Positions are `--band-*` custom properties read by
-  `canvasSpacingChromeCss.ts`, appended to the portal injector's unlayered
-  chrome sheet (not `selectionChromeCss.ts`: the runtime bundle has no
-  handles). A drag previews on the element's own `style` and commits ONE
+  `FrameChrome.module.css`. A drag previews on the element's own `style` and commits ONE
   `commitStyleMany` through the inspector's commit API
   (`selectionStyleCommands.ts`), so it lands where the Layout section's field
   would (inline, or the one class that already sets it). ⇧ writes the axis
@@ -1741,7 +1750,7 @@ a component in a live frame selected the element inside it.
   BACKGROUND (`isFrameBackgroundHit`: the synthetic `<body>` OR the screen
   element — the root's only child, which in a real project is nearly every
   empty pixel) that travels 4 px sweeps a rectangle painted
-  in the overlay root; it selects the touched layers BELOW the screen element
+  in the frame's chrome root; it selects the touched layers BELOW the screen element
   (`frameContentRootId`) at the shallowest hit
   depth (⌥ the deepest, ⇧ adds), live, and swallows the release's click.
   `planCanvasPressDrag` is null for the same hits, so the body drag and the
@@ -1773,9 +1782,9 @@ a component in a live frame selected the element inside it.
   with NOTHING hovered, the same drawing against the selection's parent (the
   nearest ancestor a multi-selection shares; P2-E / IX-19,
   `resolveMeasureTarget`) — into
-  the SAME in-frame overlay root the rings use (parent-document fallback for a
-  live/bridge frame, same `scoped`/`fixed` mode attribute the ring fallback
-  uses). Mounted from `BreakpointSelectionOverlay` with one line; it owns its
+  the frame's chrome root, in the rings' own space (the frame's viewport px;
+  counter-scaled lines and pills). Mounted from `BreakpointSelectionOverlay` with
+  one line; it owns its
   own Alt state and renders nothing until the gesture is live.
   - **The rule, per axis:** disjoint → ONE segment, the gap between facing
     edges; overlapping → TWO segments, the insets between same-side edges. So
@@ -1808,9 +1817,9 @@ a component in a live frame selected the element inside it.
     which is what stops an Alt release from committing a new selection out
     from under the thing being measured. Both stand down during an inline
     text edit.
-  - Appearance lives in `selectionChromeCss.ts` (`data-canvas-measure-*`,
-    unlayered, tokens forwarded from the editor `:root`) for the in-frame
-    path and `MeasureLayer.module.css` for the fallback. Keep the two in sync.
+  - Appearance lives in `FrameChrome.module.css` (`data-canvas-measure-*` are
+    kept as test hooks). Rects come from the frame's rect index, so a line starts
+    exactly on the ring it measures from at every zoom.
 - **`canvasGesture.ts`** — a module-level "a pointer gesture is continuously
   mutating the page; hold every derived geometry until it ends" flag. Two
   subsystems recompute expensive geometry on layout change and are right to:
@@ -1839,11 +1848,14 @@ a component in a live frame selected the element inside it.
   harness that mounts the canvas root and the frame in the same commit gets the
   toolbar one frame later — `await screen.findByRole(…)`, not `getByRole`.
 
-- Overlay chrome currently lives in the **parent document**, positioned from
-  measurements of elements inside a **transformed iframe**. Its position is
-  `elementRect × zoom + iframeOffset + panOffset` — so any stale term shows as
-  displacement, multiplied by zoom. **This is the known "menu far from the
-  element" defect**; WS-5.1 of the V2 plan moves rings inside the iframe.
+- Selection chrome (rings, handles, badges, hover ring, measure, spacing bands)
+  lives in the **parent document**, in a zero-size root beside each frame's
+  iframe, placed from the frame's rect index in the frame's own viewport px — so
+  pan and zoom move it with the frame as one transform and nothing is converted.
+  See "Parent-side selection chrome (SB-4)". (The old design converted
+  `elementRect × zoom + iframeOffset + panOffset` every tick and was the "menu
+  far from the element" defect; WS-5.1 moved the rings into the iframe, SB-4
+  moved them back out, without the conversion.)
 
 ---
 
@@ -1852,8 +1864,8 @@ a component in a live frame selected the element inside it.
 | Cost | Where | Fix (V2 WS-5) |
 |---|---|---|
 | O(pages × nodes) scan in a store selector, runs on **every** store change | `PropertiesPanelBody.tsx` (`sharedTextOriginCount`), `InPlaceInspector.tsx` (`findNodeById`) | precomputed indexes in the site slice |
-| Overlay coordinate conversion across zoom | `canvasSelectionOverlayPositioning.ts` | render rings inside the iframe |
-| A permanent rAF loop per mounted frame while anything is selected | `BreakpointSelectionOverlay.tsx` | **fixed (S4)** — `overlayMeasureScheduler.ts`, below |
+| Overlay coordinate conversion across zoom | `canvasSelectionOverlayPositioning.ts` | **fixed (WS-5.1, SB-4)** - chrome rides the frame's own transform; positions come from the rect index |
+| A permanent rAF loop per mounted frame while anything is selected | `BreakpointSelectionOverlay.tsx` | **fixed (S4, SB-4)** — `frameChromeScheduler.ts`, below |
 | The right sidebar opened on selection with a 180 ms `width` transition: the canvas root resized every frame, re-rendering `BoardFramesLayer` and repainting both rulers each time | `RightSidebar.module.css` | **fixed (edit-speed)** - no transition; the panel just is there |
 | `ClassPicker` subscribed to the whole `s.site`, so every nudge/keystroke re-ran its selector model (`Element.matches()` per ambient rule) | `ClassPicker.tsx`, `useClassPickerDerivedState.ts` | **fixed (edit-speed)** - subscribes to `site.styleRules` only |
 | `LiveBoardFrame` mounted its bridge `<iframe>` (no `src`) beside the fallback for every frame of a Tier-2 board whose dev server was not ready: 2 documents per frame | `LiveBoardFrame.tsx` | **fixed (edit-speed)** - the bridge mounts once the dev server is ready |
@@ -2022,8 +2034,11 @@ later, behind one long task that began at release — "two-phase selection".
 - `selectOnPress` (`pressRing.ts`) paints first and commits second. The hover
   ring is already on the layer a press means (same rule), so a press restyles it
   as a selection ring with ONE attribute (`data-canvas-press-ring`, rule in
-  `selectionChromeCss.ts`) — no DOM added, so no childList mutation for the
-  frame's layout observers. The page activation (`BoardFrameView`) and the
+  `FrameChrome.module.css`). The ring is parent-document chrome
+  (`frameChromeRegistry.ts` hands `pressRing.ts` the frame's ring from the press
+  event's `window.frameElement`), so a press writes nothing inside the user's
+  frame, and a press on a layer the hover ring was not on places the ring from
+  the rect index, not from an element read. The page activation (`BoardFrameView`) and the
   selection are queued with `afterPressPaint`: they run after a frame has been
   presented, in order, in ONE task and one React flush (before: two flushes
   inside the pointerdown task, the ring behind both). Run as two tasks they
@@ -2197,7 +2212,7 @@ page was just edited would show a blank title card instead of live content.
 
 **Never** add a full-site scan inside a `useEditorStore(selector)` callback.
 
-### The selection overlay measures on events, not every frame (S4)
+### The selection overlay places on events, not every frame (S4, SB-4)
 
 `BreakpointSelectionOverlay` used to arm an uncapped rAF loop whenever
 `hasOverlayWork` was true — i.e. forever while anything was selected or
@@ -2205,57 +2220,64 @@ hovered, **per mounted frame**. Eight frames and one selected node meant eight
 60 Hz loops over a canvas nobody was touching, which is enough to keep the main
 thread from ever sleeping and to undo what frame virtualization buys.
 
-`overlayMeasureScheduler.ts` now owns *when* the overlay measures. The component
-owns *what* a pass costs (unchanged: cheap in-iframe rects every pass, the
-zoom-converting parent-doc anchor only when `anchorDirtyRef` is set).
+`frameChromeScheduler.ts` owns *when* the overlay places (it replaced
+`overlayMeasureScheduler.ts`, which watched the frame document with its own
+`MutationObserver`, a `ResizeObserver` per tracked element and a scroll
+listener). The component owns *what* a pass costs: arithmetic over the frame's
+rect index (`frameChromeRects.ts`, no read of the frame), plus the zoom-converting
+parent-doc anchor only when `anchorDirtyRef` is set. The index's own
+`geometry:dirty` latch (`geometryDirtySignal.ts`: body mutations including text,
+the head, load, fonts, transitions, scroll, viewport resize) is the trigger, so
+there is no second observer per frame.
 
 A per-frame loop is armed **only** while something moves the geometry on every
 frame and no event can fire per frame:
 
 | Continuous reason | Signal |
 |---|---|
-| element resize drag | `canvasGesture.ts` → `onCanvasGestureChange` (new: the begin edge, not only `onCanvasGestureSettle`) |
+| element resize drag | `canvasGesture.ts` → `onCanvasGestureChange` |
 | reorder drag, animation replay | render state the component already holds (`reorderDrag.dragging`, `animationScrubStore`'s `'playing'`), passed in as `continuous` |
-| pan / zoom — **only for rings painted in the PARENT document** (`ringsFollowViewport: false`: the startup window before the in-frame overlay root exists, a live frame's fallback) | `canvasViewportActivity.ts` → `onCanvasViewportActivityChange`, marked from `useCanvas`'s `applyTransformToDOM` |
-| a bridge frame's DOM swap | the adapter's `hmr:before` → `hmr:after`, capped at 2 s |
 
-Everything else schedules **one** coalesced pass: a `ResizeObserver` on the
-frame body/root **and on each tracked element** (a late-loading image resizes an
-element without mutating the DOM or the body), a `MutationObserver` over the
-frame document, capture-phase `scroll` inside the frame, the adapter's
-`frame:resize` (bridge mode's only signal — its document is unreachable), a
-parent-window resize (which also invalidates the anchor), and the component's
-own effects for selection change, the committed pan/zoom, and a **hover target**
-change.
+Everything else schedules **one** pass, coalesced into a microtask (so it lands
+before the paint that follows whatever caused it): `geometry:dirty` for THIS
+frame (`onFrameGeometryDirty` filtered by iframe), the adapter's `hmr:after` and
+`frame:resize`, a parent-window resize (which also invalidates the anchor), the
+end of a pan/zoom (the toolbar and inspector settle; the rings need no pass at
+all, they ride the board's transform), and the component's own effects:
+selection change, committed pan/zoom, hover target. Those effects run as a
+LAYOUT effect that places in the commit's own task: a same-origin frame's index
+is read synchronously (`readFrameLocalGeometryNow` → `adapter.measureAllNow()`),
+a bridge frame's lands when it answers, and a pass started later supersedes a
+slower earlier one (`passGenerationRef`).
 
-Four things are easy to get wrong here:
+Things that are easy to get wrong here:
 
-- **A tracked-target change that mutates no page DOM is invisible to every
-  observer.** Hover moving straight from one node to another (body → main → an
-  icon) writes only to the ring, and the mutation observer filters that as
-  chrome, so the hover ring kept the FIRST node's box under the new id until
-  the hover-target effect existed (`breakpointOverlayHoverRingFollowsTarget.test.tsx`).
-  Any new input that retargets a ring must call `schedule()` itself.
+- **Hover does not wait for React.** `placeHoverNow` subscribes to
+  `canvasHover.ts` and places the hover ring in the event's own task from the
+  index; the render-driven path only reconciles. The ring's
+  `data-canvas-overlay-node-id` is written with its placement, never by a render
+  (a render could land after a newer hover and put the old id back).
 - **`transformRef` cannot tell you a pan STARTED.** It is mutated in place and
   never changes identity, so the only way to learn from it is to poll — the
-  loop this work order deleted. That is why `canvasViewportActivity.ts` exists,
-  and why it is a *separate* flag from `canvasGesture.ts`: a pan mutates
-  nothing and must not freeze the auto-height refit the way a page-mutating
-  gesture does.
-- **The mutation observer must skip the selection chrome.** The overlay writes
-  inline styles onto its own rings inside the observed document; counting those
-  as "the page changed" makes every pass schedule another one. It uses the ONE
-  shared predicate, `isSelectionChromeMutation` — see "Selection chrome is not
-  page content" below.
+  loop S4 deleted. That is why `canvasViewportActivity.ts` exists, and why it is
+  a *separate* flag from `canvasGesture.ts`: a pan mutates nothing and must not
+  freeze the auto-height refit the way a page-mutating gesture does.
+- **Moves nothing, marks nothing.** The anchor-dirty test compares the WHOLE
+  selection's rects with the last pass's, not just the inspected node's: a
+  multi-selection's toolbar must follow a layer that gains its box late (the
+  tree mounting, an image loading), and a pass that found none of them hid the
+  chrome and marked the anchor clean.
+- **Resize handles read the element in render**, so they must not mount before
+  it exists: the overlay keeps `selectionBoxed` (does the index list every
+  selected node?) and only then hands `resizeNodeIds` to the chrome.
 - **`BreakpointSelectionOverlay` is a SIBLING of the frame surface**, not a
-  descendant, so it cannot read `CanvasFrameAdapterContext`. It resolves the
-  adapter from the registry by iframe element and re-resolves on
-  `onFrameAdapterRegistryChange`, because either effect may run first.
+  descendant, so it cannot read `CanvasFrameAdapterContext` from a provider
+  below the surface; `BreakpointFrame` provides the adapter around it.
 
-Gates: `overlayMeasureScheduler.test.ts` (fake rAF — idle board with a
-selection runs 0 passes) and `overlayRafDiscipline.test.ts` (source shape: the
-component keeps exactly one `requestAnimationFrame` call, the one-shot
-portal-root read).
+Gates: `frameChromeScheduler.test.ts` (fake rAF — an idle board with a
+selection runs 0 passes; passes never overlap) and `overlayRafDiscipline.test.ts`
+(source shape: the component keeps exactly one `requestAnimationFrame` call, the
+one-shot portal-root read).
 
 ### Selection chrome is not page content, and a pan measures nothing (P2-A)
 
@@ -2264,21 +2286,19 @@ PERF-2/3/4/9/10/11/13); each has a regression test that failed before it, and
 `tests/e2e/canvas-feel-budgets.e2e.ts` measures them on a generated 40-frame ×
 ~300-element board (`tests/e2e/helpers/largeBoardCorpus.ts`).
 
-- **`isSelectionChromeMutation(record)`** (`@core/studio-runtime`,
-  `selectionChromeMutation.ts`) is the ONE answer to "is this DOM mutation the
-  editor's own rings/badge/handles/measure layer, or the page?". Used by all
-  four frame observers: the portal auto-height refit
-  (`frameFitMutationScheduler`), the scroll-unroll pass (`startScrollUnroll`),
-  `overlayMeasureScheduler`, and the live runtime's layout observer. Before,
-  only the last two filtered chrome, so a hover ring mounting under `<body>`
-  re-ran the frame's two full-document forced layouts. A new observer on a
-  frame document must use it too.
+- **The chrome is not in the frame document, so no observer has to filter
+  it** (SB-4). `isSelectionChromeMutation` (P2-A) was the ONE answer to "is this
+  DOM mutation the editor's own rings/badge/handles/measure layer, or the page?",
+  used by every frame observer (the auto-height refit, the scroll unroll, the
+  overlay scheduler, the runtime's layout observer). Rings, badges, handles and
+  the measure layer are now parent-document elements, so every mutation inside
+  a frame is the page's, and the predicate is deleted. `e2e/canvas-feel-budgets`
+  asserts it as a count: a hover sweep and a Layers hover sweep write ZERO
+  mutation records into any frame document.
 - **The hover ring stays mounted.** `CanvasSelectionChrome` renders it whenever
   rings are shown; `BreakpointSelectionOverlay` hides it with a style write
   (`hideOverlayElement`, in a layout effect) when hover ends. Hover start/end
-  is an attribute change, never a `childList` one. Selection rings are still
-  keyed per id (a selection change is rare next to hover); the predicate
-  covers them.
+  is a style/attribute write on a parent-document element, never a mount.
 - **`frameFitMutationScheduler` lives in `@core/studio-runtime`** and is the
   live runtime's too (PERF-9): attribute-only batches never reset a fit (a
   JS-animated app writes `style` every frame), text debounces, and structure
@@ -2291,10 +2311,10 @@ PERF-2/3/4/9/10/11/13); each has a regression test that failed before it, and
   `canvasViewportActivity.ts`, fired synchronously from `applyTransformToDOM`
   AFTER the DOM write) re-projects them through `rulerGeometry.ts`'s
   `.canvas`-relative formula. No layout read — the clamp widths are read once,
-  at record time. Rings inside a frame move with its transform for free, so
-  `overlayMeasureScheduler` arms NO loop for a pan over an in-frame overlay
-  (`ringsFollowViewport`), only one settle pass when it ends. Bridge frames get
-  the same follower through `useBridgeSelectionChrome`'s `recordAnchor`.
+  at record time. Rings sit in the frame's viewport box, so they move with its
+  transform for free, and `frameChromeScheduler` arms NO loop for a pan, only one
+  settle pass when it ends. Bridge frames use the same follower: their anchor is
+  projected from the same rect index.
   Known limit: during a discrete zoom's CSS transition (`data-animating`,
   `ANIMATED_TRANSFORM_MS`) the chrome jumps to the final position while the
   frames glide; the settle pass reconciles.
@@ -2302,9 +2322,10 @@ PERF-2/3/4/9/10/11/13); each has a regression test that failed before it, and
   a `ResizeObserver` on their length source, an origin change and a window
   resize. An idle board with a selection now runs **0** `requestAnimationFrame`
   calls per second (was ~121 — the two ruler loops).
-- **`PortalFrameAdapter` arms its ring-tracking observer lazily** (PERF-10), on
-  the first `select`/`hover` — which portal mode never calls, because its
-  rings are the overlay's own portal.
+- **`PortalFrameAdapter` arms its body observer lazily** (PERF-10), on the first
+  `measureAll` — a frame nobody indexes has no use for an observer that
+  allocates records for every attribute write in it (an element resize writes
+  styles every frame).
 - **A frame-less selection or hover is scoped to the frames whose page holds
   the node** (PERF-13, `idsRenderedByFramePage` in
   `useBreakpointOverlaySelectionState.ts`, via `_nodeIdToPageIds`). A
@@ -2426,9 +2447,8 @@ bridge's cold boot runs concurrently with the visible fallback), and **both**
 unconditionally mounted their own `BreakpointSelectionOverlay`. A click on the
 fallback (the only interactive surface before the bridge reports `ready`)
 selected a node in the store; both overlay instances reacted to it — the
-fallback's real, working `tickOnce` AND the bridge overlay's
-`useBridgeSelectionChrome`, which opened a real `postMessage` round trip
-(`select`/`hover`/`setResizeTarget`/`measure`) into a still-loading
+fallback's real, working placement pass AND the bridge overlay's own, which
+opened a real `postMessage` round trip (`measureAll`/`setResizeTarget`) into a still-loading
 cross-origin document and rendered a **second**, independently-positioned
 toolbar and in-place inspector for the very same selection — not just wasted
 work, a real double-toolbar correctness bug on every Tier-2 board frame's
@@ -2443,15 +2463,15 @@ exact commit the fallback unmounts in, so the two are never both live. See
 `BreakpointFrame.tsx`'s `overlayEnabled` doc and `liveBoardFrame.test.tsx`'s
 `describe('LiveBoardFrame — selection chrome while not ready (speed-04)')`.
 
-A second, smaller fix rides in `tickOnce`'s anchor branch (`needsAnchor` —
+A second, smaller fix rides in the placement pass's anchor branch (`needsAnchor` —
 the toolbar/inspector's expensive parent-doc `createCanvasOverlayMeasureSession`
 path, two forced `getBoundingClientRect()` reads): a frame whose own ring
-placements show it owns NONE of the selected nodes (every `elementCache.resolve`
-came back `null` — not present in this frame's iframe document) now skips
+placements show it owns NONE of the selected nodes (the frame's rect index lists
+no box for any of them) now skips
 session creation entirely rather than creating one that would only ever
 measure `null`. For a board frame this mostly restates what `selectedNodeFrameId`
 scoping (WS-10 Phase 2) already gives for free — a non-owning board frame's
-`selectedNodeIds` is already `EMPTY_SELECTED_NODE_IDS`, so its `tickOnce`
+`selectedNodeIds` is already `EMPTY_SELECTED_NODE_IDS`, so its placement pass
 never even runs — but the CMS/Visual-Component canvas mirrors one selection
 across every real breakpoint frame on purpose, and that is exactly the case
 where more than one frame reaches the anchor branch for a selection only one
@@ -2544,36 +2564,36 @@ handlers, `BoardFrameView`'s activate-on-capture, `useIframeEventForwarding`'s
 cloned wheel. Everything the board learns about a bridge frame arrives as a
 `postMessage` from the in-frame runtime (`@core/studio-runtime`), validated by
 `BridgeFrameAdapter`, and — as of `live-12`/`live-13` — consumed by
-`useBridgeFrameInteraction` and `useBridgeSelectionChrome` on the parent:
+`useBridgeFrameInteraction` and `useBridgeResizeTarget` (plus the placement pass, which reads the rect index) on the parent:
 
 | Runtime message | In-frame source (`gestureForwarding.ts`) | Parent consumer |
 |---|---|---|
 | `pointer` (`down`/`move`/`up`/`click`, with the hit's stamped id **and its stamped ancestor chain**, plus `button`/`buttons`/`pointerId`/`pointerType`) | capture-phase document listeners, both modes; never for the runtime's own chrome; `move` is coalesced (`speed-03`, see below) | `useBridgeFrameInteraction` → a PAN press (`shouldStartCanvasPointerPan`: middle button, or primary with Space/hand tool) is replayed on the iframe element as a real `PointerEvent` with its moves and release, and the click after it dropped; otherwise activates the frame's page if inactive, then the same `CanvasSelectionContext` handlers `NodeRenderer` calls (`onFrameNodeClick`, `onNodeHover`, `onNodePointerDown/Up`) — a click or hover target inside a closed `studio.instance` first resolved to the OUTERMOST closed instance, as `NodeRenderer` does (P2-B) |
 | `wheel` (design mode only; the frame's own scroll is cancelled) | same listeners | re-dispatched as a `WheelEvent` on the iframe element in parent client pixels, so it bubbles to the canvas root like a portal frame's |
-| `resize:commit` (`{ width?, height?, left?, insetInlineStart?, top? }` as integer `px` strings, offsets may be negative; plus the Fixed companions `flex: '0 1 auto' | null`, `alignSelf: null`, `justifySelf: null` — `null` clears; no other key passes the schema, canvas-23) | `resizeHandles.ts` — a finished drag on the in-frame handles | `useBridgeFrameInteraction` → `setNodeInlineStyles`, the one write `useElementResizeDrag` makes for a portal frame |
-| `resize:guides` (canvas-26; at most one guide per axis, frame-document px, bounded; `[]` when the drag ends) | `resizeHandles.ts` — posted from the preview's rAF only when the guides change | `useBridgeFrameInteraction` → `paintResizeGuides(resolveResizeGuideSurface(iframe), …)` — the frame's parent-document drag layer, where a portal drag paints its own |
+| `resize:commit` (`{ width?, height?, left?, insetInlineStart?, top? }` as integer `px` strings, offsets may be negative; plus the Fixed companions `flex: '0 1 auto' | null`, `alignSelf: null`, `justifySelf: null` — `null` clears; no other key passes the schema, canvas-23) | `resizeSession.ts` — a finished drag the parent's handles drove over `resize:begin`/`step`/`end` | `useBridgeFrameInteraction` → `setNodeInlineStyles`, the one write `useElementResizeDrag` makes for a portal frame |
+| `resize:guides` (canvas-26; at most one guide per axis, frame-document px, bounded; `[]` when the drag ends) | `resizeSession.ts` — posted from each `resize:step` only when the guides change | `useBridgeFrameInteraction` → `paintResizeGuides(resolveResizeGuideSurface(iframe), …)` — the frame's parent-document drag layer, where a portal drag paints its own |
 | `text:editStart` (`live-18`, design mode only; carries the same bounded `ancestors` chain as `pointer`, canvas-24) / `text:commit` (final text, bounded to 20 000 chars) / `text:cancel` | `inlineTextEdit.ts` — a double-click on a stamped element opens a session; the runtime owns the whole contentEditable lifecycle itself (seeding, focus, select-all, Escape/Enter, blur) and only the request and the final result cross the wire | `useBridgeFrameInteraction` → `text:editStart` runs the SAME `startInlineEdit` predicate the portal double-click handler applies — on the nearest ancestor the tree KNOWS (`nearestKnownNodeId`, the click's own walk) — and replies via `adapter.startTextEdit(nodeId, allowed, text?)`, which the runtime accepts for any ref in the chain; `text:commit` calls `applyInlineEditValue` + `endInlineEdit`; `text:cancel` calls `cancelInlineEdit` — nothing is written to the store until commit, so cancel (and an HMR update landing mid-edit) is a plain no-op here |
-| `ready`, `hmr:before`/`hmr:after`, `frame:resize`, `error`, `measure:result` | unchanged | `useAdapterReady`, `overlayMeasureScheduler`, `useIframeFrameAutoHeight`, `useBridgeFrameDiagnostics`, `useBridgeComputedValues`, and (`hmr:after`/`frame:resize`) `useBridgeSelectionChrome`'s anchor refresh |
+| `ready`, `hmr:before`/`hmr:after`, `frame:resize`, `error`, `measure:result` | unchanged | `useAdapterReady`, `frameChromeScheduler`, `useIframeFrameAutoHeight`, `useBridgeFrameDiagnostics`, `useBridgeComputedValues`, and (`hmr:after`/`frame:resize`) the placement pass |
 | `key` (P2-B; `down`/`up`, `key`/`code` ≤ 32 chars, `location`, `repeat`, modifiers) / `blur` | `keyForwarding.ts` — capture-phase `keydown`/`keyup` on the document and `blur` on its window, DESIGN mode only, never for a key typed into a contentEditable or a text field; a design-mode keydown is cancelled and stopped in the frame | `useBridgeFrameInteraction` → `canvasFrameKeyRelay.ts`, the portal frame's own relay: `down` becomes a keydown clone on the parent `document` (the one dispatcher), `up` goes into the release broadcast, `blur` releases every held key if focus left the editor (ERR-11) |
 | `dropCandidates:result` (`speed-06`; every stamped node's `{nodeId, occurrenceIndex, rect, axis, reversed, childRects}`, bounded ≤2000 candidates/≤200 `childRects` each) | `dropCandidates.ts`'s `collectDropCandidates`, answering the matching `dropCandidates` request | `BridgeFrameAdapter.measureDropCandidates()`'s pending-request map → `canvasInsertionDragSnapshot.ts`'s per-drag snapshot (never a per-move consumer) |
 | `measureAll:result` / `geometry:dirty` (SB-3; every boxed node's `{nodeId, occurrenceIndex, rect, parent, clips, inert, transformed, paint}`, bounded ≤4000 with a `truncated` flag; the ping is a latch, once per read, and only after the first `measureAll`) | `nodeGeometry.ts`'s `collectNodeGeometry` answering the matching `measureAll`; `geometryDirtySignal.ts` fed by the body `layoutObserver` the runtime already runs | `BridgeFrameAdapter.measureAll()`'s pending map → `frameGeometry/frameGeometryRegistry.ts` (the rect index; see "The rect index" below) |
 
 And the other direction — what the parent sends a bridge frame that a portal
-frame never needs (each is a no-op on a portal adapter). The chrome calls come
-from `useBridgeSelectionChrome` (called by `BreakpointSelectionOverlay` with the
-frame's adapter); the rest name their caller:
+frame never needs (each is a no-op on a portal adapter). The resize target comes
+from `useBridgeResizeTarget` (called by `BreakpointSelectionOverlay` with the
+frame's adapter) and the drag from `useBridgeResizeDrag`; the rest name their
+caller:
 
 | Adapter call | What the runtime does with it |
 |---|---|
-| `applyOverlay('selection-chrome-tokens', …)` | mounts the editor's `--canvas-selection-ring`/… token block — the runtime's own ring stylesheet references them, and a cross-origin document cannot read the parent's computed styles, so without this the rings position correctly and paint nothing |
-| `select(refs)` / `hover(ref)` | draws and positions the rings in its own overlay root (the `live-05` design; this is the caller it was waiting for) |
-| `setResizeTarget(ref, { proportional, sizing, snap })` | draws the eight handles (`resizeHandles.ts`) on the node's presented element when its computed display takes a size; the parent already applied the module half of `resizeOffer.ts` (`canOfferResizeForModule`). `sizing` is the node's STORED `flex`/`alignSelf`/`justifySelf` (canvas-23) and `snap` its tree siblings, tree parent and the committed zoom (canvas-26) — `resizeTargetContext.ts` reads them as primitives, so an unrelated store write re-sends nothing. A drag reads both once, at pointerdown |
+| `setResizeTarget(ref, { proportional, sizing, snap, anchors })` | names the node a resize drag would size (`resizeSession.ts`): the runtime resolves its presented element and refuses when its computed display ignores a size; the parent already applied the module half of `resizeOffer.ts` (`canOfferResizeForModule`) and draws the handles itself. `sizing` is the node's STORED `flex`/`alignSelf`/`justifySelf` (canvas-23) and `snap` its tree siblings, tree parent and the committed zoom (canvas-26) — `resizeTargetContext.ts` reads them as primitives, so an unrelated store write re-sends nothing. A drag reads both once, at `resize:begin` |
+| `resizeBegin(handle)` / `resizeStep(dx, dy, { shiftKey, altKey })` / `resizeEnd(commit)` (SB-4) | the drag, driven by the parent's own pointer session (`useBridgeResizeDrag` over `handleDragSession.ts`): begin reads the layout once, each step (one per animation frame, frame px, modifiers as held) previews through the runtime stylesheet and posts changed guides, end drops the preview or posts `resize:commit`. The release's final step is sent before the end |
 | `optimistic.revert(nodeIds)` (store-17) | puts back the optimistic hide and move of exactly those nodes (`revertOptimisticNodes`) — called from `structuralCommitRollback.ts` when a structural write is refused or never answered, because no HMR follows a write that did not land. Other nodes keep their optimistic state: a second gesture still in flight keeps its preview |
-| `measure(selection)` | answers with body-relative rects; the parent projects them through `createCanvasOverlayMeasureSession` to anchor the selection toolbar and in-place inspector, which stay in the parent document as they do for a portal frame — once per selection change, pan/zoom commit, `frame:resize` or `hmr:after`, never per frame |
+| `measure(refs, properties)` | answers with body-relative rects and the requested computed properties — now only for what the rect index does not carry: a node's `display` (does the parent offer resize handles?) and the Alt-hover measurement's `padding-*`. The toolbar / inspector anchor and every ring come from the index (`measureAll`) |
 | `optimistic.style(nodeId, patch, className?)` (`speed-01`) | applies the patch as a stylesheet rule ALWAYS scoped to `nodeId`'s own element (never `nodeId`'s own inline `style`, which React's later HMR write must not be cleared), stamping `[data-studio-optimistic-style]` and keying the rule on that stamp — for BOTH an inline write and a class write (`className` present). `className` crosses the wire but is informational only: a bridge frame cannot build a `.<className>` selector from it, because that name is Studio's own PARSE of the class, not the independently-hashed name Vite's CSS-modules plugin gave it in the live DOM — proven live (`speed-01`'s STATE.md entry, "Live-measurement fix"), a `.<className>` rule matched nothing. Only the edited node previews instantly; other elements sharing the class catch up on the next HMR update. Called from `commitApi.ts`'s `writeToTarget`/`previewToTarget` for a BASE-context OR a BREAKPOINT-context style commit or scrub — the broadcast layer (`optimisticStructuralBroadcast.ts`'s `broadcastOptimisticStyle`) filters a breakpoint-context write to only the bridge frame(s) whose OWN `breakpointId` (`canvasFrameAdapterRegistry.ts`'s per-registration field, set by `IframeFrameSurface.tsx`) matches; a base write reaches every bridge frame, same as before. Only a STATE/condition context (hover, focus, active, …) is skipped entirely — a live board frame IS a breakpoint frame, so treating every non-base context as "skip" (the pre-fix behaviour) silently removed the preview from its main use case. A CLEARED inline property (`null` in the patch) is sent as the empty value `OPTIMISTIC_STYLE_CLEARED`: the runtime removes that property from the element's inline `style` (remembering its value) and puts it back when the preview is taken back (`optimistic.style:clear`, `vite:beforeUpdate`); a class-target clear is not previewed. `PortalFrameAdapter`'s implementation is a documented no-op — the portal tree already repaints from the same store write. |
 | `optimistic.clearStyle(nodeId)` (`speed-01`) | drops whatever optimistic style rule is currently active for `nodeId` — a no-op when nothing is active. Called from `commitApi.ts`'s `clearStylePreview`. |
 | `optimistic.insert(nodeId, parentNodeId, index, tagName, text?)` / `optimistic.delete(nodeId)` / `optimistic.move(nodeId, parentNodeId, index)` (`live-07`) | the same-tick paint of a structural gesture, ahead of the file write and Fast Refresh: `optimisticDomOps.ts` inserts a ghost element built from structured `tagName`/`text` (never HTML; the id is a throwaway `optimistic:<uuid>`), removes the node's element, or moves it. `optimisticStructuralBroadcast.ts` sends each call to EVERY registered bridge adapter; a frame that does not hold the node no-ops. Callers: `studioSourceWrites.ts` (insert), `nodeActions.ts` and `deleteNodesAction.ts` (delete), `nodeActions.ts` and `moveSequenceActions.ts` (move). |
-| `startTextEdit(nodeId, allowed, text?)` (`live-18`) | the reply to the frame's own `text:editStart` request (called from `useBridgeFrameInteraction`, not `useBridgeSelectionChrome` — the frame asks per-node, not once per selection). `allowed` makes the target `contentEditable`, seeds it with `text` (the node's current canonical value), focuses it and selects all; refused is a silent no-op, mirroring the portal editor's own silence for a non-editable double-click. `PortalFrameAdapter`'s implementation is a documented no-op — nothing in portal mode ever emits `text:editStart` in the first place, since `NodeRenderer` owns its whole session directly with no adapter round trip. `beginTextEdit(nodeId, text)` is the parent-initiated start (`text:edit` with `begin: true`; see "Inline text editing"); `isFrameReady()` says whether the frame has posted `ready`. |
+| `startTextEdit(nodeId, allowed, text?)` (`live-18`) | the reply to the frame's own `text:editStart` request (called from `useBridgeFrameInteraction` — the frame asks per-node, not once per selection). `allowed` makes the target `contentEditable`, seeds it with `text` (the node's current canonical value), focuses it and selects all; refused is a silent no-op, mirroring the portal editor's own silence for a non-editable double-click. `PortalFrameAdapter`'s implementation is a documented no-op — nothing in portal mode ever emits `text:editStart` in the first place, since `NodeRenderer` owns its whole session directly with no adapter round trip. `beginTextEdit(nodeId, text)` is the parent-initiated start (`text:edit` with `begin: true`; see "Inline text editing"); `isFrameReady()` says whether the frame has posted `ready`. |
 | `measureDropCandidates()` (`speed-06`) | a bounded `dropCandidates`/`dropCandidates:result` round trip; the wire candidate's stamp+`occurrenceIndex` is translated to a canonical node id exactly like every other inbound method here. Called by `canvasInsertionDragSnapshot.ts`, once per drag per frame it visits (never per pointer move) and again on that frame's own `hmr:after`/`frame:resize`. `PortalFrameAdapter`'s implementation reuses the SAME `collectDropCandidates` the runtime answers with — a portal document's `data-node-id` values are already canonical, so there is no stamp translation to do. |
 | `measureAll()` (SB-3) | one `measureAll`/`measureAll:result` round trip, translated to canonical ids; arms the frame's `geometry:dirty` signal. A stamp the page tree does not know is folded into its nearest known ancestor. Called only by `frameGeometryRegistry.ts`. `PortalFrameAdapter` runs the SAME `collectNodeGeometry` synchronously. |
 
@@ -2667,12 +2687,9 @@ Three rules that fell out of wiring this, each pinned by a test:
   `style`), records what a move displaced, and `revertOptimisticDom` restores
   both on `vite:beforeUpdate` (and again on `vite:afterUpdate`). The real
   change then arrives through React from the source.
-- **The runtime's chrome is exempt from the design-mode rule.** A press on a
-  resize handle (inside the selection overlay root) is neither forwarded as a
-  pointer on some node nor cancelled before the handle's own listener sees it.
-  The drag's document listeners are CAPTURE-phase for the same reason: the
-  design-mode `stopPropagation` at the document would otherwise silence a
-  bubble listener on that same document.
+- **The runtime draws no chrome, so nothing in the frame is exempt from the
+  design-mode rule** (SB-4). A press on a resize handle never reaches the frame
+  at all: the handles are the parent's and the pointer is captured there.
 - **An in-frame resize previews through a stylesheet, never the element's
   `style`.** The commit is a `postMessage`, a file write and an HMR round trip
   away, after which React writes the SAME inline `width` the drag would have
@@ -2686,7 +2703,7 @@ Three rules that fell out of wiring this, each pinned by a test:
   stylesheet-not-inline-style posture, and had to teach the frame-fit
   `layoutObserver` about a NEW attribute it must ignore.** `optimisticStyle.ts`
   stamps `[data-studio-optimistic-style]` on the edited element for the
-  SAME reason `resizeHandles.ts` stamps `[data-studio-resize-preview]` — the
+  SAME reason `resizeSession.ts` stamps `[data-studio-resize-preview]` — the
   eventual React re-render writes the identical value, so only a stylesheet
   rule (never `element.style`) can be dropped without either deleting React's
   write or snapping back mid-round-trip. This is the THIRD attribute the
@@ -2695,9 +2712,7 @@ Three rules that fell out of wiring this, each pinned by a test:
   has to be told to ignore — miss one and every style edit spuriously resets
   the frame's fit-height pin through the SAME observer callback that reports
   `frame:resize` to the parent, fighting the "grow to content" requirement
-  `docs/features/canvas-iframe-per-frame.md` describes. `runtime.ts`'s
-  `optimistic.style` handler also calls `scheduleReposition()` explicitly
-  rather than relying solely on the mutation-observer side effect. Any
+  `docs/features/canvas-iframe-per-frame.md` describes. Any
   FUTURE runtime-owned attribute needs the same three-way check: (1) does the
   mutation observer see it and mis-fire a fit-pin reset, (2) does React's own
   reconciliation ever try to write the same thing (then it must be a
@@ -2867,19 +2882,20 @@ already BE the target page or the write lands nowhere.
 `canvas/frameGeometry/` answers "what is under this board point" and "where is
 node X, in board units" from a per-frame snapshot, with no read of the frame's
 document and no `elementRect x zoom + iframeOffset + panOffset` chain to go
-stale. It is the foundation SB-4 draws the selection chrome from (parent-side,
-no in-frame rings) and the only way to hit-test a frame that has no live
-document (a poster). Nothing on the click or hover path consumes it yet: the
-one consumer today is the right-click "Select layer" list
-(`canvasNodesUnderPoint.ts`, which used to call `elementsFromPoint`, and now
-also works for a bridge frame, where the list used to be empty).
+stale. It is where SB-4 draws the selection chrome from (see "Parent-side
+selection chrome (SB-4)" below) and the only way to hit-test a frame that has no
+live document (a poster). Its consumers: every ring, handle, badge, hover ring and
+the toolbar / inspector anchor (frame-local reads), and the right-click "Select
+layer" list (`canvasNodesUnderPoint.ts`, board-space; it used to call
+`elementsFromPoint`, and now also works for a bridge frame, where the list used
+to be empty).
 
 | File | Job |
 |---|---|
 | `frameGeometryTypes.ts` | `NodeGeometry` / `FrameGeometrySnapshot`: the batched read, as plain data (already serializable, which is what lets SB-5/6 persist it beside a poster). A dependency-free leaf. |
 | `packedRTree.ts` | Static, bulk-loaded R-tree over typed arrays (Sort-Tile-Recursive packing, 16 per node). Point and rectangle search only. |
-| `frameGeometryIndex.ts` | `FrameGeometryIndex.fromSnapshot(snapshot, origin)`: `nodesAt(point)` (topmost first), `hitTest`, `rectOf`, `bounds`, `nodesIn(rect)`, `ancestorsOf`, `setOrigin`. Board-space API over a frame-viewport-space tree: moving a frame is `setOrigin`, O(1), never a rebuild. |
-| `frameGeometryRegistry.ts` | `getFrameGeometry(iframe)` (lazy, re-reads when dirty, concurrent askers share one read), `peekFrameGeometry` (never reads), `onFrameGeometryDirty`, `hitTestBoard(clientPoint)`. Discovers frames through `canvasFrameAdapterRegistry`. |
+| `frameGeometryIndex.ts` | `FrameGeometryIndex.fromSnapshot(snapshot, origin)`: `nodesAt(point)` (topmost first), `hitTest`, `rectOf`, `bounds`, `nodesIn(rect)`, `ancestorsOf`, `setOrigin`. Board-space API over a frame-viewport-space tree: moving a frame is `setOrigin`, O(1), never a rebuild. `localRectOf(id)` is the same box in the FRAME's viewport px, independent of its place on the board (what chrome beside the iframe is placed in). |
+| `frameGeometryRegistry.ts` | `getFrameGeometry(iframe)` (board space; lazy, re-reads when dirty, concurrent askers share one read), `getFrameLocalGeometry(iframe)` (the same read for frame-local callers: needs no board origin, so it works for a CMS / Visual Component frame too), `readFrameLocalGeometryNow(iframe)` (SYNCHRONOUS: the fresh index, or a same-origin frame re-read in this task via `adapter.measureAllNow()`; `null` for a stale bridge frame), `peekFrameGeometry` (never reads), `onFrameGeometryDirty`, `hitTestBoard(clientPoint)`. A read that started before the latest `geometry:dirty` is never shared: a newer one queues behind it, because the latch means no further signal would correct a stale answer. Discovers frames through `canvasFrameAdapterRegistry`. |
 
 **The read.** `adapter.measureAll()` returns every boxed node in document order:
 `nodeVisualRect` (a `display: contents` host takes the union of its children;
@@ -2895,14 +2911,15 @@ Measured: 1.1-1.4 ms median for a 140-node frame in a live portal frame; the
 index build is 0.2-0.3 ms and a point query 1.3-1.6 us (the browser's
 `elementsFromPoint` on the same frame: 17-18 us).
 
-**Dirty.** Both frames already run a subtree `childList` + `attributes`
-observer on the body for ring repositioning (`runtime.ts` `layoutObserver`,
-`PortalFrameAdapter` `armLayoutTracking`); it now also calls
-`geometrySignal.notify()`, for every record that is not the editor's own chrome.
-`geometryDirtySignal.ts` adds only what that observer cannot see, and only once
-the parent has asked for geometry: the `<head>` (a rewritten `<style>` moves
-boxes with no body mutation), `load`, `document.fonts` `loadingdone`,
-`transitionend`/`animationend`, and window `resize`. It is a latch: `geometry:dirty`
+**Dirty.** Both frames run ONE subtree `childList` + `attributes` +
+`characterData` observer on the body (`runtime.ts` `layoutObserver`,
+`PortalFrameAdapter` `armGeometryTracking`, armed by the first `measureAll`); it
+calls `geometrySignal.notify()` for every record (typing in a text box moves
+boxes with no node added). `geometryDirtySignal.ts` adds only what that observer
+cannot see, and only once the parent has asked for geometry: the `<head>` (a
+rewritten `<style>` moves boxes with no body mutation), `load`, `document.fonts`
+`loadingdone`, `transitionend`/`animationend`, `scroll` (a scrolled container
+moves everything it clips) and window `resize`. It is a latch: `geometry:dirty`
 fires once and stays quiet until the next `measureAll`, so a live app mutating
 every frame costs one message per read. A bridge frame's reloaded document (a
 second `ready`) is reported dirty by the adapter. A frame nobody indexes pays
@@ -2938,3 +2955,64 @@ that differ are `border-radius` corners.
 
 **Freshness is the caller's rule:** ask `getFrameGeometry` when correctness
 matters, `peekFrameGeometry` when waiting is worse than a one-frame-stale answer.
+
+### Parent-side selection chrome (SB-4) — nothing of the editor's is in a frame's document
+
+Rings, the node badge, the hover and press rings, the selector-affinity rings,
+the resize / rotation / spacing handles and the W x H badge, the Alt-hover
+measurement and the in-frame marquee are all PARENT-document elements. Each
+frame's `BreakpointSelectionOverlay` renders a zero-size root
+(`data-canvas-frame-chrome`, `FrameChrome.module.css`) as a sibling of the
+iframe, inside the frame's `.viewport` box, and places everything in it in the
+frame's own viewport px from the rect index (`frameChromeRects.ts`:
+`index.localRectOf`, a zero-DOM fragment falling back to its children through
+the page tree). The root is under the board's transform layer, so pan and zoom
+move it with the frame as one composited transform: there is no
+`elementRect x zoom + iframeOffset + panOffset` chain, and nothing for any
+frame observer to filter out (`isSelectionChromeMutation` is gone). This is the
+program's "one board-space overlay" realised as one shared module set
+(`CanvasSelectionChrome`, `FrameChrome.module.css`, `frameChromeRects`,
+`frameChromeScheduler`) with one root PER FRAME rather than one root for the
+board: a root beside its own iframe follows a frame drag, a flex reflow and a
+collapse with no origin to track, and SB-5's poster frames mount the same chrome
+over their persisted index.
+
+| File | Job |
+|---|---|
+| `FrameChrome.module.css` | the look of all of it, in `--px` = `1px / var(--canvas-zoom)` so a ring is 1 SCREEN px, a handle 9, a badge 11 px type, at every zoom (`--canvas-zoom` defaults to 1 in `globals.css` for the live surface) |
+| `CanvasSelectionChrome.tsx` | the elements: rings, badges, the always-mounted hover ring, the resize handles. Data hooks (`data-canvas-selection-ring`, `-hover-ring`, `-resize-handle`, `-overlay-node-id`, ...) are unchanged, so e2e specs query the PARENT document |
+| `BreakpointSelectionOverlay.tsx` | state, placement (`place`), anchors for the toolbar / inspector, the layout effect that places in the commit's task, the synchronous hover path |
+| `frameChromeScheduler.ts` | when a pass runs (see "The selection overlay places on events") |
+| `frameChromeRects.ts` | a node's box from the index |
+| `frameChromeRegistry.ts` | iframe -> its hover ring, so `pressRing.ts` (called from inside the frame's document) can restyle it |
+| `CanvasResizeHandles.tsx`, `useElementResizeDrag.ts`, `useGroupResizeDrag.ts`, `useElementRotateDrag.ts`, `useSpacingHandleDrag.ts`, `useBridgeResizeDrag.ts` | the handles' drags; pointer events are in screen px, `handleDragSession.ts` divides by the zoom |
+| `MeasureLayer.tsx`, `useInFrameMarquee.ts` | Alt-hover measurement and the marquee, painted into the chrome root |
+
+Things to know:
+
+- **Press ring.** `selectOnPress` flips `data-canvas-press-ring` on the frame's
+  hover ring (reached through `frameChromeRegistry` from `win.frameElement`); a
+  press on a layer the hover was not on places the ring from the index
+  (`peekFrameGeometry`), with no element read. The first ring is therefore a
+  parent-document attribute write, not a frame write.
+- **Hover** is placed in the event's own task (`placeHoverNow`), from the index.
+  A stale same-origin index is re-read synchronously; a stale bridge index defers
+  to the scheduled pass.
+- **A live (bridge) frame** is the same: its index arrives by `measureAll` over
+  the wire, its dirty signal by `geometry:dirty`, its handles are the parent's and
+  its drag is `resize:begin` / `resize:step` / `resize:end`. The runtime draws
+  nothing; `selectionChromeCss.ts` and `selectionChromeMutation.ts` are gone.
+  A bridge frame's ring therefore follows a preview one round trip behind (the
+  frame re-reads after each dirty), where a portal frame's follows in the same
+  microtask as the write.
+- **Clipping.** The root is inside `.viewport` (`overflow: hidden`), exactly as
+  the in-frame chrome was clipped by the iframe: handles at a frame's edge are
+  half cut, as before.
+- **Not modelled by the index** (so a ring can differ from the browser's box for
+  them): the cases listed under "The rect index". A rotated element's ring is its
+  bounds, as `getBoundingClientRect` was.
+- **Tests** can read the chrome from the parent (`document.querySelector(
+  '[data-canvas-selection-ring]')`); specs in `tests/e2e/` use
+  `helpers/chromeProbe.ts` to time a ring against an event inside a frame (both
+  listeners run in the parent's JS realm, so one clock times both).
+

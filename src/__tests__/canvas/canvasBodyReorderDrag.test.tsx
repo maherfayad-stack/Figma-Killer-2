@@ -73,15 +73,14 @@ function stubRect(el: Element, rect: { left: number; top: number; width: number;
 interface Harness {
   iframe: HTMLIFrameElement
   frameDoc: Document
-  overlayRoot: HTMLElement
   viewport: HTMLElement
   /** `[data-node-id]` elements inside the frame document, by node id. */
   nodes: Record<string, HTMLElement>
 }
 
 /**
- * A real iframe with a real content document, a node element per page node, and
- * the design-mode overlay root the hook uses as its design-frame gate.
+ * A real iframe with a real content document and a node element per page node.
+ * The frame's document is what the hook is handed as its design-frame gate.
  */
 function mountFrame(): Harness {
   const viewport = document.createElement('div')
@@ -97,10 +96,6 @@ function mountFrame(): Harness {
   Object.defineProperty(iframe, 'clientWidth', { value: FRAME_WIDTH, configurable: true })
   Object.defineProperty(iframe, 'clientHeight', { value: FRAME_HEIGHT, configurable: true })
   Object.defineProperty(iframe, 'offsetWidth', { value: FRAME_WIDTH, configurable: true })
-
-  const overlayRoot = frameDoc.createElement('div')
-  overlayRoot.setAttribute('data-studio-canvas-overlay-root', 'true')
-  frameDoc.body.appendChild(overlayRoot)
 
   const nodes: Record<string, HTMLElement> = {}
   const layout: Record<string, { left: number; top: number; width: number; height: number }> = {
@@ -121,7 +116,7 @@ function mountFrame(): Harness {
     nodes[id] = el
   }
 
-  return { iframe, frameDoc, overlayRoot, viewport, nodes }
+  return { iframe, frameDoc, viewport, nodes }
 }
 
 /** A native pointerdown in the FRAME document — iframe-local coordinates. */
@@ -159,7 +154,7 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-function renderDrag(overrides: { bodyDragEnabled?: boolean; overlayRoot?: HTMLElement | null } = {}) {
+function renderDrag(overrides: { bodyDragEnabled?: boolean; frameDocument?: Document | null } = {}) {
   const viewportRef = { current: harness.viewport }
   const canvasRootRef = { current: harness.viewport }
   return renderHook(() =>
@@ -167,7 +162,8 @@ function renderDrag(overrides: { bodyDragEnabled?: boolean; overlayRoot?: HTMLEl
       viewportRef,
       canvasRootRef,
       iframeElement: harness.iframe,
-      overlayRoot: overrides.overlayRoot === undefined ? harness.overlayRoot : overrides.overlayRoot,
+      frameDocument: overrides.frameDocument === undefined ? harness.frameDoc : overrides.frameDocument,
+      chromeRoot: null,
       selectedNodeIds: useEditorStore.getState().selectedNodeIds,
       frameId: null,
       enabled: true,
@@ -271,20 +267,21 @@ describe('useCanvasReorderDrag — pressing the element body', () => {
     expect(result.current.dragging).toBe(false)
   })
 
-  it('ignores presses on editor chrome portaled into the same frame document', () => {
+  it('ignores presses on an interactive editor control inside the frame', () => {
     const { result } = renderDrag()
-    const handle = harness.frameDoc.createElement('div')
-    handle.setAttribute('data-canvas-resize-handle', 'se')
-    harness.overlayRoot.appendChild(handle)
+    // The selection chrome lives in the parent document, so a press on a handle never reaches
+    // this document; a control the frame itself hosts is marked `data-canvas-interactive`.
+    const control = harness.frameDoc.createElement('div')
+    control.setAttribute('data-canvas-interactive', 'true')
+    harness.nodes.a!.appendChild(control)
 
     act(() => {
-      pressInFrame(handle, 20, 20)
+      pressInFrame(control, 20, 20)
     })
     act(() => {
       dispatchWindowPointer('pointermove', 160, 70)
     })
 
-    // A resize is `useElementResizeDrag`'s gesture; this hook must not claim it.
     expect(result.current.dragging).toBe(false)
   })
 
@@ -301,8 +298,8 @@ describe('useCanvasReorderDrag — pressing the element body', () => {
     expect(result.current.dragging).toBe(false)
   })
 
-  it('does not arm at all in a frame with no design-mode overlay root (live view)', () => {
-    const { result } = renderDrag({ overlayRoot: null })
+  it('does not arm at all in a frame with no design-mode document (live view)', () => {
+    const { result } = renderDrag({ frameDocument: null })
 
     act(() => {
       pressInFrame(harness.nodes.a!, 20, 20)

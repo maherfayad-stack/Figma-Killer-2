@@ -112,7 +112,7 @@ runFrameDocumentAdapterContract('BridgeFrameAdapter', () => {
 })
 
 describe('BridgeFrameAdapter — canonical <-> wire occurrenceIndex translation', () => {
-  it('pairs a .map()-repeated canonical id with its own tree-order index when posting select', () => {
+  it('pairs a .map()-repeated canonical id with its own tree-order index when posting a node-naming message', () => {
     const stub = makeStubChannel()
     // Three canonical ids sharing one stamp (`row:1:1#0`, `#1`, `#2` -> stamp `row:1:1`).
     const adapter = new BridgeFrameAdapter({
@@ -122,11 +122,11 @@ describe('BridgeFrameAdapter — canonical <-> wire occurrenceIndex translation'
     })
     adapters.push(adapter)
 
-    adapter.select([{ nodeId: 'row:1:1#1' }])
+    void adapter.measure([{ nodeId: 'row:1:1#1' }]).catch(() => undefined)
 
     const last = stub.posted.at(-1)!.message
-    expect(last.type).toBe('select')
-    if (last.type !== 'select') throw new Error('unreachable')
+    expect(last.type).toBe('measure')
+    if (last.type !== 'measure') throw new Error('unreachable')
     expect(last.refs).toEqual([{ nodeId: 'row:1:1', occurrenceIndex: 1 }])
   })
 
@@ -456,17 +456,35 @@ describe('BridgeFrameAdapter — canonical <-> wire occurrenceIndex translation'
     expect(cancels).toEqual([{ type: 'text:cancel', nodeId: 'row:1:1#0' }])
   })
 
-  it('setNodeIds rebuilds the index so a later select uses the new tree order', () => {
+  it('setNodeIds rebuilds the index so a later message uses the new tree order', () => {
     const stub = makeStubChannel()
     const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['row:1:1#0'] })
     adapters.push(adapter)
 
     adapter.setNodeIds(['row:1:1#0', 'row:1:1#1'])
-    adapter.select([{ nodeId: 'row:1:1#1' }])
+    void adapter.measure([{ nodeId: 'row:1:1#1' }]).catch(() => undefined)
 
     const last = stub.posted.at(-1)!.message
-    if (last.type !== 'select') throw new Error('unreachable')
+    if (last.type !== 'measure') throw new Error('unreachable')
     expect(last.refs).toEqual([{ nodeId: 'row:1:1', occurrenceIndex: 1 }])
+  })
+})
+
+describe('BridgeFrameAdapter — the resize drag the parent drives (SB-4)', () => {
+  it('posts begin, one step per call and end, in order, with the modifiers as held', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['n1'] })
+    adapters.push(adapter)
+
+    adapter.resizeBegin('se')
+    adapter.resizeStep(12, -3, { shiftKey: true, altKey: false })
+    adapter.resizeEnd(true)
+
+    expect(stub.posted.slice(-3).map((envelope) => envelope.message)).toEqual([
+      { type: 'resize:begin', handle: 'se' },
+      { type: 'resize:step', dx: 12, dy: -3, shiftKey: true, altKey: false },
+      { type: 'resize:end', commit: true },
+    ])
   })
 })
 
@@ -759,12 +777,12 @@ describe('BridgeFrameAdapter — nothing is posted before the frame is ready', (
     adapters.push(adapter)
 
     adapter.applyOverlay('sel', '.x{}')
-    adapter.hover(null)
-    adapter.select([{ nodeId: 'n1' }])
+    adapter.setResizeTarget(null, { proportional: false })
+    adapter.resizeBegin('e')
     expect(stub.posted).toHaveLength(0)
 
     stub.dispatch(toOutboundEnvelope({ type: 'ready' }), FRAME_ORIGIN)
-    expect(stub.posted.map((envelope) => envelope.message.type)).toEqual(['applyOverlay', 'hover', 'select'])
+    expect(stub.posted.map((envelope) => envelope.message.type)).toEqual(['applyOverlay', 'setResizeTarget', 'resize:begin'])
 
     adapter.removeOverlay('sel')
     expect(stub.posted.at(-1)!.message.type).toBe('removeOverlay')
@@ -775,7 +793,7 @@ describe('BridgeFrameAdapter — nothing is posted before the frame is ready', (
     const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['n1'] })
     adapters.push(adapter)
 
-    adapter.hover(null)
+    adapter.resizeEnd(false)
     stub.dispatch(toOutboundEnvelope({ type: 'ready' }), 'https://attacker.test')
     expect(stub.posted).toHaveLength(0)
   })

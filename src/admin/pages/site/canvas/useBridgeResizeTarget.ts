@@ -1,5 +1,5 @@
 /**
- * useBridgeSelectionChrome — `live-13`: what a Tier 2 bridge frame still needs
+ * useBridgeResizeTarget — `live-13`: what a Tier 2 bridge frame still needs
  * from the parent for its resize handles.
  *
  * Since SB-4 the rings, the hover ring, the node badge and the toolbar /
@@ -39,7 +39,7 @@ export function isBridgeChromeAdapter(adapter: FrameDocumentAdapter | null): ada
   return adapter !== null && !isPortalFrameAdapter(adapter)
 }
 
-export function useBridgeSelectionChrome(adapter: FrameDocumentAdapter | null, options: BridgeSelectionChromeOptions): void {
+export function useBridgeResizeTarget(adapter: FrameDocumentAdapter | null, options: BridgeSelectionChromeOptions): void {
   const { selectedNodeIds, committedTransform } = options
   const bridge = isBridgeChromeAdapter(adapter) ? adapter : null
   const resizeCandidate = selectedNodeIds.length === 1 ? (selectedNodeIds[0] ?? null) : null

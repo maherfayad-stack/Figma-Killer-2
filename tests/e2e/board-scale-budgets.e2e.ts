@@ -3,7 +3,7 @@ import { expect, test, type Frame, type Locator, type Page } from '@playwright/t
 import { profileGesture, readBoardCounts } from './helpers/canvasPerf'
 import { profileCpu, readDomCounters, traceGesture, traceMainThreadTasks } from './helpers/cdpTrace'
 import { visibleCanvasIframe } from './helpers/canvasIframe'
-import { FIRST_RING_ATTRIBUTES, FIRST_RING_SELECTOR } from './helpers/pressRingProbe'
+import { armClickProbe, armHoverProbe, readRingProbe } from './helpers/chromeProbe'
 import { LARGE_BOARD_SHAPE, largeBoardPageId, openLargeBoardAtWorkingZoom, SCALE_BOARD_SHAPE, writeLargeBoardCorpus } from './helpers/largeBoardCorpus'
 import { frameForPage, removeFixtureProject, selectInFrame, type FixtureProject } from './helpers/studioFixtureProject'
 
@@ -131,68 +131,29 @@ async function clickTargets(page: Page, frameEl: Locator, content: Frame): Promi
   return targets.filter((_, index) => hittable[index])
 }
 
-/** Ctrl-click one target and return pointerdown -> first animation frame after its ring exists, ms. */
-async function clickToRing(page: Page, content: Frame, target: ClickTarget): Promise<number> {
-  await content.evaluate(({ id, ringSelector, attributes }) => {
-    const state = { downAt: 0, ringAt: 0, paintAt: 0, observer: null as MutationObserver | null }
-    ;(window as unknown as { __sb0Click: typeof state }).__sb0Click = state
-    document.addEventListener('pointerdown', () => { if (state.downAt === 0) state.downAt = performance.now() }, { capture: true, once: true })
-    const check = () => {
-      if (state.ringAt !== 0) return
-      // The first ring the press shows: the borrowed hover ring (`data-canvas-press-ring`, which names no
-      // layer of its own) or the real selection ring on the target.
-      const ring = Array.from(document.querySelectorAll(ringSelector)).find(
-        (el) => (el.hasAttribute('data-canvas-press-ring') || el.getAttribute('data-canvas-overlay-node-id') === id) && (el as HTMLElement).style.display !== 'none',
-      )
-      if (!ring) return
-      state.ringAt = performance.now()
-      requestAnimationFrame(() => { state.paintAt = performance.now() })
-    }
-    state.observer = new MutationObserver(check)
-    state.observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: attributes })
-  }, { id: target.id, ringSelector: FIRST_RING_SELECTOR, attributes: FIRST_RING_ATTRIBUTES })
+/**
+ * Ctrl-click one target and return pointerdown -> first animation frame after its ring exists, ms. The first ring a
+ * press shows is the borrowed hover ring (`data-canvas-press-ring`, which names no layer of its own) or the real
+ * selection ring on the target; both are parent-document chrome beside the iframe (SB-4).
+ */
+async function clickToRing(page: Page, iframe: Locator, target: ClickTarget): Promise<number> {
+  await armClickProbe(iframe, target.id, { acceptPressRing: true })
   await page.keyboard.down('ControlOrMeta')
   await page.mouse.click(target.x, target.y)
   await page.keyboard.up('ControlOrMeta')
-  return content.evaluate(async () => {
-    const state = (window as unknown as { __sb0Click: { downAt: number; paintAt: number; observer: MutationObserver | null } }).__sb0Click
-    for (let wait = 0; wait < 100 && state.paintAt === 0; wait += 1) await new Promise((r) => setTimeout(r, 10))
-    state.observer?.disconnect()
-    return state.downAt === 0 || state.paintAt === 0 ? -1 : state.paintAt - state.downAt
-  })
+  return readRingProbe(page)
 }
 
 /**
- * Move the pointer onto one target and return pointermove -> first animation frame after the hover ring
- * names a different node than it did before the move, ms. A hover resolves to the layer at the selection
- * depth (the whole block around a heading), so the caller alternates between targets in different blocks:
- * a move inside the hovered block changes nothing to measure.
+ * Move the pointer onto one target and return pointermove -> first animation frame after the hover ring names a
+ * different node than it did before the move, ms. A hover resolves to the layer at the selection depth (the whole
+ * block around a heading), so the caller alternates between targets in different blocks: a move inside the hovered
+ * block changes nothing to measure.
  */
-async function hoverToRing(page: Page, content: Frame, target: ClickTarget): Promise<number> {
-  await content.evaluate(() => {
-    const ring = () => document.querySelector<HTMLElement>('[data-canvas-hover-ring]')
-    const before = ring()?.getAttribute('data-canvas-overlay-node-id') ?? null
-    const state = { before, moveAt: 0, ringAt: 0, paintAt: 0, observer: null as MutationObserver | null }
-    ;(window as unknown as { __sb3Hover: typeof state }).__sb3Hover = state
-    document.addEventListener('pointermove', () => { if (state.moveAt === 0) state.moveAt = performance.now() }, { capture: true, once: true })
-    const check = () => {
-      if (state.ringAt !== 0) return
-      const el = ring()
-      const id = el?.getAttribute('data-canvas-overlay-node-id') ?? null
-      if (!el || el.style.display === 'none' || id === null || id === state.before) return
-      state.ringAt = performance.now()
-      requestAnimationFrame(() => { state.paintAt = performance.now() })
-    }
-    state.observer = new MutationObserver(check)
-    state.observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['style', 'data-canvas-overlay-node-id'] })
-  })
+async function hoverToRing(page: Page, iframe: Locator, target: ClickTarget): Promise<number> {
+  await armHoverProbe(iframe)
   await page.mouse.move(target.x, target.y, { steps: 2 })
-  return content.evaluate(async () => {
-    const state = (window as unknown as { __sb3Hover: { moveAt: number; paintAt: number; observer: MutationObserver | null } }).__sb3Hover
-    for (let wait = 0; wait < 100 && state.paintAt === 0; wait += 1) await new Promise((r) => setTimeout(r, 10))
-    state.observer?.disconnect()
-    return state.moveAt === 0 || state.paintAt === 0 ? -1 : state.paintAt - state.moveAt
-  })
+  return readRingProbe(page)
 }
 
 /** One target per vertical quarter of the visible targets (the corpus screen is four stacked blocks), in an order that never repeats a block back to back. */
@@ -213,7 +174,7 @@ test.describe('board-scale budgets on the 100 x 140 corpus', () => {
         const targets = await clickTargets(page, frameEl, content)
         expect(targets.length, 'too few click targets on screen').toBeGreaterThanOrEqual(CLICK_SAMPLES)
         // Warm-up click, untraced: the first selection arms lazy observers.
-        await clickToRing(page, content, targets[0]!)
+        await clickToRing(page, visibleCanvasIframe(frameEl), targets[0]!)
         await page.waitForTimeout(600)
 
         const reports = []
@@ -270,11 +231,11 @@ test.describe('board-scale budgets on the 100 x 140 corpus', () => {
     const { frameEl, content } = await open(page)
     const targets = await clickTargets(page, frameEl, content)
     expect(targets.length).toBeGreaterThanOrEqual(CLICK_SAMPLES + 1)
-    await clickToRing(page, content, targets[0]!)
+    await clickToRing(page, visibleCanvasIframe(frameEl), targets[0]!)
     await page.waitForTimeout(500)
     const samples: number[] = []
     for (const target of targets.slice(1, 1 + CLICK_SAMPLES)) {
-      const ms = await clickToRing(page, content, target)
+      const ms = await clickToRing(page, visibleCanvasIframe(frameEl), target)
       expect(ms, `no ring for ${target.id} within 1 s`).toBeGreaterThan(0)
       samples.push(ms)
       await page.waitForTimeout(250)
@@ -288,11 +249,11 @@ test.describe('board-scale budgets on the 100 x 140 corpus', () => {
     const { frameEl, content } = await open(page)
     const targets = await clickTargets(page, frameEl, content)
     expect(targets.length).toBeGreaterThanOrEqual(HOVER_SAMPLES + 1)
-    await hoverToRing(page, content, hoverSequence(targets, 4)[3]!)
+    await hoverToRing(page, visibleCanvasIframe(frameEl), hoverSequence(targets, 4)[3]!)
     await page.waitForTimeout(300)
     const samples: number[] = []
     for (const target of hoverSequence(targets, HOVER_SAMPLES)) {
-      const ms = await hoverToRing(page, content, target)
+      const ms = await hoverToRing(page, visibleCanvasIframe(frameEl), target)
       expect(ms, `no hover ring for ${target.id} within 1 s`).toBeGreaterThan(0)
       samples.push(ms)
       await page.waitForTimeout(150)

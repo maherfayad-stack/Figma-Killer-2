@@ -987,10 +987,9 @@ It bails, in this order, on:
 | Condition | Whose gesture it is |
 |---|---|
 | `bodyDragEnabled` false | No `site.structure.edit` capability, or this is not the active breakpoint frame |
-| `overlayRoot` is `null` | Not a design frame. `CanvasSelectionOverlayInjector` is design-mode-only, so a live / prototype frame never has one and a press there must behave exactly like the published page |
+| `frameDocument` is `null` | Not a same-origin design frame: the overlay passes `null` for the live surface (`designMode={false}`) and for a bridge frame (no document), so a press there must behave exactly like the published page |
 | `event.button !== 0`, or space held | The canvas PAN gesture (`shouldStartCanvasPointerPan`) |
 | `activeInlineEdit` is set | The contentEditable inline text editor owns the pointer — a press-and-drag there is selecting text. Same stand-down the keyboard bridge makes (`useIframeEventForwarding`'s `onKeyDown`) |
-| target inside `[data-studio-canvas-overlay-root]` | Editor chrome portaled into this same document (WS-5.1). In practice the resize handles — `useElementResizeDrag`'s gesture |
 | target inside `[data-canvas-interactive="true"]` | An editor control rendered by a module |
 | target inside `[contenteditable]` | The caret is the user's target |
 | no `[data-node-id]` ancestor | Frame background — marquee / body context menu |

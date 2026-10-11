@@ -4,9 +4,10 @@
  * Phase 5B gated `BreakpointSelectionOverlay`'s measurement loop on
  * `hasOverlayWork`, which stopped it running over an EMPTY canvas. S4 finished
  * the job: the loop no longer runs over an idle canvas that merely has
- * something selected either. Measurement is event-driven
- * (`overlayMeasureScheduler.ts`) and a per-frame loop is armed only while
- * something is genuinely moving the geometry every frame.
+ * something selected either. Placement is event-driven
+ * (`frameChromeScheduler.ts`, fed by the rect index's dirty signal) and a
+ * per-frame loop is armed only while something is genuinely moving the
+ * geometry every frame.
  *
  * So this file now pins two different things:
  *
@@ -17,7 +18,7 @@
  *     loop that forces the canvas to stay hot while otherwise idle.
  *  2. The BEHAVIOUR — "an idle board with a selection is 0 rAF/s" — which a
  *     static read cannot express at all. That lives next door in
- *     `overlayMeasureScheduler.test.ts`, against a fake rAF.
+ *     `frameChromeScheduler.test.ts`, against a fake rAF.
  *
  * A source-shape check is still the right tool for (1): the invariant is about
  * which files reference `requestAnimationFrame` at all, which a static read
@@ -39,16 +40,16 @@ function read(relPath: string): string {
 describe('BreakpointSelectionOverlay RAF loop', () => {
   const source = read('canvas/BreakpointSelectionOverlay.tsx')
 
-  it('gates its measurement on hasOverlayWork and delegates the schedule to overlayMeasureScheduler', () => {
+  it('gates its placement on hasOverlayWork and delegates the schedule to frameChromeScheduler', () => {
     const effectMatch = source.match(
-      /useEffect\(\(\) => \{\n\s*if \(!hasOverlayWork\) return[\s\S]*?\}, \[hasOverlayWork, iframeElement, overlayRoot, bridgeChrome, continuousGesture\]\)/,
+      /useEffect\(\(\) => \{\n\s*if \(!hasOverlayWork\) return[\s\S]*?\}, \[hasOverlayWork, iframeElement, continuousGesture\]\)/,
     )
     expect(effectMatch).not.toBeNull()
     const effectBody = effectMatch![0]
 
     // The effect creates the scheduler and disposes it. It must NOT drive a
     // loop of its own — that is precisely the shape S4 removed.
-    expect(effectBody).toMatch(/createOverlayMeasureScheduler\(/)
+    expect(effectBody).toMatch(/createFrameChromeScheduler\(/)
     expect(effectBody).toMatch(/\.dispose\(\)/)
     expect(effectBody).not.toMatch(/requestAnimationFrame\(/)
   })
@@ -62,11 +63,12 @@ describe('BreakpointSelectionOverlay RAF loop', () => {
   })
 
   it('the scheduler reschedules only while a continuous hold is up', () => {
-    const scheduler = read('canvas/overlayMeasureScheduler.ts')
-    // The rAF pump's ONLY reschedule is guarded by the hold set. Without the
-    // guard this module would simply be the old permanent loop, relocated.
-    expect(scheduler).toMatch(/measure\(\)\n\s*if \(holds\.size > 0\) schedule\(\)/)
-    // And the pump is the only thing that requests a frame.
+    const scheduler = read('canvas/frameChromeScheduler.ts')
+    // The pump's ONLY per-frame reschedule is guarded by the hold set. Without
+    // the guard this module would simply be the old permanent loop, relocated.
+    expect(scheduler).toMatch(/if \(holds\.size > 0\) armFrame\(\)/)
+    expect(scheduler).toMatch(/if \(disposed \|\| frame !== 0 \|\| holds\.size === 0\) return/)
+    // And the frame arm is the only thing that requests a frame.
     expect((scheduler.match(/requestAnimationFrame\(/g) ?? []).length).toBe(1)
   })
 

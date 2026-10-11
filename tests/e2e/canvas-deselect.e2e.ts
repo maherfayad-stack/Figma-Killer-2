@@ -208,7 +208,7 @@ test.describe('select-01: deselect always gets you back to nothing selected', ()
     await panIntoView(page, canvasRoot, targetFrame)
 
     const contentFrame: FrameLocator = canvasContentFrame(targetFrame)
-    const rings = contentFrame.locator(SELECTION_RING)
+    const rings = page.locator(SELECTION_RING)
     const detachButton = page.getByTestId('instance-detach-button')
 
     // `<Price value="69" />` — a local component instance whose expansion is

@@ -182,12 +182,6 @@ export function readFrameLocalGeometryNow(iframe: HTMLIFrameElement): FrameGeome
   return entry.index
 }
 
-/** True when the frame's last-built index is still trusted: it exists and no `geometry:dirty` arrived since. */
-export function isFrameGeometryFresh(iframe: HTMLIFrameElement): boolean {
-  const entry = entryFor(iframe)
-  return entry !== null && entry.index !== null && entry.builtAtEpoch === entry.epoch
-}
-
 /** The last index built for the frame, fresh or not; `null` when none was ever built. Never reads the frame. */
 export function peekFrameGeometry(iframe: HTMLIFrameElement): FrameGeometryIndex | null {
   return entryFor(iframe)?.index ?? null

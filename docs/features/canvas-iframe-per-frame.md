@@ -51,6 +51,11 @@ IframeFrameSurface
     └── RuntimeScriptInjector (body: opt-in runtime scripts when "Run scripts" is on)
 ```
 
+The frame's document holds nothing else. Selection chrome (rings, handles, badges,
+hover, measurement) is parent-document DOM in a zero-size root beside the iframe
+(`BreakpointSelectionOverlay`, see `canvas-internals.md` → "Parent-side selection
+chrome (SB-4)"), so `body`'s children are the user's and only the user's.
+
 ### Interaction modes
 
 `interaction` prop controls two distinct behaviours:

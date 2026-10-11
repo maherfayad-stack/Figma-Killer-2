@@ -1,5 +1,5 @@
 /**
- * `speed-04` (STATE.md) — `BreakpointSelectionOverlay`'s `tickOnce` skips
+ * `speed-04` (STATE.md) — `BreakpointSelectionOverlay`'s placement pass skips
  * the expensive parent-doc anchor session (`createCanvasOverlayMeasureSession`
  * — two forced `getBoundingClientRect()` reads) when this frame's own ring
  * placements already say it doesn't render ANY of the selected nodes at all.
@@ -14,10 +14,9 @@
  *
  * Selecting a node id that exists nowhere in the tree is the simplest way to
  * reproduce "this frame doesn't own the selection" without standing up a
- * second breakpoint frame: `elementCache.resolve` returns `null` for it
- * (no DOM element, and the zero-DOM fragment fallback finds nothing in the
- * page tree either), which is exactly the same signal a real, unmatched
- * frame produces.
+ * second breakpoint frame: the frame's rect index has no box for it (no DOM
+ * element, and the zero-DOM fragment fallback finds nothing in the page tree
+ * either), which is exactly the same signal a real, unmatched frame produces.
  */
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import { act, cleanup, render, waitFor } from '@testing-library/react'
@@ -96,16 +95,13 @@ describe('BreakpointSelectionOverlay — skips the anchor session for a frame th
       } as Parameters<typeof useEditorStore.setState>[0])
     })
 
-    // Proof the tick actually ran (the ring-write phase runs BEFORE the
+    // Proof the pass actually ran (the ring-write phase runs BEFORE the
     // anchor-skip check): the ring div for `ghost-node` exists, just hidden.
     await waitFor(() => {
-      expect(
-        iframe.contentDocument!.querySelector('[data-canvas-overlay-node-id="ghost-node"]'),
-      ).not.toBeNull()
+      expect(document.querySelector('[data-canvas-overlay-node-id="ghost-node"]')).not.toBeNull()
     })
-    // Give the scheduler's rAF-coalesced pass a moment past that first
-    // observable write, so a session created slightly later would still be
-    // caught before asserting.
+    // Give the scheduler a moment past that first observable write, so a
+    // session created slightly later would still be caught before asserting.
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(sessionSpy).not.toHaveBeenCalled()
 
@@ -123,6 +119,11 @@ describe('BreakpointSelectionOverlay — skips the anchor session for a frame th
     expect(buttonElement).not.toBeNull()
     buttonElement.getBoundingClientRect = () =>
       ({ left: 10, top: 10, right: 50, bottom: 30, width: 40, height: 20, x: 10, y: 10, toJSON: () => ({}) }) as DOMRect
+
+    // The stub moved a box the way a layout change does: the frame's own dirty
+    // signal (a body mutation) is what tells the index to re-read.
+    iframe.contentDocument!.body.setAttribute('data-layout-changed', '1')
+    await new Promise((resolve) => setTimeout(resolve, 0))
 
     act(() => {
       useEditorStore.setState({

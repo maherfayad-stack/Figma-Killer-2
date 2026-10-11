@@ -29,7 +29,6 @@
 import type { OutboundRuntimeMessage, RuntimeMode } from './messages'
 import { NODE_ID_ATTR } from './nodeIdIndexing'
 import { nearestNodeOccurrence, rectRelativeToBody, stampedAncestors } from './nodeDom'
-import { SELECTION_OVERLAY_ROOT_ID } from './selectionChromeCss'
 
 type PointerRect = { x: number; y: number; width: number; height: number } | null
 
@@ -42,16 +41,6 @@ function rectsEqual(a: PointerRect, b: PointerRect): boolean {
 export interface GestureForwardingOptions {
   getMode: () => RuntimeMode | null
   post: (message: OutboundRuntimeMessage) => void
-}
-
-/**
- * `live-13` — the runtime's own chrome (rings, resize handles) lives inside
- * the selection overlay root. A press on a resize handle is the handle's
- * gesture, not the page's: it is neither forwarded as a pointer on some node
- * nor cancelled before the handle's own listener can see it.
- */
-function isRuntimeChrome(target: Element | null): boolean {
-  return target?.closest(`#${SELECTION_OVERLAY_ROOT_ID}`) !== null && target !== null
 }
 
 const POINTER_TYPES = new Set(['mouse', 'pen', 'touch'])
@@ -111,8 +100,6 @@ let pendingMoveFrame: number | null = null
 let lastPostedMove: { nodeId: string | null; rect: PointerRect } | null = null
 
 function postMove(ev: PointerEvent): void {
-  const target = ev.target instanceof Element ? ev.target : null
-  if (isRuntimeChrome(target)) return
   const message = buildPointerMessage('move', ev)
   // A held button is an active drag (pan replay in particular) — position
   // has to keep flowing even when the resolved node doesn't change.
@@ -135,8 +122,6 @@ function flushPendingMove(): void {
 }
 
 function forwardPointer(phase: 'down' | 'up' | 'click', ev: PointerEvent | MouseEvent): void {
-  const target = ev.target instanceof Element ? ev.target : null
-  if (isRuntimeChrome(target)) return
   post(buildPointerMessage(phase, ev))
 }
 /**
@@ -155,7 +140,6 @@ function forwardPointer(phase: 'down' | 'up' | 'click', ev: PointerEvent | Mouse
 function editorOwnsGesture(ev: Event): boolean {
   if (getMode() !== 'design') return false
   const target = ev.target instanceof Element ? ev.target : null
-  if (isRuntimeChrome(target)) return false
   return !target?.closest('[contenteditable]')
 }
 const onPointerDown = (ev: PointerEvent) => {

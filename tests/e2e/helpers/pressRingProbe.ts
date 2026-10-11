@@ -2,11 +2,12 @@ import type { Frame, Locator, Page } from '@playwright/test'
 
 /**
  * The first ring a press shows. A press does not wait for React: it restyles
- * the hover ring as a selection ring with one attribute
+ * the frame's hover ring as a selection ring with one attribute
  * (`data-canvas-press-ring`, `canvas/pressRing.ts`), and the REAL selection
  * ring (`data-canvas-selection-ring`) follows once the selection has rendered.
  * A spec that measures "the first visible ring" must accept either, or it
- * measures the commit and calls the press slow.
+ * measures the commit and calls the press slow. Both are parent-document chrome
+ * beside the iframe (SB-4): the probes below watch the PARENT document.
  */
 export const FIRST_RING_SELECTOR = '[data-canvas-selection-ring="true"], [data-canvas-hover-ring][data-canvas-press-ring]'
 
@@ -52,13 +53,27 @@ export interface PressProbeResult {
   realIds: string[]
 }
 
-/** Install the probe in a canvas frame's document; it arms itself on the next pointerdown. */
-export async function installPressProbe(content: Frame): Promise<void> {
-  await content.evaluate(
-    ({ ring, attributes }) => {
-      const state = { downAt: 0, firstAt: 0, firstKind: 'none', realAt: 0, gaps: 0, frames: 0, ids: new Set<string>(), stop: false }
-      ;(window as unknown as { __pressProbe: typeof state }).__pressProbe = state
-      const visible = () => Array.from(document.querySelectorAll<HTMLElement>(ring)).filter((el) => el.style.display !== 'none')
+interface PressProbeState {
+  downAt: number
+  firstAt: number
+  firstKind: string
+  realAt: number
+  gaps: number
+  frames: number
+  ids: Set<string>
+  stop: boolean
+}
+
+/**
+ * Install the probe: the next `pointerdown` in `iframe`'s document starts the clock, and the parent document is
+ * watched for rings. Both listeners run in the parent's JS realm, so one `performance.now()` times both.
+ */
+export async function installPressProbe(iframe: Locator): Promise<void> {
+  await iframe.evaluate(
+    (element, args) => {
+      const state: PressProbeState = { downAt: 0, firstAt: 0, firstKind: 'none', realAt: 0, gaps: 0, frames: 0, ids: new Set<string>(), stop: false }
+      ;(window as unknown as { __pressProbe: PressProbeState }).__pressProbe = state
+      const visible = () => Array.from(document.querySelectorAll<HTMLElement>(args.ring)).filter((el) => el.style.display !== 'none')
       const read = () => {
         if (state.downAt === 0) return
         const rings = visible()
@@ -73,7 +88,7 @@ export async function installPressProbe(content: Frame): Promise<void> {
           state.firstKind = rings.some((el) => el.hasAttribute('data-canvas-selection-ring')) ? 'selection' : 'press'
         }
       }
-      new MutationObserver(read).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: attributes })
+      new MutationObserver(read).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: args.attributes })
       const frame = () => {
         if (state.stop) return
         state.frames += 1
@@ -81,7 +96,7 @@ export async function installPressProbe(content: Frame): Promise<void> {
         if (state.firstAt !== 0 && visible().length === 0) state.gaps += 1
         requestAnimationFrame(frame)
       }
-      document.addEventListener(
+      ;(element as HTMLIFrameElement).contentDocument!.addEventListener(
         'pointerdown',
         () => {
           state.downAt = performance.now()
@@ -95,11 +110,9 @@ export async function installPressProbe(content: Frame): Promise<void> {
 }
 
 /** Stop the probe and read what it saw. */
-export async function readPressProbe(content: Frame): Promise<PressProbeResult> {
-  return content.evaluate(() => {
-    const s = (window as unknown as {
-      __pressProbe: { downAt: number; firstAt: number; firstKind: string; realAt: number; gaps: number; frames: number; ids: Set<string>; stop: boolean }
-    }).__pressProbe
+export async function readPressProbe(page: Page): Promise<PressProbeResult> {
+  return page.evaluate(() => {
+    const s = (window as unknown as { __pressProbe: { downAt: number; firstAt: number; firstKind: string; realAt: number; gaps: number; frames: number; ids: Set<string>; stop: boolean } }).__pressProbe
     s.stop = true
     return {
       firstRingMs: s.firstAt === 0 ? 0 : s.firstAt - s.downAt,
