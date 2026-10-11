@@ -34,7 +34,8 @@ async function waitForFrameDocument(frameId: string): Promise<Document> {
     const frameEl = document.querySelector(`[data-frame-id="${frameId}"]`)
     const iframe = frameEl?.querySelector('iframe') as HTMLIFrameElement | null
     doc = iframe?.contentDocument ?? null
-    expect(doc?.body).toBeTruthy()
+    // The tree is a staged mount (`IframeFrameSurface`): wait for it, not just for the empty document.
+    expect(doc?.body?.querySelector('[data-node-id]')).toBeTruthy()
   })
   return doc!
 }
@@ -53,6 +54,10 @@ beforeEach(() => {
     boardsDirty: false,
     selectedFrameIds: [],
     frameDefaults: {},
+    // Frames are live only while in view at a readable zoom (SB-5): a neighbouring file's zoom must not leak in (0.5 is INITIAL_ZOOM, and keeps the second frame in the happy-dom window).
+    zoom: 0.5,
+    panX: 0,
+    panY: 0,
     selectedNodeId: null,
     selectedNodeIds: [],
     selectedNodeFrameId: null,

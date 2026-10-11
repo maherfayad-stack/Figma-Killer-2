@@ -103,7 +103,7 @@ function renderFrame(axes?: Partial<PreviewAxes>) {
       hasManualHeight={false}
       isActive={false}
       isSelected={false}
-      isOnScreen
+      isLive
     />,
   )
 }

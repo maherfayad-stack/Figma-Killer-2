@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'bun:test'
 import {
   computeLiveFrameCap,
+  LIVE_CAP_BRIDGE,
   LIVE_CAP_CEILING,
   LIVE_CAP_DEFAULT,
   LIVE_CAP_FLOOR,
@@ -16,10 +17,11 @@ import {
   type LiveFrameCandidate,
 } from '@site/canvas/BoardFramesLayer/liveFrameCap'
 
+const GB = 1024 ** 3
 const MB = 1024 * 1024
 
 describe('computeLiveFrameCap', () => {
-  it('defaults to 20 with nothing measured and nothing reported', () => {
+  it('defaults to 20 with nothing reported', () => {
     expect(computeLiveFrameCap({})).toBe(LIVE_CAP_DEFAULT)
     expect(LIVE_CAP_DEFAULT).toBe(20)
   })
@@ -28,21 +30,24 @@ describe('computeLiveFrameCap', () => {
     expect(computeLiveFrameCap({ deviceMemoryGb: 4 })).toBeLessThan(LIVE_CAP_DEFAULT)
     expect(computeLiveFrameCap({ deviceMemoryGb: 4 })).toBeGreaterThanOrEqual(LIVE_CAP_FLOOR)
     expect(computeLiveFrameCap({ deviceMemoryGb: 0.25 })).toBe(LIVE_CAP_FLOOR)
-    expect(computeLiveFrameCap({ deviceMemoryGb: 1, heapBytesPerLiveFrame: 400 * MB })).toBe(LIVE_CAP_FLOOR)
   })
 
-  it('goes above 20 when live frames are measured to be cheap, bounded by the ceiling', () => {
-    // 8 GB * 10% = ~819 MB; at 20 MB a frame that is 40 frames.
-    expect(computeLiveFrameCap({ deviceMemoryGb: 8, heapBytesPerLiveFrame: 20 * MB })).toBe(40)
-    expect(computeLiveFrameCap({ deviceMemoryGb: 8, heapBytesPerLiveFrame: 1 * MB })).toBe(LIVE_CAP_CEILING)
+  it('rises above 20 with plenty of free heap, bounded by the ceiling', () => {
+    // 3 GB free * 5% = 154 MB; at 8 MB a frame that is 19 -> the default still wins.
+    expect(computeLiveFrameCap({ deviceMemoryGb: 8, freeHeapBytes: 3 * GB })).toBe(LIVE_CAP_DEFAULT)
+    // 8 GB free * 5% = 410 MB = 51 frames -> the ceiling.
+    expect(computeLiveFrameCap({ deviceMemoryGb: 8, freeHeapBytes: 8 * GB })).toBe(LIVE_CAP_CEILING)
+    expect(computeLiveFrameCap({ deviceMemoryGb: 8, freeHeapBytes: 5 * GB })).toBeGreaterThan(LIVE_CAP_DEFAULT)
   })
 
-  it('comes down to the floor when live frames are measured to be heavy', () => {
-    expect(computeLiveFrameCap({ deviceMemoryGb: 8, heapBytesPerLiveFrame: 200 * MB })).toBe(LIVE_CAP_FLOOR)
+  it('never falls below the device-sized cap because the heap is busy', () => {
+    expect(computeLiveFrameCap({ deviceMemoryGb: 8, freeHeapBytes: 50 * MB })).toBe(LIVE_CAP_DEFAULT)
+    expect(computeLiveFrameCap({ deviceMemoryGb: 1, freeHeapBytes: 0 })).toBe(LIVE_CAP_FLOOR)
   })
 
-  it('ignores a nonsense measurement', () => {
-    expect(computeLiveFrameCap({ deviceMemoryGb: 8, heapBytesPerLiveFrame: 0 })).toBe(LIVE_CAP_DEFAULT)
+  it('a bridge board has its own cap, below the floor, whatever the memory', () => {
+    expect(computeLiveFrameCap({ bridge: true })).toBe(LIVE_CAP_BRIDGE)
+    expect(computeLiveFrameCap({ bridge: true, deviceMemoryGb: 8, freeHeapBytes: 8 * GB })).toBe(LIVE_CAP_BRIDGE)
   })
 })
 
@@ -102,5 +107,21 @@ describe('selectLiveFrames', () => {
   it('ignores working ids that are not frames of this board', () => {
     const { live } = selectLiveFrames({ ...base, frames: frames(2), editingFrameId: 'gone', selectedFrameIds: new Set(['gone']) })
     expect(live.has('gone')).toBe(false)
+  })
+
+  it('frames that are already live keep their slot over an equally-near newcomer, so a pan does not swap equals', () => {
+    const near = [
+      { id: 'a', inView: true, distanceToCenter: 100 },
+      { id: 'b', inView: true, distanceToCenter: 110 },
+    ]
+    const bridge = { bridge: true as const }
+    // Cap of 8 on a bridge board: nine candidates, one must lose.
+    const nine = Array.from({ length: 9 }, (_, i) => ({ id: `n${i}`, inView: true, distanceToCenter: 1000 + i }))
+    const fresh = selectLiveFrames({ ...base, ...bridge, frames: [...nine, ...near.map((f) => ({ ...f, id: `x${f.id}` }))] })
+    expect(fresh.live.size).toBe(LIVE_CAP_BRIDGE)
+    // n8 is the farthest, but it was live: it outranks a newcomer within the bonus.
+    const frames = [...nine.slice(0, 8), { id: 'n8', inView: true, distanceToCenter: 1100 }, { id: 'new', inView: true, distanceToCenter: 1090 }]
+    expect(selectLiveFrames({ ...base, ...bridge, frames }).live.has('n8')).toBe(false)
+    expect(selectLiveFrames({ ...base, ...bridge, frames, retainedIds: new Set(['n8']) }).live.has('n8')).toBe(true)
   })
 })

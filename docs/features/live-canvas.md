@@ -46,7 +46,7 @@ useDevServerPrewarm ──POST dev-server/start──▶ devServer.ts ──spaw
 | Live frame | `src/admin/pages/site/canvas/BoardFramesLayer/LiveBoardFrame.tsx`, `resolveLiveFrameSrc.ts` | Mounts the static fallback and the bridge iframe together and swaps on `ready` |
 | Client hooks | `src/admin/pages/site/studio/useLiveOrigin.ts`, `useDevServerReadiness.ts`, `useDevServerPrewarm.ts`, `devServerRequests.ts` | Learn the live origin, poll readiness, start the dev server as soon as a Tier-2 canvas mounts |
 | Parent-side consumers | `BoardFramesLayer/useBridgeFrameInteraction.ts`, `canvas/useBridgeSelectionChrome.ts`, `canvas/useBridgeFrameDiagnostics.ts` | Turn runtime messages into the same selection, pan, resize and text-edit calls a static frame makes; surface runtime errors |
-| Mount policy | `src/admin/pages/site/canvas/BoardFramesLayer/framePool.ts` | Which frames hold a live iframe: every on-screen frame, plus recently seen frames up to a budget of 8 for live frames (a live frame costs two documents and a dev-server client until `ready`) |
+| Mount policy | `src/admin/pages/site/canvas/BoardFramesLayer/frameMount.ts`, `liveFrameCap.ts` | Which frames hold a live iframe: the working frames plus the frames in view at zoom >= 0.35, up to a cap; a board whose dev server is ready has its own cap of 8 (a live frame costs two documents and a dev-server client until `ready`) |
 | Status pill | `src/admin/pages/site/canvas/LiveRuntimePill.tsx` | Shows `Static` / `Live` / `Live needs Vite`, and holds "Back to static" |
 
 The message catalogue (every runtime message, its in-frame source and its parent consumer) is in [`docs/agent-refs/canvas-internals.md`](../agent-refs/canvas-internals.md) → "A Tier 2 bridge frame: what crosses the wire, and who consumes it".

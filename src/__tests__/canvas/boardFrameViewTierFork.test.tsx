@@ -78,7 +78,7 @@ function renderFrame() {
       hasManualHeight={false}
       isActive={false}
       isSelected={false}
-      isOnScreen
+      isLive
     />,
   )
 }
