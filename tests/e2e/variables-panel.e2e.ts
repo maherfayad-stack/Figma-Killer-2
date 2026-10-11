@@ -62,6 +62,26 @@ const MAIN_TSX = `import './index.css'
 export {}
 `
 
+/** A CSS Module that declares a token at :root and one inside a rule of its own (the auditor's Probe fixture). */
+const PROBE_MODULE_CSS = `:root {
+  --probe-accent: #ff0000;
+}
+
+.card {
+  --status-cutout: #000;
+  color: var(--probe-accent);
+}
+`
+
+const PROBE_TSX = `import styles from './Probe.module.css'
+
+export default function Probe() {
+  return <div className={styles.card}>Probe</div>
+}
+`
+
+const PROBE_FILE = 'pages/Probe.module.css'
+
 const ORIGINAL_COLOR = 'rgb(12, 154, 176)'
 const EDITED_COLOR = 'rgb(255, 0, 0)'
 
@@ -80,6 +100,8 @@ test.beforeAll(() => {
     'src/index.css': TOKENS_CSS,
     'pages/Home.css': HOME_CSS,
     'pages/Home.tsx': HOME_TSX,
+    'pages/Probe.tsx': PROBE_TSX,
+    [PROBE_FILE]: PROBE_MODULE_CSS,
   })
 })
 
@@ -134,7 +156,8 @@ test.describe('CT-3 - Variables panel', () => {
   test('rename rewrites the declaration and every var() in one step, and Undo puts both files back', async ({ page }) => {
     const { title } = await openVariables(page)
 
-    await page.getByLabel('Rename --color-brand').click()
+    await page.getByLabel('Actions for --color-brand').click()
+    await page.getByRole('menuitem', { name: 'Rename' }).click()
     const input = page.getByLabel('New name for --color-brand')
     await input.fill('--color-primary')
     await input.press('Enter')
@@ -148,5 +171,45 @@ test.describe('CT-3 - Variables panel', () => {
     await page.getByRole('button', { name: 'Undo' }).click()
     await expect.poll(() => read(TOKENS_FILE), { timeout: 30_000 }).toBe(TOKENS_CSS)
     expect(read(HOME_FILE)).toBe(HOME_CSS)
+  })
+
+  test('a token declared in a CSS Module saves on Enter (no 409), and Undo restores the bytes', async ({ page }) => {
+    await openVariables(page)
+    const field = page.getByLabel('--probe-accent Default')
+    await field.click()
+    await field.press('ControlOrMeta+a')
+    await field.fill('#0000ff')
+    await field.press('Enter')
+    await expect
+      .poll(() => read(PROBE_FILE), { message: 'the CSS Module token edit never reached the module file', timeout: 30_000 })
+      .toBe(PROBE_MODULE_CSS.replace('#ff0000', '#0000ff'))
+    await expect(page.getByRole('alert')).toHaveCount(0)
+
+    await page.getByRole('button', { name: 'Undo' }).click()
+    await expect.poll(() => read(PROBE_FILE), { timeout: 30_000 }).toBe(PROBE_MODULE_CSS)
+  })
+
+  test('a token declared inside a rule shows its value and scope and is written in that rule', async ({ page }) => {
+    await openVariables(page)
+    const field = page.getByLabel('--status-cutout in .card')
+    await expect(field).toHaveValue('#000')
+    await field.click()
+    await field.press('ControlOrMeta+a')
+    await field.fill('#111111')
+    await field.press('Enter')
+    await expect
+      .poll(() => read(PROBE_FILE), { message: 'the scoped token edit never reached the module file', timeout: 30_000 })
+      .toBe(PROBE_MODULE_CSS.replace('#000', '#111111'))
+  })
+
+  test('the actions and every mode column are reachable without a horizontal scroll of the panel', async ({ page }) => {
+    await openVariables(page)
+    const panel = page.getByTestId('variables-panel')
+    const menu = page.getByLabel('Actions for --color-brand')
+    await expect(menu).toBeInViewport()
+    const box = (await menu.boundingBox())!
+    const panelBox = (await panel.boundingBox())!
+    expect(box.x + box.width, 'the row menu sits outside the panel').toBeLessThanOrEqual(panelBox.x + panelBox.width)
+    await expect(page.getByLabel('--color-brand Default')).toBeInViewport()
   })
 })

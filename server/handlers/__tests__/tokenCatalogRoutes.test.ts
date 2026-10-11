@@ -30,14 +30,26 @@ function request(pathAndQuery: string, init?: RequestInit): { req: Request; url:
   return { req: new Request(url, init), url, pathname: url.pathname }
 }
 
-function post(dir: string, edits: unknown[]) {
+function post(dir: string, edits: unknown[], afterPlan?: () => void) {
   const { req, url, pathname } = request('/admin/api/studio/token-catalog', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ dir, edits }),
   })
-  return tryServeStudioTokenCatalog(req, url, pathname)
+  return tryServeStudioTokenCatalog(req, url, pathname, afterPlan ? { afterPlan } : undefined)
 }
+
+const CARD_MODULE_CSS = [
+  ':root {',
+  '  --probe-accent: #ff0000;',
+  '}',
+  '',
+  '.card {',
+  '  --status-cutout: #000;',
+  '  color: var(--probe-accent);',
+  '}',
+  '',
+].join('\n')
 
 describe('token-catalog route', () => {
   let dir: string
@@ -108,5 +120,50 @@ describe('token-catalog route', () => {
   it('rejects a body that is not an edit list', async () => {
     const res = await post(dir, [{ op: 'rename', name: '--a' }])
     expect(res!.status).toBe(400)
+  })
+
+  describe('a CSS Module declares tokens (r3 variables)', () => {
+    const modulePath = (): string => path.join(dir, 'src/Card.module.css')
+    const moduleCss = (): string => fs.readFileSync(modulePath(), 'utf8')
+    beforeEach(() => {
+      fs.writeFileSync(modulePath(), CARD_MODULE_CSS)
+      fs.writeFileSync(path.join(dir, 'src/App.tsx'), ["import styles from './Card.module.css'", "export function App() { return <main className={styles.card} style={{ color: 'var(--color-brand)' }} /> }", ''].join('\n'))
+    })
+
+    it('a value edit of a :root token declared in the module is written to the module source, once', async () => {
+      const res = await post(dir, [{ op: 'set', name: '--probe-accent', value: '#0000ff' }])
+      expect(res!.status).toBe(200)
+      expect(moduleCss()).toBe(CARD_MODULE_CSS.replace('#ff0000', '#0000ff'))
+    })
+
+    it('shows a scoped token with its real value and selector, and writes it where it is declared', async () => {
+      const { req, url, pathname } = request(`/admin/api/studio/token-catalog?dir=${encodeURIComponent(dir)}`)
+      const catalog = (await (await tryServeStudioTokenCatalog(req, url, pathname))!.json()) as TokenCatalog
+      const cutout = catalog.tokens.find((t) => t.name === '--status-cutout')!
+      expect(cutout.decls.map((d) => [d.gate, d.value, d.file])).toEqual([[{ kind: 'scope', selector: '.card' }, '#000', 'src/Card.module.css']])
+
+      const res = await post(dir, [{ op: 'set', name: '--status-cutout', value: '#111111', target: { kind: 'scope', selector: '.card' } }])
+      expect(res!.status).toBe(200)
+      expect(moduleCss()).toBe(CARD_MODULE_CSS.replace('#000', '#111111'))
+    })
+
+    it('a rename and a remove of a module token still work on the same file', async () => {
+      const res = await post(dir, [{ op: 'rename', name: '--probe-accent', to: '--probe-main' }])
+      expect(res!.status).toBe(200)
+      expect(moduleCss()).toBe(CARD_MODULE_CSS.replaceAll('--probe-accent', '--probe-main'))
+    })
+
+    it('re-plans once when the file moved between the read and the write', async () => {
+      const edited = CARD_MODULE_CSS.replace('.card {', '.card {\n  --extra: 1px;')
+      let first = true
+      const res = await post(dir, [{ op: 'set', name: '--probe-accent', value: '#0000ff' }], () => {
+        if (first) {
+          first = false
+          fs.writeFileSync(modulePath(), edited)
+        }
+      })
+      expect(res!.status).toBe(200)
+      expect(moduleCss()).toBe(edited.replace('#ff0000', '#0000ff'))
+    })
   })
 })

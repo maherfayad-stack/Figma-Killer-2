@@ -61,6 +61,12 @@ export function VariablesPanel({ variant = 'docked' }: VariablesPanelProps) {
 
   const { catalog, usage } = tokenState
 
+  /** Undo reverts the write the status line describes, so the line goes with it. */
+  function undoLastWrite() {
+    setStatus(null)
+    undo()
+  }
+
   async function write(request: VariableRowWrite): Promise<void> {
     setBusy(true)
     setStatus(null)
@@ -116,7 +122,7 @@ export function VariablesPanel({ variant = 'docked' }: VariablesPanelProps) {
       {status ? (
         <div className={styles.status} role="status">
           <span>{status}</span>
-          <Button variant="ghost" size="xs" onClick={() => undo()}>
+          <Button variant="ghost" size="xs" onClick={undoLastWrite}>
             Undo
           </Button>
         </div>
@@ -134,11 +140,10 @@ export function VariablesPanel({ variant = 'docked' }: VariablesPanelProps) {
       ) : groups.length === 0 ? null : (
         <div className={styles.table} style={{ '--mode-count': columns.length } as CSSProperties}>
           <div className={styles.header} aria-hidden="true">
-            <span>Name</span>
+            <span className={styles.headerName}>Name</span>
             {columns.map((column) => (
-              <span key={column.id}>{column.label}</span>
+              <span key={column.id} className={styles.headerMode}>{column.label}</span>
             ))}
-            <span />
           </div>
           {groups.map((group) => {
             const isCollapsed = collapsed.has(group.collection.id)

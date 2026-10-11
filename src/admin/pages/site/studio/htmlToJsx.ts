@@ -57,6 +57,7 @@ import { MAX_PASTED_CSS_CHARS, MAX_PASTED_DEPTH, MAX_PASTED_ELEMENTS, MAX_PASTED
 import type { JsonDataValue } from '@core/utils/jsonData'
 import { cssValueLoadsExternalResource, markupToJsxAttributeName } from '@core/vector'
 import type { HtmlToJsxReport } from './htmlToJsxReport'
+import { absolutePlacementStyle, type AbsoluteImagePlacement } from '@site/store/slices/site/imageDropShapes'
 import type { SlotJsxNode } from './studioSaveRequests'
 import { parseDeclarations } from './svgImportStyles'
 import { svgToJsxNode } from './svgToJsxNode'
@@ -113,7 +114,63 @@ interface ConversionContext {
 
 type SvgSlot = { ok: true; node: SlotJsxNode } | { ok: false; message: string }
 
-export function htmlToJsx(html: string): HtmlToJsxResult {
+/**
+ * Pin each pasted root at `placement` (cascading one step per root) for a paste
+ * into a free frame: an un-pinned block there sits at the frame's (0,0). Merges
+ * into a `style` the root already carries; the placement wins on the keys it sets.
+ */
+export function pinPastedRoots(nodes: readonly SlotJsxNode[], placement: AbsoluteImagePlacement): SlotJsxNode[] {
+  return nodes.map((node, index) => {
+    const own = node.props?.style
+    const style = typeof own === 'object' && own !== null && !Array.isArray(own) ? own : {}
+    return { ...node, props: { ...node.props, style: { ...style, ...absolutePlacementStyle(placement, index) } } }
+  })
+}
+
+/** The part of `window.location` the relative-URL restore needs; injectable so a test can stand in for the editor page. */
+export interface EditorLocation {
+  origin: string
+  pathname: string
+}
+
+/**
+ * Chrome absolutizes every relative URL in copied HTML against the page it was
+ * copied from. When that page is the editor itself, `src="x"` arrives as
+ * `http://127.0.0.1:6131/admin/x` - and writing it would bake the editor's own
+ * origin into the user's code. Undo the absolutizing: drop the editor origin,
+ * and the editor page's directory too, so `x` is `x` again. A URL under the
+ * editor origin but outside that directory stays root-relative (`/assets/y.png`).
+ * Anything on another origin is untouched.
+ */
+function restoreRelativeUrl(url: string, editor: EditorLocation): string {
+  const trimmed = url.trim()
+  if (!trimmed.startsWith(`${editor.origin}/`) && trimmed !== editor.origin) return url
+  const rest = trimmed.slice(editor.origin.length) || '/'
+  const directory = editor.pathname.slice(0, editor.pathname.lastIndexOf('/') + 1)
+  return directory.length > 1 && rest.startsWith(directory) && rest.length > directory.length ? rest.slice(directory.length) : rest
+}
+
+function restoreRelativeUrls(document: Document, editor: EditorLocation): void {
+  if (!editor.origin || editor.origin === 'null') return
+  for (const element of Array.from(document.querySelectorAll('*'))) {
+    for (const attribute of Array.from(element.attributes)) {
+      const name = attribute.name.toLowerCase()
+      if (!URL_ATTRIBUTES.has(name)) continue
+      attribute.value =
+        name === 'srcset'
+          ? attribute.value
+              .split(',')
+              .map((part) => {
+                const [url = '', ...descriptor] = part.trim().split(/\s+/)
+                return [restoreRelativeUrl(url, editor), ...descriptor].join(' ')
+              })
+              .join(', ')
+          : restoreRelativeUrl(attribute.value, editor)
+    }
+  }
+}
+
+export function htmlToJsx(html: string, editor: EditorLocation | undefined = globalThis.location): HtmlToJsxResult {
   if (!html.trim()) return { ok: false, message: 'There is no HTML to paste.' }
   if (html.length > MAX_PASTED_HTML_CHARS) {
     return {
@@ -124,6 +181,7 @@ export function htmlToJsx(html: string): HtmlToJsxResult {
 
   const report: HtmlToJsxReport = { scripts: 0, handlers: 0, unsafeUrls: 0, styleDeclarations: 0, otherAttributes: 0, svgRefusals: [] }
   const parsed = new DOMParser().parseFromString(html, 'text/html')
+  if (editor) restoreRelativeUrls(parsed, editor)
   report.scripts = parsed.querySelectorAll('script').length
   for (const element of Array.from(parsed.querySelectorAll('*'))) {
     for (const attribute of Array.from(element.attributes)) {

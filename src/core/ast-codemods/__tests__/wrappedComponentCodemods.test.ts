@@ -112,7 +112,7 @@ describe('detach — a memo() component inlines the function memo wraps', () => 
 })
 
 describe('detach — refusals leave every file byte-identical', () => {
-  it('refuses a forwardRef component whose markup reads its ref', () => {
+  it('detaches a forwardRef component whose markup reads its ref: the call site\'s ref attribute is what the second parameter receives', () => {
     write('ui/CityInput.tsx', [
       "import { forwardRef } from 'react'",
       'export const CityInput = forwardRef<HTMLInputElement, { hint: string }>(({ hint }, ref) => (',
@@ -120,19 +120,25 @@ describe('detach — refusals leave every file byte-identical', () => {
       '))',
     ])
     write('pages/Today.tsx', [
+      "import { useRef } from 'react'",
       "import { CityInput } from '../ui/CityInput'",
       'export default function Today() {',
+      '  const field = useRef<HTMLInputElement>(null)',
       '  return (',
       '    <main>',
-      '      <CityInput hint="City" />',
+      '      <CityInput hint="City" ref={field} />',
+      '      <CityInput hint="Other" />',
       '    </main>',
       '  )',
       '}',
     ])
-    const before = snapshotWorkspace()
-    const result = detachComponentInstance(at('pages/Today.tsx', 'CityInput'))
-    expect(result.ok).toBe(false)
-    expect(snapshotWorkspace()).toEqual(before)
+    expect(detachComponentInstance(at('pages/Today.tsx', 'CityInput')).ok).toBe(true)
+    const once = read('pages/Today.tsx')
+    expect(once).toContain('<input ref={field} placeholder="City" />')
+    expect(once).toContain('<CityInput hint="Other" />')
+    // No ref at the call site: the attribute is simply absent, as a null ref is.
+    expect(detachComponentInstance(at('pages/Today.tsx', 'CityInput')).ok).toBe(true)
+    expect(read('pages/Today.tsx')).toContain('<input placeholder="Other" />')
   })
 
   it('refuses a namespace member tag', () => {

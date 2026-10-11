@@ -2,21 +2,41 @@
  * `.table`); VariableRow reads it for its own grid. */
 
 .table {
+    --name-col: 9rem;
+    --mode-col: 6.5rem;
+
     display: flex;
     min-width: 0;
     flex-direction: column;
+    container-type: inline-size;
     gap: var(--space-xs);
     overflow-x: auto;
 }
 
+/* Name column stays put (sticky) while the mode columns scroll under it, as in a
+ * spreadsheet: the table is as wide as its modes need and never wider than that. */
 .header {
-    display: grid;
+    display: flex;
+    min-width: calc(var(--name-col) + var(--mode-count) * (var(--mode-col) + var(--space-xs)));
     padding: 0 0 var(--space-3xs);
     color: var(--text-subtle);
     column-gap: var(--space-xs);
     font-size: var(--text-2xs);
     font-weight: 700;
-    grid-template-columns: minmax(8rem, 1.4fr) repeat(var(--mode-count), minmax(6rem, 1fr)) 5.5rem;
+}
+
+.headerName {
+    position: sticky;
+    z-index: 1;
+    left: 0;
+    width: var(--name-col);
+    flex: none;
+    background: var(--bg-surface);
+}
+
+.headerMode {
+    min-width: 0;
+    flex: 1 0 var(--mode-col);
 }
 
 .group {
