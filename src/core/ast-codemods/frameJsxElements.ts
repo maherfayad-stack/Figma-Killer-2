@@ -70,7 +70,7 @@ export function frameJsxElements(params: FrameJsxElementsParams): WrapJsxElement
     return { ok: false, refusal: { reason: 'frame-unwritable', message } }
   }
 
-  const wrapped = wrapJsxElements({ ...params, project })
+  const wrapped = wrapJsxElements({ ...params, requireRun: true, project })
   if (!wrapped.ok) return wrapped
   if (wrapped.created === null) return refused('Studio could not find the frame it just wrote, so nothing was changed.')
 

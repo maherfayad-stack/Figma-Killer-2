@@ -188,9 +188,16 @@ describe('what stays read-only', () => {
     }
     const defaults = nodesWith(page, 'text', 'Featured')
     expect(defaults.length).toBeGreaterThan(0)
-    for (const node of defaults) {
-      expect(node.textOrigin).toBeUndefined()
-      expect(node.codeProps).toContain('text')
-    }
+    for (const node of defaults) expect(node.textOrigin).toBeUndefined()
+    // OD-19: a default drawn by a component the PAGE calls directly is editable per
+    // instance (the edit adds a prop at that call site), so it is no longer a code
+    // value. The same default behind another component's call, or in a `.map` row
+    // that every row shares, still has no single honest target.
+    const behindOneCall = defaults.filter((node) => node.id.split('~').length === 2 && !node.id.includes('#'))
+    expect(behindOneCall).toHaveLength(1)
+    for (const node of behindOneCall) expect(node.codeProps ?? []).not.toContain('text')
+    const stillCode = defaults.filter((node) => !behindOneCall.includes(node))
+    expect(stillCode.length).toBeGreaterThan(0)
+    for (const node of stillCode) expect(node.codeProps).toContain('text')
   })
 })

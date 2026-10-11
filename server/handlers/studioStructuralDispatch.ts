@@ -18,6 +18,7 @@ import { applyStructuralEdit, applyTransplantEdit } from './studioStructuralWrit
 import { studioEditLocation, type SourceTargetScope, type StudioEditLocation } from './studioEditRouting'
 import { StudioEditRefusalError } from './studioEditRefusals'
 import { resolveInsertAssetImports } from './studioInsertAssetImports'
+import { applyPastedHtmlInsert } from './studioInsertHtml'
 import type { StudioEdit, StudioEditApplyOutcome } from './studioEditSchemas'
 
 export type StructuralDispatchEdit = Extract<
@@ -110,6 +111,19 @@ export function dispatchStructuralEdit(
       const siblings = ('siblingNodeIds' in edit ? edit.siblingNodeIds : [])
         .map((nodeId) => studioEditLocation(dir, nodeId, scope))
         .filter((location): location is StudioEditLocation => location !== null && location.rel === target.rel)
+      // G-10 - a pasted HTML fragment is its own write: markup and styles, two
+      // files, one outcome (`studioInsertHtml.ts`).
+      if (edit.kind === 'insert' && edit.pastedHtml) {
+        const pasted = applyPastedHtmlInsert(
+          dir,
+          { ...edit, pastedHtml: edit.pastedHtml },
+          loc,
+          target.rel,
+          anchor && anchor.rel === target.rel ? { line: anchor.line, col: anchor.col, position: edit.position } : null,
+        )
+        if (!pasted.ok) throw new StudioEditRefusalError(pasted.reason, pasted.message)
+        return { applied: true, created: pasted.created, pastedHtml: pasted.summary }
+      }
       // IMG-10 — an insert's image imports name workspace FILES; the specifier
       // is spelled here, from the file being written, after the path guard.
       const assets = edit.kind === 'insert' ? resolveInsertAssetImports(dir, target.rel, edit) : null

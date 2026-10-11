@@ -88,10 +88,11 @@ const MCP_EXCLUDED_TOOLS = new Set<string>(['site_list_tokens'])
  * IS `` `site:${string}` ``. So the only tree an MCP write can ever reach is a
  * studio-imported one, whose source of truth is `.tsx` on disk:
  *
- *   - `site_insert_html` / `site_replace_node_html` already REFUSE there by
- *     name (`HTML_IMPORT_ON_SOURCE_REFUSAL`, `store-13`): an HTML fragment has
- *     no honest single source form, and half of it is a `<style>` block that
- *     targets a stylesheet rather than the `.tsx`.
+ *   - `site_insert_html` writes the HTML there as JSX (G-10) but cannot return
+ *     the ids it created, since they do not exist until the file is re-read;
+ *     `site_replace_node_html` REFUSES by name (a replace is a delete plus an
+ *     insert, two writes). `studio_apply_edits`' `insert` edit takes the same
+ *     pasted HTML (`pastedHtml`) and answers with the new node ids.
  *   - `site_add_page` / `site_duplicate_page` / `site_delete_page` /
  *     `site_rename_page` and the two template verbs address `data_rows`
  *     pages, which no file in the user's repository describes.

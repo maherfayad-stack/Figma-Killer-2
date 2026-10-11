@@ -37,28 +37,43 @@
  * lookup then re-issued the gesture against the wrong element. The detach
  * reports the inlined root it created; the copy is found by its own file.
  *
- * Scope: every element the gesture names must live in ONE instance whose
- * component renders one root. A gesture that crosses the instance's edge
- * (dragging something out of it, or into it from outside) keeps the dialog:
- * deleting the detached markup on undo would take the outside element with
- * it, and that is not an undo.
+ * **A gesture that crosses the instance's edge is the same recipe (G-3).**
+ * Dragging an element out of an instance, or dropping one into its markup,
+ * names ids on BOTH sides of the call site. The ones inside follow the detach
+ * by child-index path; the ones outside - the page's own container, the
+ * sibling an anchor is written against - may have moved too, because the
+ * detach adds or removes lines above them (an import, a hoisted hook), so
+ * they are re-found by what they ARE (`sourceIdentity.ts`), not by where they
+ * used to be. The undo is not the problem it was: the move is journaled
+ * (`restore-journal`), so each of the two linked entries puts its files back
+ * byte for byte - the move first, then the detach.
+ *
+ * The user is told once, in one line, with the way back ("Detached Card to
+ * place this. Undo restores it."): a detach nobody asked for by name is never
+ * silent.
+ *
+ * Still out of reach, by name: an instance whose component renders SEVERAL
+ * root elements has no single container to follow a drop into, so a gesture
+ * aimed at the instance itself reports that instead of guessing.
  */
 import {
   INLINE_ID_SEPARATOR,
   callSitePosition,
   decodeSourceNodeId,
   isInlinedNodeId,
+  isInstanceNode,
   markSoleInstanceComponentFile,
   type NodeTree,
   type PageNode,
 } from '@core/page-tree'
 import { extractInstanceCopy } from '@site/studio/studioSaveRequests'
-import { waitForBoardRead } from '@site/studio/sourceIdentity'
+import { captureIdentities, relocateCapturedIds, waitForBoardRead, type IdentityCapture } from '@site/studio/sourceIdentity'
 import { pushToast } from '@ui/components/Toast'
 import { commitStudioDetachForInstance } from '@site/studio/studioStructuralCommits'
-import { isStructuralCommitInFlight, subscribeStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
 import type { EditorStore } from '@site/store/types'
+import { linkReplay, structuralWritesIdle, unlinkIfNothingLanded } from './gestureReplayLink'
 import { resolveActiveTreeTarget } from './helpers'
+import { detachComponentLabel } from './instanceDetachability'
 import type { EditorStoreSetter } from './types'
 
 /** Every id a refused gesture named, re-addressed after the detach — see the module doc. */
@@ -81,6 +96,11 @@ export function applyToThisInstanceOnly(input: {
   /** Show the refusal the gesture would have shown without OD-7. */
   onRefused: () => void
   /**
+   * The gesture PLACES something (a move, an insert, a transplant) rather than
+   * changing what is already there, so the notice says "to place this".
+   */
+  placing?: boolean
+  /**
    * `false` skips the component-copy fallback when the detach refuses. P5-C's
    * `detachInstances` sets it: replaying a DETACH inside a copy of a component
    * whose own detach just refused would ask for another copy, forever.
@@ -88,23 +108,50 @@ export function applyToThisInstanceOnly(input: {
   componentCopy?: false
 }): boolean {
   const { get, set, refusedNodeId, retry, onRefused } = input
-  if (!isInlinedNodeId(refusedNodeId)) return false
-  const tree = resolveActiveTreeTarget(get())?.tree
-  if (!tree) return false
-  const callSite = callSitePosition(refusedNodeId)
+  // The node is usually INSIDE the instance (a composite id); a drop onto a
+  // component that renders no children is refused about the instance itself.
+  const inside = isInlinedNodeId(refusedNodeId)
+  const callSite = inside ? callSitePosition(refusedNodeId) : refusedNodeId
+  const readTree = treeHolding(get, callSite)
+  const tree = readTree?.()
+  if (!readTree || !tree) return false
   const instance = tree.nodes[callSite]
-  const [rootId, ...more] = instance?.children ?? []
-  if (!instance || rootId === undefined || more.length > 0) return false
+  if (!inside && !isInstanceNode(instance)) return false
+  const rootIds = instance?.children ?? []
+  const [rootId] = rootIds
+  if (!instance || rootId === undefined) return false
+  // Several roots have no single container: a gesture aimed at the INSTANCE
+  // (a drop onto it) has nowhere to go; one aimed at an element inside it is
+  // followed through the root that holds it.
+  if (rootIds.length > 1 && !inside) return false
+
+  const label = detachComponentLabel(instance)
+  // Ids the gesture names outside the instance are followed through the write
+  // by identity - captured NOW, while the board still describes the old file.
+  const outside = captureOutsideIds(tree, callSite)
+  // A gesture that PLACES something says what it had to do to place it; one that
+  // changes what is there (a delete, a style) stays as quiet as it always was -
+  // a structural commit never toasts its own success (P3-A).
+  const notice = (how: 'detached' | 'copied'): void => {
+    if (!input.placing) return
+    pushToast({
+      kind: 'info',
+      title: how === 'copied' ? `Made ${label} its own copy to place this. Undo restores it.` : `Detached ${label} to place this. Undo restores it.`,
+      location: 'site-editor',
+      dedupeKey: `instance-detached:${callSite}`,
+    })
+  }
 
   void (async () => {
     const outcome = await commitStudioDetachForInstance({
       callSiteNodeId: callSite,
-      label: `Change this ${instance.label ?? 'instance'} only`,
+      label: `Change this ${instance.label ?? label} only`,
     })
-    const inlined = outcome?.createdNodeIds[0]
-    const detached = resolveActiveTreeTarget(get())?.tree
+    const detached = readTree()
+    const mapOutside: NodeIdMap = (nodeId) => relocateOutside(outside, nodeId)
+    const inlined = outcome?.createdNodeIds[0] ?? (rootIds.length > 1 && detached ? rootsAfterFragmentDetach(tree, detached, instance, callSite, mapOutside)?.[0] : undefined)
     if (!outcome) {
-      const copied = input.componentCopy === false ? false : await replayInComponentCopy({ get, set, tree, callSite, rootId, retry })
+      const copied = input.componentCopy === false ? false : await replayInComponentCopy({ get, set, tree, callSite, rootId, retry, outside, notice })
       if (!copied) onRefused()
       return
     }
@@ -117,14 +164,121 @@ export function applyToThisInstanceOnly(input: {
       })
       return
     }
-    const mapId = followIntoDetached(tree, callSite, rootId, detached, inlined)
+    const mapInside =
+      rootIds.length > 1
+        ? followIntoFragment(tree, callSite, rootIds, detached, rootsAfterFragmentDetach(tree, detached, instance, callSite, mapOutside) ?? [])
+        : followIntoDetached(tree, callSite, rootId, detached, inlined)
+    const mapId: NodeIdMap = (nodeId) => (isInsideInstance(nodeId, callSite) ? mapInside(nodeId) : mapOutside(nodeId))
     const detachAt = get()._historyPast.length - 1
     if (isDetachEntry(get()._historyPast[detachAt])) linkReplay(get, set, detachAt, true)
-    retry(mapId)
+    notice('detached')
+    await replayGesture(retry, mapId)
     await structuralWritesIdle()
     unlinkIfNothingLanded(get, set, detachAt)
   })()
   return true
+}
+
+/**
+ * Re-issue the gesture. A planner that cannot find an id it was handed throws
+ * (`moveNode` on a parent that is not in the tree); inside this fire-and-forget
+ * task that would be a silent nothing, with the instance already detached - so
+ * it is caught and told, and the undo (which takes the detach back too) is
+ * named.
+ */
+async function replayGesture(retry: (mapId: NodeIdMap) => void, mapId: NodeIdMap): Promise<void> {
+  try {
+    retry(mapId)
+  } catch (err) {
+    console.error('[instanceOnlyGesture] the replayed gesture could not run:', err)
+    pushToast({
+      kind: 'warning',
+      title: 'Detached, but the change could not be made',
+      body: 'The instance is detached and the change was not applied. Undo restores the instance.',
+      location: 'site-editor',
+    })
+  }
+}
+
+/**
+ * The tree that holds `callSite` and a way to read it again after the write:
+ * the active one, or - a drag that started in another frame - the page that
+ * holds it. `null` when no page does.
+ */
+function treeHolding(get: () => EditorStore, callSite: string): (() => NodeTree<PageNode> | undefined) | null {
+  if (resolveActiveTreeTarget(get())?.tree.nodes[callSite]) return () => resolveActiveTreeTarget(get())?.tree
+  const page = get().site?.pages.find((candidate) => candidate.nodes[callSite])
+  if (!page) return null
+  return () => get().site?.pages.find((candidate) => candidate.id === page.id)
+}
+
+/**
+ * Where the roots of an instance that renders SEVERAL went: a detach writes
+ * them as one fragment, which the page tree dissolves into the call site's own
+ * parent, so they are the run of children that replaced the instance there.
+ * `undefined` when that run cannot be read off honestly.
+ */
+function rootsAfterFragmentDetach(
+  before: NodeTree<PageNode>,
+  after: NodeTree<PageNode>,
+  instance: PageNode,
+  callSite: string,
+  mapOutside: NodeIdMap,
+): string[] | undefined {
+  const parentId = instance.parentId
+  if (!parentId) return undefined
+  const was = before.nodes[parentId]?.children ?? []
+  const now = after.nodes[mapOutside(parentId)]?.children
+  const at = was.indexOf(callSite)
+  const count = instance.children.length
+  if (!now || at < 0 || now.length !== was.length - 1 + count) return undefined
+  return now.slice(at, at + count)
+}
+
+/** `followIntoDetached` for an instance that rendered several roots: each id follows the root that held it. */
+function followIntoFragment(
+  before: NodeTree<PageNode>,
+  callSite: string,
+  rootIds: readonly string[],
+  after: NodeTree<PageNode>,
+  newRoots: readonly string[],
+): NodeIdMap {
+  return (nodeId) => {
+    // The instance as a whole has no single place in a fragment: leave it unmapped.
+    if (nodeId === callSite || newRoots.length !== rootIds.length) return nodeId
+    let current: string | undefined = nodeId
+    while (current !== undefined && !rootIds.includes(current)) current = before.nodes[current]?.parentId ?? undefined
+    if (current === undefined) return nodeId
+    return followIntoDetached(before, callSite, current, after, newRoots[rootIds.indexOf(current)]!)(nodeId)
+  }
+}
+
+/** True for the instance's own call site and everything rendered under it. */
+function isInsideInstance(nodeId: string, callSite: string): boolean {
+  return nodeId === callSite || nodeId.startsWith(`${callSite}${INLINE_ID_SEPARATOR}`)
+}
+
+/**
+ * The identity of every source position in `tree` outside the instance - each
+ * `~`-separated segment of each id, because a composite id's HEAD (the call
+ * site it was reached through) moves with the file just as its tail does.
+ */
+function captureOutsideIds(tree: NodeTree<PageNode>, callSite: string): IdentityCapture {
+  const segments = new Set<string>()
+  for (const id of Object.keys(tree.nodes)) {
+    if (isInsideInstance(id, callSite) || id.includes('#')) continue
+    for (const segment of id.split(INLINE_ID_SEPARATOR)) segments.add(segment)
+  }
+  return captureIdentities(segments)
+}
+
+/** Where an id outside the instance is now: each segment re-found by identity, left alone when that is not certain. */
+function relocateOutside(capture: IdentityCapture, nodeId: string): string {
+  if (nodeId.includes('#')) return nodeId
+  return nodeId
+    .split(INLINE_ID_SEPARATOR)
+    .map((segment) => relocateCapturedIds(capture, [segment])?.get(segment) ?? segment)
+    .join(INLINE_ID_SEPARATOR)
 }
 
 /**
@@ -139,8 +293,10 @@ async function replayInComponentCopy(input: {
   callSite: string
   rootId: string
   retry: (mapId: NodeIdMap) => void
+  outside: IdentityCapture
+  notice: (how: 'copied') => void
 }): Promise<boolean> {
-  const { get, set, tree, callSite, rootId, retry } = input
+  const { get, set, tree, callSite, rootId, retry, outside } = input
   const componentRel = decodeSourceNodeId(rootId)?.rel
   const componentName = tree.nodes[rootId]?.fromComponent
   if (!componentRel || !componentName) return false
@@ -172,7 +328,7 @@ async function replayInComponentCopy(input: {
   // inner element keeps its own position; its call-site prefix is the new one.
   const mapId: NodeIdMap = (nodeId) => {
     if (nodeId === callSite) return newCallSite
-    if (!nodeId.startsWith(`${callSite}${INLINE_ID_SEPARATOR}`)) return nodeId
+    if (!nodeId.startsWith(`${callSite}${INLINE_ID_SEPARATOR}`)) return relocateOutside(outside, nodeId)
     const [, inner, ...deeper] = nodeId.split(INLINE_ID_SEPARATOR)
     const location = inner ? decodeSourceNodeId(inner) : null
     const mapped = location
@@ -180,32 +336,11 @@ async function replayInComponentCopy(input: {
       : nodeId
     return board.nodes[mapped] ? mapped : nodeId
   }
-  retry(mapId)
+  input.notice('copied')
+  await replayGesture(retry, mapId)
   await structuralWritesIdle()
   unlinkIfNothingLanded(get, set, copyAt)
   return true
-}
-
-/**
- * Mark the entry at `at` (the detach, or the component copy) as undone WITH
- * the one above it. Set BEFORE the replay runs, not after it lands: a ⌘Z
- * pressed while the replay is still being written waits for that write and
- * then runs at once — before any code after the write could still link.
- */
-function linkReplay(get: () => EditorStore, set: EditorStoreSetter, at: number, linked: boolean): void {
-  if (!get()._historyPast[at]) return
-  set((state) => {
-    const entry = state._historyPast[at]
-    if (!entry) return
-    if (linked) entry.linkedToNext = true
-    else delete entry.linkedToNext
-  })
-}
-
-/** The replay pushed no entry of its own (refused, or nothing to write): the link has nothing to join. */
-function unlinkIfNothingLanded(get: () => EditorStore, set: EditorStoreSetter, at: number): void {
-  const past = get()._historyPast
-  if (past[at]?.linkedToNext && !past[at + 1]?.structural) linkReplay(get, set, at, false)
 }
 
 /** True for the history entry `commitStudioDetachForInstance` pushed. */
@@ -247,16 +382,4 @@ function followIntoDetached(
     }
     return found
   }
-}
-
-/** Resolves once no structural write is on the wire — the replayed gesture's own write included. */
-function structuralWritesIdle(): Promise<void> {
-  if (!isStructuralCommitInFlight()) return Promise.resolve()
-  return new Promise((resolve) => {
-    const unsubscribe = subscribeStructuralCommitInFlight(() => {
-      if (isStructuralCommitInFlight()) return
-      unsubscribe()
-      resolve()
-    })
-  })
 }

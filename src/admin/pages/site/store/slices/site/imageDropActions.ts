@@ -269,7 +269,7 @@ async function landAndInsert(
     const ghostIds = drop.sources.map(() => `optimistic:${crypto.randomUUID()}`)
     optimistic = previewOptimisticInsertRun(
       helpers,
-      commit.parentNodeId,
+      commit.previewParentId ?? commit.parentNodeId,
       drop.index,
       drop.sources.map((source, i) => ({
         moduleId: 'base.image',

@@ -197,7 +197,8 @@ function nudgeRefusal(nodeId: string, plan: NudgePlan): string | null {
   if (!canWriteInlineStyleForModule(node.moduleId)) {
     return "Its position is decided inside the component it renders, so it can't be written at this call site."
   }
-  const keys = [...plan.horizontal, ...plan.vertical].map((term) => term.property as string).concat(Object.keys(plan.fixed ?? {}))
+  const fixedKeys = plan.fixed ? Object.keys(plan.fixed) : []
+  const keys = [...plan.horizontal, ...plan.vertical].map((term) => term.property as string).concat(fixedKeys)
   const probe = Object.fromEntries(keys.map((key) => [key, '0px']))
   if (!isStylePatchWritableToSource(node, probe)) {
     return 'Its position is computed in code. Edit the expression in the source instead.'

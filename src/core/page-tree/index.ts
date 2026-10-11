@@ -49,6 +49,7 @@ export { classifyJsxTagKind } from './jsxTagKind'
 export type { JsxTagKind } from './jsxTagKind'
 export {
   isPropWritableToSource,
+  canUnbindProp,
   isPropPatchWritableToSource,
   isStyleWritableToSource,
   isStylePatchWritableToSource,
@@ -93,14 +94,24 @@ export {
   planListRowRemove,
 } from './listRowPlans'
 export type { ListRowEditPlan, ListRowPlan } from './listRowPlans'
+export { planUnrollList } from './listRowUnroll'
+export { isEditedLayoutNodeId, layoutFileOf, layoutRouteCount, setEditedLayoutFile } from './layoutEdit'
+export type { UnrollListEdit, UnrollListPlan } from './listRowUnroll'
 // The same rule asked of a live tree: which sibling a move lands beside, which
 // element "inside the page" means, and whether a selection is one run (K3).
 export {
   previewStructuralGroup,
+  isSiblingRun,
   previewStructuralMove,
   resolveContainerAnchor,
   resolveSourceContainer,
+  resolveWriteAnchor,
+  resolveWriteContainer,
 } from './sourceStructurePreview'
+// OD-22 - a drop into a layout component's `{children}` is written at the call
+// site; the parser names the element that renders them.
+export { instanceChildrenSlot, instanceWithoutChildrenSlot, isCallSiteChild, isInstanceNode } from './instanceChildrenSlot'
+export type { InstanceChildrenSlot } from './instanceChildrenSlot'
 export type {
   StructuralGroupPreview,
   StructuralMoveCommit,

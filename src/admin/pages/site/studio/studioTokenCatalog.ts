@@ -29,7 +29,7 @@ const WriteResponseSchema = Type.Object({
   ok: Type.Literal(true),
   files: Type.Array(Type.Object({ path: Type.String(), hash: Type.String() })),
   inserted: Type.Array(Type.Object({ name: Type.String() })),
-  renamed: Type.Array(Type.Object({ name: Type.String(), to: Type.String(), mentions: Type.Integer(), files: Type.Integer() })),
+  renamed: Type.Array(Type.Object({ name: Type.String(), to: Type.String(), mentions: Type.Integer(), files: Type.Integer(), unfollowed: Type.Array(Type.String()) })),
   removed: Type.Array(Type.Object({ name: Type.String(), declarations: Type.Integer(), movedReaders: Type.Integer(), replacedWith: Type.Optional(Type.String()) })),
   /** The undo-journal entry that puts every file this write changed back; `null` when it could not be journaled. */
   undoToken: Type.Union([Type.String(), Type.Null()]),
@@ -42,8 +42,9 @@ export type StudioTokenWriteResult = Static<typeof WriteResponseSchema>
  * simply has no variables to offer, which is a real answer, and the picker's
  * "no affordance when there is nothing to offer" rule handles it.
  *
- * `usage: true` (the Variables panel) also scans where each token is read; a
- * plain refresh keeps the last usage rather than dropping the panel's counts.
+ * `usage: true` (the Variables panel) also scans where each token is read and
+ * reads the values a JavaScript theme defines (CT-6); a plain refresh keeps the
+ * last of both rather than dropping the panel's counts and rows.
  */
 export function refreshStudioTokenCatalog(options: { usage?: boolean } = {}): Promise<TokenCatalog | null> {
   const wantsUsage = options.usage === true
@@ -71,8 +72,11 @@ async function readStudioTokenCatalog(wantsUsage: boolean): Promise<TokenCatalog
     const usage = wantsUsage
       ? new Map(fresh.tokens.flatMap((token) => (token.usage ? [[token.name, token.usage] as const] : [])))
       : getStudioTokenState().usage
-    publishStudioTokenState({ catalog: fresh, usage })
-    return fresh
+    // A plain refresh (the picker's) does not read the JavaScript themes; keep the ones the panel last read.
+    const previous = getStudioTokenState().catalog
+    const catalog = fresh.jsTheme || !previous?.jsTheme ? fresh : { ...fresh, jsTheme: previous.jsTheme }
+    publishStudioTokenState({ catalog, usage })
+    return catalog
   } catch (err) {
     console.error('[studioTokenCatalog] could not read the token catalog:', err)
     return getStudioTokenState().catalog

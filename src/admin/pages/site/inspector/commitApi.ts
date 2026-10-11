@@ -70,17 +70,29 @@
  * element carrying the class, which is exactly why it is gated behind an
  * explicit blast-radius confirmation before the model will hand it over.
  *
+ * ## `commitProp` and code-bound values (G-6)
+ *
+ * A value the source holds as code (`{count}`, `{t('x')}`) is shown read-only
+ * unless it can be typed over (`EditConstraint.unbindable`). When the user does,
+ * `commitProp` hands the text to `unbindNodeValue` instead of `updateNodeProps`:
+ * the code is replaced by the literal in one journaled source write, the notice
+ * names what went, and Undo restores the bytes (`studio/unbindCommit.ts`).
+ *
  * `commitProp` stays single-selection. A module prop belongs to one call
  * site's schema; fanning one key across N nodes of possibly different modules
  * is not a Mixed collapse, it is a guess.
  */
 import { useEditorStore } from '@site/store/store'
 import { registry } from '@core/module-engine'
+import type { VariantStyleContext } from '@core/component-variants'
 import type { CSSPropertyBag, PageNode } from '@core/page-tree'
 import { styleValueKey } from '@core/page-tree'
 import { OPTIMISTIC_STYLE_CLEARED } from '@core/studio-runtime'
+import { pushToast } from '@ui/components/Toast'
+import { jumpToSource } from '../panels/PropertiesPanel/jumpToSource'
 import { getActiveStyleTab } from '../panels/PropertiesPanel/classStyleSections'
 import { broadcastOptimisticStyle, broadcastOptimisticStyleClear } from '../canvas/frameAdapter/optimisticStructuralBroadcast'
+import { commitUnbindIfCodeBound } from './commitUnbind'
 import type { SelectionModel } from './selectionModel'
 import type { WriteTarget } from './resolveWriteTarget'
 
@@ -182,6 +194,18 @@ function bareClassName(selector: string): string {
   return selector.startsWith('.') ? selector.slice(1) : selector
 }
 
+/** A style edit the variant edit context could not send to the variant's rule: a warning with the remedy, and a way to the line when there is one. */
+function refuseVariantStyle(context: VariantStyleContext, reason: string): void {
+  const chosen = context.chosen
+  const openAt = chosen.kind === 'refused' ? chosen.openAt : undefined
+  pushToast({
+    kind: 'warning',
+    title: 'Style not saved to this variant',
+    body: reason,
+    ...(openAt ? { action: { label: 'Open in code', onSelect: () => jumpToSource({ rel: openAt.file, line: openAt.line, col: 1 }) } } : {}),
+  })
+}
+
 // ---------------------------------------------------------------------------
 // useInspectorCommit
 // ---------------------------------------------------------------------------
@@ -275,10 +299,13 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
           })
         }
       }
+    } else if (model.variantContext !== null) {
+      // 'none' — no honest target. Elsewhere the row is already disabled by the
+      // caller, so this is a silent no-op rather than a half-applied write; in a
+      // variant edit context (CV-4) the refusal IS the answer, and it names the
+      // variant and the remedy.
+      refuseVariantStyle(model.variantContext, target.reason)
     }
-    // 'none' — no honest target; the row should already be disabled by the
-    // caller when this is reachable, so this is a silent no-op rather than a
-    // half-applied write.
   }
 
   const previewToTarget = (target: WriteTarget, patch: Partial<CSSPropertyBag>) => {
@@ -372,7 +399,10 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
     const isOverridable = def?.schema[key]?.breakpointOverridable === true
     if (activeTab !== 'base' && isOverridable) {
       setBreakpointOverride(selectedNodeId, activeTab, { [key]: value })
-    } else {
+    } else if (!commitUnbindIfCodeBound(selectedNode, key, value)) {
+      // G-6 (OD-20) - typing over code-bound text or an attribute replaces the
+      // code with the literal (the branch above). `updateNodeProps` would refuse
+      // it silently, which is the whole reason that branch exists.
       updateNodeProps(selectedNodeId, { [key]: value })
     }
   }

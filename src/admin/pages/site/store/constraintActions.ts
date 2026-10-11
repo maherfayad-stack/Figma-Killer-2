@@ -23,6 +23,8 @@
  *   - `detach` → the ONE Detach action, `detachInstances` (P5-C), injected by
  *     the caller like `openSource`
  *   - `extract` → the component-copy codemod (`extractInstanceCopy`)
+ *   - `unroll-list` (G-9) and `edit-layout` (G-8) → closures the caller injects:
+ *     the store action that refused holds the gesture to replay
  *
  * Deliberately NOT wired: `select-container` (three different refusals share
  * that kind and only one of them means "select something"), `promote-tier1`
@@ -109,6 +111,16 @@ export interface ConstraintActionContext {
    * honesty rule every other unwireable kind follows.
    */
   duplicateIntoFrame?: () => void
+  /**
+   * G-9 — "Unroll list": write the list the refused node belongs to out as
+   * explicit elements (and, from the refusal dialog, run the refused gesture
+   * again on them). A closure, like `duplicateIntoFrame`: the gesture to replay
+   * lives with the store action that refused. Absent means the action stays
+   * un-runnable and renders as advice text.
+   */
+  unrollList?: () => void
+  /** G-8 — start "Edit layout" for the refused node's layout file (and replay the gesture, from the dialog). Same honesty rule. */
+  editLayout?: () => void
 }
 
 /** `Header.tsx:42` — the origin, short enough to sit inside a button label. */
@@ -147,7 +159,7 @@ export function resolveConstraintAction(
     const onSettled = context.onSettled
     // The action presents its own confirm and refusal; this only reports
     // whether the instance is gone, which is what `RefusalDialog` waits on.
-    return () => void detach([nodeId]).then((outcome) => onSettled?.(outcome === 'detached' || outcome === 'handed-off'))
+    return () => void detach([nodeId]).then((outcome) => onSettled?.(outcome === 'detached' || outcome === 'handed-off' || outcome === 'copied'))
   }
   if (action.kind === 'extract' && context.nodeId !== undefined) {
     const nodeId = context.nodeId
@@ -170,6 +182,22 @@ export function resolveConstraintAction(
   // gate and lands the identical single toast.
   if (action.kind === 'duplicate-into-frame' && context.duplicateIntoFrame) {
     const run = context.duplicateIntoFrame
+    const onSettled = context.onSettled
+    return () => {
+      run()
+      onSettled?.(true)
+    }
+  }
+  if (action.kind === 'unroll-list' && context.unrollList) {
+    const run = context.unrollList
+    const onSettled = context.onSettled
+    return () => {
+      run()
+      onSettled?.(true)
+    }
+  }
+  if (action.kind === 'edit-layout' && context.editLayout) {
+    const run = context.editLayout
     const onSettled = context.onSettled
     return () => {
       run()

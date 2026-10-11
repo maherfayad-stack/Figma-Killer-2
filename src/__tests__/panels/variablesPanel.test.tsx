@@ -75,7 +75,7 @@ function stubServer(options: { refuse?: { status: number; body: unknown } } = {}
     if (url.includes('/token-catalog') && init?.method === 'POST') {
       posted.push(JSON.parse(String(init.body)) as Posted)
       if (options.refuse) return json(options.refuse.body, options.refuse.status)
-      return json({ ok: true, files: [{ path: 'src/tokens.css', hash: 'h' }], inserted: [], renamed: [{ name: '--color-accent', to: '--color-pop', mentions: 2, files: 1 }], removed: [], undoToken: null })
+      return json({ ok: true, files: [{ path: 'src/tokens.css', hash: 'h' }], inserted: [], renamed: [{ name: '--color-accent', to: '--color-pop', mentions: 2, files: 1, unfollowed: [] }], removed: [], undoToken: null })
     }
     if (url.includes('/token-catalog')) return json(CATALOG)
     if (url.includes('/reload-scope')) return json({ ok: true, narrow: false })

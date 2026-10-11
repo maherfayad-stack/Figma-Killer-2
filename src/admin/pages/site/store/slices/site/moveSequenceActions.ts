@@ -135,7 +135,11 @@ export function createMoveSequenceActions(
       // their array in one write (a grid-row step and a multi-row drag alike).
       const rows = planListRowMoveSequence(tree, moves)
       if (rows) {
-        writeListRowPlan(rows, STRUCTURAL_REFUSAL_TITLE.move, { get, set })
+        writeListRowPlan(rows, STRUCTURAL_REFUSAL_TITLE.move, {
+          get,
+          set,
+          retry: (mapId) => actions.moveNodesInSequence(moves.map((step) => ({ ...step, nodeId: mapId(step.nodeId), parentId: mapId(step.parentId) }))),
+        })
         return
       }
       // Every step against the tree the steps before it leave — all or

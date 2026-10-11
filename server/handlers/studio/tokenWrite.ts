@@ -31,6 +31,7 @@
 import {
   gateKey,
   isDarkSchemeGate,
+  isThemeNamespacedName,
   lineOfOffset,
   scanGatedDeclarations,
   type GatedDeclaration,
@@ -167,8 +168,6 @@ function isInsertableSource(source: TokenCssSource): boolean {
   return source.origin === 'project' && /\.css$/i.test(source.file) && !/\.module\.css$/i.test(source.file)
 }
 
-const TAILWIND_THEME_NAMESPACE_RE = /^--(?:color|font|text|spacing|radius|shadow|breakpoint|ease|animate|tracking|leading|blur|aspect|container)-/
-
 function prefixOf(name: string): string {
   return name.slice(2).split('-')[0] ?? ''
 }
@@ -282,7 +281,7 @@ export function planTokenEdits(
 
     const prefix = prefixOf(edit.name)
     const siblings = destination.declarations.filter((d) => prefixOf(d.name) === prefix && gateKey(d.gate) === gateKey(gate) && d.name !== edit.name)
-    const useTheme = gate.kind === 'base' && TAILWIND_THEME_NAMESPACE_RE.test(edit.name) && destination.declarations.some((d) => d.inTheme)
+    const useTheme = gate.kind === 'base' && isThemeNamespacedName(edit.name) && destination.declarations.some((d) => d.inTheme)
     const result = insertCustomProperty(textOf(destination.source), {
       name: edit.name,
       value: edit.value,

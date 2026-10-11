@@ -14,6 +14,7 @@
  * the board, committing writes once and pushes one undo entry.
  */
 import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import { hasWritableSourceLocation } from '@core/page-tree'
 import { useEditorStore } from '@site/store/store'
 import { Panel, useAutoFocusPanel } from '@admin/shared/Panel'
 import { Button } from '@ui/components/Button'
@@ -24,8 +25,10 @@ import { ChevronRightIcon } from 'pixel-art-icons/icons/chevron-right'
 import { getStudioAuthoredCss, getStudioVendorCss, subscribeStudioAuthoredCss, subscribeStudioVendorCss } from '@site/studio/studioRawCssStores'
 import { applyStudioTokenEdits, refreshStudioTokenCatalog } from '@site/studio/studioTokenCatalog'
 import { getStudioTokenState, subscribeStudioTokenCatalog } from '@site/studio/studioTokenCatalogStore'
+import { commitStudioApplyClass } from '@site/studio/studioClassApply'
+import { ThemeEntryRow } from './ThemeEntryRow'
 import { VariableRow, type VariableRowWrite } from './VariableRow'
-import { buildColumns, buildVariableGroups, replacementCandidates } from './variablesModel'
+import { buildColumns, buildVariableGroups, groupThemeEntries, replacementCandidates } from './variablesModel'
 import styles from './VariablesPanel.module.css'
 
 interface VariablesPanelProps {
@@ -36,6 +39,7 @@ export function VariablesPanel({ variant = 'docked' }: VariablesPanelProps) {
   const isOpen = useEditorStore((s) => s.variablesPanelOpen)
   const setLeftSidebarPanel = useEditorStore((s) => s.setLeftSidebarPanel)
   const undo = useEditorStore((s) => s.undo)
+  const selectedNodeIds = useEditorStore((s) => s.selectedNodeIds)
   const tokenState = useSyncExternalStore(subscribeStudioTokenCatalog, getStudioTokenState)
   const authoredCss = useSyncExternalStore(subscribeStudioAuthoredCss, getStudioAuthoredCss)
   const vendorCss = useSyncExternalStore(subscribeStudioVendorCss, getStudioVendorCss)
@@ -62,7 +66,34 @@ export function VariablesPanel({ variant = 'docked' }: VariablesPanelProps) {
     setStatus(null)
     try {
       const result = await applyStudioTokenEdits(request.edits, request.undoLabel)
-      setStatus(request.summary({ renamed: result.renamed[0]?.mentions ?? 0, moved: result.removed[0]?.movedReaders ?? 0 }))
+      const summary = request.summary({ renamed: result.renamed[0]?.mentions ?? 0, moved: result.removed[0]?.movedReaders ?? 0 })
+      // A class built at runtime (`bg-${tone}`) names no literal a rename can move: say so, beside the Undo.
+      const unfollowed = result.renamed[0]?.unfollowed ?? []
+      setStatus(unfollowed.length > 0 ? `${summary} Classes built in code at ${unfollowed.join(', ')} were not changed - check them.` : summary)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // A theme class is added to the selection's `className`: only elements that have a place in the source can take it.
+  const writableSelection = selectedNodeIds.filter((nodeId) => hasWritableSourceLocation(nodeId))
+  const applyBlockedReason =
+    selectedNodeIds.length === 0
+      ? 'Select an element on the board first.'
+      : writableSelection.length === 0
+        ? 'The selected element has no place in your source to write a class to.'
+        : null
+
+  /** Adds `className` to the selection; a refusal is the engine's own warning, so this never rejects. */
+  async function applyClass(className: string): Promise<void> {
+    setBusy(true)
+    setStatus(null)
+    try {
+      const landed = await commitStudioApplyClass(writableSelection, className)
+      if (landed) setStatus(`Added ${className} to ${writableSelection.length} element${writableSelection.length === 1 ? '' : 's'}.`)
+    } catch (err) {
+      console.error('[VariablesPanel] could not apply the class:', err)
+      setStatus(`${className} could not be applied.`)
     } finally {
       setBusy(false)
     }
@@ -74,6 +105,7 @@ export function VariablesPanel({ variant = 'docked' }: VariablesPanelProps) {
     setCollapsed(next)
   }
 
+  const themeFiles = catalog ? groupThemeEntries(catalog.jsTheme ?? [], query) : []
   const columns = catalog ? buildColumns(catalog) : []
   const groups = catalog ? buildVariableGroups(catalog, usage, columns, query) : []
 
@@ -92,14 +124,14 @@ export function VariablesPanel({ variant = 'docked' }: VariablesPanelProps) {
 
       {catalog === null ? (
         <EmptyState compact plain title="Reading variables..." />
-      ) : groups.length === 0 ? (
+      ) : groups.length === 0 && themeFiles.length === 0 ? (
         <EmptyState
           compact
           plain
           title={query ? 'No variable matches.' : 'No CSS variables yet.'}
           description={query ? undefined : 'Declare custom properties in a stylesheet (for example :root { --color-brand: #0c9ab0 }) and they appear here.'}
         />
-      ) : (
+      ) : groups.length === 0 ? null : (
         <div className={styles.table} style={{ '--mode-count': columns.length } as CSSProperties}>
           <div className={styles.header} aria-hidden="true">
             <span>Name</span>
@@ -134,6 +166,8 @@ export function VariablesPanel({ variant = 'docked' }: VariablesPanelProps) {
                         replacements={catalog ? replacementCandidates(catalog, row.token) : []}
                         busy={busy}
                         onWrite={write}
+                        applyBlockedReason={applyBlockedReason}
+                        onApplyClass={applyClass}
                       />
                     ))}
                   </ul>
@@ -143,6 +177,28 @@ export function VariablesPanel({ variant = 'docked' }: VariablesPanelProps) {
           })}
         </div>
       )}
+
+      {themeFiles.map(([file, entries]) => {
+        const id = `theme:${file}`
+        const isCollapsed = collapsed.has(id)
+        return (
+          <section key={id} className={styles.group} aria-label={`JavaScript theme ${file}`}>
+            <Button variant="ghost" size="xs" align="start" fullWidth aria-expanded={!isCollapsed} onClick={() => toggleCollection(id)}>
+              {isCollapsed ? <ChevronRightIcon size={10} aria-hidden="true" /> : <ChevronDown2Icon size={10} aria-hidden="true" />}
+              <span className={styles.groupLabel}>Theme (read-only)</span>
+              <span className={styles.groupFile}>{file}</span>
+              <span className={styles.groupCount}>{entries.length}</span>
+            </Button>
+            {isCollapsed ? null : (
+              <ul className={styles.rows}>
+                {entries.map((entry) => (
+                  <ThemeEntryRow key={entry.id} entry={entry} applyBlockedReason={applyBlockedReason} busy={busy} onApply={applyClass} />
+                ))}
+              </ul>
+            )}
+          </section>
+        )
+      })}
     </Panel>
   )
 }

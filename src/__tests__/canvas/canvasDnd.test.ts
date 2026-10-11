@@ -3,6 +3,7 @@ import type { Page, PageNode } from '@core/page-tree'
 import { reindexNodeParents } from '@core/page-tree'
 import {
   getCanvasDropZone,
+  nearerSiblingSide,
   resolveCanvasInsertionTarget,
   resolveCanvasDropTarget,
   type CanvasDropCandidate,
@@ -127,6 +128,32 @@ describe('canvasDnd', () => {
       rect: overLeaf.rect,
       axis: 'vertical',
     })
+  })
+
+  it('never resolves a drop into the dragged element own descendant, in any zone - the write could not honour it (G-7)', () => {
+    const tree = page({
+      root: node('root', 'base.body', ['dragged']),
+      dragged: node('dragged', 'base.container', ['child']),
+      child: node('child', 'base.container', ['grandchild']),
+      grandchild: node('grandchild', 'base.container'),
+    })
+    const over = (id: string, depth: number) => candidate(id, depth, { left: 0, top: 0, width: 100, height: 100 })
+
+    // Near the top edge (before), the middle (inside), the bottom edge (after).
+    for (const y of [4, 50, 96]) {
+      for (const id of ['child', 'grandchild']) {
+        const result = resolveCanvasDropTarget({
+          tree,
+          draggedId: 'dragged',
+          draggedIds: ['dragged'],
+          candidates: [over(id, 2)],
+          point: { x: 50, y },
+          canHaveChildren,
+        })
+        expect(result.target).toBeNull()
+        expect(result.invalid?.overId).toBe(id)
+      }
+    }
   })
 
   it('scales the edge-hit band by the live zoom (0.8 — collapsed drop-edge hit zones)', () => {
@@ -401,6 +428,76 @@ describe('canvasDnd', () => {
     it('with no child measured it keeps the append', () => {
       const target = resolveCanvasInsertionTarget({ tree, candidates: [stack[0]!], point: { x: 100, y: 120 }, canHaveChildren })
       expect(target).toMatchObject({ parentId: 'main', index: 3 })
+    })
+  })
+
+  describe('a press on the middle of a leaf lands on the side it is nearer to (Label 2/3 off by one)', () => {
+    const tree = page({
+      root: node('root', 'base.body', ['main']),
+      main: node('main', 'base.container', ['l1', 'l2', 'l3', 'l4']),
+      l1: node('l1', 'base.text'),
+      l2: node('l2', 'base.text'),
+      l3: node('l3', 'base.text'),
+      l4: node('l4', 'base.text'),
+    })
+    // Four 40px labels with a 10px gap: l3 spans y 100..140.
+    const column = (axis: 'vertical' | 'horizontal', extra: Partial<CanvasDropCandidate> = {}) => {
+      const at = (i: number) => (axis === 'vertical' ? { left: 0, top: i * 50, width: 200, height: 40 } : { left: i * 110, top: 0, width: 100, height: 40 })
+      return [
+        candidate('main', 1, { left: 0, top: 0, width: 440, height: 200 }),
+        ...['l1', 'l2', 'l3', 'l4'].map((id, i) => ({ ...candidate(id, 2, at(i), axis), ...extra })),
+      ]
+    }
+
+    it('the upper half of Label 3 (outside the edge band) lands BEFORE Label 3, not after it', () => {
+      const target = resolveCanvasInsertionTarget({ tree, candidates: column('vertical'), point: { x: 100, y: 114 }, canHaveChildren })
+      expect(target).toMatchObject({ parentId: 'main', index: 2, position: 'before', overId: 'l3' })
+    })
+
+    it('the lower half of Label 3 lands after it', () => {
+      const target = resolveCanvasInsertionTarget({ tree, candidates: column('vertical'), point: { x: 100, y: 126 }, canHaveChildren })
+      expect(target).toMatchObject({ parentId: 'main', index: 3, position: 'after', overId: 'l3' })
+    })
+
+    it('the exact middle goes after (the append convention)', () => {
+      const target = resolveCanvasInsertionTarget({ tree, candidates: column('vertical'), point: { x: 100, y: 120 }, canHaveChildren })
+      expect(target).toMatchObject({ index: 3, position: 'after' })
+    })
+
+    it('side by side: the left half of Label 3 is before, the right half after', () => {
+      const row = column('horizontal')
+      expect(resolveCanvasInsertionTarget({ tree, candidates: row, point: { x: 232, y: 20 }, canHaveChildren })).toMatchObject({ index: 2, position: 'before' })
+      expect(resolveCanvasInsertionTarget({ tree, candidates: row, point: { x: 288, y: 20 }, canHaveChildren })).toMatchObject({ index: 3, position: 'after' })
+    })
+
+    it('a reversed flow flips the halves: the visually-near half is the later slot', () => {
+      const row = column('horizontal', { reversed: true })
+      const nearHalf = resolveCanvasInsertionTarget({ tree, candidates: row, point: { x: 232, y: 20 }, canHaveChildren })
+      expect(nearHalf).toMatchObject({ index: 3, position: 'after', reversed: true })
+      const farHalf = resolveCanvasInsertionTarget({ tree, candidates: row, point: { x: 288, y: 20 }, canHaveChildren })
+      expect(farHalf).toMatchObject({ index: 2, position: 'before' })
+    })
+
+    it('the gap BETWEEN Label 2 and Label 3 (container space) is slot 2, with margins and without', () => {
+      for (const gap of [0, 10, 36]) {
+        const stack = [
+          candidate('main', 1, { left: 0, top: 0, width: 200, height: 400 }),
+          candidate('l1', 2, { left: 0, top: 0, width: 200, height: 40 }),
+          candidate('l2', 2, { left: 0, top: 40 + gap, width: 200, height: 40 }),
+          candidate('l3', 2, { left: 0, top: 80 + gap * 2, width: 200, height: 40 }),
+          candidate('l4', 2, { left: 0, top: 120 + gap * 3, width: 200, height: 40 }),
+        ]
+        // The middle of the l2 | l3 gap (or, with no gap, the seam itself).
+        const seam = 80 + gap * 1.5
+        const target = resolveCanvasInsertionTarget({ tree, candidates: stack, point: { x: 100, y: seam }, canHaveChildren })
+        expect(target?.index, `gap ${gap}`).toBe(2)
+      }
+    })
+
+    it('nearerSiblingSide agrees with the target it feeds', () => {
+      const [, , , l3] = column('vertical')
+      expect(nearerSiblingSide(l3!, { x: 0, y: 101 })).toBe('before')
+      expect(nearerSiblingSide(l3!, { x: 0, y: 139 })).toBe('after')
     })
   })
 })

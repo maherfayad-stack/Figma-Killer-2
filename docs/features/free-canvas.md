@@ -231,6 +231,17 @@ undo journal's `restore` (every file the write touched, byte for byte — no id
 recorded at drag time survives a pruned import); a write that does not land takes the placement
 back (its rollback).
 
+**The Layers panel's Canvas section** (`panels/ExplorerPanel/StudioCanvasLayersList.tsx`,
+between Boards and Pages; absent while the board has no loose layers). Rows are
+the active board's placements front first (`layerPaintOrder` reversed): a click
+selects the layer (Shift/Cmd toggles), a double-click or F2 renames it
+(`renameCanvasLayer` -> `placement.name`, one undo entry; an empty name returns
+to the element's own, via `canvasLayerDisplayName`), and dragging a row reorders
+it (`reorderCanvasLayer` -> `reorderLayerPlacements` rewrites `z` = 1..n, one
+undo entry; the slot arithmetic is `canvasLayerRowDrop.ts`). The section reads
+placements and a per-row display-name string only, never `canvasLayerPages`
+(`canvas-layer-isolation` (b)). Lock / hide toggles in the row are not built.
+
 ---
 
 ## Not built yet
@@ -238,7 +249,7 @@ back (its rollback).
 | Work order | Missing |
 |---|---|
 | FC-2 | `canvas-layer-duplicate`; `bakeCapturedBindings` (a `captured-scope` lift refuses instead of becoming a copy with values baked) |
-| FC-3/FC-7 | Editing a loose layer's content in the inspector beyond a root `<svg>`'s Vector paint (a loose layer is selected as a whole; its nodes are not selectable, and any other root says "edit it inside a frame"); Layers-panel "Canvas" section; Measures X/Y on a placement; context menu; ⌘X and ⌘V ONTO the board |
+| FC-3/FC-7 | Editing a loose layer's content in the inspector beyond a root `<svg>`'s Vector paint (a loose layer is selected as a whole; its nodes are not selectable, and any other root says "edit it inside a frame"); Measures X/Y on a placement; context menu; ⌘X and ⌘V ONTO the board |
 | FC-4 | Registering layers as drop targets for an ELEMENT drag (drop into a loose layer's children) |
 | FC-5 | Marquee selection of loose layers; resize handles; z-order keys; lock/hide UI (the placement fields exist and are honoured) |
 | FC-6 | A multi-file drop as ONE undo step (today one per layer) |

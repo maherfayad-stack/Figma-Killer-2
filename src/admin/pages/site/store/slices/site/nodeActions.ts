@@ -52,6 +52,7 @@ import { createImageDropActions } from './imageDropActions'
 import { createSubtreeInsertActions } from './subtreeInsertActions'
 import { createInlineStyleActions } from './inlineStyleActions'
 import { createIgnoreAutoLayoutActions } from './ignoreAutoLayoutActions'
+import { createUnbindActions } from './unbindActions'
 import { createLayoutConversionActions } from './layoutConversionActions'
 import { createVisibilityActions } from './visibilityActions'
 import { createMoveSequenceActions, moveEditOf } from './moveSequenceActions'
@@ -62,6 +63,7 @@ import { writeListRowPlan } from './listRowSourceWrites'
 import { tagStructuralGesture } from './structuralHistory'
 import { trackStructuralTreeCommit } from './structuralCommitRollback'
 import { createStudioSourceWrites } from './studioSourceWrites'
+import { createStudioHtmlWrite } from './studioHtmlWrites'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
 import { createImportedNodesActions } from './importedNodesActions'
 import type { InstanceOverrideRouter } from './instanceOverrideActions'
@@ -75,10 +77,11 @@ type NodeActions = Pick<
   | 'insertComponentRef'
   | 'insertProjectComponent'
   | 'insertImportedNodes'
-  | 'refuseImportedNodesInto'
+  | 'writeHtmlToSource'
   | 'deleteNode'
   | 'deleteNodes'
   | 'updateNodeProps'
+  | 'unbindNodeValue'
   | 'updateInstanceCallSiteProp'
   | 'setNodeInlineStyles'
   | 'setNodeInlineStylesFromGesture'
@@ -219,6 +222,9 @@ export function createNodeActions(helpers: SiteSliceHelpers, overrides: Instance
     // studio-imported one. See `importedNodesActions.ts`.
     ...createImportedNodesActions(helpers, sourceWrites.refuseImportedNodesInto),
 
+    // G-10 — pasted HTML on a studio-imported tree is a source write.
+    writeHtmlToSource: createStudioHtmlWrite(helpers, readTree),
+
     insertProjectComponent: (component, parentId, index, style) =>
       writeInsertProjectComponentToSource(component, parentId, index, style),
 
@@ -293,7 +299,7 @@ export function createNodeActions(helpers: SiteSliceHelpers, overrides: Instance
       // OD-8 — a `.map` row is deleted from its array, not from the JSX.
       const rowNode = tree?.nodes[nodeId]
       const rows = rowNode ? planListRowRemove([rowNode]) : null
-      if (rows) return writeListRowPlan(rows, STRUCTURAL_REFUSAL_TITLE.delete, { get, set })
+      if (rows) return writeListRowPlan(rows, STRUCTURAL_REFUSAL_TITLE.delete, { get, set, retry: (mapId) => actions.deleteNode(mapId(nodeId)) })
       const plan = planSourceDelete([tree?.nodes[nodeId]])
       if (!plan.ok) {
         presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.delete, plan.constraint, {
@@ -414,6 +420,7 @@ export function createNodeActions(helpers: SiteSliceHelpers, overrides: Instance
 
     ...createInlineStyleActions(helpers, overrides),
     ...createIgnoreAutoLayoutActions(helpers),
+    ...createUnbindActions(helpers, readTree),
     ...createLayoutConversionActions(helpers),
 
     setBreakpointOverride: (nodeId, breakpointId, patch) => {

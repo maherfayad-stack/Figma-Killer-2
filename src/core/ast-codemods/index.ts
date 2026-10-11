@@ -100,6 +100,13 @@ export type {
   DeleteJsxRefusal,
   DeleteJsxRefusalReason,
 } from './deleteJsxElement'
+export { unrollMapExpression, MAX_UNROLL_ITEMS } from './unrollMapExpression'
+export type {
+  UnrollMapExpressionParams,
+  UnrollMapExpressionResult,
+  UnrollRefusal,
+  UnrollRefusalReason,
+} from './unrollMapExpression'
 export { editListItems } from './editListItems'
 export type { EditListItemsParams, EditListItemsResult, ListItemRefusal, ListItemRefusalReason } from './editListItems'
 export type { CreatedJsxLocation } from './createdJsxLocation'
@@ -113,6 +120,7 @@ export type {
   InsertableJsxPropValue,
 } from './jsxSubtree'
 export { isAssetImportRef, assetImportBindingName, type AssetImportRef } from './jsxAssetImports'
+export { ClassNameTokens, type ClassNamePart } from './jsxClassTokens'
 export { insertJsxIntoSlotProp } from './insertJsxIntoSlotProp'
 export type {
   InsertJsxIntoSlotPropNode,

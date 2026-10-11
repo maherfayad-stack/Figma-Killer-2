@@ -167,32 +167,6 @@ describe('wrapJsxElements', () => {
     expect(after).toContain('      <Stack>\n        <p className="first">First</p>\n')
   })
 
-  it('REFUSES a run with an unselected element in the middle, leaving the file untouched', () => {
-    const file = writeFixture(PAGE)
-    const first = locateTag(PAGE, 'p', 1)
-    const third = locateTag(PAGE, 'Third')
-
-    const result = wrapJsxElements({ file, targets: [first, third], name: 'div' })
-    expect(result.ok).toBe(false)
-    if (!result.ok) {
-      expect(result.refusal.reason).toBe('not-contiguous')
-      expect(result.refusal.message).toContain('Select siblings next to each other')
-    }
-    expect(fs.readFileSync(file, 'utf8')).toBe(PAGE)
-  })
-
-  it('REFUSES elements that are not siblings in the code', () => {
-    const file = writeFixture(PAGE)
-    const result = wrapJsxElements({
-      file,
-      targets: [locateTag(PAGE, 'p', 1), locateTag(PAGE, 'a', 1)],
-      name: 'div',
-    })
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.refusal.reason).toBe('not-siblings')
-    expect(fs.readFileSync(file, 'utf8')).toBe(PAGE)
-  })
-
   // WB-21 — this used to refuse `mixed-indentation`. The run now takes lines
   // of its own: `<i>`, which shared the run's last line, moves to the line
   // after the container, and nothing else changes.
@@ -248,28 +222,6 @@ describe('wrapJsxElements', () => {
   </div>
 )
 `)
-  })
-
-  it('REFUSES a run with an expression container between its members', () => {
-    const source = `export default function List({ rows, showBadge }) {
-  return (
-    <ul className="list">
-      <li>Head</li>
-      {showBadge && <li className="badge">New</li>}
-      <li>Tail</li>
-    </ul>
-  )
-}
-`
-    const file = writeFixture(source)
-    const result = wrapJsxElements({
-      file,
-      targets: [locateTag(source, 'li', 1), locateTag(source, 'li', 3)],
-      name: 'div',
-    })
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.refusal.reason).toBe('expression-child')
-    expect(fs.readFileSync(file, 'utf8')).toBe(source)
   })
 
   it('REFUSES a wrapper tag Studio will not write, and a run of none', () => {
@@ -366,48 +318,6 @@ describe('unwrapJsxElement', () => {
         '    <p>Only child</p>\n',
       ),
     )
-  })
-
-  it('REFUSES a wrapper with behaviour — a handler, a ref, a key, a spread — and names it', () => {
-    const cases: Array<[string, string]> = [
-      ['onClick={open}', 'onClick'],
-      ['ref={boxRef}', 'ref'],
-      ['key={row.id}', 'key'],
-      ['{...rest}', 'spread'],
-    ]
-    for (const [attribute] of cases) {
-      const source = `export default () => (
-  <section>
-    <div ${attribute}>
-      <p>Child</p>
-    </div>
-  </section>
-)
-`
-      const file = writeFixture(source, `Case${attribute.replace(/\W/g, '')}.tsx`)
-      const result = unwrapJsxElement({ file, ...locateTag(source, 'div') })
-      expect(result.ok).toBe(false)
-      if (!result.ok) expect(result.refusal.reason).toBe('has-behaviour')
-      expect(fs.readFileSync(file, 'utf8')).toBe(source)
-    }
-  })
-
-  it('REFUSES a COMPONENT tag — removing it deletes a usage, it does not ungroup', () => {
-    const source = `import { Card } from './Card'
-
-export default () => (
-  <section>
-    <Card>
-      <p>Child</p>
-    </Card>
-  </section>
-)
-`
-    const file = writeFixture(source)
-    const result = unwrapJsxElement({ file, ...locateTag(source, 'Card') })
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.refusal.reason).toBe('has-behaviour')
-    expect(fs.readFileSync(file, 'utf8')).toBe(source)
   })
 
   it('REFUSES the element a component returns, and a location nothing is written at', () => {

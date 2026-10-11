@@ -34,12 +34,24 @@
  * renderer the layers-context-menu footer and the structural lock banner use).
  * The trigger keeps a static `aria-label` naming the reason, so the fact is
  * still discoverable without opening the popover.
+ *
+ * ## ...and a text or attribute that can be TYPED OVER (G-6, OD-20)
+ *
+ * When the constraint says `unbindable` (one plain source location, code that is
+ * a value - `EditConstraint.unbindable`), the summary becomes an input. Typing
+ * and committing (Enter or blur, like every text field) hands the text to
+ * `onChange`, which the panel routes to the unbind write: the code is replaced
+ * by the literal, the notice names it, Undo brings it back. The lock glyph stays
+ * and says so, because the field must not look like an ordinary one - it is
+ * showing code, and committing replaces it.
  */
 import { useRef, useState } from 'react'
 import type { EditConstraint } from '@core/page-tree'
 import type { ControlProps } from './shared'
 import { ControlRow } from '@ui/components/ControlRow'
 import { Button } from '@ui/components/Button'
+import { Input } from '@ui/components/Input'
+import { useTextFieldDraft } from './textFieldDraft'
 import { InspectorPopover } from '@ui/components/InspectorPopover'
 import { ConstraintActionButtons } from '@site/ui/ConstraintNotice'
 import { LockSolidIcon } from 'pixel-art-icons/icons/lock-solid'
@@ -70,6 +82,40 @@ function summariseValue(value: unknown): string {
   return text.length > MAX_SCALAR_LENGTH ? `${text.slice(0, MAX_SCALAR_LENGTH - 1)}…` : text
 }
 
+/** The editable face of a code-bound value (G-6): a draft that commits once, on Enter or blur, and reverts on Escape. */
+function UnbindInput({ propKey, label, value, onChange }: { propKey: string; label?: string; value: string; onChange: ControlProps<unknown>['onChange'] }) {
+  const field = useTextFieldDraft({
+    value,
+    mixed: false,
+    resolve: (raw) => raw,
+    onCommit: (next) => onChange(propKey, next),
+  })
+  return (
+    <Input
+      id={`ctrl-${propKey}`}
+      type="text"
+      value={field.draft}
+      aria-label={label ?? propKey}
+      fieldSize="sm"
+      className={styles.codeValueInput}
+      onChange={(e) => field.onChange(e.target.value)}
+      onBlur={(e) => field.onBlur(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          field.commit(e.currentTarget.value)
+          return
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          field.revert()
+          e.currentTarget.blur()
+        }
+      }}
+    />
+  )
+}
+
 interface CodeValueControlProps extends ControlProps<unknown> {
   /**
    * Why this value cannot be edited, and any real way forward.
@@ -88,15 +134,23 @@ export function CodeValueControl({
   isOverride,
   layout,
   constraint,
+  onChange,
 }: CodeValueControlProps) {
   const triggerRef = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
-  const explanation = constraint?.explanation ?? 'Set in code.'
+  const editable = constraint?.unbindable === true && (typeof value === 'string' || value === undefined)
+  const explanation = editable
+    ? `${constraint?.explanation ?? 'Set in code.'} Type here to replace it with text; Undo brings the code back.`
+    : (constraint?.explanation ?? 'Set in code.')
 
   return (
-    <ControlRow propKey={propKey} label={label} layout={layout} isOverride={isOverride} disabled>
+    <ControlRow propKey={propKey} label={label} layout={layout} isOverride={isOverride} disabled={!editable}>
       <span className={styles.codeValue} data-testid={`code-value-${propKey}`}>
-        <span className={styles.codeValueText}>{summariseValue(value)}</span>
+        {editable ? (
+          <UnbindInput propKey={propKey} label={label} value={typeof value === 'string' ? value : ''} onChange={onChange} />
+        ) : (
+          <span className={styles.codeValueText}>{summariseValue(value)}</span>
+        )}
         <Button
           ref={triggerRef}
           variant="ghost"
@@ -104,7 +158,7 @@ export function CodeValueControl({
           iconOnly
           aria-haspopup="dialog"
           aria-expanded={open}
-          aria-label={`Why this value is read-only: ${explanation}`}
+          aria-label={editable ? `Set in code: ${explanation}` : `Why this value is read-only: ${explanation}`}
           className={styles.codeValueGlyph}
           onClick={() => setOpen((o) => !o)}
         >
@@ -115,7 +169,7 @@ export function CodeValueControl({
             id={`code-value-${propKey}`}
             anchorRef={triggerRef}
             onClose={() => setOpen(false)}
-            title="Read-only"
+            title={editable ? 'Set in code' : 'Read-only'}
             width={220}
           >
             <p className={styles.codeValueHint}>{explanation}</p>

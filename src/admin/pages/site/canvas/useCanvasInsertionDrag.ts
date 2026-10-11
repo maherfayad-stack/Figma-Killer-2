@@ -90,6 +90,8 @@ import { guardDragSession } from '@core/studio-runtime'
 import { pushToast } from '@ui/components/Toast'
 import type { AbsoluteNewLayerPlacement } from './canvasNewLayerPlacement'
 import { newLayerRefusalToast } from './newLayerRefusal'
+import { currentCanvasZoom } from './canvasZoom'
+import { createInsertionGhostTracker, type InsertionGhostTracker } from './insertionGhostTracker'
 
 /** Pointer travel (screen px) before a press becomes a drag rather than a click. */
 const DRAG_THRESHOLD_PX = 6
@@ -97,10 +99,36 @@ const DRAG_THRESHOLD_PX = 6
 export interface CanvasInsertionDragState<TGhost> {
   /** Whatever the caller needs to draw its own cursor ghost. */
   ghost: TGhost
+  /** The pointer when the state was made. Later moves go through `tracker`, not through here. */
   x: number
   y: number
   /** Null while the pointer is outside every frame — the caller renders no preview. */
   preview: CanvasDropPreview | null
+  /** Moves the ghost with the pointer WITHOUT a React render; absent for a caller that re-renders per move. */
+  tracker?: InsertionGhostTracker
+  /**
+   * The element's own size in CSS px (`ghostSize`), and the zoom it is painted
+   * at: the ghost body is that box scaled by that zoom, so it measures what the
+   * element will measure once it lands. Null when the caller cannot say.
+   */
+  size?: { width: number; height: number } | null
+  zoom?: number
+}
+
+/** Whether two previews draw the same thing - a move that does not change the drop target must not re-render. */
+function sameDropPreview(a: CanvasDropPreview | null, b: CanvasDropPreview | null): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  return (
+    a.left === b.left &&
+    a.top === b.top &&
+    a.width === b.width &&
+    a.height === b.height &&
+    a.position === b.position &&
+    a.axis === b.axis &&
+    a.reversed === b.reversed &&
+    a.label === b.label
+  )
 }
 
 interface UseCanvasInsertionDragOptions<TGhost> {
@@ -123,6 +151,12 @@ interface UseCanvasInsertionDragOptions<TGhost> {
    */
   onDraggingChange?: (dragging: boolean) => void
   /**
+   * The element's own size in CSS px, when it is known before it exists (an
+   * image's natural size, an empty box's default). Draws the ghost as that
+   * element at the canvas zoom, at half opacity, instead of a label chip.
+   */
+  ghostSize?: (ghost: TGhost) => { width: number; height: number } | null
+  /**
    * P5-G G1 — the ghost can also land on the EMPTY board as a loose layer.
    * `accepts` is asked once per drag (a saved layout or a Visual Component
    * has no loose-layer spelling, so its drag never offers the board);
@@ -143,6 +177,7 @@ type ResolvedInsertionDrop =
 export function useCanvasInsertionDrag<TGhost>({
   onDrop,
   onDraggingChange,
+  ghostSize,
   freeCanvas,
 }: UseCanvasInsertionDragOptions<TGhost>) {
   const [drag, setDrag] = useState<CanvasInsertionDragState<TGhost> | null>(null)
@@ -176,6 +211,11 @@ export function useCanvasInsertionDrag<TGhost>({
     let started = false
     const snapshot = beginInsertionDragSnapshotSession()
     const offersFreeCanvas = freeCanvas?.accepts(ghost) === true
+    const tracker = createInsertionGhostTracker(startX, startY)
+    const size = ghostSize?.(ghost) ?? null
+    const zoom = currentCanvasZoom()
+    let shownPreview: CanvasDropPreview | null = null
+    let shown = false
 
     // `speed-06` follow-up — the hovered viewport's OWN page, when it
     // differs from `canvasPage`. `data-page-id` is `BoardFrameView.tsx`'s
@@ -224,8 +264,14 @@ export function useCanvasInsertionDrag<TGhost>({
       const point = pendingPoint
       pendingPoint = null
       if (!point) return
-      const resolved = resolveDrop(point.x, point.y)
-      setDrag({ ghost, x: point.x, y: point.y, preview: previewOf(resolved) })
+      tracker.moveTo(point.x, point.y)
+      const preview = previewOf(resolveDrop(point.x, point.y))
+      // The ghost already follows the pointer; React is only told when the
+      // drop target it draws is a different one.
+      if (shown && sameDropPreview(shownPreview, preview)) return
+      shown = true
+      shownPreview = preview
+      setDrag({ ghost, x: point.x, y: point.y, preview, tracker, size, zoom })
     }
 
     const scheduleResolve = (clientX: number, clientY: number) => {

@@ -89,7 +89,10 @@ export function resolveImportEdits(
   for (const [name, requirement] of required) {
     const { specifier } = requirement
     const style = requirement.style ?? 'named'
-    const existing = declarations.find((d) => d.getModuleSpecifierValue() === specifier)
+    // A VALUE import never joins a type-only declaration (`import type { X }`
+    // is erased at build, so the binding would be undefined at runtime). An
+    // inline `type` specifier is likewise not a value binding.
+    const existing = declarations.find((d) => !d.isTypeOnly() && d.getModuleSpecifierValue() === specifier)
 
     if (style !== 'named') {
       if (existing) {
@@ -111,7 +114,7 @@ export function resolveImportEdits(
     const spelled = imported === name ? name : `${imported} as ${name}`
     if (existing) {
       const named = existing.getNamedImports()
-      if (named.some((n) => (n.getAliasNode() ?? n.getNameNode()).getText() === name && n.getNameNode().getText() === imported)) {
+      if (named.some((n) => !n.isTypeOnly() && (n.getAliasNode() ?? n.getNameNode()).getText() === name && n.getNameNode().getText() === imported)) {
         continue
       }
       const lastNamed = named[named.length - 1]

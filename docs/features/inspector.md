@@ -2279,8 +2279,40 @@ opens and when the project's stylesheets change). The contract of a value cell:
 - **Rename** (`{ op: 'rename' }`) rewrites every mention of the name in project
   source: the declarations of all modes, `var()`, strings in TSX, Tailwind
   arbitrary values, in one plan. It refuses a name already declared or named in
-  source, a package/compiled declaration, and a Tailwind `@theme` name in a
-  utility namespace (the name is also the class).
+  source and a package/compiled declaration. A Tailwind `@theme` variable
+  (`--color-brand`) is also the utility classes that read it, so the rename moves
+  those too - `bg-brand`, `hover:text-brand/50`, `!border-brand`, in string and
+  template-literal text of script files and in `@apply` - and the plan counts
+  them. See "Tailwind theme (CT-6)" below for what it refuses.
+- **Tailwind theme (CT-6).** Editing an `@theme` value is the ordinary `set`
+  (the compiled Tailwind output that echoes a project `@theme` variable is not a
+  second source: it is dropped from the catalog, so the row stays editable).
+  Rename refuses, naming why: `--spacing-*`, `--breakpoint-*`, `--container-*`
+  and the bare `--spacing` (their names are read by too many utilities or by
+  variants to follow); a new name outside the variable's namespace (the prefix is
+  what makes it a `bg-` colour); a class two theme namespaces both spell
+  (`text-lg` is a colour AND a size when both exist); a new name whose classes
+  are already used in source; classes in a file type the undo journal cannot
+  restore (`.html`, `.vue`, `.scss`). A class built at runtime (`` `bg-${tone}` ``)
+  names no literal: the rename still lands and the status line lists those
+  `file:line`s next to Undo. Remove counts classes as readers (`in-use` until
+  `replaceWith`, a variable of the same namespace; `remove-blocked` for the
+  namespaces whose readers cannot be found by spelling). The usage count of an
+  `@theme` variable includes its classes.
+- **JavaScript themes (CT-6).** `GET token-catalog?usage=1` also returns
+  `jsTheme`: every value a Tailwind v3 `tailwind.config.*` (and the token file it
+  imports, one relative hop at a time) or a standalone `theme.ts` defines, parsed
+  and never run (`tokenJsThemeStatic.ts`). The panel lists them per file under
+  "Theme (read-only)": a value is plain text, never an input; "Why" shows the
+  sentence (where it is written, that Studio reads the file without running it,
+  and to edit it there); a computed value (`require`, a call, a function of
+  `theme`, a package reference) shows what is written and says it is computed.
+  The one thing that works is **apply as a class**: it adds `bg-primary` (etc.)
+  to the selection's `className` as a literal `class` edit (`setJsxClassName`),
+  one commit for the selection, marked `restyle` (CT-5) so the batch is journaled and
+  all-or-nothing: Undo puts the file back byte for byte even if the class was
+  already there. A token file no
+  Tailwind config reads has no class to apply and says so.
 - **Remove** (`{ op: 'remove', replaceWith? }`) deletes all declarations (and
   rules left empty). A token still read needs `replaceWith` (same family,
   chosen in the row); the server refuses `in-use` otherwise, listing where.
@@ -2422,6 +2454,12 @@ The dev-only `PanelCrashProbe` mounted inside each boundary is how a browser
 spec crashes exactly one of them:
 `window.dispatchEvent(new CustomEvent('studio:panel-crash-probe', { detail: 'inspector:fill' }))`.
 It is erased from a production build at its mount site.
+
+---
+
+## §13. Editing a variant: the write target is the variant's rule (CV-4)
+
+While the selected element is a component's own element and the person is editing the MAIN component (any element of a variants gallery, or a component named by "Edit main component"), `SelectionModel.writeTargetFor` is not the P1 rule: a variant prop that styles the element aims EVERY property at the shown variant's rule (`.btn-ghost`), or returns `none` with the reason and the remedy when that variant has no honest rule. It never falls back to the base class or to `style=""`, which is exactly the leak the rule exists to close. `VariantContextChip` (above the sections) says "Editing variant ghost: .btn-ghost in Button.module.css", switches axis when several props style the element, and is the refusal text when none can; a refused commit is one `warning` toast with "Open in code". On an INSTANCE (which owns no element) the Component section's Main component mode shows the same sentence with **Edit style**, which enters the instance and selects the element. Contract and limits: `docs/features/studio-import.md`, "Style edits per variant — the variant edit context (CV-4)".
 
 ---
 

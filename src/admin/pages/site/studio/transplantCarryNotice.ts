@@ -56,14 +56,17 @@ export function carryNoticeTitle(carried: Carried): string | null {
   return null
 }
 
-/** Shows the notice for `carried`, with an Undo that is only live while this write is the newest history entry. */
-export function announceCarried(carried: Carried | undefined): void {
-  const title = carried ? carryNoticeTitle(carried) : null
-  if (!title) return
+/**
+ * An info notice about a write that just landed, with an Undo that is only
+ * live while this write is still the newest history entry. Read the depth NOW,
+ * when the gesture's own entry is on the stack (G-10's paste reuses it).
+ */
+export function announceUndoableNotice(title: string, body?: string): void {
   const depth = storeUndo?.depth() ?? 0
   pushToast({
     kind: 'info',
     title,
+    ...(body ? { body } : {}),
     location: 'site-editor',
     durationMs: 8000,
     action: {
@@ -73,4 +76,10 @@ export function announceCarried(carried: Carried | undefined): void {
       },
     },
   })
+}
+
+/** Shows the notice for `carried`, with an Undo that is only live while this write is the newest history entry. */
+export function announceCarried(carried: Carried | undefined): void {
+  const title = carried ? carryNoticeTitle(carried) : null
+  if (title) announceUndoableNotice(title)
 }

@@ -16,7 +16,7 @@
     column-gap: var(--space-xs);
     font-size: var(--text-2xs);
     font-weight: 700;
-    grid-template-columns: minmax(8rem, 1.4fr) repeat(var(--mode-count), minmax(6rem, 1fr)) 3.75rem;
+    grid-template-columns: minmax(8rem, 1.4fr) repeat(var(--mode-count), minmax(6rem, 1fr)) 5.5rem;
 }
 
 .group {

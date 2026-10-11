@@ -38,4 +38,11 @@ export interface StructuralRefusalDialogState {
    * — see `duplicate-into-frame` in `editConstraint.ts`.
    */
   duplicateIntoFrame?: () => void
+  /**
+   * G-9 / G-8 — the remedies that END with the refused gesture running again,
+   * built by the store action that refused (it alone holds the gesture): write
+   * the list out and replay (`unrollList`), or start "Edit layout" and replay
+   * (`editLayout`). Present only when the remedy applies to this refusal.
+   */
+  replayRemedies?: { unrollList?: () => void; editLayout?: () => void }
 }

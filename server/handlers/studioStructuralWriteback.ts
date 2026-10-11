@@ -52,7 +52,7 @@ import {
 import { designSystemImportSpecifier } from '@core/page-parser'
 import { isInlinedNodeId } from '@core/page-tree'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { DesignSystemImportSchema, InsertNodeSchema, InsertPropsSchema } from './studioInsertJsxSchemas'
+import { DesignSystemImportSchema, InsertNodeSchema, InsertPropsSchema, PastedHtmlSchema } from './studioInsertJsxSchemas'
 
 /**
  * One sibling reorder (`struct-01`) — `moveJsxElement`. `nodeId` is the moved
@@ -142,6 +142,7 @@ const InsertEditSchema = Type.Object({
    * every one of them, in order.
    */
   siblings: Type.Optional(Type.Array(InsertNodeSchema, { minItems: 1 })),
+  pastedHtml: Type.Optional(PastedHtmlSchema), // G-10 - see studioInsertHtml.ts
   /**
    * The editor's ⌘Z for this insert is the undo journal's `restore`, not a
    * `delete` of what it made: the parent had no children, so the write may have
@@ -204,9 +205,10 @@ const WrapEditSchema = Type.Object({
  * in source order — not one `nodeIds` array, because every other part of the
  * save route (bottom-to-top ordering, the touched-file set, the containment
  * guard) is keyed on `nodeId` and a group must sort by the topmost position it
- * changes. The codemod re-derives the run from the AST and refuses
- * (`not-contiguous`) if anything unnamed sits between the ends, so a
- * hand-crafted batch cannot widen the span.
+ * changes. The codemod re-derives the run from the AST: an unbroken run is one
+ * span wrapped in place, and anything else is GATHERED (G-7,
+ * `gatherGroupRun.ts`) - only the named elements move, so a hand-crafted batch
+ * cannot widen what the container holds.
  *
  * ⌘G on ONE element is not this kind: it is the existing `wrap`, unchanged.
  *
@@ -241,11 +243,10 @@ const GroupEditSchema = Type.Object({
  * children take its place at its own index, and the container's own bytes go.
  *
  * `nodeId` is the container, and it is the only field: everything else is
- * decided by what is written at that location. The codemod refuses
- * (`has-behaviour`) when the container carries anything but
- * `className`/`style`/`id`/`data-*`, because deleting an element that also
- * carries a handler, a ref, a `key` or a spread would drop behaviour no undo
- * in the editor can explain.
+ * decided by what is written at that location. A container carrying anything
+ * but `className`/`style`/`id`/`data-*` (a handler, a ref, a `key`, a spread,
+ * or a component tag) is KEPT, emptied (G-7) - deleting it would drop behaviour
+ * the code relies on.
  */
 const UngroupEditSchema = Type.Object({
   kind: Type.Literal('ungroup'),

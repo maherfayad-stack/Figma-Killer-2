@@ -23,6 +23,7 @@ import { createDefaultSiteDocument } from './defaults'
 import { emptyDirtyMarks, type DirtyMarks } from './dirtyTracking'
 import { reconcileFrameworkClasses } from './framework/reconcile'
 import { collectAllNodeIds, historySurvivesReload } from './historyPreservation'
+import { endMainEditMode } from './mainEditMode'
 import { retainBoardOnlyEntries } from '../boardHistory'
 import { buildReparseNodeIdRemap, remapHistoryEntries } from './historyNodeIdRemap'
 import { applyNodeIndexPatch, clearNodeIndexes, nodeIndexesOf, rebuildNodeIndexes } from './nodeIndex'
@@ -132,6 +133,7 @@ export function createLifecycleActions({
         // the prior site and would cause `mutateActiveTree` to silently no-op
         // (early-return) when the VC id is not present in the new site.
         state.activeDocument = null
+        endMainEditMode(state) // G-8 — an "edit the shared thing" mode belonged to the document it was started in
         state._historyPast = []
         state._historyFuture = []
         state._historyCoalesceKey = null
@@ -241,6 +243,11 @@ export function createLifecycleActions({
           : (findHomePage(site.pages) ?? site.pages[0])?.id ?? null
         // Reset activeDocument — see createSite for rationale.
         state.activeDocument = null
+        // G-8 — only a re-read of the project already open (it has a baseline to rebase
+        // against) keeps an "Edit layout"/"Edit main component" mode; a first load or a
+        // project switch ends it, so a layout of the same name in another project is
+        // never edited on the strength of a choice made in this one.
+        if (baselineBeforeRead(loaded.pages) === undefined) endMainEditMode(state)
         // 0.2 (E2) fix — wipe ONLY when replaying the existing stack against
         // this reload's tree is not provably safe (see `historySafe` above).
         // When safe, leave `_historyPast`/`_historyFuture` untouched — a
@@ -299,6 +306,7 @@ export function createLifecycleActions({
         state.activePageId = null
         // Reset activeDocument — without a site there can be no active doc.
         state.activeDocument = null
+        endMainEditMode(state)
         clearCanvasSelectionDraft(state)
         state._historyPast = []
         state._historyFuture = []

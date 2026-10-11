@@ -79,7 +79,7 @@ import { resolveInsertLocation } from '@site/store/insertLocation'
 import { ModulePicker } from '@site/panels/AssetsPanel'
 import { canComponentizeNode } from '@site/componentization'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
-import { explainStructuralConstraint, isResolvedByInstanceDetach, type EditConstraint } from '@core/page-tree'
+import { explainStructuralConstraint, isResolvedByInstanceDetach, planUnrollList, type EditConstraint } from '@core/page-tree'
 import type { AnyModuleDefinition } from '@core/module-engine'
 import { PenSquareSolidIcon } from 'pixel-art-icons/icons/pen-square-solid'
 import { CopyPlusSolidIcon } from 'pixel-art-icons/icons/copy-plus-solid'
@@ -94,6 +94,7 @@ import { BoxStackSolidIcon } from 'pixel-art-icons/icons/box-stack-solid'
 import { CodeIcon } from 'pixel-art-icons/icons/code'
 import { BoxSolidIcon } from 'pixel-art-icons/icons/box-solid'
 import { Copy2SolidIcon } from 'pixel-art-icons/icons/copy-2-solid'
+import { BulletlistSolidIcon } from 'pixel-art-icons/icons/bulletlist-solid'
 import { EyeSolidIcon } from 'pixel-art-icons/icons/eye-solid'
 import { isNarrowEditorChromeViewport } from '@site/layout/responsiveChrome'
 import { ConstraintNotice } from '@site/ui/ConstraintNotice'
@@ -277,6 +278,14 @@ export function LayerNodeContextMenu({
   const detachRefusal = detachTargets.map(detachRefusalFor).find((reason) => reason !== null) ?? null
   const dispatchDetach = () => {
     void useEditorStore.getState().detachInstances(targetIds)
+    onClose()
+  }
+
+  // G-9 (OD-24) — "Unroll list": offered on a row of a list whose array is a literal in
+  // this file (`planUnrollList`), never for a selection of several.
+  const unrollPlan = !isMulti && nodeId && activePage ? planUnrollList(activePage, nodeId) : null
+  const dispatchUnrollList = () => {
+    if (nodeId) void useEditorStore.getState().unrollList(nodeId)
     onClose()
   }
 
@@ -464,6 +473,17 @@ export function LayerNodeContextMenu({
             >
               <span aria-hidden="true"><Copy2SolidIcon size={13} /></span>
               {isMulti ? 'Detach instances' : 'Detach instance'}
+            </ContextMenuItem>
+          )}
+
+          {unrollPlan && (
+            <ContextMenuItem
+              onClick={dispatchUnrollList}
+              tooltip={`Write ${unrollPlan.source} out as ${unrollPlan.rowRootIds.length} separate elements. The list stops being drawn from its array.`}
+              data-testid="layer-menu-unroll-list"
+            >
+              <span aria-hidden="true"><BulletlistSolidIcon size={13} /></span>
+              Unroll list
             </ContextMenuItem>
           )}
 

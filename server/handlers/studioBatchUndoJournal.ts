@@ -16,7 +16,10 @@
  * row's delete cuts array elements whose bytes no op carries back), a
  * `transplant` that MOVES (a cross-frame drag: two files, one pruned import),
  * a same-file `move` / `reparent` (the splice leaves a blank line and an
- * indentation no inverse move reproduces),
+ * indentation no inverse move reproduces), a `wrap` / `group` / `ungroup` (G-7:
+ * a group may gather members from elsewhere and an ungroup may keep a wrapper
+ * that carries behaviour, so neither is the other's inverse), an `unbind` prop
+ * or text edit (G-6: the code a typed literal replaced),
  * a free-canvas `canvas-layer-lift` / `canvas-layer-place` that MOVES (the page
  * and the layer module), a Frame selection (a `group` with a `frame`, PA-6), and an `insert` that asked for an exact undo
  * (`exactUndo`, also asked of a `duplicate` and a copying `transplant`: it writes into a childless parent), and CV-3's `add-variant` / `remove-variant` / `add-component-prop` (a component's signature plus its stylesheet). A batch holding any of them records ONE
@@ -49,22 +52,29 @@
  */
 import { existsSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { styleLandingNeedsJournal, type StyleLanding } from '@core/page-tree'
+import { isInlinedNodeId, styleLandingNeedsJournal, type StyleLanding } from '@core/page-tree'
 import { cssEditStylesheet } from './studioCssWriteback'
 import { refusalFor, StudioEditRefusalError } from './studioEditRefusals'
 import type { StudioEdit, StudioEditApplyOutcome, StudioEditBatchOptions, StudioEditRefusal } from './studioEditSchemas'
 import { captureUndoPreImage, recordUndoJournal, restoreUndoJournal, undoJournalFiles } from './studio/undoJournal'
 
 /** The kinds a journaled batch records a pre-image for. */
-const JOURNALED_KINDS = new Set<StudioEdit['kind']>(['delete', 'detach', 'expose-prop', 'promote-override', 'swap', 'promote-component', 'move', 'reparent', 'add-variant', 'remove-variant', 'add-component-prop'])
+const JOURNALED_KINDS = new Set<StudioEdit['kind']>(['delete', 'detach', 'expose-prop', 'promote-override', 'swap', 'promote-component', 'move', 'reparent', 'add-variant', 'remove-variant', 'add-component-prop',
+  // G-7: a group may gather members from elsewhere, an ungroup may keep the wrapper (and a component or
+  // styled wrapper has no plain inverse at all), so the inverse of all three is the pre-image.
+  'wrap', 'group', 'ungroup'])
 
 export function isJournaled(edit: StudioEdit): boolean {
   return (
     JOURNALED_KINDS.has(edit.kind) ||
+    // G-6 (OD-20): typing over code replaces it, and the bytes it replaced come back only from the pre-image.
+    ((edit.kind === 'prop' || edit.kind === 'text') && edit.unbind === true) ||
     // PA-6 — a frame rewrites the wrapper AND every member's offsets; no `ungroup`
     // gives those back, the pre-image does.
     (edit.kind === 'group' && edit.frame !== undefined) ||
     (edit.kind === 'list-item' && edit.op.kind === 'remove') ||
+    // G-9 — the rows replace the `.map` and drop its `key`: no edit kind describes the bytes.
+    edit.kind === 'unroll-list' ||
     // A cross-file MOVE (a COPY is taken back by deleting what it made). The
     // move cuts markup from one file, prunes the import only that markup used,
     // and carries imports into the other — every `line:col` below the cut in
@@ -84,6 +94,8 @@ export function isJournaled(edit: StudioEdit): boolean {
     // the insert leaves `<X>` + newline + `</X>`, which is not what was there.
     // The client asks for the pre-image exactly when the parent had no children.
     ((edit.kind === 'insert' || edit.kind === 'duplicate') && edit.exactUndo === true) ||
+    // G-10 - a pasted HTML fragment writes the page AND its stylesheet; only the pre-image names both.
+    (edit.kind === 'insert' && edit.pastedHtml !== undefined) ||
     // CT-5 - a restyle (apply / create / detach a text or effect style) is a
     // class edit, an inline-style strip and, for a create, a new rule in a
     // stylesheet - possibly a brand-new one. Only the pre-image takes all of
@@ -149,6 +161,8 @@ export function openBatchUndoJournal(
 
   return {
     refuse: (edit) => {
+      const unbind = refuseUnbind(edit, journaling)
+      if (unbind) return unbind
       if (edit.kind !== 'restore') return null
       if (!journaling) {
         return refusalFor(edit, 'restore-editor-only', 'Only the editor’s own undo can restore a change Studio journaled. Nothing was written.')
@@ -176,6 +190,28 @@ export function openBatchUndoJournal(
       return recordUndoJournal(dir, preImage, createdFiles.map(absolute)) ?? undefined
     },
   }
+}
+
+/**
+ * G-6 (OD-20): an `unbind` prop/text edit replaces code with a literal, which
+ * is only honest when (a) the editor can offer Undo - the pre-image is the only
+ * thing that puts the code back, and an agent batch has none - and (b) the edit
+ * has ONE target: an inlined id writes a shared component's own markup, where the
+ * binding is what every other instance reads through.
+ */
+function refuseUnbind(edit: StudioEdit, journaling: boolean): StudioEditRefusal | null {
+  if ((edit.kind !== 'prop' && edit.kind !== 'text') || edit.unbind !== true) return null
+  if (!journaling) {
+    return refusalFor(edit, 'unbind-editor-only', 'Only the editor can replace code with a typed value, because only the editor can offer Undo. Nothing was written.')
+  }
+  if (isInlinedNodeId(edit.nodeId)) {
+    return refusalFor(
+      edit,
+      'unbind-shared',
+      'This is written once in a shared component, so replacing it with text would change every place that component is used. Nothing was written; change it in the code.',
+    )
+  }
+  return null
 }
 
 /** Apply one `restore` edit — every file its entry names, or none. Refusals throw, like every other kind's. */

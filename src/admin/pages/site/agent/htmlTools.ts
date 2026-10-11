@@ -21,7 +21,7 @@ import {
 import { registry } from '@core/module-engine'
 import { importHtml } from '@core/htmlImport'
 import { renderNode, type RenderAccumulators, type RenderConfig } from '@core/publisher'
-import { HTML_IMPORT_ON_SOURCE_REFUSAL } from '@site/store/slices/site/studioSourceRefusals'
+import { isSourceDerivedNodeId } from '@core/page-tree'
 import type { EditorStore } from '@site/store/types'
 import { getAgentStoreApi } from './storeRef'
 import { parseImportedStyleCss } from './cssTools'
@@ -38,25 +38,24 @@ import {
 const getStoreState = (): EditorStore => getAgentStoreApi<EditorStore>().getState()
 
 /**
- * `mcp-21` — the sentence an HTML import failure returns to the caller.
- *
- * The store decides WHY (the container will not take children, or this is a
- * studio-imported tree where a block of HTML has no honest source form) and
- * has already shown the user its own refusal; this forwards that sentence
- * rather than the invented one both failures used to share — for the studio
- * case, a sentence about containers that was never true.
- *
- * The studio refusal, and only that one, also names the toolset that DOES
- * write real code. Appending it to a CMS container refusal would be advice
- * about a project this call is not running against.
+ * `mcp-21` - the sentence an HTML import failure returns to the caller. The
+ * store decides WHY (the container will not take children, the markup has no
+ * elements) and has already shown the user its own refusal; this forwards that
+ * sentence and names the target.
  */
 function htmlImportFailure(message: string, targetNodeId: string): string {
-  const remedy =
-    message === HTML_IMPORT_ON_SOURCE_REFUSAL
-      ? " On a Studio project write structure with the studio_* toolset instead: studio_apply_edits' insert edit writes real JSX into the file and returns a node id you can address."
-      : ''
-  return `${message} Target: ${targetNodeId}.${remedy}`
+  return `${message} Target: ${targetNodeId}.`
 }
+
+/**
+ * Why `site_replace_node_html` stops at a node written in the project's files.
+ * Replacing is two writes there - delete the old children, insert the new - and
+ * a replace that landed only its first half would leave the page emptied; the
+ * file's undo journal records one gesture, not two. Both halves exist on their
+ * own: delete the elements, then insert the HTML.
+ */
+const REPLACE_HTML_ON_SOURCE_REFUSAL =
+  "This node is written in your project's files, where replacing its children with HTML would be two writes (delete the old elements, insert the new) and Studio will not leave the first done without the second. Delete the elements you want gone with site_delete_nodes, then add the HTML with site_insert_html, which writes real JSX and puts its styles in the page's stylesheet."
 
 /**
  * Insert an HTML snippet as page nodes under `parentId`.
@@ -71,6 +70,19 @@ function htmlImportFailure(message: string, targetNodeId: string): string {
  *      — nodes, <style> rules, and class-token binding in one undo step.
  */
 export function runInsertHtml(input: InsertHtmlInput): AiToolOutput {
+  // G-10 - on a board written in the project's files the HTML is converted to
+  // JSX and written (elements + styles, one undo step). The elements have no
+  // ids until the file is re-read, so none can be returned.
+  const sourced = getStoreState().writeHtmlToSource(input.html, input.parentId, { index: input.index, undoLabel: 'Insert HTML' })
+  if (sourced.kind === 'refused') return aiToolError(htmlImportFailure(sourced.message, input.parentId))
+  if (sourced.kind === 'written') {
+    return aiToolOk({
+      nodeIds: [],
+      writtenToSource: true,
+      note: "The HTML was converted to JSX and written into the page's file, with its styles in the page's stylesheet when it imports one. The new elements get their ids when the board re-reads the file: read the document again to address them.",
+    })
+  }
+
   // (1) Parse and walk the HTML to produce a flat node fragment + any <style> CSS
   const { nodes, rootIds, styleCss, stripped } = importHtml(input.html)
   const { rules, conditions } = parseImportedStyleCss(styleCss)
@@ -208,13 +220,10 @@ export function runReplaceNodeHtml(input: ReplaceNodeHtmlInput): AiToolOutput {
     return aiToolError(`HTML contained no importable elements or style rules.${scriptHint}`)
   }
 
-  // `mcp-21` — ask BEFORE destroying. This tool empties the target and then
+  // `mcp-21` - ask BEFORE destroying. This tool empties the target and then
   // refills it, so a refusal discovered at insert time would leave the node
-  // empty and the file unchanged: half a gesture. On a studio-imported tree
-  // the import always refuses (see `refuseImportedNodesInto`), which is
-  // exactly the case that used to wipe the children first.
-  const refusal = getStoreState().refuseImportedNodesInto(input.nodeId)
-  if (refusal) return aiToolError(htmlImportFailure(refusal, input.nodeId))
+  // empty and the file unchanged: half a gesture.
+  if (isSourceDerivedNodeId(input.nodeId)) return aiToolError(`${REPLACE_HTML_ON_SOURCE_REFUSAL} Target: ${input.nodeId}.`)
 
   // Delete existing children so the target node is empty before insertion.
   const existingChildren = [...(targetNode.children ?? [])]

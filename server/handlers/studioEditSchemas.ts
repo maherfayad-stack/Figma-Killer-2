@@ -53,8 +53,10 @@ import { VariantEditSchemas } from './studioVariantWriteback'
 import { CanvasLayerEditSchemas, type CanvasLayerRemovedText } from './studioCanvasLayerWriteback'
 import { SvgEditSchemas } from './studioSvgWriteback'
 import { ListItemEditSchema } from './studioListItemWriteback'
+import { UnrollListEditSchema } from './studioUnrollWriteback'
 import { UndoJournalTokenSchema } from './studio/undoJournalToken'
 import type { CreatedJsxLocation } from '@core/ast-codemods'
+import type { PastedHtmlSummary } from './studioPastedHtmlStyles'
 import type { StyleLanding, StyleLandingRung } from '@core/page-tree'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
@@ -73,13 +75,20 @@ const PropEditSchema = Type.Object({
   nodeId: Type.String(),
   prop: Type.String(),
   value: Type.Union([Type.String(), Type.Number(), Type.Boolean()]),
+  /**
+   * G-6 (OD-20) - the user typed over a code-bound value: replace the code
+   * with the literal. Editor-only (it needs the undo journal) and never on an
+   * inlined id; see `studioBatchUndoJournal.ts` and `studioWriteback.ts`.
+   */
+  unbind: Type.Optional(Type.Literal(true)),
 })
 
-/** One element-text-children writeback — `setJsxText`. */
+/** One element-text-children writeback — `setJsxText`. `unbind` as on {@link PropEditSchema}. */
 const TextEditSchema = Type.Object({
   kind: Type.Literal('text'),
   nodeId: Type.String(),
   text: Type.String(),
+  unbind: Type.Optional(Type.Literal(true)),
 })
 
 /**
@@ -319,6 +328,8 @@ export const StudioEditSchema = Type.Union([
   ...StructuralEditSchemas,
   // OD-8 — a `.map` row's structure, written to its array (`studioListItemWriteback.ts`).
   ListItemEditSchema,
+  // G-9 / OD-24 — "Unroll list": a `.map` over an array literal becomes its rows (`studioUnrollWriteback.ts`).
+  UnrollListEditSchema,
   ...SlotEditSchemas,
   // CV-3 — add / remove a variant, add a component property (`studioVariantWriteback.ts`).
   ...VariantEditSchemas,
@@ -454,6 +465,8 @@ export interface StudioEditApplyOutcome {
    * destination already had.
    */
   carried?: readonly StudioCarriedDeclaration[]
+  /** G-10 - where a pasted HTML fragment's styles went (an `insert` with `pastedHtml`). */
+  pastedHtml?: PastedHtmlSummary
 }
 
 /** One thing a move copied to the destination - see {@link StudioEditApplyOutcome.carried}. */
@@ -654,4 +667,6 @@ export interface StudioEditBatchResult {
    * tells the user when state or data was copied. Absent when nothing was.
    */
   carried?: StudioCarriedDeclaration[]
+  /** G-10 - where each pasted HTML fragment's styles went; the board tells the user. */
+  pastedHtml?: PastedHtmlSummary[]
 }
