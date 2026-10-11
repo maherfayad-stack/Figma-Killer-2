@@ -12,7 +12,7 @@
  *
  * Parse, never execute: both questions are answered from syntax.
  */
-import { Node, SyntaxKind, type Project } from 'ts-morph'
+import { Node, SyntaxKind, type Project, type TypeAliasDeclaration } from 'ts-morph'
 import type { ComponentCallSite } from './componentCallSites'
 
 export interface VariantUse {
@@ -57,13 +57,15 @@ export function callSitesPassingVariant(
 }
 
 /**
- * Files OUTSIDE `ownFiles` that name the type alias `aliasName`, one entry per
- * type reference. A union shared with another component's file is several
+ * References to the type alias `alias` from files OUTSIDE `ownFiles`, one entry
+ * per type reference. A union shared with another component's file is several
  * targets, and Add/Remove variant writes exactly one; a lookup object typed
  * `Record<Alias, string>` beside the component is the same target and is not
- * counted.
+ * counted. A reference counts when its name resolves to this very alias (through
+ * imports and barrels) and also when it does not resolve at all, because "not
+ * provably another type" is the conservative answer for a write.
  */
-export function typeAliasReferences(project: Project, workspaceRoot: string, aliasName: string, ownFiles: ReadonlySet<string>): VariantUse[] {
+export function typeAliasReferences(project: Project, workspaceRoot: string, alias: TypeAliasDeclaration, ownFiles: ReadonlySet<string>): VariantUse[] {
   const root = toPosix(workspaceRoot).replace(/\/+$/, '')
   const references: VariantUse[] = []
   for (const sourceFile of project.getSourceFiles()) {
@@ -72,7 +74,12 @@ export function typeAliasReferences(project: Project, workspaceRoot: string, ali
     const rel = path.slice(root.length + 1)
     if (ownFiles.has(rel)) continue
     for (const reference of sourceFile.getDescendantsOfKind(SyntaxKind.TypeReference)) {
-      if (reference.getTypeName().getText() !== aliasName) continue
+      const name = reference.getTypeName()
+      if (name.getText() !== alias.getName()) continue
+      const symbol = name.getSymbol()
+      const resolved = symbol?.isAlias() ? symbol.getAliasedSymbol() : symbol
+      const declarations = resolved?.getDeclarations() ?? []
+      if (declarations.length > 0 && !declarations.some((declaration) => declaration === alias)) continue
       const { line, column } = sourceFile.getLineAndColumnAtPos(reference.getStart())
       references.push({ file: rel, line, col: column })
     }

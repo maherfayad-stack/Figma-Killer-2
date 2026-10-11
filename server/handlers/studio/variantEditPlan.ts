@@ -133,7 +133,7 @@ function sharedUnionRefusal(project: Project, dir: string, componentRel: string,
   const offset = sourceFile.compilerNode.getPositionOfLineAndCharacter(origin.line - 1, origin.column - 1)
   const alias = sourceFile.getDescendantAtPos(offset)?.getFirstAncestorByKind(SyntaxKind.TypeAliasDeclaration)
   if (!alias || !Node.isTypeAliasDeclaration(alias)) return null
-  const elsewhere = typeAliasReferences(project, dir, alias.getName(), new Set([componentRel, origin.file]))
+  const elsewhere = typeAliasReferences(project, dir, alias, new Set([componentRel, origin.file]))
   if (elsewhere.length === 0) return null
   return {
     reason: 'shared-union',

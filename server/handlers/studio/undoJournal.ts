@@ -44,8 +44,10 @@
  *     validated with TypeBox after;
  *   - every `rel` it names is re-derived through `canonicalSourceRel`, the
  *     same guard a node id's file goes through: inside the project on the
- *     real path, app source only, never `.studio`/`.git`/`node_modules`. An
- *     entry that names anything else is `restore-unavailable`, not a write.
+ *     real path, app source only, never `.studio`/`.git`/`node_modules` — or
+ *     (CV-3) a plain hand-authored `.css`, under the CSS writeback's own
+ *     containment (`isJournalableRel`). An entry that names anything else is
+ *     `restore-unavailable`, not a write.
  *
  * ## Bounded
  *
@@ -71,7 +73,8 @@ import { existsSync, readFileSync, unlinkSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { canonicalSourceRel } from '../studioEditRouting'
-import { writeFileAtomic } from '@core/page-parser'
+import { classifyStylesheetEditability } from '@core/css-codemods'
+import { isWorkspaceWritablePath, realWorkspaceRel, unwritableWorkspaceSegment, writeFileAtomic } from '@core/page-parser'
 import {
   StudioStoreLinkError,
   listStudioStoreDir,
@@ -124,6 +127,23 @@ type UndoJournalEntry = Static<typeof UndoJournalEntrySchema>
 
 /** Every file a restore writes is resolved in the editor's scope — the journal is the editor's undo. */
 const EDITOR_SCOPE = { canvasLayers: 'allow' } as const
+
+/**
+ * Whether a recorded `rel` is a file this journal may put back: app source (the
+ * guard a node id's file goes through), or — CV-3 — a plain hand-authored
+ * `.css` the CSS writeback itself may write, which is where a variant's rule
+ * lives. The stylesheet branch is the same containment on the REAL path (a
+ * link in a cloned repo is judged by where it lands) and never reaches
+ * `.studio/`, `.git/`, `node_modules` or build output.
+ */
+function isJournalableRel(dir: string, rel: string): boolean {
+  if (canonicalSourceRel(dir, rel, EDITOR_SCOPE) === rel) return true
+  const segments = rel.split('/')
+  if (!/\.css$/i.test(rel) || /^[a-zA-Z]:/.test(rel) || segments.some((segment) => segment === '' || segment === '.' || segment === '..')) return false
+  if (unwritableWorkspaceSegment(rel) !== null || classifyStylesheetEditability(rel).kind !== 'plain-css') return false
+  const abs = join(dir, ...segments)
+  return realWorkspaceRel(dir, abs) === rel && isWorkspaceWritablePath(dir, abs)
+}
 
 /** What a write's files held before it ran: absolute path to bytes, or `null` for "did not exist". */
 export type UndoPreImage = ReadonlyMap<string, Buffer | null>
@@ -178,7 +198,7 @@ export function recordUndoJournal(dir: string, preImage: UndoPreImage, created: 
     const now = readBytes(file)
     if (was === null ? now === null : now !== null && was.equals(now)) continue
     const rel = relative(dir, file).split(sep).join('/')
-    if (canonicalSourceRel(dir, rel, EDITOR_SCOPE) !== rel) return null
+    if (!isJournalableRel(dir, rel)) return null
     const text = was === null ? null : was.toString('utf8')
     // Not valid UTF-8: the string would not write back the same bytes.
     if (text !== null && !Buffer.from(text, 'utf8').equals(was!)) return null
@@ -212,7 +232,7 @@ function readEntry(dir: string, token: string): UndoJournalEntry | null {
 function entryFiles(dir: string, entry: UndoJournalEntry): string[] | null {
   const files: string[] = []
   for (const { rel } of entry.files) {
-    if (canonicalSourceRel(dir, rel, EDITOR_SCOPE) !== rel) return null
+    if (!isJournalableRel(dir, rel)) return null
     files.push(join(dir, ...rel.split('/')))
   }
   return files
