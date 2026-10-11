@@ -221,4 +221,233 @@ test.describe('#6 layer rename', () => {
   })
 })
 
+
+const header = (page: Page, pageId: string, nth = 0): Locator =>
+  page.locator(`[data-page-id="${pageId}"]`).nth(nth).getByTestId('board-frame-header')
+
+async function mouseRightClick(page: Page, target: Locator): Promise<void> {
+  const { x, y } = await centreOf(target)
+  await page.mouse.move(x, y)
+  await page.mouse.click(x, y, { button: 'right' })
+}
+
+const readBoards = (): { boards: Array<{ frames: Frame[]; notes: Array<{ text: string }>; layers?: unknown[] }> } =>
+  JSON.parse(readText('.studio/boards.json'))
+
+const overlap = (a: Frame, b: Frame): boolean =>
+  a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
+
+test.describe('#7 duplicated frames', () => {
+  test.setTimeout(240_000)
+
+  test('land in free space to the right, never on the next frame, and undo to the original bytes', async ({ page }) => {
+    // About starts 100 px right of Home: a copy placed one gap (48) past Home sits ON About.
+    const original = boardsJson([frame('f-home', 'home', 0), frame('f-about', 'about', 500)])
+    makeFixture({ 'pages/Home.tsx': HOME, 'pages/About.tsx': ABOUT, '.studio/boards.json': original })
+    await openBoard(page)
+
+    await mouseRightClick(page, header(page, 'home'))
+    await mouseClick(page, page.getByRole('menuitem', { name: 'Duplicate frame' }))
+    await expectBoardsOnDisk((text) => (JSON.parse(text) as ReturnType<typeof readBoards>).boards[0]!.frames.length === 3, 'Duplicate frame never reached boards.json')
+
+    await mouseRightClick(page, header(page, 'home'))
+    await mouseClick(page, page.getByRole('menuitem', { name: /^Duplicate as RTL$/ }))
+    await expectBoardsOnDisk((text) => (JSON.parse(text) as ReturnType<typeof readBoards>).boards[0]!.frames.length === 4, 'Duplicate as RTL never reached boards.json')
+
+    const frames = readBoards().boards[0]!.frames
+    for (let i = 0; i < frames.length; i += 1) {
+      for (let j = i + 1; j < frames.length; j += 1) {
+        expect(overlap(frames[i]!, frames[j]!), `frames ${frames[i]!.id} and ${frames[j]!.id} overlap`).toBe(false)
+      }
+    }
+    // Both copies are to the right of the source, on its row.
+    const copies = frames.filter((f) => f.pageId === 'home' && f.id !== 'f-home')
+    expect(copies).toHaveLength(2)
+    for (const copy of copies) {
+      expect(copy.x).toBeGreaterThan(0)
+      expect(copy.y).toBe(0)
+    }
+
+    await page.getByTestId('canvas-root').focus()
+    await page.keyboard.press('Control+z')
+    await page.keyboard.press('Control+z')
+    await expectBoardsOnDisk((text) => text === original, 'two undos did not restore the boards file byte for byte')
+  })
+})
+
+test.describe('#8 frame presets', () => {
+  test.setTimeout(240_000)
+
+  test('a mouse click on a preset option resizes the frame', async ({ page }) => {
+    const original = boardsJson([frame('f-home', 'home', 0)])
+    makeFixture({ 'pages/Home.tsx': HOME, '.studio/boards.json': original })
+    await openBoard(page)
+
+    await mouseClick(page, header(page, 'home'))
+    const select = page.getByRole('combobox', { name: 'Device size preset' })
+    await mouseClick(page, select)
+    const option = page.getByRole('option', { name: /^iPad \(768/ }).first()
+    await expect(option).toBeVisible({ timeout: 10_000 })
+    // Where the audit clicked: the option's own centre, with no scrolling. It must lie inside
+    // the open menu - below the menu's edge the press lands on the panel under it.
+    const menuBox = (await page.getByRole('listbox').boundingBox())!
+    const optionBox = (await option.boundingBox())!
+    expect(optionBox.y + optionBox.height, 'the iPad option sits below the fold of the preset menu').toBeLessThanOrEqual(menuBox.y + menuBox.height)
+    await mouseClick(page, option)
+
+    await expectBoardsOnDisk((text) => {
+      const home = (JSON.parse(text) as ReturnType<typeof readBoards>).boards[0]!.frames[0]!
+      return home.width === 768 && home.height === 1024
+    }, 'clicking the iPad preset did not resize the frame on disk')
+    await expect(page.getByRole('textbox', { name: 'Frame width' })).toHaveValue('768')
+
+    await page.getByTestId('canvas-root').focus()
+    await page.keyboard.press('Control+z')
+    await expectBoardsOnDisk((text) => text === original, 'undo did not restore the boards file byte for byte')
+  })
+})
+
+test.describe('#10 sticky note text', () => {
+  test.setTimeout(240_000)
+
+  test('Escape keeps what was typed, on screen, on disk and after a reload', async ({ page }) => {
+    makeFixture({ 'pages/Home.tsx': HOME, '.studio/boards.json': boardsJson([frame('f-home', 'home', 0)]) })
+    await openBoard(page)
+
+    await mouseClick(page, page.getByRole('button', { name: '+ Sticky note' }))
+    const note = page.getByTestId('sticky-note')
+    await expect(note).toHaveCount(1)
+    await page.keyboard.type('Second')
+    await page.keyboard.press('Escape')
+
+    await expect(note).toContainText('Second')
+    await expectBoardsOnDisk((text) => (JSON.parse(text) as ReturnType<typeof readBoards>).boards[0]!.notes[0]?.text === 'Second', 'the note text was not saved when Escape closed the editor')
+
+    await page.reload()
+    await openBoard(page)
+    await expect(page.getByTestId('sticky-note')).toContainText('Second', { timeout: 30_000 })
+  })
+})
+
+test.describe('#9 R then Enter', () => {
+  test.setTimeout(240_000)
+
+  const pageSources = (): Record<string, string> =>
+    Object.fromEntries(fs.readdirSync(studioFile('pages')).map((name) => [name, readText(`pages/${name}`)]))
+
+  test('writes into no page when none is selected; the shape becomes a loose layer on the board', async ({ page }) => {
+    // The home page (Index) is the one the editor has open, and it is NOT on the board that is shown.
+    makeFixture({
+      'pages/Index.tsx': HOME.replace('Home', 'Index'),
+      'pages/About.tsx': ABOUT,
+      '.studio/boards.json': boardsJson([frame('f-about', 'about', 0)]),
+    })
+    const canvasRoot = await openBoard(page)
+    const before = pageSources()
+
+    // Nothing selected: click empty canvas well away from the frame, then R, Enter.
+    const rootBox = (await canvasRoot.boundingBox())!
+    await page.mouse.click(rootBox.x + rootBox.width - 60, rootBox.y + rootBox.height - 60)
+    await page.keyboard.press('r')
+    await page.keyboard.press('Enter')
+
+    await expect
+      .poll(() => fs.existsSync(studioFile('.studio/canvas')) && fs.readdirSync(studioFile('.studio/canvas')).length, {
+        timeout: 20_000,
+        message: 'the rectangle did not become a loose layer on the board',
+      })
+      .toBe(1)
+    await expectBoardsOnDisk((text) => (JSON.parse(text) as ReturnType<typeof readBoards>).boards[0]!.layers?.length === 1, 'the loose layer has no placement on the board')
+    expect(pageSources(), 'a page source changed - the shape was written into a page that is not on the board').toEqual(before)
+  })
+})
+
+test.describe('#11 prototype links', () => {
+  test.setTimeout(300_000)
+
+  // A link as an older build wrote it: a bare "click" trigger and an `origin`. The reader repairs both, so a
+  // save that re-serialized the parsed file would rewrite this entry.
+  const LEGACY_FILE = `{
+  "version": 1,
+  "links": [
+    {
+      "id": "legacy-link",
+      "origin": "design",
+      "source": {
+        "pageId": "about",
+        "node": {
+          "nodeId": "pages/About.tsx:3:7",
+          "indexPath": [
+            0
+          ],
+          "moduleId": "base.text",
+          "textSnippet": "About us"
+        }
+      },
+      "trigger": "click",
+      "action": "navigate",
+      "targetPageId": "home",
+      "transition": "slide-left"
+    }
+  ]
+}
+`
+  const FILE_TAIL = '\n  ]\n}\n'
+
+  test('one link is one write, one undo step, and no other link is rewritten', async ({ page }) => {
+    makeFixture({
+      'pages/Home.tsx': HOME,
+      'pages/About.tsx': ABOUT,
+      '.studio/boards.json': boardsJson([frame('f-home', 'home', 0), frame('f-about', 'about', 500)]),
+      '.studio/prototype.json': LEGACY_FILE,
+    })
+    await page.setViewportSize({ width: 1600, height: 960 })
+    const canvasRoot = await openBoard(page)
+    // Shift+1: fit the whole board, so both frames are on screen and the drop target is real.
+    await canvasRoot.focus()
+    await page.keyboard.press('Shift+1')
+    await page.waitForTimeout(600)
+    const homeFrame = page.locator('[data-page-id="home"]').first()
+    await expect(visibleCanvasIframe(homeFrame)).toBeVisible({ timeout: 60_000 })
+
+    await mouseClick(page, page.getByTestId('canvas-prototype-toggle'))
+    await selectInFrame(page, canvasContentFrame(homeFrame).getByText('Welcome home'))
+    const handle = page.getByTestId('prototype-link-handle')
+    const from = await centreOf(handle)
+    const aboutFrame = page.locator('[data-page-id="about"]').first()
+    const to = await centreOf(aboutFrame)
+
+    await page.mouse.move(from.x, from.y)
+    await page.mouse.down()
+    await page.mouse.move(from.x + 30, from.y + 10, { steps: 4 })
+    await page.mouse.move(to.x, to.y, { steps: 18 })
+    await page.waitForTimeout(250)
+    await page.mouse.up()
+
+    await expect
+      .poll(() => (JSON.parse(readText('.studio/prototype.json')) as { links: unknown[] }).links.length, { timeout: 20_000, message: 'the new link never reached .studio/prototype.json' })
+      .toBe(2)
+    const written = readText('.studio/prototype.json')
+    expect(
+      written.startsWith(LEGACY_FILE.slice(0, LEGACY_FILE.length - FILE_TAIL.length) + ','),
+      'saving the new link rewrote the existing one (its bytes changed):\n' + written,
+    ).toBe(true)
+
+    await page.getByTestId('canvas-root').focus()
+    await page.keyboard.press('Control+z')
+    await expect.poll(() => readText('.studio/prototype.json'), { timeout: 20_000, message: 'Ctrl+Z did not take the link back, byte for byte' }).toBe(LEGACY_FILE)
+
+    await page.keyboard.press('Control+Shift+z')
+    await expect
+      .poll(() => readText('.studio/prototype.json'), { timeout: 20_000, message: 'redo did not put the link back' })
+      .toBe(written)
+
+    await page.reload()
+    await openBoard(page)
+    await expect
+      .poll(() => (JSON.parse(readText('.studio/prototype.json')) as { links: unknown[] }).links.length)
+      .toBe(2)
+  })
+})
+
 export { canvasContentFrame, mouseClick }

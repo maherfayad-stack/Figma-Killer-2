@@ -25,7 +25,7 @@ import { useState } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSelectors'
 import { getStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
-import { DEVICE_PRESETS, findMatchingPreset, FRAME_WIDTH, FRAME_HEIGHT, MIN_FRAME_SIZE, type DevicePreset } from '@core/studio-board'
+import { DEVICE_PRESETS, DEVICE_PRESET_MENU_HEIGHT, findMatchingPreset, FRAME_WIDTH, FRAME_HEIGHT, MIN_FRAME_SIZE, type DevicePreset } from '@core/studio-board'
 import { escapeCssAttributeValue } from '@site/canvas/canvasNodeLookup'
 import { Select } from '@ui/components/Select'
 import { Input } from '@ui/components/Input'
@@ -175,6 +175,7 @@ export function FrameBulkInspector() {
         value=""
         placeholder={matchingPreset ? matchingPreset.name : 'Custom'}
         aria-label="Device size preset"
+        menuMaxHeight={DEVICE_PRESET_MENU_HEIGHT}
         data-testid="frame-bulk-preset-select"
         onChange={(e) => handlePresetChange(e.target.value)}
       >

@@ -111,3 +111,11 @@ export const DEVICE_PRESETS: DevicePreset[] = [
 export function findMatchingPreset(width: number, height: number): DevicePreset | undefined {
   return DEVICE_PRESETS.find((preset) => preset.width === width && preset.height === height)
 }
+
+/**
+ * How tall (px) the preset picker's menu may grow. The list is ~40 entries long
+ * and the Apple presets everyone reaches for first - iPhone, then the iPads -
+ * span the first ~500 px of it: in the default 320 px menu the iPads sat below
+ * the fold, so a click aimed at one landed on the panel under the menu's edge.
+ */
+export const DEVICE_PRESET_MENU_HEIGHT = 560
