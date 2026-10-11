@@ -12,7 +12,11 @@
  * an optional prop of the component, defaulting to what it said, with the new
  * value at this call site (`instanceOverrideActions.ts`), so this notice's
  * default state says which edits are local, how many places there are, and
- * that classes, new styles and structure are still shared.
+ * that new styles on inner elements and structure are still shared.
+ *
+ * G-2b - a class edit made to the component's OUTERMOST element is this
+ * instance's too: the instance takes a modifier class and a rule one class more
+ * specific carries the value (`classOverride.ts`).
  *
  * The other state is the explicit one. "Edit main component" turns the
  * instance-only default off for this component (`mainEditComponent`): the same
@@ -72,7 +76,7 @@ export function SharedComponentNotice({ componentName, nodeId, textOrigin }: Sha
         ) : (
           <p className={styles.text}>
             Part of <strong>{componentName}</strong>
-            {places ? <>, used in {places} places</> : null}. Text, attribute and inline-style values it already sets change this instance only; classes, new styles and structure change every place.
+            {places ? <>, used in {places} places</> : null}. Text, attribute and inline-style values it already sets, and the class styles of its outermost element, change this instance only; classes of inner elements, new styles and structure change every place.
           </p>
         )}
         {!editingMain && textElsewhere ? (

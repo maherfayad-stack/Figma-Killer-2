@@ -236,6 +236,7 @@ describe('the file\'s own idiom', () => {
       ].join('\n'),
     )
     const before = await board()
+    console.error('DEBUG ids', before.instances.map((i) => i.id), before.instances[2]!.children)
     const result = applyStudioEditBatch(dir, [exposeClass(before.instances[2]!.children[0]!, { padding: '1px' })], {}, EDITOR)
     expect(result.refusals).toEqual([])
     expect(read('components/Tier.tsx')).toContain('<section className={cn("tier", wide && "tier--wide", className)}>')
@@ -414,7 +415,8 @@ describe("what cannot be given one instance's own class is refused by name, writ
     write('pages/Other.tsx', ["import { Tier } from '../components/Tier'", 'export default function Other() {', '  return <Tier name="Legacy" price={1} className="legacy" />', '}', ''].join('\n'))
     const stray = await board()
     files = snapshot([...ALL, 'pages/Other.tsx'])
-    result = applyStudioEditBatch(dir, [exposeClass(stray.instances[0]!.children[0]!, { padding: '20px' })], {}, EDITOR)
+    const homeInstance = stray.instances.find((node) => node.id.startsWith('pages/Home.tsx'))!
+    result = applyStudioEditBatch(dir, [exposeClass(homeInstance.children[0]!, { padding: '20px' })], {}, EDITOR)
     expect(result.refusals.map((refusal) => refusal.reason)).toEqual(['call-site-class'])
     expect(snapshot([...ALL, 'pages/Other.tsx'])).toEqual(files)
   })
