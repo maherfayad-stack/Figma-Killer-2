@@ -41,18 +41,23 @@
  * before the first byte changes, and the post-build gate below restores the
  * page's in-memory text before returning. Nothing is saved on any refusal.
  *
- *  - `package-component` / `unresolvable` / `not-a-component` — the call
- *    target is not a local component with a readable declaration.
- *  - `uses-hooks` — a hook that holds state or runs effects needs a component
- *    to mount in. A CONTEXT READER (`useLanguage()`, `useContext(Ctx)`) is
- *    not refused: its call moves to the top of the component that encloses
- *    the call site (DET-3, `detachHooks.ts`) — unless there is no such
- *    component (a module-level JSX const), which refuses.
- *  - `maps-over-props` — the JSX `.map`s over one of its own props: inlining
- *    one static copy would drop that data-drivenness.
- *  - `unsupported-params` — an undestructured `props`, a nested destructure,
- *    a prop used somewhere its call-site value cannot be written (a JSX tag
- *    name that is not a component name, a type position).
+ *  - `package-component` / `unresolvable` / `not-a-component` - the call
+ *    target is not a local component with a readable declaration. The
+ *    project's own `design-system/` folder IS local code (OD-21): it detaches
+ *    like any other component, and every refusal below applies to it too.
+ *  - `uses-hooks` - a hook that is neither a context reader nor a state holder
+ *    (`useEffect`, `useMemo`, an arbitrary custom hook), or one the page cannot
+ *    take. A CONTEXT READER (`useLanguage()`, `useContext(Ctx)`) and a STATE
+ *    HOLDER (`useState`, `useReducer`, `useRef`, `useId`) are not refused:
+ *    their call moves to the top of the component that encloses the call site
+ *    (DET-3 / G-3, `detachHooks.ts`) - unless there is no such component (a
+ *    module-level JSX const), the call site is inside a function (a `.map` row
+ *    would share one hoisted state), or the component is async.
+ *  - `unsupported-params` - a nested destructure, a parameter other than the
+ *    props, a prop used somewhere its call-site value cannot be written (a JSX
+ *    tag name that is not a component name, a type position). An undestructured
+ *    `props` is read as `{ ...props }`, and a component that `.map`s over its
+ *    own props keeps its `.map` over the call site's array: neither refuses.
  *  - `spread-ambiguous` — which value a prop has cannot be known from source:
  *    an explicit attribute BEFORE a spread, two spreads, a spread of a
  *    non-identifier, or a call-site spread into a component that forwards
@@ -86,7 +91,7 @@ import { resolveComponentCallSite } from './resolveComponentCallSite'
 import { applyImportBinding, mirrorSideEffectImports, removeImportIfLastUsage } from './importReconcile'
 import { analyzeFreeVariables, bindingKindAt, bindingScopeAt, freeVariablesOutOfScopeAt } from './subtreeFreeVariables'
 import { introducesSyntaxErrors } from './syntaxRegression'
-import { DetachRefusalSignal, fail, readParamTable, type DetachRefusalReason } from './detachSource'
+import { DetachRefusalSignal, fail, type DetachRefusalReason } from './detachSource'
 import { DetachPlanner, type DetachPlan } from './detachPlanner'
 import { enclosingFunctionComponent, readComponentHooks, rendersPerRow, type PageTextEdit } from './detachHooks'
 import type { CreatedJsxLocation } from './createdJsxLocation'
@@ -160,25 +165,6 @@ function refuse(reason: DetachRefusalReason, message: string): DetachFailure {
   return { ok: false, refusal: { reason, message } }
 }
 
-
-/** Root identifier of a (possibly chained) member/element access — `items` for `items.map`, `props.items` for `props.items.map`. */
-function rootIdentifier(expr: Node): string | undefined {
-  if (Node.isIdentifier(expr)) return expr.getText()
-  if (Node.isPropertyAccessExpression(expr)) return rootIdentifier(expr.getExpression())
-  if (Node.isElementAccessExpression(expr)) return rootIdentifier(expr.getExpression())
-  return undefined
-}
-
-/** True when `root`'s JSX contains a `.map(...)` call whose receiver traces back to one of the component's OWN prop names. */
-function mapsOverAnyProp(root: Node, propNames: ReadonlySet<string>): boolean {
-  for (const call of root.getDescendantsOfKind(SyntaxKind.CallExpression)) {
-    const expr = call.getExpression()
-    if (!Node.isPropertyAccessExpression(expr) || expr.getName() !== 'map') continue
-    const id = rootIdentifier(expr.getExpression())
-    if (id && propNames.has(id)) return true
-  }
-  return false
-}
 
 export interface ParamBinding {
   /** The call site's own attribute name this param forwards, e.g. `{ title }` -> `'title'`; `{ title: t }` -> attrName `'title'`, paramName `'t'`. */
@@ -305,7 +291,7 @@ export function detachComponentInstance(params: DetachComponentParams): DetachRe
     return refuse('not-a-component', `<${fullTagName}> is a plain HTML element, not a component instance.`)
   }
 
-  const resolved = resolveComponentCallSite(project, sourceFile, workspaceRoot, identifier, file, line, col)
+  const resolved = resolveComponentCallSite(project, sourceFile, workspaceRoot, identifier, file, line, col, { designSystem: 'local' })
   if (!resolved.ok) {
     if (resolved.failure.reason === 'package-component') {
       return refuse(
@@ -318,14 +304,6 @@ export function detachComponentInstance(params: DetachComponentParams): DetachRe
   }
   const { target, fn } = resolved.result
 
-  const { childrenParam, params: paramBindings, hasUndestructuredParam } = buildParamBindings(fn)
-  if (hasUndestructuredParam) {
-    return refuse(
-      'unsupported-params',
-      `${identifier} takes an undestructured props parameter — detach can't rewrite bare props.x references.`,
-    )
-  }
-
   const roots = getReturnedJsxRoots(fn)
   const chosen = roots.find((r) => r.chosen)
   if (!chosen) {
@@ -333,19 +311,12 @@ export function detachComponentInstance(params: DetachComponentParams): DetachRe
   }
   const hadAlternatives = roots.some((r) => !r.chosen)
 
-  const restName = readParamTable(fn).rest?.getName()
-  const propNames = new Set([...paramBindings.keys(), ...(childrenParam ? [childrenParam] : []), ...(restName ? [restName] : [])])
-  if (mapsOverAnyProp(chosen.expr, propNames)) {
-    return refuse(
-      'maps-over-props',
-      `${identifier} maps over one of its own props to render — detach can't inline data-driven content.`,
-    )
-  }
-
   const original = sourceFile.getFullText()
   const perRow = rendersPerRow(opening, enclosingFunctionComponent(opening))
   let inserted: Node
   let plan: DetachPlan
+  /** Where the first element the detach wrote starts, once a fragment root has been dissolved into its parent's children. */
+  let dissolvedAt: number | undefined
   try {
     const hooks = readComponentHooks(fn, identifier)
     plan = new DetachPlanner(project, sourceFile, target.sourceFile, fn, chosen.expr, opening, identifier, hooks).plan()
@@ -359,12 +330,14 @@ export function detachComponentInstance(params: DetachComponentParams): DetachRe
     const insertedStart = siteEdit.pos + shiftBefore(plan.pageEdits, siteEdit.pos)
     inserted = nodeSpanning(sourceFile, insertedStart, insertedStart + plan.siteText.length)
     for (const pending of plan.imports) applyImportBinding(sourceFile, pending.request, pending.local)
+    if (plan.useClient) sourceFile.insertStatements(0, plan.useClient)
     if (target.sourceFile !== sourceFile) mirrorSideEffectImports(sourceFile, target.sourceFile)
     gateInsertedMarkup(inserted, sourceFile, plan)
     // Only now — after the call site's own tag reference is actually gone
     // from the tree — is "does anything else in the file still reference
     // Card" decidable.
     if (params.retireImport !== false) removeImportIfLastUsage(sourceFile, identifier)
+    dissolvedAt = dissolveFragmentIntoParent(sourceFile, inserted)
     if (introducesSyntaxErrors(file, original, sourceFile.getFullText())) {
       throw new Error(`[detachComponent] the detached source for <${identifier}> does not parse — nothing was written.`)
     }
@@ -390,14 +363,45 @@ export function detachComponentInstance(params: DetachComponentParams): DetachRe
 
   sourceFile.saveSync()
 
-  const tagName = Node.isJsxElement(inserted)
-    ? inserted.getOpeningElement().getTagNameNode()
-    : Node.isJsxSelfClosingElement(inserted)
-      ? inserted.getTagNameNode()
-      : null
+  const tagName =
+    dissolvedAt !== undefined
+      ? firstTagNameAt(sourceFile, dissolvedAt)
+      : Node.isJsxElement(inserted)
+        ? inserted.getOpeningElement().getTagNameNode()
+        : Node.isJsxSelfClosingElement(inserted)
+          ? inserted.getTagNameNode()
+          : null
   const at = tagName ? sourceFile.getLineAndColumnAtPos(tagName.getStart()) : null
 
   return { ok: true, written: true, created: at ? { line: at.line, col: at.column } : null, ...findings }
+}
+
+/**
+ * G-3 - a component that renders several roots is written as one fragment, and
+ * a fragment between an element's own children is noise: React renders its
+ * children exactly as if they were the element's. Dissolving it leaves the
+ * roots as plain siblings, which is what the page tree already shows - and is
+ * what makes a move of one of them an ordinary reorder instead of a gesture
+ * across a wrapper the canvas never drew. Only a fragment that is itself a JSX
+ * child (so a `key` fragment, an expression position, an attribute value all
+ * keep theirs). Returns where the first root now starts, or `undefined`.
+ */
+function dissolveFragmentIntoParent(sourceFile: SourceFile, inserted: Node): number | undefined {
+  if (!Node.isJsxFragment(inserted)) return undefined
+  const parent = inserted.getParent()
+  if (!Node.isJsxElement(parent) && !Node.isJsxFragment(parent)) return undefined
+  const start = inserted.getStart()
+  const inner = inserted.getText().slice(2, -3).trim()
+  sourceFile.replaceText([start, inserted.getEnd()], inner)
+  return inner === '' ? undefined : start
+}
+
+/** The tag name of the element that starts at `start`. */
+function firstTagNameAt(sourceFile: SourceFile, start: number): Node | null {
+  const opening = [...sourceFile.getDescendantsOfKind(SyntaxKind.JsxSelfClosingElement), ...sourceFile.getDescendantsOfKind(SyntaxKind.JsxOpeningElement)].find(
+    (element) => element.getStart() === start,
+  )
+  return opening ? opening.getTagNameNode() : null
 }
 
 /** `text` with every edit applied — right to left, so each `pos` still means the original offset; two at one offset keep their order. */

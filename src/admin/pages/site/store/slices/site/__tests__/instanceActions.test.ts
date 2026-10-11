@@ -121,6 +121,10 @@ let originalFetch: typeof globalThis.fetch
 let unregisterSave: (() => void) | null = null
 let patchListener: ((evt: Event) => void) | null = null
 let saveCalls: SaveBody[] = []
+/** What `/extract-component` answers (G-3's component copy). By default the copy is refused, so a refusal test sees the dialog. */
+let extractAnswer: unknown = null
+const NO_COPY = { ok: false, reason: 'unresolvable', message: 'No copy in this test.' }
+let extractCalls: unknown[] = []
 
 function stubFetch(answers: SaveAnswer[]): void {
   let call = 0
@@ -148,6 +152,10 @@ function stubFetch(answers: SaveAnswer[]): void {
         }),
         { status: 200 },
       )
+    }
+    if (path === '/admin/api/studio/extract-component') {
+      extractCalls.push(init?.body ? JSON.parse(String(init.body)) : {})
+      return new Response(JSON.stringify(extractAnswer), { status: 200 })
     }
     if (path === '/admin/api/studio/reload-scope') {
       return new Response(JSON.stringify({ ok: true, narrow: true, pageIds: [PAGE_ID] }), { status: 200 })
@@ -202,6 +210,8 @@ beforeEach(() => {
   resetStructuralCommitQueue()
   originalFetch = globalThis.fetch
   saveCalls = []
+  extractAnswer = NO_COPY
+  extractCalls = []
   unregisterSave = registerEditorSave(async () => {})
   setStudioLoadedDir('/tmp/studio-test')
   store().loadSite(makeSite({ pages: [pageBefore()] }))
@@ -313,6 +323,37 @@ describe('detachInstances — one instance', () => {
   })
 })
 
+describe('detachInstances - a refusal a copy fixes is answered with the copy (G-3)', () => {
+  const USES_HOOKS = { nodeId: CARD_ID, kind: 'detach', reason: 'uses-hooks', message: 'Card uses useEffect - detach moves a hook that holds state. Duplicate the component and edit the copy instead.' }
+
+  it('makes Card2 for this call site, says so in one notice, and opens no dialog', async () => {
+    stubFetch([{ refusals: [USES_HOOKS] }])
+    extractAnswer = { ok: true, newFile: 'components/Card2.tsx', newComponentName: 'Card2', undoToken: TOKEN_A }
+    expect(await store().detachInstances([CARD_ID])).toBe('copied')
+    expect(extractCalls).toEqual([{ dir: '/tmp/studio-test', nodeId: CARD_ID }])
+    expect(store().structuralRefusalDialog).toBeNull()
+    const notice = currentToasts().find((toast) => toast.title === 'Made Card2 for this Card')
+    expect(notice?.kind).toBe('info')
+    expect(notice?.body).toBe('Card uses useEffect - detach moves a hook that holds state. This one now has its own copy, so editing it changes nothing else. Undo puts it back.')
+  })
+
+  it('shows the refusal as before when the copy is refused too', async () => {
+    stubFetch([{ refusals: [USES_HOOKS] }])
+    extractAnswer = { ok: false, reason: 'package-component', message: 'Card comes from the built-in design system.' }
+    expect(await store().detachInstances([CARD_ID])).toBe('refused')
+    await waitFor(() => store().structuralRefusalDialog !== null)
+    expect(store().structuralRefusalDialog!.constraint.explanation).toBe(USES_HOOKS.message)
+    expect(currentToasts().some((toast) => toast.title.startsWith('Made '))).toBe(false)
+  })
+
+  it('does not offer a copy for a refusal a copy cannot fix', async () => {
+    stubFetch([{ refusals: [{ nodeId: CARD_ID, kind: 'detach', reason: 'unresolvable', message: 'Could not resolve <Card>.' }] }])
+    extractAnswer = { ok: true, newFile: 'components/Card2.tsx', newComponentName: 'Card2' }
+    expect(await store().detachInstances([CARD_ID])).toBe('refused')
+    expect(extractCalls).toEqual([])
+  })
+})
+
 describe('detachInstances — a multi-selection', () => {
   it('previews once, confirms once, writes ONE bottom-up sequence, and ONE ⌘Z restores it', async () => {
     stubFetch([
@@ -399,13 +440,22 @@ describe('detachInstances — what it never posts', () => {
     })
     afterEach(() => registry.unregister(DS_MODULE_ID))
 
-    it('refuses a design-system component before posting anything, and says why', async () => {
-      stubFetch([{}])
+    it("posts a design-system component like an instance - OD-21, the folder is the user's code, so the codemod decides", async () => {
+      stubFetch([{ written: 1, undoToken: TOKEN_A, createdNodeIds: [MADE_ID] }, { pages: [pageDetached()] }])
+      expect(await store().detachInstances([DS_ID])).toBe('detached')
+      expect(saveCalls[0]!.edits).toEqual([{ kind: 'detach', nodeId: DS_ID, dryRun: 'if-lossy' }])
+    })
+
+    it('a design-system refusal names what cannot be done and offers no copy - the folder is Studio\'s to rewrite', async () => {
+      stubFetch([{ refusals: [{ nodeId: DS_ID, kind: 'detach', reason: 'body-local', message: 'Button reads `cls`, which its body computes. Duplicate the component and edit the copy instead.' }] }])
+      extractAnswer = { ok: true, newFile: 'design-system/components/Button2.jsx', newComponentName: 'Button2' }
       expect(await store().detachInstances([DS_ID])).toBe('refused')
-      expect(saveCalls).toHaveLength(0)
+      expect(extractCalls).toEqual([])
+      expect(store().structuralRefusalDialog).toBeNull()
       const toast = currentToasts().find((entry) => entry.title === 'Detach refused')
-      expect(toast?.body).toContain('Button is a design-system component')
-      expect(toast?.body).toContain('design-system/ folder Studio manages')
+      expect(toast?.body).toBe(
+        'Button reads `cls`, which its body computes. It is part of the design-system/ folder Studio manages, so it cannot be copied either - change it through its props.',
+      )
     })
 
     it('refuses an npm package component before posting anything, and says why', async () => {
@@ -415,9 +465,9 @@ describe('detachInstances — what it never posts', () => {
       expect(currentToasts().some((toast) => toast.body?.includes('Chip comes from a package'))).toBe(true)
     })
 
-    it('refuses the WHOLE gesture when one of a multi-selection is a design-system component — nothing is posted', async () => {
+    it('refuses the WHOLE gesture when one of a multi-selection is an npm package component - nothing is posted', async () => {
       stubFetch([{}])
-      expect(await store().detachInstances([CARD_ID, DS_ID])).toBe('refused')
+      expect(await store().detachInstances([CARD_ID, NPM_ID])).toBe('refused')
       expect(saveCalls).toHaveLength(0)
     })
 

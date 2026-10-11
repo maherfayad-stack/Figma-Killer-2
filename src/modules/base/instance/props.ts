@@ -14,6 +14,8 @@ export const InstancePropsSchema = Type.Object({
   source: Type.Union([Type.Literal('local'), Type.Literal('package')], { default: 'local' }),
   sourceFile: Type.String({ default: '' }),
   callSiteProps: Type.Record(Type.String(), Type.Unknown(), { default: {} }),
+  /** OD-22 - the id of the inlined element that renders the component's `{children}` (`ParsedNode.instanceOf.childrenHost`). */
+  childrenHost: Type.Optional(Type.String()),
 })
 
 export type InstanceStoredProps = Static<typeof InstancePropsSchema>
