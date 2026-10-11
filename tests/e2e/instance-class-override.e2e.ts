@@ -112,6 +112,8 @@ test.describe('G-2b - a class edit inside one instance changes only that instanc
     await expect(page.getByTestId('class-chip-tier'), 'stepping into the instance never bound the inspector to .tier').toBeVisible({ timeout: 20_000 })
 
     const field = page.getByTestId('css-padding-all')
+    // Padding lives in the Layout section, collapsed until opened.
+    if (!(await field.isVisible())) await page.getByText('Layout', { exact: true }).first().click()
     await expect(field, 'the inspector did not offer a padding control for the selected card').toBeVisible({ timeout: 20_000 })
     const input = field.getByRole('textbox').first()
     await input.click()
