@@ -314,12 +314,13 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
     this.post({ type: 'setMode', mode })
   }
 
-  setResizeTarget(ref: NodeRef | null, { proportional, sizing, snap }: ResizeTargetOptions): void {
+  setResizeTarget(ref: NodeRef | null, { proportional, sizing, snap, anchors }: ResizeTargetOptions): void {
     this.post({
       type: 'setResizeTarget',
       ref: ref ? this.toWireRef(ref.nodeId) : null,
       proportional,
       ...(sizing === undefined ? {} : { sizing }),
+      ...(anchors === undefined ? {} : { anchors }),
       ...(snap === undefined
         ? {}
         : {

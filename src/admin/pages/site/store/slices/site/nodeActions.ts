@@ -86,6 +86,7 @@ type NodeActions = Pick<
   | 'removeNodeInlineStyleProperty'
   | 'clearNodeInlineStyles'
   | 'setIgnoreAutoLayout'
+  | 'convertLayout'
   | 'setBreakpointOverride'
   | 'clearBreakpointOverride'
   | 'renameNode'

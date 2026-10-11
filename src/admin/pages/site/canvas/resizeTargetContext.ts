@@ -20,9 +20,10 @@
  * re-sends nothing: a selector returning a fresh object would re-render the
  * overlay on every store change.
  */
-import type { ResizeSizingMarkers } from '@core/studio-runtime'
+import type { OffsetProperty, ResizeAnchors, ResizeSizingMarkers } from '@core/studio-runtime'
 import type { EditorStore } from '@site/store/store'
 import type { ResizeTargetOptions } from './frameAdapter/FrameDocumentAdapter'
+import { authoredOffsets } from './canvasNodeArrowMove'
 import { findNodeById } from './InPlaceInspector/findNodeById'
 
 /** The markers, in the order `resizeTargetOptions` reads them back. */
@@ -50,11 +51,35 @@ export function resizeSnapPeersKey(state: EditorStore, nodeId: string | null): s
   return [parent.id, ...parent.children.filter((id) => id !== nodeId)].join('\n')
 }
 
+const HORIZONTAL_ANCHORS: readonly OffsetProperty[] = ['left', 'right', 'insetInlineStart', 'insetInlineEnd']
+
+/**
+ * PA-8 — the offsets `nodeId`'s source authors (its class rules, then its
+ * inline style), as a string so an unrelated store write re-sends nothing:
+ * horizontal ones, `|`, vertical ones. `''` when the node is not found.
+ */
+export function resizeAnchorsKey(state: EditorStore, nodeId: string | null): string {
+  const node = nodeId ? findNodeById(state, nodeId) : null
+  if (!node) return ''
+  const authored = authoredOffsets(node, state.site?.styleRules)
+  const horizontal = HORIZONTAL_ANCHORS.filter((property) => authored.has(property))
+  const vertical = (['top', 'bottom'] as const).filter((property) => authored.has(property))
+  return `${horizontal.join(',')}|${vertical.join(',')}`
+}
+
+function anchorsOf(key: string): ResizeAnchors | undefined {
+  if (key === '') return undefined
+  const [horizontal = '', vertical = ''] = key.split('|')
+  const list = (text: string) => (text === '' ? [] : (text.split(',') as OffsetProperty[]))
+  return { horizontal: list(horizontal), vertical: list(vertical) }
+}
+
 /** The adapter options for a resize target, from the primitives above. */
 export function resizeTargetOptions(input: {
   proportional: boolean
   markers: readonly [string | undefined, string | undefined, string | undefined]
   snapPeers: string
+  anchors: string
   zoom: number
 }): ResizeTargetOptions {
   const sizing: ResizeSizingMarkers = {}
@@ -63,9 +88,11 @@ export function resizeTargetOptions(input: {
     if (value !== undefined) sizing[key] = value
   })
   const [parentId, ...siblingIds] = input.snapPeers === '' ? [] : input.snapPeers.split('\n')
+  const anchors = anchorsOf(input.anchors)
   return {
     proportional: input.proportional,
     sizing,
+    ...(anchors ? { anchors } : {}),
     snap: {
       siblings: siblingIds.map((nodeId) => ({ nodeId })),
       parent: parentId ? { nodeId: parentId } : null,

@@ -39,11 +39,11 @@ import {
   type ResizeInlinePatch,
   type ResizeSizingPlan,
   type SnapRect,
+  anchorResizePatch,
 } from '@core/studio-runtime'
 import { presentedElementForNode } from './canvasNodeLookup'
 import { findNodeById } from './InPlaceInspector/findNodeById'
 import { createInlineStylePreview, type InlineStylePreview } from './elementResizeInlinePreview'
-import { anchorResizePatch } from './elementResizeAnchoring'
 import { authoredOffsets, planNudge, type NudgePlan } from './canvasNodeArrowMove'
 import { groupUnionRect, memberResizeStep, resizeGroupBox, type GroupResizeMember } from './groupResize'
 import { startHandleDrag } from './handleDragSession'

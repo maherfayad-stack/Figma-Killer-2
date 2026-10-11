@@ -278,6 +278,18 @@ export {
   type ContainingBlockOffsets,
 } from './containingBlockOffsets'
 
+export { OffsetPropertySchema, ResizeAnchorsSchema, type OffsetProperty, type ResizeAnchors } from './resizeMessages'
+
+export {
+  anchorResizePatch,
+  offsetTerm,
+  resizeAnchorPlan,
+  resizeEdgeShifts,
+  type OffsetPlan,
+  type OffsetStyle,
+  type OffsetTerm,
+} from './elementResizeAnchors'
+
 export {
   inferAutoLayout,
   type CrossAlignment,

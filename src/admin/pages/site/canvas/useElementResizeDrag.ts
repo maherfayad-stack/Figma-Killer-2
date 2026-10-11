@@ -41,7 +41,7 @@
  * and every modifier key change (IX-6c), and a `position: absolute | fixed`
  * element's W/N handles also move its offset so the opposite edge stays put
  * (IX-6d) — the offsets the source ANCHORS it by, so a `right`-anchored layer
- * keeps `right` and never gains a `left` (IX-21, `elementResizeAnchoring.ts`).
+ * keeps `right` and never gains a `left` (IX-21, `elementResizeAnchors.ts`).
  * Every axis the drag writes also carries the inspector's Fixed
  * switch (`elementResizeSizing.ts`), so a flex item's `flex: 1` cannot swallow
  * the width (IX-6b).
@@ -104,10 +104,10 @@ import {
   writeSizeBadge,
   type ResizeHandle,
   type SnapGuide,
+  anchorResizePatch,
 } from '@core/studio-runtime'
 import { createInlineStylePreview } from './elementResizeInlinePreview'
 import { pushToast } from '@ui/components/Toast'
-import { anchorResizePatch } from './elementResizeAnchoring'
 import { authoredOffsets, planNudge, type NudgePlan } from './canvasNodeArrowMove'
 import { nodeVisualRect } from './canvasDomGeometry'
 import { iframeZoom, paintResizeGuides, resizeGuideLines, resolveResizeGuideSurface } from './elementResizeGuides'
