@@ -1148,7 +1148,20 @@ The rules the ladder replaced prose with:
   size unless it has no padding or border (then it is made `border-box`); a
   reorder is a structural commit, so the restyle parks behind it
   (`deferWhileStructuralCommitInFlight`) and runs on relocated ids; removed
-  style keys come back at the END of the object on undo.
+  style keys come back at the END of the object on undo. Remove writes whole
+  pixels (`sizePx`: a measured 222.76 becomes `223px`; a size the source authors
+  fractionally keeps its exact value). ⇧A on layers that are NOT one container
+  (a leaf, a selection) wraps them with `groupNodes(ids, undefined, undefined,
+  { wrapperStyle })` where `planWrapAutoLayout` reads direction, gap and
+  alignment off their MARGIN boxes: one write, one undo, nothing sits in a plain
+  block that would collapse their spacing.
+- **A design-system instance is measured as the box it draws (r3-layout):**
+  `measure` (`PortalFrameAdapter`, `measureNodes.ts` for live frames) resolves the
+  node's element through `presentedElementOf`, so the `display: contents` host of
+  an `alm.*` / `pkg.*` instance answers with its rendered root's rect and computed
+  style. That is what lets Frame selection, arrow nudge and ⇧A treat a Button like
+  any element; a Fragment call site of the project's own component still has no
+  element and still refuses.
 - **Live-frame anchored resize (PA-8):** `setResizeTarget` carries
   `anchors` (which of left/right/top/bottom/inset-inline the SOURCE authors,
   `resizeAnchorsKey` in `resizeTargetContext.ts`); `resizeHandles.ts` reads their

@@ -28,6 +28,7 @@ import {
   startHoverSuppression,
   startScrollUnroll,
   isSelectionChromeMutation,
+  presentedElementOf,
   type AnimationFreezeController,
   type GeometryDirtySignal,
   type HoverSuppressionController,
@@ -348,8 +349,10 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
     const props = properties?.length ? properties : DEFAULT_MEASURED_PROPERTIES
     const view = this.doc.defaultView
     return refs.map(({ nodeId }) => {
-      const el = findByNodeId(this.doc, nodeId)
-      if (!el || !this.doc.body || !view) return { nodeId, rect: null, computedStyle: {} }
+      const own = findByNodeId(this.doc, nodeId)
+      if (!own || !this.doc.body || !view) return { nodeId, rect: null, computedStyle: {} }
+      // A design-system instance's host is `display: contents`: its box is its rendered root's.
+      const el = presentedElementOf(view, own)
       const rect = rectRelativeToBody(el, this.doc.body)
       const computed = view.getComputedStyle(el)
       const computedStyle: Record<string, string> = {}
