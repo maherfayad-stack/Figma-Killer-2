@@ -258,8 +258,8 @@ export function fixedPreviewForTarget(
     width: target.rect.width * scale,
     height: target.rect.height * scale,
     position: target.position,
-    axis: target.axis,
-    ...(target.reversed ? { reversed: true } : {}),
+    // The line beside a sibling stands along the axis the siblings flow on.
+    ...(target.position === 'inside' ? {} : { axis: target.axis, ...(target.reversed ? { reversed: true } : {}) }),
     label,
   }
 }
