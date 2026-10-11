@@ -170,12 +170,13 @@ async function exportFrames(input: StudioExportFramesInput): Promise<AiToolOutpu
         FRAME_MOUNT_TIMEOUT_MS,
       )
       if (!mounted) {
-        // Say WHY, from the one module that decides it (`framePool.ts`). The
-        // pan above should have put this frame on screen, so `offscreen` here
-        // means the mount pool never took it and the board's viewport read is
-        // the thing to look at; `on-screen`/`pooled` means the frame IS
-        // mounted and it is the staged node tree (`perf-08`) that never
-        // landed. Those are different bugs and used to read identically.
+        // Say WHY, from the one module that decides it (`frameMount.ts`). The
+        // pan above put this frame in view at zoom 1 and opened its page, so it
+        // is in the live set: `live` here means the frame IS mounted and it is
+        // the staged node tree (`perf-08`) that never landed; `poster` or
+        // `cold` means the live set never took it, and the board's viewport
+        // read is the thing to look at. Those are different bugs and used to
+        // read identically.
         const mountReason = agentRenderFrameMountReason(pageId)
         results.push({
           pageId,

@@ -67,6 +67,14 @@
     overflow: visible;
 }
 
+/* SB-5 - a poster of a frame that hugs its content is as tall as the live frame
+   was when it was photographed, so a frame does not change size when it is
+   promoted (the picture is the document's own aspect ratio at the frame's
+   width). A frame with a manual height keeps its fixed box and crops. */
+.frameBody[data-frame-auto-height='true'] > .offscreenPlaceholderImage:not(.mountOverlay) {
+    height: auto;
+}
+
 .header {
     display: flex;
     align-items: center;

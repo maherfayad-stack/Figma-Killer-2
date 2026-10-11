@@ -220,7 +220,7 @@ export function useCanvasInsertionDrag<TGhost>({
     // `speed-06` follow-up — the hovered viewport's OWN page, when it
     // differs from `canvasPage`. `data-page-id` is `BoardFrameView.tsx`'s
     // OWN existing stamp (its outer `.frame` wrapper — `viewport.closest`,
-    // not a second copy on the viewport itself: `framePoolMountReason.test.tsx`
+    // not a second copy on the viewport itself: `frameMountReason.test.tsx`
     // already reads every `[data-page-id]` element back through
     // `readFrameMountReason`, so a second, mount-reason-less element with
     // the same attribute would fail that test's "every frame answers" check).

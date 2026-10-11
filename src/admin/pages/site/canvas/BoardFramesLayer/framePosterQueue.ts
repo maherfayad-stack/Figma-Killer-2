@@ -62,12 +62,21 @@
 import { listFrameAdapters, onFrameAdapterRegistryChange } from '../frameAdapter/canvasFrameAdapterRegistry'
 import type { FrameDocumentAdapter } from '../frameAdapter/FrameDocumentAdapter'
 import { isPortalFrameAdapter } from '../frameAdapter/PortalFrameAdapter'
+import { isCanvasViewportActive, onCanvasViewportActivityChange } from '../canvasViewportActivity'
 
 /** How long the board must be quiet before any poster is rasterized. */
 const QUIET_PERIOD_MS = 700
 
 /** Gap between two captures, so each one is its own macrotask. */
 const CAPTURE_GAP_MS = 32
+
+/**
+ * How long a frame that has just finished arriving is left alone before its
+ * picture is taken (fonts and images land after the node tree commits). The
+ * board having been quiet for {@link QUIET_PERIOD_MS} already does not shorten
+ * this: it is about the frame, not the hands.
+ */
+const ARRIVAL_SETTLE_MS = 350
 
 type Capture = () => Promise<void>
 
@@ -76,6 +85,10 @@ let quietTimer: ReturnType<typeof setTimeout> | null = null
 let draining = false
 let pointerHeld = false
 let listening = false
+/** `performance.now()` of the last input event or viewport movement; 0 until there has been one. */
+let lastBusyAt = 0
+/** Callers parked in {@link waitForBoardQuiet}: their frames' input must be heard too. */
+let quietWaiters = 0
 /** Detaches the per-frame listeners; non-null exactly while any request is pending. */
 let stopFrameListening: (() => void) | null = null
 
@@ -85,7 +98,13 @@ const BUSY_EVENTS = ['wheel', 'pointerdown', 'pointerup', 'pointercancel', 'keyd
 function onBusyEvent(event: Event): void {
   if (event.type === 'pointerdown') pointerHeld = true
   else if (event.type === 'pointerup' || event.type === 'pointercancel') pointerHeld = false
-  armQuietTimer()
+  noteBusy()
+}
+
+/** Milliseconds until the board has been quiet for {@link QUIET_PERIOD_MS}: 0 when it already is. */
+function msUntilQuiet(): number {
+  if (pointerHeld || isCanvasViewportActive()) return QUIET_PERIOD_MS
+  return Math.max(0, QUIET_PERIOD_MS - (performance.now() - lastBusyAt))
 }
 
 function listenOnDocument(doc: Document): () => void {
@@ -113,10 +132,10 @@ function listenOnFrame(adapter: FrameDocumentAdapter): () => void {
       if (event.phase === 'move') return
       if (event.phase === 'down') pointerHeld = true
       else if (event.phase === 'up') pointerHeld = false
-      armQuietTimer()
+      noteBusy()
     }),
-    adapter.on('wheel', armQuietTimer),
-    adapter.on('key', armQuietTimer),
+    adapter.on('wheel', noteBusy),
+    adapter.on('key', noteBusy),
   ]
   return () => {
     for (const unsubscribe of unsubscribes) unsubscribe()
@@ -168,22 +187,32 @@ function listenForInput(): void {
 }
 
 function stopFrameListeningIfIdle(): void {
-  if (pending.size === 0 && !draining) stopFrameListening?.()
+  if (pending.size === 0 && !draining && quietWaiters === 0) stopFrameListening?.()
 }
 
-function armQuietTimer(): void {
+/** The user (or a gesture) just touched the board: nothing is rasterized until it has been quiet again. */
+function noteBusy(): void {
+  lastBusyAt = performance.now()
+  if (pending.size > 0 || draining) armQuietTimer(QUIET_PERIOD_MS)
+}
+
+/** Wait `delayMs`, then drain unless the user is mid-gesture. */
+function armQuietTimer(delayMs: number): void {
   if (quietTimer !== null) clearTimeout(quietTimer)
   quietTimer = setTimeout(() => {
     quietTimer = null
-    // A held pointer is a gesture in progress even with no event to show for
-    // it — keep waiting rather than rasterizing under a drag.
-    if (pointerHeld) {
-      armQuietTimer()
+    // A held pointer, or a pan/zoom still in flight, is a gesture in progress even with no input event to
+    // show for it (a programmatic pan sends none): keep waiting rather than rasterizing under it.
+    if (pointerHeld || isCanvasViewportActive()) {
+      armQuietTimer(QUIET_PERIOD_MS)
       return
     }
     void drain()
-  }, QUIET_PERIOD_MS)
+  }, delayMs)
 }
+
+// A pan or zoom that ends re-arms the wait, so a picture never starts in the 150 ms after the board stopped moving.
+onCanvasViewportActivityChange(noteBusy)
 
 async function drain(): Promise<void> {
   if (draining) return
@@ -213,7 +242,44 @@ async function drain(): Promise<void> {
 export function requestFramePoster(token: object, capture: Capture): void {
   listenForInput()
   pending.set(token, capture)
-  armQuietTimer()
+  // An arrival does not mean the hands are busy: it waits for its own settle, or for the quiet that input
+  // already started, whichever is later. A board that has been idle for a while (the background fill) is
+  // therefore photographed one settle after each frame lands, not one full quiet period.
+  armQuietTimer(Math.max(ARRIVAL_SETTLE_MS, msUntilQuiet()))
+}
+
+/** `setTimeout` that also ends the moment `signal` aborts, so a cancelled waiter lets go of its listeners at once. */
+function sleepUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', done)
+      resolve()
+    }
+    const timer = setTimeout(done, ms)
+    signal.addEventListener('abort', done)
+  })
+}
+
+/**
+ * Resolve once nothing has touched the board for the quiet period. `false`
+ * when `signal` aborts first. The background fill waits here before it mounts
+ * the next frame, so it never starts a mount under the user's hands.
+ */
+export async function waitForBoardQuiet(signal: AbortSignal): Promise<boolean> {
+  quietWaiters += 1
+  try {
+    listenForInput()
+    for (;;) {
+      if (signal.aborted) return false
+      const waitMs = msUntilQuiet()
+      if (waitMs <= 0) return true
+      await sleepUnlessAborted(waitMs, signal)
+    }
+  } finally {
+    quietWaiters -= 1
+    stopFrameListeningIfIdle()
+  }
 }
 
 /** Withdraw a request that has not run yet. A capture already in flight finishes. */
@@ -229,4 +295,5 @@ export function resetFramePosterQueue(): void {
   if (quietTimer !== null) clearTimeout(quietTimer)
   quietTimer = null
   pointerHeld = false
+  lastBusyAt = 0
 }

@@ -502,12 +502,17 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
       const target = (await hittableTargets(page, iframe, content))[2]
       if (!target) throw new Error('no hittable press target in the frame')
 
+      // Keyed by the frame each iframe belongs to: the first selection docks the Properties panel and narrows the
+      // canvas, so a frame that is now off its right edge is a poster (poster-first mounting) and has no iframe to
+      // compare. What must not happen is any frame that stays mounted moving.
       const rects = () =>
         page.evaluate(() =>
-          Array.from(document.querySelectorAll('iframe')).map((f) => {
-            const r = f.getBoundingClientRect()
-            return [r.x, r.y, r.width]
-          }),
+          Object.fromEntries(
+            Array.from(document.querySelectorAll('iframe')).map((f) => {
+              const r = f.getBoundingClientRect()
+              return [f.closest('[data-frame-id]')?.getAttribute('data-frame-id') ?? f.title, [r.x, r.y, r.width]]
+            }),
+          ),
         )
       const before = await rects()
       await installPressProbe(content)
@@ -530,7 +535,9 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
       await page.waitForTimeout(800)
       const longest = await content.evaluate(() => (window as unknown as { __pressLong: { longest: number } }).__pressLong.longest)
       const after = await rects()
-      const drift = Math.max(...before.map((b, i) => Math.max(Math.abs(b[0]! - after[i]![0]!), Math.abs(b[1]! - after[i]![1]!))))
+      const stayed = Object.keys(before).filter((id) => after[id])
+      expect(stayed.length, 'no frame stayed mounted across the first selection').toBeGreaterThan(0)
+      const drift = Math.max(...stayed.map((id) => Math.max(Math.abs(before[id]![0]! - after[id]![0]!), Math.abs(before[id]![1]! - after[id]![1]!))))
       annotate(
         `first press (${scenario.name}): first ring (${held.firstRingKind}) / real ring / gap frames of ${held.frames} / long task / board drift`,
         `${held.firstRingMs.toFixed(1)}ms / ${held.realRingMs.toFixed(1)}ms / ${held.gapFrames} / ${longest.toFixed(0)}ms / ${drift.toFixed(1)}px`,
@@ -623,7 +630,9 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
     const { content } = await openAtWorkingZoom(page)
     await selectInFrame(page, content.locator('.block__heading').nth(1))
     await expect(content.locator(SELECTION_RING).first()).toBeAttached({ timeout: 10_000 })
-    // Let the click's own settle passes and the poster queue finish.
+    // Let the click's own settle passes finish, and the background poster fill (idle-time work of its own, one frame
+    // at a time) photograph the whole board: this budget is about the editor being idle, not about that.
+    await expect(page.getByTestId('board-frames-layer')).toHaveAttribute('data-poster-fill', 'done', { timeout: 180_000 })
     await page.waitForTimeout(3000)
 
     const read = async () => {

@@ -65,23 +65,18 @@
  * `BreakpointSelectionOverlay` queries each frame's own iframe document by
  * node id.
  *
- * Virtualization + the mount pool: a live `BreakpointFrame` (iframe + full
- * `NodeRenderer` tree) is only mounted for frames whose board-space rect
- * intersects the current viewport, inflated by `FRAME_VIEWPORT_MARGIN` (see
- * `frameVirtualization.ts`) so scrolling/panning doesn't pop iframes in and
- * out right at the edge, PLUS the recently-departed frames the pool still
- * holds (`framePool.ts`) — leaving the viewport no longer throws a document
- * away, so panning back to where you just were costs nothing at all.
- * Eviction is least-recently-on-screen, and the budget is the ONE thing that
- * varies: `framePoolBudget('live', n)` once a Tier-2 board's dev server is
- * READY and its frames are cross-origin documents against a real dev-server
- * process, `framePoolBudget('portal', n)` for every other frame — a Tier 0/1
- * board's `srcDoc` frames, and a Tier-2 board's frames while its dev server is
- * booting, failed or stopped, when each one is its same-origin fallback. There is one pool, one retention list and one budget per render —
- * see `framePool.ts` for why there used to be two, and what each budget is
- * measured against.
+ * Virtualization + the live set (SB-5, poster-first): a live `BreakpointFrame`
+ * (iframe + full `NodeRenderer` tree) is mounted only for the frames in the
+ * live set (`liveFrameCap.ts`) — those the user is working in (selected,
+ * edited, play), plus the frames in view at zoom >= 0.35, nearest the
+ * viewport centre first, up to the adaptive cap (default 20, never below 12,
+ * rising with free memory; a Tier-2 board whose dev server is ready has its
+ * own, lower cap). There is no margin and no retention: a frame that leaves
+ * the live set shows its picture, and `PosterFill` photographs the frames that
+ * never had one. See `frameMount.ts` for the vocabulary (`live` / `poster` /
+ * `cold`).
  *
- * Frames outside the pool render a static placeholder body instead — no
+ * Frames outside the live set render a static poster body instead — no
  * iframe, no animation. Only the BODY is swapped: the outer `.frame` div,
  * its position (`--frame-x/--frame-y`), the drag header, and its
  * title/rename/context-menu all stay mounted and functional on placeholders
@@ -91,7 +86,7 @@
  * collide on) ensures React cleanly (re)mounts a fresh iframe when a frame
  * re-enters the viewport, and gives each variant its own component identity.
  *
- * The retention list lives in `useState` (not a ref — `react-hooks/refs`,
+ * The live set lives in `useState` (not a ref — `react-hooks/refs`,
  * part of this repo's React Compiler lint set, flags reading `ref.current`
  * during render) and is advanced DURING render through react.dev's
  * "adjusting state when something changes" pattern; the `key` tag on it is
@@ -131,9 +126,13 @@ import { selectActiveBoardFrames, selectHasActiveBoard } from '@site/store/slice
 import type { Page } from '@core/page-tree'
 import { CanvasViewportActionsContext } from '../CanvasContexts'
 import { AddPagePicker } from './AddPagePicker'
-import { FRAME_WIDTH, FRAME_HEIGHT, FRAME_HEADER_HEIGHT } from '@core/studio-board'
-import { FRAME_VIEWPORT_MARGIN, isFrameOnScreen } from './frameVirtualization'
-import { nextFramePool, sameFramePool, type FrameMountCost } from './framePool'
+import { FRAME_WIDTH, FRAME_HEIGHT, FRAME_HEADER_HEIGHT, type BoardFrame } from '@core/studio-board'
+import { isFrameOnScreen, type FrameRect } from './frameVirtualization'
+import { sameLiveSet } from './frameMount'
+import { POSTER_ZOOM, readLiveCapMemory, selectLiveFrames, type LiveFrameCandidate } from './liveFrameCap'
+import { useMeasuredFrameHeights } from './frameMeasuredHeights'
+import { PosterFill } from './PosterFill'
+import { usePosterFillFrameId, usePosterFillState } from './posterFillTarget'
 import { resolveFramesWithPages } from './resolveFramesWithPages'
 import { getStudioTrustTier, subscribeStudioTrustTier } from '@site/studio/studioProjectTrust'
 import { useDevServerReadiness } from '@site/studio/useDevServerReadiness'
@@ -150,22 +149,35 @@ import styles from './BoardFramesLayer.module.css'
 // exceeded" render loop once anything downstream reacts to the selected value).
 const EMPTY_PAGES: (Page | null)[] = []
 
-/** Stable empty retention, for the same "never a fresh literal" reason. */
-const EMPTY_RETENTION: string[] = []
+/** Stable empty live set, for the same "never a fresh literal" reason. */
+const EMPTY_LIVE: string[] = []
 
 /**
- * The pool's membership, tagged with the inputs it was derived from. The tag
- * is what lets the derivation happen during render without looping — see the
+ * The live set, tagged with the inputs it was derived from. The tag is what
+ * lets the derivation happen during render without looping — see the
  * `useState` below.
  */
-interface FrameRetention {
-  /** The `poolKey` this membership was computed for — on-screen ids plus the frame cost. */
+interface LiveSetState {
+  /** The inputs this set was computed for. */
   key: string
-  /** Most-recently-on-screen first. See `framePool.ts`. */
   ids: string[]
 }
 
-const INITIAL_RETENTION: FrameRetention = { key: '\u0000', ids: EMPTY_RETENTION }
+const INITIAL_LIVE: LiveSetState = { key: '\u0000', ids: EMPTY_LIVE }
+
+/**
+ * A frame's board-space box, header included. A frame that hugs its content has
+ * no stored height: its measured one stands in (`frameMeasuredHeights.ts`), so a
+ * tall page whose middle is on screen is in view, not a picture.
+ */
+function frameRect(frame: BoardFrame, measuredHeights: ReadonlyMap<string, number>): FrameRect {
+  return {
+    x: frame.x,
+    y: frame.y,
+    width: frame.width ?? FRAME_WIDTH,
+    height: (frame.height ?? measuredHeights.get(frame.id) ?? FRAME_HEIGHT) + FRAME_HEADER_HEIGHT,
+  }
+}
 
 export function BoardFramesLayer() {
   // CT-4: the frames' mode chips and the gates they apply come from the token
@@ -214,83 +226,111 @@ export function BoardFramesLayer() {
   useEffect(() => {
     const root = viewportActions?.canvasRootRef.current
     if (!root) return
-    const syncSize = () => setViewportSize({ width: root.clientWidth, height: root.clientHeight })
+    const syncSize = () => {
+      // An unlaid-out or hidden canvas measures 0 x 0: keep the last real size rather than
+      // reading "nothing is in view" and unmounting every live frame.
+      if (root.clientWidth === 0 || root.clientHeight === 0) return
+      setViewportSize({ width: root.clientWidth, height: root.clientHeight })
+    }
     syncSize()
     const observer = new ResizeObserver(syncSize)
     observer.observe(root)
     return () => observer.disconnect()
   }, [viewportActions])
 
-  // The pool's membership (most-recently-on-screen first). See
-  // `framePool.ts`; the derivation itself is below, next to the on-screen set
-  // it needs.
-  const [retention, setRetention] = useState<FrameRetention>(INITIAL_RETENTION)
-  // What one mounted frame costs on this board, and therefore how big the
-  // pool may be. A Tier-2 frame whose dev server is READY is a cross-origin
-  // document against a real dev-server process, so it gets the capped
-  // `'live'` budget. Until then — booting, failed, or never started — a
-  // Tier-2 frame is its same-origin fallback, exactly what a Tier 0/1 frame
-  // is, and gets the portal budget with its headroom. That headroom is what
-  // keeps a departed frame mounted long enough to be rasterized into its
-  // poster (`useFramePosterCapture`); under the live budget a frame leaving
-  // a full screen was evicted on the spot, so a Tier-2 board whose server was
-  // not up never got a poster at all (P6-C). This is the ONLY place the trust
-  // tier touches mounting.
+  // The live set: which frames hold an iframe right now. See `liveFrameCap.ts`
+  // for the rule and `frameMount.ts` for what everything else shows.
+  const [liveSet, setLiveSet] = useState<LiveSetState>(INITIAL_LIVE)
+  // A Tier-2 board whose dev server is READY renders each live frame as a
+  // cross-origin document against a real dev-server process, so it gets the
+  // bridge cap. Until then — booting, failed, or never started — a Tier-2 frame
+  // is its same-origin fallback, exactly what a Tier 0/1 frame is. This is the
+  // ONLY place the trust tier touches mounting.
   const trust = useSyncExternalStore(subscribeStudioTrustTier, getStudioTrustTier, getStudioTrustTier)
   const projectDir = useAdminUi((s) => s.studioProject?.dir ?? null)
   const devServer = useDevServerReadiness(projectDir)
-  const frameCost: FrameMountCost = trust === 'run-project' && devServer.phase === 'ready' ? 'live' : 'portal'
+  const bridge = trust === 'run-project' && devServer.phase === 'ready'
+  // The frames the user is working in are live whatever the zoom and the cap:
+  // the one holding the selected layer(s) and the one being played.
+  const hasNodeSelection = useEditorStore((s) => s.selectedNodeIds.length > 0)
+  const selectedNodeFrameId = useEditorStore((s) => s.selectedNodeFrameId)
+  const playPageId = useEditorStore((s) => (s.playMode ? (s.playState.screens.at(-1)?.pageId ?? s.activePageId) : null))
+  // The one frame `PosterFill` has mounted just to photograph it, if any.
+  const fillFrameId = usePosterFillFrameId()
+  const fillState = usePosterFillState()
+  // How tall each content-hugging frame really is (it decides what is in view).
+  const measuredHeights = useMeasuredFrameHeights()
 
-  // Resolved frames + the viewport intersection test, hoisted ABOVE this
-  // component's `hasActiveBoard` early return because the retention effect
-  // below is a hook and hooks cannot live after one. Both are cheap array
-  // passes over this board's own frames — never a whole-site scan.
+  // Resolved frames, hoisted ABOVE this component's `hasActiveBoard` early
+  // return because the live-set derivation below sets state and the hooks
+  // around it cannot live after one. Both are cheap array passes over this
+  // board's own frames — never a whole-site scan.
   const framesWithPages = resolveFramesWithPages(frames, relevantPages)
   // P6-B — frames whose page a streamed load has not delivered yet hold their
   // place (`PendingBoardFrame`). Empty outside a load, which is every render
   // but the first few of a project opening.
   const pendingPages = useEditorStore((s) => s.pendingPages)
   const pendingFrames = pendingBoardFrames(frames, relevantPages, pendingPages)
-  const onScreenFrameIds = framesWithPages
-    .filter(({ frame }) =>
-      isFrameOnScreen(
-        {
-          x: frame.x,
-          y: frame.y,
-          width: frame.width ?? FRAME_WIDTH,
-          height: (frame.height ?? FRAME_HEIGHT) + FRAME_HEADER_HEIGHT,
-        },
-        { panX, panY, zoom, width: viewportSize.width, height: viewportSize.height },
-        FRAME_VIEWPORT_MARGIN,
-      ),
-    )
+  const viewport = { panX, panY, zoom, width: viewportSize.width, height: viewportSize.height }
+  const inViewFrameIds = framesWithPages
+    .filter(({ frame }) => isFrameOnScreen(frameRect(frame, measuredHeights), viewport, 0))
     .map(({ frame }) => frame.id)
-  // Tagged with the cost too: a trust change, or the dev server coming up,
-  // flips the budget under a board that has not panned at all, and the pool
-  // has to be recomputed when it does.
-  const poolKey = `${frameCost}:${onScreenFrameIds.join('|')}`
+  const selectedFrameIdList = framesWithPages.filter(({ page }) => selectedFrameIds.includes(page.id)).map(({ frame }) => frame.id)
+  const editingFrameId = !hasNodeSelection
+    ? null
+    : framesWithPages.some(({ frame }) => frame.id === selectedNodeFrameId)
+      ? selectedNodeFrameId
+      : (framesWithPages.find(({ frame }) => frame.pageId === activePageId)?.frame.id ?? null)
+  const playFrameId = framesWithPages.find(({ page }) => page.id === playPageId)?.frame.id ?? null
+  // Everything the set is derived from, as one string. Panning inside the same
+  // in-view membership changes nothing, which is the point: the set is
+  // recomputed when the membership, the selection or the zoom class changes,
+  // not on every pan commit.
+  const liveKey = [
+    bridge,
+    zoom >= POSTER_ZOOM,
+    inViewFrameIds.join('|'),
+    selectedFrameIdList.join('|'),
+    editingFrameId,
+    playFrameId,
+  ].join(';')
 
-  // Advance the retention DURING render, React's documented "adjusting state
+  // Advance the live set DURING render, React's documented "adjusting state
   // when something changes" pattern, rather than from an effect.
   //
   // An effect would commit twice per membership change — once with the old
-  // pool, once with the new — and `boardFramesLayerRenderScope.test.tsx` and
+  // set, once with the new — and `boardFramesLayerRenderScope.test.tsx` and
   // `boardLayerNarrowSelectorsScope.test.tsx` both count commits precisely so
   // this layer cannot quietly start doing that. Setting state during a
   // component's own render makes React discard the in-progress pass and
   // re-run it immediately: one commit, no effect, nothing to tear.
   //
-  // `key` is the guard that stops it looping. It is the JOINED on-screen ids
-  // (plus the cost), not the array, because a fresh array identity every
-  // render would make "did membership change?" always true — and the whole
-  // point is that a pan which moved no frame across the margin changes
-  // nothing at all.
-  let pooledFrameIds = retention.ids
-  if (retention.key !== poolKey) {
-    const known = new Set(framesWithPages.map(({ frame }) => frame.id))
-    const next = nextFramePool(retention.ids, onScreenFrameIds, known, frameCost)
-    pooledFrameIds = sameFramePool(retention.ids, next) ? retention.ids : next
-    setRetention({ key: poolKey, ids: pooledFrameIds })
+  // `key` is the guard that stops it looping: it names the INPUTS, so the
+  // re-run sees an unchanged key however the new set ranks.
+  let liveFrameIds = liveSet.ids
+  if (liveSet.key !== liveKey) {
+    const candidates = framesWithPages.map(({ frame }): LiveFrameCandidate => {
+      const rect = frameRect(frame, measuredHeights)
+      const centerX = panX + (rect.x + rect.width / 2) * zoom
+      const centerY = panY + (rect.y + rect.height / 2) * zoom
+      return {
+        id: frame.id,
+        inView: inViewFrameIds.includes(frame.id),
+        distanceToCenter: Math.hypot(centerX - viewport.width / 2, centerY - viewport.height / 2),
+      }
+    })
+    const { live } = selectLiveFrames({
+      ...readLiveCapMemory(bridge),
+      frames: candidates,
+      zoom,
+      selectedFrameIds: new Set(selectedFrameIdList),
+      editingFrameId,
+      playFrameId,
+      retainedIds: new Set(liveSet.ids),
+    })
+    const next = [...live.keys()]
+    liveFrameIds = sameLiveSet(liveSet.ids, next) ? liveSet.ids : next
+    setLiveSet({ key: liveKey, ids: liveFrameIds })
   }
 
   // Marquee drag (WS-7.1) — screen-space rect, portaled outside the
@@ -303,12 +343,10 @@ export function BoardFramesLayer() {
 
   if (!hasActiveBoard) return null
 
-  const onScreenFrameIdSet = new Set(onScreenFrameIds)
-  // The pool list already leads with every on-screen id (both budgets are
-  // `>= onScreenIds.length`, so the truncation can only bite into the
-  // retained tail), so this set IS "which frames hold an iframe". A pooled
-  // frame is invisible; it is mounted purely so coming back is free.
-  const pooledFrameIdSet = new Set(pooledFrameIds)
+  // The set already holds every working frame, in view or not; the fill's one
+  // frame rides beside it (it is mounted only to be photographed).
+  const liveFrameIdSet = new Set(liveFrameIds)
+  if (fillFrameId) liveFrameIdSet.add(fillFrameId)
 
   // One bounding box around the whole multi-selection (board-space, so it
   // lives inside `.layer` and pans/zooms with the frames it encloses).
@@ -338,6 +376,7 @@ export function BoardFramesLayer() {
       ref={layerRef}
       className={styles.layer}
       data-testid="board-frames-layer"
+      data-poster-fill={fillState}
     >
       {framesWithPages.length === 0 && pendingFrames.length === 0 ? (
         <div className={styles.emptyState}>
@@ -366,8 +405,7 @@ export function BoardFramesLayer() {
               hasManualHeight={frame.height !== undefined}
               isActive={page.id === activePageId}
               isSelected={selectedFrameIds.includes(page.id)}
-              isOnScreen={onScreenFrameIdSet.has(frame.id)}
-              isMounted={pooledFrameIdSet.has(frame.id)}
+              isLive={liveFrameIdSet.has(frame.id)}
             />
           )
         })
@@ -385,6 +423,8 @@ export function BoardFramesLayer() {
           height={frame.height ?? FRAME_HEIGHT}
         />
       ))}
+
+      <PosterFill liveFrameIds={liveFrameIds} enabled={!bridge} />
 
       {selectionBoundingBox && (
         <div

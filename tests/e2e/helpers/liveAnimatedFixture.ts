@@ -36,8 +36,8 @@
  * forced layout — sixty times a second.
  *
  * The other screens are plain, so a board of `LIVE_BOARD_FRAME_COUNT` frames
- * can hold more live frames than `LIVE_FRAME_POOL_SIZE` (8) and a pan can
- * evict one — the per-frame memory measurement.
+ * can hold more live frames than the Tier-2 cap (`LIVE_CAP_BRIDGE`, 8) and a pan can
+ * demote one — the per-frame memory measurement.
  */
 import fs from 'node:fs'
 import path from 'node:path'
