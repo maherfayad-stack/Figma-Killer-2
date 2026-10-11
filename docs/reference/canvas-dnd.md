@@ -529,7 +529,7 @@ the next width change moves the wrong edge, or `width: auto` stretches it);
 + `translate(-50%)` centring moves as `left` from its USED px value, so the
 translate still centres it where it lands. Only a layer that becomes absolute
 in this gesture has nothing authored and takes `left`/`top`. A resize of a
-positioned layer follows the same rule (`elementResizeAnchoring.ts`).
+positioned layer follows the same rule (`elementResizeAnchors.ts`).
 
 **RTL.** In a right-to-left element the physical `left` is the wrong property:
 a drag to the right must DECREASE the distance from the inline start. The

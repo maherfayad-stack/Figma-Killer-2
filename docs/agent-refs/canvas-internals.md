@@ -1083,8 +1083,28 @@ The rules the ladder replaced prose with:
   else it selects EVERY child of the selection (`selectChildNodes`). ⇧Enter
   selects the parent of every selected layer. With a draw tool armed, the
   `node` rung gives Enter up and the `board` rung inserts at the selection.
+- **Add / remove auto layout (PA-7, PA-8):** ⇧A on a container runs
+  `layoutConversion.ts` — it reads the container and its children from the
+  portal frame's DOM (rects divided by the container's `scale()`, margin and
+  border from computed style), plans in the pure `layoutConversionPatches.ts`
+  (`planAddAutoLayout` via `inferAutoLayout`, `planFreezePositions`) and calls
+  the store's ONE `convertLayout` (`layoutConversionActions.ts`; refusal gate
+  `layoutConversionPlan.ts`). Landmines: a flex container lays out MARGIN
+  boxes, so the gap is read from margin boxes or block-flow margins are
+  counted twice; a padding write on a content-box container changes its outer
+  size unless it has no padding or border (then it is made `border-box`); a
+  reorder is a structural commit, so the restyle parks behind it
+  (`deferWhileStructuralCommitInFlight`) and runs on relocated ids; removed
+  style keys come back at the END of the object on undo.
+- **Live-frame anchored resize (PA-8):** `setResizeTarget` carries
+  `anchors` (which of left/right/top/bottom/inset-inline the SOURCE authors,
+  `resizeAnchorsKey` in `resizeTargetContext.ts`); `resizeHandles.ts` reads their
+  used values from the frame's computed style at pointerdown
+  (`elementResizeAnchors.ts`, shared with the portal drag) so a W drag on a
+  right-anchored layer writes the width alone. `ResizeCommitPatch` accepts
+  `right` / `insetInlineEnd` / `bottom` for it.
 - **Layer commands (P5-E):** ⌥A ⌥D ⌥W ⌥S ⌥H ⌥V align, ⌘⇧] / ⌘⇧[ front /
-  back, ⇧A flex, ⌘⌥C / ⌘⌥V copy / paste style — `useCanvasLayerCommandKeys`
+  back, ⇧A auto layout (above), ⌘⌥C / ⌘⌥V copy / paste style — `useCanvasLayerCommandKeys`
   on the `node` rung, component-owned. Letters with ⌥ are matched on
   `event.code` (⌥A is `'å'` on a Mac). ⌘C / ⌘V reject ⌥ since then: before,
   Ctrl+Alt+V pasted a layer AND a style. The right-click menu and the palette
