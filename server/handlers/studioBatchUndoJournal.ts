@@ -36,6 +36,7 @@
  * than one edit is refused by name, before anything runs.
  */
 import { join } from 'node:path'
+import { isInlinedNodeId } from '@core/page-tree'
 import { refusalFor, StudioEditRefusalError } from './studioEditRefusals'
 import type { StudioEdit, StudioEditApplyOutcome, StudioEditBatchOptions, StudioEditRefusal } from './studioEditSchemas'
 import { captureUndoPreImage, recordUndoJournal, restoreUndoJournal, undoJournalFiles } from './studio/undoJournal'
@@ -46,6 +47,8 @@ const JOURNALED_KINDS = new Set<StudioEdit['kind']>(['delete', 'detach', 'expose
 export function isJournaled(edit: StudioEdit): boolean {
   return (
     JOURNALED_KINDS.has(edit.kind) ||
+    // G-6 (OD-20): typing over code replaces it, and the bytes it replaced come back only from the pre-image.
+    ((edit.kind === 'prop' || edit.kind === 'text') && edit.unbind === true) ||
     (edit.kind === 'list-item' && edit.op.kind === 'remove') ||
     // A cross-file MOVE (a COPY is taken back by deleting what it made). The
     // move cuts markup from one file, prunes the import only that markup used,
@@ -96,6 +99,8 @@ export function openBatchUndoJournal(
 
   return {
     refuse: (edit) => {
+      const unbind = refuseUnbind(edit, journaling)
+      if (unbind) return unbind
       if (edit.kind !== 'restore') return null
       if (!journaling) {
         return refusalFor(edit, 'restore-editor-only', 'Only the editor’s own undo can restore a change Studio journaled. Nothing was written.')
@@ -110,6 +115,28 @@ export function openBatchUndoJournal(
       return recordUndoJournal(dir, preImage, createdFiles.map((rel) => join(dir, ...rel.split('/')))) ?? undefined
     },
   }
+}
+
+/**
+ * G-6 (OD-20): an `unbind` prop/text edit replaces code with a literal, which
+ * is only honest when (a) the editor can offer Undo - the pre-image is the only
+ * thing that puts the code back, and an agent batch has none - and (b) the edit
+ * has ONE target: an inlined id writes a shared component's own markup, where the
+ * binding is what every other instance reads through.
+ */
+function refuseUnbind(edit: StudioEdit, journaling: boolean): StudioEditRefusal | null {
+  if ((edit.kind !== 'prop' && edit.kind !== 'text') || edit.unbind !== true) return null
+  if (!journaling) {
+    return refusalFor(edit, 'unbind-editor-only', 'Only the editor can replace code with a typed value, because only the editor can offer Undo. Nothing was written.')
+  }
+  if (isInlinedNodeId(edit.nodeId)) {
+    return refusalFor(
+      edit,
+      'unbind-shared',
+      'This is written once in a shared component, so replacing it with text would change every place that component is used. Nothing was written; change it in the code.',
+    )
+  }
+  return null
 }
 
 /** Apply one `restore` edit — every file its entry names, or none. Refusals throw, like every other kind's. */

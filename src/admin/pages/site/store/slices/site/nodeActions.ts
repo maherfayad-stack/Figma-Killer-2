@@ -52,6 +52,7 @@ import { createImageDropActions } from './imageDropActions'
 import { createSubtreeInsertActions } from './subtreeInsertActions'
 import { createInlineStyleActions } from './inlineStyleActions'
 import { createIgnoreAutoLayoutActions } from './ignoreAutoLayoutActions'
+import { createUnbindActions } from './unbindActions'
 import { createVisibilityActions } from './visibilityActions'
 import { createMoveSequenceActions, moveEditOf } from './moveSequenceActions'
 import { duplicateNodeWithScopedClasses } from './duplicateWithScopedClasses'
@@ -77,6 +78,7 @@ type NodeActions = Pick<
   | 'deleteNode'
   | 'deleteNodes'
   | 'updateNodeProps'
+  | 'unbindNodeValue'
   | 'updateInstanceCallSiteProp'
   | 'setNodeInlineStyles'
   | 'setNodeInlineStylesFromGesture'
@@ -397,6 +399,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
 
     ...createInlineStyleActions(helpers),
     ...createIgnoreAutoLayoutActions(helpers),
+    ...createUnbindActions(helpers, readTree),
 
     setBreakpointOverride: (nodeId, breakpointId, patch) => {
       mutateActiveTree(

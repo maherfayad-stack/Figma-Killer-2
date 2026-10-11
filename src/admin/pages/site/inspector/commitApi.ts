@@ -70,6 +70,14 @@
  * element carrying the class, which is exactly why it is gated behind an
  * explicit blast-radius confirmation before the model will hand it over.
  *
+ * ## `commitProp` and code-bound values (G-6)
+ *
+ * A value the source holds as code (`{count}`, `{t('x')}`) is shown read-only
+ * unless it can be typed over (`EditConstraint.unbindable`). When the user does,
+ * `commitProp` hands the text to `unbindNodeValue` instead of `updateNodeProps`:
+ * the code is replaced by the literal in one journaled source write, the notice
+ * names what went, and Undo restores the bytes (`studio/unbindCommit.ts`).
+ *
  * `commitProp` stays single-selection. A module prop belongs to one call
  * site's schema; fanning one key across N nodes of possibly different modules
  * is not a Mixed collapse, it is a guess.
@@ -80,6 +88,7 @@ import type { CSSPropertyBag, PageNode } from '@core/page-tree'
 import { styleValueKey } from '@core/page-tree'
 import { getActiveStyleTab } from '../panels/PropertiesPanel/classStyleSections'
 import { broadcastOptimisticStyle, broadcastOptimisticStyleClear } from '../canvas/frameAdapter/optimisticStructuralBroadcast'
+import { commitUnbindIfCodeBound } from './commitUnbind'
 import type { SelectionModel } from './selectionModel'
 import type { WriteTarget } from './resolveWriteTarget'
 
@@ -363,7 +372,10 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
     const isOverridable = def?.schema[key]?.breakpointOverridable === true
     if (activeTab !== 'base' && isOverridable) {
       setBreakpointOverride(selectedNodeId, activeTab, { [key]: value })
-    } else {
+    } else if (!commitUnbindIfCodeBound(selectedNode, key, value)) {
+      // G-6 (OD-20) - typing over code-bound text or an attribute replaces the
+      // code with the literal (the branch above). `updateNodeProps` would refuse
+      // it silently, which is the whole reason that branch exists.
       updateNodeProps(selectedNodeId, { [key]: value })
     }
   }

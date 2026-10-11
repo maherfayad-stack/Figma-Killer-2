@@ -238,6 +238,14 @@ export interface SiteSlice {
   deleteNodes: (nodeIds: string[]) => void
   updateNodeProps: (nodeId: string, patch: Record<string, unknown>) => void
   /**
+   * G-6 (OD-20) - the user TYPED over a code-bound text or attribute: replace
+   * the code with this literal as one journaled source write, with a notice and
+   * Undo (`unbindActions.ts`). `false` when nothing was started (the prop is not
+   * unbindable, or the write was parked behind an in-flight structural commit
+   * and will re-plan itself).
+   */
+  unbindNodeValue: (nodeId: string, prop: string, value: string) => boolean
+  /**
    * instance-ui-01 — write ONE call-site prop on a `studio.instance` node
    * (`props.callSiteProps.<propName>`), the WS-4.2/4.3 instance model's
    * nested prop bag. Silently refuses (no-op, same convention as

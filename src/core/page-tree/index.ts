@@ -47,6 +47,7 @@ export { classifyJsxTagKind } from './jsxTagKind'
 export type { JsxTagKind } from './jsxTagKind'
 export {
   isPropWritableToSource,
+  canUnbindProp,
   isPropPatchWritableToSource,
   isStyleWritableToSource,
   isStylePatchWritableToSource,

@@ -70,13 +70,20 @@ const PropEditSchema = Type.Object({
   nodeId: Type.String(),
   prop: Type.String(),
   value: Type.Union([Type.String(), Type.Number(), Type.Boolean()]),
+  /**
+   * G-6 (OD-20) - the user typed over a code-bound value: replace the code
+   * with the literal. Editor-only (it needs the undo journal) and never on an
+   * inlined id; see `studioBatchUndoJournal.ts` and `studioWriteback.ts`.
+   */
+  unbind: Type.Optional(Type.Literal(true)),
 })
 
-/** One element-text-children writeback — `setJsxText`. */
+/** One element-text-children writeback — `setJsxText`. `unbind` as on {@link PropEditSchema}. */
 const TextEditSchema = Type.Object({
   kind: Type.Literal('text'),
   nodeId: Type.String(),
   text: Type.String(),
+  unbind: Type.Optional(Type.Literal(true)),
 })
 
 /**
