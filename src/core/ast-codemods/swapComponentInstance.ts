@@ -194,8 +194,9 @@ export function swapComponentInstance(params: SwapComponentInstanceParams): Swap
     .getImportDeclarations()
     .some(
       (declaration) =>
+        !declaration.isTypeOnly() &&
         declaration.getModuleSpecifierValue() === specifier &&
-        declaration.getNamedImports().some((named) => (named.getAliasNode() ?? named.getNameNode()).getText() === localName),
+        declaration.getNamedImports().some((named) => !named.isTypeOnly() && (named.getAliasNode() ?? named.getNameNode()).getText() === localName),
     )
   if (!alreadyImported) {
     const imported = requirement.imported ?? localName

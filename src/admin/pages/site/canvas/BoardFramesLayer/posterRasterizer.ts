@@ -148,33 +148,49 @@ const ROOT_DOES_NOT_CLIP = 'html{overflow:visible !important}'
 const CSS_URL = /url\(\s*(['"]?)([^'")]+)\1\s*\)/g
 const MARKUP_URL = /(<(?:img|image)\b[^>]*?\s(?:src|href|xlink:href)=")([^"]+)(")/g
 
-function collectUrls(text: string, pattern: RegExp, group: number, base: string, into: Set<string>): void {
+/**
+ * A URL as written in SERIALIZED markup is entity-escaped (`?a=1&amp;b=2`);
+ * fetched as it stands, the `amp;` rides along in the query and the request
+ * 404s (the board's asset URLs are `...?dir=...&path=...`). Decode before
+ * resolving. `&amp;` goes last so `&amp;lt;` decodes to `&lt;`, not `<`.
+ */
+export function decodeMarkupUrl(raw: string): string {
+  return raw
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+}
+
+function collectUrls(text: string, pattern: RegExp, group: number, base: string, into: Set<string>, markup: boolean): void {
   for (const match of text.matchAll(pattern)) {
-    const url = absolute(match[group]!, base)
+    const url = absolute(markup ? decodeMarkupUrl(match[group]!) : match[group]!, base)
     if (url) into.add(url)
   }
 }
 
-async function inlineAll(styleText: string, bodyMarkup: string, base: string): Promise<{ style: string; body: string }> {
+/** Exported for the test: the URL phase of a capture, with `fetch` as the only side effect. */
+export async function inlineAll(styleText: string, bodyMarkup: string, base: string): Promise<{ style: string; body: string }> {
   const urls = new Set<string>()
-  collectUrls(styleText, CSS_URL, 2, base, urls)
-  collectUrls(bodyMarkup, CSS_URL, 2, base, urls)
-  collectUrls(bodyMarkup, MARKUP_URL, 2, base, urls)
+  collectUrls(styleText, CSS_URL, 2, base, urls, false)
+  collectUrls(bodyMarkup, CSS_URL, 2, base, urls, true)
+  collectUrls(bodyMarkup, MARKUP_URL, 2, base, urls, true)
   if (urls.size === 0) return { style: styleText, body: bodyMarkup }
   const resolved = new Map<string, string>()
   await Promise.all([...urls].map(async (url) => resolved.set(url, await inlineResource(url))))
-  const swapCss = (match: string, quote: string, raw: string) => {
-    const url = absolute(raw, base)
+  const swapCssIn = (markup: boolean) => (match: string, quote: string, raw: string) => {
+    const url = absolute(markup ? decodeMarkupUrl(raw) : raw, base)
     if (!url) return match
     return `url(${quote}${resolved.get(url) ?? ''}${quote})`
   }
   const swapMarkup = (_match: string, open: string, raw: string, close: string) => {
-    const url = absolute(raw, base)
+    const url = absolute(decodeMarkupUrl(raw), base)
     return url ? `${open}${resolved.get(url) ?? ''}${close}` : `${open}${raw}${close}`
   }
   return {
-    style: styleText.replace(CSS_URL, swapCss),
-    body: bodyMarkup.replace(CSS_URL, swapCss).replace(MARKUP_URL, swapMarkup),
+    style: styleText.replace(CSS_URL, swapCssIn(false)),
+    body: bodyMarkup.replace(CSS_URL, swapCssIn(true)).replace(MARKUP_URL, swapMarkup),
   }
 }
 

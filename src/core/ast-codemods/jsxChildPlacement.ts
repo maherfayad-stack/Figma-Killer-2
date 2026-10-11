@@ -264,7 +264,7 @@ export function countLeadingWhitespace(text: string, from: number): number {
 /**
  * One level of indentation, as this file writes it — a tab when the file is
  * tab-indented, otherwise the smallest non-zero space indent it uses (falling
- * back to two spaces). Copied rather than assumed so a write never mixes a
+ * back to two spaces) - block-comment gutters (` * text`) do not count. Copied rather than assumed so a write never mixes a
  * second indentation style into a file.
  */
 export function indentUnit(text: string): string {
@@ -272,7 +272,10 @@ export function indentUnit(text: string): string {
   for (const line of text.split('\n')) {
     const width = countLeadingWhitespace(line, 0)
     if (width === 0 || line.trim() === '') continue
-    if (line[0] === '\t') return '\t'
+    // A block comment's ` * text` gutter is one space wide in almost every
+    // file; it says nothing about how the CODE is indented.
+    if (line.trimStart().startsWith('*')) continue
+    if (line[0] ==='\t') return '\t'
     if (smallest === 0 || width < smallest) smallest = width
   }
   return ' '.repeat(smallest > 0 ? smallest : 2)

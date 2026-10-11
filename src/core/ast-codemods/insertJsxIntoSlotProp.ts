@@ -405,9 +405,9 @@ function addRequiredImports(sourceFile: SourceFile, required: ReadonlyMap<string
   for (const [name, { specifier, imported }] of required) {
     // `{ Button as Button2 }` when `planImportBindings` chose an alias (WB-19).
     const named = imported !== undefined && imported !== name ? { name: imported, alias: name } : { name }
-    const existing = sourceFile.getImportDeclarations().find((d) => d.getModuleSpecifierValue() === specifier)
+    const existing = sourceFile.getImportDeclarations().find((d) => !d.isTypeOnly() && d.getModuleSpecifierValue() === specifier)
     if (existing) {
-      const already = existing.getNamedImports().some((n) => (n.getAliasNode() ?? n.getNameNode()).getText() === name)
+      const already = existing.getNamedImports().some((n) => !n.isTypeOnly() && (n.getAliasNode() ?? n.getNameNode()).getText() === name)
       if (!already) existing.addNamedImport(named)
       continue
     }
