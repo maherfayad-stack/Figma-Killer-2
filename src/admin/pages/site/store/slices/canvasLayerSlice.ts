@@ -220,7 +220,9 @@ export function canvasLayerDisplayName(
     if (named) return named
   }
   const page = state.canvasLayerPages[`canvas:${layerId}`]
-  const root = page?.nodes[page.rootNodeId]
+  // A layer page is the synthetic body around its one element: name the element.
+  const body = page?.nodes[page.rootNodeId]
+  const root = body?.moduleId === 'base.body' ? page?.nodes[body.children[0] ?? ''] : body
   return root ? getNodeDisplayName(root, registry.get(root.moduleId), undefined) : 'Layer'
 }
 

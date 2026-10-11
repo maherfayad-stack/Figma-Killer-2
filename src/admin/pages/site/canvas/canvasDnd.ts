@@ -579,8 +579,12 @@ interface ResolvePageTreeInsertionTargetInput {
   tree: NodeTree<PageNode>
   overId: string
   zone: PageTreeDropPosition
-  /** Where a drop lands beside `overId` when `zone` is `inside` but `overId` cannot take it. */
-  nearerSide: 'before' | 'after'
+  /**
+   * Where a drop lands beside `overId` when `zone` is `inside` but `overId`
+   * cannot take it. A caller with pointer geometry passes the nearer side; a
+   * Layers-panel row has none and keeps the append convention (`after`).
+   */
+  nearerSide?: 'before' | 'after'
   canHaveChildren: (moduleId: string) => boolean
 }
 
@@ -588,7 +592,7 @@ function resolvePageTreeInsertionTarget({
   tree,
   overId,
   zone,
-  nearerSide,
+  nearerSide = 'after',
   canHaveChildren,
 }: ResolvePageTreeInsertionTargetInput): Omit<CanvasInsertionTarget, 'rect' | 'axis'> | null {
   const over = tree.nodes[overId]
