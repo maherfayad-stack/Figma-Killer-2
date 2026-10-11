@@ -281,7 +281,7 @@
  * `studioGithubImport.ts`.
  */
 import { relative, sep } from 'node:path'
-import { parseBoardsFile, type BoardsFile } from '@core/studio-board'
+import { parseBoardsFile, withUnseenBoards, type BoardsFile } from '@core/studio-board'
 import { readBoardsFile, writeBoardsFile } from './studio/boardGeometry'
 import { RequestBodyTooLargeError, badRequest, jsonResponse, ndjsonResponse, readValidatedBody, internalServerError } from '../http'
 import {
@@ -303,7 +303,7 @@ import { applyStudioEditBatchLocked } from './studioWriteback'
 import { applyStudioEditSequenceLocked } from './studioEditSequence'
 import { withIdempotentReplay } from './studio/idempotentReplay'
 import { registeredMcpServerProjectKey } from '../ai/drivers/registeredMcpServers'
-import { syncComponentBoardFrames, syncStoryBoardFrames } from './studio/boardFrames'
+import { forgetRemovedDerivedBoards, syncComponentBoardFrames, syncStoryBoardFrames } from './studio/boardFrames'
 import { gateStudioRequest, type StudioSessionRuntime } from './studio/routeGate'
 import { STUDIO_SESSION_SUB_ROUTERS, STUDIO_SUB_ROUTERS } from './studio/subRouters'
 import type { DbClient } from '../db/client'
@@ -594,8 +594,10 @@ export async function tryServeStudio(
       if (!body) return badRequest('invalid boards body')
       const dir = resolveProjectDir(body.dir)
       // Re-parse the incoming payload so we only ever write a valid, normalized file.
-      const boards: BoardsFile = parseBoardsFile(body.boards)
+      const incoming: BoardsFile = parseBoardsFile(body.boards)
+      const boards = body.knownBoardIds ? withUnseenBoards(incoming, readBoardsFile(dir), body.knownBoardIds) : incoming
       writeBoardsFile(dir, boards)
+      forgetRemovedDerivedBoards(dir, body.knownBoardIds, boards)
       return jsonResponse({ ok: true, boards })
     } catch (err) {
       return studioRouteFailure(err)

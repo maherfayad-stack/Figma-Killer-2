@@ -40,6 +40,13 @@ export const SaveBodySchema = Type.Object({
 export const BoardsPostBodySchema = Type.Object({
   dir: Type.Optional(Type.String()),
   boards: Type.Unknown(),
+  /**
+   * Every board id the editor has read or written so far. A board on disk that
+   * is in neither this list nor `boards` was made by someone else since (the
+   * server's Components board) and survives the save; one that IS listed and
+   * absent from `boards` was removed on purpose. Absent: a plain overwrite.
+   */
+  knownBoardIds: Type.Optional(Type.Array(Type.String())),
 })
 
 /**

@@ -44,14 +44,13 @@ const MAX_NAMED = 3
 
 /**
  * Why this module can't take a `style=""` the editor writes, in the user's
- * words. A design-system component (`alm.*`) is deliberately absent: it CAN,
- * and never reaches here.
+ * words and one clause: the toast sits over the inspector, so it stays short.
+ * A design-system component (`alm.*`) is deliberately absent: it CAN, and never
+ * reaches here.
  */
 function describeModule(moduleId: string): string {
-  if (moduleId === 'studio.instance') {
-    return 'it is a call site of one of your own components, which renders no box of its own — its styles live in that component’s file, where they would change every instance'
-  }
-  return `it is a ${moduleId} component from a package, and nothing tells Studio that it forwards a style prop to the element you can see`
+  if (moduleId === 'studio.instance') return 'a call site of your own component, which renders no box of its own'
+  return `a ${moduleId} component from a package, which takes no style Studio can write`
 }
 
 function describeRefusal(refusal: InlineStyleModuleRefusal): string {
@@ -71,13 +70,13 @@ export function notifyInlineStyleUnsaved(refusals: readonly InlineStyleModuleRef
   const remaining = refusals.length - named.length
   const list = remaining > 0 ? `${named.join('; ')}; and ${remaining} more` : named.join('; ')
 
+  const many = refusals.length > 1
   pushToast({
     kind: 'warning',
     title: "Style change won't be saved",
-    body:
-      `${list}. This element takes no style of its own here — ${describeModule(refusals[0].moduleId)}. ` +
-      `Assign a CSS class to it, or change the design-system token, instead — otherwise ` +
-      `${refusals.length === 1 ? 'it' : 'these'} will revert the next time this page loads.`,
+    body: `${list}: ${describeModule(refusals[0].moduleId)}. ${many ? 'These' : 'It'} will revert on reload. Give ${many ? 'them' : 'it'} a CSS class instead.`,
     location: 'site-editor',
+    // The same drop on a second edit replaces this toast instead of stacking over the inspector.
+    dedupeKey: 'inline-style-unsaved',
   })
 }

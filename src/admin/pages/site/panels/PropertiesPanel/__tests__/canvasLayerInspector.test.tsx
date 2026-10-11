@@ -47,13 +47,25 @@ describe('CanvasLayerInspector', () => {
     expect((screen.getByRole('combobox', { name: 'Fill type' }) as HTMLInputElement).value).toBe('None')
   })
 
-  it('any other root says where its styles are edited, rather than offering controls that would miss', () => {
+  it('any other root gets the style controls, filled from the element’s own inline styles', async () => {
     useEditorStore.setState({
-      canvasLayerPages: { [`canvas:${LAYER_ID}`]: layer({ moduleId: 'base.image', props: { src: '/a.png' } }) },
+      canvasLayerPages: {
+        [`canvas:${LAYER_ID}`]: layer({
+          moduleId: 'base.container',
+          inlineStyles: { width: '120px', height: '80px', background: '#d9d9d9', borderRadius: '8px', border: '2px solid #ff0000', opacity: 0.5 },
+        }),
+      },
       selectedCanvasLayerIds: [LAYER_ID],
     })
     render(<CanvasLayerInspector />)
-    expect(screen.getByTestId('canvas-layer-inspector').textContent).toContain('edited inside a frame for now')
+    expect(await screen.findByTestId('layer-style')).toBeTruthy()
+    expect((screen.getByLabelText('Layer width') as HTMLInputElement).value).toBe('120')
+    expect((screen.getByLabelText('Layer height') as HTMLInputElement).value).toBe('80')
+    expect((screen.getByLabelText('Layer fill colour') as HTMLInputElement).value).toBe('#d9d9d9')
+    expect((screen.getByLabelText('Layer stroke colour') as HTMLInputElement).value).toBe('#ff0000')
+    expect((screen.getByLabelText('Layer stroke weight') as HTMLInputElement).value).toBe('2')
+    expect((screen.getByLabelText('Layer corner radius') as HTMLInputElement).value).toBe('8')
+    expect((screen.getByLabelText('Layer opacity') as HTMLInputElement).value).toBe('50')
     expect(screen.queryByTestId('vector-paint')).toBeNull()
   })
 

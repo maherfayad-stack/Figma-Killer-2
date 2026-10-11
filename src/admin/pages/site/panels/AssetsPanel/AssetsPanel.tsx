@@ -310,8 +310,8 @@ export function AssetsPanel() {
             <EmptyState
               plain
               compact
-              title="No layouts yet"
-              description="Save a selection as a layout to reuse it here."
+              title={searching ? 'No layouts match' : 'No layouts yet'}
+              description={searching ? undefined : 'Save a selection as a layout to reuse it here.'}
             />
           ) : (
             <AssetGrid>
@@ -339,8 +339,8 @@ export function AssetsPanel() {
             <EmptyState
               plain
               compact
-              title="No components yet"
-              description="Turn a selection into a Visual Component to insert it from here."
+              title={searching ? 'No saved components match' : 'No components yet'}
+              description={searching ? undefined : 'Turn a selection into a Visual Component to insert it from here.'}
             />
           ) : (
             <AssetGrid>{renderCards(rankedComponents)}</AssetGrid>

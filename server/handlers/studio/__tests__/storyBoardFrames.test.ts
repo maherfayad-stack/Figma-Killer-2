@@ -9,7 +9,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { createBoard, createBoardsFile, parseBoardsFile, serializeBoardsFile, upsertBoard } from '@core/studio-board'
-import { syncStoryBoardFrames } from '../boardFrames'
+import { forgetRemovedDerivedBoards, syncStoryBoardFrames } from '../boardFrames'
 import { boardsFilePath } from '../boardGeometry'
 import { readStudioMeta, writeStudioMeta } from '../studioMeta'
 import type { StorySummary } from '../storyDiscovery'
@@ -108,12 +108,23 @@ describe('syncStoryBoardFrames', () => {
     expect(frames[1]!.y).toBe(frames[0]!.y)
   })
 
-  it('stops placing entirely once the Stories board itself has been deleted', () => {
+  it('stops placing once the author deleted the Stories board (the editor save names it as removed)', () => {
+    syncStoryBoardFrames(tmpDir, [story('chip-primary', 'Data/Chip')])
+    const known = readBoards().boards.map((b) => b.id)
+    fs.writeFileSync(boardsFilePath(tmpDir), serializeBoardsFile(createBoardsFile()))
+    forgetRemovedDerivedBoards(tmpDir, known, readBoards())
+
+    syncStoryBoardFrames(tmpDir, [story('chip-primary', 'Data/Chip'), story('chip-critical', 'Data/Chip')])
+    expect(readBoards().boards.map((b) => b.frames.map((f) => f.pageId))).toEqual([['chip-critical']])
+  })
+
+  it('makes the Stories board again when it was lost without anyone removing it', () => {
     syncStoryBoardFrames(tmpDir, [story('chip-primary', 'Data/Chip')])
     fs.writeFileSync(boardsFilePath(tmpDir), serializeBoardsFile(createBoardsFile()))
 
     syncStoryBoardFrames(tmpDir, [story('chip-primary', 'Data/Chip'), story('chip-critical', 'Data/Chip')])
-    expect(readBoards().boards).toEqual([])
+    expect(readBoards().boards.map((b) => b.name)).toEqual(['Stories'])
+    expect(readBoards().boards[0]!.frames.map((f) => f.pageId).sort()).toEqual(['chip-critical', 'chip-primary'])
   })
 
   it('honours the explicit off switch', () => {
