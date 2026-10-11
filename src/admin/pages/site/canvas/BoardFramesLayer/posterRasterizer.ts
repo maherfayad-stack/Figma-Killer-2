@@ -136,6 +136,15 @@ function htmlOpenTag(root: HTMLElement): string {
   return `<html xmlns="${XHTML_NS}"${attributes}>`
 }
 
+/**
+ * A frame document's `<html>` carries `overflow: hidden` (the reset that lets the iframe grow to its content) and the
+ * body is pinned to the frame's nominal height. In the live document `html`'s overflow propagates to the viewport, so
+ * the content past the pinned height still paints. Inside a `foreignObject` `html` is an ordinary box: the same
+ * declaration clips the picture at the pinned height (a 1301 px screen came out blank below 800 px). The picture is
+ * taken at the full content height, so the root must not clip.
+ */
+const ROOT_DOES_NOT_CLIP = 'html{overflow:visible !important}'
+
 const CSS_URL = /url\(\s*(['"]?)([^'")]+)\1\s*\)/g
 const MARKUP_URL = /(<(?:img|image)\b[^>]*?\s(?:src|href|xlink:href)=")([^"]+)(")/g
 
@@ -203,7 +212,8 @@ export async function rasterizeFrameDocument(doc: Document, { width, height, max
   // `<html>` and `<body>` selectors, `:root` variables and `dir`/`lang` all survive because the
   // real element chain is rebuilt, not flattened into a div.
   await yieldToMain()
-  const markup = `${htmlOpenTag(root)}<head><style>${escapeXmlText(style)}</style></head>${inlinedBody}</html>`
+  const markup = `${htmlOpenTag(root)}<head><style>${escapeXmlText(style)}
+${ROOT_DOES_NOT_CLIP}</style></head>${inlinedBody}</html>`
   const svg = `<svg xmlns="${SVG_NS}" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><foreignObject x="0" y="0" width="${width}" height="${height}">${markup}</foreignObject></svg>`
 
   const image = await loadSvgImage(svg)

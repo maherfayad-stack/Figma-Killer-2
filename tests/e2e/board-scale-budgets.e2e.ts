@@ -341,10 +341,18 @@ test.describe('board-scale budgets on the 100 x 140 corpus', () => {
   })
 
   test('poster -> live: a frame that was a picture becomes a readable document in <= 250 ms', { tag: '@production-bundle' }, async ({ page }) => {
-    const { canvasRoot, frameEl } = await open(page)
+    const { canvasRoot, frameEl, content } = await open(page)
     const firstId = largeBoardPageId(0)
     mkdirSync('.tmp/board-speed', { recursive: true })
     await frameEl.screenshot({ path: '.tmp/board-speed/poster-sample-live.png' })
+    // Where the live frame's last piece of content ends, as a fraction of its document height. The frame is taller than
+    // the 800 px its body is pinned to, so a poster that clips at the pin comes out blank below that fraction.
+    const live = await content.evaluate(() => {
+      let bottom = 0
+      for (const el of document.querySelectorAll('.row__label')) bottom = Math.max(bottom, el.getBoundingClientRect().bottom)
+      return { docHeight: document.documentElement.scrollHeight, contentBottom: bottom, bodyHeight: document.body.offsetHeight }
+    })
+    expect(live.docHeight, 'the corpus frame must be taller than its pinned body, or this test proves nothing').toBeGreaterThan(live.bodyHeight + 100)
     // Frame 0 has been live: wait for its picture, then send the viewport far away so the pool lets it go.
     await expect
       .poll(() => page.evaluate(({ name, id }) => performance.getEntriesByName(name).some((e) => (e as PerformanceMeasure).detail?.pageId === id), { name: POSTER_CAPTURE_MEASURE, id: firstId }), {
@@ -368,15 +376,23 @@ test.describe('board-scale budgets on the 100 x 140 corpus', () => {
       const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data
       let opaque = 0
       let inked = 0
+      let lastInkedRow = 0
       for (let i = 0; i < data.length; i += 4) {
         if (data[i + 3] > 0) opaque += 1
-        if (data[i + 3] > 0 && (data[i]! < 235 || data[i + 1]! < 235 || data[i + 2]! < 235)) inked += 1
+        if (data[i + 3] > 0 && (data[i]! < 235 || data[i + 1]! < 235 || data[i + 2]! < 235)) {
+          inked += 1
+          lastInkedRow = Math.max(lastInkedRow, Math.floor(i / 4 / canvas.width))
+        }
       }
-      return { width: canvas.width, height: canvas.height, opaque, inked, png: canvas.toDataURL('image/png') }
+      return { width: canvas.width, height: canvas.height, opaque, inked, lastInkedRow, png: canvas.toDataURL('image/png') }
     })
     writeFileSync('.tmp/board-speed/poster-sample-poster.png', Buffer.from(picture.png.split(',')[1]!, 'base64'))
     annotate('poster bitmap', `${picture.width}x${picture.height}, opaque ${picture.opaque}, inked ${picture.inked}`)
     expect(picture.opaque, 'the poster is fully transparent').toBeGreaterThan(picture.width * picture.height * 0.9)
+    // Fidelity against the live frame: the picture reaches as far down as the content does.
+    const expectedLastRow = Math.round((live.contentBottom / live.docHeight) * picture.height)
+    annotate('poster fidelity: last inked row / live content bottom', `${picture.lastInkedRow} / ${expectedLastRow} of ${picture.height}`)
+    expect(picture.lastInkedRow, 'the poster is blank below where the live frame still has content (clipped at the pinned body height?)').toBeGreaterThanOrEqual(expectedLastRow - 0.03 * picture.height)
     expect(picture.inked, 'the poster is blank').toBeGreaterThan(picture.width * picture.height * 0.02)
     type Probe = { iframeAt: number; contentAt: number }
     await page.evaluate((id) => {
