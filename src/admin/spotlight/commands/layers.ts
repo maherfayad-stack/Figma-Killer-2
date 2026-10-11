@@ -312,8 +312,8 @@ export function getLayersCommands(): Command[] {
         const ids = ctx.editor?.selectedNodeIds ?? []
         if (ids.length === 0) return
         try {
-          const { useEditorStore } = await import('@site/store/store')
-          useEditorStore.getState().groupNodes([...ids])
+          const { groupLayersKeepingLayout } = await import('@site/canvas/layerCommands')
+          await groupLayersKeepingLayout([...ids])
         } catch (err) {
           console.error('[spotlight] groupNodes failed:', err)
         }

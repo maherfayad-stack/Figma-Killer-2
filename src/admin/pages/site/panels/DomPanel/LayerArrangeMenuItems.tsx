@@ -23,6 +23,7 @@ import { alignSelection } from '@site/canvas/layerAlign'
 import { frameSelection } from '@site/canvas/canvasFrameSelection'
 import {
   copySelectionStyle,
+  groupLayersKeepingLayout,
   hasCopiedStyle,
   moveSelectionToEnd,
   pasteSelectionStyle,
@@ -86,7 +87,7 @@ export function LayerArrangeMenuItems({ targetIds, layerIdsUnderPointer, onClose
     <>
       <ContextMenuSeparator />
       {!isRoot && (
-        <ContextMenuItem onClick={run(() => { store().groupNodes([...targetIds]) })} shortcut={shortcutLabelFor('layers.group')}>
+        <ContextMenuItem onClick={run(() => groupLayersKeepingLayout([...targetIds]))} shortcut={shortcutLabelFor('layers.group')}>
           <span aria-hidden="true"><BoxStackSolidIcon size={13} /></span>
           Group
         </ContextMenuItem>

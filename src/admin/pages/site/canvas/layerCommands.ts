@@ -87,9 +87,22 @@ export async function toggleFlexLayout(): Promise<void> {
     return
   }
 
-  const layerIds = ids.filter((id) => id !== tree.rootNodeId)
-  if (layerIds.length === 0) return
-  const measured = await measureInRenderingFrame(layerIds, MARGIN_PROPERTIES, store.activeBreakpointId, layerIds)
+  await groupLayersKeepingLayout(ids.filter((id) => id !== tree.rootNodeId))
+}
+
+/**
+ * ⌘G, and the wrap half of ⇧A: put `layerIds` (one layer or a run of siblings)
+ * in one container that is WRITTEN with the layout they ran in, in the same
+ * write. A bare container is a plain block, which collapses the spacing the
+ * layers' parent gave them (a 16px `gap` becomes none, so two buttons touch -
+ * R4 #8); this one reads direction, gap and alignment off their margin boxes
+ * (`planWrapAutoLayout`), so grouping moves nothing and is one undo entry.
+ */
+export async function groupLayersKeepingLayout(layerIds: readonly string[]): Promise<void> {
+  const store = useEditorStore.getState()
+  const tree = selectActiveCanvasPage(store)
+  if (!tree || layerIds.length === 0) return
+  const measured = await measureInRenderingFrame([...layerIds], MARGIN_PROPERTIES, store.activeBreakpointId, [...layerIds])
   const sourceIndex = (id: string) => tree.nodes[tree.nodes[id]?.parentId ?? '']?.children.indexOf(id) ?? 0
   const layers = [...layerIds].sort((a, b) => sourceIndex(a) - sourceIndex(b)).flatMap((id) => {
     const measurement = measured?.get(id)
@@ -98,7 +111,7 @@ export async function toggleFlexLayout(): Promise<void> {
   // The wrapper is written WITH its layout: one write, one undo entry, and the layers never
   // sit in a plain block that would collapse the spacing their parent gave them.
   const wrapperStyle = layers.length === layerIds.length ? planWrapAutoLayout(layers.map(measuredBoxOf)) : {}
-  const wrapperId = store.groupNodes(layerIds, undefined, undefined, { wrapperStyle, memberStyles: {} })
+  const wrapperId = useEditorStore.getState().groupNodes([...layerIds], undefined, undefined, { wrapperStyle, memberStyles: {} })
   // A CMS tree mints the wrapper at once: select it. A source write selects it when it lands.
   if (typeof wrapperId === 'string' && wrapperId) useEditorStore.getState().selectNode(wrapperId)
 }

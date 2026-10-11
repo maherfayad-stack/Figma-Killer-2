@@ -68,7 +68,7 @@ export default function Home() {
   )
 }
 `
-const CSS = `.page { position: relative; box-sizing: border-box; width: 100%; min-height: 600px; background: #fff; }
+const CSS = `.page { position: relative; box-sizing: border-box; width: 100%; min-height: 700px; background: #fff; }
 .header { position: absolute; inset: 0 0 auto 0; z-index: 1; height: 60px; }
 .banner { position: absolute; inset: 124px 0 auto 0; box-sizing: border-box; display: flex; flex-direction: column; gap: 16px; padding: 16px; overflow: hidden; background: #fafafa; }
 .page p { margin: 0; }
@@ -78,7 +78,7 @@ const CSS = `.page { position: relative; box-sizing: border-box; width: 100%; mi
 .codeInput { width: 44px; height: 48px; box-sizing: border-box; }
 .note { margin: 0; }
 /* Its bottom edge sits 4px under the tab bar's top: a press that snapped would pull the bar up to it. */
-.peer { position: absolute; left: 300px; top: 400px; width: 40px; height: 94px; }
+.peer { position: absolute; left: 300px; top: 496px; width: 40px; height: 98px; }
 .action { width: 160px; padding: 10px 14px; font: inherit; text-align: center; border: 1px solid #888; }
 .long { margin: 0; max-width: 300px; line-height: 1.5; text-align: center; padding: 6px 10px; }
 `
@@ -236,8 +236,9 @@ test.describe('N2: Space + drag pans, it never moves the selection', () => {
     await page.waitForTimeout(500)
     const frameAfter = (await homeFrame.boundingBox())!
     expect(readFile(REL), 'Space-drag moved the layer in source').toBe(HOME)
-    expect(Math.abs(frameAfter.x - frameBefore.x - 80), 'the board did not pan').toBeLessThanOrEqual(3)
-    expect(Math.abs(frameAfter.y - frameBefore.y - 50)).toBeLessThanOrEqual(3)
+    // The pan engages after a few px of travel, so it trails the pointer by that much.
+    expect(Math.abs(frameAfter.x - frameBefore.x - 80), 'the board did not pan').toBeLessThanOrEqual(8)
+    expect(Math.abs(frameAfter.y - frameBefore.y - 50)).toBeLessThanOrEqual(8)
     expect(readFile(REL), 'Space-drag moved the layer in source').toBe(HOME)
   })
 })
@@ -392,7 +393,7 @@ test.describe(`#4 at ${zoomPercent}%: an insert in an all-absolute frame lands a
 
   test('R-tool draw in the empty part of the screen is written absolute and renders where it was drawn', async ({ page }) => {
     const { node, canvasRoot } = await openHome(page, zoomPercent)
-    const at = await mainPoint(node, 42, 700)
+    const at = await mainPoint(node, 42, 750)
     await canvasRoot.focus()
     await page.keyboard.press('r')
     await expect(page.locator('[data-canvas-draw-layer="rectangle"]')).toBeVisible()
@@ -406,12 +407,12 @@ test.describe(`#4 at ${zoomPercent}%: an insert in an all-absolute frame lands a
     await expect(drawn).toBeVisible({ timeout: 30_000 })
     const rect = await offsetInMain(drawn, node(ID.main))
     expect(Math.abs(rect.left - 42)).toBeLessThanOrEqual(2)
-    expect(Math.abs(rect.top - 700)).toBeLessThanOrEqual(2)
+    expect(Math.abs(rect.top - 750)).toBeLessThanOrEqual(2)
   })
 
   test('the notch Div released in the empty part of the screen lands absolute at the pointer', async ({ page }) => {
     const { node } = await openHome(page, zoomPercent)
-    const at = await mainPoint(node, 300, 700)
+    const at = await mainPoint(node, 300, 750)
     await dragNotchTo(page, 'canvas-notch-div-btn', at)
     await page.mouse.up()
     await expect.poll(() => readFile(REL), { timeout: 30_000 }).not.toBe(HOME)
@@ -422,7 +423,7 @@ test.describe(`#4 at ${zoomPercent}%: an insert in an all-absolute frame lands a
 
   test('the Text tool drag lands the text at the pointer', async ({ page }) => {
     const { node, canvasRoot, home } = await openHome(page, zoomPercent)
-    const at = await mainPoint(node, 42, 700)
+    const at = await mainPoint(node, 42, 750)
     await canvasRoot.focus()
     await page.keyboard.press('t')
     await expect(page.locator('[data-canvas-draw-layer="text"]')).toBeVisible()
@@ -434,7 +435,7 @@ test.describe(`#4 at ${zoomPercent}%: an insert in an all-absolute frame lands a
     await expect(editable.first()).toBeVisible({ timeout: 30_000 })
     const rect = await offsetInMain(editable.first(), node(ID.main))
     expect(Math.abs(rect.left - 42)).toBeLessThanOrEqual(2)
-    expect(Math.abs(rect.top - 700)).toBeLessThanOrEqual(2)
+    expect(Math.abs(rect.top - 750)).toBeLessThanOrEqual(2)
   })
 })
 }
@@ -453,7 +454,7 @@ test.describe('#7: an in-frame marquee selects what it sweeps, even with the fra
     await page.mouse.click(header.x + header.width / 2, header.y + header.height / 2)
     await expect(page.getByTestId('frame-bulk-inspector')).toBeVisible({ timeout: 10_000 })
     await page.waitForTimeout(400)
-    const from = await mainPoint(node, 700, 700)
+    const from = await mainPoint(node, 700, 750)
     const banner = await visualBox(node(ID.banner))
     await page.mouse.move(from.x, from.y)
     await page.mouse.down()
@@ -470,7 +471,7 @@ test.describe('#7: an in-frame marquee selects what it sweeps, even with the fra
 test('#7 control: the same sweep with nothing selected', async ({ page }) => {
   test.setTimeout(240_000)
   const { node, home } = await openHome(page)
-  const from = await mainPoint(node, 700, 700)
+  const from = await mainPoint(node, 700, 750)
   const banner = await visualBox(node(ID.banner))
   await page.mouse.move(from.x, from.y)
   await page.mouse.down()
@@ -486,7 +487,7 @@ test.describe('#5: Escape in a text edit keeps what was typed', () => {
 
   test('a Text-tool drag, typed text, then Escape writes the text and selects the layer', async ({ page }) => {
     const { node, canvasRoot, home } = await openHome(page)
-    const at = await mainPoint(node, 120, 700)
+    const at = await mainPoint(node, 120, 750)
     await canvasRoot.focus()
     await page.keyboard.press('t')
     await expect(page.locator('[data-canvas-draw-layer="text"]')).toBeVisible()
@@ -541,6 +542,7 @@ test.describe('N7: a new edit after an undo clears redo', () => {
     await page.keyboard.down('ControlOrMeta')
     await page.mouse.click(bar.x, bar.y)
     await page.keyboard.up('ControlOrMeta')
+    await expect.poll(() => selectedInFrames(page), { timeout: 10_000 }).toBeGreaterThan(0)
     await page.waitForTimeout(500)
     await page.keyboard.press('ArrowUp')
     await expect.poll(() => readFile(REL), { timeout: 30_000 }).toContain('bottom: "11px"')
@@ -649,5 +651,40 @@ test.describe('N5: Shift+0 zooms to 100% around the viewport centre', () => {
     const still = await probe()
     expect(Math.abs(still.x - under.x)).toBeLessThanOrEqual(2)
     expect(Math.abs(still.y - under.y)).toBeLessThanOrEqual(2)
+  })
+})
+
+test.describe('#8: Ctrl+G keeps the gap its parent gave the layers', () => {
+  test.setTimeout(240_000)
+
+  test('two buttons grouped stay 16px apart and the wrapper is written with the layout', async ({ page }) => {
+    const { node } = await openHome(page)
+    const one = sourceNodeId(HOME, REL, 'Button', 1)
+    const two = sourceNodeId(HOME, REL, 'Button', 2)
+    // The ids are line:col of the source, which the group rewrites: ask by the source as it is NOW.
+    const gapBetween = async () => {
+      const src = readFile(REL)
+      const first = node(sourceNodeId(src, REL, 'Button', 1))
+      const second = node(sourceNodeId(src, REL, 'Button', 2))
+      return (await visualBox(second)).top - (await visualBox(first)).bottom
+    }
+    const gapBefore = await gapBetween()
+    const b1 = centre(await visualBox(node(one)))
+    const b2 = centre(await visualBox(node(two)))
+    await page.keyboard.down('ControlOrMeta')
+    await page.mouse.click(b1.x, b1.y)
+    await page.keyboard.up('ControlOrMeta')
+    await page.keyboard.down('Shift')
+    await page.mouse.click(b2.x, b2.y)
+    await page.keyboard.up('Shift')
+    await page.waitForTimeout(500)
+    await page.keyboard.press('Control+g')
+    await expect.poll(() => readFile(REL), { timeout: 30_000 }).not.toBe(HOME)
+    await page.waitForTimeout(1500)
+    const src = readFile(REL)
+    expect(src, 'the group wrapper carries no layout').toMatch(/flexDirection: ?["']column["']/)
+    expect(src).toMatch(/gap: ?["']16px["']/)
+    const gapAfter = await gapBetween()
+    expect(Math.abs(gapAfter - gapBefore), 'the buttons moved when grouped').toBeLessThanOrEqual(1)
   })
 })

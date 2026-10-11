@@ -39,6 +39,7 @@ import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
 import { armCanvasPaste } from './canvasClipboardBridge'
 import { isUserGestureKeyEvent } from './canvasFrameKeyRelay'
 import { stepSelectionAmongSiblings } from './canvasNodeArrowMove'
+import { groupLayersKeepingLayout } from './layerCommands'
 import { isInsideKeyOwningOverlay, isTextInputTarget } from './editorKeyGuards'
 import { useEditorKeyScope } from './useEditorKeyDispatcher'
 
@@ -70,7 +71,7 @@ function runMoveShortcut(direction: 'up' | 'down', selectedNodeId: string, curre
  */
 function runGroupShortcut(selectedNodeId: string, currentIds: readonly string[]): void {
   const ids = currentIds.length > 0 ? [...currentIds] : [selectedNodeId]
-  useEditorStore.getState().groupNodes(ids)
+  void groupLayersKeepingLayout(ids)
 }
 
 interface CanvasNodeShortcutsOptions {
