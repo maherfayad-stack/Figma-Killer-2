@@ -114,12 +114,65 @@ describe('setDeclaration — the declaration the cascade reads (P3-C, WB-16)', (
     )
   })
 
-  it('still refuses a covering !important shorthand — there is no honest single write', () => {
+  it('a covering !important shorthand is rewritten in place with that one side changed (G-5)', () => {
     const css = '.price {\n  padding-top: 4px;\n  padding: 8px !important;\n}\n'
-    expect(setDeclaration(css, '.price', 'padding-top', '12px')).toMatchObject({
-      ok: false,
-      refusal: { reason: 'important-override' },
+    expect(setDeclaration(css, '.price', 'padding-top', '12px')).toEqual({
+      ok: true,
+      css: '.price {\n  padding-top: 4px;\n  padding: 12px 8px 8px !important;\n}\n',
+      changed: true,
+      landing: 'rule',
     })
+  })
+
+  it("keeps the shorthand's own token count when the edit does not need more", () => {
+    const css = '.price {\n  margin: 4px 8px !important;\n}\n'
+    expect(written(setDeclaration(css, '.price', 'margin-bottom', '12px')).css).toBe(
+      '.price {\n  margin: 4px 8px 12px !important;\n}\n',
+    )
+    expect(written(setDeclaration(css, '.price', 'margin-left', '12px')).css).toBe(
+      '.price {\n  margin: 4px 8px 4px 12px !important;\n}\n',
+    )
+    // A side set to the value its opposite already has keeps the two tokens.
+    expect(written(setDeclaration('.price { margin: 8px 4px !important; }', '.price', 'margin-bottom', '8px'))).toEqual({
+      css: '.price { margin: 8px 4px !important; }',
+      changed: false,
+    })
+  })
+
+  it('writes an !important longhand after a covering !important shorthand it cannot expand', () => {
+    // `var()` can stand for any number of tokens, so the sides are not readable.
+    const css = '.price {\n  padding: var(--pad) !important;\n  color: red;\n}\n'
+    expect(setDeclaration(css, '.price', 'padding-top', '12px')).toEqual({
+      ok: true,
+      css: '.price {\n  padding: var(--pad) !important;\n  padding-top: 12px !important;\n  color: red;\n}\n',
+      changed: true,
+      landing: 'override',
+    })
+  })
+
+  it('does the same for a shorthand with no side-by-side reading at all (background)', () => {
+    const css = '.price {\n  background: red !important;\n}\n'
+    expect(setDeclaration(css, '.price', 'background-color', 'blue')).toEqual({
+      ok: true,
+      css: '.price {\n  background: red !important;\n  background-color: blue !important;\n}\n',
+      changed: true,
+      landing: 'override',
+    })
+  })
+
+  it('an elliptical border-radius is not expanded — the longhand overrides it instead', () => {
+    const css = '.price { border-radius: 8px / 4px !important; }'
+    expect(setDeclaration(css, '.price', 'border-top-left-radius', '2px')).toMatchObject({
+      ok: true,
+      landing: 'override',
+    })
+  })
+
+  it('reports where each plain write landed', () => {
+    expect(setDeclaration('.a { color: red; }', '.a', 'color', 'blue')).toMatchObject({ landing: 'rule' })
+    expect(setDeclaration('.a { color: red; }', '.a', 'margin', '0')).toMatchObject({ landing: 'rule' })
+    expect(setDeclaration('', '.a', 'margin', '0')).toMatchObject({ landing: 'rule' })
+    expect(setDeclaration('.a { padding: 8px; }', '.a', 'padding-top', '2px')).toMatchObject({ landing: 'override' })
   })
 
   it('an unparseable stylesheet refuses by its own name', () => {
@@ -131,7 +184,7 @@ describe('setDeclaration — the declaration the cascade reads (P3-C, WB-16)', (
 
   it('is a no-op, returning the same bytes, when the winning value is already there', () => {
     const css = '.price { color: red; }\n.price { color: blue; }\n'
-    expect(setDeclaration(css, '.price', 'color', 'blue')).toEqual({ ok: true, css, changed: false })
+    expect(setDeclaration(css, '.price', 'color', 'blue')).toEqual({ ok: true, css, changed: false, landing: 'rule' })
   })
 })
 
