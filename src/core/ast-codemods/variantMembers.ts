@@ -197,7 +197,7 @@ export function planAddVariant(input: VariantPropInput, read: ReadWorkspaceText,
   if (!union.ok) return { ok: false, refusal: union.refusal }
   edits.add(located.file, union.splice)
 
-  let styling: VariantStyling = 'none'
+  let styling: VariantStyling
   let stylingFile: string | undefined
   if (binding.kind === 'css-module-class' || binding.kind === 'data-attr') {
     const from = sourceMember(input, binding.rules.map((rule) => rule.member))
