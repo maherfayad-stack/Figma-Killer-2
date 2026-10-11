@@ -20,11 +20,13 @@ export { PageNodeSchema, parsePageNode } from './pageNode'
 export {
   INLINE_ID_SEPARATOR,
   LOOP_ID_SEPARATOR,
+  MAX_INSTANCE_OVERRIDE_DEPTH,
   buildSourceNodeId,
   callSitePosition,
   decodeSourceNodeId,
   hasWritableSourceLocation,
   inlineDepth,
+  inlineSegments,
   isInlinedNodeId,
   isRouteChromeNodeId,
   isSourceDerivedNodeId,

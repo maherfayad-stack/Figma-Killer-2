@@ -267,25 +267,47 @@ const DetachEditSchema = Type.Object({
 })
 
 /**
- * P5-C (DET-7) — "Expose as prop": the literal `target` of an element inside
- * a component's markup becomes an optional prop of that component whose
- * default IS the literal (`exposeLiteralAsProp`), so every other instance
- * renders byte-identical; `value`, when given, is written at this one call
- * site. `nodeId` is the element's inlined id, exactly one call site deep
- * (`page~component:line:col`) — the call site is its head, and the codemod
- * checks the element really is that component's. Two files, one gesture,
- * journaled (⌘Z is `restore`).
+ * P5-C (DET-7), OD-19 — "Expose as prop", the write behind every edit made to
+ * an element inside a component instance: each of `overrides` names a literal
+ * of that ONE element (its text, an attribute, or one inline-style property)
+ * that becomes an optional prop of the component whose default IS the literal
+ * (`exposeLiteralAsProp`), so every other instance renders byte-identical;
+ * `value`, when given, is written at this one call site. `nodeId` is the
+ * element's inlined id, exactly one call site deep (`page~component:line:col`)
+ * — the call site is its head, and the codemod checks the element really is
+ * that component's. Two files, one gesture however many overrides, journaled
+ * (⌘Z is `restore`).
  */
-const ExposePropEditSchema = Type.Object({
-  kind: Type.Literal('expose-prop'),
-  nodeId: Type.String(),
+const ExposeOverrideSchema = Type.Object({
   target: Type.Union([
     Type.Object({ kind: Type.Literal('text') }),
     Type.Object({ kind: Type.Literal('attribute'), name: Type.String({ pattern: '^[A-Za-z_$][A-Za-z0-9_$:-]*$', maxLength: 64 }) }),
     Type.Object({ kind: Type.Literal('style'), property: Type.String({ pattern: '^[A-Za-z_$][A-Za-z0-9_$-]*$', maxLength: 64 }) }),
   ]),
   propName: Type.String({ pattern: '^[A-Za-z_$][A-Za-z0-9_$]*$', maxLength: 64 }),
-  value: Type.Optional(Type.Union([Type.String(), Type.Number(), Type.Boolean()])),
+  value: Type.Optional(Type.Union([Type.String({ maxLength: 10_000 }), Type.Number(), Type.Boolean()])),
+})
+
+const ExposePropEditSchema = Type.Object({
+  kind: Type.Literal('expose-prop'),
+  nodeId: Type.String(),
+  overrides: Type.Array(ExposeOverrideSchema, { minItems: 1, maxItems: 16 }),
+})
+
+/**
+ * OD-19 — "Apply to all": the values the instance overrides through `propNames`
+ * become the component's defaults and the call site stops passing it
+ * (`promoteOverrideToDefault`). `nodeId` is the inlined id of ANY element of
+ * that instance, exactly one call site deep (`page~component:line:col`): its
+ * head is the call site, its tail names the component's file, and both go
+ * through the one path decoder. Which element is irrelevant — the override's
+ * own write may have moved the one that was edited. Journaled (⌘Z is
+ * `restore`).
+ */
+const PromoteOverrideEditSchema = Type.Object({
+  kind: Type.Literal('promote-override'),
+  nodeId: Type.String(),
+  propNames: Type.Array(Type.String({ pattern: '^[A-Za-z_$][A-Za-z0-9_$]*$', maxLength: 64 }), { minItems: 1, maxItems: 16 }),
 })
 
 /**
@@ -332,6 +354,7 @@ export const StudioEditSchema = Type.Union([
   AssetEditSchema,
   DetachEditSchema,
   ExposePropEditSchema,
+  PromoteOverrideEditSchema,
   SwapEditSchema,
   RestoreEditSchema,
   ...StructuralEditSchemas,

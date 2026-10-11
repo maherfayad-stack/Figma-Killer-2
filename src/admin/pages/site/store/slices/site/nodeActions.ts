@@ -63,6 +63,7 @@ import { trackStructuralTreeCommit } from './structuralCommitRollback'
 import { createStudioSourceWrites } from './studioSourceWrites'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
 import { createImportedNodesActions } from './importedNodesActions'
+import type { InstanceOverrideRouter } from './instanceOverrideActions'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 import { coalesceKeyForPatch } from '../../historyCoalesce'
 
@@ -130,7 +131,7 @@ function toastOutletBlocked(body: string): void {
   })
 }
 
-export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
+export function createNodeActions(helpers: SiteSliceHelpers, overrides: InstanceOverrideRouter): NodeActions {
   const { get, set, mutateActiveTree, mutateActiveTreeAndSite, mutateTreesForNodeIds } = helpers
 
   /**
@@ -342,28 +343,42 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
     },
 
     updateNodeProps: (nodeId, patch) => {
-      mutateActiveTree(
-        (tree) => {
-          const node = tree.nodes[nodeId]
-          if (!node) throw new Error(`[PageTree] Node "${nodeId}" not found`)
-          // On a studio-imported node, writability is PER-PROP: a prop backed by
-          // a literal attribute at this element is editable even when the node's
-          // structure is code-controlled (a `.map` made it, a ternary chose it),
-          // while a prop backed by an expression is not, because writing there
-          // would replace the binding with a baked literal. See
-          // `isPropPatchWritableToSource` for why this is not keyed on
-          // `lockReason` — that describes structure, not values.
-          //
-          // Silent no-op: this action is also called programmatically (agent,
-          // plugins), so a toast here would be noise, not user feedback. The
-          // panel is what tells the user, by not offering the control.
-          if (!isPropPatchWritableToSource(node, patch)) return false
-          if (!recordPatchChanges(node.props, patch)) return false
+      // OD-19 — a value inside a component instance is an override of THIS instance, not a rewrite of the component.
+      const written = () =>
+        mutateActiveTree(
+          (tree) => {
+            const node = tree.nodes[nodeId]
+            if (!node) throw new Error(`[PageTree] Node "${nodeId}" not found`)
+            // On a studio-imported node, writability is PER-PROP: a prop backed by
+            // a literal attribute at this element is editable even when the node's
+            // structure is code-controlled (a `.map` made it, a ternary chose it),
+            // while a prop backed by an expression is not, because writing there
+            // would replace the binding with a baked literal. See
+            // `isPropPatchWritableToSource` for why this is not keyed on
+            // `lockReason` — that describes structure, not values.
+            //
+            // Silent no-op: this action is also called programmatically (agent,
+            // plugins), so a toast here would be noise, not user feedback. The
+            // panel is what tells the user, by not offering the control.
+            if (!isPropPatchWritableToSource(node, patch)) return false
+            if (!recordPatchChanges(node.props, patch)) return false
+            updateNodeProps(tree, nodeId, patch)
+            return true
+          },
+          coalesceKeyForPatch('props', nodeId, patch),
+        )
+      const overridden = overrides.route({
+        nodeId,
+        change: { props: patch },
+        preview: (tree) => {
+          if (!tree.nodes[nodeId]) return false
           updateNodeProps(tree, nodeId, patch)
           return true
         },
-        coalesceKeyForPatch('props', nodeId, patch),
-      )
+        plain: () => void written(),
+        again: (id) => get().updateNodeProps(id, patch),
+      })
+      if (!overridden) written()
     },
 
     updateInstanceCallSiteProp: (nodeId, propName, value) => {
@@ -395,7 +410,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       )
     },
 
-    ...createInlineStyleActions(helpers),
+    ...createInlineStyleActions(helpers, overrides),
     ...createIgnoreAutoLayoutActions(helpers),
 
     setBreakpointOverride: (nodeId, breakpointId, patch) => {

@@ -10,6 +10,7 @@ import { describe, expect, it } from 'bun:test'
 import {
   INLINE_ID_SEPARATOR,
   callSitePosition,
+  inlineSegments,
   decodeSourceNodeId,
 } from '../sourceNodeId'
 
@@ -31,3 +32,15 @@ describe('callSitePosition', () => {
   })
 })
 
+
+describe('inlineSegments (G-2b)', () => {
+  it('names every position of a chain, outermost first, each a plain id the path decoder takes on its own', () => {
+    const nodeId = ['pages/Home.jsx:5:8', 'components/Card.jsx:4:6', 'components/Badge.jsx:2:10'].join(INLINE_ID_SEPARATOR)
+    expect(inlineSegments(nodeId)).toEqual(['pages/Home.jsx:5:8', 'components/Card.jsx:4:6', 'components/Badge.jsx:2:10'])
+    expect(inlineSegments(nodeId).map((segment) => decodeSourceNodeId(segment)?.rel)).toEqual(['pages/Home.jsx', 'components/Card.jsx', 'components/Badge.jsx'])
+  })
+
+  it('a plain id is its own single segment', () => {
+    expect(inlineSegments('pages/Home.jsx:5:8')).toEqual(['pages/Home.jsx:5:8'])
+  })
+})
