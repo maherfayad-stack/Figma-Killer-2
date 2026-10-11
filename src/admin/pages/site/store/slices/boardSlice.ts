@@ -116,6 +116,7 @@ import {
 } from '@core/studio-board'
 import type { FrameAlignEdge } from '@site/canvas/BoardFramesLayer/frameAlign'
 import { boardCoalesceKey, commitBoardChange, dropBoardHistory } from './boardHistory'
+import { createBoardNameActions } from './boardNameActions'
 import * as guideActions from './boardGuideActions'
 import { createFrameSelectionActions } from './boardFrameSelectionActions'
 import { createFrameMutationActions } from './boardFrameSliceActions'
@@ -335,6 +336,16 @@ interface BoardSlice {
   duplicateFrameAt: (sourceFrameId: string, x: number, y: number) => string | null
   /** WS-10 Phase 2 — set (or clear, passing `undefined`) one frame's per-axis preview override by `id`. No-op if the frame id doesn't exist. */
   setFrameAxes: (frameId: string, axes: Partial<PreviewAxes> | undefined) => void
+  /**
+   * Rename a page on the board (`pageNames` in `.studio/boards.json`); an empty
+   * title gives the page its file name back. One undo entry. See `boardNameActions.ts`.
+   */
+  renamePageOnBoard: (pageId: string, title: string) => void
+  /**
+   * Name an element of a page (`layerNames` in `.studio/boards.json`); an empty
+   * name clears it. One undo entry. False when the element is not in that page's tree.
+   */
+  renameLayerOnBoard: (pageId: string, nodeId: string, name: string) => boolean
   /** Clear the dirty flag after a successful save. */
   markBoardsClean: () => void
   /**
@@ -547,6 +558,7 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
   },
 
   ...createAnnotationActions(set, get),
+  ...createBoardNameActions(set, get),
 
   // D1 — persisted ruler guides (one-lined to stay under the size-budget ceiling).
   addGuide: (axis, position) => {

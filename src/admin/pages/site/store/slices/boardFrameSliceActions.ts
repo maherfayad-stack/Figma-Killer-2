@@ -28,8 +28,7 @@ import {
   setFrameAxes as setFrameAxesOnBoard,
   duplicateFrame,
   defaultFramePosition,
-  FRAME_WIDTH,
-  VARIANT_GAP,
+  freeSlotBeside,
 } from '@core/studio-board'
 import { boardCoalesceKey, commitBoardChange } from './boardHistory'
 
@@ -139,10 +138,10 @@ export function createFrameMutationActions(
       const newFrameId = crypto.randomUUID()
       const nextBoard = duplicateFrame(board, sourceFrameId, {
         id: newFrameId,
-        // Beside the source, same row — the primary way users reach this
-        // feature (§4.4), so it must never land exactly on top of its sibling.
-        x: source.x + (source.width ?? FRAME_WIDTH) + VARIANT_GAP,
-        y: source.y,
+        // Beside the source, same row, in free space — the primary way users
+        // reach this feature (§4.4), so it must never land on top of a sibling
+        // or on the next frame along.
+        ...freeSlotBeside(board, source),
         axes: axesOverride,
       })
       if (!nextBoard) return null

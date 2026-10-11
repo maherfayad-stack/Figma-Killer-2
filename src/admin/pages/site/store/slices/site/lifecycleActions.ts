@@ -24,7 +24,7 @@ import { emptyDirtyMarks, type DirtyMarks } from './dirtyTracking'
 import { reconcileFrameworkClasses } from './framework/reconcile'
 import { collectAllNodeIds, historySurvivesReload } from './historyPreservation'
 import { endMainEditMode } from './mainEditMode'
-import { retainBoardOnlyEntries } from '../boardHistory'
+import { retainSiteIndependentEntries } from '../boardHistory'
 import { buildReparseNodeIdRemap, remapHistoryEntries } from './historyNodeIdRemap'
 import { applyNodeIndexPatch, clearNodeIndexes, nodeIndexesOf, rebuildNodeIndexes } from './nodeIndex'
 import { notePagesRead } from './pageReadEpoch'
@@ -259,8 +259,8 @@ export function createLifecycleActions({
           // wipe. Wiping a sticky-note move because a page's line numbers
           // shifted is the same "one gesture destroys unrelated undo history"
           // bug `store-08` fixed for the site domain.
-          state._historyPast = retainBoardOnlyEntries(state._historyPast)
-          state._historyFuture = retainBoardOnlyEntries(state._historyFuture)
+          state._historyPast = retainSiteIndependentEntries(state._historyPast)
+          state._historyFuture = retainSiteIndependentEntries(state._historyFuture)
         }
         // A reload boundary always ends an in-progress coalescing burst —
         // the next edit must not fold into whatever burst was open before
@@ -520,8 +520,8 @@ export function createLifecycleActions({
           // wipe. Wiping a sticky-note move because a page's line numbers
           // shifted is the same "one gesture destroys unrelated undo history"
           // bug `store-08` fixed for the site domain.
-          state._historyPast = retainBoardOnlyEntries(state._historyPast)
-          state._historyFuture = retainBoardOnlyEntries(state._historyFuture)
+          state._historyPast = retainSiteIndependentEntries(state._historyPast)
+          state._historyFuture = retainSiteIndependentEntries(state._historyFuture)
         }
         // A patch that reaches this point changed at least one page or
         // removed one — the same "reload boundary" `loadSite` treats as

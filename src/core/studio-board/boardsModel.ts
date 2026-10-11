@@ -1,4 +1,4 @@
-import type { Board, BoardFrame, BoardGuide, BoardsFile, BoardStacked, DocBlock, StickyNote } from './types'
+import type { Board, BoardFrame, BoardGuide, BoardsFile, BoardStacked, DocBlock, LayerName, StickyNote } from './types'
 import type { PreviewAxes } from './previewAxes'
 
 export function createBoardsFile(): BoardsFile {
@@ -351,4 +351,43 @@ export function duplicateFrame(
     ...(next.axes ? { axes: next.axes } : {}),
   }
   return { ...board, frames: [...board.frames, frame] }
+}
+
+/**
+ * Give a page a display name, or take it away (`name` empty or `undefined`).
+ * Returns the SAME file when nothing changes, so a no-op rename neither dirties
+ * the boards nor lands on the undo stack.
+ */
+export function setPageName(file: BoardsFile, pageId: string, name: string | undefined): BoardsFile {
+  const next = name?.trim() ?? ''
+  const current = file.pageNames?.[pageId]
+  if (next === (current ?? '')) return file
+  const { [pageId]: _removed, ...rest } = file.pageNames ?? {}
+  const pageNames = next === '' ? rest : { ...rest, [pageId]: next }
+  const { pageNames: _old, ...withoutNames } = file
+  return Object.keys(pageNames).length > 0 ? { ...withoutNames, pageNames } : withoutNames
+}
+
+/**
+ * Give an element a layer name, or take it away (`name` empty). `supersedes` is
+ * the stored node id of the entry this one replaces - the same element as it was
+ * anchored when it was last named, which is not `hint.nodeId` once an edit above
+ * it has moved it (default: `hint.nodeId`). Renaming twice replaces rather than
+ * stacks. Returns the SAME file when nothing changes.
+ */
+export function setLayerName(
+  file: BoardsFile,
+  target: { pageId: string; hint: LayerName['hint']; supersedes?: string },
+  name: string | undefined,
+): BoardsFile {
+  const next = name?.trim() ?? ''
+  const replaced = target.supersedes ?? target.hint.nodeId
+  const all = file.layerNames ?? []
+  const isTarget = (entry: LayerName): boolean => entry.pageId === target.pageId && entry.hint.nodeId === replaced
+  const current = all.find(isTarget)
+  if ((current?.name ?? '') === next && (next === '' || JSON.stringify(current?.hint) === JSON.stringify(target.hint))) return file
+  const others = all.filter((entry) => !isTarget(entry))
+  const layerNames = next === '' ? others : [...others, { pageId: target.pageId, hint: target.hint, name: next }]
+  const { layerNames: _old, ...withoutNames } = file
+  return layerNames.length > 0 ? { ...withoutNames, layerNames } : withoutNames
 }

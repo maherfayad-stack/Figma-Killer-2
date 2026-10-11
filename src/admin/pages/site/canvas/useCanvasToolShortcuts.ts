@@ -54,7 +54,10 @@ import type { DrawTool } from '@site/store/slices/canvasSlice'
 import { resolveSiblingAfterLocation } from '@site/store/insertLocation'
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
 import { useInsertModule } from '@site/hooks/useInsertModule'
+import { selectActiveBoard } from '@site/store/slices/boardSelectors'
 import { DRAW_TOOL_SPECS, isDrawTool, type ArmedTool } from './canvasDrawTool'
+import { centredAnnotationPosition } from './annotationPlacement'
+import { placeDrawOnBoard } from './placeDrawOnBoard'
 import { isTextInputTarget } from './editorKeyGuards'
 import { useEditorKeyScope } from './useEditorKeyDispatcher'
 
@@ -68,6 +71,36 @@ const ARMED_TOOL_KEYS: ReadonlyArray<{ commandId: string; tool: ArmedTool }> = [
   { commandId: 'tools.pen', tool: 'pen' },
 ]
 
+/** The size a tool's loose layer is centred with when ⏎ has nothing selected to place it against (text has no click size). */
+const NATURAL_LAYER_SIZE = { width: 100, height: 100 }
+
+/**
+ * ⏎ with a draw tool armed and NOTHING selected. There is no element to put
+ * the new one beside or inside, and the page the editor happens to have open
+ * (`?page=`) is not necessarily on the board at all - writing there is a
+ * change the author cannot see. So the element becomes a loose layer at the
+ * centre of what they ARE looking at, the same landing a press on the empty
+ * board gives it. No active board, or no canvas to measure: nothing is made.
+ */
+function insertLooseLayerAtViewportCentre(tool: DrawTool): boolean {
+  const state = useEditorStore.getState()
+  const board = selectActiveBoard(state)
+  const canvas = document.querySelector('[data-testid="canvas-root"]')
+  if (!board || !canvas) return false
+  const { width: viewportWidth, height: viewportHeight } = canvas.getBoundingClientRect()
+  const size = DRAW_TOOL_SPECS[tool].clickSize ?? NATURAL_LAYER_SIZE
+  const { x, y } = centredAnnotationPosition({
+    zoom: state.zoom,
+    panX: state.panX,
+    panY: state.panY,
+    viewportWidth,
+    viewportHeight,
+    ...size,
+    existing: [...board.notes, ...board.docs],
+  })
+  return placeDrawOnBoard(tool, { x, y, ...size }, false)
+}
+
 /** `H` and `K` — the two latched tools, each a toggle on its own key. */
 const LATCHED_TOOL_KEYS: ReadonlyArray<{ commandId: string; tool: 'hand' | 'scale' }> = [
   { commandId: 'tools.hand', tool: 'hand' },
@@ -79,6 +112,7 @@ export function useCanvasToolShortcuts(editable: boolean, isLive: boolean): void
 
   /** ⏎ with `tool` armed: the immediate insert the letter used to make. */
   const insertAtSelection = (tool: DrawTool): boolean => {
+    if (useEditorStore.getState().selectedNodeId === null) return insertLooseLayerAtViewportCentre(tool)
     const spec = DRAW_TOOL_SPECS[tool]
     const definition = registry.get(spec.moduleId)
     if (!definition) return false

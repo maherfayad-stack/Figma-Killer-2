@@ -139,6 +139,14 @@ export function createPageActions({
     },
 
     renamePage: (pageId, title, slug) => {
+      // A Studio page is a file; its name is board state (`boardNameActions.ts`)
+      // because the file name is what its id and route come from. The slug is
+      // that id, so it is not the caller's to change.
+      const studioPage = get().site?.pages.find((candidate) => candidate.id === pageId)
+      if (studioPage && isStudioPageRootId(studioPage.rootNodeId)) {
+        get().renamePageOnBoard(pageId, title)
+        return
+      }
       mutateSite((p) => {
         const page = p.pages.find((candidate) => candidate.id === pageId)
         if (!page) return false

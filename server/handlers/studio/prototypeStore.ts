@@ -29,33 +29,49 @@
  * which pages still exist. A `prune` naming NO pages is refused rather than
  * obeyed: it is indistinguishable from a caller that failed to load its pages,
  * and obeying it would wipe every flow in the project.
+ *
+ * WHY AN OP TOUCHES ONLY THE LINKS IT NAMES
+ * ─────────────────────────────────────────
+ * The file is hand-editable and lives in the user's git repo, so a write for one
+ * link must not rewrite the others. `parsePrototypeFile` REPAIRS on read (a
+ * legacy `"trigger": "click"` becomes `{ kind: "click" }`, a field it does not
+ * know is dropped), so serializing the parsed file back out re-formatted every
+ * link in the file - a 46-line diff for one new connector, and an undo that
+ * could not restore the bytes it had changed. Ops therefore run on the file's
+ * RAW links: the named link is added, replaced or removed, every other entry
+ * (including one the reader would repair or drop) is written back exactly as it
+ * was read. Removing the link an upsert appended restores the file byte for
+ * byte.
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import {
   PrototypeLinkSchema,
-  createPrototypeFile,
   parsePrototypeFile,
   prunePrototypeLinks,
-  removePrototypeLink,
-  serializePrototypeFile,
-  upsertPrototypeLink,
   type PrototypeFile,
+  type PrototypeLink,
 } from '@core/studio-prototype'
-import { readStudioStoreDocument, studioStorePath, writeStudioStoreFile } from './studioStore'
+import { readStudioStoreText, studioStorePath, writeStudioStoreFile } from './studioStore'
 
 const PROTOTYPE_FILE = 'prototype.json'
 
-/** Absolute path of `.studio/prototype.json` — for a caller that must NAME it (the shell's input stamp); reading and writing go through `studioStore.ts`. */
+/** Absolute path of `.studio/prototype.json` - for a caller that must NAME it (the shell's input stamp); reading and writing go through `studioStore.ts`. */
 export function prototypeFilePath(dir: string): string {
   return studioStorePath(dir, PROTOTYPE_FILE)
 }
 
+/** The file as the editor reads it: links repaired and validated. */
 export function readPrototypeFile(dir: string): PrototypeFile {
-  return readStudioStoreDocument(dir, PROTOTYPE_FILE, parsePrototypeFile, createPrototypeFile)
+  return parsePrototypeFile(readStudioStoreText(dir, PROTOTYPE_FILE) ?? '')
 }
 
-export function writePrototypeFile(dir: string, file: PrototypeFile): void {
-  writeStudioStoreFile(dir, PROTOTYPE_FILE, serializePrototypeFile(file))
+/** The file's bytes, or `null` when there is none (or it is reached through a link). */
+export function readPrototypeText(dir: string): string | null {
+  return readStudioStoreText(dir, PROTOTYPE_FILE)
+}
+
+export function writePrototypeText(dir: string, text: string): void {
+  writeStudioStoreFile(dir, PROTOTYPE_FILE, text)
 }
 
 export const PrototypeOpSchema = Type.Union([
@@ -66,41 +82,83 @@ export const PrototypeOpSchema = Type.Union([
 export type PrototypeOp = Static<typeof PrototypeOpSchema>
 
 export type PrototypeOpResult =
-  | { ok: true; file: PrototypeFile; changed: boolean }
+  | { ok: true; file: PrototypeFile; text: string; changed: boolean }
   | { ok: false; status: 400; error: string }
 
+type RawObject = Record<string, unknown>
+
+function isRawObject(value: unknown): value is RawObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** The stored document and its raw `links`; an absent, unparseable or link-less file is an empty document. */
+function readRawDocument(stored: string | null): { document: RawObject; links: unknown[] } {
+  if (stored !== null) {
+    try {
+      const parsed: unknown = JSON.parse(stored)
+      if (isRawObject(parsed) && Array.isArray(parsed.links)) return { document: parsed, links: parsed.links }
+    } catch {
+      // An unreadable file is treated as empty, exactly as the reader does; the write replaces it.
+    }
+  }
+  return { document: { version: 1 }, links: [] }
+}
+
+const rawId = (entry: unknown): string | undefined => (isRawObject(entry) && typeof entry.id === 'string' ? entry.id : undefined)
+
 /**
- * Apply one operation. Pure with respect to the filesystem — the caller reads,
- * applies and writes, which is what makes this testable without a temp dir.
+ * The link as it goes into the file. An existing entry keeps the `origin` it
+ * carried (a field the editor does not model but a person or an older build
+ * wrote), placed right after `id` where it was.
+ */
+function storedLink(link: PrototypeLink, existing: unknown): RawObject {
+  const { id, ...rest } = link
+  const origin = isRawObject(existing) ? existing.origin : undefined
+  return origin === undefined ? { id, ...rest } : { id, origin, ...rest }
+}
+
+/**
+ * Apply one operation to the stored text. Pure with respect to the filesystem -
+ * the caller reads, applies and writes, which is what makes this testable
+ * without a temp dir.
  *
  * `changed: false` is a SUCCESS: removing a link that is already gone, or a
  * prune with nothing to prune, writes no bytes rather than rewriting a
  * byte-identical file.
  */
-export function applyPrototypeOp(file: PrototypeFile, op: PrototypeOp): PrototypeOpResult {
+export function applyPrototypeOp(stored: string | null, op: PrototypeOp): PrototypeOpResult {
+  const { document, links } = readRawDocument(stored)
+  const finish = (next: unknown[]): PrototypeOpResult => {
+    const changed = JSON.stringify(next) !== JSON.stringify(links)
+    const text = changed || stored === null ? `${JSON.stringify({ ...document, links: next }, null, 2)}
+` : stored
+    return { ok: true, file: parsePrototypeFile(text), text, changed }
+  }
+
   switch (op.kind) {
     case 'upsert': {
       // Re-parse the single link so a hand-rolled request cannot store a
-      // shape the reader would later have to repair — same posture as the
+      // shape the reader would later have to repair - same posture as the
       // boards route re-parsing its whole payload.
-      const parsed = parsePrototypeFile({ version: 1, links: [op.link] })
-      const link = parsed.links[0]
+      const link = parsePrototypeFile({ version: 1, links: [op.link] }).links[0]
       if (!link) return { ok: false, status: 400, error: 'Link is not a usable prototype link' }
-      const next = upsertPrototypeLink(file, link)
-      return { ok: true, file: next, changed: true }
+      const index = links.findIndex((entry) => rawId(entry) === link.id)
+      if (index === -1) return finish([...links, storedLink(link, undefined)])
+      return finish(links.map((entry, i) => (i === index ? storedLink(link, entry) : entry)))
     }
 
-    case 'remove': {
-      const next = removePrototypeLink(file, op.linkId)
-      return { ok: true, file: next, changed: next !== file }
-    }
+    case 'remove':
+      return finish(links.filter((entry) => rawId(entry) !== op.linkId))
 
     case 'prune': {
       if (op.pageIds.length === 0) {
         return { ok: false, status: 400, error: 'prune requires the list of pages that still exist' }
       }
-      const next = prunePrototypeLinks(file, op.pageIds)
-      return { ok: true, file: next, changed: next !== file }
+      const readable = parsePrototypeFile({ version: 1, links })
+      const surviving = new Set(prunePrototypeLinks(readable, op.pageIds).links.map((link) => link.id))
+      const readableIds = new Set(readable.links.map((link) => link.id))
+      // An entry the reader cannot make sense of is not this op's to delete.
+      return finish(links.filter((entry) => !readableIds.has(rawId(entry) ?? '') || surviving.has(rawId(entry) ?? '')))
     }
   }
 }

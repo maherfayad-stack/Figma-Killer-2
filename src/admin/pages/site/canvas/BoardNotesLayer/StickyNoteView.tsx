@@ -11,8 +11,9 @@
  * (or by double-clicking, from any state). That two-step is deliberate and is
  * how Miro and Figma both behave — on an infinite canvas a single click is
  * how you pick something up, so making the first click also enter a text
- * caret makes the note impossible to select without risking an edit. Blur or
- * Escape commits; Escape additionally restores the pre-edit text.
+ * caret makes the note impossible to select without risking an edit. Blur and
+ * Escape both commit the typed text (Figma's behaviour: Escape leaves the
+ * editor, it never throws the note's words away).
  *
  * The editing session is local state, NOT `inlineEditSlice` — that slice is
  * page-tree specific and a note is board furniture, not a node.
@@ -85,8 +86,6 @@ function StickyNoteViewImpl({ note }: StickyNoteViewProps) {
     clearAnnotationEditRequest(note.id)
   }, [note.id])
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
-  // The text as it was when editing began — Escape restores it.
-  const preEditTextRef = useRef(note.text)
   // Whether this gesture is a click on an already-selected note (which opens
   // the editor on release) and whether it has since travelled far enough to be
   // a drag instead. The slop is what stops the sub-pixel movement of an
@@ -121,7 +120,6 @@ function StickyNoteViewImpl({ note }: StickyNoteViewProps) {
   }, [isEditing])
 
   const beginEditing = () => {
-    preEditTextRef.current = note.text
     setIsEditing(true)
   }
 
@@ -163,14 +161,17 @@ function StickyNoteViewImpl({ note }: StickyNoteViewProps) {
     if (shouldEdit) beginEditing()
   }
 
-  const handleTextBlur = (e: React.FocusEvent<HTMLDivElement>) => {
+  /**
+   * Commit what is typed and close the editor. Blur and Escape both end an
+   * editing session this way.
+   */
+  const commitText = (el: HTMLDivElement) => {
     // `innerText`, not `textContent`: pressing Enter in a contentEditable
     // inserts a `<div>` or `<br>`, and `textContent` concatenates across them —
     // a two-line note would commit as one run-on line. `innerText` is the
     // rendered text, line breaks included, which is what the note stores and
     // what `white-space: pre-wrap` renders back. (jsdom implements only
     // `textContent`, hence the fallback.)
-    const el = e.currentTarget
     updateNoteText(note.id, el.innerText ?? el.textContent ?? '')
     // `store-09` — one editing session is one undo entry; closing the burst
     // here makes the next session its own ⌘Z step.
@@ -178,14 +179,13 @@ function StickyNoteViewImpl({ note }: StickyNoteViewProps) {
     setIsEditing(false)
   }
 
+  const handleTextBlur = (e: React.FocusEvent<HTMLDivElement>) => commitText(e.currentTarget)
+
   const handleTextKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'Escape') {
       e.preventDefault()
       e.stopPropagation()
-      if (textRef.current) textRef.current.textContent = preEditTextRef.current
-      updateNoteText(note.id, preEditTextRef.current)
-      useEditorStore.getState().endBoardGesture()
-      setIsEditing(false)
+      commitText(e.currentTarget)
       return
     }
     // Every other key belongs to the text — never to the canvas's own

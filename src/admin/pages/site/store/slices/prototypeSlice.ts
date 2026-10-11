@@ -40,6 +40,8 @@
  */
 import type { EditorStoreSliceCreator } from '@site/store/types'
 import { clearCanvasHover } from '@site/canvas/canvasHover'
+import { commitHistoryEntry } from './site/historyStack'
+import type { PrototypeHistory } from './site/historyTypes'
 import {
   INITIAL_PLAY_STATE,
   applyPlayAction,
@@ -155,6 +157,12 @@ export interface PrototypeSlice {
   /** Adopt a freshly-derived code flow map. */
   adoptCodeFlow: (flow: CodeFlow) => void
   setPrototypeLoadFailed: (failed: boolean) => void
+  /**
+   * Put a link write that has already landed on the undo stack, as the two
+   * operations that take it back and put it again (`PrototypeHistory`). It
+   * ends any coalescing burst: a link is never folded into a neighbour.
+   */
+  recordPrototypeEdit: (edit: PrototypeHistory) => void
   setBoardMode: (mode: BoardMode) => void
   setSelectedLink: (linkId: string | null) => void
   setPlayMode: (active: boolean) => void
@@ -202,6 +210,11 @@ export const createPrototypeSlice: EditorStoreSliceCreator<PrototypeSlice> = (se
   adoptCodeFlow: (flow) =>
     set((s) => {
       s.codeFlow = flow
+    }),
+
+  recordPrototypeEdit: (edit) =>
+    set((s) => {
+      commitHistoryEntry(s, { inverse: [], forward: [], coalesceKey: null, prototype: edit })
     }),
 
   setPrototypeLoadFailed: (failed) =>

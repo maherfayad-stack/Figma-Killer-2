@@ -52,6 +52,35 @@ async function run(op: PrototypeOp, failureTitle: string): Promise<boolean> {
 }
 
 /**
+ * Write one link change AND put it on the undo stack, as the pair of
+ * operations that takes it back and puts it again. `previous` is the link as it
+ * stood before (an edit, a delete) or `undefined` when the change created it.
+ * The stack entry exists only once the write has landed, so a refused write
+ * leaves nothing for Ctrl+Z to undo.
+ */
+async function runRecorded(
+  forward: PrototypeOp,
+  previous: PrototypeLink | undefined,
+  failureTitle: string,
+): Promise<boolean> {
+  const ok = await run(forward, failureTitle)
+  if (!ok) return false
+  const back: PrototypeOp | null =
+    forward.kind === 'upsert'
+      ? previous
+        ? { kind: 'upsert', link: previous }
+        : { kind: 'remove', linkId: forward.link.id }
+      : forward.kind === 'remove' && previous
+        ? { kind: 'upsert', link: previous }
+        : null
+  if (back) useEditorStore.getState().recordPrototypeEdit({ undo: back, redo: forward })
+  return true
+}
+
+const storedLink = (linkId: string): PrototypeLink | undefined =>
+  useEditorStore.getState().prototype.links.find((link) => link.id === linkId)
+
+/**
  * Re-read the authored links — after a load, a project switch, or an agent push.
  *
  * P3-A — a read nobody clicked for: retried quietly while the server is
@@ -135,7 +164,7 @@ export async function saveLink(draft: LinkDraft, tree: NodeTree): Promise<boolea
     targetPageId: takesTarget ? draft.targetPageId : null,
     ...(transition ? { transition } : {}),
   }
-  return run({ kind: 'upsert', link }, 'Failed to save the prototype link')
+  return runRecorded({ kind: 'upsert', link }, storedLink(link.id), 'Failed to save the prototype link')
 }
 
 /**
@@ -190,7 +219,7 @@ export async function commitLinkDraft(
   }
 
   state.cancelLinkDraft()
-  const ok = await run({ kind: 'upsert', link }, 'Could not create the link')
+  const ok = await runRecorded({ kind: 'upsert', link }, undefined, 'Could not create the link')
   if (!ok) return null
   useEditorStore.getState().setSelectedLink(link.id)
   return link.id
@@ -212,12 +241,12 @@ export async function commitLinkDraft(
  * screen, so the drag gesture cannot express it, but the inspector already can.
  */
 export async function updateLink(link: PrototypeLink): Promise<boolean> {
-  return run({ kind: 'upsert', link }, 'Could not update the link')
+  return runRecorded({ kind: 'upsert', link }, storedLink(link.id), 'Could not update the link')
 }
 
 /** Delete one authored link. */
 export async function deleteLink(linkId: string): Promise<boolean> {
-  const ok = await run({ kind: 'remove', linkId }, 'Failed to delete the prototype link')
+  const ok = await runRecorded({ kind: 'remove', linkId }, storedLink(linkId), 'Failed to delete the prototype link')
   if (ok && useEditorStore.getState().selectedLinkId === linkId) {
     useEditorStore.getState().setSelectedLink(null)
   }

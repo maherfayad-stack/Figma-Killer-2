@@ -196,18 +196,29 @@ export function isBoardOnlyEntry(entry: HistoryEntry): boolean {
   )
 }
 
+/** True when an entry's ONLY scope is the prototype links (`.studio/prototype.json`). */
+export function isPrototypeOnlyEntry(entry: HistoryEntry): boolean {
+  return (
+    entry.prototype !== undefined &&
+    entry.board === undefined &&
+    entry.inverse.length === 0 &&
+    entry.forward.length === 0 &&
+    entry.structural === undefined
+  )
+}
+
 /**
- * Keep only the board-scoped entries in a stack — what a SITE reload should
- * leave behind when it decides the site-scoped stack can no longer be replayed
- * (`historyPreservation.ts`).
+ * Keep only the entries that live outside the page documents (board state, the
+ * prototype links) - what a SITE reload should leave behind when it decides the
+ * site-scoped stack can no longer be replayed (`historyPreservation.ts`).
  *
- * A `.tsx` reparse says nothing whatsoever about `.studio/boards.json`, so
- * wiping a sticky-note move because a page's line numbers shifted would be
- * exactly the "one gesture destroys unrelated undo history" bug `store-08`
- * fixed for the site domain, reintroduced in the board domain.
+ * A `.tsx` reparse says nothing whatsoever about `.studio/boards.json` or
+ * `.studio/prototype.json`, so wiping a sticky-note move because a page's line
+ * numbers shifted would be exactly the "one gesture destroys unrelated undo
+ * history" bug `store-08` fixed for the site domain, reintroduced in another.
  */
-export function retainBoardOnlyEntries(entries: readonly HistoryEntry[]): HistoryEntry[] {
-  return entries.filter(isBoardOnlyEntry)
+export function retainSiteIndependentEntries(entries: readonly HistoryEntry[]): HistoryEntry[] {
+  return entries.filter((entry) => isBoardOnlyEntry(entry) || isPrototypeOnlyEntry(entry))
 }
 
 /**

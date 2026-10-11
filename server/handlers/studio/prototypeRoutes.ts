@@ -22,7 +22,7 @@
 import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import { Type } from '@core/utils/typeboxHelpers'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
-import { PrototypeOpSchema, applyPrototypeOp, readPrototypeFile, writePrototypeFile } from './prototypeStore'
+import { PrototypeOpSchema, applyPrototypeOp, readPrototypeFile, readPrototypeText, writePrototypeText } from './prototypeStore'
 import { readCodeFlow } from './prototypeCodeFlow'
 
 const ROUTE_PATH = '/admin/api/studio/prototype'
@@ -71,10 +71,10 @@ export async function tryServeStudioPrototype(
 
       // Read-apply-write, so a concurrent writer merges instead of being
       // silently discarded.
-      const result = applyPrototypeOp(readPrototypeFile(dir), body.op)
+      const result = applyPrototypeOp(readPrototypeText(dir), body.op)
       if (!result.ok) return jsonResponse({ error: result.error }, { status: result.status })
 
-      if (result.changed) writePrototypeFile(dir, result.file)
+      if (result.changed) writePrototypeText(dir, result.text)
       return jsonResponse({ ok: true, changed: result.changed, prototype: result.file })
     } catch (err) {
       rethrowProjectDirRefusal(err)

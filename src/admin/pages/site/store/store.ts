@@ -32,6 +32,7 @@ import { useAdminUi } from '@admin/state/adminUi'
 import { readWorkspaceLayout, workspaceFromPathname } from '@admin/state/workspaceLayoutStorage'
 import { restoreStoredSiteEditorLayout } from '@site/layout/siteEditorLayoutPersistence'
 import { clearCanvasHover } from '@site/canvas/canvasHover'
+import { bindBoardNamesSync, resetBoardNamesSync } from './boardNamesSync'
 
 /**
  * EditorStore — the central Zustand store for the visual editor.
@@ -182,6 +183,10 @@ useEditorStore.subscribe(
 // editor store is constructed.
 bindPluginRuntimeStoreApi(useEditorStore)
 
+// A page title and a layer label are derived from the board names - see
+// `boardNamesSync.ts`.
+bindBoardNamesSync(useEditorStore)
+
 // ---------------------------------------------------------------------------
 // Test-only: restore the store to the state it had when this module finished
 // loading.
@@ -221,6 +226,7 @@ const PRISTINE_EDITOR_STATE = useEditorStore.getState()
  */
 export function __resetEditorStoreForTests(): void {
   useEditorStore.setState(PRISTINE_EDITOR_STATE, true)
+  resetBoardNamesSync()
   clearCanvasHover()
 }
 

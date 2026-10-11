@@ -1,6 +1,7 @@
 import { Type, type Static } from '@sinclair/typebox'
 import type { PreviewAxes } from './previewAxes'
 import { CanvasLayerIdSchema } from './canvasLayers'
+import { NodeHintSchema } from '@core/studio-anchor'
 
 export type NoteColor = 'yellow' | 'green' | 'blue' | 'pink' | 'gray'
 
@@ -157,7 +158,36 @@ export interface Board {
   layers?: CanvasLayerPlacement[]
 }
 
+/**
+ * A layer's name, kept beside the board because the JSX has nowhere to hold it.
+ *
+ * A node in a Studio page IS an element of the user's source; the source has no
+ * "layer name", and writing one into the markup (a `data-` attribute) would put
+ * Studio's bookkeeping in the user's code. So the name is Studio's own state,
+ * like a frame's size or a note's text. It is anchored with a `NodeHint`
+ * (`@core/studio-anchor`) because a node id is a source position and rots on
+ * every edit above it; the hint is re-resolved on each load and an entry whose
+ * element is gone is simply not applied.
+ */
+export const LayerNameSchema = Type.Object({
+  pageId: Type.String({ minLength: 1 }),
+  hint: NodeHintSchema,
+  name: Type.String({ minLength: 1, maxLength: 120 }),
+})
+
+export type LayerName = Static<typeof LayerNameSchema>
+
 export interface BoardsFile {
   version: 1
   boards: Board[]
+  /**
+   * A page's display name by page id, when the author renamed it. The page's
+   * file is `pages/<Name>.tsx` and its id and route come from that name, so a
+   * rename in Studio cannot move the file (that would change the page's id
+   * under every link, comment and frame that names it): the new name is board
+   * state, shown wherever the page is listed. Absent when no page is renamed.
+   */
+  pageNames?: Record<string, string>
+  /** Layer names the author gave elements of a page. Absent when none. See {@link LayerNameSchema}. */
+  layerNames?: LayerName[]
 }

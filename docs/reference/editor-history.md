@@ -284,7 +284,7 @@ lands the undo.
 **Reload boundaries — opposite answers, on purpose.**
 
 - A **site** reload/patch that fails `historySurvivesReload` now calls
-  `retainBoardOnlyEntries` instead of `= []`. A `.tsx` reparse says nothing
+  `retainSiteIndependentEntries` instead of `= []`. A `.tsx` reparse says nothing
   about `.studio/boards.json`; wiping a sticky-note move because a page's line
   numbers shifted is exactly the bug `store-08` fixed for the site domain.
   `remapHistoryEntries` passes board entries through untouched (they carry no
@@ -660,7 +660,7 @@ The Zustand store is created with `mutative({ enableAutoFreeze: true })`. That k
 
 - `src/admin/pages/site/store/slices/site/helpers.ts` — `runHistoricMutation`, all six `mutate*` helpers
 - `src/admin/pages/site/store/slices/site/historyStack.ts` — `commitHistoryEntry`, `foldIntoCoalescedEntry` (the sole writer of the stacks)
-- `src/admin/pages/site/store/slices/boardHistory.ts` — `commitBoardChange`, `restoreBoardSnapshot`, `boardCoalesceKey`, `retainBoardOnlyEntries`, `dropBoardHistory`
+- `src/admin/pages/site/store/slices/boardHistory.ts` — `commitBoardChange`, `restoreBoardSnapshot`, `boardCoalesceKey`, `retainSiteIndependentEntries`, `dropBoardHistory`
 - `src/admin/pages/site/store/slices/site/undoRedoActions.ts` — `undo`, `redo`, `runStructuralStep`
 - `src/admin/pages/site/store/slices/site/structuralHistory.ts` — `tagStructuralGesture`, `captureMoveOrigin`, `reissueStructuralMove`
 - `src/admin/pages/site/store/slices/site/structuralCommitRollback.ts` — `trackStructuralTreeCommit`, `trackStructuralStackCommit` (ERR-6)

@@ -39,8 +39,7 @@ import {
   duplicateFrame,
   setFrameAxes as setFrameAxesOnBoard,
   upsertBoard,
-  FRAME_WIDTH,
-  VARIANT_GAP,
+  freeSlotBeside,
   type Board,
   type BoardFrame,
   type PreviewAxes,
@@ -125,12 +124,11 @@ const duplicateFrameAsVariantTool: AiTool = {
     const found = findFrame(boardsFile.boards, args.pageId, args.frameId)
     if (!found) return notFoundError(dir, args.pageId, args.frameId)
 
-    // Beside the source, same row — `boardSlice.ts`'s own placement, sharing
-    // `VARIANT_GAP` so the toolbar and this tool cannot drift apart.
+    // Beside the source, same row, in free space — `boardSlice.ts`'s own
+    // placement (`freeSlotBeside`), so the toolbar and this tool cannot drift apart.
     const nextBoard = duplicateFrame(found.board, found.frame.id, {
       id: crypto.randomUUID(),
-      x: found.frame.x + (found.frame.width ?? FRAME_WIDTH) + VARIANT_GAP,
-      y: found.frame.y,
+      ...freeSlotBeside(found.board, found.frame),
       axes: args.axes,
     })
     if (!nextBoard) return notFoundError(dir, args.pageId, args.frameId)

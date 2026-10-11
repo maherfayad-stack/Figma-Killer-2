@@ -1,6 +1,8 @@
 import { renderMarkdownToHtml } from '@core/markdown/renderMarkdown'
 import {
   CanvasLayerPlacementSchema,
+  LayerNameSchema,
+  type LayerName,
   type Board,
   type BoardFrame,
   type BoardGuide,
@@ -219,6 +221,32 @@ function coerceBoard(raw: unknown): Board | undefined {
   return { id, name, frames, notes, docs, guides, ...(layers.length > 0 ? { layers } : {}) }
 }
 
+/** The longest name a page or a layer may carry. */
+const MAX_NAME_LENGTH = 120
+
+/** `pageNames` - page id to non-empty display name; anything else in a hand-edited file is dropped, never thrown on. */
+function coercePageNames(raw: unknown): Record<string, string> {
+  const names: Record<string, string> = {}
+  if (!isPlainObject(raw)) return names
+  for (const [pageId, name] of Object.entries(raw)) {
+    if (pageId.length > 0 && typeof name === 'string' && name.trim().length > 0) names[pageId] = name.trim().slice(0, MAX_NAME_LENGTH)
+  }
+  return names
+}
+
+/** `layerNames` - every entry that passes the schema, each (page, element id) at most once (the first wins). */
+function coerceLayerNames(raw: unknown): LayerName[] {
+  const seen = new Set<string>()
+  const names: LayerName[] = []
+  for (const entry of filterArray(LayerNameSchema, raw)) {
+    const key = JSON.stringify([entry.pageId, entry.hint.nodeId])
+    if (seen.has(key)) continue
+    seen.add(key)
+    names.push(entry)
+  }
+  return names
+}
+
 export function parseBoardsFile(raw: unknown): BoardsFile {
   let value: unknown = raw
 
@@ -237,5 +265,14 @@ export function parseBoardsFile(raw: unknown): BoardsFile {
     .map(coerceBoard)
     .filter((b): b is Board => b !== undefined)
 
-  return { version: 1, boards }
+  // Both are omitted when empty, so a project that never renamed anything reads
+  // and writes the file exactly as it did before they existed.
+  const pageNames = coercePageNames(value.pageNames)
+  const layerNames = coerceLayerNames(value.layerNames)
+  return {
+    version: 1,
+    boards,
+    ...(Object.keys(pageNames).length > 0 ? { pageNames } : {}),
+    ...(layerNames.length > 0 ? { layerNames } : {}),
+  }
 }

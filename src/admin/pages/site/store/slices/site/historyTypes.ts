@@ -15,6 +15,7 @@
 import type { Patches } from 'mutative'
 import type { BoardsFile } from '@core/studio-board'
 import type { StructuralSourceGesture } from '@site/studio/structuralUndoPlan'
+import type { PrototypeOp } from '@site/studio/prototypeApi'
 
 /**
  * One undoable transaction, stored as Mutative patch pairs scoped to the
@@ -47,6 +48,11 @@ export interface HistoryEntry {
    * sticky notes, doc cards, guides, board CRUD). See `BoardHistory`.
    */
   board?: BoardHistory
+  /**
+   * Present when this transaction wrote the prototype links
+   * (`.studio/prototype.json`). See `PrototypeHistory`.
+   */
+  prototype?: PrototypeHistory
   /**
    * ERR-6 — present only while the structural write this entry stands for is
    * still on the wire: the gesture's own write (`'gesture'`), or the write an
@@ -105,6 +111,18 @@ export interface BoardHistorySnapshot {
 export interface BoardHistory {
   before: BoardHistorySnapshot
   after: BoardHistorySnapshot
+}
+
+/**
+ * A prototype-link write, as the two server operations that take it back and
+ * put it again. Operations, not snapshots: the links file is written by link
+ * (`prototypeStore.ts`), so removing the link a gesture added restores the
+ * file's bytes exactly, and nothing the gesture did not touch is rewritten.
+ * Replaying an op is a request, which is why undo of one is asynchronous.
+ */
+export interface PrototypeHistory {
+  undo: PrototypeOp
+  redo: PrototypeOp
 }
 
 /**

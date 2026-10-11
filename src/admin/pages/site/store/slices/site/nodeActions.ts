@@ -35,6 +35,7 @@ import {
   isPropPatchWritableToSource,
   isPropWritableToSource,
   planListRowRemove,
+  isSourceDerivedNodeId,
 } from '@core/page-tree'
 import type { NodeTree, PageNode } from '@core/page-tree'
 import { subtreeHasOutlet, treeHasOutlet } from '@core/templates'
@@ -448,6 +449,12 @@ export function createNodeActions(helpers: SiteSliceHelpers, overrides: Instance
     },
 
     renameNode: (nodeId, label) => {
+      // An element of the user's source has no name in the source, so its
+      // layer name is board state (`boardNameActions.ts`), anchored to the
+      // element and applied back as the node label by `boardNamesSync.ts`.
+      const target = resolveActiveTreeTarget(get())
+      const page = target && !target.vc ? get().site?.pages.find((candidate) => candidate === target.tree) : undefined
+      if (page && isSourceDerivedNodeId(nodeId) && get().renameLayerOnBoard(page.id, nodeId, label)) return
       mutateActiveTree((tree) => {
         const node = tree.nodes[nodeId]
         if (!node) throw new Error(`[PageTree] Node "${nodeId}" not found`)

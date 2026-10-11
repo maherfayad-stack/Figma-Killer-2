@@ -22,7 +22,10 @@ import { cloneSiteRuntimeConfig } from '@core/site-runtime'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
 import { collectDirtyFromSitePatches, mergeDirtyMarks } from './dirtyTracking'
 import { applyNodeIndexPatch, nodeIndexesOf } from './nodeIndex'
-import { isBoardOnlyEntry, restoreBoardSnapshot } from '../boardHistory'
+import { isBoardOnlyEntry, isPrototypeOnlyEntry, restoreBoardSnapshot } from '../boardHistory'
+import { applyPrototypeOp } from '@site/studio/prototypeApi'
+import { getStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
+import { getErrorMessage } from '@core/utils/errorMessage'
 import { flushPendingGestures } from '../../pendingGestures'
 import { pushToast } from '@ui/components/Toast'
 import type { StructuralStepOutcome } from './structuralHistory'
@@ -172,6 +175,49 @@ function runBoardStep(
   })
 }
 
+/** Prototype-link steps run one at a time, in the order they were pressed. */
+let prototypeStepQueue: Promise<void> = Promise.resolve()
+
+/**
+ * Move a PROTOTYPE-ONLY entry one step: the stack moves at once, and the link
+ * file is changed by replaying the entry's operation on the server. The store
+ * adopts the file the server answers with, so a failed step leaves the board
+ * showing exactly what is on disk and says so.
+ */
+function runPrototypeStep(
+  { get, set }: Pick<SiteSliceHelpers, 'get' | 'set'>,
+  entry: HistoryEntry,
+  direction: 'undo' | 'redo',
+): void {
+  set((state) => {
+    if (direction === 'undo') {
+      state._historyPast.pop()
+      state._historyFuture.push(entry)
+    } else {
+      state._historyFuture.pop()
+      state._historyPast.push(entry)
+    }
+    state._historyCoalesceKey = null
+    state.canUndo = state._historyPast.length > 0
+    state.canRedo = state._historyFuture.length > 0
+  })
+  const op = direction === 'undo' ? entry.prototype!.undo : entry.prototype!.redo
+  prototypeStepQueue = prototypeStepQueue.then(async () => {
+    try {
+      get().adoptPrototype(await applyPrototypeOp(op, getStudioWorkspaceDir()))
+    } catch (err) {
+      console.error('[undoRedo] prototype link step failed:', err)
+      pushToast({
+        kind: 'warning',
+        title: direction === 'undo' ? 'Could not undo the link change' : 'Could not redo the link change',
+        body: getErrorMessage(err, 'The prototype links file did not accept the change.'),
+        location: 'site-editor',
+        dedupeKey: 'prototype-link-step-failed',
+      })
+    }
+  })
+}
+
 export function createUndoRedoActions({ get, set }: SiteSliceHelpers): UndoRedoActions {
   return {
     undo: () => {
@@ -185,6 +231,7 @@ export function createUndoRedoActions({ get, set }: SiteSliceHelpers): UndoRedoA
       if (_historyPast.length === 0) return
       const entry = _historyPast[_historyPast.length - 1]!
       if (isBoardOnlyEntry(entry)) return runBoardStep({ set }, entry, 'undo')
+      if (isPrototypeOnlyEntry(entry)) return runPrototypeStep({ get, set }, entry, 'undo')
       if (!site) return
       if (entry.structural) return runStructuralStep({ get, set }, entry, entry.structural, 'undo')
       const restored = apply(site, entry.inverse)
@@ -233,6 +280,7 @@ export function createUndoRedoActions({ get, set }: SiteSliceHelpers): UndoRedoA
       if (_historyFuture.length === 0) return
       const entry = _historyFuture[_historyFuture.length - 1]!
       if (isBoardOnlyEntry(entry)) return runBoardStep({ set }, entry, 'redo')
+      if (isPrototypeOnlyEntry(entry)) return runPrototypeStep({ get, set }, entry, 'redo')
       if (!site) return
       if (entry.structural) return runStructuralStep({ get, set }, entry, entry.structural, 'redo')
       const restored = apply(site, entry.forward)
