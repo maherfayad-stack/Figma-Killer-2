@@ -29,8 +29,9 @@ import {
  *     — it used to open on that inner element, replace the selection with it,
  *     and never offer the item;
  *   - a design-system component (the project's managed `design-system/`
- *     folder, an opaque `alm.*` node) refuses and SAYS WHY — ⌘⌥B used to do
- *     nothing at all and neither menu offered the item.
+ *     folder, an opaque `alm.*` node) detaches as the local code it is
+ *     (OD-21): the folder's own markup is written in place of `<Button/>`, the
+ *     folder stays byte-identical, and one Cmd+Z puts the call site back.
  *
  * SAFETY — this spec WRITES, so it authors its own fixture under this run's
  * throwaway copy of `studio-workspace/` and removes it afterwards.
@@ -54,8 +55,13 @@ export default function Home() {
 }
 `
 
-/** The project's copy of the design system: only that it RESOLVES inside `design-system/` matters (`design-system-insert.e2e.ts`). */
-const DESIGN_SYSTEM_INDEX = `export function Button() { return null }
+/** The project's copy of the design system: a real, readable component behind a barrel, exactly where Studio writes it. */
+const DESIGN_SYSTEM_INDEX = `export { Button } from './components/Button'
+`
+
+const DESIGN_SYSTEM_BUTTON = `export function Button({ label }) {
+  return <button className="ds-btn" type="button">{label}</button>
+}
 `
 
 const BADGE = `export function Badge({ label }: { label: string }) {
@@ -101,6 +107,7 @@ test.beforeEach(() => {
     'components/Badge.tsx': BADGE,
     'components/Status.tsx': STATUS,
     'design-system/index.js': DESIGN_SYSTEM_INDEX,
+    'design-system/components/Button.jsx': DESIGN_SYSTEM_BUTTON,
     '.studio/meta.json': JSON.stringify({ pagesDir: 'pages', trust: 'static' }, null, 2) + '\n',
   })
 })
@@ -202,7 +209,7 @@ test.describe('P5-C — detach an instance, and one ⌘Z puts it back', () => {
     expect(journalEntries()).toHaveLength(1)
   })
 
-  test('a design-system component refuses and says why: ⌘⌥B warns, the menu greys the item out, the file is untouched', async ({ page }) => {
+  test('a design-system component detaches as local code: the folder is untouched, and Cmd+Z puts the call site back', async ({ page }) => {
     const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: true })
     const frame = await frameForPage(page, canvasRoot, 'home')
     await panIntoView(page, canvasRoot, frame)
@@ -210,7 +217,7 @@ test.describe('P5-C — detach an instance, and one ⌘Z puts it back', () => {
     const content = canvasContentFrame(frame)
 
     const buttonId = sourceNodeId(HOME_PAGE, HOME, 'Button', 1)
-    // The design-system host is `display: contents` — click what it renders.
+    // The design-system host is `display: contents` - click what it renders.
     const rendered = content.locator(`[data-node-id="${buttonId}"] button`).first()
     await panIntoView(page, canvasRoot, rendered, 80)
     await selectInFrame(page, rendered)
@@ -218,17 +225,35 @@ test.describe('P5-C — detach an instance, and one ⌘Z puts it back', () => {
 
     await canvasRoot.focus()
     await page.keyboard.press('Control+Alt+b')
-    const toast = page.locator('[data-toast-kind]').filter({ hasText: 'Detach refused' })
-    await expect(toast, 'a detach of a design-system component did nothing and said nothing').toBeVisible({ timeout: 15_000 })
-    await expect(toast).toContainText('Button is a design-system component')
+    await expect.poll(() => read(HOME), { timeout: 30_000 }).not.toContain('<Button')
+    expect(read(HOME)).toContain('<button className="ds-btn" type="button">Continue</button>')
+    expect(read('design-system/components/Button.jsx'), 'detaching wrote into the design-system folder').toBe(DESIGN_SYSTEM_BUTTON)
+    expect(read('design-system/index.js')).toBe(DESIGN_SYSTEM_INDEX)
+    expect(journalEntries()).toHaveLength(1)
+    await expect.poll(() => topEntryHasInverse(page)).toBe(true)
 
+    await canvasRoot.focus()
+    await page.keyboard.press('Control+z')
+    await expect.poll(() => read(HOME), { timeout: 30_000 }).toBe(HOME_PAGE)
+  })
+
+  test('the menu offers Detach on a design-system component, enabled', async ({ page }) => {
+    const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: true })
+    const frame = await frameForPage(page, canvasRoot, 'home')
+    await panIntoView(page, canvasRoot, frame)
+    await expect(visibleCanvasIframe(frame)).toBeVisible({ timeout: 60_000 })
+    const content = canvasContentFrame(frame)
+
+    const buttonId = sourceNodeId(HOME_PAGE, HOME, 'Button', 1)
+    const rendered = content.locator(`[data-node-id="${buttonId}"] button`).first()
+    await panIntoView(page, canvasRoot, rendered, 80)
     const box = await rendered.boundingBox()
     await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2, { button: 'right' })
-    await expect(detachMenuItem(page), 'the menu hid Detach instead of saying why it cannot').toBeVisible({ timeout: 15_000 })
-    await expect(detachMenuItem(page)).toHaveAttribute('aria-disabled', 'true')
+    await expect(detachMenuItem(page), 'the menu hid Detach on a design-system component').toBeVisible({ timeout: 15_000 })
+    await expect(detachMenuItem(page)).toBeEnabled()
     await page.keyboard.press('Escape')
 
-    expect(read(HOME), 'a refused detach wrote').toBe(HOME_PAGE)
+    expect(read(HOME), 'opening the menu wrote').toBe(HOME_PAGE)
     expect(journalEntries()).toHaveLength(0)
   })
 })

@@ -105,7 +105,13 @@ export {
   previewStructuralMove,
   resolveContainerAnchor,
   resolveSourceContainer,
+  resolveWriteAnchor,
+  resolveWriteContainer,
 } from './sourceStructurePreview'
+// OD-22 - a drop into a layout component's `{children}` is written at the call
+// site; the parser names the element that renders them.
+export { instanceChildrenSlot, instanceWithoutChildrenSlot, isCallSiteChild, isInstanceNode } from './instanceChildrenSlot'
+export type { InstanceChildrenSlot } from './instanceChildrenSlot'
 export type {
   StructuralGroupPreview,
   StructuralMoveCommit,
