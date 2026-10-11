@@ -455,6 +455,15 @@ export interface ParsedNode {
      * `style:<property>`), without inventing a new predicate.
      */
     callSiteProps: Record<string, ParsedPropValue>
+    /**
+     * OD-22 - the id of the ONE inlined element that renders the component's
+     * `{children}` directly: where a call site's own children appear, and so
+     * where a drop into this instance can be written (between the call site's
+     * tags) without detaching it. Absent when the component renders no
+     * children, renders them in more than one place, or leaves the choice to a
+     * branch or a loop.
+     */
+    childrenHost?: string
   }
   /**
    * E2.3 — present when this node is the materialized container for a

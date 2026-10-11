@@ -97,6 +97,8 @@ export function ImagesSection({ query, collapsed, onToggle }: ImagesSectionProps
   const assets = useProjectImageAssets()
 
   const drag = useCanvasInsertionDrag<ImageDragGhost>({
+    // The picture at its own size and the canvas zoom, half opaque.
+    ghostSize: (ghost) => ghost.size,
     // `useCanvasInsertionDrag` has already made the dropped-on frame's page
     // the active one, so the location's ids are that page's.
     onDrop: (ghost, location, placement) => {
@@ -193,7 +195,14 @@ export function ImagesSection({ query, collapsed, onToggle }: ImagesSectionProps
       )}
       <UnusedImagesFooter assets={assets} />
 
-      <CanvasInsertionDragOverlay drag={drag.drag}>
+      <CanvasInsertionDragOverlay
+        drag={drag.drag}
+        body={
+          drag.drag?.ghost.size ? (
+            <img src={studioAssetPreviewUrl(drag.drag.ghost.asset.relPath)} alt="" draggable={false} />
+          ) : undefined
+        }
+      >
         {drag.drag && (
           <>
             <span className={styles.ghostThumb} aria-hidden="true">

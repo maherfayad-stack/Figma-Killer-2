@@ -52,6 +52,44 @@ export function moveLayerPlacements(board: Board, moves: ReadonlyMap<string, { x
   return changed ? withLayers(board, next) : board
 }
 
+/** Name a placement (an empty name takes the name away, so the layer shows its element's own). Returns `board` itself when nothing changed. */
+export function renameLayerPlacement(board: Board, id: string, name: string): Board {
+  const layers = boardLayers(board)
+  const layer = layers.find((candidate) => candidate.id === id)
+  const trimmed = name.trim()
+  if (!layer || (layer.name ?? '') === trimmed) return board
+  const { name: _previous, ...rest } = layer
+  return withLayers(
+    board,
+    layers.map((candidate) => (candidate === layer ? (trimmed.length > 0 ? { ...rest, name: trimmed } : rest) : candidate)),
+  )
+}
+
+/**
+ * Move one layer to `toIndex` in paint order (0 = lowest, painted first) and
+ * write the order back as `z` = 1..n on every layer whose `z` changes, so an
+ * order that was implied by stored position becomes explicit and stays put.
+ * `toIndex` counts positions AFTER the layer is lifted out, the same
+ * convention `moveNode` uses. Returns `board` itself when nothing changes.
+ */
+export function reorderLayerPlacements(board: Board, id: string, toIndex: number): Board {
+  const layers = boardLayers(board)
+  const moving = layers.find((layer) => layer.id === id)
+  if (!moving) return board
+  const rest = layerPaintOrder(layers).filter((layer) => layer.id !== id)
+  const at = Math.max(0, Math.min(Math.trunc(toIndex), rest.length))
+  const ordered = [...rest.slice(0, at), moving, ...rest.slice(at)]
+  const zOf = new Map(ordered.map((layer, i) => [layer.id, i + 1]))
+  let changed = false
+  const next = layers.map((layer) => {
+    const z = zOf.get(layer.id)
+    if (z === undefined || layer.z === z) return layer
+    changed = true
+    return { ...layer, z }
+  })
+  return changed ? withLayers(board, next) : board
+}
+
 /** Which board holds a placement, and the placement itself — `null` when no board does. */
 export function findLayerPlacement(
   file: BoardsFile,

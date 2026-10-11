@@ -120,6 +120,7 @@ export type {
   InsertableJsxPropValue,
 } from './jsxSubtree'
 export { isAssetImportRef, assetImportBindingName, type AssetImportRef } from './jsxAssetImports'
+export { ClassNameTokens, type ClassNamePart } from './jsxClassTokens'
 export { insertJsxIntoSlotProp } from './insertJsxIntoSlotProp'
 export type {
   InsertJsxIntoSlotPropNode,

@@ -61,7 +61,8 @@ async function menu(): Promise<Page> {
 
 function rows(page: Page): PageNode[] {
   return Object.values(page.nodes)
-    .filter((node) => loopTemplateNodeId(node.id) !== null && node.inlineStyles?.padding !== undefined)
+    // The inline `padding` shorthand loads as the per-side keys the property bag stores (1f61f6f8).
+    .filter((node) => loopTemplateNodeId(node.id) !== null && node.inlineStyles?.paddingTop !== undefined)
     .sort((a, b) => a.id.localeCompare(b.id))
 }
 
@@ -88,7 +89,7 @@ describe('OD-8 — a .map row writes its template', () => {
     expect(template).toBe('pages/Menu.tsx:7:10')
     for (const dish of dishes) {
       expect(loopTemplateNodeId(dish.id)).toBe(template)
-      expect(dish.codeProps ?? []).not.toContain(styleValueKey('padding'))
+      expect(dish.codeProps ?? []).not.toContain(styleValueKey('paddingTop'))
       expect(dish.sourceFingerprint).toBeDefined()
       expect(dish.sourceFingerprint).toBe(dishes[0]!.sourceFingerprint)
     }

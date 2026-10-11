@@ -238,6 +238,29 @@ function forwardedProps(
 }
 
 /**
+ * Whether `el` is in the component's output no matter what its props are: no
+ * branch (`? :`, `&&`, `||`, `??`, an `if` or `switch` around the `return`) and
+ * no callback (a `.map` row) stands between it and the function. An element
+ * that may not be there is not a place a call site can name.
+ */
+function isRenderedUnconditionally(el: Node, fn: FunctionLike): boolean {
+  for (const ancestor of el.getAncestors()) {
+    if (ancestor === fn) return true
+    if (
+      Node.isConditionalExpression(ancestor) ||
+      Node.isIfStatement(ancestor) ||
+      Node.isSwitchStatement(ancestor) ||
+      Node.isArrowFunction(ancestor) ||
+      Node.isFunctionExpression(ancestor) ||
+      (Node.isBinaryExpression(ancestor) && ['&&', '||', '??'].includes(ancestor.getOperatorToken().getText()))
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
+/**
  * Patches `subPage` (already structurally correct via `parseJsxTree`) with
  * §2.3's substitutions: a `{paramName}` prop/text reference resolved to a
  * literal via `env`, a `{children}` reference spliced with the call site's
@@ -263,6 +286,14 @@ export function applySubstitutions(
   fn: FunctionLike,
   evalOptions: StaticEvalOptions | undefined,
   forward?: SpreadForward,
+  /**
+   * G-3 / OD-22 - collects the id of every plain element that renders the
+   * component's `{children}` directly (`<div className="body">{children}</div>`).
+   * One id is the instance's children slot: the place a call site's own
+   * children are written, so a drop there needs no detach. An element a branch
+   * or a loop decides is left out - it is not a place the call site can name.
+   */
+  childrenHosts?: string[],
 ): ParsedPage {
   if (env.size === 0 && !forward) return subPage
   const nodes = { ...subPage.nodes }
@@ -561,6 +592,7 @@ export function applySubstitutions(
           if (Node.isJsxExpression(child)) {
             const expr = child.getExpression()
             if (expr && Node.isIdentifier(expr) && env.get(expr.getText())?.kind === 'children') {
+              if (!existing.locked && isRenderedUnconditionally(el, fn)) childrenHosts?.push(id)
               patchedChildren = [
                 ...existing.children.slice(0, insertAt),
                 ...callSiteChildrenIds,

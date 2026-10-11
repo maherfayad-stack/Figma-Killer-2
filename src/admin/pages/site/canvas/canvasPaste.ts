@@ -11,7 +11,10 @@
  *     siblings, the ghost, the size clamp. No second image pipeline;
  *   - SVG: `insertSvgAtTarget` (`canvasSvgInsert.ts`, shared with the icon
  *     insert and the `.svg` drop): one subtree insert when it fits as source,
- *     an `<img>` of the landed file when it is too big, a refusal otherwise.
+ *     an `<img>` of the landed file when it is too big, a refusal otherwise;
+ *   - HTML (G-10): `writeHtmlToSource` - converted to intrinsic JSX (sanitized
+ *     first, no scripts, no handlers, no `javascript:` links), its styles written
+ *     into the page's own stylesheet, all of it one undo step.
  *
  * Images and SVGs land where ⇧K's images land (`canvasSelectionInsert.ts`):
  * after the selected layer, else at the end of the active frame's root.
@@ -21,6 +24,9 @@ import { useEditorStore } from '@site/store/store'
 import { decideCanvasPaste, type ClipboardSnapshot } from './canvasClipboardData'
 import { insertImagesAtTarget, readSelectionInsertTarget, type SelectionInsertTarget } from './canvasSelectionInsert'
 import { insertSvgAtTarget } from './canvasSvgInsert'
+import { findRenderedCanvasElements } from './canvasNodeLookup'
+import { measureNewLayerParent, planNewLayerPlacement } from './canvasNewLayerPlacement'
+import { IMAGE_CASCADE_STEP_PX, type AbsoluteImagePlacement } from '@site/store/slices/site/imageDropShapes'
 
 type InsertTarget = Extract<SelectionInsertTarget, { ok: true }>
 
@@ -45,6 +51,25 @@ export function runCanvasPaste(snapshot: ClipboardSnapshot): void {
     case 'svg': {
       const target = targetOrExplain()
       if (target) void insertSvgAtTarget(decision.source, target, { undoLabel: 'Paste SVG', refusalTitle: 'Cannot paste that SVG' })
+      return
+    }
+    case 'html': {
+      const target = targetOrExplain()
+      if (!target) return
+      // A refusal has already been shown by the store, where it knew why.
+      const written = state.writeHtmlToSource(decision.html, target.parentId, {
+        index: target.index,
+        undoLabel: 'Paste HTML',
+        absolute: freeParentPlacement(target.parentId, state.selectedNodeId),
+      })
+      if (written.kind === 'cms') {
+        pushToast({
+          kind: 'warning',
+          title: PASTE_TITLE,
+          body: 'This frame is not backed by a source file, so there is nowhere to write the pasted HTML.',
+          location: 'site-editor',
+        })
+      }
       return
     }
     case 'none':
@@ -74,4 +99,28 @@ function targetOrExplain(): InsertTarget | null {
   if (target.ok) return target
   pushToast({ kind: 'warning', title: PASTE_TITLE, body: target.message, location: 'site-editor' })
   return null
+}
+
+/**
+ * A free frame (positioned, every child out of flow) has no flow to land in: a
+ * block written without insets sits at its (0,0), under whatever is there. So
+ * the pasted block is pinned beside the selected layer (one cascade step down
+ * and right of it), or inside the frame's corner when nothing is selected - the
+ * same absolute write a drop into a free frame makes. `null` for every flow or
+ * auto-layout parent, where an insert at the index IS the placement.
+ */
+function freeParentPlacement(parentId: string, selectedNodeId: string | null): AbsoluteImagePlacement | null {
+  const parentElement = findRenderedCanvasElements(parentId)[0]?.element
+  const doc = parentElement?.ownerDocument
+  if (!parentElement || !doc) return null
+  const parent = measureNewLayerParent(doc, parentId)
+  if (!parent || parent.kind !== 'free-frame') return null
+  const anchor = selectedNodeId ? findRenderedCanvasElements(selectedNodeId)[0]?.element : undefined
+  const from = anchor && anchor.ownerDocument === doc ? anchor.getBoundingClientRect() : parentElement.getBoundingClientRect()
+  const placement = planNewLayerPlacement(
+    parent,
+    { left: from.left + IMAGE_CASCADE_STEP_PX, top: from.top + IMAGE_CASCADE_STEP_PX, width: 0, height: 0 },
+    false,
+  )
+  return placement.kind === 'absolute' ? { property: placement.property, inline: placement.inline, top: placement.top } : null
 }
