@@ -9,7 +9,7 @@ import type {
 } from './types'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { effectiveCaptureRatio, type CapturePurpose } from '@core/ai'
-import { readFrameMountReason, type FrameMountReason } from '../canvas/BoardFramesLayer/framePool'
+import { readFrameMountReason, type FrameMountReason } from '../canvas/BoardFramesLayer/frameMount'
 
 const MAX_TEXT_LENGTH = 300
 const MAX_COMPUTED_BACKGROUND_IMAGE_LENGTH = 500
@@ -232,15 +232,16 @@ export function findAgentRenderFrame({
 /**
  * Why the board is (or is not) holding an iframe for `pageId` right now —
  * read back from `BoardFrameView`'s `data-frame-mount` stamp, which is
- * written from the ONE mount decision (`framePool.ts`'s `resolveFrameMount`).
+ * written from the ONE mount decision (`frameMount.ts`'s `resolveFrameMount`).
  *
  * `findAgentRenderFrame` above deliberately does NOT consult this: a frame
- * the pool holds offscreen is a perfectly capturable frame, and a capture
- * must never be refused for being out of view. This exists so that when a
- * capture times out, the caller can say WHY instead of "did not mount" — the
- * two real causes (the frame is not pooled at all, versus it is mounted but
- * its staged node tree has not landed) look identical from the outside and
- * cost very different things to fix. `null` means the board is not rendering
+ * that is mounted is a perfectly capturable frame wherever it is, and a
+ * capture must never be refused for being out of view. This exists so that
+ * when a capture times out, the caller can say WHY instead of "did not
+ * mount" — the two real causes (the live set never took the frame, so it is
+ * a `poster` or `cold`, versus it is `live` but its staged node tree has not
+ * landed) look identical from the outside and cost very different things to
+ * fix. `null` means the board is not rendering
  * that page at all.
  */
 export function agentRenderFrameMountReason(pageId: string): FrameMountReason | null {

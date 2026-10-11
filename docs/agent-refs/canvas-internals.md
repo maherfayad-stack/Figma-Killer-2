@@ -695,7 +695,7 @@ the frame boundary:
 - **`canvasDropSurfaceRegistry.ts`** — every mounted design frame publishes
   itself (viewport, iframe, page id, its own drag layer) while
   `BreakpointSelectionOverlay` is mounted. Registration IS the viewport test:
-  only a frame `frameVirtualization.ts` (plus the mount pool) decided to mount
+  only a frame the live set (`liveFrameCap.ts`) decided to mount
   has an overlay at all, so there is no second on-screen check. It is
   module-scoped, **never a store selector** — a drag reads it on every
   animation frame.
@@ -2090,61 +2090,69 @@ streams store updates continuously). Measured: staged, the transient frame's
 body held **0 children for the whole 5 s `waitForAgentRenderFrame` window** and
 the capture failed with "did not become ready".
 
-### `framePool.ts` — the ONE module that answers "is frame X mounted, and why"
+### `frameMount.ts` + `liveFrameCap.ts` — the live set (SB-5, poster-first)
 
-**Leaving the viewport no longer throws a document away.** A departed frame
-stays mounted while the pool has room, evicted least-recently-on-screen, so
-panning back to where you just were costs nothing. The cap is a memory ceiling,
-not a target: each live frame is a whole document with its own copy of every
-stylesheet.
+**A board is a picture of itself first.** A frame holds a live iframe only while
+the user is working in it or it is in view at a readable zoom, up to a cap;
+every other frame shows its picture. There is no pool, no margin around the
+viewport and no "recently seen" retention: a frame that leaves the live set is
+torn down, and panning back to it paints its poster at once while the document
+mounts underneath (`FramePosterPlaceholder overlay`, unchanged).
 
-There were two pools until `perf-9` merged them — S1's `frameMountPool.ts` for
-portal frames and L8 Phase B's `liveFramePool.ts` for Tier-2 live frames. They
-ran the same algorithm and differed only in budget, `BoardFramesLayer` computed
-both on every render and threw one away, and `BoardFrameView` re-derived which
-applied from the trust tier (`isLiveMounted ?? isMounted ?? isOnScreen`). Now
-there is one policy, parameterised by what a frame **costs**:
+| Rule | Frames |
+|---|---|
+| Always live, and not counted against the cap | selected frames (`selectedFrameIds`), the frame holding the selected layer (`selectedNodeFrameId`, else the first frame of the active page), the frame in play mode |
+| Live up to the cap | frames in view (no margin) at zoom >= 0.35 (`POSTER_ZOOM`), nearest the viewport centre first; a frame that is already live keeps its slot over an equally-near newcomer (150 px of preference) |
+| Poster | everything else. `cold` (the title placeholder) until the frame has a picture |
+| The cap | `computeLiveFrameCap`: 20 by default, 14 at 4 GB, never below 12, raised toward 48 when the free JS heap allows (`performance.memory`, 5% of it at 8 MB a frame). A Tier-2 board whose dev server is ready has its own cap of 8 (`LIVE_CAP_BRIDGE`; each live frame there is two documents and a dev-server client; SB-8 lowers it again) |
 
-| `FrameMountCost` | A mounted frame is | Budget |
-|---|---|---|
-| `'portal'` (Tier 0/1, and Tier 2 until its dev server is ready) | one same-origin `srcDoc` iframe, ~12 ms to create | `max(8, onScreen + 4)` — a floor with headroom |
-| `'live'` (Tier 2, dev server ready) | `LiveBoardFrame`: a cross-origin bridge iframe against a real dev-server process (plus its fallback until that frame reports ready) — measured ~0.85 MB of heap, one document and ~110 DOM nodes per small frame (`docs/audits/2026-09-13-live-frame-memory-baseline.md`) | `max(onScreen, 8)` — a ceiling only the visible set may exceed |
+`BoardFramesLayer` derives the set during render from its inputs
+(`liveKey`: in-view ids, selected frames, editing frame, play frame, zoom class,
+bridge): panning inside the same in-view membership changes nothing, and the
+store's pan/zoom commit lands 100 ms after the last wheel event, so a frame is
+promoted on settle, never mid-gesture. `selectLiveFrames` (pure) ranks, the
+layer applies; `board-live-frame-cap.test.ts` keeps `LIVE_CAP_*` in one module and
+the old pool (`MIN_FRAME_POOL`, `FRAME_POOL_HEADROOM`, `LIVE_FRAME_POOL_SIZE`,
+`framePoolBudget`, `nextFramePool`, `FrameMountCost`) gone for good. The trust
+tier touches mounting in exactly one place: whether the bridge cap applies.
 
-The cost is derived from the trust tier **and the dev server's readiness** in
-`BoardFramesLayer` and **nowhere else**; the tier no longer reaches mounting at
-all. One retention list, one `useState`, one budget per render. A trust change,
-or the dev server coming up, is part of the retention key, so the pool resizes
-without a pan.
+`resolveFrameMount({ isLive, hasPoster })` is the single per-frame answer,
+`{ mounted, reason }` with `reason` one of **`live` / `poster` / `cold`**.
+`BoardFrameView` stamps it on the frame element as **`data-frame-mount`**, so the
+answer is legible from the DOM: to `src/__tests__/canvas/frameMountReason.test.tsx`
+(live count against the cap at every step of a scripted pan across a 24-frame
+board), to `agentRenderFrameMountReason` in `agent/renderEvidence.ts` (so a
+timed-out `studio_export_frames` says whether the live set never took the frame,
+`poster`/`cold`, or it is `live` and its staged node tree has not landed), to
+`canvasViewportCommands.ts`, and to a human dogfooding a pan with devtools open.
+`BoardFrameView.isLive` is **required**.
 
-**Why readiness and not just the tier (P6-C).** Until its dev server is ready
-a Tier-2 frame IS its same-origin fallback (the bridge iframe has nothing to
-load), and the portal headroom is the only window in which a departed frame
-can be rasterized into its poster — capture runs only for a frame that is off
-screen and still pooled (P2-I). Under the live budget a frame leaving a full
-screen was evicted on the spot, so a Tier-2 board whose server was booting,
-failed or could not start (no `node_modules`) never got a poster: `perf-01`
-read 0/4. And `LiveBoardFrame` paints a cached poster OVER its clickable
-fallback until the fallback's tree commits — never INSTEAD of it; it used to
-replace it, so a frame panned away from and back to became a picture nothing
-could select until the server reported ready.
+**Editing a poster promotes it, and the press is not lost.** A poster has no
+document to press on, so the frame body takes the click itself
+(`BoardFrameView.handlePosterClick`): a click that is not the end of a pan
+selects the frame, a selected frame is in the live set, so one press promotes
+and selects. At a readable zoom the click is also remembered
+(`posterPress.ts`) and, once the promoted frame's tree has committed, replayed
+against its rect index (`hitTestBoard` -> `pressSelectionTarget`, the ONE depth
+rule), so the layer under the pointer ends up selected; it is dropped if the view
+moved or the user selected something else meanwhile. Below zoom 0.35 the frame
+selection is the whole answer (a frame is a thumbnail there).
 
-`resolveFrameMount({ isOnScreen, isPooled })` is the single per-frame answer,
-returning `{ mounted, reason }` where `reason` is `on-screen` / `pooled` /
-`offscreen`. `BoardFrameView` stamps it on the frame element as
-**`data-frame-mount`**, so the answer is legible from the DOM — to
-`src/__tests__/canvas/framePoolMountReason.test.tsx` (which asserts the mounted
-count against `framePoolBudget` at every step of a scripted pan across a
-24-frame board, for both costs), to `agentRenderFrameMountReason` in
-`agent/renderEvidence.ts` (so a timed-out `studio_export_frames` says whether
-the frame was never pooled or was mounted-but-not-ready), and to a human
-dogfooding a pan with devtools open.
+**The background fill (`PosterFill.tsx`).** A frame that was never live (the cap,
+a zoom below 0.35, scrolled past before its picture was due) has no picture, so
+a first zoom-out would show titles. `PosterFill` finds the nearest such frame to
+the viewport centre (`posterFillPlan.ts`), mounts it through
+`posterFillTarget.ts` (the layer adds that one id to its live set, beside the
+cap), waits for `useFramePosterCapture` to photograph it, lets it go and takes the
+next: serially, and only once the board has been quiet
+(`framePosterQueue.waitForBoardQuiet`). It skips Tier-2 boards with a ready dev
+server (SB-8 owns bridge posters) and frames pinned to another locale, and never
+retries a key whose picture did not arrive within 8 s.
 
-`isPooled` — and `BoardFrameView`'s `isMounted` prop — are **optional**, and
-must stay that way: a caller outside `BoardFramesLayer` means "mounted exactly
-while visible", and making it required silently renders nothing at all for
-every such caller with no `tsc` error (`meta-14` landmine 1;
-`boardFrameViewTierFork.test.tsx` is the gate). `isOnScreen` stays a separate
-prop for the pool's own reasons.
+**Why the bridge cap applies only once the server is ready (P6-C history).**
+Until its dev server is ready a Tier-2 frame IS its same-origin fallback, and
+capture reads that fallback. `LiveBoardFrame` paints a cached poster OVER its
+clickable fallback until the fallback's tree commits, never INSTEAD of it.
 
 **Posters (SB-2).** A frame's picture is `framePosters` (`posterStore.ts`: in-memory
 LRU by bytes + IndexedDB, one picture per frame), keyed by `posterKey.ts` — frame
@@ -2171,10 +2179,11 @@ of the active page) so the rings mount in one frame, not every variant. `framePo
 listeners run in every mounted frame document too (portal: DOM listeners; bridge:
 the adapter's `pointer`/`wheel`/`key` events), so a press inside a frame holds the
 queue. Each capture records a `studio:poster-capture` User Timing measure.
-`liveFrameCap.ts` is the pure, adaptive live-frame cap policy (default 20, scaled
-by `navigator.deviceMemory` and the measured cost of a live frame, floor 12;
-posters below zoom 0.35; selected/editing/play frames always live) — SB-5's
-poster-first mounting will replace `framePool.ts` with it.
+`liveFrameCap.ts` is the pure, adaptive live-frame cap policy that
+`BoardFramesLayer` applies (see "the live set" above). A capture is requested
+one settle (350 ms) after the frame's tree lands, or one quiet period (700 ms)
+after the last input or viewport movement, whichever is later (`framePosterQueue`
+also waits out `isCanvasViewportActive`, so a programmatic pan holds it too).
 
 Measured, 18-frame stand-in board, dev build, same Playwright runner
 `tests/e2e/studio-board-perf.e2e.ts` uses:
@@ -2854,7 +2863,7 @@ THAT tree drives candidates, target resolution, and the page-root fallback's
 `rootNodeId` — not `canvasPage`. `useCanvasInsertionDrag.ts` supplies it by
 climbing `viewport.closest('[data-page-id]')` to `BoardFrameView.tsx`'s
 ALREADY-EXISTING stamp on its outer `.frame` wrapper (never a second copy —
-`framePoolMountReason.test.tsx`'s `sample()` reads every `[data-page-id]`
+`frameMountReason.test.tsx`'s `sample()` reads every `[data-page-id]`
 element back through `readFrameMountReason`, and a mount-reason-less
 duplicate fails its "every frame answers" assertion). A successful drop
 whose resolved page differs from the active one calls

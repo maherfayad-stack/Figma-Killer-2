@@ -102,41 +102,26 @@ What the profile actually said, and what it cost per mounting frame, is in
 single most expensive thing happening during a mount sweep was the **poster
 rasterization** of frames that had just arrived.
 
-### The mount pool — a departed frame keeps its document
+### The live set: poster first, documents where the user works
 
-`framePool.ts` is the one module that decides which frames hold a live iframe:
-everything `isFrameOnScreen` says is visible, **plus** the recently-departed
-frames the pool still has room for. Panning back to where you just were
-therefore remounts nothing at all. Eviction is least-recently-on-screen, and
-the cap exists because each mounted frame is a whole document carrying its own
-parsed copy of every injected stylesheet, so an uncapped pool would end a pan
-across a 40-frame board with 40 of them resident.
+`frameMount.ts` and `liveFrameCap.ts` decide which frames hold a live iframe.
+Selected frames, the frame holding the selected layer and the frame in play mode
+are always live; frames in view at zoom >= 0.35 are live nearest the viewport
+centre first, up to an adaptive cap (default 20, never below 12, rising with free
+heap; a Tier-2 board with a ready dev server has a lower cap of its own);
+everything else shows its picture, or the title placeholder before it has one.
+A frame that leaves the live set is torn down, because each live frame is a
+whole document carrying its own parsed copy of every injected stylesheet and the
+picture is what a user looks at while panning past it. Editing a poster frame
+promotes it; a click on a poster selects the frame, which is the same thing.
 
-The budget is the one thing that varies, and it varies by what a frame **costs**
-on this board — a Tier 0/1 portal frame is one cheap same-origin `srcDoc`
-document (`max(8, onScreen + 4)`, a floor with headroom); a Tier-2 frame is a
-`LiveBoardFrame`, which is a fallback document **and** a cross-origin bridge
-iframe against a real dev-server process (`max(onScreen, 8)`, a ceiling only
-the visible set may exceed). The trust tier picks the cost in
-`BoardFramesLayer` and touches mounting nowhere else.
-
-`BoardFrameView` takes two separate props as a result: `isOnScreen` (the
-viewport test — drives poster CAPTURE, which has to happen while the frame is
-genuinely visible and settled) and `isMounted` (is the pool holding it — drives
-the live frame, the auto-height box, and the empty-page hint). It resolves them
-through `resolveFrameMount`, and stamps the answer's reason onto the frame
-element as `data-frame-mount` (`on-screen` / `pooled` / `offscreen`), which is
-how a test, the agent's capture path and a human with devtools open all read
-the same answer. `isMounted` is **optional** and defaults to `isOnScreen`; see
-`docs/agent-refs/canvas-internals.md` §Perf for why that is load-bearing.
-
-The active viewport context (highlighted, drives style override routing) is tracked by `activeBreakpointId` in `canvasSlice`.
-
-### Agent evidence frames
-
-`site_render_snapshot` always asks `CanvasRoot` to mount one `AgentSnapshotFrame` through a portal outside the canvas clipping/transform layers. It uses the same `IframeFrameSurface`, `CanvasComposedTree`, breakpoint context, class CSS, and user stylesheet path as the editor, at the breakpoint's configured width. A deterministic transient path avoids capturing a visible frame midway through an asynchronous preview fetch and makes Live/collapsed/disabled-frame state irrelevant. The frame sits offscreen rather than using `display:none`, so it has real layout geometry for evidence collection.
-
-This frame is transient editor-session state. It does not change the active viewport, Design/Live mode, pan/zoom, or collapsed frame ids, and it never runs authored runtime scripts (a read must not duplicate arbitrary side effects or network calls). A revisioned readiness tracker covers post-type preview rows, loop data, and media metadata; capture additionally waits for fonts, React/DOM settling, and cloned image/background embedding. The request-specific marker is stored on the host iframe rather than authored DOM. The executor captures only after that marker appears and releases the request in `finally`. Explicit breakpoint lookup is exact; it never substitutes another frame.
+`BoardFrameView` takes one `isLive` prop, resolves it through `resolveFrameMount`
+and stamps the reason (`live` / `poster` / `cold`) onto the frame element as
+`data-frame-mount`, which is how a test, the agent's capture path and a human
+with devtools open all read the same answer. `PosterFill` photographs the
+frames that were never live, one at a time and only when the board is quiet, so
+the first zoom-out of a board shows pictures. The full rule, the fill and the
+press-promotion are in `docs/agent-refs/canvas-internals.md` §Perf.
 
 ### Frozen posters are queued, never raced against a gesture
 

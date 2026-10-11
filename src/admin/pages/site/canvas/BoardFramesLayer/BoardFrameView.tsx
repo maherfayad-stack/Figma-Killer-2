@@ -58,7 +58,8 @@ import { posterKey } from './posterKey'
 import { afterPressPaint } from '../pressRing'
 import { FramePosterPlaceholder } from './FramePosterPlaceholder'
 import { LiveBoardFrame } from './LiveBoardFrame'
-import { resolveFrameMount } from './framePool'
+import { resolveFrameMount } from './frameMount'
+import { armPosterPress, replayPosterPress } from './posterPress'
 import { FrameModeChips } from './FrameModeChips'
 import { FrameDiagnosticsBadge } from './FrameDiagnosticsBadge'
 import { GalleryAddVariantButton } from './GalleryAddVariantButton'
@@ -132,6 +133,9 @@ function buildStudioBreakpoint(width: number): Breakpoint {
   return breakpoint
 }
 
+/** A press that moved further than this between down and up was a pan, not a click on the poster. */
+const POSTER_PRESS_SLOP_PX = 4
+
 interface ResizeDragState {
   pointerId: number
   handle: ResizeHandle
@@ -163,29 +167,13 @@ interface BoardFrameViewProps {
   /** WS-7.1 — whether this frame is part of the bulk-selection set (`selectedFrameIds`). Distinct from `isActive`. */
   isSelected: boolean
   /**
-   * Whether this frame's board rect intersects the viewport (plus margin). It
-   * drives the frozen-poster CAPTURE only — the picture has to be taken while
-   * the frame is genuinely on screen and settled.
+   * Whether the board's live set (`liveFrameCap.ts`, applied by
+   * `BoardFramesLayer`) holds this frame: it is selected, edited, played, in
+   * view at a readable zoom within the cap, or being photographed for its
+   * poster. Every other frame renders its picture (or, before it has one, the
+   * title placeholder) and no iframe at all.
    */
-  isOnScreen: boolean
-  /**
-   * Whether the mount pool (`framePool.ts`) is holding this frame. A
-   * superset of `isOnScreen`: the pool keeps recently-departed frames
-   * mounted so panning back to them costs nothing. A pooled, offscreen frame
-   * is simply outside the visible area — it renders exactly as it did on
-   * screen, it just isn't being looked at. The budget that decided this is
-   * the board's, not this component's: one pool, sized by what a frame costs
-   * on this tier.
-   *
-   * Optional, defaulting to `isOnScreen` (through `resolveFrameMount`): a
-   * caller that does not take part in the pool — a unit test, or any future
-   * surface rendering one frame outside `BoardFramesLayer` — means "mounted
-   * exactly while visible", which is the pre-pool behaviour and the only
-   * honest default. Required here once, it silently unmounted every such
-   * caller (`meta-14` landmine 1; `boardFrameViewTierFork.test.tsx` is the
-   * gate).
-   */
-  isMounted?: boolean
+  isLive: boolean
 }
 
 /**
@@ -208,16 +196,9 @@ function BoardFrameViewImpl({
   hasManualHeight,
   isActive,
   isSelected,
-  isOnScreen,
-  isMounted,
+  isLive,
 }: BoardFrameViewProps) {
   const trust = useSyncExternalStore(subscribeStudioTrustTier, getStudioTrustTier, getStudioTrustTier)
-  // ONE module answers "does this frame hold an iframe, and why"
-  // (`framePool.ts`). The tier no longer enters here at all: it picked the
-  // pool's budget back in `BoardFramesLayer`, which is the only place a
-  // frame's cost is a question. `reason` is stamped on the frame element
-  // below so the answer is legible from the DOM.
-  const { mounted, reason: mountReason } = resolveFrameMount({ isOnScreen, isPooled: isMounted })
   const resizeRef = useRef<ResizeDragState | null>(null)
   const [rename, renameInputRef] = useInlineRename({
     onCommit: (title) => useEditorStore.getState().renamePage(page.id, title),
@@ -278,6 +259,10 @@ function BoardFrameViewImpl({
   const styleSignature = useEditorStore(selectPosterStyleSignature)
   const posterId = posterKey({ frameId: frame.id, page, styleSignature, axes: effectiveAxes, width })
   const posterUrl = useFramePoster(posterId)
+  // ONE module answers "does this frame hold an iframe, and what does it show
+  // instead" (`frameMount.ts`). `reason` is stamped on the frame element below
+  // so the answer is legible from the DOM.
+  const { mounted, reason: mountReason } = resolveFrameMount({ isLive, hasPoster: posterUrl !== undefined })
   useFramePosterCapture(frameBodyRef, page.id, posterId, width, posterUrl !== undefined, mounted, contentReady || trust === 'run-project')
 
   // Capture phase — fires before the frame's own node-click handling, so
@@ -299,6 +284,24 @@ function BoardFrameViewImpl({
   // release) — its own hook so this view keeps owning what a frame LOOKS
   // like. See `useBoardFrameMoveDrag`.
   const moveDrag = useBoardFrameMoveDrag({ frameId: frame.id, pageId: page.id, x, y, width, height })
+
+  // A poster has no document to press on, so the frame body takes the press itself: a click (not the end of a
+  // pan) selects the frame, and a selected frame is live, so the one press promotes AND selects. At a readable zoom
+  // the layer under the pointer is selected too once the frame has committed (`posterPress.ts`).
+  const posterPressDownRef = useRef<{ x: number; y: number } | null>(null)
+  const handlePosterPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    posterPressDownRef.current = { x: e.clientX, y: e.clientY }
+  }
+  const handlePosterClick = (e: ReactMouseEvent<HTMLDivElement>) => {
+    const down = posterPressDownRef.current
+    posterPressDownRef.current = null
+    if (e.button !== 0 || (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > POSTER_PRESS_SLOP_PX)) return
+    useEditorStore.getState().selectFrame(page.id, e.shiftKey ? 'toggle' : 'replace')
+    if (!e.shiftKey) armPosterPress(frame.id, { clientX: e.clientX, clientY: e.clientY, deep: e.metaKey || e.ctrlKey })
+  }
+  useEffect(() => {
+    if (mounted && contentReady) void replayPosterPress(frame.id, page.id)
+  }, [mounted, contentReady, frame.id, page.id])
 
   const handleHeaderContextMenu = (e: ReactMouseEvent<HTMLDivElement>) => {
     e.preventDefault()
@@ -384,7 +387,7 @@ function BoardFrameViewImpl({
   return (
     // `data-frame-mount` is `FRAME_MOUNT_ATTR` spelled out — JSX cannot take
     // a computed attribute name without a spread. The two spellings are tied
-    // together by `framePoolMountReason.test.tsx`, which reads this element
+    // together by `frameMountReason.test.tsx`, which reads this element
     // back through `readFrameMountReason`.
     <div
       className={styles.frame}
@@ -544,6 +547,8 @@ function BoardFrameViewImpl({
         className={styles.frameBody}
         data-testid="board-frame-body"
         data-frame-auto-height={!hasManualHeight && mounted ? 'true' : undefined}
+        onPointerDown={mounted ? undefined : handlePosterPointerDown}
+        onClick={mounted ? undefined : handlePosterClick}
         style={{ '--frame-w': `${width}px`, '--frame-h': `${height}px` } as CSSProperties}
       >
         {/* `CanvasDiagnosticsScopeContext` (Z5) is where this frame's runtime
