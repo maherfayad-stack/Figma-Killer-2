@@ -36,7 +36,8 @@ import type { EditConstraint } from '@core/page-tree'
 import { useEditorStore } from '@site/store/store'
 import { STRUCTURAL_REFUSAL_TITLE, presentStructuralRefusal } from '@site/store/slices/site/structuralSourceEdits'
 import type { CanvasLiftDrop } from './BoardCanvasLayer/canvasLayerLift'
-import type { CanvasDropResolution, CanvasTransplantTarget } from './canvasDnd'
+import type { CanvasDropResolution } from './canvasDnd'
+import type { CanvasTransplantTarget } from './canvasTransplantDrop'
 import {
   freeMoveStylePatches,
   presentFreeMoveRefusal,

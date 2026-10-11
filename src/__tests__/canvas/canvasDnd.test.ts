@@ -6,9 +6,9 @@ import {
   nearerSiblingSide,
   resolveCanvasInsertionTarget,
   resolveCanvasDropTarget,
-  resolveCanvasTransplantTarget,
   type CanvasDropCandidate,
 } from '@admin/pages/site/canvas/canvasDnd'
+import { resolveCanvasTransplantTarget } from '@admin/pages/site/canvas/canvasTransplantDrop'
 
 function node(id: string, moduleId: string, children: string[] = [], locked = false): PageNode {
   return {
@@ -504,29 +504,32 @@ describe('canvasDnd', () => {
 })
 
 describe('a cross-frame drop lands where the pointer is, with its line', () => {
+  // Source-derived ids (`file:line:col`): a transplant is a source write, so the
+  // store's own gate refuses a node that exists only on the canvas.
+  const id = (name: string) => `pages/${name}.tsx:1:1`
   const origin = page({
-    root: node('root', 'base.body', ['moved']),
-    moved: node('moved', 'base.text'),
-  })
+    [id('root')]: node(id('root'), 'base.body', [id('moved')]),
+    [id('moved')]: node(id('moved'), 'base.text'),
+  }, id('root'))
   const destination = page({
-    root: node('root', 'base.body', ['main']),
-    main: node('main', 'base.container', ['a', 'b', 'c']),
-    a: node('a', 'base.text'),
-    b: node('b', 'base.text'),
-    c: node('c', 'base.text'),
-  })
+    [id('droot')]: node(id('droot'), 'base.body', [id('main')]),
+    [id('main')]: node(id('main'), 'base.container', [id('a'), id('b'), id('c')]),
+    [id('a')]: node(id('a'), 'base.text'),
+    [id('b')]: node(id('b'), 'base.text'),
+    [id('c')]: node(id('c'), 'base.text'),
+  }, id('droot'))
   const stack = [
-    candidate('main', 1, { left: 0, top: 0, width: 200, height: 600 }),
-    candidate('a', 2, { left: 0, top: 0, width: 200, height: 50 }),
-    candidate('b', 2, { left: 0, top: 200, width: 200, height: 50 }),
-    candidate('c', 2, { left: 0, top: 400, width: 200, height: 50 }),
+    candidate(id('main'), 1, { left: 0, top: 0, width: 200, height: 600 }),
+    candidate(id('a'), 2, { left: 0, top: 0, width: 200, height: 50 }),
+    candidate(id('b'), 2, { left: 0, top: 200, width: 200, height: 50 }),
+    candidate(id('c'), 2, { left: 0, top: 400, width: 200, height: 50 }),
   ]
-  const resolve = (point: { x: number; y: number }, candidates = stack) =>
+  const resolve = (point: { x: number; y: number }) =>
     resolveCanvasTransplantTarget({
       originTree: origin,
       destinationTree: destination,
-      draggedIds: ['moved'],
-      candidates,
+      draggedIds: [id('moved')],
+      candidates: stack,
       point,
       canHaveChildren,
       copy: false,
@@ -534,7 +537,7 @@ describe('a cross-frame drop lands where the pointer is, with its line', () => {
 
   it('released in the gap between two siblings it goes between them, not at the end', () => {
     const { target } = resolve({ x: 100, y: 120 })
-    expect(target).toMatchObject({ parentId: 'main', index: 1, position: 'inside' })
+    expect(target).toMatchObject({ parentId: id('main'), index: 1, position: 'inside' })
     // The line sits in the middle of the gap: between a's bottom (50) and b's top (200).
     expect(target?.gap?.axis).toBe('vertical')
     expect(target?.gap?.rect.top).toBe(125)
@@ -542,14 +545,12 @@ describe('a cross-frame drop lands where the pointer is, with its line', () => {
 
   it('released below the last child it still appends, and the line sits under it', () => {
     const { target } = resolve({ x: 100, y: 550 })
-    expect(target).toMatchObject({ parentId: 'main', index: 3 })
+    expect(target).toMatchObject({ parentId: id('main'), index: 3 })
     expect(target?.gap?.rect.top).toBe(450)
   })
 
   it('released on the near half of a leaf it lands on that side of the leaf', () => {
-    const upper = resolve({ x: 100, y: 410 }).target
-    expect(upper).toMatchObject({ parentId: 'main', index: 2, position: 'before' })
-    const lower = resolve({ x: 100, y: 440 }).target
-    expect(lower).toMatchObject({ parentId: 'main', index: 3, position: 'after' })
+    expect(resolve({ x: 100, y: 410 }).target).toMatchObject({ parentId: id('main'), index: 2, position: 'before' })
+    expect(resolve({ x: 100, y: 440 }).target).toMatchObject({ parentId: id('main'), index: 3, position: 'after' })
   })
 })

@@ -276,7 +276,7 @@ type SyntheticEvent = {
  */
 type SyntheticModifierState = { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean; altKey: boolean }
 type SyntheticMouseEvent = SyntheticEvent & SyntheticModifierState & { button: number }
-type SyntheticKeyboardEvent = SyntheticEvent & {
+type SyntheticKeyboardEvent = SyntheticEvent & SyntheticModifierState & {
   key: string
 }
 type SyntheticFocusEvent = SyntheticEvent

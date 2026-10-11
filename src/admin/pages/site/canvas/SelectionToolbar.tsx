@@ -32,6 +32,7 @@ import { HandGrabSolidIcon } from 'pixel-art-icons/icons/hand-grab-solid'
 import { LinkIcon } from 'pixel-art-icons/icons/link'
 import { PenGlyphIcon } from '@ui/components/ElementIcons'
 import { CanvasInsertModuleButton } from './CanvasInsertModuleButton'
+import { useHideWhileDragging } from './useHideWhileDragging'
 import { tryEnterVectorEdit, vectorEditVerdict } from './BoardVectorLayer/vectorEditEntry'
 import { useVectorEditTarget } from './BoardVectorLayer/vectorEditState'
 import styles from './BreakpointSelectionOverlay.module.css'
@@ -39,6 +40,8 @@ import styles from './BreakpointSelectionOverlay.module.css'
 interface SelectionToolbarProps {
   /** Positioned imperatively by the overlay's RAF tick (`positionToolbar`). */
   toolbarRef: React.RefObject<HTMLDivElement | null>
+  /** An element drag is in flight: the bar is anchored to where the element WAS, so it hides for the gesture. */
+  dragging: boolean
   /** `scoped` when portaled into the canvas root, `fixed` in the body fallback. */
   mode: 'scoped' | 'fixed'
   onDragPointerDown: (event: React.PointerEvent<HTMLElement>) => void
@@ -77,7 +80,8 @@ function deleteSelectedLayers() {
   state.clearSelection()
 }
 
-export function SelectionToolbar({ toolbarRef, mode, onDragPointerDown, frameId }: SelectionToolbarProps) {
+export function SelectionToolbar({ toolbarRef, dragging, mode, onDragPointerDown, frameId }: SelectionToolbarProps) {
+  useHideWhileDragging(toolbarRef, dragging)
   const inPrototypeMode = useEditorStore((s) => s.boardMode === 'prototype')
   const picking = useEditorStore((s) => s.linkDraft?.mode === 'pick' || s.pendingLinkSource !== null)
   // Only where entering would succeed: a refused svg (an `.svg`-file icon, a

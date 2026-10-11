@@ -85,8 +85,8 @@ export function offerSelectionToFollowUp(selectedNodeIds: readonly string[], now
   // The selection moved to something that was already there: the user did
   // something else, and the follow-up belongs to nothing any more.
   const before = current.existing.get(nodeId)
-  const now = fingerprintOf(selectActiveCanvasPage(useEditorStore.getState())?.nodes[nodeId])
-  if (before !== undefined && before === now) {
+  const after = fingerprintOf(selectActiveCanvasPage(useEditorStore.getState())?.nodes[nodeId])
+  if (before !== undefined && before === after) {
     pending = null
     return false
   }

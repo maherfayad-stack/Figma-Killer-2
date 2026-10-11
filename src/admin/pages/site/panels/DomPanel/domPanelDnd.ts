@@ -5,7 +5,7 @@ import {
   type PageTreeDropPosition,
   type PageTreeDropTarget,
 } from '@core/page-tree'
-import { resolveTransplantDropOver } from '@site/canvas/canvasDnd'
+import { resolveTransplantDropOver } from '@site/canvas/canvasTransplantDrop'
 
 type DomDropZone = PageTreeDropPosition
 

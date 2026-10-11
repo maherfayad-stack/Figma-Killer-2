@@ -45,6 +45,7 @@ export default function Home() {
         </div>
       </div>
       <Button label="Tab" size="default" variant="primary" style={{ position: "absolute", bottom: "10px" }} />
+      <input type="text" aria-label="code" style={{ position: "absolute", left: "600px", top: "520px", width: "120px", height: "32px" }} />
     </main>
   )
 }
@@ -82,7 +83,7 @@ test.afterEach(() => {
 })
 
 async function openBoard(page: Page): Promise<{ canvasRoot: Locator; frame: (pageId: string) => Locator; content: (pageId: string) => FrameLocator }> {
-  const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
+  const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: true })
   const frame = (pageId: string) => page.locator(`[data-page-id="${pageId}"]`).first()
   const content = (pageId: string) => canvasContentFrame(frame(pageId))
   return { canvasRoot, frame, content }
@@ -222,11 +223,11 @@ test.describe('the Text tool', () => {
     await page.mouse.down()
     await page.mouse.move(at.x + 80, at.y + 30, { steps: 6 })
     await page.mouse.up()
-    const editable = home.locator('[contenteditable="true"]')
+    const editable = home.locator('[contenteditable]:not([contenteditable="false"])')
     await expect(editable, 'the new text never entered inline edit').toBeVisible({ timeout: 30_000 })
     await expect.poll(() => editable.evaluate((el) => el.ownerDocument.activeElement === el), { timeout: 5_000 }).toBe(true)
     await page.keyboard.type('Hello world')
-    await page.keyboard.press('Escape')
+    await page.keyboard.press('Enter')
     await expect.poll(() => readFile('pages/Home.tsx'), { timeout: 30_000 }).toContain('Hello world')
   })
 })
@@ -289,32 +290,115 @@ test.describe('cross-frame drop', () => {
     const g = await visualBox(gamma)
     await selectInFrame(page, gamma)
     await expect.poll(() => selectedNodeIds(other), { timeout: 10_000 }).toContain('pages/Other.tsx:7:10')
-    // Release in the 16px gap between "first" and the first Button of Home's form.
-    const first = await visualBox(home.locator('[data-node-id="pages/Home.tsx:12:12"]'))
     const one = await visualBox(home.locator('[data-node-id="pages/Home.tsx:13:12"]'))
-    const dropX = (first.left + first.right) / 2 + 40
-    const dropY = (first.bottom + one.top) / 2
+    // Between Button One and Button Two (both instances, so this also asks that an instance is an anchor):
+    // deep inside the form, clear of its edge bands (at 35% zoom an edge band is ~46 frame px).
+    const two = await visualBox(home.locator('[data-node-id="pages/Home.tsx:14:12"]'))
+    const dropX = (one.left + one.right) / 2
+    const dropY = (one.bottom + two.top) / 2
     await page.mouse.move((g.left + g.right) / 2, (g.top + g.bottom) / 2)
     await page.mouse.down()
     await page.mouse.move((g.left + g.right) / 2 + 30, (g.top + g.bottom) / 2 - 30, { steps: 5 })
     await page.mouse.move(dropX, dropY, { steps: 20 })
     await page.waitForTimeout(250)
-    console.log('DROPDOM', JSON.stringify(await home.locator('body').evaluate((body) => Array.from(body.querySelectorAll('[data-studio-canvas-overlay-root] *')).map((e) => e.tagName + ' ' + Array.from(e.attributes).map((a) => a.name + '=' + a.value.slice(0, 40)).join(' ') + ' d=' + (e as HTMLElement).style.display).slice(0, 40))))
-    const otherDom = await other.locator('body').evaluate((body) => Array.from(body.querySelectorAll('[data-position], [data-canvas-drag-ghost]')).map((e) => e.tagName + ' ' + e.getAttribute('data-position')))
-    console.log('OTHERDOM', JSON.stringify(otherDom))
-    // The insertion line is the drop layer's "line" bar in the destination frame, 2px thick.
-    const lineThickness = await home.locator('body').evaluate((body) => {
-      const lines = Array.from(body.querySelectorAll('[data-position="after"], [data-position="before"]'))
-      return lines.map((l) => Math.min(l.getBoundingClientRect().width, l.getBoundingClientRect().height))
+    // The insertion line is the drop layer's bar, painted in the editor document over the destination frame.
+    const line = await page.evaluate(() => {
+      const bars = Array.from(document.querySelectorAll<HTMLElement>('[data-position="after"], [data-position="before"]'))
+      return bars.map((bar) => {
+        const r = bar.getBoundingClientRect()
+        return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, width: r.width, height: r.height }
+      })
     })
-    expect(lineThickness.length, 'no insertion line while hovering between siblings').toBeGreaterThan(0)
+    expect(line.length, 'no insertion line while hovering between siblings').toBeGreaterThan(0)
+    const bar = line.find((l) => l.width > 0 && l.height > 0)!
+    // Thin, across the container, and in the gap between Button One and Button Two.
+    expect(Math.min(bar.width, bar.height)).toBeLessThanOrEqual(6)
+    expect(bar.top).toBeGreaterThanOrEqual(one.bottom - 2)
+    expect(bar.bottom).toBeLessThanOrEqual(two.top + 2)
     await page.mouse.up()
     await expect.poll(() => readFile('pages/Home.tsx'), { timeout: 30_000 }).toContain('gamma')
     const src = readFile('pages/Home.tsx')
-    const iFirst = src.indexOf('<p>first</p>')
-    const iGamma = src.indexOf('gamma')
     const iOne = src.indexOf('label="One"')
-    expect(iGamma, src).toBeGreaterThan(iFirst)
-    expect(iGamma, src).toBeLessThan(iOne)
+    const iGamma = src.indexOf('gamma')
+    const iTwo = src.indexOf('label="Two"')
+    expect(iGamma, src).toBeGreaterThan(iOne)
+    expect(iGamma, src).toBeLessThan(iTwo)
+  })
+})
+
+const INPUT = 'pages/Home.tsx:19:8'
+
+test.describe('P2: chrome follows the gesture', () => {
+  test.setTimeout(240_000)
+
+  test('the press ring shows on pointer-down on an <input>, before release', async ({ page }) => {
+    const { home } = await openHome(page)
+    const input = await visualBox(home.locator(`[data-node-id="${INPUT}"]`))
+    const x = (input.left + input.right) / 2
+    const y = (input.top + input.bottom) / 2
+    await page.mouse.move(x - 20, y - 20)
+    await page.mouse.move(x, y, { steps: 6 })
+    await page.waitForTimeout(150)
+    await page.mouse.down()
+    // Held down: no release yet. The ring is a frame or three behind the finger at worst.
+    await expect
+      .poll(() => home.locator('body').evaluate((body) => body.querySelector('[data-canvas-press-ring], [data-canvas-selection-ring="true"]') !== null), { timeout: 1_500 })
+      .toBe(true)
+    await page.mouse.up()
+  })
+
+  test('the selection toolbar is hidden while its element is dragged, and back on release', async ({ page }) => {
+    const { home } = await openHome(page)
+    await selectInFrame(page, home.locator('[data-node-id="pages/Home.tsx:12:12"]'))
+    const toolbar = page.locator('[data-canvas-selection-toolbar="true"]')
+    await expect(toolbar).toBeVisible({ timeout: 10_000 })
+    const box = await visualBox(home.locator('[data-node-id="pages/Home.tsx:12:12"]'))
+    const x = (box.left + box.right) / 2
+    const y = (box.top + box.bottom) / 2
+    await page.mouse.move(x, y)
+    await page.mouse.down()
+    await page.mouse.move(x + 30, y + 40, { steps: 8 })
+    await expect(toolbar, 'the toolbar stayed over the element it no longer sits on').toBeHidden({ timeout: 5_000 })
+    await page.mouse.up()
+    await expect(toolbar).toBeVisible({ timeout: 10_000 })
+  })
+})
+
+test.describe('P2: the board opens framed', () => {
+  test.setTimeout(240_000)
+
+  test('Shift+1 fits the frames into the viewport left once the Properties sidebar opens', async ({ page }) => {
+    const { canvasRoot, frame, content } = await openBoard(page)
+    await canvasRoot.focus()
+    await page.keyboard.press('Shift+1')
+    await page.waitForTimeout(800)
+    await expect(visibleCanvasIframe(frame('other'))).toHaveCount(1, { timeout: 60_000 })
+    // Selecting opens the docked sidebar; the frames must already clear it.
+    await selectInFrame(page, content('other').locator('[data-node-id="pages/Other.tsx:4:8"]'))
+    const sidebar = page.getByTestId('right-sidebar')
+    await expect(sidebar).toHaveAttribute('data-expanded', 'true', { timeout: 10_000 })
+    await page.waitForTimeout(400)
+    const left = (await sidebar.boundingBox())!.x
+    const rights = await page.locator('[data-frame-mount]').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().right))
+    expect(rights.length).toBeGreaterThan(0)
+    for (const right of rights) expect(right, 'a frame sits under the opened sidebar').toBeLessThanOrEqual(left + 1)
+  })
+
+  test('reopening restores the camera the person left', async ({ page }) => {
+    const { canvasRoot, homeFrame } = await openHome(page)
+    await zoomToPercent(page, canvasRoot, 30)
+    const root = (await canvasRoot.boundingBox())!
+    await page.mouse.move(root.x + root.width / 2, root.y + root.height / 2)
+    await page.mouse.wheel(120, 60)
+    await page.waitForTimeout(600) // past the 100 ms store commit that remembers it
+    const before = (await homeFrame.boundingBox())!
+    await page.reload()
+    await expect(page.getByTestId('canvas-root')).toBeVisible({ timeout: 60_000 })
+    await expect(page.locator('[data-page-id="home"]').first()).toBeAttached({ timeout: 90_000 })
+    await page.waitForTimeout(1_500)
+    const after = (await page.locator('[data-page-id="home"]').first().boundingBox())!
+    expect(Math.abs(after.x - before.x)).toBeLessThanOrEqual(3)
+    expect(Math.abs(after.y - before.y)).toBeLessThanOrEqual(3)
+    expect(Math.abs(after.width - before.width)).toBeLessThanOrEqual(3)
   })
 })

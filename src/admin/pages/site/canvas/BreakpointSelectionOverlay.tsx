@@ -262,13 +262,7 @@ export function BreakpointSelectionOverlay({
   const showRings =
     permissions.canEditStructure || permissions.canEditContent || permissions.canEditStyle
   const showSelectorHighlight = showRings && Boolean(highlightedSelector)
-  // The toolbar additionally needs a selection; body press-and-drag does not.
-  // A board frame (`frameId` set) is always an editing surface: every frame of a
-  // board shares the synthetic 'studio' breakpoint while the store's active one
-  // is the site's own until the first press on a frame, so this gate left a
-  // board's body drag and in-frame marquee OFF until something was clicked
-  // first - a press-drag on a frame's background did nothing. Outside a board
-  // the page is mirrored across breakpoint frames and only the active one edits.
+  // The toolbar additionally needs a selection; body press-and-drag does not. A board frame always edits (one shared breakpoint id).
   const canEditStructureHere = permissions.canEditStructure && (frameId !== null || activeBreakpointId === breakpointId)
   const showToolbar = canEditStructureHere && selectedNodeIds.length > 0
 
@@ -612,7 +606,7 @@ export function BreakpointSelectionOverlay({
 
   const toolbar = showToolbar ? (
     <SelectionToolbar
-      toolbarRef={toolbarRef}
+      toolbarRef={toolbarRef} dragging={reorderDrag.dragging}
       mode={toolbarMode}
       onDragPointerDown={reorderDrag.handlePointerDown}
       frameId={frameId}
@@ -681,19 +675,6 @@ export function BreakpointSelectionOverlay({
       onResizeFrameReady={setResizeFrameElement}
     />
   ) : null
-
-  // The floating toolbar is anchored to where the element WAS; a dragged one
-  // moves away from it and the bar sat over its neighbours for the whole drag.
-  // Hidden for the gesture, back on release (`positionToolbar` owns `display` and the
-  // placement, never `visibility`, so the two cannot fight).
-  useEffect(() => {
-    const toolbar = toolbarRef.current
-    if (!toolbar || !reorderDrag.dragging) return
-    toolbar.style.visibility = 'hidden'
-    return () => {
-      toolbar.style.visibility = ''
-    }
-  }, [reorderDrag.dragging])
 
   // Studio-only mini-inspector (Phase 2), anchored below the selection ring; any drag end closes it.
   const inspectorClosed = useInspectorClosedAfterDrag(reorderDrag.dragging, selectedNodeIdsSignature, selectedNodeIds.length > 0)

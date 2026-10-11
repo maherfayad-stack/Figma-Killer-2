@@ -53,9 +53,9 @@ import type {
   CanvasDropCandidate,
   CanvasDropResolution,
   CanvasRect,
-  CanvasTransplantResolution,
 } from './canvasDnd'
-import { resolveCanvasDropTarget, resolveCanvasTransplantTarget } from './canvasDnd'
+import { resolveCanvasDropTarget } from './canvasDnd'
+import { resolveCanvasTransplantTarget, type CanvasTransplantResolution } from './canvasTransplantDrop'
 import { autoPanDelta } from './canvasDragAutoPan'
 import {
   refreshBoardDropSurfaces,
