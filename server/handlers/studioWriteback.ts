@@ -73,7 +73,7 @@ import type { Project } from 'ts-morph'
 import { applyCssEdit } from './studioCssWriteback'
 import { withProjectWriteLock } from './studio/projectWriteLock'
 import { snapshotImportsBeforeRemoval } from './studioBatchImportPrune'
-import { applyRestoreEdit, openBatchUndoJournal } from './studioBatchUndoJournal'
+import { applyRestoreEdit, openBatchUndoJournal, RESTYLE_ROLLED_BACK_REASON } from './studioBatchUndoJournal'
 import { relativeImportSpecifier, resolveClassNameTokens, resolveContainedRefPath } from './studioEditTargets'
 import {
   applySlotEdit,
@@ -544,8 +544,26 @@ export function applyStudioEditBatch(
   }
 
   importPrune.prune()
+  // CT-5 - a restyle that refused anywhere writes nothing at all: files back to
+  // the pre-image, the stylesheet it created removed. The edits that DID run are
+  // reported as rolled back, after the real refusals, so `skipped` still counts
+  // every edit that did not land.
+  const createdFiles = [...promoteDetails.map((detail) => detail.newFile), ...createdStylesheets.map((created) => created.file)]
+  const rolledBack = journal.rollbackRestyle(refusals.length > 0, createdFiles)
+  if (rolledBack) {
+    const refused = new Set(refusals.map((refusal) => `${refusal.kind}|${refusal.nodeId}`))
+    for (const edit of ordered) {
+      if (refused.has(`${edit.kind}|${edit.nodeId}`)) continue
+      refusals.push(refusalFor(edit, RESTYLE_ROLLED_BACK_REASON, 'Another part of this style change was refused, so none of it was written.'))
+    }
+    written = 0
+    createdStylesheets.length = 0
+    fingerprints.length = 0
+    swapDetails.length = 0
+    detachDetails.length = 0
+  }
   // P3-F — after the prune and the module imports: the entry is what the files are NOW.
-  const undoToken = journal.commit(written, promoteDetails.map((detail) => detail.newFile))
+  const undoToken = rolledBack ? undefined : journal.commit(written, createdFiles)
 
   // A re-found edit means the caller's ids for its file were already stale
   // before this batch wrote anything — `shifted` is how every caller learns

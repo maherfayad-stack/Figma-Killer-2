@@ -136,6 +136,17 @@ const ClassEditSchema = Type.Object({
   nodeId: Type.String(),
   add: Type.Array(ClassNameTokenSchema),
   remove: Type.Array(ClassNameTokenSchema),
+  /**
+   * CT-5 - this class edit belongs to a restyle gesture (apply, create or detach
+   * a text/effect style): the Inspector's style picker posts it together with the
+   * `css` insert and the inline `style` strip/set the gesture needs. It asks for
+   * two things no plain class edit gets: the batch is journaled (one `restore`
+   * puts back every file it changed, a created stylesheet included) and it is
+   * ALL OR NOTHING - if any edit in the batch refuses, every file goes back to
+   * the bytes it had and nothing is written. A half-applied restyle (the inline
+   * values stripped, the class refused) is a layer that changed look.
+   */
+  restyle: Type.Optional(Type.Literal(true)),
 })
 
 /**

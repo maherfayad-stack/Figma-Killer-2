@@ -339,6 +339,18 @@ function resolveContainedCssPath(dir: string, fileRel: string): string | null {
   return resolveWritableExistingFile(dir, fileRel, /\.css$/i)
 }
 
+/**
+ * CT-5 - the existing stylesheet a `set`/`unset`/`insert`/keyframe edit writes,
+ * as an absolute path, or `null` for a `create` (its file does not exist yet) or
+ * a target this module would refuse. Exported for the undo journal: a restyle's
+ * pre-image has to hold the stylesheet its rule is inserted into, which is not
+ * in the batch's touched-file set (a node id names a `line:col`, a CSS edit
+ * names a file).
+ */
+export function cssEditTargetFile(dir: string, edit: CssEdit): string | null {
+  return edit.op === 'create' ? null : resolveContainedCssPath(dir, edit.file)
+}
+
 /** A real page-source-file extension — the set `applyStudioEdit` already treats as app source. */
 const SOURCE_FILE_EXT_RE = /\.(tsx|jsx|ts|js)$/i
 

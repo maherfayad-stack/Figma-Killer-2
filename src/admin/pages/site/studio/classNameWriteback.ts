@@ -131,7 +131,7 @@ export interface ClassNameEditPlan {
   rowTemplateWrites: RowTemplateWrite[]
 }
 
-type ClassTokenResult =
+export type ClassTokenResult =
   | { kind: 'token'; token: ClassNameEditToken }
   | { kind: 'refused'; reason: string; message: string }
   /** The class's stylesheet is being created in this same save — see `resolveClassToken`. */
@@ -183,7 +183,7 @@ type ClassTokenResult =
  *     be a `stylesheet-not-created-yet` warning telling the user to make
  *     another change.
  */
-function resolveClassToken(
+export function resolveClassToken(
   classId: string,
   styleRules: Record<string, StyleRule>,
   pageIndex: ReadonlyMap<string, string>,
