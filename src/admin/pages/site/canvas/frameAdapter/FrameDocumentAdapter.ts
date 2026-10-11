@@ -72,6 +72,39 @@ export interface DropCandidateGeometry {
 }
 
 /**
+ * SB-3 — one node's box and the few hit-test facts the rect index needs, as
+ * returned by {@link FrameDocumentAdapter.measureAll}. `rect` is BODY-RELATIVE
+ * (the same coordinate space `measure` speaks) and is `nodeVisualRect`: a
+ * `display: contents` host carries the union of its boxed children. Only nodes
+ * that have a box are listed; a boxless node's descendants attach to the
+ * nearest listed ancestor.
+ */
+export interface NodeGeometry {
+  /** Canonical tree node id (a bridge frame's stamp ids are already translated; stamps the tree does not know are folded into their nearest known ancestor). */
+  nodeId: string
+  rect: NodeRect
+  /** Position in the same `nodes` array of the nearest listed ancestor, or -1 for a root. Always earlier than this node. */
+  parent: number
+  /** `overflow` other than `visible`: descendants are clipped to this node's box. */
+  clips: boolean
+  /** `pointer-events: none` or `visibility: hidden`: a native hit test passes through it. */
+  inert: boolean
+  /** A non-identity `transform`: `rect` is the bounds of a quad, so a point inside it may still miss the node. */
+  transformed: boolean
+  /** Paint rank among siblings (`paintRankOf` in `@core/studio-runtime`): higher paints on top. */
+  paint: number
+}
+
+/** SB-3 — the reply to {@link FrameDocumentAdapter.measureAll}: every boxed node in document order. */
+export interface FrameGeometrySnapshot {
+  /** Where the body's border box sits in the frame's own viewport (0,0 for an ordinary frame). Node rects + `origin` are viewport points. */
+  origin: { x: number; y: number }
+  nodes: NodeGeometry[]
+  /** The frame has more stamped nodes than one read carries; `nodes` is the document-order prefix, so a hit test over it may miss a late node. */
+  truncated: boolean
+}
+
+/**
  * The three structural DOM mutations a structural gesture performs
  * immediately (same tick) for the paint-on-drop feel, ahead of the
  * HMR/writeback reconciliation that follows within milliseconds, plus the
@@ -115,6 +148,13 @@ export interface OptimisticDomOps {
 
 export type FrameRuntimeEvent =
   | { type: 'ready' }
+  /**
+   * SB-3 — the geometry last returned by `measureAll` may be stale (content or
+   * style changed, a stylesheet or font or image landed, a transition ended, the
+   * viewport resized). A latch: fired once, then quiet until the next
+   * `measureAll`. Never fires before the first `measureAll`.
+   */
+  | { type: 'geometry:dirty' }
   | { type: 'hmr:before' }
   | { type: 'hmr:after' }
   | { type: 'frame:resize'; height: number }
@@ -230,6 +270,17 @@ export interface FrameDocumentAdapter {
   hover(ref: NodeRef | null): void
   /** Rects + a bounded set of computed-style properties. Portal mode resolves synchronously (wrapped in a resolved `Promise` so callers never branch on adapter kind); bridge mode is genuinely async (a real `postMessage` round trip, bounded by a timeout). */
   measure(refs: NodeRef[], properties?: string[]): Promise<NodeMeasurement[]>
+  /**
+   * SB-3 — every boxed node in the frame, in ONE batched read, for the rect
+   * index (`frameGeometry/`). Unlike `measure` it takes no refs and reads no
+   * computed style beyond the five hit-test facts on {@link NodeGeometry}; unlike
+   * `measureDropCandidates` it is linear in the node count and carries ancestry.
+   * Portal mode resolves synchronously (wrapped in a resolved `Promise`); bridge
+   * mode is one `postMessage` round trip carrying a single array. The FIRST call
+   * also arms the frame's `geometry:dirty` signal (see {@link FrameRuntimeEvent}),
+   * so a frame nobody indexes pays nothing for it.
+   */
+  measureAll(): Promise<FrameGeometrySnapshot>
   /**
    * `speed-06` — every node currently in the frame's document, with its
    * drop-target geometry, for a per-drag candidate snapshot

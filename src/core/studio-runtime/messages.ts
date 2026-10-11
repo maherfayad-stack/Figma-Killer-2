@@ -68,11 +68,13 @@
  */
 import { Type, type Static } from '@sinclair/typebox'
 import { DropCandidatesMessageSchema, DropCandidatesResultMessageSchema } from './dropCandidateMessages'
+import { GeometryDirtyMessageSchema, MeasureAllMessageSchema, MeasureAllResultMessageSchema } from './geometryMessages'
 import { FrameBlurMessageSchema, KeyMessageSchema } from './keyMessages'
 import { NodeRectSchema, NodeRefSchema, PointerModifiersSchema } from './messageShapes'
 import { ResizeCommitMessageSchema, ResizeGuidesMessageSchema, SetResizeTargetMessageSchema } from './resizeMessages'
 
 export { DROP_CANDIDATES_MAX, DROP_CANDIDATE_CHILD_RECTS_MAX, DropCandidatesMessageSchema, DropCandidatesResultMessageSchema, type DropCandidateWire } from './dropCandidateMessages'
+export { GEOMETRY_NODES_MAX, GeometryDirtyMessageSchema, MeasureAllMessageSchema, MeasureAllResultMessageSchema, type GeometryNodeWire } from './geometryMessages'
 export { NodeRectSchema, type NodeRect } from './messageShapes'
 export { FrameBlurMessageSchema, KEY_NAME_MAX, KeyMessageSchema, type KeyMessage } from './keyMessages'
 export {
@@ -373,6 +375,7 @@ export const InboundRuntimeMessageSchema = Type.Union([
   OptimisticStyleClearMessageSchema,
   OptimisticRevertMessageSchema,
   DropCandidatesMessageSchema,
+  MeasureAllMessageSchema,
 ])
 export type InboundRuntimeMessage = Static<typeof InboundRuntimeMessageSchema>
 
@@ -654,6 +657,8 @@ export const OutboundRuntimeMessageSchema = Type.Union([
   DropCandidatesResultMessageSchema,
   KeyMessageSchema,
   FrameBlurMessageSchema,
+  MeasureAllResultMessageSchema,
+  GeometryDirtyMessageSchema,
 ])
 export type OutboundRuntimeMessage = Static<typeof OutboundRuntimeMessageSchema>
 

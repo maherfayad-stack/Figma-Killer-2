@@ -64,7 +64,9 @@ import type { PreviewAxes } from '@core/studio-board'
 import type {
   DropCandidateGeometry,
   FrameDocumentAdapter,
+  FrameGeometrySnapshot,
   FrameRuntimeEvent,
+  NodeGeometry,
   NodeMeasurement,
   NodeRef,
   OptimisticDomOps,
@@ -134,6 +136,13 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
     string,
     { resolve: (c: DropCandidateGeometry[]) => void; reject: (err: Error) => void; timeout: ReturnType<typeof setTimeout> }
   >()
+  /** SB-3 — pending `measureAll` requests; same shape as `pendingDropCandidates`. */
+  private readonly pendingGeometry = new Map<
+    string,
+    { resolve: (g: FrameGeometrySnapshot) => void; reject: (err: Error) => void; timeout: ReturnType<typeof setTimeout> }
+  >()
+  /** SB-3 — whether `measureAll` was ever called: only then does a reloaded document owe the parent a `geometry:dirty`. */
+  private geometryRequested = false
   private nextRequestId = 0
   private disposed = false
   private frameReady = false
@@ -305,6 +314,49 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
     })
   }
 
+  /**
+   * SB-3 — one `measureAll`/`measureAll:result` round trip: every boxed node of
+   * the live page in a single reply, translated to canonical ids like every
+   * other inbound method here. The runtime stamps nodes by SOURCE position, so
+   * the reply can list elements the page tree never heard of (a design-system
+   * component's own internals). Those are folded into their nearest known
+   * ancestor rather than listed: the children keep a valid `parent`, and a
+   * click on one resolves to the known node, the same rule
+   * `nearestKnownNodeId` applies to pointer events. What folding loses is the
+   * folded node's own `clips`/`inert` facts, which is the bridge's documented
+   * approximation.
+   */
+  measureAll(): Promise<FrameGeometrySnapshot> {
+    this.geometryRequested = true
+    const requestId = `bridge-measure-all-${this.nextRequestId++}`
+    return new Promise<FrameGeometrySnapshot>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingGeometry.delete(requestId)
+        reject(new MeasureTimeoutError(requestId))
+      }, this.measureTimeoutMs)
+      this.pendingGeometry.set(requestId, { resolve, reject, timeout })
+      this.post({ type: 'measureAll', requestId })
+    })
+  }
+
+  /** Wire nodes -> canonical, known-ids-only, with `parent` re-pointed past every folded node. */
+  private toCanonicalGeometry(message: Extract<OutboundRuntimeMessage, { type: 'measureAll:result' }>): FrameGeometrySnapshot {
+    const nodes: NodeGeometry[] = []
+    // For wire node i: the index in `nodes` of itself, or of its nearest kept ancestor, or -1.
+    const resolved: number[] = []
+    message.nodes.forEach((wire, i) => {
+      const parent = wire.parent >= 0 && wire.parent < i ? resolved[wire.parent]! : -1
+      const nodeId = this.stampIndex.get(wire.nodeId)?.[wire.occurrenceIndex]
+      if (nodeId === undefined) {
+        resolved.push(parent)
+        return
+      }
+      resolved.push(nodes.length)
+      nodes.push({ nodeId, rect: wire.rect, parent, clips: wire.clips, inert: wire.inert, transformed: wire.transformed, paint: wire.paint })
+    })
+    return { origin: message.origin, nodes, truncated: message.truncated }
+  }
+
   setAxes(axes: PreviewAxes): void {
     this.post({ type: 'setAxes', axes: { direction: axes.direction, colorScheme: axes.colorScheme, locale: axes.locale } })
   }
@@ -388,6 +440,19 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
         // A SECOND `ready` is a reloaded document — see `interactionMode`.
         if (wasReady && this.interactionMode !== null) this.post({ type: 'setMode', mode: this.interactionMode })
         this.emit({ type: 'ready' })
+        // The reloaded document has a new, untracked runtime: geometry read from the old one is gone.
+        if (wasReady && this.geometryRequested) this.emit({ type: 'geometry:dirty' })
+        return
+      }
+      case 'geometry:dirty':
+        this.emit({ type: 'geometry:dirty' })
+        return
+      case 'measureAll:result': {
+        const pending = this.pendingGeometry.get(message.requestId)
+        if (!pending) return
+        clearTimeout(pending.timeout)
+        this.pendingGeometry.delete(message.requestId)
+        pending.resolve(this.toCanonicalGeometry(message))
         return
       }
       case 'hmr:before':
@@ -531,6 +596,11 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
       reject(new Error('BridgeFrameAdapter disposed while a dropCandidates request was in flight.'))
     }
     this.pendingDropCandidates.clear()
+    for (const { reject, timeout } of this.pendingGeometry.values()) {
+      clearTimeout(timeout)
+      reject(new Error('BridgeFrameAdapter disposed while a measureAll request was in flight.'))
+    }
+    this.pendingGeometry.clear()
     this.eventHandlers.clear()
   }
 }

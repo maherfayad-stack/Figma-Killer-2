@@ -18,6 +18,8 @@ import { getColorSchemeCapability } from '@site/studio/previewAxesCapability'
 import type { PreviewAxes } from '@core/studio-board'
 import {
   collectDropCandidates,
+  collectNodeGeometry,
+  createGeometryDirtySignal,
   OVERLAY_ID_ATTR,
   SELECTION_CHROME_RULES,
   SELECTION_OVERLAY_ROOT_ID,
@@ -27,6 +29,7 @@ import {
   startScrollUnroll,
   isSelectionChromeMutation,
   type AnimationFreezeController,
+  type GeometryDirtySignal,
   type HoverSuppressionController,
   type ScrollUnrollController,
 } from '@core/studio-runtime'
@@ -35,6 +38,7 @@ import { escapeCssAttributeValue } from '../escapeCssAttributeValue'
 import type {
   DropCandidateGeometry,
   FrameDocumentAdapter,
+  FrameGeometrySnapshot,
   FrameRuntimeEvent,
   NodeMeasurement,
   NodeRect,
@@ -140,6 +144,8 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
   private repositionRaf: number | null = null
   private layoutObserver: MutationObserver | null = null
   private ringTrackingArmed = false
+  /** SB-3 — created by the first `measureAll`; fed by `layoutObserver` below, so geometry adds no body observer of its own. */
+  private geometrySignal: GeometryDirtySignal | null = null
 
   readonly optimistic: OptimisticDomOps = {
     insert: (nodeId, parentNodeId, index, tagName, text) => {
@@ -190,8 +196,12 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
    * anyway allocated records and scheduled a no-op animation frame for every
    * attribute write in every frame — a ring style write, every frame of an
    * element resize.
+   *
+   * SB-3: the first `measureAll` arms it too, because the same observer is the
+   * rect index's dirty signal for content and style-attribute changes (it
+   * forwards to `geometrySignal`). A frame nobody hit-tests still pays nothing.
    */
-  private armRingTracking(): void {
+  private armLayoutTracking(): void {
     if (this.ringTrackingArmed || this.disposed) return
     this.ringTrackingArmed = true
     const view = this.doc.defaultView
@@ -200,6 +210,7 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
       // This adapter's own ring writes are chrome; repositioning for them
       // would schedule another frame for nothing.
       if (records?.every(isSelectionChromeMutation)) return
+      this.geometrySignal?.notify()
       if (this.repositionRaf !== null) return
       this.repositionRaf = raf(() => {
         this.repositionRaf = null
@@ -303,7 +314,7 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
   }
 
   select(refs: NodeRef[]): void {
-    this.armRingTracking()
+    this.armLayoutTracking()
     const next = new Set(refs.map((ref) => ref.nodeId))
     for (const [nodeId, ring] of this.selectionRings) {
       if (!next.has(nodeId)) {
@@ -322,7 +333,7 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
   }
 
   hover(ref: NodeRef | null): void {
-    this.armRingTracking()
+    this.armLayoutTracking()
     this.hoverNodeId = ref?.nodeId ?? null
     if (!ref) {
       if (this.hoverRing) this.hoverRing.style.display = 'none'
@@ -344,6 +355,22 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
       for (const prop of props) computedStyle[prop] = computed.getPropertyValue(prop)
       return { nodeId, rect, computedStyle }
     })
+  }
+
+  /**
+   * SB-3 — the same `collectNodeGeometry` the bridge runtime answers `measureAll`
+   * with, run on the same-origin document. Synchronous under the hood. The first
+   * call arms the layout observer and the extra dirty listeners (see
+   * {@link armLayoutTracking}); every call re-arms the `geometry:dirty` latch.
+   */
+  async measureAll(): Promise<FrameGeometrySnapshot> {
+    const view = this.doc.defaultView
+    if (!view) return { origin: { x: 0, y: 0 }, nodes: [], truncated: false }
+    this.armLayoutTracking()
+    this.geometrySignal ??= createGeometryDirtySignal(this.doc, view, () => this.bus.emit({ type: 'geometry:dirty' }))
+    this.geometrySignal.track()
+    this.geometrySignal.markClean()
+    return collectNodeGeometry(this.doc, view)
   }
 
   /**
@@ -457,6 +484,7 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
     for (const unsubscribe of this.domUnsubscribes) unsubscribe()
     this.domUnsubscribes.length = 0
     this.layoutObserver?.disconnect()
+    this.geometrySignal?.dispose()
     if (this.repositionRaf !== null) {
       const view = this.doc.defaultView
       ;(view?.cancelAnimationFrame?.bind(view) ?? cancelAnimationFrame)(this.repositionRaf)
