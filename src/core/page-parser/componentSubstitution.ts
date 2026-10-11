@@ -72,6 +72,12 @@ type JsxOpeningLike = JsxElement | JsxSelfClosingElement
 export type Substitution =
   | { kind: 'value'; value: ParsedPropValue; prop: string; origin?: ValueOrigin; fromDefault?: true; untraceable?: true }
   | { kind: 'children' }
+  /**
+   * A destructured param the call site did not pass and the component gives no default: in JavaScript it IS `undefined`,
+   * so `${styles.card} ${className || ''}` is a known string at this instance. Without it the evaluator met a binding it
+   * could not resolve and the whole class list dropped off the canvas (round-4 N10). Never a write target.
+   */
+  | { kind: 'absent' }
 
 /** The call-site facts `buildSubstitutionEnv` reads. */
 export type SubstitutionCallSite = Pick<ParsedNode, 'props' | 'literalPropOrigins' | 'resolvedProps' | 'codeProps' | 'propFeeds'>
@@ -155,7 +161,11 @@ export function buildSubstitutionEnv(fn: FunctionLike, callSite: SubstitutionCal
 
     // A destructure DEFAULT carries no origin — see `Substitution`.
     const initializer = element.getInitializer()
-    if (!initializer) continue
+    if (!initializer) {
+      // A prop passed as code is unknown, not absent.
+      if (!passedAsCode) env.set(paramName, { kind: 'absent' })
+      continue
+    }
     if (Node.isStringLiteral(initializer) || Node.isNumericLiteral(initializer)) {
       env.set(paramName, { kind: 'value', value: initializer.getLiteralValue(), prop: attrName, fromDefault: true, ...(passedAsCode || !atPage ? { untraceable: true as const } : {}) })
     } else if (initializer.getKind() === SyntaxKind.TrueKeyword || initializer.getKind() === SyntaxKind.FalseKeyword) {
@@ -321,7 +331,11 @@ export function applySubstitutions(
       locals: new Map<string, LocalBinding>([
         ...createEvalScope(sourceFile, fn).locals,
         ...[...env].flatMap(([name, sub]): [string, LocalBinding][] =>
-          sub.kind === 'value' ? [[name, { kind: 'resolved', value: toStaticValue(sub.value, sub.origin) }]] : [],
+          sub.kind === 'value'
+            ? [[name, { kind: 'resolved', value: toStaticValue(sub.value, sub.origin) }]]
+            : sub.kind === 'absent'
+              ? [[name, { kind: 'resolved', value: { kind: 'undefined' } }]]
+              : [],
         ),
       ]),
     },

@@ -105,6 +105,34 @@ describe('CSS Modules through the evaluator', () => {
     expect(div?.props.className).toBe('Card_card__a1b2 active')
   })
 
+  // Round-4 N10 - the className a component accepts but one instance does not pass.
+  it('evaluates `${styles.card} ${className || ""}` when an instance passes no className', () => {
+    writeCardModuleFixture()
+    write(
+      'components/Card.tsx',
+      [
+        "import styles from './Card.module.css'",
+        'export default function Card({ title, className }: { title: string; className?: string }) {',
+        "  return <div className={`${styles.card} ${className || ''}`}>{title}</div>",
+        '}',
+        '',
+      ].join("\n"),
+    )
+    write(
+      'pages/Home.jsx',
+      [
+        "import Card from '../components/Card'",
+        'export default function Home() {',
+        '  return <main><Card title="A" /><Card title="B" className="extra" /></main>',
+        '}',
+        '',
+      ].join("\n"),
+    )
+
+    const divs = loadNodes('pages/Home.jsx', evalOptions()).filter((n) => n.name === 'div')
+    expect(divs.map((div) => div.props.className)).toEqual(['Card_card__a1b2', 'Card_card__a1b2 extra'])
+  })
+
   it('resolves cn(styles.card, isOn && styles.on) — both branches statically known', () => {
     writeCardModuleFixture()
     write(

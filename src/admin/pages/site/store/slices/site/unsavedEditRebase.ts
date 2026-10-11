@@ -61,6 +61,7 @@ import {
 import { pushToast } from '@ui/components/Toast'
 import { literalInlineStyles, type BaselineBeforeRead } from '@site/studio/loadedValuesBaseline'
 import { captureIdentities } from '@site/studio/sourceIdentity'
+import { isInstanceOverrideHeld } from '@site/studio/instanceOverrideHold'
 import { alignPageTrees } from './reparseNodeFollow'
 
 type Scalar = string | number | boolean
@@ -159,6 +160,10 @@ function pendingEditOf(node: PageNode, baseline: BaselineBeforeRead): PendingNod
 
   const values: PendingValue[] = []
   for (const key of keys) {
+    // An instance override is still writing this value (`instanceOverrideHold.ts`): the tree holds its canvas PREVIEW, not
+    // an edit the user left unsaved. The write's own re-read is what replaces it; carrying it over would let the next
+    // autosave write the preview into the shared component, for every instance (round-4 N1).
+    if (isInstanceOverrideHeld(node.id, key)) continue
     const local = readValue(node, key)
     if (!Object.is(local, base[key])) values.push({ key, base: base[key], local })
   }
