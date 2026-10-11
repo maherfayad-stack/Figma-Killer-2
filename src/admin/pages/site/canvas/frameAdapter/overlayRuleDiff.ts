@@ -212,7 +212,11 @@ export class OverlayRulePatcher {
   private entries: Entry[] = []
   private stats: PatchStats = { inserted: 0, deleted: 0, skipped: 0 }
 
-  constructor(private readonly sheet: RuleContainer) {}
+  private readonly sheet: RuleContainer
+
+  constructor(sheet: RuleContainer) {
+    this.sheet = sheet
+  }
 
   /** Brings the sheet to `css`. Throws {@link OverlayPatchError} when it cannot, leaving the sheet in an unknown state. */
   apply(css: string): PatchStats {

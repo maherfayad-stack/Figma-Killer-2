@@ -8,7 +8,8 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { OVERLAY_REVISION_ATTR, STYLE_CHANGE_OBSERVER_OPTIONS } from '@core/studio-runtime'
 import { PortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
 
-const LAYER = (body: string) => `@layer reset, user-authored;\n@layer user-authored {\n${body}\n}`
+// Top-level rules only: happy-dom's CSSOM cannot model `@layer`, and its
+// grouping rules throw on `insertRule`. The nested diff is `overlayRuleDiff.test.ts`.
 
 let adapters: PortalFrameAdapter[] = []
 
@@ -36,7 +37,7 @@ function layerRules(style: HTMLStyleElement): CSSRule[] {
 describe('PortalFrameAdapter incremental overlays', () => {
   it('builds the sheet from rules and leaves the element without text', () => {
     const adapter = mount()
-    adapter.applyOverlay('mc-classes', SHEET('.a { color: red }\n.b { color: blue }'), { incremental: true })
+    adapter.applyOverlay('mc-classes', '.a { color: red }\n.b { color: blue }', { incremental: true })
     const style = overlayStyle('mc-classes')
     expect(style.textContent).toBe('')
     expect(layerRules(style).map((rule) => (rule as CSSStyleRule).selectorText)).toEqual(['.a', '.b'])
@@ -44,10 +45,10 @@ describe('PortalFrameAdapter incremental overlays', () => {
 
   it('an edit replaces only the changed rule; every other rule object is the same one', () => {
     const adapter = mount()
-    adapter.applyOverlay('mc-classes', SHEET('.a { color: red }\n.b { color: blue }\n.c { color: green }'), { incremental: true })
+    adapter.applyOverlay('mc-classes', '.a { color: red }\n.b { color: blue }\n.c { color: green }', { incremental: true })
     const style = overlayStyle('mc-classes')
     const [a, b, c] = layerRules(style)
-    adapter.applyOverlay('mc-classes', SHEET('.a { color: red }\n.b { color: black }\n.c { color: green }'), { incremental: true })
+    adapter.applyOverlay('mc-classes', '.a { color: red }\n.b { color: black }\n.c { color: green }', { incremental: true })
     const after = layerRules(style)
     expect(after).toHaveLength(3)
     expect(after[0]).toBe(a!)
@@ -59,7 +60,7 @@ describe('PortalFrameAdapter incremental overlays', () => {
 
   it('identical CSS touches nothing, not even the revision', () => {
     const adapter = mount()
-    const css = SHEET('.a { color: red }')
+    const css = '.a { color: red }'
     adapter.applyOverlay('mc-classes', css, { incremental: true })
     const style = overlayStyle('mc-classes')
     const revision = style.getAttribute(OVERLAY_REVISION_ATTR)
@@ -74,8 +75,8 @@ describe('PortalFrameAdapter incremental overlays', () => {
     const records: MutationRecord[] = []
     const observer = new MutationObserver((batch) => records.push(...batch))
     observer.observe(document.head, STYLE_CHANGE_OBSERVER_OPTIONS)
-    adapter.applyOverlay('mc-classes', SHEET('.a { color: red }'), { incremental: true })
-    adapter.applyOverlay('mc-classes', SHEET('.a { color: blue }'), { incremental: true })
+    adapter.applyOverlay('mc-classes', '.a { color: red }', { incremental: true })
+    adapter.applyOverlay('mc-classes', '.a { color: blue }', { incremental: true })
     adapter.applyOverlay('plain', '.x { top: 0 }')
     await new Promise((resolve) => setTimeout(resolve, 0))
     observer.disconnect()
@@ -88,10 +89,10 @@ describe('PortalFrameAdapter incremental overlays', () => {
     const adapter = mount()
     adapter.applyOverlay('plain', '.x { top: 0 }')
     expect(overlayStyle('plain').textContent).toBe('.x { top: 0 }')
-    adapter.applyOverlay('mc-classes', SHEET('.a { color: red }'), { incremental: true })
+    adapter.applyOverlay('mc-classes', '.a { color: red }', { incremental: true })
     adapter.removeOverlay('mc-classes')
     expect(document.querySelector('[data-studio-overlay-id="mc-classes"]')).toBeNull()
-    adapter.applyOverlay('mc-classes', SHEET('.b { color: red }'), { incremental: true })
+    adapter.applyOverlay('mc-classes', '.b { color: red }', { incremental: true })
     expect(layerRules(overlayStyle('mc-classes')).map((rule) => (rule as CSSStyleRule).selectorText)).toEqual(['.b'])
   })
 
@@ -108,7 +109,7 @@ describe('PortalFrameAdapter incremental overlays', () => {
       throw new DOMException('refused', 'HierarchyRequestError')
     }
     try {
-      adapter.applyOverlay('mc-classes', SHEET('.a { color: red }'), { incremental: true })
+      adapter.applyOverlay('mc-classes', '.a { color: red }', { incremental: true })
     } finally {
       proto.insertRule = insertRule
       console.warn = warn
@@ -116,14 +117,14 @@ describe('PortalFrameAdapter incremental overlays', () => {
     expect(overlayStyle('mc-classes').textContent).toBe('.a { color: red }')
     expect(warnings).toHaveLength(1)
     // Text mode is for good: the next edit is a plain rewrite, not another failed patch.
-    adapter.applyOverlay('mc-classes', SHEET('.a { color: blue }'), { incremental: true })
+    adapter.applyOverlay('mc-classes', '.a { color: blue }', { incremental: true })
     expect(overlayStyle('mc-classes').textContent).toBe('.a { color: blue }')
   })
 
   it('an overlay that already has text stays in text mode', () => {
     const adapter = mount()
-    adapter.applyOverlay('mc-classes', SHEET('.a { color: red }'))
-    adapter.applyOverlay('mc-classes', SHEET('.a { color: blue }'), { incremental: true })
-    expect(overlayStyle('mc-classes').textContent).toBe(SHEET('.a { color: blue }'))
+    adapter.applyOverlay('mc-classes', '.a { color: red }')
+    adapter.applyOverlay('mc-classes', '.a { color: blue }', { incremental: true })
+    expect(overlayStyle('mc-classes').textContent).toBe('.a { color: blue }')
   })
 })

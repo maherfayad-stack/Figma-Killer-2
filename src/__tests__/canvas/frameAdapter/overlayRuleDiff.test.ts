@@ -14,10 +14,12 @@ interface WriteCounts {
 
 class FakeRule implements RuleContainer {
   readonly rules: FakeRule[] = []
-  constructor(
-    readonly cssText: string,
-    readonly writes: WriteCounts,
-  ) {}
+  readonly cssText: string
+  readonly writes: WriteCounts
+  constructor(cssText: string, writes: WriteCounts) {
+    this.cssText = cssText
+    this.writes = writes
+  }
   get cssRules(): FakeRule[] {
     return this.rules
   }
