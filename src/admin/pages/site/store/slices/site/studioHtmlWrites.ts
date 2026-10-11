@@ -21,7 +21,7 @@
  *      own resync brings them in and selects them.
  */
 import { describeStructuralRefusal, type NodeTree, type PageNode } from '@core/page-tree'
-import { htmlToJsx } from '@site/studio/htmlToJsx'
+import { htmlToJsx, pinPastedRoots } from '@site/studio/htmlToJsx'
 import { announceLeftOut, announcePastedStyles } from '@site/studio/pastedHtmlNotice'
 import { commitStudioInsert } from '@site/studio/studioStructuralCommits'
 import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
@@ -80,7 +80,8 @@ export function createStudioHtmlWrite(
     }
     if (!plan.commit) return { kind: 'cms' }
 
-    const [first, ...rest] = converted.nodes
+    const placed = options.absolute ? pinPastedRoots(converted.nodes, options.absolute) : converted.nodes
+    const [first, ...rest] = placed
     let answer: StudioSaveResponse | undefined
     void commitStudioInsert({
       ...plan.commit,
