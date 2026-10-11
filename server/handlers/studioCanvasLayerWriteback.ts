@@ -70,6 +70,7 @@ const PositionSchema = Type.Union([Type.Literal('before'), Type.Literal('after')
 const CanvasLayerElementSchema = Type.Object({
   name: Type.String(),
   importSpecifier: Type.Optional(Type.String()),
+  importStyle: Type.Optional(Type.Literal('default')),
   designSystemImport: Type.Optional(DesignSystemImportSchema),
   children: Type.Optional(Type.Union([Type.String(), Type.Array(InsertNodeSchema)])),
   props: Type.Optional(InsertPropsSchema),

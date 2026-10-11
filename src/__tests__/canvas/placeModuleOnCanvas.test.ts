@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
 import { registry, type AnyModuleDefinition } from '@core/module-engine'
 import { moduleSourceElement } from '@site/store/slices/site/moduleSourceElement'
-import { canPlaceModuleOnCanvas, placeModuleOnCanvas } from '@site/hooks/placeModuleOnCanvas'
+import { canPlaceModuleOnCanvas, placeModuleOnCanvas, placeProjectComponentOnCanvas } from '@site/hooks/placeModuleOnCanvas'
 import { useEditorStore } from '@site/store/store'
 import '@modules/base/index'
 
@@ -111,5 +111,21 @@ describe('placeModuleOnCanvas', () => {
   it('reports false when there is no board to put it on', () => {
     createCanvasLayer.mockImplementationOnce(() => null)
     expect(placeModuleOnCanvas(DS_BUTTON, undefined, { x: 0, y: 0 })).toBe(false)
+  })
+})
+
+describe('placeProjectComponentOnCanvas', () => {
+  it('writes the project component as a loose layer importing it relative to .studio/canvas', () => {
+    const component = {
+      name: 'Card',
+      exportName: 'Card',
+      file: 'components/Card.tsx',
+      isDefaultExport: true,
+    } as unknown as Parameters<typeof placeProjectComponentOnCanvas>[0]
+    expect(placeProjectComponentOnCanvas(component, { x: 10, y: 20 })).toBe(true)
+    expect(createCanvasLayer).toHaveBeenCalledWith(
+      { name: 'Card', importSpecifier: '../../components/Card', importStyle: 'default', props: {} },
+      { x: 10, y: 20 },
+    )
   })
 })

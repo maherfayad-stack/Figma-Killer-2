@@ -82,6 +82,12 @@ interface DrawSession {
   frameId: string | null
 }
 
+/** On a Studio board: whether a board frame is painted under the point. Off a board (no board origin) there is no empty board to be on. */
+function isOverBoardFrame(clientX: number, clientY: number): boolean {
+  if (!document.querySelector('[data-studio-board-origin]') || typeof document.elementsFromPoint !== 'function') return true
+  return document.elementsFromPoint(clientX, clientY).some((element) => element.closest('[data-frame-id]') !== null)
+}
+
 export function CanvasDrawToolLayer({ tool, transformLayerRef }: CanvasDrawToolLayerProps) {
   const spec = DRAW_TOOL_SPECS[tool]
   const insertModule = useInsertModule()
@@ -109,6 +115,12 @@ export function CanvasDrawToolLayer({ tool, transformLayerRef }: CanvasDrawToolL
     const canvasPage = selectActiveCanvasPage(state)
     const snapshot = snapshotRef.current
     if (!canvasPage || !snapshot) return null
+    // A frame's drop viewport can extend past the box the board paints (its
+    // iframe grows to content), so a press on the EMPTY board beside a frame
+    // still lands inside some viewport rect — and a text drawn there was
+    // written into that page. On a board, what is painted under the pointer
+    // decides: no frame in the stack means the empty board (the free canvas's).
+    if (!isOverBoardFrame(clientX, clientY)) return null
     return resolveCanvasPointerInsertionDrop({
       canvasPage,
       clientX,

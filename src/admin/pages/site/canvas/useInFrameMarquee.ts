@@ -25,7 +25,7 @@
  * selection write when the hit set changed.
  */
 import { useEffect } from 'react'
-import { getAncestors, type NodeTree, type PageNode } from '@core/page-tree'
+import { getAncestors } from '@core/page-tree'
 import { guardDragSession } from '@core/studio-runtime'
 import { useEditorStore } from '@site/store/store'
 import { resolveSelectableNode } from '@site/store/slices/selectionResolve'
@@ -35,7 +35,7 @@ import { presentedElementForNode } from './canvasNodeLookup'
 import { nodeVisualRect } from './canvasDomGeometry'
 import { createBareWrapperProbe } from './canvasBareWrapperProbe'
 import { canvasPressContext, isFrameBackgroundHit, marqueeRootId } from './canvasPressTarget'
-import { marqueeBetween, marqueeHits, type MarqueeCandidate, type MarqueeRect } from './inFrameMarquee'
+import { collectMarqueeCandidates, marqueeBetween, marqueeHits, type MarqueeCandidate, type MarqueeRect } from './inFrameMarquee'
 
 /** Frame px the pointer travels before a root press becomes a marquee rather than a click. */
 const MARQUEE_THRESHOLD_PX = 4
@@ -45,27 +45,6 @@ interface InFrameMarqueeOptions {
   /** The in-frame overlay root: the design-frame gate, the frame's current document, and where the rectangle paints. */
   overlayRoot: HTMLElement | null
   frameId: string | null
-}
-
-function collectCandidates(doc: Document, tree: NodeTree<PageNode>, rootId: string): MarqueeCandidate[] {
-  const candidates: MarqueeCandidate[] = []
-  const walk = (nodeId: string, depth: number) => {
-    const node = tree.nodes[nodeId]
-    if (!node) return
-    for (const childId of node.children) {
-      const child = tree.nodes[childId]
-      if (!child || child.hidden) continue
-      const element = presentedElementForNode(doc, childId)
-      const rect = element ? nodeVisualRect(element) : null
-      if (rect && !child.locked) {
-        candidates.push({ nodeId: childId, depth, rect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height } })
-      }
-      walk(childId, depth + 1)
-    }
-  }
-  // Below the background the press landed on: the layers a sweep means are its children.
-  walk(rootId, 1)
-  return candidates
 }
 
 function paintMarquee(element: HTMLElement, rect: MarqueeRect): void {
@@ -150,7 +129,11 @@ export function useInFrameMarquee({ enabled, overlayRoot, frameId }: InFrameMarq
         if (!candidates) {
           if (Math.hypot(moveEvent.clientX - start.x, moveEvent.clientY - start.y) < MARQUEE_THRESHOLD_PX) return
           // The marquee starts: one read of every layer's box, then chrome.
-          candidates = collectCandidates(doc, tree, sweepRootId)
+          candidates = collectMarqueeCandidates(tree, sweepRootId, (id) => {
+            const element = presentedElementForNode(doc, id)
+            const rect = element ? nodeVisualRect(element) : null
+            return rect ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : null
+          })
           box = doc.createElement('div')
           box.setAttribute('data-canvas-in-frame-marquee', 'true')
           Object.assign(box.style, {
