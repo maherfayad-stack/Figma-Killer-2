@@ -205,7 +205,7 @@ export function PropertyControlRenderer({
 
   // Nothing writable behind this control: either the value has no scalar form,
   // or the node itself refuses writes. Same read-only row for both.
-  if (!isSlot && (constraint !== undefined || isStructuredValue(control, value))) {
+  if (!isSlot && (control.type === 'code' || constraint !== undefined || isStructuredValue(control, value))) {
     return (
       <div
         data-testid={`property-control-${propKey}`}

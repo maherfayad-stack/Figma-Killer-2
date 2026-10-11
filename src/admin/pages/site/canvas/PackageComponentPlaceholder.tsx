@@ -20,6 +20,10 @@
  *      version mismatch, no components found) — shows the server's own
  *      message, no promote action (promoting again wouldn't change the
  *      outcome).
+ *   4. Trust tier ≥ 1, the bundle answered `ok` and registered everything it
+ *      holds, yet this node is still here — its import does not resolve (a
+ *      folder that is not in the project, a package that is not installed).
+ *      Says so; "Loading" would be a promise nothing keeps.
  *
  * Rendered INSIDE the per-frame iframe (portalled by `NodeRenderer`, same as
  * every other module) — see `EditorChromeInjector.tsx`'s
@@ -95,6 +99,18 @@ export function PackageComponentPlaceholder({ moduleId }: PackageComponentPlaceh
       <div data-studio-package-placeholder="" title={status.message}>
         <WarningDiamondSolidIcon size={14} />
         <span data-studio-package-placeholder-label="">{name} couldn&apos;t render: {status.message}</span>
+      </div>
+    )
+  }
+
+  // The bundle answered and registered everything it holds, and this node is still not
+  // one of them: the import names a package or folder that does not resolve. Waiting longer
+  // changes nothing, so say so instead of "Loading".
+  if (status?.ok) {
+    return (
+      <div data-studio-package-placeholder="" title={`${name} is not exported by anything this project imports it from`}>
+        <WarningDiamondSolidIcon size={14} />
+        <span data-studio-package-placeholder-label="">{name} can&apos;t be found: check its import path.</span>
       </div>
     )
   }

@@ -144,12 +144,14 @@ export function openBatchUndoJournal(
   edits: readonly StudioEdit[],
   touchedFiles: Set<string>,
   options: StudioEditBatchOptions,
+  /** This batch made the project design-system-backed (`designSystemMaterialize.ts`): its undo takes that back too. */
+  designSystemCreated = false,
 ): BatchUndoJournal {
   const journaling = options.journal === true
   for (const edit of edits) {
     if (edit.kind === 'restore' && journaling) for (const file of undoJournalFiles(dir, edit.token)) touchedFiles.add(file)
   }
-  const oneShot = edits.some(isJournaled)
+  const oneShot = edits.some(isJournaled) || (journaling && designSystemCreated)
   const restyling = edits.some(isRestyleEdit)
   // A `css` edit's stylesheet is not in `touchedFiles` (its id decodes to no
   // source location), so the pre-image names it separately. A restyle needs
@@ -187,7 +189,7 @@ export function openBatchUndoJournal(
     commit: (written, createdFiles, landings) => {
       if (!journaling || !preImage || written === 0) return undefined
       if (!oneShot && !landings.some((landing) => styleLandingNeedsJournal(landing.rung))) return undefined
-      return recordUndoJournal(dir, preImage, createdFiles.map(absolute)) ?? undefined
+      return recordUndoJournal(dir, preImage, createdFiles.map(absolute), { designSystemCreated }) ?? undefined
     },
   }
 }

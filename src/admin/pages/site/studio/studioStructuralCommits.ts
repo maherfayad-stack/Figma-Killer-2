@@ -559,7 +559,12 @@ export async function commitStudioInsert(insert: {
     {
       undo: {
         label: insert.undoLabel ?? `Add ${insert.name}`,
-        template: insert.parentIsEmpty || insert.pastedHtml ? { kind: 'restore-journal' } : { kind: 'delete-created' },
+        template:
+          insert.parentIsEmpty || insert.pastedHtml
+            ? { kind: 'restore-journal' }
+            : insert.designSystemImport
+              ? { kind: 'restore-journal-else-delete-created' }
+              : { kind: 'delete-created' },
       },
       ...(insert.optimistic ? { optimistic: insert.optimistic } : {}),
       ...(insert.onAnswer ? { onAnswer: insert.onAnswer } : {}),

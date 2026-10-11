@@ -72,6 +72,7 @@ import type { } from 'ts-morph'
 import type { PastedHtmlSummary } from './studioPastedHtmlStyles'
 import { withProjectWriteLock } from './studio/projectWriteLock'
 import { snapshotImportsBeforeRemoval } from './studioBatchImportPrune'
+import { dematerializeDesignSystem, materializeDesignSystem, namesDesignSystemImport } from './studio/designSystemMaterialize'
 import { openBatchUndoJournal, RESTYLE_ROLLED_BACK_REASON } from './studioBatchUndoJournal'
 import {
   
@@ -181,7 +182,10 @@ export function applyStudioEditBatch(
   // to recover from an `element-moved` refusal.
   const touchedFiles = studioEditsTouchedFiles(dir, [...ordered, ...identity.moved.map((entry) => entry.edit)], scope)
   // P3-F — before any byte is written: a one-shot write's pre-image, and a restore's own files.
-  const journal = openBatchUndoJournal(dir, edits, touchedFiles, options)
+  // The first design-system insert into a project without the folder brings the
+  // folder with it, so the import it writes resolves; the same batch's undo removes both.
+  const designSystemCreated = ordered.some(namesDesignSystemImport) && materializeDesignSystem(dir)
+  const journal = openBatchUndoJournal(dir, edits, touchedFiles, options, designSystemCreated)
   const lineCountBefore = new Map<string, number>()
   for (const file of touchedFiles) {
     lineCountBefore.set(file, countLines(file))
@@ -310,6 +314,8 @@ export function applyStudioEditBatch(
   // P3-F — after the prune and the module imports: the entry is what the files are NOW.
   // A stylesheet a `css`/`create` edit invented did not exist before the batch: recorded as such, so a restore removes it with the import it needed.
   const undoToken = rolledBack ? undefined : journal.commit(written, createdFiles, styleLandings)
+  // Nothing landed, so the project must not be left carrying a design system nobody asked for.
+  if (designSystemCreated && (written === 0 || rolledBack)) dematerializeDesignSystem(dir)
 
   // A re-found edit means the caller's ids for its file were already stale
   // before this batch wrote anything — `shifted` is how every caller learns

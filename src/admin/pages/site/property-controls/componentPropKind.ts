@@ -209,7 +209,8 @@ export function withCanvasDrivenProps(
  *
  * `handler` is the one case that returns NO control. A callback is not a
  * value a text box can produce, and writing one back would put a string where
- * the component expects a function. The rule lives here rather than in each
+ * the component expects a function - and it is behaviour, not a property a
+ * designer sets, so it has no row at all. The rule lives here rather than in each
  * caller's own filter because this is the single place that decides what a
  * prop's editor is — `componentSpecExtract.ts` drops handlers server-side for
  * the local-component and package-bundle paths, but a design-system manifest
@@ -222,12 +223,12 @@ export function controlForPropKind(name: string, kind: PropKind): PropertyContro
     case 'handler':
       return undefined
     case 'collection':
-      // Same answer as a handler, for the same reason: there is no scalar edit
-      // that lands honestly. A text box on `items={[{ icon, label }]}` accepts
-      // any value and every value it accepts breaks the component — typing `5`
-      // reached `items.map(...)` and put "TabBar (render error)" on the canvas.
-      // Declining the control is the refusal CLAUDE.md asks for.
-      return undefined
+      // Listed, never editable here. A text box on `items={[{ icon, label }]}`
+      // accepts any value and every value it accepts breaks the component -
+      // typing `5` reached `items.map(...)` and put "TabBar (render error)" on
+      // the canvas. The row is the read-only "N items, set in code" summary, so
+      // the panel still names every prop the component takes.
+      return { type: 'code', label: name }
     case 'enum':
       return kind.values.length >= 2
         ? { type: 'select', label: name, options: kind.values.map((v) => ({ label: v, value: v })) }

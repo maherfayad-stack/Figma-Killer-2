@@ -82,6 +82,7 @@ import {
   writeStudioStoreFile,
 } from './studioStore'
 import { isUndoJournalToken } from './undoJournalToken'
+import { dematerializeDesignSystem } from './designSystemMaterialize'
 
 /** The journal folder as a `.studio` store path (`studioStore.ts`). */
 const JOURNAL_STORE_DIR = 'undo-journal'
@@ -120,6 +121,13 @@ const UndoJournalEntrySchema = Type.Object({
     }),
     { minItems: 1, maxItems: MAX_FILES_PER_ENTRY },
   ),
+  /**
+   * The write that recorded this entry also made the project design-system-
+   * backed (`designSystemMaterialize.ts`): a restore takes the folder and the
+   * `.studio/meta.json` field back out with the files above, which cannot name
+   * them - the folder is hundreds of files, some of them binary.
+   */
+  designSystemCreated: Type.Optional(Type.Literal(true)),
 })
 type UndoJournalEntry = Static<typeof UndoJournalEntrySchema>
 
@@ -170,7 +178,12 @@ export function captureUndoPreImage(files: Iterable<string>): UndoPreImage {
  * `created` names files the write made that `preImage` did not list (an
  * extract's new component file); they are recorded as "did not exist".
  */
-export function recordUndoJournal(dir: string, preImage: UndoPreImage, created: Iterable<string> = []): string | null {
+export function recordUndoJournal(
+  dir: string,
+  preImage: UndoPreImage,
+  created: Iterable<string> = [],
+  options: { designSystemCreated?: boolean } = {},
+): string | null {
   const before = new Map(preImage)
   for (const file of created) if (!before.has(file)) before.set(file, null)
 
@@ -187,7 +200,7 @@ export function recordUndoJournal(dir: string, preImage: UndoPreImage, created: 
   }
   if (files.length === 0 || files.length > MAX_FILES_PER_ENTRY) return null
 
-  const entry: UndoJournalEntry = { version: 1, at: Date.now(), files }
+  const entry: UndoJournalEntry = { version: 1, at: Date.now(), files, ...(options.designSystemCreated ? { designSystemCreated: true as const } : {}) }
   const json = JSON.stringify(entry)
   if (Buffer.byteLength(json, 'utf8') > MAX_ENTRY_BYTES) return null
 
@@ -304,6 +317,7 @@ export function restoreUndoJournal(dir: string, token: string, deps: UndoJournal
     }
   }
   removeStudioStoreEntry(dir, entryRel(token)!)
+  if (entry.designSystemCreated) dematerializeDesignSystem(dir)
   return { ok: true, files }
 }
 

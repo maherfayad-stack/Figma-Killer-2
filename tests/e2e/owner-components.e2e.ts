@@ -1,0 +1,177 @@
+import { expect, test, type FrameLocator, type Locator, type Page } from '@playwright/test'
+import * as fs from 'node:fs'
+import * as path from 'node:path'
+import {
+  createAuthoredFixtureProject,
+  openFixtureBoard,
+  panIntoView,
+  removeFixtureProject,
+  selectInFrame,
+  type FixtureProject,
+} from './helpers/studioFixtureProject'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
+
+/**
+ * Owner-reported component problems (2026-10-11), replayed with a real mouse and
+ * keyboard on a throwaway project copy:
+ *
+ *  O1  Assets offers the built-in design system in a project that does not carry
+ *      it. The insert wrote `import { TabBar } from '../design-system'` to a
+ *      folder that was not there, so the real app stopped building and the board
+ *      showed "Loading TabBar..." for ever. The first design-system insert now
+ *      writes the folder and `.studio/meta.json` `designSystem: 'alm'` in the same
+ *      batch, and one Ctrl+Z takes the page, the folder and the meta field back.
+ *      An import that cannot resolve says so instead of "Loading".
+ *
+ *  O6  An instance's props were not all editable: a boolean, a selected tab, an
+ *      enum had no control on a design-system instance (the unset ones sat behind
+ *      a tiny disclosure and a list or callback prop had no row at all). Every
+ *      prop of the component has a row; each writes the call-site attribute once.
+ */
+
+const HOME_BEFORE = `export default function Home() {
+  return (
+    <div className="wrap">
+      <p>Hello</p>
+    </div>
+  )
+}
+`
+
+let fixture: FixtureProject
+
+const rel = (...parts: string[]): string => path.join(fixture.dir, ...parts)
+const read = (...parts: string[]): string => fs.readFileSync(rel(...parts), 'utf8')
+const metaDesignSystem = (): unknown => {
+  const file = rel('.studio', 'meta.json')
+  return fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, 'utf8')) as { designSystem?: string }).designSystem : undefined
+}
+
+test.use({ viewport: { width: 1600, height: 1000 } })
+
+async function openBoard(page: Page): Promise<FrameLocator> {
+  const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: true })
+  const frame = page.locator('[data-page-id]').first()
+  await panIntoView(page, canvasRoot, frame)
+  await expect(visibleCanvasIframe(frame), 'the fixture frame never mounted a canvas iframe').toBeVisible({ timeout: 60_000 })
+  return canvasContentFrame(frame)
+}
+
+async function insertFromAssets(page: Page, query: string, assetId: string): Promise<void> {
+  await page.getByTestId('panel-rail-assets').click()
+  const assets = page.getByTestId('assets-panel')
+  await expect(assets).toBeVisible({ timeout: 10_000 })
+  await assets.getByRole('searchbox', { name: 'Search assets' }).fill(query)
+  await assets.locator(`[data-asset-id="${assetId}"]`).first().click()
+}
+
+test.describe('O1: the first design-system insert brings the design system', () => {
+  test.setTimeout(240_000)
+
+  test.beforeEach(() => {
+    fixture = createAuthoredFixtureProject('__e2e-owner-ds-insert', { 'pages/Home.tsx': HOME_BEFORE })
+  })
+  test.afterEach(() => {
+    removeFixtureProject(fixture)
+  })
+
+  test('insert writes the folder and the meta with the page, renders, and one Ctrl+Z removes all of it', async ({ page }) => {
+    const contentFrame = await openBoard(page)
+    expect(fs.existsSync(rel('design-system'))).toBe(false)
+
+    await insertFromAssets(page, 'TabBar', 'alm.TabBar')
+
+    const inserted = contentFrame.locator('[data-module-id="alm.TabBar"]').first()
+    await expect(inserted, 'the inserted TabBar never rendered (the board shows a placeholder instead)').toBeVisible({ timeout: 90_000 })
+    await expect(contentFrame.locator('[data-studio-package-placeholder]')).toHaveCount(0)
+
+    await expect.poll(() => read('pages', 'Home.tsx'), { timeout: 30_000 }).toContain("import { TabBar } from '../design-system'")
+    expect(fs.existsSync(rel('design-system', 'index.js')), 'the import points at a folder that does not exist').toBe(true)
+    expect(metaDesignSystem()).toBe('alm')
+
+    // One Ctrl+Z: the page, the folder and the meta field go together.
+    await page.getByTestId('canvas-root').focus()
+    await page.keyboard.press('Control+z')
+    await expect.poll(() => read('pages', 'Home.tsx'), { timeout: 30_000 }).toBe(HOME_BEFORE)
+    await expect.poll(() => fs.existsSync(rel('design-system')), { timeout: 30_000 }).toBe(false)
+    expect(metaDesignSystem()).toBeUndefined()
+    expect(fs.existsSync(rel('.studio', 'design-system.json'))).toBe(false)
+  })
+
+  test('an import that resolves to nothing says so instead of Loading for ever', async ({ page }) => {
+    fixture = createAuthoredFixtureProject('__e2e-owner-ds-insert', {
+      'pages/Home.tsx': `import { TabBar } from '../../design-system'
+
+export default function Home() {
+  return (
+    <div className="wrap">
+      <TabBar items={[{ label: 'Home' }]} value={0} />
+    </div>
+  )
+}
+`,
+    })
+    const contentFrame = await openBoard(page)
+    const placeholder = contentFrame.locator('[data-studio-package-placeholder]').first()
+    await expect(placeholder).toBeVisible({ timeout: 60_000 })
+    await expect(placeholder, 'a node whose import cannot resolve must not promise to load').not.toContainText('Loading', { timeout: 60_000 })
+    await expect(placeholder).toContainText('TabBar')
+  })
+})
+
+/** The design-system-backed fixture O6 needs: the folder is the declaration, Studio renders from its own pack. */
+const DS_PAGE = `import { Toggle, TabBar } from '../design-system'
+
+export default function Home() {
+  return (
+    <div className="wrap">
+      <TabBar items={[{ label: 'Home' }, { label: 'Explore' }, { label: 'My Trips' }]} value={0} />
+      <Toggle />
+    </div>
+  )
+}
+`
+const DS_STUB = `export function Toggle() { return null }
+export function TabBar() { return null }
+`
+
+async function selectModule(page: Page, contentFrame: FrameLocator, moduleId: string): Promise<void> {
+  // The module wrapper is `display: contents` (no box of its own); its first drawn child is what a user clicks.
+  const target: Locator = contentFrame.locator(`[data-module-id="${moduleId}"] *`).first()
+  await panIntoView(page, page.getByTestId('canvas-root'), target)
+  await selectInFrame(page, target)
+}
+
+test.describe('O6: every prop of an instance has a control that writes the call site', () => {
+  test.setTimeout(240_000)
+
+  test.beforeEach(() => {
+    fixture = createAuthoredFixtureProject('__e2e-owner-props', {
+      'pages/Home.tsx': DS_PAGE,
+      'design-system/index.js': DS_STUB,
+    })
+  })
+  test.afterEach(() => {
+    removeFixtureProject(fixture)
+  })
+
+  test('a boolean is a switch and the selected tab a select, shown without opening anything', async ({ page }) => {
+    const contentFrame = await openBoard(page)
+
+    const props = page.getByTestId('module-properties')
+    await selectModule(page, contentFrame, 'alm.Toggle')
+    const checked = props.getByTestId('property-control-checked')
+    await expect(checked, 'the Toggle has no on/off control in the panel').toBeVisible({ timeout: 15_000 })
+    await checked.getByRole('switch').click()
+    await expect.poll(() => read('pages', 'Home.tsx'), { timeout: 30_000 }).toContain('<Toggle checked')
+
+    await selectModule(page, contentFrame, 'alm.TabBar')
+    const value = props.getByTestId('property-control-value')
+    await expect(value, 'TabBar has no selected-tab control').toBeVisible({ timeout: 15_000 })
+    await value.getByRole('combobox').click()
+    await page.getByRole('option', { name: 'Explore' }).click()
+    await expect.poll(() => read('pages', 'Home.tsx'), { timeout: 30_000 }).toContain('value={1}')
+    // The list itself is shown, read-only, not dropped from the panel.
+    await expect(props.getByTestId('property-control-items')).toBeVisible()
+  })
+})

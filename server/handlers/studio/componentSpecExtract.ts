@@ -186,9 +186,24 @@ export function enumLiteralNodes(project: Project, typeNode: TypeNode | undefine
   return resolveNamedUnionAliasNodes(project, typeNode, 0)
 }
 
+/** `T[]`, `readonly T[]`, `Array<T>`, `ReadonlyArray<T>` - a list the call site passes whole. */
+function isArrayTypeNode(node: TypeNode): boolean {
+  if (node.getKind() === SyntaxKind.ArrayType) return true
+  if (node.getKind() === SyntaxKind.TypeOperator) {
+    const operand = node.asKindOrThrow(SyntaxKind.TypeOperator).getTypeNode()
+    return operand.getKind() === SyntaxKind.ArrayType
+  }
+  if (node.getKind() === SyntaxKind.TypeReference) {
+    const typeName = node.asKindOrThrow(SyntaxKind.TypeReference).getTypeName().getText()
+    return typeName === 'Array' || typeName === 'ReadonlyArray'
+  }
+  return false
+}
+
 /** A single (already non-nullish) type node -> `PropKind`. Never touches the checker — see module doc. */
 function classifyNonNullish(project: Project, name: string, node: TypeNode): PropKind {
   if (node.getKind() === SyntaxKind.FunctionType) return { kind: 'handler' }
+  if (isArrayTypeNode(node)) return { kind: 'collection' }
 
   const text = normalizedTypeText(node)
   if (REACT_NODE_TEXT_RE.test(text)) return { kind: 'node' }
@@ -366,6 +381,28 @@ function pascalCaseFromFileBase(relPath: string): string | undefined {
   return PASCAL_CASE_RE.test(capitalized) ? capitalized : undefined
 }
 
+/** Number props that, by name, say "which entry is current" - `TabBar.value`, `activeIndex`, `selectedTab`. */
+const INDEX_PROP_NAME_RE = /^(?:value|index|(?:selected|active|current)(?:Index|Tab|Item|Step|Segment)?|tabIndex|step)$/
+
+/** A list prop named like what it holds, preferred when a component has several. */
+const COLLECTION_NAME_RE = /^(?:items|tabs|options|segments|steps|pages|slides|choices|chips)$/
+
+/**
+ * A number named like a selection, next to ONE list the component takes, is an
+ * index into that list: the panel then offers the list's own entries to choose
+ * from instead of a bare number (`collectionIndex`, the same kind the built-in
+ * design system's manifest records). With several lists, only one named like a
+ * list of choices counts; with none such, it stays a number.
+ */
+function markCollectionIndexes(props: PropSpec[]): PropSpec[] {
+  const collections = props.filter((prop) => prop.kind.kind === 'collection').map((prop) => prop.name)
+  const target = collections.length === 1 ? collections[0] : collections.find((name) => COLLECTION_NAME_RE.test(name))
+  if (target === undefined) return props
+  return props.map((prop) =>
+    prop.kind.kind === 'number' && INDEX_PROP_NAME_RE.test(prop.name) ? { ...prop, kind: { kind: 'collectionIndex', collection: target } } : prop,
+  )
+}
+
 export function extractPropsFromMembers(project: Project, members: MemberedNode): PropSpec[] {
   const props: PropSpec[] = []
   for (const prop of members.getProperties()) {
@@ -373,7 +410,7 @@ export function extractPropsFromMembers(project: Project, members: MemberedNode)
     if (kind.kind === 'handler') continue // dropped, never stubbed — see module doc
     props.push({ name: prop.getName(), kind, required: !prop.hasQuestionToken() })
   }
-  return props
+  return markCollectionIndexes(props)
 }
 
 /**

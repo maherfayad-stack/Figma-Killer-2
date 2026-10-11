@@ -455,8 +455,10 @@ async function syncProjectModules(dir: string): Promise<void> {
       setPackageBundleStatus({ ok: false, code: response.code, message: response.message })
       return
     }
-    setPackageBundleStatus({ ok: true })
-    if (response.components.length === 0 || !response.url) return
+    if (response.components.length === 0 || !response.url) {
+      setPackageBundleStatus({ ok: true })
+      return
+    }
 
     await ensurePluginRuntime()
     if (dir !== activeProjectDir) return
@@ -514,6 +516,9 @@ async function syncProjectModules(dir: string): Promise<void> {
     }
 
     paletteHiddenPackageModuleIds = nextHidden
+    // Only now: `ok` means "every component this bundle holds is registered", which is what lets a
+    // `pkg.*` node still unregistered say it cannot be found (`PackageComponentPlaceholder`) instead of "Loading".
+    setPackageBundleStatus({ ok: true })
   } catch (err) {
     if (dir !== activeProjectDir) return // project changed again while this request was in flight
     console.error('[registerProjectModules] component bundle sync failed:', err)

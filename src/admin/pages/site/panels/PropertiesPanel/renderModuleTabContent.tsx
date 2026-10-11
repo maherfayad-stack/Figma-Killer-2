@@ -145,6 +145,12 @@ export function renderModuleTabContent(args: ModuleTabContentArgs): React.ReactN
   // the pre-drawn rows come from.
   const residentRows: React.ReactNode[] = []
   const foldedRows: React.ReactNode[] = []
+  // A design-system or package COMPONENT lists every prop it takes, set or not
+  // (Figma's instance panel does): its on/off switches, its selected tab and its
+  // variants are the whole point of selecting it, and an unset boolean folded
+  // behind a header button read as "this component has no such control". The
+  // fold is for a plain element's optional attributes (`<img loading>`).
+  const listsEveryProp = definition.sourceImport !== undefined
 
   for (const [key, control] of Object.entries(definition.schema) as Array<[string, PropertyControl]>) {
     // Hidden controls carry a type for the engine (escaping dispatch) but
@@ -196,7 +202,7 @@ export function renderModuleTabContent(args: ModuleTabContentArgs): React.ReactN
         />
       )
 
-    if (isPropSetOnNode(selectedNode, key, overrideKeys)) residentRows.push(row)
+    if (listsEveryProp || isPropSetOnNode(selectedNode, key, overrideKeys)) residentRows.push(row)
     else foldedRows.push(row)
   }
 

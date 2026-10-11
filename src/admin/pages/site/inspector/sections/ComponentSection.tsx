@@ -243,6 +243,8 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
                     onChange={(propKey, next) => updateCallSiteProp(nodeId, propKey, next)}
                     constraint={constraint}
                     ownerNodeId={nodeId}
+                    // `collection-index` (`value` / `activeIndex` next to `items`) offers the list's own entries.
+                    siblingProps={callSiteProps}
                     multiline={false} // a call-site prop is a JSX attribute
                   />
                 </div>

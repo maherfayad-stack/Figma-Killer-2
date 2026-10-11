@@ -186,6 +186,16 @@ export const PropertyControlSchema = Type.Recursive((Self) => Type.Union([
     },
     { additionalProperties: false },
   ),
+  /**
+   * A prop the panel lists but never writes through a field: a list
+   * (`items={[{ label }, ...]}`) whose entries no scalar control can hold. It
+   * renders as the read-only "N items, set in code" row, so a component's
+   * whole prop surface is visible even where Studio cannot edit all of it.
+   */
+  Type.Object(
+    { ...PropertyControlBaseSchema, type: Type.Literal('code') },
+    { additionalProperties: false },
+  ),
   Type.Object(
     { ...PropertyControlBaseSchema, type: Type.Literal('toggle') },
     { additionalProperties: false },

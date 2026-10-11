@@ -34,6 +34,10 @@ export const PropKindSchema = Type.Union([
    * `src/modules/alm/register.tsx`'s doc comment), kept, not reinvented.
    */
   Type.Object({ kind: Type.Literal('handler') }),
+  /** `T[]`, `Array<T>` - a list the call site passes whole (`items`, `tabs`). Shown read-only: there is no scalar edit that lands honestly. */
+  Type.Object({ kind: Type.Literal('collection') }),
+  /** A number that names one entry of the sibling list `collection` (`TabBar.value` -> `items`): the panel offers that list's entries to choose from. */
+  Type.Object({ kind: Type.Literal('collectionIndex'), collection: Type.String() }),
   /** Every other shape — an object type, a generic this extractor doesn't unwrap, an unresolvable reference. */
   Type.Object({ kind: Type.Literal('unknown') }),
 ])

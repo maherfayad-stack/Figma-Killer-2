@@ -84,6 +84,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  rmdirSync,
   statSync,
   writeFileSync,
 } from 'node:fs'
@@ -91,7 +92,7 @@ import { dirname, join, posix } from 'node:path'
 import { isUnlinkedWorkspacePath, listWorkspaceFiles } from '@core/page-parser'
 import { parseJsonWithFallback } from '@core/utils/jsonValidate'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { readStudioStoreJson, writeStudioStoreJson } from './studioStore'
+import { readStudioStoreJson, removeStudioStoreEntry, writeStudioStoreJson } from './studioStore'
 import {
   BUILTIN_DESIGN_SYSTEM_DIR,
   PROJECT_DESIGN_SYSTEM_DIR,
@@ -476,4 +477,37 @@ export function ensureDesignSystemFiles(
     console.error('[studio/designSystemFiles]', err)
     return emptyResult('no-source')
   }
+}
+
+/**
+ * Takes back what {@link ensureDesignSystemFiles} wrote: every path the
+ * manifest lists (and only those), the now-empty folders they leave, the
+ * manifest itself. The undo of the insert that made a project design-system-
+ * backed. Never throws; returns the paths removed.
+ */
+export function removeDesignSystemFiles(projectDir: string): string[] {
+  const removed: string[] = []
+  try {
+    const manifest = readManifest(projectDir)
+    if (!manifest) return removed
+    const dsRoot = join(projectDir, PROJECT_DESIGN_SYSTEM_DIR)
+    const dirs = new Set<string>()
+    for (const rel of manifest.files) {
+      if (!isSafeRelPath(rel)) continue
+      const abs = join(dsRoot, ...rel.split('/'))
+      if (!existsSync(abs) || lstatSync(abs).isSymbolicLink() || !isRealpathContained(abs, dsRoot)) continue
+      rmSync(abs, { force: true })
+      removed.push(rel)
+      for (let dir = dirname(abs); dir !== dsRoot && dir.startsWith(dsRoot); dir = dirname(dir)) dirs.add(dir)
+    }
+    // Deepest first, so a parent empties after its children go; a folder the user put files in stays.
+    for (const dir of [...dirs].sort((a, b) => b.length - a.length)) {
+      if (readdirSync(dir).length === 0) rmdirSync(dir)
+    }
+    if (existsSync(dsRoot) && readdirSync(dsRoot).length === 0) rmdirSync(dsRoot)
+    removeStudioStoreEntry(projectDir, MANIFEST_FILE)
+  } catch (err) {
+    console.error('[studio/designSystemFiles]', err)
+  }
+  return removed
 }

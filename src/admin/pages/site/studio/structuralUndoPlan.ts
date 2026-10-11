@@ -99,6 +99,13 @@ export type StructuralInverseTemplate =
    * (`StructuralWriteOutcome.undoToken`), and a redo's write records a fresh one.
    */
   | { kind: 'restore-journal' }
+  /**
+   * An insert that MAY have made the project design-system-backed: when the
+   * write recorded a journal entry (it did, exactly then) its undo is the
+   * `restore` that also takes the design-system folder back out; otherwise it
+   * is the ordinary delete of what it made.
+   */
+  | { kind: 'restore-journal-else-delete-created' }
   | {
       /**
        * P5-B (IMG-3) — an inverse that is fully known at gesture time,
@@ -170,6 +177,10 @@ export function resolveStructuralInverse(
     }
     case 'restore-journal':
       return outcome.undoToken === null ? null : [restoreEdit(outcome.undoToken)]
+    case 'restore-journal-else-delete-created':
+      return outcome.undoToken === null
+        ? resolveStructuralInverse({ kind: 'delete-created' }, outcome)
+        : [restoreEdit(outcome.undoToken)]
     case 'canvas-layer-delete':
       return [{ kind: 'canvas-layer-delete', nodeId: canvasLayerEditNodeId(template.layerId), layerId: template.layerId }]
     case 'canvas-layer-restore-removed': {
