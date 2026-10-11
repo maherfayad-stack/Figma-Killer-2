@@ -90,6 +90,9 @@ interface ClassStyleInjectorProps {
 // Component
 // ---------------------------------------------------------------------------
 
+/** The User Timing entry each frame's class-CSS write records: generation, canvas transforms and the overlay write. */
+const CLASS_CSS_APPLY_MEASURE = 'studio:class-css-apply'
+
 const STYLE_TAG_ID = 'mc-classes'
 const PREVIEW_STYLE_TAG_ID = 'mc-classes-preview'
 const FORCE_STATE_STYLE_TAG_ID = 'mc-classes-force-state'
@@ -136,6 +139,7 @@ export function ClassStyleInjector({ viewport }: ClassStyleInjectorProps = {}) {
 
   useEffect(() => {
     if (!adapter) return
+    const startedAt = performance.now()
 
     const generated = generateCanvasClassCSS(
       classes ?? EMPTY_STYLE_RULES,
@@ -168,7 +172,9 @@ export function ClassStyleInjector({ viewport }: ClassStyleInjectorProps = {}) {
       css
         ? `${CANVAS_CSS_LAYER_ORDER}\n@layer ${USER_AUTHORED_LAYER} {\n${css}\n}`
         : `${CANVAS_CSS_LAYER_ORDER}\n/* no classes */`,
+      { incremental: true },
     )
+    performance.measure(CLASS_CSS_APPLY_MEASURE, { start: startedAt })
   }, [
     adapter,
     viewport,

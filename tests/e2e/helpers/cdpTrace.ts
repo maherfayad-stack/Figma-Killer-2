@@ -246,3 +246,74 @@ export async function profileCpu(page: Page, gesture: () => Promise<void>, top =
     await client.detach()
   }
 }
+
+export interface EditCost {
+  /** Recalculate Style (`UpdateLayoutTree`) summed over every frame, ms. */
+  styleMs: number
+  styleEvents: number
+  /** Elements Recalculate Style visited, summed. */
+  styleElements: number
+  /** Distinct frames (documents) that ran a style recalculation with at least one element. */
+  framesRestyled: number
+  /** Per frame: elements visited, for attribution. */
+  elementsByFrame: Record<string, number>
+  layoutMs: number
+  /** Top-level script time (outermost `FunctionCall` / `EvaluateScript` / `FireAnimationFrame` / `TimerFire` events), ms. */
+  scriptingMs: number
+  /** Every main-thread task together, ms. */
+  taskMs: number
+  longestTaskMs: number
+}
+
+/**
+ * The main-thread cost of ONE action — a class edit across a whole board:
+ * Recalculate Style plus top-level scripting plus layout, from a trace around
+ * `action`. Unlike {@link traceGesture} this sums EVERY task in the window, since
+ * an edit's work is spread over several (store commit, effects, rAF).
+ */
+export async function traceEditCost(page: Page, action: () => Promise<void>): Promise<EditCost> {
+  const client = await page.context().newCDPSession(page)
+  try {
+    const events = await collect(client, action)
+    const mainTids = new Set<string>()
+    for (const e of events) {
+      if (e.ph === 'M' && e.name === 'thread_name' && e.args?.name === 'CrRendererMain') mainTids.add(`${e.pid}:${e.tid}`)
+    }
+    const main = events.filter((e) => mainTids.has(`${e.pid}:${e.tid}`) && e.ph === 'X' && typeof e.dur === 'number')
+    const cost: EditCost = {
+      styleMs: 0, styleEvents: 0, styleElements: 0, framesRestyled: 0, elementsByFrame: {},
+      layoutMs: 0, scriptingMs: 0, taskMs: 0, longestTaskMs: 0,
+    }
+    const SCRIPT = new Set(['FunctionCall', 'EvaluateScript', 'FireAnimationFrame', 'TimerFire', 'RunMicrotasks', 'v8.callFunction'])
+    const scripts = main.filter((e) => SCRIPT.has(e.name)).sort((a, b) => a.ts - b.ts || (b.dur ?? 0) - (a.dur ?? 0))
+    let coveredUntil = Number.NEGATIVE_INFINITY
+    for (const s of scripts) {
+      const end = s.ts + (s.dur ?? 0)
+      if (s.ts >= coveredUntil) cost.scriptingMs += (s.dur ?? 0) / 1000
+      else if (end > coveredUntil) cost.scriptingMs += (end - coveredUntil) / 1000
+      coveredUntil = Math.max(coveredUntil, end)
+    }
+    for (const e of main) {
+      const ms = (e.dur ?? 0) / 1000
+      if (e.name === 'RunTask') {
+        cost.taskMs += ms
+        cost.longestTaskMs = Math.max(cost.longestTaskMs, ms)
+      } else if (e.name === 'UpdateLayoutTree') {
+        cost.styleMs += ms
+        cost.styleEvents += 1
+        const elements = typeof e.args?.elementCount === 'number' ? e.args.elementCount : 0
+        cost.styleElements += elements
+        if (elements > 0) {
+          const frame = frameOf(e) || '(unattributed)'
+          cost.elementsByFrame[frame] = (cost.elementsByFrame[frame] ?? 0) + elements
+        }
+      } else if (e.name === 'Layout') {
+        cost.layoutMs += ms
+      }
+    }
+    cost.framesRestyled = Object.keys(cost.elementsByFrame).length
+    return cost
+  } finally {
+    await client.detach()
+  }
+}

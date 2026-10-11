@@ -225,14 +225,29 @@ export interface ResizeTargetOptions {
   anchors?: ResizeAnchors
 }
 
+export interface ApplyOverlayOptions {
+  /** Apply `css` as a rule-level edit of the existing sheet when possible. */
+  incremental?: boolean
+}
+
 /**
  * The interface. 7 methods (the plan's own literal sketch is corrected from
  * 6 — see `STATE.md`'s `live-05` entry, "The plan's literal interface is
  * incomplete") plus a symmetric `dispose()`.
  */
 export interface FrameDocumentAdapter {
-  /** Mounts/updates a managed `<style id="...">`-equivalent with `css` — the generic mechanism every CSS-text injector (`ClassStyleInjector`, `EditorChromeInjector`, ...) now goes through instead of a direct `targetDocument.head.appendChild`. */
-  applyOverlay(id: string, css: string): void
+  /**
+   * Mounts/updates a managed `<style id="...">`-equivalent with `css` — the generic mechanism every CSS-text injector (`ClassStyleInjector`, `EditorChromeInjector`, ...) now goes through instead of a direct `targetDocument.head.appendChild`.
+   *
+   * `options.incremental` (SB-7) is a request, not a promise: the stylesheet is
+   * large and re-sent on every edit, so an adapter that can should apply the
+   * difference to the live sheet's rules instead of rewriting its text, which
+   * restyles everything either text could match. The resulting sheet is the
+   * same either way; only the invalidation differs. The portal adapter honours
+   * it (and then the `<style>` element holds no text, only rules); the bridge
+   * adapter ships the whole text and the in-frame runtime replaces it.
+   */
+  applyOverlay(id: string, css: string, options?: ApplyOverlayOptions): void
   removeOverlay(id: string): void
   /** Shows/positions the selection ring(s) for exactly these nodes; an empty array clears selection. */
   select(refs: NodeRef[]): void
