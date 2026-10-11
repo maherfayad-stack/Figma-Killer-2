@@ -69,7 +69,8 @@ import { Button } from '@ui/components/Button'
 import { SearchBar } from '@ui/components/SearchBar'
 import { Input } from '@ui/components/Input'
 import { pushToast } from '@ui/components/Toast'
-import { retryWhileUnreachable } from '@core/http'
+import { ApiError, retryWhileUnreachable } from '@core/http'
+import { useAdminUi } from '@admin/state/adminUi'
 import styles from './ContentPanel.module.css'
 
 /**
@@ -248,7 +249,18 @@ function ContentPanelBody() {
         body: notes.join(' · ') || 'Written into the dictionary.',
       })
     } catch (err) {
-      pushToast({ kind: 'error', title: 'Translation failed', body: getErrorMessage(err, 'Unknown error') })
+      // A missing AI setup (412) or a project that can't take the translation (409) is a refusal
+      // with a remedy, not a failure: only a request that genuinely broke is red.
+      if (err instanceof ApiError && (err.status === 412 || err.status === 409)) {
+        pushToast({
+          kind: 'warning',
+          title: 'Not translated',
+          body: getErrorMessage(err, 'The translation could not start.'),
+          action: err.status === 412 ? { label: 'Open AI settings', onSelect: () => useAdminUi.getState().openSettings('ai') } : undefined,
+        })
+      } else {
+        pushToast({ kind: 'error', title: 'Translation failed', body: getErrorMessage(err, 'Unknown error') })
+      }
     } finally {
       setTranslating(false)
     }

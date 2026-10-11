@@ -199,19 +199,20 @@ async function handle(req: Request, db: DbClient): Promise<Response> {
   const fallback = await getDefault(db)
   if (!fallback) {
     return jsonResponse(
-      { error: 'No default AI model is configured. Set one in Settings → AI before translating.' },
-      { status: 409 },
+      { error: 'No AI model is set up yet. Choose one in AI settings.' },
+      // 412, not 409: the request is fine, the editor is missing a precondition the user can supply.
+      { status: 412 },
     )
   }
   const record = await readCredentialForUser(db, user.id, fallback.credentialId)
-  if (!record) return jsonResponse({ error: 'The configured AI credential is no longer accessible.' }, { status: 409 })
+  if (!record) return jsonResponse({ error: 'The AI model you chose is no longer available. Choose another in AI settings.' }, { status: 412 })
 
   let resolved: AiResolvedCredential
   try {
     resolved = await resolveCredentialForDriver(record)
   } catch (err) {
     rethrowProjectDirRefusal(err)
-    return jsonResponse({ error: err instanceof Error ? err.message : 'Credential resolution failed.' }, { status: 409 })
+    return jsonResponse({ error: err instanceof Error ? err.message : 'The AI credential could not be read.' }, { status: 412 })
   }
 
   // Captured as their own `const`s, fixed at THIS narrowed point, rather than
