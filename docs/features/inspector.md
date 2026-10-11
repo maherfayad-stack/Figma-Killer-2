@@ -2276,6 +2276,21 @@ opens and when the project's stylesheets change). The contract of a value cell:
   `restore-stale` if any moved since. The journal's path rule gained one
   extension for this (`SourceTargetScope.journalStylesheets`, `.css`, journal
   only). Redo is not offered: there is no `/save` edit for a token write.
+- **CSS Modules and scoped declarations (r3).** A token declared in a `.module.css`
+  is planned against, and written to, the module's OWN text
+  (`projectTokenSources.ts` reads the file, not the class-hashed compiled chunk),
+  so the stale check compares source text with source text and a write can never
+  put hashed selectors into the user's file. A token declared inside a rule of its
+  own (`.card { --x: #000 }`) is not a mode column; the row lists it under the
+  mode cells as `in .card` + file, editable in place (`set` with a `scope` gate
+  target, written where it is declared). A scoped cell in a CSS Module previews on
+  commit only (the canvas renames the class). A file that moved between the read
+  and the write is re-planned once on the server; only a second miss answers 409.
+- **Layout.** The table is as wide as its modes need; the name column is sticky,
+  the mode columns scroll under it, and a row's Rename / Remove / Apply as a
+  class live in its `Actions for <name>` menu. Rename and remove confirmations,
+  notes and refusals are as wide as the visible table, so a refusal is never
+  scrolled out of sight.
 - **Rename** (`{ op: 'rename' }`) rewrites every mention of the name in project
   source: the declarations of all modes, `var()`, strings in TSX, Tailwind
   arbitrary values, in one plan. It refuses a name already declared or named in
