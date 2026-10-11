@@ -11,11 +11,21 @@
 import type { EditorStore } from '@site/store/types'
 import type { Board, BoardFrame, BoardGuide, CanvasLayerPlacement, DocBlock, StickyNote } from '@core/studio-board'
 import { getActiveBoard } from '@core/studio-board'
+import { isGalleryPage } from '@core/component-variants'
 import type { SnapGuide, SnapSpacing } from '@core/studio-runtime'
 
 /** Select the active board (or `null` — not studio mode / not loaded yet). */
 export const selectActiveBoard = (s: EditorStore): Board | null =>
   getActiveBoard(s.boards, s.activeBoardId)
+
+/**
+ * Ids of the pages a default board is seeded with. A variants gallery is
+ * derived and lives on the server-placed Components board, so it is never
+ * seeded onto another one. Lives here (the store chunk), not in the route
+ * shell, so the shell does not import `@core/component-variants`.
+ */
+export const selectSeedablePageIds = (s: EditorStore): string[] =>
+  (s.site?.pages ?? []).filter((page) => !isGalleryPage(page)).map((page) => page.id)
 
 /** Whether an active board currently resolves. Cheap boolean — safe to subscribe to on its own where a component only needs the yes/no. */
 export const selectHasActiveBoard = (s: EditorStore): boolean =>
