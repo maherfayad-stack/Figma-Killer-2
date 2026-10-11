@@ -59,6 +59,7 @@ export default function Home() {
           <Button label="Two" size="default" variant="primary" style={{ width: "223px" }} />
         </div>
       </div>
+      <div className={styles.peer} />
       <TabBar items={[
         { icon: <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M4 4h16v16H4z" fill="currentColor" /></svg>, label: "Home" },
         { icon: <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M4 4h16v16H4z" fill="currentColor" /></svg>, label: "Explore" },
@@ -76,6 +77,8 @@ const CSS = `.page { position: relative; box-sizing: border-box; width: 100%; mi
 .codeInputs { display: flex; gap: 8px; }
 .codeInput { width: 44px; height: 48px; box-sizing: border-box; }
 .note { margin: 0; }
+/* Its bottom edge sits 4px under the tab bar's top: a press that snapped would pull the bar up to it. */
+.peer { position: absolute; left: 300px; top: 400px; width: 40px; height: 94px; }
 .action { width: 160px; padding: 10px 14px; font: inherit; text-align: center; border: 1px solid #888; }
 .long { margin: 0; max-width: 300px; line-height: 1.5; text-align: center; padding: 6px 10px; }
 `

@@ -471,6 +471,10 @@ export function stepFreeMove(
   zoom: number,
   lockedAxis: 'x' | 'y' | null = null,
 ): FreeMoveStep {
+  // A press that has not moved is not a move: snapping it would pull the layer
+  // to the nearest peer edge before the pointer travelled (R4 N3 - a plain
+  // press on the SMS tab bar shifted it 4px and the next nudge wrote that).
+  if (dx === 0 && dy === 0) return { dx: 0, dy: 0, guides: [], spacings: [], rect: { ...plan.rect } }
   const moved: SnapRect = {
     x: plan.rect.x + dx,
     y: plan.rect.y + dy,
