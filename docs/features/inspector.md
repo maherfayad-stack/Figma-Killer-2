@@ -2362,6 +2362,16 @@ rewrite) would have left the inline values stripped and no class on the layer.
 Cmd+Z is the journal's `restore` (all files byte for byte); Cmd+Shift+Z posts
 the same edits again.
 
+**In a CSS Modules project** (`className={styles.greet}`) a style is reached through
+the file's binding. Applying one swaps the element's bound class for another
+(`styles.greet` becomes `styles.counter`; a `{`${styles.a} ${styles.b}`}` list loses one span and
+keeps the rest, `setJsxClassName` + `classNameTemplate.ts`), and a create writes
+the rule into the page's own module (`Probe.module.css`, the co-located
+stylesheet) and attaches it as `styles["text-hero"]`. A template that holds a
+span glued to text (`btn-${size}`) is not a class list and still refuses
+`template-dynamic`, so the apply is refused whole. The menu's value summary names a
+token (`font-display`), not `var(--font-display)`.
+
 A refusal the client can know (a name taken, a layer computed in code, a
 generated `.map` row) is a sentence in the name popover or a warning toast
 ("Style not applied"), never a silent no-op. Not built: hover preview of a

@@ -82,4 +82,9 @@ describe('summarizeStyle', () => {
     const [effect] = discoverStyles(rules(rule('s', { boxShadow: '0 1px 2px rgba(0, 0, 0, 0.2)' }))).effect
     expect(summarizeStyle(effect!)).toBe('0 1px 2px rgba(0, 0, 0, 0.2)')
   })
+
+  it('names a token instead of printing var() syntax', () => {
+    const [text] = discoverStyles(rules(rule('h', { fontFamily: 'var(--font-display, serif)', fontWeight: '700', fontSize: 'var(--step-3)', lineHeight: '1.2' }))).text
+    expect(summarizeStyle(text!)).toBe('font-display · 700 · step-3 / 1.2')
+  })
 })

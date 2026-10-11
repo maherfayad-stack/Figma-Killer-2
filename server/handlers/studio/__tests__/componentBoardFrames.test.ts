@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { parseBoardsFile, serializeBoardsFile, upsertBoard } from '@core/studio-board'
-import { syncComponentBoardFrames, syncStoryBoardFrames } from '../boardFrames'
+import { createBoard, parseBoardsFile, serializeBoardsFile, upsertBoard, withUnseenBoards } from '@core/studio-board'
+import { forgetRemovedDerivedBoards, syncComponentBoardFrames, syncStoryBoardFrames } from '../boardFrames'
 import { boardsFilePath, readBoardsFile } from '../boardGeometry'
 import type { GallerySummary } from '../componentGallery'
 import { readStudioMeta } from '../studioMeta'
@@ -83,10 +83,36 @@ describe('syncComponentBoardFrames', () => {
     expect(readBoards().boards.map((b) => b.name).sort()).toEqual(['Components', 'Stories'])
   })
 
-  it('does not re-create a Components board the user deleted', () => {
+  it('does not re-create a Components board the author deleted (the editor save names it as removed)', () => {
+    syncComponentBoardFrames(tmpDir, [gallery('Button')])
+    const known = readBoards().boards.map((b) => b.id)
+    fs.writeFileSync(boardsFilePath(tmpDir), serializeBoardsFile({ ...readBoardsFile(tmpDir), boards: [] }))
+    forgetRemovedDerivedBoards(tmpDir, known, readBoards())
+    syncComponentBoardFrames(tmpDir, [gallery('Button')])
+    expect(readBoards().boards).toEqual([])
+  })
+
+  it('makes the Components board again, galleries placed, when the file lost it without anyone removing it', () => {
     syncComponentBoardFrames(tmpDir, [gallery('Button')])
     fs.writeFileSync(boardsFilePath(tmpDir), serializeBoardsFile({ ...readBoardsFile(tmpDir), boards: [] }))
+    // The editor's save never named it, so the ledger still points at a board that is gone.
+    forgetRemovedDerivedBoards(tmpDir, undefined, readBoards())
     syncComponentBoardFrames(tmpDir, [gallery('Button'), gallery('Badge')])
-    expect(readBoards().boards).toEqual([])
+    const boards = readBoards().boards
+    expect(boards.map((b) => b.name)).toEqual(['Components'])
+    expect(boards[0]!.frames.map((f) => f.pageId).sort()).toEqual(['component-badge', 'component-button'])
+    expect(readStudioMeta(tmpDir).components?.boardId).toBe(boards[0]!.id)
+  })
+
+  it('a save from an editor that never read the Components board keeps it', () => {
+    syncComponentBoardFrames(tmpDir, [gallery('Button')])
+    const stored = readBoardsFile(tmpDir)
+    const editorBoard = createBoard('editor-board', 'Board 1')
+    const incoming = { ...stored, boards: [editorBoard] }
+    const merged = withUnseenBoards(incoming, stored, ['editor-board'])
+    expect(merged.boards.map((b) => b.name)).toEqual(['Board 1', 'Components'])
+    // The same save from an editor that HAD read it is a removal.
+    const known = stored.boards.map((b) => b.id)
+    expect(withUnseenBoards(incoming, stored, known).boards.map((b) => b.name)).toEqual(['Board 1'])
   })
 })
