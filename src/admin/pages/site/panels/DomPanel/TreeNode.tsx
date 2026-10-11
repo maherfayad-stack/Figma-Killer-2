@@ -38,6 +38,7 @@
 import { memo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
+import { selectLayersFrameId } from '@site/store/slices/boardSelectors'
 import { setCanvasHover, useIsNodeHovered } from '@site/canvas/canvasHover'
 import type { PageNode } from '@core/page-tree'
 import { useDraggable } from '@dnd-kit/core'
@@ -151,7 +152,9 @@ export const TreeNode = memo(function TreeNode({
   const renameInputRef = useRef<HTMLInputElement>(null)
 
   const selectLayerNode = (mode?: 'replace' | 'toggle' | 'range') => {
-    useEditorStore.getState().selectNode(nodeId, mode, {
+    const state = useEditorStore.getState()
+    state.selectNode(nodeId, mode, {
+      frameId: selectLayersFrameId(state),
       preservePropertiesPanelCollapse: isNarrowEditorChromeViewport(),
     })
   }
@@ -415,7 +418,7 @@ export const TreeNode = memo(function TreeNode({
           }
           setContextMenu({ x: e.clientX, y: e.clientY })
         }}
-        onMouseEnter={() => setCanvasHover(nodeId)}
+        onMouseEnter={() => setCanvasHover(nodeId, null, selectLayersFrameId(useEditorStore.getState()))}
         onMouseLeave={() => setCanvasHover(null)}
       >
         <LayerTreeNodeContent
