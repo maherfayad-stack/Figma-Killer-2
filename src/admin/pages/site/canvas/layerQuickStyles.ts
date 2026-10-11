@@ -11,7 +11,8 @@
  *
  * 1 … 9 set 10 % … 90 %, written as the layer's own `opacity`. 0 means 100 %:
  * it CLEARS the layer's own `opacity` rather than writing a redundant
- * `opacity: 1`. A layer whose opacity comes from a class keeps the class's —
+ * `opacity: 1`. Two digits typed within 600 ms are one exact percentage, as in
+ * Figma (`5` then `5` = 55 %, `5` then `0` = 50 %). A layer whose opacity comes from a class keeps the class's —
  * that value lives in the class, and the inspector is where to change it.
  * Every selected layer gets the same value in ONE write (`setNodesInlineStyles`).
  *
@@ -23,6 +24,7 @@
  * is named in an info toast and left alone; the rest of the selection flips,
  * in ONE write (`setNodesInlineStylesPerNode`).
  */
+import { canWriteInlineStyleForModule } from '@core/page-tree'
 import { pushToast } from '@ui/components/Toast'
 import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 import {
@@ -38,21 +40,57 @@ export function opacityForDigit(digit: number): string | null {
   return digit === 0 ? null : String(digit / 10)
 }
 
-/** The selected layers of the active page, root excluded — the ones a style key writes. */
+/**
+ * The selected layers of the active page that take a `style=""` of their own —
+ * the ones a style key writes. A component call site or a package component
+ * (`canWriteInlineStyleForModule`) is left out HERE rather than written and
+ * refused at save: the canvas would show the value, the save would drop it, and
+ * a "Style change won't be saved" warning would follow every ⌘A + digit.
+ * `skipped` counts the layers left out, for the one quiet note below.
+ */
 function selectedLayers() {
   const store = useEditorStore.getState()
   const tree = selectActiveCanvasPage(store)
-  if (!tree) return { store, nodes: [] }
-  const nodes = store.selectedNodeIds.flatMap((id) => {
+  if (!tree) return { store, nodes: [], skipped: 0 }
+  const selected = store.selectedNodeIds.flatMap((id) => {
     const node = tree.nodes[id]
     return node ? [node] : []
   })
-  return { store, nodes }
+  const nodes = selected.filter((node) => canWriteInlineStyleForModule(node.moduleId))
+  return { store, nodes, skipped: selected.length - nodes.length }
 }
 
-export function setSelectionOpacity(digit: number): void {
-  const value = opacityForDigit(digit)
-  const { store, nodes } = selectedLayers()
+/** Said only when a key could do nothing at all because every selected layer is a call site. */
+function noteNoStyleTarget(command: string): void {
+  pushToast({
+    kind: 'info',
+    title: `${command} was not changed`,
+    body: 'A component instance takes no style of its own here. Open its component to change it.',
+    dedupeKey: 'quick-style-no-target',
+  })
+}
+
+/** Figma: two digits typed quickly are one exact percentage (`5` then `5` = 55 %, `5` then `0` = 50 %). */
+const TWO_DIGIT_WINDOW_MS = 600
+let pendingDigit: { digit: number; at: number } | null = null
+
+/** The digit a quick second press completes, or `null` when this press starts a new number. */
+function takePendingTens(digit: number, at: number): number | null {
+  const pending = pendingDigit
+  pendingDigit = digit === 0 && pending === null ? null : { digit, at }
+  if (pending === null || pending.digit === 0 || at - pending.at > TWO_DIGIT_WINDOW_MS) return null
+  pendingDigit = null
+  return pending.digit
+}
+
+export function setSelectionOpacity(digit: number, at: number = performance.now()): void {
+  const tens = takePendingTens(digit, at)
+  const value = tens === null ? opacityForDigit(digit) : String((tens * 10 + digit) / 100)
+  const { store, nodes, skipped } = selectedLayers()
+  if (nodes.length === 0) {
+    if (skipped > 0) noteNoStyleTarget('Opacity')
+    return
+  }
   const targets = value === null
     ? nodes.filter((node) => node.inlineStyles?.opacity !== undefined)
     : nodes.filter((node) => String(node.inlineStyles?.opacity ?? '') !== value)
@@ -75,8 +113,11 @@ export function flipPatchFor(
 }
 
 export function flipSelection(axis: 'x' | 'y'): void {
-  const { store, nodes } = selectedLayers()
-  if (nodes.length === 0) return
+  const { store, nodes, skipped } = selectedLayers()
+  if (nodes.length === 0) {
+    if (skipped > 0) noteNoStyleTarget('Flip')
+    return
+  }
   const patches: Array<{ nodeId: string; patch: Record<string, string | null> }> = []
   const refused: string[] = []
   for (const node of nodes) {

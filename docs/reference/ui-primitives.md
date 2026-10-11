@@ -357,6 +357,8 @@ pushToast({
 
 Toasts auto-dismiss after a few seconds. Errors stay longer. Each kind picks the matching semantic token (`--success-*`, `--danger-*`, etc.).
 
+**A toast never covers the inspector.** The stack stays bottom-right but moves left of any surface marked `data-toast-avoid` that sits on the right half of the window (the docked right sidebar and the floating Properties panel carry it), measured whenever the stack changes and on resize (`--toast-clear-right`). A notification used to land on the lower inspector and swallow clicks meant for its controls. The free-form `location` tag is a dev-build aid and is not rendered in production.
+
 **Toasts de-duplicate by default.** A push whose `kind` + `title` + `body` match a toast already on the stack collapses onto it: same id, same position, refreshed countdown, and a visible `×N` counter next to the title. One root cause can therefore never produce N identical cards. Three ways to control it:
 
 | `dedupeKey` | Behaviour |

@@ -409,6 +409,9 @@ export function TokenAwareInput({
             revertingRef.current = true
             setDraft(display)
             setIsEditing(false)
+            // The as-you-type preview is on the canvas until something clears it; a
+            // revert that only resets the field leaves the abandoned value painted.
+            onClearPreview?.()
             onDraftClear?.()
             ;(e.target as HTMLInputElement).blur()
           } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {

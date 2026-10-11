@@ -12,13 +12,15 @@
 
 .stack {
     position: fixed;
-    right: 16px;
+    /* Set by ToastProvider: how far the inspector reaches in from the right edge, so the stack sits beside it, never on it. */
+    --toast-clear-right: 0px;
+    right: calc(16px + var(--toast-clear-right));
     bottom: 16px;
     z-index: var(--toast-z-index);
     display: flex;
     flex-direction: column-reverse;
     gap: var(--space-s);
-    max-width: min(420px, calc(100vw - 32px));
+    max-width: min(420px, calc(100vw - 32px - var(--toast-clear-right)));
     pointer-events: none;
 }
 

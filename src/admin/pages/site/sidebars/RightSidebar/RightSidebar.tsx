@@ -108,6 +108,7 @@ export function RightSidebar({ mode }: RightSidebarProps) {
       ref={sidebarRef}
       className={styles.sidebar}
       data-testid="right-sidebar"
+      data-toast-avoid=""
       data-expanded={isExpanded ? 'true' : 'false'}
       data-mode={propertiesPanelMode}
       style={style}
