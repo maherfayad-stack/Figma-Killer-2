@@ -1,7 +1,10 @@
 /**
- * G-1a - a cross-frame move that carries the constants and handlers the element
- * reads is still ONE honest write and ONE byte-exact undo; and what cannot be
- * carried (state, props) refuses by name and leaves every file as it was.
+ * G-1 - a cross-frame move that carries what the element reads is still ONE
+ * honest write and ONE byte-exact undo: the constants and handlers it reads
+ * (G-1a), the state it uses (G-1b - the destination gets its own copy, and the
+ * board says so with an Undo), a `.map` row's data (G-1c); and what cannot be
+ * carried (a prop nothing gives a value to, a custom hook) refuses by name and
+ * leaves every file as it was.
  *
  * Real end to end, in the style of `crossFrameMoveUndoRealSource.test.ts`:
  * `/save` is `applyStudioEditBatchLocked` against a temp workspace (journaled,
@@ -21,7 +24,7 @@ import { useEditorStore } from '@site/store/store'
 import { registerEditorSave } from '@site/hooks/editorSaveRef'
 import { applySitePagesPatch } from '@site/hooks/siteReloadApply'
 import { CMS_SITE_PAGES_PATCH_EVENT, type CmsSitePagesPatchDetail } from '@admin/state/adminEvents'
-import { __resetToastBusForTests } from '@ui/components/Toast/toastBus'
+import { __resetToastBusForTests, subscribeToasts, type Toast } from '@ui/components/Toast/toastBus'
 import { resetStructuralCommitQueue } from '@site/studio/structuralCommitQueue'
 import { setStudioLoadedDir } from '@site/studio/studioWorkspaceDir'
 import type { PageNode } from '@core/page-tree'
@@ -78,6 +81,40 @@ export default function Stateful() {
     <main className="stateful">
       <button type="button" onClick={toggle}>
         Toggle
+      </button>
+    </main>
+  )
+}
+`
+
+const ROWS = `const RACES = [
+  { id: 'fell', name: 'Fell Run' },
+  { id: 'ridge', name: 'Ridge Ultra' },
+]
+
+export default function Rows() {
+  return (
+    <main className="rows">
+      <ul>
+        {RACES.map((race) => (
+          <li key={race.id}>
+            <b>{race.name}</b>
+          </li>
+        ))}
+      </ul>
+    </main>
+  )
+}
+`
+
+const CUSTOM = `import { useToggle } from '../lib/useToggle'
+
+export default function Custom() {
+  const [open, toggle] = useToggle(false)
+  return (
+    <main className="custom">
+      <button type="button" onClick={toggle}>
+        {open ? 'Hide' : 'Show'}
       </button>
     </main>
   )
@@ -186,6 +223,8 @@ describe('G-1a - a cross-frame move that carries constants and handlers', () => 
     write('pages/Receipt.tsx', RECEIPT)
     write('pages/Stateful.tsx', STATEFUL)
     write('pages/Propped.tsx', PROPPED)
+    write('pages/Rows.tsx', ROWS)
+    write('pages/Custom.tsx', CUSTOM)
     write('lib/format.ts', FORMAT)
     __resetToastBusForTests()
     resetStructuralCommitQueue()
@@ -256,16 +295,84 @@ describe('G-1a - a cross-frame move that carries constants and handlers', () => 
     expect(read('pages/Receipt.tsx')).toBe(RECEIPT)
   })
 
-  it('refuses a handler that sets state, names it, and writes neither file', async () => {
-    transplantTo(pageAndNode('pages/Stateful', STATEFUL, 'button'), 'pages/Receipt', RECEIPT)
+  it('gives the destination its own copy of the state, says so with an Undo, and one undo restores BOTH files byte for byte', async () => {
+    let toasts: readonly Toast[] = []
+    const stop = subscribeToasts((next) => {
+      toasts = next
+    })
+    try {
+      transplantTo(pageAndNode('pages/Stateful', STATEFUL, 'button'), 'pages/Receipt', RECEIPT)
+      await waitFor(() => saves.length === 1)
+      await waitFor(() => useEditorStore.getState().canUndo)
+      await waitFor(() => toasts.some((toast) => toast.title.includes('state')))
+
+      expect(responses[0]!.refusals ?? []).toEqual([])
+      const receipt = read('pages/Receipt.tsx')
+      expect(receipt).toContain("import { useState } from 'react'")
+      expect(receipt).toContain('const [open, setOpen] = useState(false)')
+      expect(receipt).toContain('const toggle = () => setOpen(!open)')
+      expect(receipt).toContain('<button type="button" onClick={toggle}>')
+      // The origin keeps its own state.
+      expect(read('pages/Stateful.tsx')).toContain('const [open, setOpen] = useState(false)')
+
+      // One info notice, with the board's own Undo on it - not an error.
+      const notice = toasts.find((toast) => toast.title.includes('state'))!
+      expect(notice.kind).toBe('info')
+      expect(notice.title).toContain('open, setOpen')
+      expect(notice.action?.label).toBe('Undo')
+      void notice.action!.onSelect()
+
+      await waitFor(() => saves.length === 2)
+      await waitFor(() => !useEditorStore.getState().canUndo)
+      expect(saves[1]!.edits[0]!.kind).toBe('restore')
+      expect(read('pages/Stateful.tsx')).toBe(STATEFUL)
+      expect(read('pages/Receipt.tsx')).toBe(RECEIPT)
+    } finally {
+      stop()
+    }
+  })
+
+  it('refuses a custom hook result, names the hook, and writes neither file', async () => {
+    transplantTo(pageAndNode('pages/Custom', CUSTOM, 'button'), 'pages/Receipt', RECEIPT)
     await waitFor(() => saves.length === 1)
 
     expect(responses[0]!.written).toBe(0)
     expect(responses[0]!.refusals?.[0]).toMatchObject({ kind: 'transplant', reason: 'captured-scope' })
-    expect(responses[0]!.refusals?.[0]?.message).toContain('"setOpen"')
-    expect(read('pages/Stateful.tsx')).toBe(STATEFUL)
+    expect(responses[0]!.refusals?.[0]?.message).toContain('useToggle()')
+    expect(read('pages/Custom.tsx')).toBe(CUSTOM)
     expect(read('pages/Receipt.tsx')).toBe(RECEIPT)
     expect(useEditorStore.getState().canUndo).toBe(false)
+  })
+
+  it('drags an element out of a .map row: a copy of that row, the list untouched, one undo, an info notice', async () => {
+    let toasts: readonly Toast[] = []
+    const stop = subscribeToasts((next) => {
+      toasts = next
+    })
+    try {
+      const at = locateTag(ROWS, 'b')
+      const page = useEditorStore.getState().site!.pages.find((candidate) => `pages/Rows.tsx:${at.line}:${at.col}#1` in candidate.nodes)!
+      const rowNode = page.nodes[`pages/Rows.tsx:${at.line}:${at.col}#1`]!
+      transplantTo({ pageId: page.id, node: rowNode }, 'pages/Receipt', RECEIPT)
+      await waitFor(() => saves.length === 1)
+      await waitFor(() => useEditorStore.getState().canUndo)
+
+      expect(responses[0]!.refusals ?? []).toEqual([])
+      expect(read('pages/Rows.tsx')).toBe(ROWS)
+      const receipt = read('pages/Receipt.tsx')
+      expect(receipt).toContain("const race = { id: 'ridge', name: 'Ridge Ultra' }")
+      expect(receipt).toContain('<b>{race.name}</b>')
+      await waitFor(() => toasts.some((toast) => toast.title.includes('values')))
+      expect(toasts.find((toast) => toast.title.includes('values'))!.kind).toBe('info')
+
+      useEditorStore.getState().undo()
+      await waitFor(() => saves.length === 2)
+      expect(saves[1]!.edits[0]!.kind).toBe('restore')
+      expect(read('pages/Rows.tsx')).toBe(ROWS)
+      expect(read('pages/Receipt.tsx')).toBe(RECEIPT)
+    } finally {
+      stop()
+    }
   })
 
   it('refuses a constant computed from a prop, names the prop, and writes neither file', async () => {

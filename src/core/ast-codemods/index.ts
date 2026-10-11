@@ -49,6 +49,8 @@ export {
   liftJsxElementToCanvasModule,
   canvasLayerModuleRoot,
 } from './transplantJsxElement'
+export type { CarriedDeclaration } from './transplantBindings'
+export type { RowRef } from './transplantPropBake'
 export { buildCanvasLayerModule, canvasLayerModuleFromSpec, type CanvasLayerModule } from './canvasLayerModule'
 export type {
   LiftJsxElementParams,

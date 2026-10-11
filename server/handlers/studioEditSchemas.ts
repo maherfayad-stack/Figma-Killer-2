@@ -460,6 +460,23 @@ export interface StudioEditApplyOutcome {
    * own bytes, which its undo writes back (`canvas-layer-restore`).
    */
   removed?: readonly CanvasLayerRemovedText[]
+  /**
+   * G-1 - what a `transplant` wrote into the destination besides the markup:
+   * plain constants and handlers (`copy`), the element's own copy of the state it
+   * used (`state`, OD-17), a row's data or a prop's default as a literal
+   * constant (`value`). Absent when it carried none. Never includes a copy the
+   * destination already had.
+   */
+  carried?: readonly StudioCarriedDeclaration[]
+}
+
+/** One thing a move copied to the destination - see {@link StudioEditApplyOutcome.carried}. */
+export interface StudioCarriedDeclaration {
+  /** The name it had in the origin. */
+  name: string
+  /** The name it has at the destination - different only after a clash. */
+  as: string
+  how: 'copy' | 'state' | 'value'
 }
 
 /**
@@ -637,4 +654,10 @@ export interface StudioEditBatchResult {
    * when the batch held no `list-item` edit that wrote.
    */
   listArrays: { nodeId: string; to: string }[]
+  /**
+   * G-1 - everything a `transplant` in this batch copied to its destination
+   * besides the markup (see {@link StudioEditApplyOutcome.carried}); the board
+   * tells the user when state or data was copied. Absent when nothing was.
+   */
+  carried?: StudioCarriedDeclaration[]
 }

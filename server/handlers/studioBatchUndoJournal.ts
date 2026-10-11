@@ -14,7 +14,8 @@
  * call site), `swap`, `promote-component` (extract a subtree into a new
  * component), a `list-item` remove (OD-8: a `.map`
  * row's delete cuts array elements whose bytes no op carries back), and a
- * `transplant` that MOVES (a cross-frame drag: two files, one pruned import). A batch holding any of them records ONE
+ * `transplant` (a cross-frame drag: two files, one pruned import; a COPY too,
+ * since G-1 - it may write copied state and constants besides the markup). A batch holding any of them records ONE
  * entry covering every file the batch changed, so one gesture is one token,
  * however many elements a multi-select delete removed and across however
  * many files.
@@ -42,14 +43,16 @@ function isJournaled(edit: StudioEdit): boolean {
   return (
     JOURNALED_KINDS.has(edit.kind) ||
     (edit.kind === 'list-item' && edit.op.kind === 'remove') ||
-    // A cross-file MOVE (a COPY is taken back by deleting what it made). The
-    // move cuts markup from one file, prunes the import only that markup used,
-    // and carries imports into the other — every `line:col` below the cut in
-    // BOTH files shifts, including the container the element left, which is
-    // the only place an inverse `transplant` could put it back. No id recorded
-    // before the write survives it; the pre-image does, and restoring it is
-    // also byte-exact (blank lines, import order and all).
-    (edit.kind === 'transplant' && edit.copy !== true)
+    // A cross-file move. It cuts markup from one file, prunes the import only
+    // that markup used, and carries imports into the other — every `line:col`
+    // below the cut in BOTH files shifts, including the container the element
+    // left, which is the only place an inverse `transplant` could put it back.
+    // No id recorded before the write survives it; the pre-image does, and
+    // restoring it is also byte-exact (blank lines, import order and all).
+    // A COPY is journaled too (G-1): deleting what it made would leave behind
+    // the state, constants and imports it wrote beside the markup, and undoing
+    // a copy of state has to give the destination back exactly as it was.
+    edit.kind === 'transplant'
   )
 }
 

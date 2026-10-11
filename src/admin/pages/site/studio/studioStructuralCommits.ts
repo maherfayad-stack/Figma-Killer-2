@@ -28,6 +28,7 @@ import { decodeSourceNodeId } from '@core/page-tree'
 import type { OptimisticPreviewHandle } from '@site/store/slices/site/structuralOptimism'
 import type { StructuralCommitRollback } from '@site/store/slices/site/structuralCommitRollback'
 import { commitStructural, type StructuralCommitOptions } from './studioStructuralCommitEngine'
+import { announceCarried } from './transplantCarryNotice'
 import {
   dissolveWrapperTemplate,
   type StructuralEditPayload,
@@ -147,10 +148,11 @@ export async function commitStudioReparent(reparent: {
  * covers both files (the batch reports both as touched), so the two frames
  * update together.
  *
- * The undo: a MOVE is taken back by the undo journal's `restore` (both files
+ * The undo is the undo journal's `restore` for a move AND a copy (both files
  * back, byte for byte — an id recorded before the write cannot name the
- * container the element left, because the write pruned the import above it),
- * and a COPY by deleting what it made.
+ * container the element left, because the write pruned the import above it, and
+ * a copy may have written state or constants that deleting its markup would
+ * leave behind).
  */
 export async function commitStudioTransplant(transplant: {
   nodeId: string
@@ -158,9 +160,12 @@ export async function commitStudioTransplant(transplant: {
   anchorNodeId: string | null
   position: 'before' | 'after'
   copy: boolean
+  /** G-1c - the `.map` row the node is a copy of (`nodeId` is then its template). */
+  row?: { array: string; index: number; length: number }
   /** Opens a source file in the code panel - the remedy for a binding that cannot travel. */
   openSource: (origin: { rel: string; line: number; col: number }) => void
 }): Promise<void> {
+  let carried: StudioSaveResponse['carried']
   await commitStructural(
     [
       {
@@ -171,10 +176,16 @@ export async function commitStudioTransplant(transplant: {
           ? { anchorNodeId: transplant.anchorNodeId, position: transplant.position }
           : {}),
         ...(transplant.copy ? { copy: true } : {}),
+        ...(transplant.row ? { row: transplant.row } : {}),
       },
     ],
     'Cannot move this between frames',
     {
+      // G-1 - what the write copied beside the markup; told once it has landed.
+      onAnswer: (answer) => {
+        carried = answer.carried
+      },
+      onLanded: () => announceCarried(carried),
       // `captured-scope` - the element reads state that lives in its own
       // screen's code (an input bound to `useState`). Nothing in the carry can
       // move that binding, so the way forward is to show where it is declared.
@@ -183,11 +194,12 @@ export async function commitStudioTransplant(transplant: {
         const origin = decodeSourceNodeId(refusal.nodeId)
         return origin ? { label: 'Open code', onSelect: () => transplant.openSource(origin) } : null
       },
+      // Both are the undo journal's `restore` (G-1): a copy can write state,
+      // constants and imports beside the markup, which deleting what it made
+      // would leave behind.
       undo: {
-        label: transplant.copy ? 'Copy into another frame' : 'Move into another frame',
-        template: transplant.copy
-          ? { kind: 'delete-created' }
-          : { kind: 'restore-journal' },
+        label: transplant.copy || transplant.row ? 'Copy into another frame' : 'Move into another frame',
+        template: { kind: 'restore-journal' },
       },
     },
   )

@@ -1,0 +1,61 @@
+/**
+ * transplantCarryNotice - the one line the board shows when a move into another
+ * frame COPIED something besides the markup that changes what the element is
+ * (owner decision OD-17): the state it used, or the data it read from a list row
+ * or a prop default.
+ *
+ * Plain constants and handlers (`how: 'copy'`) are not announced - they are the
+ * same bytes and behave the same. State is: the element now has its OWN copy, so
+ * the two frames change separately. Data is: the row or prop was written down as
+ * a constant, so it no longer follows the list.
+ *
+ * An info notice with Undo, never a toast about an error - the editor did what it
+ * was asked. Undo is the store's own ⌘Z, which for a transplant is the undo
+ * journal's `restore`: both files back, byte for byte. It is offered only while
+ * this gesture is still the newest history entry; after anything else, ⌘Z would
+ * undo that instead.
+ */
+import { pushToast } from '@ui/components/Toast'
+import { useEditorStore } from '@site/store/store'
+import type { StudioSaveResponse } from './studioSaveRequests'
+
+type Carried = NonNullable<StudioSaveResponse['carried']>
+
+const MAX_NAMES = 3
+
+function spell(entries: Carried): string {
+  const names = entries.map((entry) => (entry.as === entry.name ? entry.name : `${entry.as}`))
+  const shown = names.slice(0, MAX_NAMES).join(', ')
+  return names.length > MAX_NAMES ? `${shown} +${names.length - MAX_NAMES}` : shown
+}
+
+/** The sentence for what was carried, or `null` when nothing in it needs saying. */
+export function carryNoticeTitle(carried: Carried): string | null {
+  const state = carried.filter((entry) => entry.how === 'state')
+  const value = carried.filter((entry) => entry.how === 'value')
+  if (state.length > 0 && value.length > 0) {
+    return `Copied its state (${spell(state)}) and values (${spell(value)}) into the new frame`
+  }
+  if (state.length > 0) return `Copied its state (${spell(state)}) - the new frame has its own copy now`
+  if (value.length > 0) return `Copied the values it reads (${spell(value)}) into the new frame as constants`
+  return null
+}
+
+/** Shows the notice for `carried`, with an Undo that is only live while this write is the newest history entry. */
+export function announceCarried(carried: Carried | undefined): void {
+  const title = carried ? carryNoticeTitle(carried) : null
+  if (!title) return
+  const depth = useEditorStore.getState()._historyPast.length
+  pushToast({
+    kind: 'info',
+    title,
+    location: 'site-editor',
+    durationMs: 8000,
+    action: {
+      label: 'Undo',
+      onSelect: () => {
+        if (useEditorStore.getState()._historyPast.length === depth) useEditorStore.getState().undo()
+      },
+    },
+  })
+}
