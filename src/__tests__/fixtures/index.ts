@@ -82,6 +82,8 @@ export function makeNode(overrides: Partial<PageNode> & { id?: string } = {}): P
     lockReason: overrides.lockReason,
     codeProps: overrides.codeProps,
     resolvedProps: overrides.resolvedProps,
+    // The component an inlined node was expanded from (OD-19, CV-4).
+    ...(overrides.fromComponent !== undefined ? { fromComponent: overrides.fromComponent } : {}),
     // P1-A — the parser's identity stamp, which every write sends back as
     // `expect`. Dropped here, no test could reach the element identity guard.
     ...(overrides.sourceFingerprint !== undefined ? { sourceFingerprint: overrides.sourceFingerprint } : {}),
