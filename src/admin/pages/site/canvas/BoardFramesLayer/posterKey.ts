@@ -94,7 +94,11 @@ export function siteStyleSignature(inputs: SiteStyleInputs): string {
 /** Stable text for a frame's effective preview axes. */
 export function axesKey(axes: Partial<PreviewAxes> | undefined): string {
   if (!axes) return ''
-  return `${axes.direction ?? ''}|${axes.colorScheme ?? ''}|${axes.locale ?? ''}`
+  const modes = Object.entries(axes.modes ?? {})
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([axisId, modeId]) => `${axisId}=${modeId}`)
+    .join(',')
+  return `${axes.direction ?? ''}|${axes.colorScheme ?? ''}|${axes.locale ?? ''}|${modes}`
 }
 
 export interface PosterKeyParts {

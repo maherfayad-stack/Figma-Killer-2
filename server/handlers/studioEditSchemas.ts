@@ -48,12 +48,14 @@ import {
   type StudioPromoteComponentDetail,
 } from './studioSlotWriteback'
 import { StructuralEditSchemas } from './studioStructuralWriteback'
+import { VariantEditSchemas } from './studioVariantWriteback'
 import { CanvasLayerEditSchemas, type CanvasLayerRemovedText } from './studioCanvasLayerWriteback'
 import { SvgEditSchemas } from './studioSvgWriteback'
 import { ListItemEditSchema } from './studioListItemWriteback'
 import { UndoJournalTokenSchema } from './studio/undoJournalToken'
 import type { CreatedJsxLocation } from '@core/ast-codemods'
 import type { PastedHtmlSummary } from './studioPastedHtmlStyles'
+import type { StyleLanding, StyleLandingRung } from '@core/page-tree'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
 /**
@@ -362,6 +364,8 @@ export const StudioEditSchema = Type.Union([
   // OD-8 — a `.map` row's structure, written to its array (`studioListItemWriteback.ts`).
   ListItemEditSchema,
   ...SlotEditSchemas,
+  // CV-3 — add / remove a variant, add a component property (`studioVariantWriteback.ts`).
+  ...VariantEditSchemas,
   // P5-G — the free canvas's five kinds (`studioCanvasLayerWriteback.ts`).
   ...CanvasLayerEditSchemas,
   // P5-D SVG-4 — one element inside an inline `<svg>` (`studioSvgWriteback.ts`).
@@ -442,6 +446,8 @@ export interface StudioEditApplyOutcome {
   /** P5-C — every `detach` that did not refuse; `written: false` is a held dry run, counted as neither written nor skipped. */
   detachDetail?: StudioDetachDetail
   createdStylesheet?: { file: string }
+  /** G-5 — the rung a style edit took (`css` set/insert/create, `styled`, `style`); see `@core/page-tree`'s `styleLanding.ts`. */
+  styleLanding?: { rung: StyleLandingRung; file: string }
   promoteDetail?: StudioPromoteComponentDetail
   addSlotPropDetail?: StudioAddSlotPropDetail
   /**
@@ -575,6 +581,14 @@ export interface StudioEditBatchResult {
    * path on its very next edit, with no reload.
    */
   createdStylesheets: { nodeId: string; file: string }[]
+  /**
+   * G-5 — where every style edit that wrote LANDED: the declaration, an
+   * expanded shorthand, an override, or the element's own `style=""`
+   * (`StyleLanding`). `nodeId` is the edit's own id — a `css` edit's synthetic
+   * one, a styled edit's template tag, an inline edit's element — the join key
+   * the client already holds for it. Empty array when none did.
+   */
+  styleLandings: StyleLanding[]
   /**
    * E2.4 — every `promote-component` edit that SUCCEEDED, with the new
    * file/component name it minted and the free-variable partition it

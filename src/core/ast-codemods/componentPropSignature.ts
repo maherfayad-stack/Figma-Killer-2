@@ -78,13 +78,15 @@ function addFreshParameter(sourceFile: SourceFile, fn: FunctionLike, prop: Optio
 /**
  * `name?: T` on an object type. A body written on ONE line stays on one line
  * (`{ title: string; heading?: string }`) — ts-morph's `addProperty` would
- * break it across lines; a multi-line body gets `addProperty`'s own layout.
+ * break it across lines; a body written one member per line gets its new
+ * member on a line of its own, in the indent and separator the last one uses.
  */
 function addMember(sourceFile: SourceFile, shape: TypeLiteralNode | InterfaceDeclaration, member: { name: string; type: string }): void {
   const members = shape.getMembers()
   const body = Node.isInterfaceDeclaration(shape) ? sourceFile.getFullText().slice(members[0]?.getStart() ?? shape.getEnd(), shape.getEnd()) : shape.getText()
   const oneLine = !/[\r\n]/.test(body)
-  if (!oneLine) {
+  const last = members.at(-1)
+  if (!oneLine && !last) {
     shape.addProperty({ name: member.name, type: member.type, hasQuestionToken: true })
     return
   }
@@ -93,7 +95,18 @@ function addMember(sourceFile: SourceFile, shape: TypeLiteralNode | InterfaceDec
   // the caller (a whole-file `insertText` would forget them all).
   const own = shape.getText()
   const at = (offset: number) => offset - shape.getStart()
-  const last = members.at(-1)
+  if (!oneLine && last) {
+    // A body written one member per line: the new member goes on its own line
+    // in the file's own indent and separator (`addProperty` would re-indent
+    // with its own four spaces), after any comment trailing the last member.
+    const indent = /[ \t]*$/.exec(own.slice(0, at(last.getStart())))?.[0] ?? ''
+    const terminator = /[;,]$/.exec(last.getText())?.[0] ?? ''
+    const lineEnd = own.indexOf('\n', at(last.getEnd()))
+    const tail = own.slice(at(last.getEnd()), lineEnd === -1 ? own.length : lineEnd)
+    const split = /^[ \t]*\/\/.*$/.test(tail) ? at(last.getEnd()) + tail.length : at(last.getEnd())
+    shape.replaceWithText(`${own.slice(0, split)}\n${indent}${text}${terminator}${own.slice(split)}`)
+    return
+  }
   if (!last) {
     const close = own.lastIndexOf('}')
     shape.replaceWithText(`${own.slice(0, close)} ${text} ${own.slice(close)}`)

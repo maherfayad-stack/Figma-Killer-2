@@ -120,7 +120,7 @@ describe('placeProjectComponentOnCanvas', () => {
       name: 'Card',
       exportName: 'Card',
       file: 'components/Card.tsx',
-      isDefaultExport: true,
+      isDefaultExport: true, line: 1, column: 1,
     } as unknown as Parameters<typeof placeProjectComponentOnCanvas>[0]
     expect(placeProjectComponentOnCanvas(component, { x: 10, y: 20 })).toBe(true)
     expect(createCanvasLayer).toHaveBeenCalledWith(

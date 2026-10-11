@@ -67,6 +67,7 @@
  * which `runtime.ts` (in-frame) reads and writes directly.
  */
 import { Type, type Static } from '@sinclair/typebox'
+import { ModeRootPlanSchema } from '@core/studio-tokens'
 import { DropCandidatesMessageSchema, DropCandidatesResultMessageSchema } from './dropCandidateMessages'
 import { FrameBlurMessageSchema, KeyMessageSchema } from './keyMessages'
 import { NodeRectSchema, NodeRefSchema, PointerModifiersSchema } from './messageShapes'
@@ -168,6 +169,12 @@ export const SetAxesMessageSchema = Type.Object({
     colorScheme: ColorSchemeSchema,
     locale: Type.Optional(Type.String({ minLength: 1 })),
   }),
+  /**
+   * CT-4 - the root attributes/classes the token catalog's mode gates put in
+   * force for this frame (`@core/studio-tokens`' `planModeRoot`). Resolved by
+   * the parent, which has the catalog; applied before the generic writes.
+   */
+  modeRoot: Type.Optional(ModeRootPlanSchema),
 })
 
 /** See "Two additions" in the module docblock. */

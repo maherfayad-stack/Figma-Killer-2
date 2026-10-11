@@ -32,15 +32,33 @@
  *     matching rule (a fresh rule at the end of the scope when none exists),
  *     where nothing can follow it.
  *
- * What still refuses is the one shape with no honest single write:
- * `important-override`, a covering shorthand carrying `!important`, which
- * beats a plain longhand from any position — making the longhand `!important`
- * or editing the shorthand are both a different edit than the one asked for.
- * Unparseable CSS refuses `css-syntax`, a malformed scope `invalid-at-rule`.
+ * ## The ladder: a style edit lands (G-5)
  *
- * `analyzeDeclarationTarget` keeps the old verdicts for the one caller that
- * still writes the first match — a styled-component template
- * (`setStyledDeclaration`), whose spans are not rules this module can splice.
+ * The one shape that used to refuse, `important-override` (a covering shorthand
+ * carrying `!important`, which beats a plain longhand from any position), is a
+ * write now. First rung that is honest wins:
+ *
+ *   1. the shorthand is rewritten IN PLACE with that one side changed
+ *      (`padding: 4px 8px !important` + top `12px` ->
+ *      `padding: 12px 8px 4px !important`), keeping the author's single
+ *      `!important` — `expandShorthandSide`, for the shorthands whose value
+ *      reads side by side;
+ *   2. otherwise a longhand carrying its own `!important` goes right after it,
+ *      where it wins among equals.
+ *
+ * `landing` reports which kind of line took the value, for the inspector's
+ * "Saved in Card.css" / "as an override" chip: `'rule'` is the class's own
+ * declaration (rewritten, or appended to its rule), `'expanded'` a shorthand
+ * rewritten with that one side changed, `'override'` a longhand written after
+ * the declaration it overrides.
+ * Unparseable CSS refuses `css-syntax` (a file with a syntax error is not one
+ * Studio edits — the same stance every writer takes), a malformed scope
+ * `invalid-at-rule`.
+ *
+ * Declarations are written where the cascade reads them. What the old
+ * `analyzeDeclarationTarget` refused (a doubled selector, a doubled property, a
+ * covering shorthand) is covered above; the analyzer itself is gone now that
+ * its last caller, the styled-template writer, lands those shapes too.
  *
  * Scope, deliberately narrow:
  *   - A SINGLE stylesheet's text; the caller supplies which file — pure
@@ -52,14 +70,24 @@
  */
 import postcss, { type AtRule, type Container, type Declaration, type Root, type Rule } from 'postcss'
 import { preservingLineEndings } from './preserveLineEndings'
-import { shorthandCovers } from './analyzeDeclarationTarget'
+import { expandShorthandSide, shorthandCovers } from './shorthandCoverage'
 import { findAtRuleBlocks, parseAtRuleScope, type AtRuleScope } from './cssAtRuleScope'
 
 /** A named, user-readable reason a declaration write declined. `message` is shown verbatim. */
 export interface DeclarationWriteRefusal {
-  reason: 'important-override' | 'css-syntax' | 'invalid-at-rule'
+  reason: 'css-syntax' | 'invalid-at-rule'
   message: string
 }
+
+/**
+ * Which kind of line took a written value — the inspector's "where did it go".
+ * `'rule'`: the class's own declaration (rewritten in place, appended to its
+ * rule, or a new rule). `'expanded'`: a covering shorthand rewritten with that
+ * one side changed. `'override'`: a longhand written AFTER the declaration it
+ * overrides. The last two are the ones a plain "set the old value back" does
+ * not undo byte for byte, which is why the batch journals them.
+ */
+export type DeclarationLanding = 'rule' | 'expanded' | 'override'
 
 export type DeclarationWriteResult =
   | {
@@ -69,6 +97,11 @@ export type DeclarationWriteResult =
       /** `false` when the requested state was already the state in the file (a pure no-op edit). */
       changed: boolean
     }
+  | { ok: false; refusal: DeclarationWriteRefusal }
+
+/** {@link DeclarationWriteResult} for a SET: the same, plus where the value landed. */
+export type DeclarationSetResult =
+  | { ok: true; css: string; changed: boolean; landing: DeclarationLanding }
   | { ok: false; refusal: DeclarationWriteRefusal }
 
 export interface DeclarationWriteOptions {
@@ -223,8 +256,9 @@ export function setDeclaration(
   property: string,
   value: string,
   options: DeclarationWriteOptions = {},
-): DeclarationWriteResult {
+): DeclarationSetResult {
   let refusal: DeclarationWriteRefusal | null = null
+  let landing: DeclarationLanding = 'rule'
   const rewrite = preservingLineEndings(cssText, (source) => {
     const read = readDeclarationScope(source, options)
     if ('refusal' in read) {
@@ -255,17 +289,23 @@ export function setDeclaration(
       return { css: root.toString(), changed: true }
     }
     if (winner.important) {
-      refusal = {
-        reason: 'important-override',
-        message:
-          `“${selector.trim()}” sets “${winner.prop}: … !important”, which overrides “${prop}” however it is ` +
-          `written. Edit “${winner.prop}” instead, or drop the !important.`,
+      // A covering `!important` shorthand: rung 1 rewrites it with this one side
+      // changed; rung 2 writes a longhand that is `!important` itself.
+      const expanded = winner.raws.value ? null : expandShorthandSide(winner.prop, winner.value, prop, value)
+      if (expanded !== null) {
+        if (expanded === winner.value) return { css: source, changed: false }
+        winner.value = expanded
+        landing = 'expanded'
+        return { css: root.toString(), changed: true }
       }
-      return { css: source, changed: false }
+      winner.after({ prop: property, value, important: true })
+      landing = 'override'
+      return { css: root.toString(), changed: true }
     }
     // A covering shorthand has the last word: the longhand goes right after it.
     winner.after({ prop: property, value })
+    landing = 'override'
     return { css: root.toString(), changed: true }
   })
-  return refusal ? { ok: false, refusal } : { ok: true, ...rewrite }
+  return refusal ? { ok: false, refusal } : { ok: true, ...rewrite, landing }
 }

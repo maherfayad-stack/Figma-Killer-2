@@ -10,7 +10,8 @@
  * 'style' | 'class' | 'literal' | 'tag' | 'asset' | 'svg-attr' | 'detach' | 'expose-prop' | 'swap' | 'restore' | 'move' |
  * 'delete' | 'insert' | 'duplicate' | 'wrap' | 'group' | 'ungroup' |
  * 'reparent' | 'transplant' | 'insert-slot' |
- * 'promote-component' | 'add-slot-prop' | 'css'`) lives in
+ * 'promote-component' | 'add-slot-prop' | 'add-variant' | 'remove-variant' |
+ * 'add-component-prop' | 'css'`) lives in
  * `studioEditSchemas.ts` (split out for the
  * `module-size-budgets` ceiling) and is re-exported below verbatim, so every
  * existing consumer's import path is unchanged.
@@ -69,7 +70,7 @@ import {
   syncProjectWithDisk,
   type ModuleImportPlan,
 } from '@core/ast-codemods'
-import { callSitePosition, inlineDepth, inlineSegments, type SourceFingerprintExpectations } from '@core/page-tree'
+import { callSitePosition, inlineDepth, inlineSegments, type SourceFingerprintExpectations, type StyleLanding } from '@core/page-tree'
 import type { Project } from 'ts-morph'
 import { applyCssEdit } from './studioCssWriteback'
 import type { PastedHtmlSummary } from './studioPastedHtmlStyles'
@@ -84,6 +85,7 @@ import {
   type StudioPromoteComponentDetail,
 } from './studioSlotWriteback'
 import { dispatchStructuralEdit } from './studioStructuralDispatch'
+import { applyVariantEdit } from './studioVariantWriteback'
 import { applySvgAttrEdit } from './studioSvgWriteback'
 import { applyListItemEdit } from './studioListItemWriteback'
 import { applyCanvasLayerEdit, isCanvasLayerEdit } from './studioCanvasLayerWriteback'
@@ -129,6 +131,7 @@ export { StudioEditRefusalError } from './studioEditRefusals'
 export { canonicalSourceRel, isWritableSourceRel } from './studioEditRouting'
 export { studioEditLocation, isSharedSourceNodeId, orderStudioEditsForApply, dedupeStudioEdits, studioEditFile, type StudioEditLocation }
 import {
+  canonicalSourceRel,
   dedupeStudioEdits,
   isSharedSourceNodeId,
   orderStudioEditsForApply,
@@ -209,6 +212,7 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
       applied: outcome.applied,
       ...(outcome.applied ? {} : { unwritable: 'stylesheet-unavailable' as const }),
       ...(outcome.createdStylesheet ? { createdStylesheet: outcome.createdStylesheet } : {}),
+      ...(outcome.styleLanding ? { styleLanding: outcome.styleLanding } : {}),
     }
   }
 
@@ -254,7 +258,7 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
       // `changed: false` means the template already says exactly this — the
       // requested state IS the state on disk, so reporting a skip would toast
       // the user about a no-op (`applyCssEdit`'s `unset` precedent).
-      return { applied: true }
+      return { applied: true, styleLanding: { rung: outcome.landing, file: target.rel } }
     }
     case 'style':
       // `style-03` — `JsxStyleTargetError` refuses `style-target`
@@ -262,7 +266,7 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
       // from an expression `style`, a value that is not an object, or a
       // shorthand key: a spread or an identifier is written, not refused.
       setJsxStyle({ ...loc, style: edit.style, ...(edit.remove ? { remove: edit.remove } : {}), project })
-      return { applied: true }
+      return { applied: true, styleLanding: { rung: 'inline', file: target.rel } }
     case 'class': {
       // Track B2 — the real write behind Phase 0 item 0.6's honesty-only
       // stopgap. `setJsxClassName` returns a NAMED refusal (never throws)
@@ -394,6 +398,14 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
         swapDetail: { removedProps: result.removedProps, unfilledRequiredProps: result.unfilledRequiredProps },
       }
     }
+    case 'add-variant':
+    case 'remove-variant':
+    case 'add-component-prop': {
+      // CV-3 — the component's definition: `loc` is its declaration, the rest is re-read from disk.
+      const result = applyVariantEdit(dir, edit, target, (rel) => canonicalSourceRel(dir, rel))
+      if ('refusal' in result) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
+      return result
+    }
     case 'insert-slot':
     case 'promote-component':
     case 'add-slot-prop': {
@@ -485,6 +497,7 @@ export function applyStudioEditBatch(
   const swapDetails: (StudioEditSwapDetail & { nodeId: string })[] = []
   const detachDetails: (StudioDetachDetail & { nodeId: string })[] = []
   const createdStylesheets: { nodeId: string; file: string }[] = []
+  const styleLandings: StyleLanding[] = []
   const promoteDetails: (StudioPromoteComponentDetail & { nodeId: string })[] = []
   const addSlotPropDetails: (StudioAddSlotPropDetail & { nodeId: string })[] = []
   // `store-13` — where each created element sat, measured from the END of its
@@ -532,6 +545,7 @@ export function applyStudioEditBatch(
         }
         if (outcome.swapDetail) swapDetails.push({ nodeId: edit.nodeId, ...outcome.swapDetail })
         if (outcome.createdStylesheet) createdStylesheets.push({ nodeId: edit.nodeId, ...outcome.createdStylesheet })
+        if (outcome.styleLanding) styleLandings.push({ nodeId: edit.nodeId, ...outcome.styleLanding })
         if (outcome.promoteDetail) promoteDetails.push({ nodeId: edit.nodeId, ...outcome.promoteDetail })
         for (const text of outcome.removed ?? []) removed.push({ nodeId: edit.nodeId, ...text })
         for (const entry of outcome.carried ?? []) carried.push({ name: entry.name, as: entry.as, how: entry.how })
@@ -577,7 +591,8 @@ export function applyStudioEditBatch(
 
   importPrune.prune()
   // P3-F — after the prune and the module imports: the entry is what the files are NOW.
-  const undoToken = journal.commit(written, promoteDetails.map((detail) => detail.newFile))
+  // A stylesheet a `css`/`create` edit invented did not exist before the batch: recorded as such, so a restore removes it with the import it needed.
+  const undoToken = journal.commit(written, [...promoteDetails.map((detail) => detail.newFile), ...createdStylesheets.map((sheet) => sheet.file)], styleLandings)
 
   // A re-found edit means the caller's ids for its file were already stale
   // before this batch wrote anything — `shifted` is how every caller learns
@@ -619,6 +634,7 @@ export function applyStudioEditBatch(
     swapDetails: asSent(swapDetails),
     detachDetails: asSent(detachDetails),
     createdStylesheets: asSent(createdStylesheets),
+    styleLandings: asSent(styleLandings),
     promoteDetails: asSent(promoteDetails),
     addSlotPropDetails: asSent(addSlotPropDetails),
     touchedFiles: [...touchedFiles],

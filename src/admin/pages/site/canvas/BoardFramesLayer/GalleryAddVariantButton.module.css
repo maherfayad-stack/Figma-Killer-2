@@ -1,0 +1,5 @@
+/* The "+" at the trailing edge of a variants-gallery frame's header. */
+.add {
+    margin-inline-start: auto;
+    flex-shrink: 0;
+}

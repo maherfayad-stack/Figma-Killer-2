@@ -31,6 +31,7 @@ import {
   type ScrollUnrollController,
 } from '@core/studio-runtime'
 import { applyPreviewAxesToFrameDocument } from '../previewAxesFrameEffect'
+import { currentModeAxes } from '../modeRootPlan'
 import { escapeCssAttributeValue } from '../escapeCssAttributeValue'
 import type {
   DropCandidateGeometry,
@@ -359,7 +360,7 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
 
   setAxes(axes: PreviewAxes): void {
     if (!this.doc.documentElement) return
-    applyPreviewAxesToFrameDocument(this.doc.documentElement, axes, getColorSchemeCapability())
+    applyPreviewAxesToFrameDocument(this.doc.documentElement, axes, getColorSchemeCapability(), currentModeAxes())
   }
 
   /**

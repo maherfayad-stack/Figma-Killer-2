@@ -27,6 +27,7 @@ import { cssCreateImportTarget } from './studioCssWriteback'
 import { pastedHtmlStylesheet } from './studioInsertHtml'
 import { collapseSameTargetEdits, type DedupedStudioEdit } from './studioEditMerge'
 import { isSlotEditKind } from './studioSlotWriteback'
+import { isVariantEdit, isVariantEditKind, variantEditTouchedFiles } from './studioVariantWriteback'
 import { isStructuralEditKind } from './studioStructuralWriteback'
 import { canvasLayerTouchedFiles, isCanvasLayerEditKind } from './studioCanvasLayerWriteback'
 import { svgAttrOrderLocation } from './studioSvgWriteback'
@@ -185,7 +186,7 @@ export function isStudioOwnedTargetUnlinked(dir: string, rel: string): boolean {
 const WRITABLE_SOURCE_EXTENSION = /\.(tsx?|jsx?|mjs|cjs)$/i
 
 /** The one extra extension the undo journal may name: a token write's stylesheets. */
-const JOURNAL_STYLESHEET_EXTENSION = /\.css$/i
+const JOURNAL_STYLESHEET_EXTENSION = /(?<!\.min)\.css$/i
 
 /**
  * Whether a decoded `rel` is safe to write, checked on the PATH SHAPE alone so
@@ -312,7 +313,7 @@ export function isSharedSourceNodeId(nodeId: string, kind?: StudioEdit['kind']):
   if (kind === 'asset' || kind === 'literal' || kind === 'detach' || kind === 'swap' || kind === 'list-item' || kind === 'restore') return true
   // P5-G — every canvas-layer kind creates, removes or moves a whole element
   // across files, exactly like `transplant`.
-  if (kind !== undefined && (isStructuralEditKind(kind) || isSlotEditKind(kind) || isCanvasLayerEditKind(kind))) return true
+  if (kind !== undefined && (isStructuralEditKind(kind) || isSlotEditKind(kind) || isVariantEditKind(kind) || isCanvasLayerEditKind(kind))) return true
   return isInlinedNodeId(nodeId) || isRouteChromeNodeId(nodeId)
 }
 
@@ -449,6 +450,8 @@ export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(
       // planned against the literal the previous left, and refuses honestly
       // (`list-changed`) rather than being dropped.
       edit.kind === 'list-item' ||
+      // CV-3 — two adds to one component are two values, never the same write.
+      isVariantEditKind(edit.kind) ||
       // P5-G — a place or lift names a real element but is never the "same
       // write" as a value edit on it; the other three carry synthetic ids.
       isCanvasLayerEditKind(edit.kind)
@@ -522,6 +525,13 @@ export function studioEditsTouchedFiles(
       for (const segment of inlineSegments(edit.nodeId).slice(0, -1)) {
         const file = studioEditFile(dir, segment, scope)
         if (file) touchedFiles.add(file)
+      }
+    }
+    // CV-3 — the stylesheet / union file / lookup object a variant edit also writes.
+    if (isVariantEdit(edit)) {
+      const component = studioEditLocation(dir, edit.nodeId, scope)
+      if (component) {
+        for (const file of variantEditTouchedFiles(dir, edit, component.rel, (rel) => canonicalSourceRel(dir, rel, scope))) touchedFiles.add(file)
       }
     }
     // P5-G — a loose layer's module, and the page a `canvas-layer-place` lands in.

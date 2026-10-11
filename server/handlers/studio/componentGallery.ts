@@ -26,7 +26,8 @@
  *   its props are recorded in `codeProps` and the instance is locked. The
  *   inlined subtree is the shared component's: an edit there is a
  *   shared-component edit that lands on every instance, and the editor already
- *   says so. CV-3 (Add variant) is what makes the axes writable.
+ *   says so. The axes are written through the component's definition (CV-3:
+ *   `studioVariantWriteback.ts`), never through a cell.
  *
  * The cell grid itself is `planVariantGrid` (cap, pinned axes): this module
  * only turns a plan into nodes.
@@ -42,7 +43,7 @@ import {
   type ParsedPropValue,
   type StaticEvalOptions,
 } from '@core/page-parser'
-import { planVariantGrid, type GalleryAxisInput, type GalleryPlan } from '@core/component-variants'
+import { galleryNodeIdPrefix, planVariantGrid, type GalleryAxisInput, type GalleryPlan } from '@core/component-variants'
 import type { Project } from 'ts-morph'
 import { pageIdFromRelPath } from '../studioPageIds'
 import { extractLocalComponentCatalog, type LocalComponentSpec } from './componentSpecExtract'
@@ -60,14 +61,28 @@ export const GALLERY_CALL_SITE_LOCK_REASON = 'a generated variants gallery cell,
 /** Marks a gallery's `pageParseCache` route key, exactly as `story:` marks a story's (`storyPages.ts`). */
 const GALLERY_ROUTE_KEY_PREFIX = 'component-gallery:'
 
-/** The `pageParseCache` route key for one gallery page. */
-function galleryRouteKey(pageId: string): string {
-  return `${GALLERY_ROUTE_KEY_PREFIX}${pageId}`
+/**
+ * The `pageParseCache` route key for one gallery page: its page id, then `@`
+ * and the component's file. A page id is a slug, so it holds no `@`; the file
+ * rides in the key because a narrowed reload (`reloadScope.ts`) has to tell
+ * which galleries a touched FILE owns, and the dependency set alone cannot (a
+ * gallery depends on every file its component inlines, not only its own).
+ */
+function galleryRouteKey(pageId: string, file: string): string {
+  return `${GALLERY_ROUTE_KEY_PREFIX}${pageId}@${file}`
+}
+
+/** What a gallery's `pageParseCache` key carries, or `null` for any other route. */
+export function parseGalleryRouteKey(routePath: string): { pageId: string; file: string } | null {
+  if (!routePath.startsWith(GALLERY_ROUTE_KEY_PREFIX)) return null
+  const body = routePath.slice(GALLERY_ROUTE_KEY_PREFIX.length)
+  const at = body.indexOf('@')
+  return at > 0 ? { pageId: body.slice(0, at), file: body.slice(at + 1) } : null
 }
 
 /** The gallery page id behind a `cachedRouteDependencies` key, or `null` for any other route. */
 export function galleryPageIdFromRoutePath(routePath: string): string | null {
-  return routePath.startsWith(GALLERY_ROUTE_KEY_PREFIX) ? routePath.slice(GALLERY_ROUTE_KEY_PREFIX.length) : null
+  return parseGalleryRouteKey(routePath)?.pageId ?? null
 }
 
 /** What the board needs to know about one gallery page, and nothing the parse needs. */
@@ -126,6 +141,31 @@ function samplePropsOf(spec: LocalComponentSpec): Record<string, ParsedPropValue
   return sample
 }
 
+/** The declaration a gallery would put a call site on, with its grid plan, or `null` when this component gets no gallery. Shared by discovery and by `galleryCountForFile`, so "has a gallery" has one definition. */
+function galleryCandidate(project: Project, dir: string, spec: LocalComponentSpec): { plan: GalleryPlan; line: number; col: number } | null {
+  if (NON_GALLERY_FILE_RE.test(spec.file)) return null
+  const plan = planVariantGrid(axesOf(spec))
+  if (!plan) return null
+  const sourceFile = project.getSourceFile(path.join(dir, ...spec.file.split('/')))
+  const declaration = sourceFile && findNamedComponentDeclaration(sourceFile, spec.name, false)
+  if (!sourceFile || !declaration) return null
+  const { line, column } = sourceFile.getLineAndColumnAtPos(declaration.getStart())
+  return { plan, line, col: column }
+}
+
+/**
+ * How many galleries `relFile` owns right now. A save that adds the first
+ * variant prop to a component, or removes the last, changes the BOARD's shape
+ * (a gallery page appears or vanishes), which a narrowed reload of the pages
+ * that render it cannot show — `reloadScope.ts` compares this with the
+ * galleries the parse cache holds for the file and widens when they differ.
+ * Route files own none (the load excludes them), so the caller skips those.
+ */
+export function galleryCountForFile(project: Project, dir: string, relFile: string): number {
+  if (NON_GALLERY_FILE_RE.test(relFile)) return 0
+  return extractLocalComponentCatalog(project, dir, { analyzeBindings: false, onlyFile: relFile }).filter((spec) => galleryCandidate(project, dir, spec)).length
+}
+
 /**
  * Every local component worth a gallery: it declares at least one enum/boolean
  * prop with two or more values, it is not a page, a story or a test, and its
@@ -151,13 +191,10 @@ export function discoverGalleries(
 
   for (const spec of specs) {
     if (found.length >= MAX_GALLERY_COMPONENTS) break
-    if (excludeFiles.has(spec.file) || NON_GALLERY_FILE_RE.test(spec.file)) continue
-    const plan = planVariantGrid(axesOf(spec))
-    if (!plan) continue
-    const sourceFile = project.getSourceFile(path.join(dir, ...spec.file.split('/')))
-    const declaration = sourceFile && findNamedComponentDeclaration(sourceFile, spec.name, false)
-    if (!sourceFile || !declaration) continue
-    const { line, column } = sourceFile.getLineAndColumnAtPos(declaration.getStart())
+    if (excludeFiles.has(spec.file)) continue
+    const candidate = galleryCandidate(project, dir, spec)
+    if (!candidate) continue
+    const { plan, line, col } = candidate
 
     const slug = pageIdFromRelPath(spec.file)
     const nameSlug = pageIdFromRelPath(spec.name)
@@ -178,7 +215,7 @@ export function discoverGalleries(
         total: plan.total,
       },
       line,
-      col: column,
+      col,
       plan,
       sampleProps: samplePropsOf(spec),
       takesChildren: spec.props.some((prop) => prop.name === 'children'),
@@ -217,7 +254,7 @@ function scaffold(
 /** The one-page `ParsedPage` for a gallery: header + a wrapping grid of labelled call sites. Pure — `inlineLocalComponents` does the rest. */
 export function synthesizeGalleryPage(gallery: DiscoveredGallery): { parsed: ParsedPage; sources: Record<string, ComponentSource> } {
   const { summary, plan, line, col } = gallery
-  const prefix = `component-gallery:${summary.pageId}`
+  const prefix = galleryNodeIdPrefix(summary.pageId)
   const nodes: Record<string, ParsedNode> = {}
   const sources: Record<string, ComponentSource> = {}
   const cellIds: string[] = []
@@ -293,7 +330,7 @@ export function buildGalleryRouteEntries(
   const { dir, preferredKey } = scope
   const entries: RoutePageEntry[] = []
   for (const gallery of galleries) {
-    const outcome = parseRouteThroughCache(scope, workspace, galleryRouteKey(gallery.summary.pageId), () => {
+    const outcome = parseRouteThroughCache(scope, workspace, galleryRouteKey(gallery.summary.pageId, gallery.summary.file), () => {
       const readFiles = new Set<string>()
       const evalOptions: StaticEvalOptions = {
         preferredKey,

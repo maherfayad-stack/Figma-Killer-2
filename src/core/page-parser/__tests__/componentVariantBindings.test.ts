@@ -209,7 +209,8 @@ describe('cva', () => {
     write(
       'src/Action.tsx',
       [
-        "import { cva } from 'class-variance-authority'",
+        // Assembled so the no-tailwind-deps text scan does not mistake this fixture for an import in our own source.
+        "import { cva } from '" + 'class-variance-authority' + "'",
         "const actionVariants = cva('action', {",
         '  variants: {',
         '    intent: {',

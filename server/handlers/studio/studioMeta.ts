@@ -224,6 +224,8 @@ const PersistedPreviewAxesSchema = Type.Object({
   direction: Type.Optional(Type.Union([Type.Literal('ltr'), Type.Literal('rtl')])),
   colorScheme: Type.Optional(Type.Union([Type.Literal('light'), Type.Literal('dark')])),
   locale: Type.Optional(Type.String({ minLength: 1 })),
+  /** CT-4 - the mode picked on each catalog axis beyond the three above, `axisId -> modeId`. */
+  modes: Type.Optional(Type.Record(Type.String({ minLength: 1, maxLength: 80 }), Type.String({ minLength: 1, maxLength: 200 }))),
 })
 
 /**
