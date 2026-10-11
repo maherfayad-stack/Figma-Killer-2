@@ -16,6 +16,7 @@ import type { JsThemeEntry } from '@core/studio-tokens'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { Button } from '@ui/components/Button'
 import { ApplyClassStrip } from './ApplyClassStrip'
+import { themeEntryLabel } from './variablesModel'
 import styles from './ThemeEntryRow.module.css'
 
 interface ThemeEntryRowProps {
@@ -24,10 +25,6 @@ interface ThemeEntryRowProps {
   applyBlockedReason: string | null
   busy: boolean
   onApply: (className: string) => Promise<void>
-}
-
-export function themeEntryLabel(entry: JsThemeEntry): string {
-  return entry.path === '' ? entry.group : `${entry.group}.${entry.path}`
 }
 
 export function ThemeEntryRow({ entry, applyBlockedReason, busy, onApply }: ThemeEntryRowProps) {

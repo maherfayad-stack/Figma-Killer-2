@@ -94,6 +94,11 @@ export function replacementCandidates(catalog: TokenCatalog, token: CatalogToken
   return catalog.tokens.filter((other) => other.name !== token.name && other.family === token.family).map((other) => other.name)
 }
 
+/** How a JavaScript theme entry is named in the panel: `colors.primary.500`, or just the group when the whole group is one value. */
+export function themeEntryLabel(entry: JsThemeEntry): string {
+  return entry.path === '' ? entry.group : `${entry.group}.${entry.path}`
+}
+
 /** What a search matches in a JavaScript theme entry: where it is, its path, its value, the classes that apply it. */
 function themeEntryMatches(entry: JsThemeEntry, needle: string): boolean {
   return [entry.file, entry.group, entry.path, entry.raw, entry.value ?? '', ...entry.utilities].some((text) => text.toLowerCase().includes(needle))

@@ -17,13 +17,14 @@ import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
  *
  * Four claims a unit test cannot make:
  *
- *   1. **An `@theme` value edits in place.** Typing repaints the canvas while
- *      `src/index.css` is byte-identical; Enter changes exactly the one
- *      declaration INSIDE `@theme`; the panel's Undo restores the file.
+ *   1. **An `@theme` value edits in place.** Typing repaints the canvas (the
+ *      live preview restates the variable) while `src/index.css` is
+ *      byte-identical; Enter changes exactly the one declaration INSIDE
+ *      `@theme`; the panel's Undo restores the file.
  *   2. **A rename moves the utility classes too.** `--color-crust` ->
  *      `--color-toast` rewrites the `@theme` declaration, the `var()` read in
- *      `Home.css` AND the `text-crust` class in `Home.tsx`, in one step; the
- *      canvas colour does not change; Undo puts all three files back.
+ *      `Home.css` AND the `text-crust` class in `Home.tsx`, in one step; Undo
+ *      puts all three files back.
  *   3. **A rename it cannot follow is refused beside the row, in words.**
  *      `--spacing-gutter` is read by every spacing utility; nothing is written.
  *   4. **Apply by utility class.** With the heading selected, the Variables
@@ -31,8 +32,9 @@ import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
  *      `className` in the source, and Undo takes it back byte for byte.
  *
  * The fixture has no Tailwind installed (this suite never installs one), so the
- * canvas colour is driven by a plain `var(--color-crust)` rule; the claims are
- * about the files and the panel. The fixture lives in this run's throwaway
+ * browser sees `@theme` as an unknown at-rule and paints nothing from it until
+ * the live preview restates the variable; the claims are about the files and
+ * the panel. The fixture lives in this run's throwaway
  * workspace copy, so writing is safe.
  */
 
@@ -59,7 +61,6 @@ const MAIN_TSX = `import './index.css'
 export {}
 `
 
-const ORIGINAL_COLOR = 'rgb(197, 137, 64)'
 const EDITED_COLOR = 'rgb(255, 0, 0)'
 
 const THEME_FILE = 'src/index.css'
@@ -84,7 +85,7 @@ test.afterAll(() => {
   if (fixture) removeFixtureProject(fixture)
 })
 
-async function openVariables(page: Page): Promise<{ title: Locator; contentFrame: FrameLocator }> {
+async function openVariables(page: Page, options: { selectHeading?: boolean } = {}): Promise<{ title: Locator; contentFrame: FrameLocator }> {
   const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: true })
   const frame = page.locator('[data-page-id]').first()
   await panIntoView(page, canvasRoot, frame)
@@ -92,6 +93,12 @@ async function openVariables(page: Page): Promise<{ title: Locator; contentFrame
   const contentFrame = canvasContentFrame(frame)
   const title = contentFrame.locator('.hero-title').first()
   await expect(title).toBeVisible({ timeout: 30_000 })
+  // Selecting first: the board is at its widest, and the selection survives opening the panel.
+  if (options.selectHeading) {
+    // The frame is larger than the viewport: bring the HEADING itself on screen, or the click lands on nothing.
+    await panIntoView(page, canvasRoot, title)
+    await selectInFrame(page, title)
+  }
   await page.getByTestId('panel-rail-variables').click()
   await expect(page.getByTestId('variables-panel')).toBeVisible()
   await expect(page.getByLabel('--color-crust Default')).toBeVisible({ timeout: 30_000 })
@@ -105,7 +112,6 @@ test.describe('CT-6 - Tailwind v4 theme in the Variables panel', () => {
 
   test('an @theme value previews on type, writes one declaration inside @theme on Enter, and Undo restores the file', async ({ page }) => {
     const { title } = await openVariables(page)
-    expect(await colorOf(title)).toBe(ORIGINAL_COLOR)
 
     const field = page.getByLabel('--color-crust Default')
     await field.click()
@@ -127,7 +133,7 @@ test.describe('CT-6 - Tailwind v4 theme in the Variables panel', () => {
   })
 
   test('renaming a theme colour moves the declaration, the var() and the utility class, and Undo puts all three files back', async ({ page }) => {
-    const { title } = await openVariables(page)
+    await openVariables(page)
 
     await page.getByLabel('Rename --color-crust').click()
     const input = page.getByLabel('New name for --color-crust')
@@ -139,7 +145,6 @@ test.describe('CT-6 - Tailwind v4 theme in the Variables panel', () => {
       .toBe(HOME_TSX.replace('text-crust', 'text-toast'))
     expect(read(THEME_FILE)).toBe(INDEX_CSS.replace('--color-crust', '--color-toast'))
     expect(read(HOME_CSS_FILE)).toBe(HOME_CSS.replace('--color-crust', '--color-toast'))
-    await expect.poll(() => colorOf(title), { message: 'a rename left the heading without its colour', timeout: 15_000 }).toBe(ORIGINAL_COLOR)
     // `bg-cream` names another colour and is untouched.
     expect(read(HOME_TSX_FILE)).toContain('bg-cream')
 
@@ -165,8 +170,7 @@ test.describe('CT-6 - Tailwind v4 theme in the Variables panel', () => {
   })
 
   test('Apply by utility class adds the class to the selected element in the source, and Undo restores the file', async ({ page }) => {
-    const { title } = await openVariables(page)
-    await selectInFrame(page, title)
+    await openVariables(page, { selectHeading: true })
 
     await page.getByLabel('Apply --color-cream as a class').click()
     await page.getByRole('button', { name: 'border-cream' }).click()
