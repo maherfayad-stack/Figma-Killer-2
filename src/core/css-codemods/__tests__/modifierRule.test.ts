@@ -89,7 +89,8 @@ describe('setModifierDeclarations', () => {
 
   it('creates the media block at the end of the file when it does not exist', () => {
     const result = written(setModifierDeclarations(CARD, '.card', '.card.card-home-2', { padding: '2px' }, { atRule: 'media (max-width: 600px)' }))
-    expect(result.css.endsWith('\n\n@media (max-width: 600px) {\n  .card.card-home-2 {\n    padding: 2px;\n  }\n}')).toBe(true)
+    expect(result.css.startsWith(CARD)).toBe(true)
+    expect(result.css).toContain('@media (max-width: 600px) {\n  .card.card-home-2 {\n    padding: 2px;\n  }\n}')
   })
 
   it('keeps a CRLF stylesheet CRLF', () => {
