@@ -9,6 +9,10 @@
  * flips true. The component mounts fresh on each open. All local state is
  * initialized from store values once on mount; no reset effects are needed.
  *
+ * On a board backed by real files (G-10) "Insert" is `writeHtmlToSource`
+ * instead: the HTML becomes JSX and its CSS goes into the page's stylesheet, one
+ * undo step. The pipeline below is the CMS tree's.
+ *
  * Pipeline on "Insert":
  *   1. `importHtml(source)` — parse → harvest inline styles + <style> CSS →
  *      strip unsafe → walk and map to PageNodes
