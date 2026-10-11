@@ -129,18 +129,18 @@ export function applyToThisInstanceOnly(input: {
   // Ids the gesture names outside the instance are followed through the write
   // by identity - captured NOW, while the board still describes the old file.
   const outside = captureOutsideIds(tree, callSite)
-  const notice = (how: 'detached' | 'copied'): void =>
-    void pushToast({
+  // A gesture that PLACES something says what it had to do to place it; one that
+  // changes what is there (a delete, a style) stays as quiet as it always was -
+  // a structural commit never toasts its own success (P3-A).
+  const notice = (how: 'detached' | 'copied'): void => {
+    if (!input.placing) return
+    pushToast({
       kind: 'info',
-      title:
-        how === 'copied'
-          ? `Made ${label} its own copy ${input.placing ? 'to place this' : 'for just this one'}. Undo restores it.`
-          : input.placing
-            ? `Detached ${label} to place this. Undo restores it.`
-            : `Detached ${label} to change just this one. Undo restores it.`,
+      title: how === 'copied' ? `Made ${label} its own copy to place this. Undo restores it.` : `Detached ${label} to place this. Undo restores it.`,
       location: 'site-editor',
       dedupeKey: `instance-detached:${callSite}`,
     })
+  }
 
   void (async () => {
     const outcome = await commitStudioDetachForInstance({

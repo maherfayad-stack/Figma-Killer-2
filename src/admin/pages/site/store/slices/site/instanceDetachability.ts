@@ -43,6 +43,11 @@ export function isDetachCandidate(node: PageNode | undefined): node is PageNode 
   )
 }
 
+/** A call site of Studio's own design system - in-project code (OD-21) that Studio also manages, so it can be inlined but never copied. */
+export function isDesignSystemCallSite(node: PageNode): boolean {
+  return node.moduleId.startsWith(DESIGN_SYSTEM_MODULE_PREFIX) && registry.get(node.moduleId)?.sourceImport?.kind === 'design-system'
+}
+
 /** The component's own name, for a sentence. */
 export function detachComponentLabel(node: PageNode): string {
   const name = (node.props as { componentName?: unknown }).componentName

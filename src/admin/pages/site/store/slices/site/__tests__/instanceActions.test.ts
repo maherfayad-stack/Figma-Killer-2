@@ -446,6 +446,18 @@ describe('detachInstances — what it never posts', () => {
       expect(saveCalls[0]!.edits).toEqual([{ kind: 'detach', nodeId: DS_ID, dryRun: 'if-lossy' }])
     })
 
+    it('a design-system refusal names what cannot be done and offers no copy - the folder is Studio\'s to rewrite', async () => {
+      stubFetch([{ refusals: [{ nodeId: DS_ID, kind: 'detach', reason: 'body-local', message: 'Button reads `cls`, which its body computes. Duplicate the component and edit the copy instead.' }] }])
+      extractAnswer = { ok: true, newFile: 'design-system/components/Button2.jsx', newComponentName: 'Button2' }
+      expect(await store().detachInstances([DS_ID])).toBe('refused')
+      expect(extractCalls).toEqual([])
+      expect(store().structuralRefusalDialog).toBeNull()
+      const toast = currentToasts().find((entry) => entry.title === 'Detach refused')
+      expect(toast?.body).toBe(
+        'Button reads `cls`, which its body computes. It is part of the design-system/ folder Studio manages, so it cannot be copied either - change it through its props.',
+      )
+    })
+
     it('refuses an npm package component before posting anything, and says why', async () => {
       stubFetch([{}])
       expect(await store().detachInstances([NPM_ID])).toBe('refused')

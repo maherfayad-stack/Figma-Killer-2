@@ -70,7 +70,7 @@ import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommi
 import { extractInstanceCopy, postEdits, type StudioSaveResponse } from '@site/studio/studioSaveRequests'
 import { commitStudioDetach } from '@site/studio/studioStructuralCommits'
 import { resolveActiveTreeTarget } from './helpers'
-import { detachComponentLabel, detachRefusalFor, isDetachCandidate } from './instanceDetachability'
+import { detachComponentLabel, detachRefusalFor, isDesignSystemCallSite, isDetachCandidate } from './instanceDetachability'
 import { applyToThisInstanceOnly } from './instanceOnlyGesture'
 import type { DetachInstancesOutcome, InstanceDetachConfirmState, InstanceDetachSlice } from './instanceDetachTypes'
 import { presentStructuralRefusal, STRUCTURAL_REFUSAL_TITLE } from './structuralSourceEdits'
@@ -89,6 +89,8 @@ interface DetachTarget {
   label: string
   /** How many rows the call site renders: 1 unless it is a `.map` template. */
   rows: number
+  /** A design-system component: inlined when it can be, but never copied (Studio rewrites that folder). */
+  designSystem: boolean
 }
 
 /** Rows of one `.map` template on the board — the N in "every row (N)". */
@@ -169,11 +171,20 @@ export function createInstanceActions(helpers: SiteSliceHelpers): InstanceAction
   }
 
   async function presentRefusal(refusal: { reason: string; message: string }, target: DetachTarget, single: boolean): Promise<DetachInstancesOutcome> {
-    if (single) {
+    if (single && !target.designSystem) {
       const copied = await copyInstead(refusal, target)
       if (copied) return copied
     }
-    presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.detach, explainDetachConstraint(refusal.reason, refusal.message), {
+    // A design-system component cannot be copied either (the folder is Studio's to rewrite),
+    // so the sentence must not point at a remedy that does not exist.
+    const constraint = target.designSystem
+      ? {
+          ...explainDetachConstraint(refusal.reason, refusal.message),
+          explanation: `${firstSentence(refusal.message)} It is part of the design-system/ folder Studio manages, so it cannot be copied either - change it through its props.`,
+          actions: [],
+        }
+      : explainDetachConstraint(refusal.reason, refusal.message)
+    presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.detach, constraint, {
       // The CALL SITE, not a row's id: the remedy (a component copy) repoints one call site.
       nodeId: target.site,
       getState: get,
@@ -285,7 +296,9 @@ export function createInstanceActions(helpers: SiteSliceHelpers): InstanceAction
         warn('Detach refused', `This ${label} has no single place in your code to detach.`)
         return 'refused'
       }
-      if (!targets.has(site)) targets.set(site, { nodeId: id, site, label, rows: site === id ? 1 : rowsOf(tree, site) })
+      if (!targets.has(site)) {
+        targets.set(site, { nodeId: id, site, label, rows: site === id ? 1 : rowsOf(tree, site), designSystem: isDesignSystemCallSite(tree.nodes[id]!) })
+      }
     }
     const list = [...targets.values()]
     return list.length === 1 ? detachOne(list[0]!) : detachMany(list)
