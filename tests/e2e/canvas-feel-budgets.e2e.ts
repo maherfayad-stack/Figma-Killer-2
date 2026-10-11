@@ -121,6 +121,8 @@ const BUDGET_FIRST_PRESS_TO_RING_MS = E2E_VITE_MODE === 'preview' ? 75 : 150
  * frame was rasterized ~600 ms into this window (worst frame 1,139.7 ms).
  */
 const POST_EDIT_PAUSE_MS = 2500
+/** The worst frame of the post-edit pause: the poster refresh must not show as a hitch. */
+const BUDGET_POST_EDIT_WORST_FRAME_MS = 100
 /** `useFramePosterCapture.ts`'s User Timing measure name. */
 const POSTER_CAPTURE_MEASURE = 'studio:poster-capture'
 
@@ -508,7 +510,7 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
     expect(drift, 'selecting moved a mounted frame').toBeLessThan(0.5)
   })
 
-  test('post-edit pause: the frame being edited is not rasterized under the user', async ({ page }) => {
+  test('post-edit pause: the edited frame is re-photographed once, in the background, without a long frame', async ({ page }) => {
     // PERF-5 (P2-I) — an edit makes a new `Page`, and the poster effect used
     // to treat that as "no poster yet": 700 ms after the last keystroke the
     // queue rasterized the ON-SCREEN frame being edited (`html-to-image`,
@@ -554,10 +556,10 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
     )
     annotate('post-edit pause: worst frame', `${pause.worstFrameMs.toFixed(1)}ms`)
     annotate('post-edit pause: poster captures', captures.map((c) => `${c.pageId} ${c.ms.toFixed(0)}ms`).join(', ') || '(none)')
-    expect(
-      captures.filter((c) => c.pageId === TARGET_PAGE_ID),
-      'the frame being edited was rasterized while the user was looking at it',
-    ).toEqual([])
+    // SB-2: the picture is refreshed while the frame is live (the SVG rasterizer is ~8 ms of main thread, not
+    // html-to-image's 85-1,160 ms), exactly once per settled edit, and never as a long frame.
+    expect(captures.filter((c) => c.pageId === TARGET_PAGE_ID).length).toBeLessThanOrEqual(1)
+    expect(pause.worstFrameMs).toBeLessThan(BUDGET_POST_EDIT_WORST_FRAME_MS)
   })
 
   test('idle with a selection: the editor schedules no animation frames', async ({ page }) => {

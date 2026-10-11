@@ -125,13 +125,6 @@ function runPlacementGesture(
   })
 }
 
-/** The slot `nodeId` occupies in `page`, for a lift's undo (`canvas-layer-lift-back`). */
-function originSlot(page: Page, nodeId: string): { parentNodeId: string; index: number } {
-  const parentNodeId = page.nodes[nodeId]?.parentId ?? page.rootNodeId
-  const index = page.nodes[parentNodeId]?.children.indexOf(nodeId) ?? -1
-  return { parentNodeId, index: index < 0 ? Number.MAX_SAFE_INTEGER : index }
-}
-
 function placementAt(get: Get, layerId: string, at: CanvasLayerDrop): { boardId: string; placement: CanvasLayerPlacement } | null {
   const state = get()
   const board = getActiveBoard(state.boards, state.activeBoardId)
@@ -242,7 +235,6 @@ export function createCanvasLayerGestures(set: Set, get: Get): CanvasLayerGestur
           layerId,
           nodeId: preview.nodeId,
           copy,
-          origin: originSlot(originPage, preview.nodeId),
           placements: changes,
           rollback,
         }),

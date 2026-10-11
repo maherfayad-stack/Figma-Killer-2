@@ -23,6 +23,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useEditorStore, selectCanvasPageFor } from '@site/store/store'
+import { selectLayersFrameId } from '@site/store/slices/boardSelectors'
 import { registry } from '@core/module-engine'
 import {
   getAncestors,
@@ -261,7 +262,9 @@ export function LayerRowList({
     if (!next) return
     e.preventDefault()
     e.stopPropagation()
-    useEditorStore.getState().selectNode(next.nodeId, e.shiftKey ? 'range' : 'replace', {
+    const state = useEditorStore.getState()
+    state.selectNode(next.nodeId, e.shiftKey ? 'range' : 'replace', {
+      frameId: selectLayersFrameId(state),
       preservePropertiesPanelCollapse: isNarrowEditorChromeViewport(),
     })
     setFocusedNodeId(next.nodeId)

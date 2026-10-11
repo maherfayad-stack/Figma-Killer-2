@@ -47,6 +47,18 @@ function board() {
 }
 
 const store = () => useEditorStore.getState()
+
+/**
+ * The board's re-read after a move reports the write's undo-journal token on
+ * the entry the move already pushed (`recordStructuralSourceWrite` `fill`).
+ * These specs have no editor mounted to re-read, so they apply that step.
+ */
+function landJournalToken(): void {
+  store().recordStructuralSourceWrite({
+    kind: 'fill',
+    outcome: { createdNodeIds: [], relocatedNodeIds: [], removed: [], undoToken: '0123456789abcdef0123456789abcdef', listArrays: [] },
+  })
+}
 const childrenOf = (pageIndex: number, root: string) => store().site!.pages[pageIndex]!.nodes[root]!.children
 
 type SaveReply =
@@ -68,6 +80,8 @@ let unsubscribeToasts: () => void
 function reply(json: unknown): Response {
   return new Response(JSON.stringify(json), { status: 200, headers: { 'content-type': 'application/json' } })
 }
+
+const TOKEN = '0123456789abcdef0123456789abcdef'
 
 beforeEach(() => {
   resetStructuralCommitQueue()
@@ -99,7 +113,7 @@ beforeEach(() => {
           refusals: [{ kind: String(body.edits?.[0]?.kind ?? 'move'), nodeId: next.nodeId, reason: 'has-behaviour', message: next.message }],
         })
       }
-      return reply({ ok: true, written: 1, skipped: 0, shifted: true, sharedComponents: false, touchedFiles: [FILE_A] })
+      return reply({ ok: true, written: 1, skipped: 0, shifted: true, sharedComponents: false, undoToken: TOKEN, touchedFiles: [FILE_A] })
     }
     // Reload scope: "not provably narrow" — with no editor mounted, the full
     // reload request settles at once and nothing is re-read.
@@ -148,32 +162,33 @@ describe('ERR-3 — structural undo finds the page that owns the element', () =>
     store().moveNodes([a(3)], ROOT_A, 3)
     expect(childrenOf(0, ROOT_A)).toEqual([a(4), a(5), a(3)])
     await settle()
+    landJournalToken()
     const pastAfterMove = store()._historyPast.length
 
     // Pressing on a frame activates its page — the normal flow.
     store().setActivePage('page-b')
     store().undo()
 
-    expect(childrenOf(0, ROOT_A)).toEqual([a(3), a(4), a(5)])
     expect(store()._historyPast.length).toBe(pastAfterMove - 1)
     expect(store()._historyFuture.length).toBe(1)
-    // Silently taken to the page the undo changed, the way Figma does it.
-    expect(store().activePageId).toBe('page-a')
     await settle()
-    expect(posted.at(-1)!.edits[0]).toMatchObject({ kind: 'move', nodeId: a(3) })
+    // The journal's restore names the write, not a page: it needs no tree.
+    expect(posted.at(-1)!.edits[0]).toMatchObject({ kind: 'restore', token: TOKEN })
     expect(toasts.filter((toast) => toast.title === 'Nothing to undo here')).toHaveLength(0)
   })
 
   it('redoes it from the other frame too', async () => {
     store().moveNodes([a(3)], ROOT_A, 3)
     await settle()
+    landJournalToken()
     store().undo()
     await settle()
 
     store().setActivePage('page-b')
     store().redo()
-    expect(childrenOf(0, ROOT_A)).toEqual([a(4), a(5), a(3)])
     expect(store()._historyFuture.length).toBe(0)
+    await settle()
+    expect(posted.at(-1)!.edits[0]).toMatchObject({ kind: 'move', nodeId: a(3) })
   })
 })
 
@@ -259,10 +274,10 @@ describe('ERR-6 — an undo whose re-issued write does not land', () => {
   it('is skipped when the server refuses it: the tree stays as disk has it, and the stack moves on', async () => {
     store().moveNodes([a(3)], ROOT_A, 3)
     await settle()
+    landJournalToken()
     replies = [{ kind: 'refused', nodeId: a(3), message: 'Refused.' }]
 
     store().undo()
-    expect(childrenOf(0, ROOT_A)).toEqual([a(3), a(4), a(5)])
     await settle()
 
     // Disk still has the move, so the board does too — and the entry is gone
@@ -276,6 +291,7 @@ describe('ERR-6 — an undo whose re-issued write does not land', () => {
   it('goes back on the stack when the server never answered, so the next ⌘Z can try again', async () => {
     store().moveNodes([a(3)], ROOT_A, 3)
     await settle()
+    landJournalToken()
     replies = [{ kind: 'unreachable' }]
 
     store().undo()
@@ -283,13 +299,12 @@ describe('ERR-6 — an undo whose re-issued write does not land', () => {
 
     expect(childrenOf(0, ROOT_A)).toEqual([a(4), a(5), a(3)])
     expect(store()._historyPast.length).toBe(1)
-    expect(store()._historyPast[0]!.structural?.gesture).toBe('move')
+    expect(store()._historyPast[0]!.structural?.gesture).toBe('source')
     expect(store()._historyPast[0]!.pendingCommit).toBeUndefined()
     expect(store()._historyFuture.length).toBe(0)
 
     replies = [{ kind: 'written' }]
     store().undo()
-    expect(childrenOf(0, ROOT_A)).toEqual([a(3), a(4), a(5)])
     await settle()
     expect(store()._historyFuture.length).toBe(1)
   })

@@ -139,6 +139,12 @@ const ALLOWLIST_FETCH = new Set<string>([
   //   (which validates a TypeBox success body) cannot model it — the response
   //   body is SVG text, sanitized via sanitizeSvg before use.
   join(PROJECT_ROOT, 'src/admin/pages/site/property-controls/SvgControl.tsx'),
+
+  // §3.7  posterRasterizer.ts — reads the bytes of a frame's own images, fonts
+  //   and CSS `url(...)` assets (any same-origin path, not a CMS endpoint) to
+  //   inline them as data URIs, because an SVG image can load nothing itself.
+  //   File-content GETs, never JSON, so there is no envelope to validate.
+  join(PROJECT_ROOT, 'src/admin/pages/site/canvas/BoardFramesLayer/posterRasterizer.ts'),
 ])
 
 /**

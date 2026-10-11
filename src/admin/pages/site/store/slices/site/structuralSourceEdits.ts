@@ -48,17 +48,14 @@ import {
   isSourceDerivedNodeId,
   previewStructuralGroup,
   previewStructuralMove,
-  previewStructuralTransplant,
   refuseStructuralEdit,
   resolveContainerAnchor,
   resolveSourceContainer,
   type EditConstraint,
-  type EditConstraintAction,
   type ListRowEditPlan,
   type NodeTree,
   type PageNode,
   type StructuralMoveCommit,
-  type StructuralTransplantCommit,
 } from '@core/page-tree'
 import { pushToast } from '@ui/components/Toast'
 import { constraintPrimaryAction, constraintToastBody } from '../../constraintActions'
@@ -162,6 +159,12 @@ export interface SourceInsertCommit {
   /** The existing child the new element is written next to, or `null` to append as the last child. */
   anchorNodeId: string | null
   position: 'before' | 'after'
+  /**
+   * The container has no children yet. The write may then turn a self-closing
+   * `<X />` into `<X>…</X>`, which deleting the new element does not undo — so
+   * the insert's ⌘Z is the undo journal's `restore` (`commitStudioInsert`).
+   */
+  parentIsEmpty: boolean
 }
 
 /**
@@ -192,7 +195,10 @@ export function planSourceInsert(
     return { ok: false, constraint: describeStructuralRefusal({ refusal, node }), nodeId: node.id }
   }
 
-  return { ok: true, commit: { parentNodeId: node.id, ...resolveContainerAnchor(tree, node, index) } }
+  return {
+    ok: true,
+    commit: { parentNodeId: node.id, ...resolveContainerAnchor(tree, node, index), parentIsEmpty: node.children.length === 0 },
+  }
 }
 
 /**
@@ -242,6 +248,12 @@ export interface SourceDuplicateToCommit {
    * needs there, and refuses by name when a local it reads cannot travel.
    */
   crossFile?: true
+  /**
+   * The container has no children yet, so the copy may expand a self-closing
+   * `<X />` — and deleting the copy does not put that back. The copy's undo is
+   * then the undo journal's `restore` (as `SourceInsertCommit.parentIsEmpty`).
+   */
+  parentIsEmpty?: true
 }
 
 /**
@@ -335,6 +347,7 @@ export function planSourceDuplicateTo(
       parentNodeId: container.node.id,
       ...anchor,
       ...(decodeSourceNodeId(nodeId)?.rel !== intoFile ? { crossFile: true as const } : {}),
+      ...(container.node.children.length === 0 ? { parentIsEmpty: true as const } : {}),
     })),
   }
 }
@@ -425,97 +438,6 @@ export function planSourceUngroup(
     return { ok: false, constraint: describeStructuralRefusal({ refusal, node }), nodeId: node.id }
   }
   return { ok: true, commit: isSourceDerivedNodeId(node.id) ? node.id : null }
-}
-
-/**
- * D2 G3 — whether ONE element may leave the page it is written in and land in
- * a container on ANOTHER page (a cross-frame drop), and if so where.
- *
- * A thin wrapper over `previewStructuralTransplant` (`@core/page-tree`), for
- * exactly the reason `planSourceMove` is one over `previewStructuralMove`: the
- * rule is pure and belongs next to the other structural rules, and the only
- * thing the store adds is the `EditConstraint` dressing, which needs the NODE
- * in hand to derive `origin` (the `rel:line:col` a "show me" button jumps to).
- *
- * `commit` is never `null` on success. Unlike every other plan here there is
- * no "ordinary CMS tree" branch to fall through to: a cross-PAGE move has no
- * in-memory equivalent at all — the two trees are two files — so either the
- * source can take the write or the gesture refuses.
- */
-export function planSourceTransplant(
-  originTree: NodeTree<PageNode>,
-  nodeIds: readonly string[],
-  destinationTree: NodeTree<PageNode>,
-  newParentId: string,
-  newIndex: number,
-  copy: boolean,
-): StructuralPlan<StructuralTransplantCommit> {
-  const preview = previewStructuralTransplant({
-    originTree,
-    nodeIds,
-    destinationTree,
-    newParentId,
-    newIndex,
-    copy,
-  })
-  if (preview.ok) return { ok: true, commit: preview.commit }
-  // The node the refusal is about — either end of the gesture, since a
-  // transplant can be refused for what the CONTAINER is as well as for what
-  // the moved element is. `previewStructuralTransplant` names which.
-  const node = preview.nodeId === undefined
-    ? undefined
-    : (originTree.nodes[preview.nodeId] ?? destinationTree.nodes[preview.nodeId])
-  const constraint = describeStructuralRefusal({ refusal: preview.refusal, ...(node ? { node } : {}) })
-  return {
-    ok: false,
-    constraint: offersCopyInstead(originTree, nodeIds, destinationTree, newParentId, newIndex, copy)
-      ? { ...constraint, actions: [...constraint.actions, DUPLICATE_INTO_FRAME_ACTION] }
-      : constraint,
-    ...(node ? { nodeId: node.id } : {}),
-  }
-}
-
-/**
- * D2 G3's one remedy: the refused MOVE, re-issued as a copy.
- *
- * The label says what the button does rather than naming the mechanism,
- * because a user who has just been told "moving this would change every place
- * it is used" is being offered the thing that does not.
- */
-const DUPLICATE_INTO_FRAME_ACTION: EditConstraintAction = {
-  label: 'Duplicate into frame instead',
-  kind: 'duplicate-into-frame',
-}
-
-/**
- * Whether the SAME gesture with Alt held would be allowed — the only honest
- * basis for offering "Duplicate into frame instead".
- *
- * It re-asks `previewStructuralTransplant`, the identical function that just
- * refused, rather than testing the refusal's reason against a list here: the
- * rule about which refusals a copy escapes belongs in the engine
- * (`copyEscapesOriginRefusal`), and a second copy of it in the store is exactly
- * the hand-kept-in-sync duplication `planSourceMove`'s own doc was written to
- * stop repeating. A gesture that was ALREADY a copy has nothing to offer — it
- * refused with Alt already held.
- */
-function offersCopyInstead(
-  originTree: NodeTree<PageNode>,
-  nodeIds: readonly string[],
-  destinationTree: NodeTree<PageNode>,
-  newParentId: string,
-  newIndex: number,
-  copy: boolean,
-): boolean {
-  if (copy) return false
-  return previewStructuralTransplant({
-    originTree,
-    nodeIds,
-    destinationTree,
-    newParentId,
-    newIndex,
-    copy: true,
-  }).ok
 }
 
 /** Titles the refusal toasts use, one per gesture. Matches the `Detach refused` / `Swap refused` vocabulary. */

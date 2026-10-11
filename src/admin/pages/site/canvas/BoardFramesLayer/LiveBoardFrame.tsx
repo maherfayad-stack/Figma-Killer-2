@@ -49,7 +49,6 @@ import { useLiveOrigin } from '@site/studio/useLiveOrigin'
 import { useDevServerReadiness } from '@site/studio/useDevServerReadiness'
 import { getStudioProjectKey, subscribeStudioProjectKey } from '@site/studio/studioProjectTrust'
 import { FramePosterPlaceholder } from './FramePosterPlaceholder'
-import { getFramePoster } from './frameSnapshotCache'
 import { useAdapterReady } from './useAdapterReady'
 import { useFramesHeldStatic } from './staticFrameHold'
 import { useBridgeFrameDiagnostics } from '../useBridgeFrameDiagnostics'
@@ -62,8 +61,8 @@ interface LiveBoardFrameProps {
   onActivate: (breakpointId: string) => void
   frameId: string
   axesOverride?: Partial<PreviewAxes>
-  /** This frame's own board-space width — same value `getFramePoster` keys the poster cache on. */
-  width: number
+  /** The frame's current picture (`framePosters`), painted over the fallback until it has content. */
+  posterUrl: string | undefined
 }
 
 export function LiveBoardFrame({
@@ -73,7 +72,7 @@ export function LiveBoardFrame({
   onActivate,
   frameId,
   axesOverride,
-  width,
+  posterUrl,
 }: LiveBoardFrameProps) {
   const projectDir = useAdminUi((s) => s.studioProject?.dir ?? null)
   const bareLiveOrigin = useLiveOrigin()
@@ -142,8 +141,6 @@ export function LiveBoardFrame({
       axes,
     }
   }, [attemptLive, liveOrigin, page, axes])
-
-  const posterUrl = getFramePoster(page, width)
 
   return (
     <>
