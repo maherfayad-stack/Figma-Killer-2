@@ -53,6 +53,7 @@ import { SelectorInspector } from './SelectorInspector'
 import { canComponentizeNode } from '@site/componentization'
 import { BranchChoiceNotice } from './BranchChoiceNotice'
 import { SharedComponentNotice } from './SharedComponentNotice'
+import { LayoutNotice } from './LayoutNotice'
 import { SlotFillNotice } from './SlotFillNotice'
 import { SourceConstraintNotice } from './SourceConstraintNotice'
 import { useEditorStore } from '@site/store/store'
@@ -202,6 +203,9 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
             textOrigin={selectedNode.textOrigin}
           />
         ) : null}
+        {/* G-8 — the selected node is written in a Next layout/template file: states how
+            many routes draw it and offers "Edit layout". Renders nothing otherwise. */}
+        {singleNodeChrome && selectedNodeId ? <LayoutNotice nodeId={selectedNodeId} /> : null}
         {/* E2.5 — the selected node IS the content filling another component's
             slot (a `header={<Icon/>}` fill, or a fragment-slot child). States
             which slot/instance it belongs to; renders nothing for every other

@@ -46,6 +46,8 @@ import {
   decodeSourceNodeId,
   describeStructuralRefusal,
   isSourceDerivedNodeId,
+  layoutFileOf,
+  planUnrollList,
   previewStructuralGroup,
   previewStructuralMove,
   refuseStructuralEdit,
@@ -62,8 +64,10 @@ import { constraintPrimaryAction, constraintToastBody } from '../../constraintAc
 import { openSourceFile } from '../../openSourceFile'
 import type { EditorStore } from '@site/store/types'
 import { applyToThisInstanceOnly } from './instanceOnlyGesture'
+import { resolveActiveTreeTarget } from './helpers'
 import type { SourceDuplicateToCommit } from '@site/studio/studioStructuralCommits'
 import { nodeHtmlTag } from './nodeHtmlTag'
+import type { StructuralRefusalDialogState } from '../structuralRefusalDialogState'
 import type { EditorStoreSetter } from './types'
 
 /**
@@ -502,9 +506,48 @@ export const STRUCTURAL_REFUSAL_TITLE = {
  * below is untouched — `pushToast` does not go through this store's `set` at
  * all, so it was never inside this cost.
  */
+/**
+ * G-8 / G-9 — the two remedies that end with the refused gesture RUNNING: a
+ * `route-chrome` refusal can be answered by starting "Edit layout" for that
+ * layout file, a `list-row` refusal (on a list whose array is a literal in the
+ * same file) by writing the list out as elements. Each is offered only when the
+ * caller handed over what it takes to run the gesture again (`retry`) and the
+ * store; the constraint gains the matching action, the dialog gets the closure.
+ */
+function withReplayRemedies(
+  constraint: EditConstraint,
+  context: { nodeId?: string; retry?: (mapId: (nodeId: string) => string) => void; getState?: () => EditorStore },
+): { constraint: EditConstraint; replayRemedies?: NonNullable<StructuralRefusalDialogState['replayRemedies']> } {
+  const { nodeId, retry, getState } = context
+  if (!nodeId || !getState) return { constraint }
+  if (constraint.reason === 'route-chrome') {
+    const rel = layoutFileOf(nodeId)
+    if (!rel) return { constraint }
+    return {
+      constraint,
+      replayRemedies: {
+        editLayout: () => {
+          getState().setMainEditTarget({ kind: 'layout', rel })
+          // Nothing was written, so every id the gesture named is still right.
+          retry?.((id) => id)
+        },
+      },
+    }
+  }
+  if (constraint.reason === 'list-row') {
+    const tree = resolveActiveTreeTarget(getState())?.tree
+    if (!tree || !planUnrollList(tree, nodeId)) return { constraint }
+    return {
+      constraint: { ...constraint, actions: [{ label: 'Unroll list', kind: 'unroll-list' }, ...constraint.actions] },
+      replayRemedies: { unrollList: () => void getState().unrollList(nodeId, retry ? { retry } : undefined) },
+    }
+  }
+  return { constraint }
+}
+
 export function presentStructuralRefusal(
   title: (typeof STRUCTURAL_REFUSAL_TITLE)[keyof typeof STRUCTURAL_REFUSAL_TITLE],
-  constraint: EditConstraint,
+  refused: EditConstraint,
   context: {
     /** The node the refusal is about, when the plan had one — see `StructuralPlan.nodeId`. */
     nodeId?: string
@@ -532,6 +575,7 @@ export function presentStructuralRefusal(
     set: EditorStoreSetter
   },
 ): void {
+  const { constraint, replayRemedies } = withReplayRemedies(refused, context)
   const openSourceContext = context.getState
     ? {
         openSource: (origin: Parameters<typeof openSourceFile>[1]) => openSourceFile(context.getState!(), origin),
@@ -549,6 +593,7 @@ export function presentStructuralRefusal(
           constraint,
           ...(context.nodeId !== undefined ? { nodeId: context.nodeId } : {}),
           ...(context.duplicateIntoFrame ? { duplicateIntoFrame: context.duplicateIntoFrame } : {}),
+          ...(replayRemedies ? { replayRemedies } : {}),
         }
       })
     })

@@ -422,6 +422,28 @@ export async function commitStudioDetachForInstance(detach: {
 }
 
 /**
+ * G-9 (OD-24) — "Unroll list": a `.map` over an array literal written out as
+ * the elements it rendered. Resolves with what the write made once the board
+ * has re-read it (`createdNodeIds` are the written rows, in array order), or
+ * `null` when it did not land — the refusal has already been shown, as the
+ * warning toast every refused structural write gets.
+ *
+ * Its undo is the undo journal's `restore` (P3-F): the rows replace the
+ * `.map` and drop its `key`, which no edit kind can write back.
+ */
+export async function commitStudioUnrollList(unroll: { edit: StructuralEditPayload; label: string }): Promise<StructuralWriteOutcome | null> {
+  let landed: StructuralWriteOutcome | null = null
+  await commitStructural([unroll.edit], 'Unroll list refused', {
+    undo: { label: unroll.label, template: { kind: 'restore-journal' } },
+    select: 'created',
+    onLanded: (outcome) => {
+      landed = outcome
+    },
+  })
+  return landed
+}
+
+/**
  * `struct-01` — removing one or more elements from the user's `.tsx`.
  *
  * Several ids in one request on purpose: `applyStudioEditBatch` orders a batch

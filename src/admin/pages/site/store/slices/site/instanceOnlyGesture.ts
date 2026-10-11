@@ -56,8 +56,8 @@ import { extractInstanceCopy } from '@site/studio/studioSaveRequests'
 import { waitForBoardRead } from '@site/studio/sourceIdentity'
 import { pushToast } from '@ui/components/Toast'
 import { commitStudioDetachForInstance } from '@site/studio/studioStructuralCommits'
-import { isStructuralCommitInFlight, subscribeStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
 import type { EditorStore } from '@site/store/types'
+import { linkReplay, structuralWritesIdle, unlinkIfNothingLanded } from './gestureReplayLink'
 import { resolveActiveTreeTarget } from './helpers'
 import type { EditorStoreSetter } from './types'
 
@@ -186,28 +186,6 @@ async function replayInComponentCopy(input: {
   return true
 }
 
-/**
- * Mark the entry at `at` (the detach, or the component copy) as undone WITH
- * the one above it. Set BEFORE the replay runs, not after it lands: a ⌘Z
- * pressed while the replay is still being written waits for that write and
- * then runs at once — before any code after the write could still link.
- */
-function linkReplay(get: () => EditorStore, set: EditorStoreSetter, at: number, linked: boolean): void {
-  if (!get()._historyPast[at]) return
-  set((state) => {
-    const entry = state._historyPast[at]
-    if (!entry) return
-    if (linked) entry.linkedToNext = true
-    else delete entry.linkedToNext
-  })
-}
-
-/** The replay pushed no entry of its own (refused, or nothing to write): the link has nothing to join. */
-function unlinkIfNothingLanded(get: () => EditorStore, set: EditorStoreSetter, at: number): void {
-  const past = get()._historyPast
-  if (past[at]?.linkedToNext && !past[at + 1]?.structural) linkReplay(get, set, at, false)
-}
-
 /** True for the history entry `commitStudioDetachForInstance` pushed. */
 function isDetachEntry(entry: EditorStore['_historyPast'][number] | undefined): boolean {
   return entry?.structural?.gesture === 'source' && entry.structural.source.forward[0]?.kind === 'detach'
@@ -247,16 +225,4 @@ function followIntoDetached(
     }
     return found
   }
-}
-
-/** Resolves once no structural write is on the wire — the replayed gesture's own write included. */
-function structuralWritesIdle(): Promise<void> {
-  if (!isStructuralCommitInFlight()) return Promise.resolve()
-  return new Promise((resolve) => {
-    const unsubscribe = subscribeStructuralCommitInFlight(() => {
-      if (isStructuralCommitInFlight()) return
-      unsubscribe()
-      resolve()
-    })
-  })
 }

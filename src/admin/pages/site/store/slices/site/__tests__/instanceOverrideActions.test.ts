@@ -176,7 +176,7 @@ beforeEach(() => {
   unregisterSave = registerEditorSave(async () => {})
   setStudioLoadedDir('/tmp/studio-test')
   load(page())
-  useEditorStore.setState({ mainEditComponent: null } as Parameters<typeof useEditorStore.setState>[0])
+  useEditorStore.setState({ mainEditTarget: null } as Parameters<typeof useEditorStore.setState>[0])
   patchListener = (evt: Event) => {
     applySitePagesPatch((evt as CustomEvent<CmsSitePagesPatchDetail>).detail)
   }
@@ -293,7 +293,7 @@ describe('what the codemod cannot prove keeps today\'s behaviour, with the reaso
 
   it('"Edit main component" steps aside: the same edit is the ordinary one and changes every instance', async () => {
     stubFetch([{}])
-    store().setMainEditComponent('Card')
+    store().setMainEditTarget({ kind: 'component', name: 'Card' })
     store().updateNodeProps(HEAD_A, { text: 'New' })
     expect(headText(HEAD_A)).toBe('New')
     expect(store().canUndo).toBe(true)
@@ -354,7 +354,7 @@ describe('a value that is already a prop (the parser recorded its feed)', () => 
   it('"Edit main component" does not write it: the value has no literal there, and the notice says where it lives', async () => {
     load(fedPage())
     stubFetch([{}])
-    store().setMainEditComponent('Card')
+    store().setMainEditTarget({ kind: 'component', name: 'Card' })
     store().updateNodeProps(HEAD_B, { text: 'Two!' })
     expect(headText(HEAD_B)).toBe('Current')
     expect(saveCalls).toHaveLength(0)
