@@ -29,6 +29,7 @@
  */
 import { removeCustomPropertyDeclarations } from '@core/css-codemods'
 import { findTokenMentions, lineOfOffset, rewriteTokenMentions, scanGatedDeclarations, type TokenEdit } from '@core/studio-tokens'
+import { isWritableSourceRel } from '../studioEditRouting'
 import type { TokenCssSource } from './projectTokenIndex'
 import { tokenRefusal, type PlannedTokenFile, type TokenWritePlan, type TokenWriteRefusal } from './tokenWriteTypes'
 import type { TokenWorkspaceFile } from './tokenWorkspaceFiles'
@@ -112,6 +113,17 @@ function declarationRefusal(name: string, declarations: readonly FoundDeclaratio
   return null
 }
 
+/**
+ * Files that mention `name` but that the undo journal cannot name (`.scss`,
+ * `.html`, `.vue`...). A rewrite of one would land with no undo, so the plan
+ * refuses up front rather than writing something ⌘Z cannot take back.
+ */
+function unjournalableMentions(name: string, workspace: readonly TokenWorkspaceFile[]): string[] {
+  return workspace
+    .filter((file) => !isWritableSourceRel(file.file, { journalStylesheets: 'allow' }) && findTokenMentions(file.text).some((mention) => mention.name === name))
+    .map((file) => file.file)
+}
+
 export function planTokenRefactor(
   sources: readonly TokenCssSource[],
   workspace: readonly TokenWorkspaceFile[],
@@ -122,6 +134,13 @@ export function planTokenRefactor(
   if (own.length === 0) {
     return tokenRefusal(0, 'no-such-token', `${edit.name} is not declared in any stylesheet the canvas loads.`, {
       remedy: 'Check the name in the Variables panel (or studio_list_tokens).',
+    })
+  }
+  const stranded = unjournalableMentions(edit.name, workspace)
+  if (stranded.length > 0) {
+    return tokenRefusal(0, 'read-only-source', `${edit.name} is also named in ${siteList(stranded)}, a file type Studio cannot rewrite with an undo.`, {
+      remedy: 'Change those mentions with the file tools first (or in your editor), then try again.',
+      declarations: stranded,
     })
   }
   return edit.op === 'rename' ? planRename(edit, own, declarations, workspace) : planRemove(edit, own, declarations, workspace)
