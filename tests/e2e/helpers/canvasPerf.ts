@@ -55,11 +55,11 @@ import type { Page } from '@playwright/test'
  * whose three frames all fit inside the viewport margin at the opening zoom:
  * its scripted zoom-out mounts nothing at all (3 live iframes before, 3
  * after, on the pre- and post-S1 trees alike). Its zoom assertion is
- * therefore a SMOOTHNESS gate, not a mount gate. S1's mount pool sharpens
- * that further: it holds at least `MIN_FRAME_POOL` (8) live frames, so on a
- * board of 8 frames or fewer every frame stays mounted and there is no mount
- * left to measure. **A gate on the mount path needs a board of at least 9
- * frames.**
+ * therefore a SMOOTHNESS gate, not a mount gate. The live-frame cap sharpens
+ * that further: frames in view at a readable zoom are all live up to the cap
+ * (`LIVE_CAP_FLOOR`, 12), so on a board of 12 frames or fewer every frame in
+ * view stays mounted and a zoom-out unmounts nothing. **A gate on the mount
+ * path needs a board of at least 13 frames, or a zoom below 0.35.**
  *
  * That gate is `studio-board-perf.e2e.ts`, and since `verify-2` it has one:
  * the committed twelve-frame `studio-workspace/__board-perf-fixture`, which
