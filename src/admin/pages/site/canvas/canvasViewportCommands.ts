@@ -95,10 +95,23 @@ const CHROME_CLEARANCE_PX = 16
 /**
  * The margins a fit leaves on each side: the edge padding, but never less than
  * the floating notch (it overlays the canvas root's top edge) plus a little
- * clearance, so a fitted frame's title bar is not hidden beneath it.
+ * clearance, so a fitted frame's title bar is not hidden beneath it - and, on
+ * the right, the width the docked Properties sidebar WILL take.
+ *
+ * That sidebar is a flex sibling of the canvas root that opens on selection:
+ * a fit made while it is closed measures the full-width root, then the first
+ * selection narrows the root by the panel's width and the rightmost frame sits
+ * under the panel (clicks land in the inspector). Figma fits the viewport that
+ * is left once its docked panels are open, so a closed docked sidebar's
+ * layout width is reserved here. An open one has already shrunk the root.
  */
 export function measureCanvasFitInsets(root: HTMLElement, padding: number): ZoomFitInsets {
   const insets = uniformInsets(padding)
+  const sidebar = root.ownerDocument.querySelector<HTMLElement>('[data-testid="right-sidebar"]')
+  if (sidebar && sidebar.dataset.mode === 'docked' && sidebar.dataset.expanded === 'false') {
+    const reserved = Number.parseFloat(root.ownerDocument.defaultView?.getComputedStyle(sidebar).getPropertyValue('--right-sidebar-panel-layout-width') ?? '')
+    if (Number.isFinite(reserved) && reserved > 0) insets.right = Math.max(insets.right, reserved + padding)
+  }
   const notch = root.querySelector<HTMLElement>('[data-testid="canvas-notch"]')
   if (notch) {
     const clearance = notch.getBoundingClientRect().bottom - root.getBoundingClientRect().top + CHROME_CLEARANCE_PX

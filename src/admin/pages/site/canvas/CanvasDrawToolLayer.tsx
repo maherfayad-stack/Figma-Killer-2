@@ -50,11 +50,11 @@ import {
 } from './canvasDrawTool'
 import { armCreatedNodeFollowUp } from './createdNodeFollowUp'
 import { boardDrawPlacement } from './boardDrawTool'
-import { newLayerPlacementAt, newLayerPlacementStyles } from './canvasNewLayerPlacement'
+import { locationForPlacement, newLayerPlacementAt, newLayerPlacementStyles } from './canvasNewLayerPlacement'
 import { newLayerRefusalToast } from './newLayerRefusal'
 import { placeDrawOnBoard } from './placeDrawOnBoard'
 import { pushToast } from '@ui/components/Toast'
-import { startCanvasTextEdit } from './canvasTextEditStart'
+import { startCanvasTextEditWhenRendered } from './canvasTextEditStart'
 import styles from './CanvasDrawToolLayer.module.css'
 
 interface CanvasDrawToolLayerProps {
@@ -221,8 +221,8 @@ export function CanvasDrawToolLayer({ tool, transformLayerRef }: CanvasDrawToolL
     // Every insert writes through the ACTIVE tree, so the frame's page must be
     // active before it runs (`useCanvasInsertionDrag` does the same).
     if (drop.pageId !== selectActiveCanvasPage(store)?.id) store.openPageInCanvas(drop.pageId)
-    if (tool === 'text') armCreatedNodeFollowUp((nodeId) => { startCanvasTextEdit(nodeId, frameId, { selectAll: true }) })
-    const nodeId = insertModule(definition, drop.location, { inlineStyles: { ...drawInsertStyles(spec, rect, scale), ...newLayerPlacementStyles(placement) } })
+    if (tool === 'text') armCreatedNodeFollowUp((nodeId) => { startCanvasTextEditWhenRendered(nodeId, frameId, { selectAll: true }) })
+    const nodeId = insertModule(definition, locationForPlacement(drop.location, placement), { inlineStyles: { ...drawInsertStyles(spec, rect, scale), ...newLayerPlacementStyles(placement) } })
     if (nodeId !== null) useEditorStore.getState().setActiveBreakpoint(drop.breakpointId)
     useEditorStore.getState().setCanvasTool('move')
   }

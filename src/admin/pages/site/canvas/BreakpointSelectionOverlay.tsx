@@ -262,8 +262,8 @@ export function BreakpointSelectionOverlay({
   const showRings =
     permissions.canEditStructure || permissions.canEditContent || permissions.canEditStyle
   const showSelectorHighlight = showRings && Boolean(highlightedSelector)
-  // The toolbar additionally needs a selection; body press-and-drag does not.
-  const canEditStructureHere = permissions.canEditStructure && activeBreakpointId === breakpointId
+  // The toolbar additionally needs a selection; body press-and-drag does not. A board frame always edits (one shared breakpoint id).
+  const canEditStructureHere = permissions.canEditStructure && (frameId !== null || activeBreakpointId === breakpointId)
   const showToolbar = canEditStructureHere && selectedNodeIds.length > 0
 
   // In-place mini-inspector (Phase 2): single-select only. Unlike
@@ -606,7 +606,7 @@ export function BreakpointSelectionOverlay({
 
   const toolbar = showToolbar ? (
     <SelectionToolbar
-      toolbarRef={toolbarRef}
+      toolbarRef={toolbarRef} dragging={reorderDrag.dragging}
       mode={toolbarMode}
       onDragPointerDown={reorderDrag.handlePointerDown}
       frameId={frameId}

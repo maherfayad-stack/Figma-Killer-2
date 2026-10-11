@@ -39,6 +39,30 @@ export interface PlacementParentInput {
 }
 
 /**
+ * The computed `position` of each box a parent places: its element children,
+ * with a `display: none` child skipped (it takes no space and decides nothing)
+ * and a `display: contents` child looked THROUGH. A design-system call site is
+ * hosted on a `display: contents` element that generates no box, so its own
+ * `position` is always `static`; the box the user sees - and the one whose
+ * insets place it - is what the host renders. Reading the host made a screen of
+ * absolutely positioned layers (one of them a component) look like flow, so a
+ * draw or drop into it was appended to the flow at the frame's (0, 0).
+ */
+export function childPlacementPositions(view: Window, parent: Element): string[] {
+  const positions: string[] = []
+  const collect = (element: Element, depth: number) => {
+    for (const child of Array.from(element.children)) {
+      const style = view.getComputedStyle(child)
+      if (style.display === 'none') continue
+      if (style.display === 'contents' && depth < 4 && child.children.length > 0) collect(child, depth + 1)
+      else positions.push(style.position)
+    }
+  }
+  collect(parent, 0)
+  return positions
+}
+
+/**
  * Classify a parent. `childPositions` are the computed `position` of its
  * element children; `null` means they were not measured, so a positioned
  * non-auto-layout parent reads as `flow` (the conservative answer: it

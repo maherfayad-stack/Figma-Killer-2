@@ -16,7 +16,8 @@
  *
  * The board is therefore never framed by this at all (see
  * {@link resolveCanvasFocusTarget}: its frames could not be found until the
- * first selection, which then framed the board under it). Outside board mode
+ * first selection, which then framed the board under it). It has its own,
+ * once-per-board opening framing: `useBoardOpenCamera`. Outside board mode
  * the page is the unit of "opened", and `lastCenteredKey` makes it stick to
  * once per unit: a re-run for a key already framed leaves the viewport alone.
  * A page switch is still a real navigation and still re-centers.

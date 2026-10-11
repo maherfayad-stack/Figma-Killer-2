@@ -60,7 +60,9 @@ describe('ToastProvider', () => {
     expect(alerts).toHaveLength(2)
     const error = findToastByText(alerts, 'Save failed')
     expect(error.textContent).toContain('Disk is full.')
-    expect(error.textContent).toContain('admin-test')
+    // Where it came from is for a screenshot-less bug report, not for the person looking at it.
+    expect(error.textContent).not.toContain('admin-test')
+    expect(error.getAttribute('data-toast-location')).toBe('admin-test')
     expect(error.getAttribute('aria-live')).toBe('assertive')
     expect(error.getAttribute('data-toast-kind')).toBe('error')
     const warning = findToastByText(alerts, 'Draft conflict')

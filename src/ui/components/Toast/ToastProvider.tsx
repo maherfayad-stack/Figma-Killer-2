@@ -233,10 +233,6 @@ function ToastItem({ toast }: { toast: Toast }) {
           )}
         </p>
         {toast.body && <p className={styles.body}>{toast.body}</p>}
-        {/* A developer's breadcrumb (`error-boundary:canvas`), never copy: the production build leaves it out. */}
-        {!import.meta.env.PROD && toast.location && (
-          <p className={styles.location}>{toast.location}</p>
-        )}
       </div>
       <div className={styles.actions}>
         {toast.action && (

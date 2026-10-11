@@ -88,7 +88,7 @@ import { beginInsertionDragSnapshotSession } from './canvasInsertionDragSnapshot
 import { clearCanvasPointerRelay, markCanvasPointerRelay } from './canvasPointerRelay'
 import { guardDragSession } from '@core/studio-runtime'
 import { pushToast } from '@ui/components/Toast'
-import type { AbsoluteNewLayerPlacement } from './canvasNewLayerPlacement'
+import { locationForPlacement, type AbsoluteNewLayerPlacement } from './canvasNewLayerPlacement'
 import { newLayerRefusalToast } from './newLayerRefusal'
 import { currentCanvasZoom } from './canvasZoom'
 import { createInsertionGhostTracker, type InsertionGhostTracker } from './insertionGhostTracker'
@@ -349,7 +349,7 @@ export function useCanvasInsertionDrag<TGhost>({
         pushToast(newLayerRefusalToast(label.replace(/^Drop /, ''), placement.reason))
         return
       }
-      if (onDrop(ghost, drop.location, placement.kind === 'absolute' ? placement : null)) useEditorStore.getState().setActiveBreakpoint(drop.breakpointId)
+      if (onDrop(ghost, locationForPlacement(drop.location, placement), placement.kind === 'absolute' ? placement : null)) useEditorStore.getState().setActiveBreakpoint(drop.breakpointId)
     }
 
     const cancel = () => {

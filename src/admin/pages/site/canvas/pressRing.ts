@@ -35,6 +35,7 @@
  * has had its measure pass, and on the next press.
  */
 import { useEditorStore } from '@site/store/store'
+import { escapeCssAttributeValue } from './escapeCssAttributeValue'
 import { measureIframeLocalRect } from './canvasOverlayGeometry'
 import { positionOverlayElement } from './canvasSelectionOverlayPositioning'
 
@@ -43,6 +44,8 @@ const PRESS_RING_ATTR = 'data-canvas-press-ring'
 const QUEUE_FALLBACK_MS = 64
 /** The real ring is measured and painted a frame or two after its commit; the outer bound on the borrowed one. */
 const RING_RELEASE_MS = 600
+/** A press held this long has stopped being a press: the borrowed ring goes back. */
+const HELD_RING_MAX_MS = 15_000
 /** What ends the wait: the gesture moved on from "the finger just landed". */
 const FLUSH_EVENTS = ['pointerup', 'contextmenu', 'keydown', 'dblclick'] as const
 
@@ -119,7 +122,7 @@ export function selectOnPress(element: Element, nodeId: string, select: () => vo
   releasePreviousRing = null
   const doc = element.ownerDocument
   const win = doc.defaultView
-  const target = doc.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`) ?? element
+  const target = doc.querySelector(`[data-node-id="${escapeCssAttributeValue(nodeId)}"]`) ?? element
   const release = win ? borrowHoverRing(doc, nodeId, target) : null
   if (!win || !release) {
     flushPressQueue()
@@ -139,4 +142,34 @@ export function selectOnPress(element: Element, nodeId: string, select: () => vo
     // its commit: hand the hover ring back once that has had two.
     win.requestAnimationFrame(() => win.requestAnimationFrame(finish))
   })
+}
+
+/**
+ * The ring alone, for a press that selects on RELEASE (an authored form
+ * control, whose press is cancelled and which may still become a drag): the
+ * hover ring borrowed as a selection ring for as long as the button is down, and
+ * kept until the real ring has had its measure pass after the release.
+ */
+export function ringOnPress(element: Element, nodeId: string): void {
+  releasePreviousRing?.()
+  releasePreviousRing = null
+  const doc = element.ownerDocument
+  const win = doc.defaultView
+  const target = doc.querySelector(`[data-node-id="${escapeCssAttributeValue(nodeId)}"]`) ?? element
+  const release = win ? borrowHoverRing(doc, nodeId, target) : null
+  if (!win || !release) return
+  const held = setTimeout(() => finish(), HELD_RING_MAX_MS)
+  const onRelease = () => {
+    win.requestAnimationFrame(() => win.requestAnimationFrame(finish))
+  }
+  win.addEventListener('pointerup', onRelease, { capture: true, once: true })
+  win.addEventListener('pointercancel', onRelease, { capture: true, once: true })
+  function finish(): void {
+    clearTimeout(held)
+    win?.removeEventListener('pointerup', onRelease, { capture: true })
+    win?.removeEventListener('pointercancel', onRelease, { capture: true })
+    release?.()
+    if (releasePreviousRing === finish) releasePreviousRing = null
+  }
+  releasePreviousRing = finish
 }
