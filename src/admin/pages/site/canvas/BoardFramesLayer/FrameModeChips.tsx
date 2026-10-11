@@ -11,8 +11,7 @@
  *
  * Renders nothing for a project whose CSS declares no mode: no disabled chip.
  */
-import { createPortal } from 'react-dom'
-import { useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from 'react'
+import { useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { mergePreviewAxes, withAxisMode, type BoardFrame } from '@core/studio-board'
 import { getStudioTokenCatalog, subscribeStudioTokenCatalog } from '@site/studio/studioTokenCatalogStore'
@@ -22,25 +21,23 @@ import { PlusIcon } from 'pixel-art-icons/icons/plus'
 import { frameModeChips, frameModeVariants } from './frameModeOptions'
 import styles from './BoardFramesLayer.module.css'
 
-type OpenMenu = { kind: 'chip'; axisId: string; x: number; y: number } | { kind: 'add'; x: number; y: number }
-
-/** The header drags the frame; a press on a chip is the chip's, not the drag's. */
-function keepPressOffHeader(event: ReactPointerEvent<HTMLElement>): void {
-  event.stopPropagation()
-}
+type OpenMenu = { kind: 'chip'; axisId: string } | { kind: 'add' }
 
 export function FrameModeChips({ frame }: { frame: BoardFrame }) {
   const catalog = useSyncExternalStore(subscribeStudioTokenCatalog, getStudioTokenCatalog, getStudioTokenCatalog)
   const boardAxes = useEditorStore((s) => s.previewAxes)
   const [menu, setMenu] = useState<OpenMenu | null>(null)
+  // The button the open menu hangs from. The menu treats a press on its anchor
+  // as "not outside", so the click that opened it cannot also dismiss it.
+  const anchorRef = useRef<HTMLElement | null>(null)
 
   const chips = frameModeChips(catalog?.axes ?? [], mergePreviewAxes(boardAxes, frame.axes))
   if (chips.length === 0) return null
   const variants = frameModeVariants(chips, frame.axes)
 
-  const open = (event: ReactPointerEvent<HTMLElement> | React.MouseEvent<HTMLElement>, next: (x: number, y: number) => OpenMenu) => {
-    const rect = event.currentTarget.getBoundingClientRect()
-    setMenu(next(rect.left, rect.bottom + 4))
+  const open = (event: ReactMouseEvent<HTMLElement>, next: OpenMenu) => {
+    anchorRef.current = event.currentTarget
+    setMenu(next)
   }
   const chooseMode = (axisId: string, modeId: string | null) => {
     setMenu(null)
@@ -65,8 +62,8 @@ export function FrameModeChips({ frame }: { frame: BoardFrame }) {
           data-mode={chip.current.id ?? 'default'}
           aria-haspopup="menu"
           aria-label={`${chip.axisLabel}: ${chip.current.label}. Choose a mode for this frame.`}
-          onPointerDown={keepPressOffHeader}
-          onClick={(event) => open(event, (x, y) => ({ kind: 'chip', axisId: chip.axisId, x, y }))}
+          data-frame-header-control=""
+          onClick={(event) => open(event, { kind: 'chip', axisId: chip.axisId })}
         >
           {chip.current.label}
         </Button>
@@ -79,16 +76,15 @@ export function FrameModeChips({ frame }: { frame: BoardFrame }) {
           data-testid="board-frame-add-mode"
           aria-haspopup="menu"
           aria-label="Add a mode: duplicate this frame in another mode"
-          onPointerDown={keepPressOffHeader}
-          onClick={(event) => open(event, (x, y) => ({ kind: 'add', x, y }))}
+          data-frame-header-control=""
+          onClick={(event) => open(event, { kind: 'add' })}
         >
           <PlusIcon size={10} aria-hidden="true" />
           Mode
         </Button>
       )}
-      {/* Portalled to <body>: the board is CSS-transformed, which would re-anchor a fixed-position menu. */}
-      {menu?.kind === 'chip' && openChip && createPortal(
-        <ContextMenu x={menu.x} y={menu.y} ariaLabel={`${openChip.axisLabel} modes`} animateExit onClose={() => setMenu(null)}>
+      {menu?.kind === 'chip' && openChip && (
+        <ContextMenu anchorRef={anchorRef} ariaLabel={`${openChip.axisLabel} modes`} onClose={() => setMenu(null)}>
           {openChip.choices.map((choice) => (
             <ContextMenuItem
               key={choice.id ?? 'default'}
@@ -100,18 +96,16 @@ export function FrameModeChips({ frame }: { frame: BoardFrame }) {
               {choice.label}
             </ContextMenuItem>
           ))}
-        </ContextMenu>,
-        document.body,
+        </ContextMenu>
       )}
-      {menu?.kind === 'add' && createPortal(
-        <ContextMenu x={menu.x} y={menu.y} ariaLabel="Duplicate in another mode" animateExit onClose={() => setMenu(null)}>
+      {menu?.kind === 'add' && (
+        <ContextMenu anchorRef={anchorRef} ariaLabel="Duplicate in another mode" onClose={() => setMenu(null)}>
           {variants.map((variant) => (
             <ContextMenuItem key={variant.label} data-testid="board-frame-add-mode-option" onClick={() => addMode(variant.axes)}>
               {variant.label}
             </ContextMenuItem>
           ))}
-        </ContextMenu>,
-        document.body,
+        </ContextMenu>
       )}
     </>
   )

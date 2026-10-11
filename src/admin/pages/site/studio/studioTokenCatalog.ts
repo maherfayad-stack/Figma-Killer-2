@@ -45,14 +45,30 @@ export type StudioTokenWriteResult = Static<typeof WriteResponseSchema>
  * `usage: true` (the Variables panel) also scans where each token is read; a
  * plain refresh keeps the last usage rather than dropping the panel's counts.
  */
-export async function refreshStudioTokenCatalog(options: { usage?: boolean } = {}): Promise<TokenCatalog | null> {
+export function refreshStudioTokenCatalog(options: { usage?: boolean } = {}): Promise<TokenCatalog | null> {
+  const wantsUsage = options.usage === true
+  // Two surfaces (the inspector's pickers, the board's mode chips) ask in the
+  // same commit when the CSS changes: one request answers both. The window is
+  // the current task only - a later call (the re-read after a write) must see
+  // the disk as it is then, never an answer that was already in flight.
+  const pending = sameTaskRefresh.get(wantsUsage)
+  if (pending) return pending
+  const request = readStudioTokenCatalog(wantsUsage)
+  sameTaskRefresh.set(wantsUsage, request)
+  queueMicrotask(() => sameTaskRefresh.delete(wantsUsage))
+  return request
+}
+
+const sameTaskRefresh = new Map<boolean, Promise<TokenCatalog | null>>()
+
+async function readStudioTokenCatalog(wantsUsage: boolean): Promise<TokenCatalog | null> {
   const dir = studioWriteDir() ?? undefined
   try {
     const fresh = await apiRequest(ROUTE, {
-      query: { dir, ...(options.usage ? { usage: '1' } : {}) },
+      query: { dir, ...(wantsUsage ? { usage: '1' } : {}) },
       schema: TokenCatalogSchema,
     })
-    const usage = options.usage
+    const usage = wantsUsage
       ? new Map(fresh.tokens.flatMap((token) => (token.usage ? [[token.name, token.usage] as const] : [])))
       : getStudioTokenState().usage
     publishStudioTokenState({ catalog: fresh, usage })

@@ -27,7 +27,7 @@
  * declaration that paints, with its value in every other mode on the row's
  * tooltip.
  */
-import { useEffect, useSyncExternalStore } from 'react'
+import { useSyncExternalStore } from 'react'
 import { filterReemittableColorTokens, generateFrameworkRootCss } from '@core/framework'
 import {
   modeOfGate,
@@ -39,8 +39,7 @@ import {
 } from '@core/studio-tokens'
 import { classifyVariableValue, type VariableOption } from '@ui/components/VariableField'
 import { useEditorStore } from '@site/store/store'
-import { getStudioAuthoredCss, getStudioVendorCss, subscribeStudioAuthoredCss, subscribeStudioVendorCss } from '@site/studio/studioRawCssStores'
-import { refreshStudioTokenCatalog } from '@site/studio/studioTokenCatalog'
+import { useStudioTokenCatalogSync } from '@site/studio/useStudioTokenCatalogSync'
 import { getStudioTokenCatalog, subscribeStudioTokenCatalog } from '@site/studio/studioTokenCatalogStore'
 
 /** The declaration a picker row shows: the default value, else the one that paints, else the first. */
@@ -114,13 +113,8 @@ export function buildVariableCatalog(catalog: TokenCatalog | null, frameworkCss:
  */
 export function useProjectVariables(): VariableOption[] {
   const catalog = useSyncExternalStore(subscribeStudioTokenCatalog, getStudioTokenCatalog)
-  const authoredCss = useSyncExternalStore(subscribeStudioAuthoredCss, getStudioAuthoredCss)
-  const vendorCss = useSyncExternalStore(subscribeStudioVendorCss, getStudioVendorCss)
   const framework = useEditorStore((state) => state.site?.settings?.framework)
-
-  useEffect(() => {
-    void refreshStudioTokenCatalog()
-  }, [authoredCss, vendorCss])
+  useStudioTokenCatalogSync()
 
   const frameworkCss = generateFrameworkRootCss({
     colors: filterReemittableColorTokens(framework?.colors),
