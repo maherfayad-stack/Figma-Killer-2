@@ -91,6 +91,41 @@ export function runFrameDocumentAdapterContract(name: string, makeHarness: () =>
       }
     })
 
+    // SB-3
+    it('measureAll returns a promise resolving to a well-formed snapshot: finite rects, every parent an earlier entry', async () => {
+      const { adapter, cleanup } = makeHarness()
+      try {
+        const result = adapter.measureAll()
+        expect(result).toBeInstanceOf(Promise)
+        const snapshot = await result
+        expect(Number.isFinite(snapshot.origin.x) && Number.isFinite(snapshot.origin.y)).toBe(true)
+        expect(typeof snapshot.truncated).toBe('boolean')
+        snapshot.nodes.forEach((node, i) => {
+          expect(node.nodeId.length).toBeGreaterThan(0)
+          expect([node.rect.x, node.rect.y, node.rect.width, node.rect.height].every(Number.isFinite)).toBe(true)
+          expect(node.parent).toBeGreaterThanOrEqual(-1)
+          expect(node.parent).toBeLessThan(i)
+        })
+      } finally {
+        cleanup()
+      }
+    })
+
+    it('geometry:dirty can be subscribed to, and is silent until a measureAll has been asked for', async () => {
+      const { adapter, cleanup } = makeHarness()
+      try {
+        let fired = 0
+        const unsubscribe = adapter.on('geometry:dirty', () => {
+          fired += 1
+        })
+        await Promise.resolve()
+        expect(fired).toBe(0)
+        expect(() => unsubscribe()).not.toThrow()
+      } finally {
+        cleanup()
+      }
+    })
+
     it('setAxes does not throw for both directions and both color schemes', () => {
       const { adapter, cleanup } = makeHarness()
       try {

@@ -418,6 +418,13 @@
     text-overflow: ellipsis;
 }
 
+/* G-6 - a code-bound text or attribute that can be typed over: the input takes
+   the summary's place and the lock glyph stays beside it. */
+.codeValueInput {
+    flex: 1;
+    min-width: 0;
+}
+
 /* R3 — the explanation paragraph inside the lock glyph's `InspectorPopover`
    (`CodeValueControl.tsx`). Was `codeValueHint` for an inline hint string this
    component no longer renders; kept the name, repurposed the usage. */

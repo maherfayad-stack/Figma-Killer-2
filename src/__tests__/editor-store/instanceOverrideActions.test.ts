@@ -28,7 +28,7 @@ import { resetStructuralCommitQueue } from '@site/studio/structuralCommitQueue'
 import { setStudioLoadedDir } from '@site/studio/studioWorkspaceDir'
 import { resetLoadedValues } from '@site/studio/loadedValuesBaseline'
 import { collectNodeDiffEdits } from '@site/studio/nodeDiffWriteback'
-import { makeNode, makePage, makeSite } from '../../../../../../../__tests__/fixtures'
+import { makeNode, makePage, makeSite } from '../fixtures'
 
 const PAGE_ID = 'home'
 const ROOT_ID = 'pages/Home.tsx:4:5'

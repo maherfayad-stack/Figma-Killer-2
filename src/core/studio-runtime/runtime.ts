@@ -47,6 +47,7 @@
  *     which is why the parent validates the bounds rather than trusting it.
  */
 import { Value } from '@sinclair/typebox/value'
+import { applyModeRootPlan, type ModeRootPlan } from '@core/studio-tokens'
 import {
   InboundEnvelopeSchema,
   RUNTIME_MESSAGE_SOURCE,
@@ -63,6 +64,8 @@ import { rectRelativeToBody } from './nodeDom'
 import { installResizeHandles } from './resizeHandles'
 import { measureNodes } from './measureNodes'
 import { collectDropCandidates } from './dropCandidates'
+import { createGeometryDirtySignal } from './geometryDirtySignal'
+import { collectNodeGeometry } from './nodeGeometry'
 import { startRuntimeErrorTaps } from './runtimeErrorTaps'
 import {
   applyOptimisticDelete,
@@ -407,6 +410,14 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
     postOutbound({ type: 'dropCandidates:result', requestId, candidates: collectDropCandidates(doc) })
   }
 
+  // ---- measureAll (SB-3): every node's box in one reply; the body observer below is the dirty signal ----
+  const geometrySignal = createGeometryDirtySignal(doc, view, () => postOutbound({ type: 'geometry:dirty' }))
+  function handleMeasureAll(requestId: string): void {
+    geometrySignal.track()
+    geometrySignal.markClean()
+    postOutbound({ type: 'measureAll:result', requestId, ...collectNodeGeometry(doc, view) })
+  }
+
   // ---- setAxes --------------------------------------------------------------
   // A deliberately small, self-contained copy of the universal (mechanism-
   // independent) attribute writes `previewAxesFrameEffect.ts` makes — NOT an
@@ -416,8 +427,10 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
   // dark-mode gate" branch needs a `ColorSchemeCapability` probe result this
   // message does not carry — deferred to L5, which can extend `setAxes`'s
   // payload once the parent-side adapter has that probe result to send.
-  function handleSetAxes(axes: { direction: 'ltr' | 'rtl'; colorScheme: 'light' | 'dark' }): void {
+  function handleSetAxes(axes: { direction: 'ltr' | 'rtl'; colorScheme: 'light' | 'dark' }, modeRoot: ModeRootPlan | undefined): void {
     const html = doc.documentElement
+    // CT-4: the catalog-resolved mode gates first; the generic writes below land last.
+    if (modeRoot) applyModeRootPlan(html, modeRoot)
     html.setAttribute('dir', axes.direction)
     if (axes.direction === 'rtl') html.setAttribute('lang', RTL_PREVIEW_LANG)
     else html.removeAttribute('lang')
@@ -467,7 +480,10 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       layoutObserver = new MutationObserverCtor((records) => {
         // The rings' own repositioning writes are chrome; repositioning for
         // them would schedule another frame for nothing.
-        if (!records.every(isSelectionChromeMutation)) scheduleReposition()
+        if (!records.every(isSelectionChromeMutation)) {
+          scheduleReposition()
+          geometrySignal.notify()
+        }
         frameFitScheduler.handle(records)
       })
       layoutObserver.observe(doc.body, { childList: true, subtree: true, attributes: true })
@@ -478,29 +494,13 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
     }
   }
 
-  // ---- frame:resize — the cross-origin replacement for portal mode's
-  // ResizeObserver on `contentWindow` (impossible here by construction). See
-  // `frameFitRules.ts`'s module doc and `live-05`'s STATE.md entry.
-  //
-  // Mirrors `useIframeFrameAutoHeight.ts`'s (portal) split of concerns as
-  // closely as a cross-origin frame allows: BODY's definite height (the pin
-  // that resolves a `height: 100%` chain and stops internal scrolling) is a
-  // child-side write only this in-frame code can make; the OUTER `<iframe>`
-  // element's box on the parent canvas is a parent-side concern the reported
-  // `height` here feeds (Batch 5, `useIframeFrameAutoHeight.ts`'s bridge
-  // branch, via the SAME `resolveCanvasFrameHeight` portal mode already
-  // uses). Only active in `mode === 'design'` — a live/preview frame renders
-  // at its own real intended size and must not be artificially fit, exactly
-  // matching portal mode's `isLive` early return.
-  //
-  // Coalesced to one post per animation frame, the same shape as
-  // `scheduleReposition` above — deliberately a SEPARATE raf handle, since
-  // ring repositioning and height reporting are independent concerns that
-  // shouldn't drop each other's frame.
-  //
-  // The pin is reset (allowing the frame to SHRINK) only on a genuine
-  // content mutation, through `frameFitScheduler` above — the same
-  // classify-and-debounce module portal mode uses (PERF-9).
+  // ---- frame:resize — the cross-origin replacement for portal mode's ResizeObserver on
+  // `contentWindow` (see `frameFitRules.ts` and `live-05`'s STATE.md entry). Mirrors
+  // `useIframeFrameAutoHeight.ts`: BODY's definite height (the pin that resolves a `height: 100%`
+  // chain and stops internal scrolling) is the child-side write made here; the OUTER `<iframe>`
+  // box is the parent's, fed by the reported `height`. Design mode only: a live frame renders at
+  // its own size. Coalesced to one post per animation frame on its OWN raf handle, and the pin
+  // resets (so the frame can SHRINK) only on a genuine content mutation via `frameFitScheduler`.
   let pinnedHeight = DEFAULT_FRAME_FIT_HEIGHT
   let frameFitPassesUsed = 0
   let lastReportedHeight: number | null = null
@@ -575,7 +575,7 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
         handleMeasure(message.requestId, message.refs, message.properties)
         return
       case 'setAxes':
-        handleSetAxes(message.axes)
+        handleSetAxes(message.axes, message.modeRoot)
         return
       case 'setMode':
         applyMode(message.mode)
@@ -609,6 +609,9 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
         return
       case 'dropCandidates':
         handleDropCandidates(message.requestId)
+        return
+      case 'measureAll':
+        handleMeasureAll(message.requestId)
         return
     }
   }
@@ -665,6 +668,7 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       textEdit.dispose()
       disposeErrorTaps()
       layoutObserver?.disconnect()
+      geometrySignal.dispose()
       frameFitScheduler.dispose()
       if (repositionRaf !== null) (view.cancelAnimationFrame?.bind(view) ?? cancelAnimationFrame)(repositionRaf)
       frameResizeObserver?.disconnect()

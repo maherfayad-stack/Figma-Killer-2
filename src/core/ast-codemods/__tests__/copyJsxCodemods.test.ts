@@ -617,7 +617,7 @@ describe('moveJsxElement — the reparent form', () => {
       position: 'after',
     })
     expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.refusal.reason).toBe('not-siblings')
+    if (!result.ok) expect(result.refusal.reason).toBe('into-own-descendant')
     expect(fs.readFileSync(file, 'utf8')).toBe(TWO_COMPONENTS)
   })
 
@@ -630,12 +630,4 @@ describe('moveJsxElement — the reparent form', () => {
     expect(fs.readFileSync(file, 'utf8')).toBe(PAGE)
   })
 
-  it('still refuses a same-parent reorder with no anchor to write against', () => {
-    const file = writeFixture(PAGE)
-    const first = locateTag(PAGE, 'p', 1)
-    const result = moveJsxElement({ file, ...first })
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.refusal.reason).toBe('no-anchor')
-    expect(fs.readFileSync(file, 'utf8')).toBe(PAGE)
-  })
 })

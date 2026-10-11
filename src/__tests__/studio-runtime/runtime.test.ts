@@ -191,6 +191,27 @@ describe('createStudioRuntimeBridge — setAxes', () => {
 
     expect(document.documentElement.hasAttribute('lang')).toBe(false)
   })
+
+  it("applies the parent's catalog-resolved mode gates (CT-4) before the generic writes", () => {
+    const { fakeWindow } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+
+    bridge.handleMessage({
+      type: 'setAxes',
+      axes: { direction: 'ltr', colorScheme: 'dark' },
+      modeRoot: { attrs: { 'data-density': 'compact' }, classes: { dark: true } },
+    })
+    expect(document.documentElement.getAttribute('data-density')).toBe('compact')
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
+
+    bridge.handleMessage({
+      type: 'setAxes',
+      axes: { direction: 'ltr', colorScheme: 'light' },
+      modeRoot: { attrs: { 'data-density': null }, classes: { dark: false } },
+    })
+    expect(document.documentElement.hasAttribute('data-density')).toBe(false)
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
+  })
 })
 
 describe('createStudioRuntimeBridge — optimistic DOM ops', () => {

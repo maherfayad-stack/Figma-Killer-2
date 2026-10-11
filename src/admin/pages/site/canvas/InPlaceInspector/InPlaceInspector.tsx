@@ -22,6 +22,7 @@ import { useEditorStore } from '@site/store/store'
 import { registry } from '@core/module-engine'
 import { explainPropConstraint } from '@core/page-tree'
 import { PropertyControlRenderer } from '@site/property-controls/PropertyControlRenderer'
+import { commitUnbindIfCodeBound } from '@site/inspector/commitUnbind'
 import { findNodeById } from './findNodeById'
 import { visibleInspectorControls } from './visibleInspectorControls'
 import styles from './InPlaceInspector.module.css'
@@ -42,6 +43,8 @@ export function InPlaceInspector({ nodeId }: InPlaceInspectorProps) {
   const controls = visibleInspectorControls(definition.schema, props)
 
   const handleChange = (key: string, value: unknown) => {
+    // G-6 - typing over a code-bound value replaces the code (see `commitUnbind.ts`).
+    if (commitUnbindIfCodeBound(node, key, value)) return
     useEditorStore.getState().updateNodeProps(nodeId, { [key]: value })
   }
 

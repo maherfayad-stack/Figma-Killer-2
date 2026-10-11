@@ -31,6 +31,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { useEditorStore, selectActiveCanvasPage, selectSelectedNode } from '@site/store/store'
 import { registry } from '@core/module-engine'
 import { resolveProps } from '@core/page-tree'
+import { commitUnbindIfCodeBound } from '../../inspector/commitUnbind'
 import { getActiveStyleTab } from './classStyleSections'
 import { NO_CLASS_TOKEN_USAGE, buildClassTokenUsageMap, resolveSelectorUsage } from '../selectorUsage'
 import type {
@@ -229,7 +230,8 @@ export function usePropertiesPanelData(): PropertiesPanelData {
     const isOverridable = def?.schema[propKey]?.breakpointOverridable === true
     if (editingBreakpointId !== 'base' && isOverridable) {
       setBreakpointOverride(selectedNodeId, editingBreakpointId, { [propKey]: value })
-    } else {
+    } else if (!commitUnbindIfCodeBound(selectedNode, propKey, value)) {
+      // G-6 - the branch above: typing over code-bound text or an attribute.
       updateNodeProps(selectedNodeId, { [propKey]: value })
     }
     setStatusMessage(`${propKey} updated`)
