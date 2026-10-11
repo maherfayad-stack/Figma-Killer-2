@@ -118,9 +118,27 @@ export function placementKindOfElement(view: Window, element: HTMLElement): Pare
   return parentPlacementKind({ display: style.display, position: style.position }, childPlacementPositions(view, element))
 }
 
+/**
+ * The element a layer inserted into `element` is really written inside.
+ *
+ * The page root is a synthetic `<body>`: a layer dropped on the frame's
+ * background (below the screen's own root, in the gutter around it) has the
+ * body as its tree parent, but a component returns ONE root element and the
+ * codemod writes the newcomer at the end of THAT. Measuring the body asked
+ * "is this a free frame?" of a box whose only child is a relative `<main>`, so
+ * an all-absolute screen read as flow and a drawn layer lost its position (R4 #4).
+ */
+function sourceContainerElement(element: HTMLElement | null): HTMLElement | null {
+  
+  if (!element || element.dataset.moduleId !== 'base.body') return element
+  // Duck-typed: the frame's elements come from another realm, so `instanceof HTMLElement` is false for all of them.
+  const roots = Array.from(element.children).filter((child) => child.hasAttribute('data-node-id'))
+  return roots.length === 1 ? (roots[0] as HTMLElement) : element
+}
+
 /** One computed-style read of the parent and its children, one rect read — at gesture end, never per move. */
 export function measureNewLayerParent(doc: Document, parentId: string): NewLayerParent | null {
-  const element = ownElementForNode(doc, parentId)
+  const element = sourceContainerElement(ownElementForNode(doc, parentId))
   const view = doc.defaultView
   if (!element || !view || typeof view.getComputedStyle !== 'function') return null
   const style = view.getComputedStyle(element)

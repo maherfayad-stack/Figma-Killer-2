@@ -11,6 +11,7 @@ import {
   type FixtureProject,
 } from './helpers/studioFixtureProject'
 import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
+import { zoomToPercent } from './helpers/studioFixtureProject'
 
 /**
  * Round-4 canvas audit fixes, each replayed with a REAL mouse and keyboard and
@@ -66,9 +67,10 @@ export default function Home() {
   )
 }
 `
-const CSS = `.page { position: relative; box-sizing: border-box; width: 100%; min-height: 100vh; background: #fff; }
+const CSS = `.page { position: relative; box-sizing: border-box; width: 100%; min-height: 600px; background: #fff; }
 .header { position: absolute; inset: 0 0 auto 0; z-index: 1; height: 60px; }
 .banner { position: absolute; inset: 124px 0 auto 0; box-sizing: border-box; display: flex; flex-direction: column; gap: 16px; padding: 16px; overflow: hidden; background: #fafafa; }
+.page p { margin: 0; }
 .title { margin: 0; }
 .form { display: flex; flex-direction: column; gap: 16px; width: 100%; }
 .codeInputs { display: flex; gap: 8px; }
@@ -111,8 +113,9 @@ interface Opened {
   node: (id: string) => Locator
 }
 
-async function openHome(page: Page): Promise<Opened> {
+async function openHome(page: Page, zoomPercent = 100): Promise<Opened> {
   const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: true })
+  if (zoomPercent !== 100) await zoomToPercent(page, canvasRoot, zoomPercent)
   const homeFrame = page.locator('[data-page-id="home"]').first()
   await panIntoView(page, canvasRoot, homeFrame)
   await expect(visibleCanvasIframe(homeFrame)).toHaveCount(1, { timeout: 60_000 })
@@ -288,3 +291,147 @@ test.describe('O3: entering inline edit never moves a glyph', () => {
     })
   }
 })
+
+/** A client point whose hit test is the empty board itself (the canvas root), scanned rather than guessed. */
+async function findEmptyBoardPoint(page: Page): Promise<{ x: number; y: number }> {
+  const point = await page.evaluate(() => {
+    const root = document.querySelector('[data-studio-canvas-root="true"]')
+    if (!(root instanceof HTMLElement)) return null
+    const r = root.getBoundingClientRect()
+    for (let iy = 1; iy < 24; iy += 1) {
+      for (let ix = 1; ix < 24; ix += 1) {
+        const x = r.left + (r.width * ix) / 24
+        const y = r.top + (r.height * iy) / 24
+        if (document.elementFromPoint(x, y) === root) return { x, y }
+      }
+    }
+    return null
+  })
+  expect(point, 'no empty board point on screen').not.toBeNull()
+  return point!
+}
+
+const selectedInFrames = (page: Page): Promise<number> =>
+  page.evaluate(() =>
+    Array.from(document.querySelectorAll('iframe')).reduce((count, frame) => {
+      const doc = frame.contentDocument
+      return count + (doc ? doc.querySelectorAll('[data-canvas-selected="true"], [data-canvas-selection-ring="true"]').length : 0)
+    }, 0),
+  )
+
+test.describe('D1: a plain click on the empty board clears the selection', () => {
+  test.setTimeout(240_000)
+
+  test('after selecting a layer in a frame', async ({ page }) => {
+    const { node, canvasRoot } = await openHome(page)
+    await selectInFrame(page, node(ID.banner))
+    await expect.poll(() => selectedInFrames(page), { timeout: 10_000 }).toBeGreaterThan(0)
+    await page.waitForTimeout(600)
+    const at = await findEmptyBoardPoint(page)
+    await page.mouse.click(at.x, at.y)
+    await expect.poll(() => selectedInFrames(page), { timeout: 10_000, message: 'a ring is still drawn after the board click' }).toBe(0)
+    await expect(page.getByTestId('right-sidebar')).not.toHaveAttribute('data-expanded', 'true', { timeout: 10_000 })
+    void canvasRoot
+  })
+
+  test('after selecting a layer, with the Layers panel focused before the click', async ({ page }) => {
+    const { node } = await openHome(page)
+    await selectInFrame(page, node(ID.banner))
+    await page.waitForTimeout(600)
+    await page.getByText('Container').first().click()
+    await page.waitForTimeout(300)
+    const at = await findEmptyBoardPoint(page)
+    await page.mouse.click(at.x, at.y)
+    await expect.poll(() => selectedInFrames(page), { timeout: 10_000 }).toBe(0)
+  })
+
+  test('after selecting a poster frame (zoomed out)', async ({ page }) => {
+    const { canvasRoot, homeFrame } = await openHome(page)
+    await zoomToPercent(page, canvasRoot, 25)
+    await page.waitForTimeout(800)
+    const box = (await homeFrame.boundingBox())!
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+    await expect(page.getByTestId('right-sidebar'), 'the poster press selected nothing to clear').toHaveAttribute('data-expanded', 'true', { timeout: 10_000 })
+    await page.waitForTimeout(600)
+    const at = await findEmptyBoardPoint(page)
+    await page.mouse.click(at.x, at.y)
+    await expect(page.getByTestId('right-sidebar')).not.toHaveAttribute('data-expanded', 'true', { timeout: 10_000 })
+    await expect.poll(() => selectedInFrames(page), { timeout: 10_000 }).toBe(0)
+  })
+})
+
+/** A point `frameX`, `frameY` frame-px into `main`, in editor client px. */
+async function mainPoint(node: (id: string) => Locator, frameX: number, frameY: number): Promise<{ x: number; y: number }> {
+  const main = node(ID.main)
+  const box = await visualBox(main)
+  const scale = await main.evaluate((el) => {
+    const f = el.ownerDocument.defaultView!.frameElement as HTMLIFrameElement
+    return f.getBoundingClientRect().width / f.clientWidth
+  })
+  return { x: box.left + frameX * scale, y: box.top + frameY * scale }
+}
+
+/** The offset of `el` inside `main` in frame px, from computed layout. */
+async function offsetInMain(el: Locator, main: Locator): Promise<{ left: number; top: number; width: number; height: number }> {
+  const m = await main.evaluate((e) => {
+    const r = e.getBoundingClientRect()
+    return { left: r.left, top: r.top }
+  })
+  return el.evaluate((e, base) => {
+    const r = e.getBoundingClientRect()
+    return { left: r.left - base.left, top: r.top - base.top, width: r.width, height: r.height }
+  }, m)
+}
+
+for (const zoomPercent of [100, 45]) {
+test.describe(`#4 at ${zoomPercent}%: an insert in an all-absolute frame lands at the pointer`, () => {
+  test.setTimeout(240_000)
+
+  test('R-tool draw in the empty part of the screen is written absolute and renders where it was drawn', async ({ page }) => {
+    const { node, canvasRoot } = await openHome(page, zoomPercent)
+    const at = await mainPoint(node, 42, 700)
+    await canvasRoot.focus()
+    await page.keyboard.press('r')
+    await expect(page.locator('[data-canvas-draw-layer="rectangle"]')).toBeVisible()
+    await page.mouse.move(at.x, at.y)
+    await page.mouse.down()
+    await page.mouse.move(at.x + 60, at.y + 30, { steps: 8 })
+    await page.mouse.up()
+    await expect.poll(() => readFile(REL), { timeout: 30_000 }).not.toBe(HOME)
+    expect(readFile(REL), 'the drawn rectangle was written with no position').toMatch(/position: ?["']absolute["']/)
+    const drawn = node(ID.main).locator(':scope > div[style*="background"]').first()
+    await expect(drawn).toBeVisible({ timeout: 30_000 })
+    const rect = await offsetInMain(drawn, node(ID.main))
+    expect(Math.abs(rect.left - 42)).toBeLessThanOrEqual(2)
+    expect(Math.abs(rect.top - 700)).toBeLessThanOrEqual(2)
+  })
+
+  test('the notch Div released in the empty part of the screen lands absolute at the pointer', async ({ page }) => {
+    const { node } = await openHome(page, zoomPercent)
+    const at = await mainPoint(node, 300, 700)
+    await dragNotchTo(page, 'canvas-notch-div-btn', at)
+    await page.mouse.up()
+    await expect.poll(() => readFile(REL), { timeout: 30_000 }).not.toBe(HOME)
+    const src = readFile(REL)
+    expect(src).toMatch(/position: ?["']absolute["']/)
+    expect(src).toMatch(/left: ?["'](29\d|30\d)(\.\d+)?px["']/)
+  })
+
+  test('the Text tool drag lands the text at the pointer', async ({ page }) => {
+    const { node, canvasRoot, home } = await openHome(page, zoomPercent)
+    const at = await mainPoint(node, 42, 700)
+    await canvasRoot.focus()
+    await page.keyboard.press('t')
+    await expect(page.locator('[data-canvas-draw-layer="text"]')).toBeVisible()
+    await page.mouse.move(at.x, at.y)
+    await page.mouse.down()
+    await page.mouse.move(at.x + 80, at.y + 30, { steps: 6 })
+    await page.mouse.up()
+    const editable = home.locator('[contenteditable]:not([contenteditable="false"])')
+    await expect(editable.first()).toBeVisible({ timeout: 30_000 })
+    const rect = await offsetInMain(editable.first(), node(ID.main))
+    expect(Math.abs(rect.left - 42)).toBeLessThanOrEqual(2)
+    expect(Math.abs(rect.top - 700)).toBeLessThanOrEqual(2)
+  })
+})
+}
