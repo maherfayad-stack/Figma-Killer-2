@@ -111,3 +111,26 @@ describe('inferAutoLayout', () => {
     expect(result.exact).toBe(false)
   })
 })
+
+describe('inferAutoLayout — stretch (block flow)', () => {
+  const column = [box(0, 0, 400, 30), box(0, 40, 400, 30)]
+
+  it('full-width block children stretch when the layout is in flow', () => {
+    const result = inferAutoLayout(column, inner, { stretch: true })
+    expect(result).toMatchObject({ direction: 'column', align: 'stretch', gap: 10, exact: true })
+  })
+
+  it('children that hug do not stretch', () => {
+    expect(inferAutoLayout([box(0, 0, 100, 30), box(0, 40, 100, 30)], inner, { stretch: true }).align).toBe('flex-start')
+  })
+
+  it('absolute children never stretch: they hug', () => {
+    expect(inferAutoLayout(column, inner).align).toBe('flex-start')
+  })
+
+  it('equal padding either side counts as spanning', () => {
+    const result = inferAutoLayout([box(12, 12, 376, 30), box(12, 52, 376, 30)], inner, { stretch: true })
+    expect(result.align).toBe('stretch')
+    expect(result.padding).toMatchObject({ left: 12, right: 12 })
+  })
+})

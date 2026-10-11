@@ -191,3 +191,14 @@ describe('planFreezePositions', () => {
     expect(plan.parentPatch.width).toBe('400px')
   })
 })
+
+describe('planAddAutoLayout — margins', () => {
+  it('margins between flow children are not counted twice: the gap is what is left between the margin boxes', () => {
+    const margin = { top: 0, right: 0, bottom: 10, left: 0 }
+    const plan = planAddAutoLayout(box('p', 0, 0, 200, 200), [
+      box('a', 0, 0, 200, 30, { margin }),
+      box('b', 0, 40, 200, 30, { margin }),
+    ])
+    expect(plan.parentPatch).toMatchObject({ flexDirection: 'column', gap: '0px', alignItems: 'stretch' })
+  })
+})

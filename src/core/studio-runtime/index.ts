@@ -293,6 +293,7 @@ export {
 export {
   inferAutoLayout,
   type CrossAlignment,
+  type InferOptions,
   type InferredAutoLayout,
   type InferredPadding,
   type LayoutRect,

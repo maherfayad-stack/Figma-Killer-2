@@ -70,6 +70,16 @@ function specifiedSize(box: MeasuredBox): { width: number; height: number } {
   }
 }
 
+/** The border box plus the margins — the box a flex container lays out. */
+function outerRect(box: MeasuredBox): LayoutRect {
+  return {
+    x: box.rect.x - box.margin.left,
+    y: box.rect.y - box.margin.top,
+    width: box.rect.width + box.margin.left + box.margin.right,
+    height: box.rect.height + box.margin.top + box.margin.bottom,
+  }
+}
+
 /** The inline keys that put an out-of-flow child where it is; clearing them returns it to flow. */
 const CHILD_PLACEMENT_KEYS = ['left', 'top', 'right', 'bottom', 'insetInlineStart', 'translate'] as const
 
@@ -93,7 +103,8 @@ export function planAddAutoLayout(parent: MeasuredBox, children: readonly Measur
   const free = measured.length > 0 && measured.every((child) => isOutOfFlow(child.position))
   // A badge pinned over a flow container stays pinned: only in-flow children set the layout.
   const laidOut = free ? measured : measured.filter((child) => !isOutOfFlow(child.position))
-  const inferred = inferAutoLayout(laidOut.map((child) => child.rect), paddingBox(parent))
+  // A flex container lays out MARGIN boxes and puts its gap between them, so those are what is read.
+  const inferred = inferAutoLayout(laidOut.map(outerRect), paddingBox(parent), { stretch: !free })
 
   const parentPatch: StylePatch = {
     display: 'flex',

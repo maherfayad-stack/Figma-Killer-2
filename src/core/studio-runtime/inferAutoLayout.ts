@@ -29,7 +29,7 @@ export interface InferredPadding {
   left: number
 }
 
-export type CrossAlignment = 'flex-start' | 'center' | 'flex-end'
+export type CrossAlignment = 'flex-start' | 'center' | 'flex-end' | 'stretch'
 
 export interface InferredAutoLayout {
   direction: 'row' | 'column'
@@ -98,7 +98,7 @@ interface RowAnswer {
 }
 
 /** The row-space inference; a column layout is the same problem with x and y swapped. */
-function inferRow(rects: readonly LayoutRect[], inner: LayoutRect, lines: number[][]): RowAnswer {
+function inferRow(rects: readonly LayoutRect[], inner: LayoutRect, lines: number[][], allowStretch: boolean): RowAnswer {
   const wrap = lines.length > 1
   const order = lines.flat()
 
@@ -164,10 +164,26 @@ function inferRow(rects: readonly LayoutRect[], inner: LayoutRect, lines: number
     bottom = leftoverBottom
     topPad = Math.min(top, bottom)
   }
+  // Block children fill their parent: when every child shares both cross edges and
+  // spans the parent between equal paddings, `stretch` keeps them filling it.
+  if (allowStretch && !wrap && deviation.start <= TOLERANCE && deviation.end <= TOLERANCE && Math.abs(leftoverBottom - top) <= TOLERANCE) {
+    align = 'stretch'
+    bottom = leftoverBottom
+  }
   return { wrap, gap, lineGap, align, padding: { top: topPad, right, bottom, left }, order, exact }
 }
 
-export function inferAutoLayout(childRects: readonly LayoutRect[], inner: LayoutRect): InferredAutoLayout {
+export interface InferOptions {
+  /**
+   * The children are in flow (block layout), where an auto-sized child fills
+   * its parent: a layer that spans the parent between equal paddings then
+   * stretches instead of hugging. A free frame's absolute children hug.
+   */
+  stretch?: boolean
+}
+
+export function inferAutoLayout(childRects: readonly LayoutRect[], inner: LayoutRect, options: InferOptions = {}): InferredAutoLayout {
+  const allowStretch = options.stretch === true
   const empty: InferredAutoLayout = {
     direction: 'column',
     wrap: false,
@@ -183,10 +199,10 @@ export function inferAutoLayout(childRects: readonly LayoutRect[], inner: Layout
   // One child has no direction to read: a block stacks vertically, so a column.
   const rowLines = childRects.length > 1 ? groupLines(childRects) : null
   if (rowLines && rowLines.length < childRects.length) {
-    return { direction: 'row', ...inferRow(childRects, inner, rowLines) }
+    return { direction: 'row', ...inferRow(childRects, inner, rowLines, allowStretch) }
   }
   const flipped = childRects.map(transpose)
   const byPosition = flipped.map((_, index) => index).sort((a, b) => flipped[a]!.x - flipped[b]!.x)
-  const answer = inferRow(flipped, transpose(inner), [byPosition])
+  const answer = inferRow(flipped, transpose(inner), [byPosition], allowStretch)
   return { direction: 'column', ...answer, padding: unTranspose(answer.padding), wrap: false, lineGap: answer.gap }
 }
