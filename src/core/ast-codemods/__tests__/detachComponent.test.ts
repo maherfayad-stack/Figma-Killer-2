@@ -962,25 +962,6 @@ describe('detachComponentInstance — refusals', () => {
     expectRefusedUntouched('pages/Home.tsx', source, 'div', 'not-a-component')
   })
 
-  it('refuses a component using useState', () => {
-    write('components/Counter.tsx', [
-      "import { useState } from 'react'",
-      'export function Counter() {',
-      '  const [n] = useState(0)',
-      '  return <span>{n}</span>',
-      '}',
-      '',
-    ].join('\n'))
-    const source = [
-      "import { Counter } from '../components/Counter'",
-      'export default function Home() {',
-      '  return <Counter />',
-      '}',
-      '',
-    ].join('\n')
-    expectRefusedUntouched('pages/Home.tsx', source, 'Counter', 'uses-hooks')
-  })
-
   it('refuses a component using a custom hook', () => {
     write('components/Widget.tsx', [
       "function useWidgetState() { return 1 }",
@@ -998,40 +979,6 @@ describe('detachComponentInstance — refusals', () => {
       '',
     ].join('\n')
     expectRefusedUntouched('pages/Home.tsx', source, 'Widget', 'uses-hooks')
-  })
-
-  it('refuses a component that maps over one of its own props', () => {
-    write('components/List.tsx', [
-      "export function List({ items }: { items: string[] }) {",
-      '  return <ul>{items.map((item) => <li key={item}>{item}</li>)}</ul>',
-      '}',
-      '',
-    ].join('\n'))
-    const source = [
-      "import { List } from '../components/List'",
-      'export default function Home() {',
-      "  return <List items={['a', 'b']} />",
-      '}',
-      '',
-    ].join('\n')
-    expectRefusedUntouched('pages/Home.tsx', source, 'List', 'maps-over-props')
-  })
-
-  it('refuses a component taking an undestructured props parameter', () => {
-    write('components/Card.tsx', [
-      'export function Card(props) {',
-      '  return <div>{props.title}</div>',
-      '}',
-      '',
-    ].join('\n'))
-    const source = [
-      "import { Card } from '../components/Card'",
-      'export default function Home() {',
-      '  return <Card title="Hi" />',
-      '}',
-      '',
-    ].join('\n')
-    expectRefusedUntouched('pages/Home.tsx', source, 'Card', 'unsupported-params')
   })
 
   it('refuses `unsupported-params` for a nested destructure the markup reads', () => {

@@ -71,6 +71,8 @@ export interface DetachPlan {
   pageEdits: PageTextEdit[]
   /** DET-3 — hooks a NEW call was written for; what a pre-commit confirm names. */
   movedHooks: string[]
+  /** G-3 — the `'use client'` directive the page must start with once component state moved into it. */
+  useClient?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -161,8 +163,16 @@ export class DetachPlanner {
       if (kinds.has('call-site')) callSiteKinds.set(name, bindingKindAt(this.callSite.site, name, this.page))
     }
     this.hooks.finish()
-    const { edits: pageEdits, movedHooks } = this.hooks
-    return { siteText: text, imports: this.names.imports, expected: this.names.expected, callSiteKinds, pageEdits, movedHooks }
+    const { edits: pageEdits, movedHooks, useClient } = this.hooks
+    return {
+      siteText: text,
+      imports: this.names.imports,
+      expected: this.names.expected,
+      callSiteKinds,
+      pageEdits,
+      movedHooks,
+      ...(useClient ? { useClient } : {}),
+    }
   }
 
   // --- call-site values ----------------------------------------------------
@@ -363,14 +373,11 @@ export class DetachPlanner {
     if (!Node.isJsxExpression(node)) return undefined
     const expr = node.getExpression()
     if (!expr || node.getDotDotDotToken()) return undefined
-    if (Node.isIdentifier(expr) && this.callSite.children && isReferenceIdentifier(expr)) {
-      const ref = this.classify(expr, unit)
-      if (ref.kind === 'param' && ref.entry.attrName === 'children') {
-        const free = new Set(this.callSite.children.nodes.flatMap((child) => freeReferenceNames(child)))
-        this.names.expectCallSiteNames(free)
-        this.admit(expr, free, unit)
-        return this.callSite.children.rawText
-      }
+    if (this.callSite.children && this.readsChildren(expr, unit)) {
+      const free = new Set(this.callSite.children.nodes.flatMap((child) => freeReferenceNames(child)))
+      this.names.expectCallSiteNames(free)
+      this.admit(expr, free, unit)
+      return this.callSite.children.rawText
     }
     const folded = this.conditionals.child(expr, unit)
     if (folded !== undefined) return folded
@@ -385,6 +392,20 @@ export class DetachPlanner {
     }
     if (value.jsx) return value.expr()
     return `{${value.expr()}}`
+  }
+
+  /** `{children}` (a destructured `children` param) or `{props.children}` — the call site's own children, placed as written. */
+  private readsChildren(expr: Node, unit: Unit): boolean {
+    if (Node.isIdentifier(expr)) {
+      if (!isReferenceIdentifier(expr)) return false
+      const ref = this.classify(expr, unit)
+      return ref.kind === 'param' && ref.entry.attrName === 'children'
+    }
+    if (!Node.isPropertyAccessExpression(expr) || expr.getName() !== 'children') return false
+    const object = expr.getExpression()
+    if (!Node.isIdentifier(object) || !isReferenceIdentifier(object) || this.classify(object, unit).kind !== 'rest') return false
+    this.assertRestIsReadable('member')
+    return true
   }
 
   /** An opening, self-closing or closing tag: its name and its attributes rewritten. */
@@ -639,20 +660,26 @@ export class DetachPlanner {
     return this.componentValue(decl.getInitializerOrThrow())
   }
 
-  /** `rest.x` — the call site's own `x`, unless a named param consumed it. */
+  /** `rest.x` / `props.x` — the call site's own `x`, unless a named param consumed it. */
   private restMemberValue(node: Node, unit: Unit): Value | undefined {
     if (!Node.isPropertyAccessExpression(node)) return undefined
     const object = node.getExpression()
     if (!Node.isIdentifier(object) || !isReferenceIdentifier(object) || this.classify(object, unit).kind !== 'rest') return undefined
-    this.assertRestIsReadable()
+    this.assertRestIsReadable('member')
     const name = node.getName()
-    if (this.params.consumed.has(name) || name === 'key') return UNDEFINED_VALUE
+    if (this.params.restExcludes.has(name) || name === 'key') return UNDEFINED_VALUE
     if (name === 'children' && this.callSite.children) return this.childrenValue()
     const explicit = this.lastAttribute(name)
     return explicit ? this.explicitValue(explicit.attr, undefined) : UNDEFINED_VALUE
   }
 
-  private assertRestIsReadable(): void {
+  /**
+   * Which props `rest` holds can be known only when the call site has no
+   * spread. Reading ONE member needs nothing more; forwarding the whole object
+   * (`<div {...rest}/>`) also forwards `children`, which the leftover
+   * attributes cannot carry — so a call site that passes children refuses there.
+   */
+  private assertRestIsReadable(use: 'member' | 'forward' = 'forward'): void {
     const spread = this.callSite.spreads[0]
     if (spread) {
       fail(
@@ -660,7 +687,7 @@ export class DetachPlanner {
         `This call site spreads {...${spread.expr.getText()}} into ${this.componentName}, which forwards \`...rest\` — which props land where can't be known from source.`,
       )
     }
-    if (this.callSite.children && !this.params.consumed.has('children')) {
+    if (use === 'forward' && this.callSite.children && !this.params.restExcludes.has('children')) {
       fail('spread-ambiguous', `This call site passes children, and ${this.componentName} forwards them through \`...rest\` rather than placing them.`)
     }
   }
@@ -670,7 +697,7 @@ export class DetachPlanner {
     this.assertRestIsReadable()
     const out: { name: string; text: string; free: ReadonlySet<string> }[] = []
     for (const attr of this.callSite.attrs) {
-      if (this.params.consumed.has(attr.name) || this.lastAttribute(attr.name) !== attr) continue
+      if (this.params.restExcludes.has(attr.name) || this.lastAttribute(attr.name) !== attr) continue
       const initializer = attr.attr.getInitializer()
       const free = new Set(initializer ? freeReferenceNames(initializer) : [])
       this.names.expectCallSiteNames(free)

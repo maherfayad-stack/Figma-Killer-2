@@ -79,14 +79,14 @@
  * refused: `getReturnedJsxRoots` picks the same one the canvas shows, and
  * `DetachSuccess.branchNote` says so.
  */
-import { Node, Project, QuoteKind, SyntaxKind, type SourceFile } from 'ts-morph'
+import { Node, Project, QuoteKind, type SourceFile } from 'ts-morph'
 import { findJsxElementAtLocationOrThrow, loadSourceFile } from './locateJsxElement'
 import { createWorkspaceProject, getReturnedJsxRoots, type FunctionLike } from '@core/page-parser'
 import { resolveComponentCallSite } from './resolveComponentCallSite'
 import { applyImportBinding, mirrorSideEffectImports, removeImportIfLastUsage } from './importReconcile'
 import { analyzeFreeVariables, bindingKindAt, bindingScopeAt, freeVariablesOutOfScopeAt } from './subtreeFreeVariables'
 import { introducesSyntaxErrors } from './syntaxRegression'
-import { DetachRefusalSignal, fail, readParamTable, type DetachRefusalReason } from './detachSource'
+import { DetachRefusalSignal, fail, type DetachRefusalReason } from './detachSource'
 import { DetachPlanner, type DetachPlan } from './detachPlanner'
 import { enclosingFunctionComponent, readComponentHooks, rendersPerRow, type PageTextEdit } from './detachHooks'
 import type { CreatedJsxLocation } from './createdJsxLocation'
@@ -160,25 +160,6 @@ function refuse(reason: DetachRefusalReason, message: string): DetachFailure {
   return { ok: false, refusal: { reason, message } }
 }
 
-
-/** Root identifier of a (possibly chained) member/element access — `items` for `items.map`, `props.items` for `props.items.map`. */
-function rootIdentifier(expr: Node): string | undefined {
-  if (Node.isIdentifier(expr)) return expr.getText()
-  if (Node.isPropertyAccessExpression(expr)) return rootIdentifier(expr.getExpression())
-  if (Node.isElementAccessExpression(expr)) return rootIdentifier(expr.getExpression())
-  return undefined
-}
-
-/** True when `root`'s JSX contains a `.map(...)` call whose receiver traces back to one of the component's OWN prop names. */
-function mapsOverAnyProp(root: Node, propNames: ReadonlySet<string>): boolean {
-  for (const call of root.getDescendantsOfKind(SyntaxKind.CallExpression)) {
-    const expr = call.getExpression()
-    if (!Node.isPropertyAccessExpression(expr) || expr.getName() !== 'map') continue
-    const id = rootIdentifier(expr.getExpression())
-    if (id && propNames.has(id)) return true
-  }
-  return false
-}
 
 export interface ParamBinding {
   /** The call site's own attribute name this param forwards, e.g. `{ title }` -> `'title'`; `{ title: t }` -> attrName `'title'`, paramName `'t'`. */
@@ -318,29 +299,12 @@ export function detachComponentInstance(params: DetachComponentParams): DetachRe
   }
   const { target, fn } = resolved.result
 
-  const { childrenParam, params: paramBindings, hasUndestructuredParam } = buildParamBindings(fn)
-  if (hasUndestructuredParam) {
-    return refuse(
-      'unsupported-params',
-      `${identifier} takes an undestructured props parameter — detach can't rewrite bare props.x references.`,
-    )
-  }
-
   const roots = getReturnedJsxRoots(fn)
   const chosen = roots.find((r) => r.chosen)
   if (!chosen) {
     return refuse('no-renderable-jsx', `${identifier} has no renderable JSX to inline.`)
   }
   const hadAlternatives = roots.some((r) => !r.chosen)
-
-  const restName = readParamTable(fn).rest?.getName()
-  const propNames = new Set([...paramBindings.keys(), ...(childrenParam ? [childrenParam] : []), ...(restName ? [restName] : [])])
-  if (mapsOverAnyProp(chosen.expr, propNames)) {
-    return refuse(
-      'maps-over-props',
-      `${identifier} maps over one of its own props to render — detach can't inline data-driven content.`,
-    )
-  }
 
   const original = sourceFile.getFullText()
   const perRow = rendersPerRow(opening, enclosingFunctionComponent(opening))
@@ -359,6 +323,7 @@ export function detachComponentInstance(params: DetachComponentParams): DetachRe
     const insertedStart = siteEdit.pos + shiftBefore(plan.pageEdits, siteEdit.pos)
     inserted = nodeSpanning(sourceFile, insertedStart, insertedStart + plan.siteText.length)
     for (const pending of plan.imports) applyImportBinding(sourceFile, pending.request, pending.local)
+    if (plan.useClient) sourceFile.insertStatements(0, plan.useClient)
     if (target.sourceFile !== sourceFile) mirrorSideEffectImports(sourceFile, target.sourceFile)
     gateInsertedMarkup(inserted, sourceFile, plan)
     // Only now — after the call site's own tag reference is actually gone

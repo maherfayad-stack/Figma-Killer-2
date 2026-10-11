@@ -7,7 +7,7 @@
  * that keep a substituted value meaning exactly what it meant. Pure reads —
  * nothing here writes.
  */
-import { Node, SyntaxKind, type BindingElement, type JsxAttribute } from 'ts-morph'
+import { Node, SyntaxKind, VariableDeclarationKind, type BindingElement, type JsxAttribute, type ParameterDeclaration } from 'ts-morph'
 import type { FunctionLike } from '@core/page-parser'
 import type { JsxOpeningLikeElement } from './locateJsxElement'
 import { literalField, type Literal } from './detachConstantFold'
@@ -51,11 +51,19 @@ export interface ParamEntry {
 
 export interface ParamTable {
   entries: Map<Node, ParamEntry>
-  rest?: BindingElement
+  /**
+   * The object every prop NOT named by a binding lands in: a `...rest` element,
+   * or (G-3) the whole `props` parameter of `function Card(props)` — which is
+   * `{ ...props }` spelled differently, so `props.title` reads the call site's
+   * own `title` exactly as `rest.title` does.
+   */
+  rest?: BindingElement | ParameterDeclaration
   /** Bindings inside a NESTED pattern (`{ a: { b } }`) — nothing to substitute them with. */
   nested: Set<Node>
-  /** Every prop name a named binding consumes — the complement is what `...rest` receives. */
+  /** Every prop name a named binding consumes. */
   consumed: Set<string>
+  /** The prop names `rest` does NOT hold: `consumed` for a `...rest` element, none for a whole `props` object. */
+  restExcludes: Set<string>
 }
 
 function propertyNameText(node: Node): string | undefined {
@@ -65,10 +73,23 @@ function propertyNameText(node: Node): string | undefined {
 }
 
 export function readParamTable(fn: FunctionLike): ParamTable {
-  const table: ParamTable = { entries: new Map(), nested: new Set(), consumed: new Set() }
-  const pattern = fn.getParameters()[0]?.getNameNode()
-  if (!pattern || !Node.isObjectBindingPattern(pattern)) return table
-  for (const element of pattern.getElements()) {
+  const table: ParamTable = { entries: new Map(), nested: new Set(), consumed: new Set(), restExcludes: new Set() }
+  const parameter = fn.getParameters()[0]
+  const pattern = parameter?.getNameNode()
+  if (!parameter || !pattern) return table
+  if (Node.isIdentifier(pattern)) {
+    table.rest = parameter
+    readBodyDestructures(fn, pattern.getText(), table)
+    return table
+  }
+  if (!Node.isObjectBindingPattern(pattern)) return table
+  readBindingElements(pattern.getElements(), table)
+  for (const name of table.consumed) table.restExcludes.add(name)
+  return table
+}
+
+function readBindingElements(elements: readonly BindingElement[], table: ParamTable): void {
+  for (const element of elements) {
     if (element.getDotDotDotToken()) {
       table.rest = element
       continue
@@ -83,7 +104,31 @@ export function readParamTable(fn: FunctionLike): ParamTable {
     }
     table.entries.set(element, { attrName, default: element.getInitializer() })
   }
-  return table
+}
+
+/**
+ * `const { title, size = 'm' } = props` at the top of the body is the same
+ * destructure as the parameter's own — its bindings are props. Only a plain
+ * pattern counts (no rest, nothing nested, no computed key): anything else
+ * stays an ordinary body value, which detach reports by name.
+ */
+function readBodyDestructures(fn: FunctionLike, propsName: string, table: ParamTable): void {
+  const body = fn.getBody()
+  if (!body || !Node.isBlock(body)) return
+  for (const statement of body.getStatements()) {
+    if (!Node.isVariableStatement(statement) || statement.getDeclarationKind() !== VariableDeclarationKind.Const) continue
+    for (const declaration of statement.getDeclarations()) {
+      const name = declaration.getNameNode()
+      const init = declaration.getInitializer()
+      if (!Node.isObjectBindingPattern(name) || !init || !Node.isIdentifier(init) || init.getText() !== propsName) continue
+      const elements = name.getElements()
+      const plain = elements.every((element) => {
+        const property = element.getPropertyNameNode()
+        return !element.getDotDotDotToken() && Node.isIdentifier(element.getNameNode()) && (!property || propertyNameText(property) !== undefined)
+      })
+      if (plain) readBindingElements(elements, table)
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
