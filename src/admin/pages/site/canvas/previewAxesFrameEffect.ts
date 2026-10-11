@@ -19,12 +19,15 @@
  */
 import { createContext, useContext, useEffect, useSyncExternalStore } from 'react'
 import { useEditorStore } from '@site/store/store'
-import { DEFAULT_PREVIEW_AXES, type PreviewAxes } from '@core/studio-board'
+import { DEFAULT_PREVIEW_AXES, mergePreviewAxes, type PreviewAxes } from '@core/studio-board'
+import { applyModeRootPlan, drivesColorScheme, type ModeAxis } from '@core/studio-tokens'
 import {
   getColorSchemeCapability,
   subscribeColorSchemeCapability,
   type ColorSchemeCapability,
 } from '@site/studio/previewAxesCapability'
+import { modeRootPlanFor } from './modeRootPlan'
+import { getStudioTokenCatalog, subscribeStudioTokenCatalog } from '@site/studio/studioTokenCatalogStore'
 import { DARK_SCHEME_ATTR } from './darkSchemeCssTransform'
 import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
 
@@ -97,16 +100,23 @@ export const VENDOR_THEME_ATTR = 'data-theme'
  *     matches it.
  *   - `data-theme` — see {@link VENDOR_THEME_ATTR}.
  *
- * Additionally, when `capability.mechanism === 'class'` and its `selector`
- * parses, toggles that EXACT class/attribute on `html` too — the project's
- * own dark-mode gate, so its styles respond exactly as they would in the
- * real app rather than relying solely on the generic attributes above.
+ * CT-4: first, the token catalog's gates for EVERY mode axis the project
+ * declares are written onto `html` ({@link modeRootPlanFor}) - the attribute
+ * or class each mode's own selector tests for. The generic writes above then
+ * land last, so `dir`/`lang`/`data-theme` always hold what the toolbar says.
+ *
+ * Only when the catalog has no colour-scheme axis it can drive (not loaded
+ * yet, or the project's dark mode is a media query) does the older
+ * probe-derived path run: when `capability.mechanism === 'class'` and its
+ * `selector` parses, it toggles that EXACT class/attribute on `html` too.
  */
 export function applyPreviewAxesToFrameDocument(
   html: HTMLElement,
   axes: PreviewAxes,
   capability: ColorSchemeCapability | null,
+  modeAxes: readonly ModeAxis[] = [],
 ): void {
+  applyModeRootPlan(html, modeRootPlanFor(modeAxes, axes))
   html.setAttribute('dir', axes.direction)
   if (axes.direction === 'rtl') html.setAttribute('lang', RTL_PREVIEW_LANG)
   else html.removeAttribute('lang')
@@ -116,6 +126,7 @@ export function applyPreviewAxesToFrameDocument(
   html.setAttribute(VENDOR_THEME_ATTR, axes.colorScheme)
   html.style.colorScheme = axes.colorScheme
 
+  if (drivesColorScheme(modeAxes)) return
   if (capability?.mechanism !== 'class' || !capability.selector) return
   const parsed = parseClassSchemeSelector(capability.selector)
   if (!parsed) return
@@ -128,16 +139,6 @@ export function applyPreviewAxesToFrameDocument(
   // An attribute gate does: see `VENDOR_THEME_ATTR` for why removing it is
   // not the same as saying "light".
   html.setAttribute(parsed.name, isDark ? (parsed.value ?? 'dark') : 'light')
-}
-
-/**
- * WS-10 Phase 2 (§4.4) — a "duplicate as variant" board frame's own
- * `BoardFrame.axes` overrides the board-global default PER AXIS, not
- * wholesale: a frame that only overrides `direction` still inherits the
- * board's current `colorScheme`.
- */
-function resolveFrameAxes(boardAxes: PreviewAxes, override: Partial<PreviewAxes> | undefined): PreviewAxes {
-  return override ? { ...boardAxes, ...override } : boardAxes
 }
 
 /**
@@ -180,7 +181,7 @@ export function useFramePreviewAxes(): PreviewAxes {
  */
 export function useResolvedFrameAxes(axesOverride?: Partial<PreviewAxes>): PreviewAxes {
   const boardAxes = useEditorStore((s) => s.previewAxes)
-  return resolveFrameAxes(boardAxes, axesOverride)
+  return mergePreviewAxes(boardAxes, axesOverride)
 }
 
 /**
@@ -212,7 +213,10 @@ export function useApplyPreviewAxes(
     getColorSchemeCapability,
     getColorSchemeCapability,
   )
-  const effectiveAxes = resolveFrameAxes(boardAxes, axesOverride)
+  // The catalog's gates decide what a mode writes on the frame root, so a
+  // catalog that arrives (or changes) after the frame mounted re-applies it.
+  const catalog = useSyncExternalStore(subscribeStudioTokenCatalog, getStudioTokenCatalog, getStudioTokenCatalog)
+  const effectiveAxes = mergePreviewAxes(boardAxes, axesOverride)
   useEffect(() => {
     if (!adapter) return
     // Re-resolved inside the effect rather than closing over `effectiveAxes`
@@ -221,7 +225,7 @@ export function useApplyPreviewAxes(
     // conditionally-constructed value it cannot prove stable — and the fix it
     // asks for (`useMemo`) is exactly the manual memoization this repo's
     // React Compiler setup bans.
-    adapter.setAxes(resolveFrameAxes(boardAxes, axesOverride))
-  }, [adapter, boardAxes, axesOverride, colorSchemeCapability])
+    adapter.setAxes(mergePreviewAxes(boardAxes, axesOverride))
+  }, [adapter, boardAxes, axesOverride, colorSchemeCapability, catalog])
   return effectiveAxes
 }
