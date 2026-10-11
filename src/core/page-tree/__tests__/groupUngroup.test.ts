@@ -12,7 +12,7 @@
  */
 import { describe, expect, it } from 'bun:test'
 import type { Page, PageNode } from '../index'
-import { previewStructuralGroup, reindexNodeParents, unwrapNode } from '../index'
+import { isSiblingRun, previewStructuralGroup, reindexNodeParents, unwrapNode } from '../index'
 
 function node(id: string, children: string[] = [], lockReason?: string): PageNode {
   return {
@@ -62,19 +62,27 @@ describe('previewStructuralGroup', () => {
     expect(previewStructuralGroup(board(), [B])).toEqual({ ok: true, commit: [B] })
   })
 
-  it('REFUSES a selection with a gap in it', () => {
-    const result = previewStructuralGroup(board(), [A, C])
-    expect(result.ok).toBe(false)
-    if (!result.ok) {
-      expect(result.refusal.reason).toBe('multi-select')
-      expect(result.refusal.message).toContain('Select siblings next to each other')
-    }
+  // G-7 - a selection that is not a run is gathered by the write, not refused.
+  it('commits a selection with a gap in it, in source order - the codemod gathers the members', () => {
+    expect(previewStructuralGroup(board(), [C, A])).toEqual({ ok: true, commit: [A, C] })
+    expect(isSiblingRun(board(), [A, C])).toBe(false)
+    expect(isSiblingRun(board(), [A, B])).toBe(true)
   })
 
-  it('REFUSES a selection that crosses parents, however adjacent it looks', () => {
-    const result = previewStructuralGroup(board(), [B, NESTED])
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.refusal.reason).toBe('multi-select')
+  it('commits a selection that crosses parents, ordered as the page reads', () => {
+    expect(previewStructuralGroup(board(), [NESTED, B])).toEqual({ ok: true, commit: [B, NESTED] })
+    expect(isSiblingRun(board(), [B, NESTED])).toBe(false)
+  })
+
+  it('a member inside another selected one is not a second member - it travels with the one that holds it', () => {
+    expect(previewStructuralGroup(board(), [NESTED, A, C])).toEqual({ ok: true, commit: [A, C] })
+  })
+
+  it('REFUSES members written in different files - there is no one file to put the container in', () => {
+    const other = 'pages/About.tsx:20:6'
+    const result = previewStructuralGroup(board({ [other]: node(other) }), [A, other])
+    expect(result).toMatchObject({ ok: false, refusal: { reason: 'group' } })
+    if (!result.ok) expect(result.refusal.message).toContain('different files')
   })
 
   it('REFUSES any member with no single honest target of its own', () => {

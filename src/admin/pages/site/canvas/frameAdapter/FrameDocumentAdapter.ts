@@ -32,6 +32,7 @@
  * file's own doc for the conversion.
  */
 import type { PreviewAxes } from '@core/studio-board'
+import type { FrameGeometrySnapshot } from '../frameGeometry/frameGeometryTypes'
 import type { ResizeAnchors, ResizeCommitPatch, ResizeSizingMarkers, RuntimeErrorKind, SnapGuide } from '@core/studio-runtime'
 
 /** A real, canonical parser/tree node id — the ONLY id shape any caller outside `frameAdapter/` ever sees. */
@@ -115,6 +116,13 @@ export interface OptimisticDomOps {
 
 export type FrameRuntimeEvent =
   | { type: 'ready' }
+  /**
+   * SB-3 — the geometry last returned by `measureAll` may be stale (content or
+   * style changed, a stylesheet or font or image landed, a transition ended, the
+   * viewport resized). A latch: fired once, then quiet until the next
+   * `measureAll`. Never fires before the first `measureAll`.
+   */
+  | { type: 'geometry:dirty' }
   | { type: 'hmr:before' }
   | { type: 'hmr:after' }
   | { type: 'frame:resize'; height: number }
@@ -232,6 +240,17 @@ export interface FrameDocumentAdapter {
   hover(ref: NodeRef | null): void
   /** Rects + a bounded set of computed-style properties. Portal mode resolves synchronously (wrapped in a resolved `Promise` so callers never branch on adapter kind); bridge mode is genuinely async (a real `postMessage` round trip, bounded by a timeout). */
   measure(refs: NodeRef[], properties?: string[]): Promise<NodeMeasurement[]>
+  /**
+   * SB-3 — every boxed node in the frame, in ONE batched read, for the rect
+   * index (`frameGeometry/`). Unlike `measure` it takes no refs and reads no
+   * computed style beyond the five hit-test facts on {@link NodeGeometry}; unlike
+   * `measureDropCandidates` it is linear in the node count and carries ancestry.
+   * Portal mode resolves synchronously (wrapped in a resolved `Promise`); bridge
+   * mode is one `postMessage` round trip carrying a single array. The FIRST call
+   * also arms the frame's `geometry:dirty` signal (see {@link FrameRuntimeEvent}),
+   * so a frame nobody indexes pays nothing for it.
+   */
+  measureAll(): Promise<FrameGeometrySnapshot>
   /**
    * `speed-06` — every node currently in the frame's document, with its
    * drop-target geometry, for a per-drag candidate snapshot

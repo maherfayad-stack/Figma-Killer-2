@@ -921,6 +921,72 @@ describe('PropertyControlRenderer — a source-locked node', () => {
     expect(screen.getByRole('button', { name: /open the array in code/i })).toBeDefined()
   })
 
+  describe('a code-bound value that can be typed over (G-6, OD-20)', () => {
+    const unbindable: EditConstraint = {
+      reason: 'resolved-expression',
+      scope: 'prop',
+      explanation: 'Reads `heading` from code.',
+      actions: [],
+      unbindable: true,
+    }
+
+    it('commits the typed text once, on Enter, and keeps the lock glyph beside the field', () => {
+      const changes: [string, unknown][] = []
+      render(
+        <PropertyControlRenderer
+          propKey="title"
+          control={{ type: 'text', label: 'Title' }}
+          value="Today only"
+          onChange={(key, value) => changes.push([key, value])}
+          constraint={unbindable}
+        />,
+      )
+
+      const input = screen.getByRole('textbox', { name: 'Title' }) as HTMLInputElement
+      expect(input.value).toBe('Today only')
+      fireEvent.change(input, { target: { value: 'Fresh' } })
+      fireEvent.change(input, { target: { value: 'Fresh beans' } })
+      expect(changes).toEqual([]) // typing writes nothing
+      fireEvent.keyDown(input, { key: 'Enter' })
+      expect(changes).toEqual([['title', 'Fresh beans']])
+      // The field still says it is showing code, and says what committing does.
+      expect(screen.getByRole('button', { name: /set in code.*replace it with text/i })).toBeDefined()
+    })
+
+    it('Escape discards the typing and writes nothing', () => {
+      const changes: [string, unknown][] = []
+      render(
+        <PropertyControlRenderer
+          propKey="title"
+          control={{ type: 'text', label: 'Title' }}
+          value="Today only"
+          onChange={(key, value) => changes.push([key, value])}
+          constraint={unbindable}
+        />,
+      )
+      const input = screen.getByRole('textbox', { name: 'Title' }) as HTMLInputElement
+      fireEvent.change(input, { target: { value: 'Fresh' } })
+      fireEvent.keyDown(input, { key: 'Escape' })
+      expect(changes).toEqual([])
+      expect(input.value).toBe('Today only')
+    })
+
+    it('stays a read-only stand-in for a control that is not free text, and for a constraint that is not unbindable', () => {
+      const select = renderControl(
+        { type: 'select', label: 'Tone', options: [{ label: 'A', value: 'a' }] },
+        'tone',
+        'a',
+        unbindable,
+      )
+      expect(select).toContain('data-testid="code-value-tone"')
+      expect(select).not.toContain('<input')
+
+      const plain = renderControl({ type: 'text', label: 'Title' }, 'title', 'Today only', { ...unbindable, unbindable: undefined })
+      expect(plain).toContain('data-testid="code-value-title"')
+      expect(plain).not.toContain('<input')
+    })
+  })
+
   it('leaves an unlocked node fully editable', () => {
     const html = renderControl({ type: 'text', label: 'Title' }, 'title', 'Editable')
 

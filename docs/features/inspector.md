@@ -2289,6 +2289,53 @@ opens and when the project's stylesheets change). The contract of a value cell:
 
 `studio_set_tokens` takes `rename` / `remove` (each its own call) next to
 `set`, through the same planner.
+
+### §10.9 Text and effect styles (CT-5)
+
+Figma's text and effect styles are a library the document owns. Here they are
+the project's own classes: **a text style is a class whose declarations are one
+typography bundle, an effect style one shadow/blur bundle** (`studio/
+textStyleDiscovery.ts`, read from the registry the board loaded, so it covers
+`.css` and `*.module.css` alike; a CSS Module class is listed by its local
+name). Text: at least two declarations, one of them family/size/weight/line
+height/letter spacing, and nothing but typography (alignment, colour and
+wrapping are tolerated companions; `margin` or `display` make it a component's
+class). Effect: only `box-shadow`, `filter`, `backdrop-filter`, `text-shadow`,
+at least one not `text-shadow`. Framework-generated utilities, ambient rules,
+`@keyframes` and styled-component classes are never styles.
+
+The Text and Effects section headers carry a styles button (single selection
+only) whose menu lists the project's styles of that family, then **Create ...
+style from selection** and, while one is applied, **Detach style**; the applied
+style also shows as a chip at the top of the section with its detach button.
+Each gesture is planned by `studio/textStylePlan.ts` into edits the writeback
+already has and posted as ONE structural commit (`textStyleCommit.ts`):
+
+| gesture | edits |
+|---|---|
+| apply | `class` add (and take off the family's other style) + `style` strip of the inline values the class now owns - an inline value outranks a class, so leaving it would make the click do nothing |
+| create | `css` insert (the new `.text-<name>` / `.effect-<name>` rule, from the values the layer shows: its classes in cascade order, then its inline values; a value the layer computes in code is not copied) + `class` add + `style` strip. The rule goes where the class picker puts a new class (`resolveCssInsertDestination`); with no stylesheet at all the server makes a plain global `studio.css` |
+| detach | `class` remove + `style` set of the class's declarations inline, except the ones the element already set itself. Refused for a style that also changes at a breakpoint (a `style=""` attribute cannot be media-queried) |
+
+Every `class` edit carries `restyle: true` (`studioEditSchemas.ts`), which asks
+the batch for two things no other class edit gets: it is **journaled** - the
+journal's pre-image also holds the stylesheet a `css` edit names (a CSS edit
+names a file, not a `line:col`, so it is not in the touched-file set) and the
+stylesheet a create made - and it is **all or nothing**
+(`BatchUndoJournal.rollbackRestyle`): if any edit of the batch refuses, every
+file goes back to the pre-image, a created stylesheet is removed, `written` is
+0, and the edits that had run are reported `restyle-rolled-back` after the real
+refusal. Without that, a refused `className` (an expression the codemod cannot
+rewrite) would have left the inline values stripped and no class on the layer.
+Cmd+Z is the journal's `restore` (all files byte for byte); Cmd+Shift+Z posts
+the same edits again.
+
+A refusal the client can know (a name taken, a layer computed in code, a
+generated `.map` row) is a sentence in the name popover or a warning toast
+("Style not applied"), never a silent no-op. Not built: hover preview of a
+style on the canvas (an inline value would mask it), multi-selection, and
+breakpoint-aware create.
+
 ## §11. What an inspector gesture costs the undo stack
 
 Two defects made Ctrl+Z read as broken from the Properties panel. Both were
@@ -2375,6 +2422,12 @@ The dev-only `PanelCrashProbe` mounted inside each boundary is how a browser
 spec crashes exactly one of them:
 `window.dispatchEvent(new CustomEvent('studio:panel-crash-probe', { detail: 'inspector:fill' }))`.
 It is erased from a production build at its mount site.
+
+---
+
+## §13. Editing a variant: the write target is the variant's rule (CV-4)
+
+While the selected element is a component's own element and the person is editing the MAIN component (any element of a variants gallery, or a component named by "Edit main component"), `SelectionModel.writeTargetFor` is not the P1 rule: a variant prop that styles the element aims EVERY property at the shown variant's rule (`.btn-ghost`), or returns `none` with the reason and the remedy when that variant has no honest rule. It never falls back to the base class or to `style=""`, which is exactly the leak the rule exists to close. `VariantContextChip` (above the sections) says "Editing variant ghost: .btn-ghost in Button.module.css", switches axis when several props style the element, and is the refusal text when none can; a refused commit is one `warning` toast with "Open in code". On an INSTANCE (which owns no element) the Component section's Main component mode shows the same sentence with **Edit style**, which enters the instance and selects the element. Contract and limits: `docs/features/studio-import.md`, "Style edits per variant — the variant edit context (CV-4)".
 
 ---
 

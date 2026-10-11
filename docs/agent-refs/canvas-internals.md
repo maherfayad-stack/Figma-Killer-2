@@ -2575,6 +2575,7 @@ cloned wheel. Everything the board learns about a bridge frame arrives as a
 | `ready`, `hmr:before`/`hmr:after`, `frame:resize`, `error`, `measure:result` | unchanged | `useAdapterReady`, `overlayMeasureScheduler`, `useIframeFrameAutoHeight`, `useBridgeFrameDiagnostics`, `useBridgeComputedValues`, and (`hmr:after`/`frame:resize`) `useBridgeSelectionChrome`'s anchor refresh |
 | `key` (P2-B; `down`/`up`, `key`/`code` ≤ 32 chars, `location`, `repeat`, modifiers) / `blur` | `keyForwarding.ts` — capture-phase `keydown`/`keyup` on the document and `blur` on its window, DESIGN mode only, never for a key typed into a contentEditable or a text field; a design-mode keydown is cancelled and stopped in the frame | `useBridgeFrameInteraction` → `canvasFrameKeyRelay.ts`, the portal frame's own relay: `down` becomes a keydown clone on the parent `document` (the one dispatcher), `up` goes into the release broadcast, `blur` releases every held key if focus left the editor (ERR-11) |
 | `dropCandidates:result` (`speed-06`; every stamped node's `{nodeId, occurrenceIndex, rect, axis, reversed, childRects}`, bounded ≤2000 candidates/≤200 `childRects` each) | `dropCandidates.ts`'s `collectDropCandidates`, answering the matching `dropCandidates` request | `BridgeFrameAdapter.measureDropCandidates()`'s pending-request map → `canvasInsertionDragSnapshot.ts`'s per-drag snapshot (never a per-move consumer) |
+| `measureAll:result` / `geometry:dirty` (SB-3; every boxed node's `{nodeId, occurrenceIndex, rect, parent, clips, inert, transformed, paint}`, bounded ≤4000 with a `truncated` flag; the ping is a latch, once per read, and only after the first `measureAll`) | `nodeGeometry.ts`'s `collectNodeGeometry` answering the matching `measureAll`; `geometryDirtySignal.ts` fed by the body `layoutObserver` the runtime already runs | `BridgeFrameAdapter.measureAll()`'s pending map → `frameGeometry/frameGeometryRegistry.ts` (the rect index; see "The rect index" below) |
 
 And the other direction — what the parent sends a bridge frame that a portal
 frame never needs (each is a no-op on a portal adapter). The chrome calls come
@@ -2593,6 +2594,7 @@ frame's adapter); the rest name their caller:
 | `optimistic.insert(nodeId, parentNodeId, index, tagName, text?)` / `optimistic.delete(nodeId)` / `optimistic.move(nodeId, parentNodeId, index)` (`live-07`) | the same-tick paint of a structural gesture, ahead of the file write and Fast Refresh: `optimisticDomOps.ts` inserts a ghost element built from structured `tagName`/`text` (never HTML; the id is a throwaway `optimistic:<uuid>`), removes the node's element, or moves it. `optimisticStructuralBroadcast.ts` sends each call to EVERY registered bridge adapter; a frame that does not hold the node no-ops. Callers: `studioSourceWrites.ts` (insert), `nodeActions.ts` and `deleteNodesAction.ts` (delete), `nodeActions.ts` and `moveSequenceActions.ts` (move). |
 | `startTextEdit(nodeId, allowed, text?)` (`live-18`) | the reply to the frame's own `text:editStart` request (called from `useBridgeFrameInteraction`, not `useBridgeSelectionChrome` — the frame asks per-node, not once per selection). `allowed` makes the target `contentEditable`, seeds it with `text` (the node's current canonical value), focuses it and selects all; refused is a silent no-op, mirroring the portal editor's own silence for a non-editable double-click. `PortalFrameAdapter`'s implementation is a documented no-op — nothing in portal mode ever emits `text:editStart` in the first place, since `NodeRenderer` owns its whole session directly with no adapter round trip. `beginTextEdit(nodeId, text)` is the parent-initiated start (`text:edit` with `begin: true`; see "Inline text editing"); `isFrameReady()` says whether the frame has posted `ready`. |
 | `measureDropCandidates()` (`speed-06`) | a bounded `dropCandidates`/`dropCandidates:result` round trip; the wire candidate's stamp+`occurrenceIndex` is translated to a canonical node id exactly like every other inbound method here. Called by `canvasInsertionDragSnapshot.ts`, once per drag per frame it visits (never per pointer move) and again on that frame's own `hmr:after`/`frame:resize`. `PortalFrameAdapter`'s implementation reuses the SAME `collectDropCandidates` the runtime answers with — a portal document's `data-node-id` values are already canonical, so there is no stamp translation to do. |
+| `measureAll()` (SB-3) | one `measureAll`/`measureAll:result` round trip, translated to canonical ids; arms the frame's `geometry:dirty` signal. A stamp the page tree does not know is folded into its nearest known ancestor. Called only by `frameGeometryRegistry.ts`. `PortalFrameAdapter` runs the SAME `collectNodeGeometry` synchronously. |
 
 **Inline-style edit -> paint, static frames (W3-c, measured 2026-10-11, preview build).** A portal frame paints an inline-style commit from the store write itself, never from the save: the field's `input` event to the frame's computed style reads the new value in ~27 ms (median; the next frame), a commit-only control (text colour: no live preview while typing) in ~17 ms after Enter, and over the 2.2 s the autosave, re-parse and reload take the value never changes again (no reconcile flash). The 0.86-0.95 s of the 2026-10-10 audit is the write (210-295 ms) plus the reload, i.e. what a frame that waits for the file shows; it is not reproducible on a static frame. `tests/e2e/canvas-edit-budgets.e2e.ts` ("inline-style edit -> paint", budget 35 ms) pins both the paint and the no-flash. Live (bridge) frames are unmeasured here: they need an installed project, which the e2e workspace cannot boot.
 
@@ -2878,3 +2880,80 @@ whose resolved page differs from the active one calls
 `openPageInCanvas(resolved.pageId)` BEFORE the insert commits — every insert
 action writes through `mutateActiveTree`, so the active document has to
 already BE the target page or the write lands nowhere.
+
+### The rect index (SB-3) — where every node of a frame is, without asking the frame
+
+`canvas/frameGeometry/` answers "what is under this board point" and "where is
+node X, in board units" from a per-frame snapshot, with no read of the frame's
+document and no `elementRect x zoom + iframeOffset + panOffset` chain to go
+stale. It is the foundation SB-4 draws the selection chrome from (parent-side,
+no in-frame rings) and the only way to hit-test a frame that has no live
+document (a poster). Nothing on the click or hover path consumes it yet: the
+one consumer today is the right-click "Select layer" list
+(`canvasNodesUnderPoint.ts`, which used to call `elementsFromPoint`, and now
+also works for a bridge frame, where the list used to be empty).
+
+| File | Job |
+|---|---|
+| `frameGeometryTypes.ts` | `NodeGeometry` / `FrameGeometrySnapshot`: the batched read, as plain data (already serializable, which is what lets SB-5/6 persist it beside a poster). A dependency-free leaf. |
+| `packedRTree.ts` | Static, bulk-loaded R-tree over typed arrays (Sort-Tile-Recursive packing, 16 per node). Point and rectangle search only. |
+| `frameGeometryIndex.ts` | `FrameGeometryIndex.fromSnapshot(snapshot, origin)`: `nodesAt(point)` (topmost first), `hitTest`, `rectOf`, `bounds`, `nodesIn(rect)`, `ancestorsOf`, `setOrigin`. Board-space API over a frame-viewport-space tree: moving a frame is `setOrigin`, O(1), never a rebuild. |
+| `frameGeometryRegistry.ts` | `getFrameGeometry(iframe)` (lazy, re-reads when dirty, concurrent askers share one read), `peekFrameGeometry` (never reads), `onFrameGeometryDirty`, `hitTestBoard(clientPoint)`. Discovers frames through `canvasFrameAdapterRegistry`. |
+
+**The read.** `adapter.measureAll()` returns every boxed node in document order:
+`nodeVisualRect` (a `display: contents` host takes the union of its children;
+the function moved into `@core/studio-runtime/nodeVisualRect.ts` and
+`canvasDomGeometry.ts` re-exports it), body-relative, plus `parent` (nearest
+listed ancestor), and the four facts a hit test needs: `clips` (overflow not
+visible), `inert` (`pointer-events: none` / `visibility: hidden`), `transformed`
+and `paint` (a paint rank: `z-index x 2`, +1 if positioned). One
+`querySelectorAll`, one body rect, one `getComputedStyle` per boxed node:
+`collectNodeGeometry` (`@core/studio-runtime`), shared verbatim by the bridge
+runtime (`measureAll` -> `measureAll:result`, one array) and the portal adapter.
+Measured: 1.1-1.4 ms median for a 140-node frame in a live portal frame; the
+index build is 0.2-0.3 ms and a point query 1.3-1.6 us (the browser's
+`elementsFromPoint` on the same frame: 17-18 us).
+
+**Dirty.** Both frames already run a subtree `childList` + `attributes`
+observer on the body for ring repositioning (`runtime.ts` `layoutObserver`,
+`PortalFrameAdapter` `armLayoutTracking`); it now also calls
+`geometrySignal.notify()`, for every record that is not the editor's own chrome.
+`geometryDirtySignal.ts` adds only what that observer cannot see, and only once
+the parent has asked for geometry: the `<head>` (a rewritten `<style>` moves
+boxes with no body mutation), `load`, `document.fonts` `loadingdone`,
+`transitionend`/`animationend`, and window `resize`. It is a latch: `geometry:dirty`
+fires once and stays quiet until the next `measureAll`, so a live app mutating
+every frame costs one message per read. A bridge frame's reloaded document (a
+second `ready`) is reported dirty by the adapter. A frame nobody indexes pays
+nothing: no observer, no listener, no message.
+
+**What a hit reproduces, and what it flags.** Reproduced: deepest box over its
+ancestors, siblings by paint rank then document order, `pointer-events: none`
+and `visibility: hidden` skipped (their hittable descendants still hit), a point
+outside a clipping ancestor cannot hit its descendants, half-open edges like the
+browser. `FrameHit.approximate` is true for a `transformed` node or ancestor (the
+rect is the bounds of a quad) and for any hit in a `truncated` read. NOT modelled
+and NOT flagged: `border-radius` corners (a box is hit as its rectangle), a
+negative `z-index` behind a non-stacking parent, `opacity`/`filter`/`isolation`
+stacking contexts, floats, `clip-path`/`mask`. A caller that must be exact (a
+drag that commits to a drop target) confirms with the native hit test while the
+frame is live. Bridge frames additionally lose the `clips`/`inert` facts of a
+stamp the page tree does not know (it is folded into its known ancestor).
+
+**Press resolution needs no change.** `resolveCanvasPressTarget` was already
+pure over the page tree (hit id in, layer id out), so a poster frame's press is
+`index.hitTest(boardPoint).nodeId` fed to the same function
+(`indexPressTarget.test.ts` composes them with no document).
+
+**Verified against the browser, in real layout** (`tests/e2e/frame-geometry-index.e2e.ts`;
+happy-dom has no layout): a probe bundle runs the real `collectNodeGeometry` +
+`FrameGeometryIndex` over a point grid and compares with `elementsFromPoint`
+mapped through `closest('[data-node-id]')`. An adversarial page (absolute overlap
+with z-index, `overflow: hidden`, `pointer-events: none`, `visibility: hidden`,
+`display: contents`, a rotated node): 22 004 of 22 211 points equal, the other 207
+all inside the rotated node and all flagged `approximate`, 0 unflagged
+mismatches. The 100-frame corpus's live frame: 20 862 of 20 864 equal; the two
+that differ are `border-radius` corners.
+
+**Freshness is the caller's rule:** ask `getFrameGeometry` when correctness
+matters, `peekFrameGeometry` when waiting is worse than a one-frame-stale answer.

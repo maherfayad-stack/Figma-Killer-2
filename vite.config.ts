@@ -118,6 +118,9 @@ function isPixelArtIconModule(moduleId: string): boolean {
 
 function vendorChunkName(moduleId: string): string | null {
   if (isPixelArtIconModule(moduleId)) return 'pixel-art-icons'
+  // Every shared UI primitive in one chunk: as separate sub-2 KB chunks they
+  // fill the route shell's preload table (see bundle-size-budgets.test.ts).
+  if (moduleId.replace(/\\/g, '/').includes('/src/ui/components/')) return 'ui-components'
   if (!moduleId.includes('node_modules')) return null
   if (moduleId.includes('node_modules/react-dom') || /node_modules\/react(\/|\\)/.test(moduleId)) {
     return 'react-vendor'

@@ -15,11 +15,21 @@
  * writer crosses (the editor, a plugin, the agent's `studio_apply_edits`), so
  * the codemod refuses by name — `JsxPropTargetError`, reason
  * `binding-overwrite` — rather than trusting that no caller ever asks.
+ *
+ * ## ...unless the caller says it means to (G-6, OD-20)
+ *
+ * Typing into a field that shows a code-bound value is explicit intent, so
+ * `unbind: true` replaces a plain VALUE expression (`title={count}`,
+ * `label={t('x')}`) with the literal. The editor shows what was replaced and
+ * offers Undo - the undo journal puts the bytes back. Even then, markup
+ * (`icon={<svg/>}`), a function (`onClick={fn}`) and a whole array or object are
+ * not values the field showed, so they still refuse (`unbindableExpression.ts`).
  */
-import { Node, Project } from 'ts-morph'
+import { Node, Project, type JsxAttribute } from 'ts-morph'
 import { isLiteralJsxAttribute } from '@core/page-parser'
 import { createProject, findJsxElementAtLocationOrThrow, loadSourceFile } from './locateJsxElement'
 import { jsxAttributeInitializerText, jsxAttributeQuote } from './stringSpelling'
+import { isUnbindableExpression } from './unbindableExpression'
 
 export interface SetJsxPropParams {
   file: string
@@ -27,6 +37,8 @@ export interface SetJsxPropParams {
   col: number
   prop: string
   value: string | number | boolean
+  /** G-6 - replace a code-bound value with `value`. Without it, code is never overwritten. */
+  unbind?: boolean
   /** Optional pre-existing project to reuse (e.g. across multiple edits). */
   project?: Project
 }
@@ -64,6 +76,12 @@ export class JsxPropTargetError extends Error {
   }
 }
 
+/** `title={count}` - an attribute whose code is a plain value, not markup, a function or a whole array/object. */
+function isUnbindableAttribute(attribute: JsxAttribute): boolean {
+  const initializer = attribute.getInitializer()
+  return initializer !== undefined && Node.isJsxExpression(initializer) && isUnbindableExpression(initializer.getExpression())
+}
+
 export function setJsxProp(params: SetJsxPropParams): void {
   const { file, line, col, prop, value } = params
   const project = params.project ?? createProject()
@@ -77,9 +95,11 @@ export function setJsxProp(params: SetJsxPropParams): void {
   )
 
   if (existingAttribute && Node.isJsxAttribute(existingAttribute)) {
-    if (!isLiteralJsxAttribute(existingAttribute)) {
+    if (!isLiteralJsxAttribute(existingAttribute) && !(params.unbind === true && isUnbindableAttribute(existingAttribute))) {
       throw new JsxPropTargetError(
-        `"${prop}" is set from code here (${existingAttribute.getInitializer()?.getText() ?? ''}), not a literal, so writing a value would replace that code and delete the binding. Change it in the code, or edit the value it reads.`,
+        params.unbind === true
+          ? `"${prop}" holds markup, a function or a whole list or object (${existingAttribute.getInitializer()?.getText() ?? ''}), not a value a typed literal can stand in for, so Studio did not replace it. Change it in the code.`
+          : `"${prop}" is set from code here (${existingAttribute.getInitializer()?.getText() ?? ''}), not a literal, so writing a value would replace that code and delete the binding. Change it in the code, or edit the value it reads.`,
         `${file}:${line}:${col}`,
       )
     }

@@ -87,6 +87,7 @@ export const createSiteSlice: EditorStoreSliceCreator<SiteSlice & InstanceDetach
 
     // OD-19 — the explicit all-instances mode (`instanceOverrideActions.ts`).
     mainEditComponent: null,
+    variantEditAxis: null,
     ...instanceOverrides.slice,
 
     // mutateAllPagesAndSite is the public entry point for the Super Import

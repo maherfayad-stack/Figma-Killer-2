@@ -10,8 +10,9 @@
  *
  *   | binding             | Add variant                                   | Remove variant                |
  *   |---------------------|-----------------------------------------------|-------------------------------|
- *   | css-module-class    | copy the default member's rule under `.new`   | delete that member's rule     |
- *   | data-attr           | copy its `[data-x="default"]` rule            | delete that member's rule     |
+ *   | css-module-class    | copy the default member's rule and its state  | delete that member's rule and |
+ *   |                     | rules (`.x:hover`) under the new name         | its state rules               |
+ *   | data-attr           | the same, for `[data-x="default"]` rules      | the same                      |
  *   | lookup-object / cva | copy the default member's entry under `new`   | delete that member's entry    |
  *   | boolean-class       | refused (a boolean has no members)            | refused                       |
  *   | opaque / unread     | refused with the line that defeated Studio    | refused                       |
@@ -260,7 +261,7 @@ export function planRemoveVariant(input: VariantPropInput, read: ReadWorkspaceTe
       if (!removed.ok) return { ok: false, refusal: removed.refusal }
       stylingFile = target.rule.range.file
       styling = 'removed'
-      edits.add(stylingFile, removed.splice)
+      for (const splice of removed.splices) edits.add(stylingFile, splice)
     }
   } else {
     const entry = binding.entries.find((candidate) => candidate.member === name)

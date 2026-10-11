@@ -33,6 +33,8 @@ a text edit can re-flow children and a style edit can rewrite a multi-line
 - **prop** replaces only a LITERAL attribute value, or adds a missing
   attribute. An attribute holding code (\`title={c.heading}\`, \`onClick={fn}\`)
   refuses with \`binding-overwrite\` rather than baking a literal over it.
+  (The editor alone may replace code with a typed value, because only it can
+  offer Undo; \`unbind\` from a tool call refuses \`unbind-editor-only\`.)
 - **literal** (\`{ kind: "literal", nodeId: "<file>:<line>:<col>", text, expected }\`)
   rewrites the string literal a resolved value came from (a dictionary entry,
   a call-site attribute). \`expected\` is the text you read there; when the file

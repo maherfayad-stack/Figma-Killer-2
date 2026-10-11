@@ -31,8 +31,13 @@ export function useCanvasLayerContextMenu(): CanvasLayerContextMenuApi {
 
   // The layers under the pointer are read once, as the menu opens — the one
   // moment the point means anything (`x`/`y` are editor-document client px).
+  // The menu opens at once; the "Select layer" list fills in when the frame's
+  // rect index answers (a microtask for a warm or same-origin frame).
   const open = (next: CanvasContextMenuPosition) => {
-    setPosition({ ...next, layerIdsUnderPointer: nodesUnderClientPoint(next.x, next.y) })
+    setPosition({ ...next, layerIdsUnderPointer: [] })
+    void nodesUnderClientPoint(next.x, next.y).then((layerIdsUnderPointer) => {
+      setPosition((current) => (current && current.x === next.x && current.y === next.y && current.nodeId === next.nodeId ? { ...current, layerIdsUnderPointer } : current))
+    })
   }
 
   const close = () => {
