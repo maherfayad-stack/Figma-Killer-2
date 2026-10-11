@@ -268,7 +268,7 @@ describe('extractLocalComponentCatalog roles', () => {
     write('pages/Home.tsx', 'export default function Home() {\n  return <main />\n}')
     write('components/Hero.tsx', 'export default function Hero() {\n  return <section />\n}')
     const project = createWorkspaceProject(tmpDir)
-    const roles = Object.fromEntries(extractLocalComponentCatalog(project, tmpDir, 'pages').map((c) => [c.name, c.role]))
+    const roles = Object.fromEntries(extractLocalComponentCatalog(project, tmpDir, { pagesDir: 'pages' }).map((c) => [c.name, c.role]))
     expect(roles).toEqual({ Home: 'page', Hero: 'component' })
   })
 

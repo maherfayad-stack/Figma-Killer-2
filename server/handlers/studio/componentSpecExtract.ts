@@ -496,6 +496,18 @@ function variantFieldsFor(
   return fields
 }
 
+/**
+ * `analyzeBindings: false` skips reading each component's stylesheets — the
+ * variants gallery only needs the axes and their members, and runs on every
+ * full load, where the catalog route runs on demand.
+ */
+export interface LocalCatalogOptions {
+  /** The project's detected pages directory, POSIX, relative to `workspaceRoot` (`.studio/meta.json` `profile.pagesDir`). */
+  pagesDir?: string
+  /** Read each enum/boolean prop's variant bindings (default on; the gallery's discovery pass skips the stylesheet analysis). */
+  analyzeBindings?: boolean
+}
+
 /** `buildComponentSpec`, plus the variant read model for every enum/boolean prop. */
 function buildLocalComponentSpec(
   project: Project,
@@ -504,13 +516,14 @@ function buildLocalComponentSpec(
   declaration: Node,
   relFile: string,
   isDefaultExport: boolean,
+  analyzeBindings: boolean,
 ): Omit<LocalComponentSpec, 'role'> | undefined {
   const spec = buildComponentSpec(project, exportName, declaration, relFile, isDefaultExport)
   if (!spec) return undefined
   const signatures = new Map(
     (resolveTypeNodeToMembers(project, resolvePropsTypeNode(declaration))?.getProperties() ?? []).map((p) => [p.getName(), p] as const),
   )
-  const context = createComponentAnalysisContext(declaration, workspaceRoot)
+  const context = analyzeBindings ? createComponentAnalysisContext(declaration, workspaceRoot) : undefined
   return {
     ...spec,
     props: spec.props.map((prop) => ({
@@ -539,8 +552,9 @@ function localSpec(
   declaration: Node,
   relFile: string,
   isDefaultExport: boolean,
+  analyzeBindings: boolean,
 ): LocalComponentSpec | undefined {
-  const spec = buildLocalComponentSpec(project, workspaceRoot, exportName, declaration, relFile, isDefaultExport)
+  const spec = buildLocalComponentSpec(project, workspaceRoot, exportName, declaration, relFile, isDefaultExport, analyzeBindings)
   if (!spec) return undefined
   const role = componentRole(relFile, pagesPrefix, declaration)
   return { ...spec, role }
@@ -575,12 +589,8 @@ function localSpec(
  * source-fallback tier already gives; this module never fabricates a prop
  * kind it can't read from a type annotation.
  */
-export function extractLocalComponentCatalog(
-  project: Project,
-  workspaceRoot: string,
-  /** The project's detected pages directory, POSIX, relative to `workspaceRoot` (`.studio/meta.json` `profile.pagesDir`). */
-  pagesDir?: string,
-): LocalComponentSpec[] {
+export function extractLocalComponentCatalog(project: Project, workspaceRoot: string, options: LocalCatalogOptions = {}): LocalComponentSpec[] {
+  const { pagesDir, analyzeBindings = true } = options
   const specs: LocalComponentSpec[] = []
   const pagesPrefix = pagesDir ? `${toPosix(pagesDir).replace(/^\.?\/+|\/+$/g, '')}/` : null
 
@@ -600,20 +610,20 @@ export function extractLocalComponentCatalog(
 
     for (const fn of sourceFile.getFunctions()) {
       if (fn.isDefaultExport()) {
-        const spec = localSpec(project, workspaceRoot, pagesPrefix, 'default', fn, relFile, true)
+        const spec = localSpec(project, workspaceRoot, pagesPrefix, 'default', fn, relFile, true, analyzeBindings)
         if (spec) specs.push(spec)
       } else if (fn.isExported() && fn.getName()) {
-        const spec = localSpec(project, workspaceRoot, pagesPrefix, fn.getName()!, fn, relFile, false)
+        const spec = localSpec(project, workspaceRoot, pagesPrefix, fn.getName()!, fn, relFile, false, analyzeBindings)
         if (spec) specs.push(spec)
       }
     }
 
     for (const cls of sourceFile.getClasses()) {
       if (cls.isDefaultExport()) {
-        const spec = localSpec(project, workspaceRoot, pagesPrefix, 'default', cls, relFile, true)
+        const spec = localSpec(project, workspaceRoot, pagesPrefix, 'default', cls, relFile, true, analyzeBindings)
         if (spec) specs.push(spec)
       } else if (cls.isExported() && cls.getName()) {
-        const spec = localSpec(project, workspaceRoot, pagesPrefix, cls.getName()!, cls, relFile, false)
+        const spec = localSpec(project, workspaceRoot, pagesPrefix, cls.getName()!, cls, relFile, false, analyzeBindings)
         if (spec) specs.push(spec)
       }
     }
@@ -621,7 +631,7 @@ export function extractLocalComponentCatalog(
     for (const stmt of sourceFile.getVariableStatements()) {
       if (!stmt.isExported()) continue
       for (const decl of stmt.getDeclarations()) {
-        const spec = localSpec(project, workspaceRoot, pagesPrefix, decl.getName(), decl, relFile, false)
+        const spec = localSpec(project, workspaceRoot, pagesPrefix, decl.getName(), decl, relFile, false, analyzeBindings)
         if (spec) specs.push(spec)
       }
     }
@@ -638,7 +648,7 @@ export function extractLocalComponentCatalog(
         sourceFile.getClass(defaultIdentifierName) ??
         sourceFile.getVariableDeclaration(defaultIdentifierName)
       if (declaration) {
-        const spec = localSpec(project, workspaceRoot, pagesPrefix, 'default', declaration, relFile, true)
+        const spec = localSpec(project, workspaceRoot, pagesPrefix, 'default', declaration, relFile, true, analyzeBindings)
         if (spec) specs.push(spec)
       }
     }

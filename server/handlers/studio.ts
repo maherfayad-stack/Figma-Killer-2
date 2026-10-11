@@ -303,7 +303,7 @@ import { applyStudioEditBatchLocked } from './studioWriteback'
 import { applyStudioEditSequenceLocked } from './studioEditSequence'
 import { withIdempotentReplay } from './studio/idempotentReplay'
 import { registeredMcpServerProjectKey } from '../ai/drivers/registeredMcpServers'
-import { syncStoryBoardFrames } from './studio/boardFrames'
+import { syncComponentBoardFrames, syncStoryBoardFrames } from './studio/boardFrames'
 import { gateStudioRequest, type StudioSessionRuntime } from './studio/routeGate'
 import { STUDIO_SESSION_SUB_ROUTERS, STUDIO_SUB_ROUTERS } from './studio/subRouters'
 import type { DbClient } from '../db/client'
@@ -368,6 +368,8 @@ export async function tryServeStudio(
       // story ROUTES are all still discovered and parsed; only the per-page
       // convert narrows), so a targeted reload can never retract a frame.
       syncStoryBoardFrames(dir, loaded.stories)
+      // CV-2 — the same one-time placement for the components' variants galleries.
+      syncComponentBoardFrames(dir, loaded.galleries)
       // W7-2 — the one request that means "this project is on the board".
       // Recorded here rather than in the launcher's click handler because a
       // project is also opened by a reload, by the sticky `studioWorkspaceDir`

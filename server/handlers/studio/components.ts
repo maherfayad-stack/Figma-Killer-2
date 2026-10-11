@@ -64,7 +64,7 @@ export async function tryServeStudioComponents(req: Request, url: URL, pathname:
     const components: LocalComponentSpec[] = extractLocalComponentCatalog(
       project,
       dir,
-      relative(dir, projectPagesDir(dir)).split(sep).join('/'),
+      { pagesDir: relative(dir, projectPagesDir(dir)).split(sep).join('/') },
     )
     return jsonResponse({ components })
   } catch (err) {

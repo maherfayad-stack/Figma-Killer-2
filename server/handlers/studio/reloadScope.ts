@@ -103,6 +103,7 @@ import { assignAppRouterPageIds, assignPageIds } from '../studioPageIds'
 import { readStudioMeta, type StudioMeta } from './studioMeta'
 import { storyFilesIn } from './storyDiscovery'
 import { storyPageIdFromRoutePath } from './storyPages'
+import { galleryPageIdFromRoutePath } from './componentGallery'
 import { cachedRouteDependencies } from './pageParseCache'
 import { canvasLayerIdFromRel, canvasLayerPageId } from '@core/studio-board'
 import { canvasLayerIdFromCacheRoute } from './canvasLayerLoad'
@@ -166,6 +167,17 @@ function resolveNarrowReloadPageIds(dir: string, filesRelToDir: readonly string[
     const layerId = canvasLayerIdFromCacheRoute(routePath)
     if (layerId) {
       idByRoutePath.set(routePath, canvasLayerPageId(layerId))
+      continue
+    }
+    // CV-2 — a variants gallery is cached and named like a route: its key
+    // carries its page id, so an edit to the component narrows to that
+    // gallery's page. A gallery can also APPEAR or VANISH when an edit adds or
+    // removes an enum/boolean prop; that is a change of board shape no
+    // `/save` the editor makes today produces (axes are only written by CV-3),
+    // and an external edit reloads in full.
+    const galleryPageId = galleryPageIdFromRoutePath(routePath)
+    if (galleryPageId !== null) {
+      idByRoutePath.set(routePath, galleryPageId)
       continue
     }
     const storyPageId = storyPageIdFromRoutePath(routePath)
