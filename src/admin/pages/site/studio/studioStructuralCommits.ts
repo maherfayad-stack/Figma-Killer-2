@@ -27,7 +27,6 @@
 import { decodeSourceNodeId } from '@core/page-tree'
 import type { OptimisticPreviewHandle } from '@site/store/slices/site/structuralOptimism'
 import type { StructuralCommitRollback } from '@site/store/slices/site/structuralCommitRollback'
-import type { SourceDuplicateToCommit } from '@site/store/slices/site/structuralSourceEdits'
 import { commitStructural, type StructuralCommitOptions } from './studioStructuralCommitEngine'
 import {
   dissolveWrapperTemplate,
@@ -49,6 +48,29 @@ import type { InsertPropValue, SlotJsxNode, StudioSaveResponse } from './studioS
  * `undo`/`rollback`/`optimistic`/`select` mean what they mean for every other
  * commit (`StructuralCommitOptions`).
  */
+/** Where one Alt-dragged or pasted COPY is written: inside which container, beside which existing child. */
+export interface SourceDuplicateToCommit {
+  /** The element being copied. */
+  nodeId: string
+  /** The container the copy lands in — a real source node, never the synthetic page root. */
+  parentNodeId: string
+  /** The existing child the copy is written next to, or `null` to append as the last child. */
+  anchorNodeId: string | null
+  position: 'before' | 'after'
+  /**
+   * ERR-16 — the container is written in ANOTHER file than the element, so the
+   * copy is a `transplant` with `copy: true`: it carries the imports the markup
+   * needs there, and refuses by name when a local it reads cannot travel.
+   */
+  crossFile?: true
+  /**
+   * The container has no children yet, so the copy may expand a self-closing
+   * `<X />` — and deleting the copy does not put that back. The copy's undo is
+   * then the undo journal's `restore` (as `SourceInsertCommit.parentIsEmpty`).
+   */
+  parentIsEmpty?: true
+}
+
 export async function commitStudioSequence(
   edits: readonly StructuralEditPayload[],
   refusalTitle: string,

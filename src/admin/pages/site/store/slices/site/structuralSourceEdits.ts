@@ -62,6 +62,7 @@ import { constraintPrimaryAction, constraintToastBody } from '../../constraintAc
 import { openSourceFile } from '../../openSourceFile'
 import type { EditorStore } from '@site/store/types'
 import { applyToThisInstanceOnly } from './instanceOnlyGesture'
+import type { SourceDuplicateToCommit } from '@site/studio/studioStructuralCommits'
 import { nodeHtmlTag } from './nodeHtmlTag'
 import type { EditorStoreSetter } from './types'
 
@@ -231,29 +232,6 @@ export function planSourceDuplicate(
     if (isSourceDerivedNodeId(node.id)) commit.push(node.id)
   }
   return { ok: true, commit: commit.length > 0 ? commit : null }
-}
-
-/** Where one Alt-dragged or pasted COPY is written: inside which container, beside which existing child. */
-export interface SourceDuplicateToCommit {
-  /** The element being copied. */
-  nodeId: string
-  /** The container the copy lands in — a real source node, never the synthetic page root. */
-  parentNodeId: string
-  /** The existing child the copy is written next to, or `null` to append as the last child. */
-  anchorNodeId: string | null
-  position: 'before' | 'after'
-  /**
-   * ERR-16 — the container is written in ANOTHER file than the element, so the
-   * copy is a `transplant` with `copy: true`: it carries the imports the markup
-   * needs there, and refuses by name when a local it reads cannot travel.
-   */
-  crossFile?: true
-  /**
-   * The container has no children yet, so the copy may expand a self-closing
-   * `<X />` — and deleting the copy does not put that back. The copy's undo is
-   * then the undo journal's `restore` (as `SourceInsertCommit.parentIsEmpty`).
-   */
-  parentIsEmpty?: true
 }
 
 /**
