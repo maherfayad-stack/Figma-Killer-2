@@ -50,7 +50,7 @@ describe('planTokenEdits - rename', () => {
     expect(textOf(plan, 'src/tokens.css')).toBe(TOKENS_CSS.replaceAll('--color-brand:', '--color-primary:'))
     expect(textOf(plan, 'src/app.css')).toBe(APP_CSS.replace('var(--color-brand)', 'var(--color-primary)'))
     expect(textOf(plan, 'src/App.tsx')).toBe(APP_TSX.replace('[--color-brand]', '[--color-primary]').replace('var(--color-brand)', 'var(--color-primary)'))
-    expect(plan.ok && plan.renamed).toEqual([{ name: '--color-brand', to: '--color-primary', mentions: 5, files: 3 }])
+    expect(plan.ok && plan.renamed).toEqual([{ name: '--color-brand', to: '--color-primary', mentions: 5, files: 3, unfollowed: [] }])
   })
 
   it('refuses a name that is already declared', () => {

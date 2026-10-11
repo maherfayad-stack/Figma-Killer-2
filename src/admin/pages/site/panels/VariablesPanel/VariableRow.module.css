@@ -10,7 +10,7 @@
     padding: var(--space-3xs) 0;
     border-bottom: 1px solid var(--border-subtle);
     column-gap: var(--space-xs);
-    grid-template-columns: minmax(8rem, 1.4fr) repeat(var(--mode-count), minmax(6rem, 1fr)) 3.75rem;
+    grid-template-columns: minmax(8rem, 1.4fr) repeat(var(--mode-count), minmax(6rem, 1fr)) 5.5rem;
     list-style: none;
     row-gap: var(--space-3xs);
 }

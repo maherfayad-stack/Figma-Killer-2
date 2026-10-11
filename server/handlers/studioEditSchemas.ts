@@ -138,6 +138,14 @@ const ClassEditSchema = Type.Object({
   nodeId: Type.String(),
   add: Type.Array(ClassNameTokenSchema),
   remove: Type.Array(ClassNameTokenSchema),
+  /**
+   * CT-6 - the editor asks for the pre-image when the class edit is a one-click
+   * "apply bg-primary" from the Variables panel: whether the token was already
+   * on the element is something only the source knows, and a remove written
+   * as its undo would take away a class the author had put there. The journal
+   * puts the file back byte for byte instead (`studioBatchUndoJournal.ts`).
+   */
+  exactUndo: Type.Optional(Type.Literal(true)),
 })
 
 /**

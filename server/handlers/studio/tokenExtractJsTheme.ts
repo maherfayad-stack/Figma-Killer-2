@@ -171,7 +171,7 @@ function rawOf(value: StaticValue): string {
 
 function addEntry(context: EntryContext, group: string, spec: ThemeGroup, path: string[], classKey: string, value: StaticValue): void {
   if (context.entries.size >= MAX_ENTRIES) return
-  const why = value.kind === 'computed' ? value.why : null
+  const why = value.kind === 'computed' ? value.why : value.kind === 'array' ? (value.items.find((item): item is Extract<StaticValue, { kind: 'computed' }> => item.kind === 'computed')?.why ?? null) : null
   const utilities = context.fromConfig && classKey.length > 0 ? spec.utilities.map((utility) => `${utility}-${classKey}`) : []
   const id = `${value.file}#${group}.${path.join('.')}`
   context.entries.set(id, {

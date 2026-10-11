@@ -68,8 +68,9 @@ function publish(next: StudioTokenState): void {
  * simply has no variables to offer, which is a real answer, and the picker's
  * "no affordance when there is nothing to offer" rule handles it.
  *
- * `usage: true` (the Variables panel) also scans where each token is read; a
- * plain refresh keeps the last usage rather than dropping the panel's counts.
+ * `usage: true` (the Variables panel) also scans where each token is read and
+ * reads the values a JavaScript theme defines (CT-6); a plain refresh keeps the
+ * last of both rather than dropping the panel's counts and rows.
  */
 export async function refreshStudioTokenCatalog(options: { usage?: boolean } = {}): Promise<TokenCatalog | null> {
   const dir = studioWriteDir() ?? undefined
@@ -81,8 +82,10 @@ export async function refreshStudioTokenCatalog(options: { usage?: boolean } = {
     const usage = options.usage
       ? new Map(fresh.tokens.flatMap((token) => (token.usage ? [[token.name, token.usage] as const] : [])))
       : state.usage
-    publish({ catalog: fresh, usage })
-    return fresh
+    // A plain refresh (the picker's) does not read the JavaScript themes; keep the ones the panel last read.
+    const catalog = fresh.jsTheme || !state.catalog?.jsTheme ? fresh : { ...fresh, jsTheme: state.catalog.jsTheme }
+    publish({ catalog, usage })
+    return catalog
   } catch (err) {
     console.error('[studioTokenCatalog] could not read the token catalog:', err)
     return state.catalog

@@ -19,7 +19,7 @@
  * indentation no inverse move reproduces),
  * a free-canvas `canvas-layer-lift` / `canvas-layer-place` that MOVES (the page
  * and the layer module), a Frame selection (a `group` with a `frame`, PA-6), and an `insert` that asked for an exact undo
- * (`exactUndo`, also asked of a `duplicate` and a copying `transplant`: it writes into a childless parent), and CV-3's `add-variant` / `remove-variant` / `add-component-prop` (a component's signature plus its stylesheet). A batch holding any of them records ONE
+ * (`exactUndo`, also asked of a `duplicate`, a copying `transplant` and CT-6's apply-a-theme-class `class` edit: whether the class was already there is not something its inverse can know), and CV-3's `add-variant` / `remove-variant` / `add-component-prop` (a component's signature plus its stylesheet). A batch holding any of them records ONE
  * entry covering every file the batch changed, so one gesture is one token,
  * however many elements a multi-select delete removed and across however
  * many files.
@@ -82,7 +82,7 @@ export function isJournaled(edit: StudioEdit): boolean {
     // An insert into a childless parent expands `<X />` to `<X>…</X>`; deleting
     // the insert leaves `<X>` + newline + `</X>`, which is not what was there.
     // The client asks for the pre-image exactly when the parent had no children.
-    ((edit.kind === 'insert' || edit.kind === 'duplicate') && edit.exactUndo === true)
+    ((edit.kind === 'insert' || edit.kind === 'duplicate' || edit.kind === 'class') && edit.exactUndo === true)
   )
 }
 
