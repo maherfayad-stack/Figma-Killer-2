@@ -363,8 +363,8 @@ type PropertyChange = { property: string; value: string } | { property: string; 
  * That second half is `style-03`'s fix. This used to iterate `after` only, so
  * clearing a declaration in the inspector produced no edit at all: the canvas
  * updated, the save reported success, and the property came back on the next
- * reload with nothing said. Both directions now produce an edit, and both go
- * through the same `analyzeDeclarationTarget` gate server-side.
+ * reload with nothing said. Both directions now produce an edit, and both are
+ * written where the cascade reads them server-side (`setDeclaration`).
  */
 function diffDeclarations(before: Record<string, unknown>, after: Record<string, unknown>): PropertyChange[] {
   const changes: PropertyChange[] = []
@@ -600,21 +600,24 @@ export function collectStyleRuleEdits(
 }
 
 /**
- * W4-4 Phase B — one styled rule's changes, split into the value edits that
- * can reach the user's template and the ones that cannot.
+ * W4-4 Phase B — one styled rule's changes, split into the SETs that reach
+ * the user's template and the clears that cannot.
  *
- * ## Only a SET is a value edit
+ * ## A SET always lands (G-5)
+ *
+ * A set is rewritten in place when the template writes the value, and otherwise
+ * appended to the same block as an override (`setStyledDeclaration`'s ladder) —
+ * including a property the template never declared, which used to be reported
+ * here as unsaved and is now a new line in the block.
+ *
+ * ## A CLEAR is the exception
  *
  * A cleared declaration (`value === null`) is not a value change: writing it
  * means deleting a line from a template the user wrote, next to
- * interpolations whose position decides what the surrounding CSS means. Same
- * for a property the template never declared, which would mean adding one.
- * Both are reported through `unmapped` — the caller's existing “Style not
- * saved to source” toast, which is the right title for them — rather than
- * being silently dropped, the one outcome this whole module exists to
- * prevent. The server refuses them a second time by name if one ever reaches
- * it (`setStyledDeclaration`'s `declaration-not-in-template`); saying so here
- * is what stops the user waiting two seconds to find out.
+ * interpolations whose position decides what the surrounding CSS means. It is
+ * reported through `unmapped` — the caller's existing “Style not saved to
+ * source” toast, which is the right title for it — rather than being silently
+ * dropped, the one outcome this whole module exists to prevent.
  *
  * ## A real breakpoint IS writable here
  *

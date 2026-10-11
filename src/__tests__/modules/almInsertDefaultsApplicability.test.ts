@@ -36,7 +36,7 @@ const cardSpec = (variantExample: string | undefined): DesignSystemComponentSpec
   name: 'CardButton',
   file: 'x.jsx',
   exportName: 'CardButton',
-  isDefaultExport: false,
+  isDefaultExport: false, line: 1, column: 1,
   description: '',
   keywords: [],
   group: 'test',

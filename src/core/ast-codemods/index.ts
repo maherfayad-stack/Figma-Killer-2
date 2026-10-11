@@ -213,3 +213,10 @@ export { readSourceFingerprintAt } from './sourceFingerprintAt'
  */
 export { resolveJsxChildRange } from './jsxChildRange'
 export type { JsxChildRange, JsxChildUnit } from './jsxChildRange'
+// CV-3 — Add / remove a variant, add a component property (`variantMembers.ts`, `addComponentProp.ts`).
+export { planAddVariant, planRemoveVariant } from './variantMembers'
+export type { ReadWorkspaceText, VariantPlan, VariantPlanRefusal, VariantPlanRefusalReason, VariantPropInput, VariantStyling } from './variantMembers'
+export { addComponentProp } from './addComponentProp'
+export type { AddComponentPropRefusal, AddComponentPropRefusalReason, AddComponentPropResult, NewComponentProp } from './addComponentProp'
+export { callSitesPassingVariant, typeAliasReferences } from './variantCallSites'
+export type { VariantUse } from './variantCallSites'

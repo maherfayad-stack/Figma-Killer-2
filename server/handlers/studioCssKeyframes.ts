@@ -28,8 +28,7 @@
  *
  * ## The refusal
  *
- * `analyzeKeyframesTarget` runs first, and it needs only one rule where
- * `analyzeDeclarationTarget` needs four. A second `@keyframes` block with the
+ * `analyzeKeyframesTarget` runs first, and it needs only one rule. A second `@keyframes` block with the
  * same name does not merge with the first the way two rules with the same
  * selector do — it REPLACES it entirely — so editing the first when a second
  * exists would change the file and change nothing on screen. That is exactly

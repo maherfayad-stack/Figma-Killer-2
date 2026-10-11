@@ -472,7 +472,7 @@ Order: CT-1, CT-2, CV-1 (CV-1 in parallel), CT-3, CT-4, CV-2, CV-3, CT-5, CT-6, 
 | CT-6 | Tailwind v4 `@theme` write; v3 and JS theme read-only | S | CT-3 | not started |
 | CV-1 | Variant model (read): binding analyzer, component-properties controls | M | none | in flight |
 | CV-2 | Variants gallery: synthesized call-site frames | M | CV-1, CV-OD-2 | not started |
-| CV-3 | Add variant / add property / remove as `StudioEdit` kinds | L | CV-2, CV-OD-1, CV-OD-3, CV-OD-4 | not started |
+| CV-3 | Add variant / add property / remove as `StudioEdit` kinds | L | CV-2, CV-OD-1, CV-OD-3, CV-OD-4 | done (branch `feat/add-variant`, awaiting merge) |
 | CV-4 | Edit styles per variant (variant edit context) | L | CV-3, CT-4, P5-D | not started |
 
 ### Multiplayer: [`docs/programs/multiplayer.md`](docs/programs/multiplayer.md)

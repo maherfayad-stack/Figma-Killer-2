@@ -337,6 +337,14 @@ export {
   isImportedStyleRuleId,
 } from './styleRuleOrigin'
 
+export {
+  StyleLandingRungSchema,
+  StyleLandingSchema,
+  styleLandingNeedsJournal,
+  styleLandingText,
+} from './styleLanding'
+export type { StyleLanding, StyleLandingRung } from './styleLanding'
+
 export { getNodeDisplayName, getNodeHtmlTag, getNodeClassNames } from './nodeDisplayName'
 
 export { resolvePageTreeDropTarget } from './dnd'

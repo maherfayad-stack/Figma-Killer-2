@@ -51,6 +51,7 @@ import { shouldSeedDefaultBoard } from './studioDefaultBoardSeed'
 import { collectFrameIds, shouldRefuseBoardsSave } from './boardsSaveGuard'
 import { pushToast } from '@ui/components/Toast'
 import { retryWhileUnreachable } from '@core/http'
+import { isGalleryPage } from '@core/component-variants'
 import { useAdminUi } from '@admin/state/adminUi'
 import { CMS_SITE_RELOAD_EVENT, requestCmsSiteReload } from '@admin/state/adminEvents'
 import {
@@ -583,7 +584,8 @@ function useStudioDefaultBoardSeed(): void {
   const boardCount = useEditorStore((s) => s.boards.boards.length)
   const activeBoard = useEditorStore(selectActiveBoard)
   const activeBoardFrameCount = activeBoard?.frames.length ?? null
-  const pageCount = useEditorStore((s) => s.site?.pages.length ?? 0)
+  // A variants gallery is derived and lives on the server-placed Components board: never seeded onto this one.
+  const pageCount = useEditorStore((s) => s.site?.pages.filter((page) => !isGalleryPage(page)).length ?? 0)
   const frameDefaultsSettled = useEditorStore((s) => s.frameDefaultsSettled)
   const pagesArriving = useEditorStore((s) => s.pendingPages.length > 0)
 
@@ -591,7 +593,7 @@ function useStudioDefaultBoardSeed(): void {
     if (!shouldSeedDefaultBoard({ boardsLoaded, boardsLoadFailed, boardCount, activeBoardFrameCount, pageCount, frameDefaultsSettled, pagesArriving })) return
 
     const sitePages = useEditorStore.getState().site?.pages
-    const pageIds = sitePages ? sitePages.map((p) => p.id) : []
+    const pageIds = sitePages ? sitePages.filter((page) => !isGalleryPage(page)).map((p) => p.id) : []
     if (pageIds.length === 0) return
     useEditorStore.getState().seedFramesForActiveBoard(pageIds)
   }, [boardsLoaded, boardsLoadFailed, boardCount, activeBoardFrameCount, pageCount, frameDefaultsSettled, pagesArriving])

@@ -481,6 +481,7 @@ export async function tryServeStudio(
         swapDetails,
         detachDetails,
         createdStylesheets,
+        styleLandings,
         touchedFiles,
         createdNodeIds,
         relocatedNodeIds,
@@ -522,6 +523,8 @@ export async function tryServeStudio(
         // pre-commit confirm reads it. `studioSaveRoute.test.ts` holds it.
         detachDetails,
         createdStylesheets,
+        // G-5 — the rung each style edit landed on, for the inspector's chip.
+        styleLandings,
         touchedFiles: touchedFiles.map((file) => relative(dir, file).split(sep).join('/')),
         // `store-13`/`store-14` — the node ids this batch made and moved.
         // `applyStudioEditBatch` has computed these since `store-13`, but the
