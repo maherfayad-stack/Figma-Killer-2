@@ -21,6 +21,14 @@ import { nodeHtmlTag } from './nodeHtmlTag'
 
 export type LayoutStylePatch = Record<string, string | null>
 
+export interface LayoutConversionRequest {
+  parentId: string
+  parentPatch: LayoutStylePatch
+  childPatches: ReadonlyArray<{ nodeId: string; patch: LayoutStylePatch }>
+  /** The children's ids in the order they should end up, when it differs from the source order. */
+  order?: readonly string[]
+}
+
 export interface LayoutConversionWrite {
   nodeId: string
   patch: LayoutStylePatch

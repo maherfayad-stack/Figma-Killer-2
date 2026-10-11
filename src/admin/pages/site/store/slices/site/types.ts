@@ -74,6 +74,7 @@ import type {
  * door — every consumer already imports them from `./types`.
  */
 import type { HistoryEntry } from './historyTypes'
+import type { LayoutConversionRequest } from './layoutConversionPlan'
 import type { TransplantDestination } from './transplantDestination'
 
 export type {
@@ -321,21 +322,8 @@ export interface SiteSlice {
       | { ignore: true; parentContains: boolean; offsets: { left: number; top: number } }
       | { ignore: false; releaseParent: boolean },
   ) => 'applied' | 'refused' | 'noop'
-  /**
-   * PA-7 / PA-8 — Add auto layout / Remove auto layout (keep positions): the
-   * container's patch and every child's patch in ONE undo step (plus the
-   * source reorder when `order` differs from the children's source order, which
-   * is its own entry). All or nothing: one element that cannot take its write
-   * refuses the whole gesture and a dialog says which. The values are measured
-   * and inferred by the caller (`canvas/layoutConversion.ts`).
-   */
-  convertLayout: (request: {
-    parentId: string
-    parentPatch: Record<string, string | null>
-    childPatches: ReadonlyArray<{ nodeId: string; patch: Record<string, string | null> }>
-    /** The children's ids in the order they should end up, when it differs from the source order. */
-    order?: readonly string[]
-  }) => 'applied' | 'refused' | 'noop'
+  /** PA-7 / PA-8 — Add / Remove auto layout: the container and every child in ONE undo step, all or nothing (`layoutConversionActions.ts`). */
+  convertLayout: (request: LayoutConversionRequest) => 'applied' | 'refused' | 'noop'
   setBreakpointOverride: (nodeId: string, breakpointId: string, patch: Record<string, unknown>) => void
   clearBreakpointOverride: (nodeId: string, breakpointId: string) => void
   renameNode: (nodeId: string, label: string) => void
