@@ -3,7 +3,7 @@
  *
  * `routeGate` only runs its CSRF `Origin` rule for state-changing methods, and
  * a WebSocket handshake is a GET - so this module does that check itself
- * (cross-site WebSocket hijacking). A browser always sends `Origin` on a
+ * (cross-origin WebSocket hijacking). A browser always sends `Origin` on a
  * handshake, so an absent one is refused too. Then the same gate every other
  * Studio route passes: the path must be declared, the session must hold the
  * capability the declaration names (`site.read`).

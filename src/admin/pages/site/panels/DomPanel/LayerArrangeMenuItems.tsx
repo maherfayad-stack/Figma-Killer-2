@@ -20,6 +20,7 @@ import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 import { shortcutLabelFor } from '@admin/spotlight/keybindings'
 import { ALIGN_COMMANDS } from '@admin/spotlight/keybindingLayerCommands'
 import { alignSelection } from '@site/canvas/layerAlign'
+import { frameSelection } from '@site/canvas/canvasFrameSelection'
 import {
   copySelectionStyle,
   hasCopiedStyle,
@@ -66,7 +67,7 @@ export function LayerArrangeMenuItems({ targetIds, layerIdsUnderPointer, onClose
   const locked = nodes.every((node) => node.locked === true)
   // Not "Wrap in …": that is the Wrap submenu's name, and one menu must not
   // offer two items a reader (or a screen reader) cannot tell apart.
-  const flexLabel = single && isContainer ? 'Add / remove auto layout' : 'Add auto layout'
+  const flexLabel = single && isContainer ? 'Add auto layout / Remove (keep positions)' : 'Add auto layout'
   // A group is the bare container Studio's own Group writes: no classes, no
   // inline styles, no breakpoint overrides. Any other container carries
   // styling of its own, and dissolving it would silently drop that.
@@ -88,6 +89,12 @@ export function LayerArrangeMenuItems({ targetIds, layerIdsUnderPointer, onClose
         <ContextMenuItem onClick={run(() => { store().groupNodes([...targetIds]) })} shortcut={shortcutLabelFor('layers.group')}>
           <span aria-hidden="true"><BoxStackSolidIcon size={13} /></span>
           Group
+        </ContextMenuItem>
+      )}
+      {!isRoot && (
+        <ContextMenuItem onClick={run(() => frameSelection([...targetIds]))} shortcut={shortcutLabelFor('layers.frameSelection')}>
+          <span aria-hidden="true"><ContainerSolidIcon size={13} /></span>
+          Frame selection
         </ContextMenuItem>
       )}
       {single && isPlainGroup && !isRoot && single.children.length > 0 && (

@@ -107,7 +107,7 @@ describe('liftJsxElementToCanvasModule', () => {
     const home = writeFixture('pages/Home.tsx', HOME)
     const { moduleFile, result } = lift(home, HOME, 'Badge', '.studio/canvas/cl0123456789.tsx')
 
-    expect(result).toEqual({ ok: true, carriedImports: ['Badge'], root: { line: 7, col: 6 } })
+    expect(result).toEqual({ ok: true, carriedImports: ['Badge'], carriedDeclarations: [], root: { line: 7, col: 6 } })
     expect(read(moduleFile)).toBe(BADGE_LAYER)
     // The origin keeps its import: pruning it is the batch's post-pass, never the codemod's.
     expect(read(home)).toBe(HOME_WITHOUT_BADGE)

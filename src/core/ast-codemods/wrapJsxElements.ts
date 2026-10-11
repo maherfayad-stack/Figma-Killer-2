@@ -64,6 +64,7 @@ import { validateSubtree } from './jsxSubtree'
 import type { WrapJsxRefusalReason } from './wrapJsxElement'
 import { createdJsxLocation, offsetAfterEdits, type CreatedJsxLocation } from './createdJsxLocation'
 import { ancestorTagNames, intrinsicTagName, resolveWrapperTag } from './wrapperContentModel'
+import { jsStringSpelling, preferredQuote } from './stringSpelling'
 
 export interface WrapJsxElementsParams {
   file: string
@@ -80,8 +81,25 @@ export interface WrapJsxElementsParams {
   name: string
   /** Module the wrapper is imported from. Omit for an intrinsic tag, which needs no import. */
   importSpecifier?: string
+  /**
+   * Inline style the wrapper is written with (`style={{ position: 'absolute',
+   * left: '10px' }}`), camelCase CSS keys in the order given. Frame selection
+   * (PA-6) is the caller: a frame is a container that is sized and placed.
+   * Omit for the bare container ⌘G writes.
+   */
+  wrapperStyle?: Readonly<Record<string, string>>
+  /** Refuse a selection that is not one unbroken run instead of gathering it (a frame, PA-6). */
+  requireRun?: true
   /** Optional pre-existing project to reuse. */
   project?: Project
+}
+
+/** ` style={{ a: 'x', b: 'y' }}` — the attribute text, or `''` for no style. */
+function styleAttributeText(style: Readonly<Record<string, string>> | undefined, sourceFile: SourceFile): string {
+  const entries = Object.entries(style ?? {})
+  if (entries.length === 0) return ''
+  const quote = preferredQuote(sourceFile)
+  return ` style={{ ${entries.map(([key, value]) => `${key}: ${jsStringSpelling(value, quote)}`).join(', ')} }}`
 }
 
 /**
@@ -96,7 +114,11 @@ export type WrapJsxElementsRefusalReason =
   // same gates as `wrapJsxElement`, and refuses for the same extra reason.
   | WrapJsxRefusalReason
   | 'out-of-scope'
+  // `requireRun` only: a frame measured its members where they sit, so gathering them would change what it measured.
+  | 'not-contiguous'
   | 'no-targets'
+  // PA-6 — `frameJsxElements` could not write a member's offsets, so the frame was taken back.
+  | 'frame-unwritable'
 
 export interface WrapJsxElementsRefusal {
   reason: WrapJsxElementsRefusalReason
@@ -132,6 +154,12 @@ export function wrapJsxElements(params: WrapJsxElementsParams): WrapJsxElementsR
   const run = resolveRun(sourceFile, targets)
   if (!run.ok) return run
   const gathered = !isUnbrokenRun(run.ranges)
+  if (gathered && params.requireRun === true) {
+    return refuseWrap(
+      'not-contiguous',
+      'There are other elements in the code between the ones selected, and a frame is measured around where they sit, so it cannot gather them. Select siblings next to each other.',
+    )
+  }
   if (gathered) {
     const lost = namesLostByGathering(sourceFile, run.ranges)
     if (lost.length > 0) {
@@ -181,20 +209,21 @@ export function wrapJsxElements(params: WrapJsxElementsParams): WrapJsxElementsR
   const baseIndent = lineIndentAt(verbatim, spanStart)
   const unit = indentUnit(verbatim)
 
+  const opening = `${tag}${styleAttributeText(params.wrapperStyle, sourceFile)}`
   const importEdits = resolveImportEdits(sourceFile, verbatim, bindings.required)
 
   if (gathered) {
     // The first member's own span is where the container goes; the rest of the
     // members are cut out of wherever they were and travel inside it.
     const { span: gatheredSpan, removals } = gatherRun(verbatim, run.ranges)
-    const wrap = ownLinesWrap(verbatim, spanStart, first.element.getEnd(), gatheredSpan, tag, baseIndent, unit)
+    const wrap = ownLinesWrap(verbatim, spanStart, first.element.getEnd(), gatheredSpan, tag, opening, baseIndent, unit)
     writeVerbatimSource(sourceFile, file, applyGather(verbatim, [wrap, ...removals, ...importEdits]))
     return { ok: true, created: createdJsxLocation(sourceFile, offsetAfterEdits(importEdits, wrap.start), wrap.text) }
   }
 
   const edit = !span.includes('\n') && !first.wholeLine
-    ? { start: spanStart, end: spanEnd, text: `<${tag}>${span}</${tag}>` }
-    : ownLinesWrap(verbatim, spanStart, spanEnd, span, tag, baseIndent, unit)
+    ? { start: spanStart, end: spanEnd, text: `<${opening}>${span}</${tag}>` }
+    : ownLinesWrap(verbatim, spanStart, spanEnd, span, tag, opening, baseIndent, unit)
 
   writeVerbatimSource(sourceFile, file, applyTextEdits(verbatim, [edit, ...importEdits]))
   return { ok: true, created: createdJsxLocation(sourceFile, offsetAfterEdits(importEdits, edit.start), edit.text) }
@@ -212,6 +241,7 @@ function ownLinesWrap(
   spanEnd: number,
   span: string,
   tag: string,
+  opening: string,
   baseIndent: string,
   unit: string,
 ): { start: number; end: number; text: string } {
@@ -223,7 +253,7 @@ function ownLinesWrap(
   let trailing = spanEnd
   while (trailing < lineEnd && (verbatim[trailing] === ' ' || verbatim[trailing] === '\t')) trailing += 1
   const block = [
-    `${baseIndent}<${tag}>`,
+    `${baseIndent}<${opening}>`,
     `${baseIndent}${unit}${reindentBlock(span, baseIndent, baseIndent + unit)}`,
     `${baseIndent}</${tag}>`,
   ].join('\n')

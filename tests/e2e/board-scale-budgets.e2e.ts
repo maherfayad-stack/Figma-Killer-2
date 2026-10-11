@@ -3,6 +3,7 @@ import { expect, test, type Frame, type Locator, type Page } from '@playwright/t
 import { profileGesture, readBoardCounts } from './helpers/canvasPerf'
 import { profileCpu, readDomCounters, traceGesture, traceMainThreadTasks } from './helpers/cdpTrace'
 import { visibleCanvasIframe } from './helpers/canvasIframe'
+import { FIRST_RING_ATTRIBUTES, FIRST_RING_SELECTOR } from './helpers/pressRingProbe'
 import { LARGE_BOARD_SHAPE, largeBoardPageId, openLargeBoardAtWorkingZoom, SCALE_BOARD_SHAPE, writeLargeBoardCorpus } from './helpers/largeBoardCorpus'
 import { frameForPage, removeFixtureProject, selectInFrame, type FixtureProject } from './helpers/studioFixtureProject'
 
@@ -43,6 +44,9 @@ const ZOOM_CYCLES = 20
 /** Documents may wobble by a frame or two while a mount is in flight; a leak is a slope. */
 const LEAK_DOC_TOLERANCE = 2
 const CLICK_SAMPLES = 8
+const HOVER_SAMPLES = 12
+/** SB-3: provisional, set from the first measured runs and ratcheted by SB-4 (parent-side chrome) toward the plan's 16 ms. */
+const HOVER_TO_RING_P95_BUDGET_MS = 25
 /** SB-2: the longest main-thread task a poster refresh may cause. */
 const TARGET_POSTER_REFRESH_MAIN_MS = 15
 /** SB-2: a poster frame becoming a live, readable document. */
@@ -129,22 +133,24 @@ async function clickTargets(page: Page, frameEl: Locator, content: Frame): Promi
 
 /** Ctrl-click one target and return pointerdown -> first animation frame after its ring exists, ms. */
 async function clickToRing(page: Page, content: Frame, target: ClickTarget): Promise<number> {
-  await content.evaluate((id) => {
+  await content.evaluate(({ id, ringSelector, attributes }) => {
     const state = { downAt: 0, ringAt: 0, paintAt: 0, observer: null as MutationObserver | null }
     ;(window as unknown as { __sb0Click: typeof state }).__sb0Click = state
     document.addEventListener('pointerdown', () => { if (state.downAt === 0) state.downAt = performance.now() }, { capture: true, once: true })
     const check = () => {
       if (state.ringAt !== 0) return
-      const ring = Array.from(document.querySelectorAll('[data-canvas-selection-ring="true"]')).find(
-        (el) => el.getAttribute('data-canvas-overlay-node-id') === id && (el as HTMLElement).style.display !== 'none',
+      // The first ring the press shows: the borrowed hover ring (`data-canvas-press-ring`, which names no
+      // layer of its own) or the real selection ring on the target.
+      const ring = Array.from(document.querySelectorAll(ringSelector)).find(
+        (el) => (el.hasAttribute('data-canvas-press-ring') || el.getAttribute('data-canvas-overlay-node-id') === id) && (el as HTMLElement).style.display !== 'none',
       )
       if (!ring) return
       state.ringAt = performance.now()
       requestAnimationFrame(() => { state.paintAt = performance.now() })
     }
     state.observer = new MutationObserver(check)
-    state.observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['style', 'data-canvas-overlay-node-id'] })
-  }, target.id)
+    state.observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: attributes })
+  }, { id: target.id, ringSelector: FIRST_RING_SELECTOR, attributes: FIRST_RING_ATTRIBUTES })
   await page.keyboard.down('ControlOrMeta')
   await page.mouse.click(target.x, target.y)
   await page.keyboard.up('ControlOrMeta')
@@ -154,6 +160,48 @@ async function clickToRing(page: Page, content: Frame, target: ClickTarget): Pro
     state.observer?.disconnect()
     return state.downAt === 0 || state.paintAt === 0 ? -1 : state.paintAt - state.downAt
   })
+}
+
+/**
+ * Move the pointer onto one target and return pointermove -> first animation frame after the hover ring
+ * names a different node than it did before the move, ms. A hover resolves to the layer at the selection
+ * depth (the whole block around a heading), so the caller alternates between targets in different blocks:
+ * a move inside the hovered block changes nothing to measure.
+ */
+async function hoverToRing(page: Page, content: Frame, target: ClickTarget): Promise<number> {
+  await content.evaluate(() => {
+    const ring = () => document.querySelector<HTMLElement>('[data-canvas-hover-ring]')
+    const before = ring()?.getAttribute('data-canvas-overlay-node-id') ?? null
+    const state = { before, moveAt: 0, ringAt: 0, paintAt: 0, observer: null as MutationObserver | null }
+    ;(window as unknown as { __sb3Hover: typeof state }).__sb3Hover = state
+    document.addEventListener('pointermove', () => { if (state.moveAt === 0) state.moveAt = performance.now() }, { capture: true, once: true })
+    const check = () => {
+      if (state.ringAt !== 0) return
+      const el = ring()
+      const id = el?.getAttribute('data-canvas-overlay-node-id') ?? null
+      if (!el || el.style.display === 'none' || id === null || id === state.before) return
+      state.ringAt = performance.now()
+      requestAnimationFrame(() => { state.paintAt = performance.now() })
+    }
+    state.observer = new MutationObserver(check)
+    state.observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['style', 'data-canvas-overlay-node-id'] })
+  })
+  await page.mouse.move(target.x, target.y, { steps: 2 })
+  return content.evaluate(async () => {
+    const state = (window as unknown as { __sb3Hover: { moveAt: number; paintAt: number; observer: MutationObserver | null } }).__sb3Hover
+    for (let wait = 0; wait < 100 && state.paintAt === 0; wait += 1) await new Promise((r) => setTimeout(r, 10))
+    state.observer?.disconnect()
+    return state.moveAt === 0 || state.paintAt === 0 ? -1 : state.paintAt - state.moveAt
+  })
+}
+
+/** One target per vertical quarter of the visible targets (the corpus screen is four stacked blocks), in an order that never repeats a block back to back. */
+function hoverSequence(targets: ClickTarget[], length: number): ClickTarget[] {
+  const sorted = [...targets].sort((a, b) => a.y - b.y)
+  const quarter = Math.floor(sorted.length / 4)
+  const perBlock = [0, 1, 2, 3].map((block) => sorted[block * quarter + Math.floor(quarter / 2)]!)
+  const order = [0, 2, 1, 3]
+  return Array.from({ length }, (_, i) => perBlock[order[i % 4]!]!)
 }
 
 test.describe('board-scale budgets on the 100 x 140 corpus', () => {
@@ -234,6 +282,24 @@ test.describe('board-scale budgets on the 100 x 140 corpus', () => {
     annotate('click -> ring samples', samples.map((n) => n.toFixed(1)).join(', '))
     annotate('click -> ring p95', `${p95(samples).toFixed(1)}ms`)
     expect(p95(samples)).toBeLessThanOrEqual(TARGET_CLICK_TO_RING_P95_MS)
+  })
+
+  test('hover -> ring p95 on a live frame', { tag: '@production-bundle' }, async ({ page }) => {
+    const { frameEl, content } = await open(page)
+    const targets = await clickTargets(page, frameEl, content)
+    expect(targets.length).toBeGreaterThanOrEqual(HOVER_SAMPLES + 1)
+    await hoverToRing(page, content, hoverSequence(targets, 4)[3]!)
+    await page.waitForTimeout(300)
+    const samples: number[] = []
+    for (const target of hoverSequence(targets, HOVER_SAMPLES)) {
+      const ms = await hoverToRing(page, content, target)
+      expect(ms, `no hover ring for ${target.id} within 1 s`).toBeGreaterThan(0)
+      samples.push(ms)
+      await page.waitForTimeout(150)
+    }
+    annotate('hover -> ring samples', samples.map((n) => n.toFixed(1)).join(', '))
+    annotate('hover -> ring p95', `${p95(samples).toFixed(1)}ms`)
+    expect(p95(samples)).toBeLessThanOrEqual(HOVER_TO_RING_P95_BUDGET_MS)
   })
 
   test('pan: p95 frame <= one vsync, none over 20 ms, over a scripted 1 s pan', { tag: '@production-bundle' }, async ({ page }) => {

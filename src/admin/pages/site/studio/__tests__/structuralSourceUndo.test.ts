@@ -380,6 +380,38 @@ describe('a structural source write is one undo step', () => {
     expect(lastEdits()).toEqual([{ kind: 'restore', nodeId: `undo-journal:${TOKEN_A}`, token: TOKEN_A }])
   })
 
+  it('Frame selection posts ONE group with the frame, and ⌘Z restores the journal entry (PA-6)', async () => {
+    stubFetch([
+      { createdNodeIds: [MADE_ID], undoToken: TOKEN_A, pages: [pageGrouped()] },
+      { relocatedNodeIds: [ROW_ID, SECOND_ID], pages: [pageBefore()] },
+    ])
+    const frame = {
+      wrapperStyle: { position: 'absolute', left: '40px', top: '30px', width: '220px', height: '140px' },
+      memberStyles: { [ROW_ID]: { left: '0px', top: '0px' }, [SECOND_ID]: { left: '160px', top: '90px' } },
+    }
+
+    useEditorStore.getState().selectMany([ROW_ID, SECOND_ID])
+    useEditorStore.getState().groupNodes([ROW_ID, SECOND_ID], undefined, undefined, frame)
+    await waitFor(() => useEditorStore.getState().canUndo)
+    expect(saveCalls).toHaveLength(1)
+    expect(lastEdits()).toEqual([
+      {
+        kind: 'group',
+        nodeId: ROW_ID,
+        siblingNodeIds: [SECOND_ID],
+        name: 'div',
+        frame: {
+          wrapperStyle: frame.wrapperStyle,
+          memberStyles: [{ left: '0px', top: '0px' }, { left: '160px', top: '90px' }],
+        },
+      },
+    ])
+
+    useEditorStore.getState().undo()
+    await waitFor(() => saveCalls.length === 2)
+    expect(lastEdits()).toEqual([{ kind: 'restore', nodeId: `undo-journal:${TOKEN_A}`, token: TOKEN_A }])
+  })
+
   it('⌘⇧G is undone by restoring its journal entry, so a container that carried a class or a handler comes back whole', async () => {
     stubFetch([
       { relocatedNodeIds: [ROW_ID, SECOND_ID], undoToken: TOKEN_A, pages: [pageBefore()] },

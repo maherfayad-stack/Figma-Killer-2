@@ -22,12 +22,24 @@ const NOTE_COLORS: NoteColor[] = ['yellow', 'green', 'blue', 'pink', 'gray']
  * tolerant-partial posture `studioMeta.ts` uses server-side for a
  * hand-edited or older-version file.
  */
+/** CT-4 - `modes`: axis id to mode id, both non-empty strings; anything else in a hand-edited file is dropped, never thrown on. */
+function coerceModes(raw: unknown): Record<string, string> | undefined {
+  if (!isPlainObject(raw)) return undefined
+  const modes: Record<string, string> = {}
+  for (const [axisId, modeId] of Object.entries(raw)) {
+    if (axisId.length > 0 && axisId.length <= 80 && typeof modeId === 'string' && modeId.length > 0 && modeId.length <= 200) modes[axisId] = modeId
+  }
+  return Object.keys(modes).length > 0 ? modes : undefined
+}
+
 function coerceAxesOverride(raw: unknown): Partial<PreviewAxes> | undefined {
   if (!isPlainObject(raw)) return undefined
   const override: Partial<PreviewAxes> = {}
   if (raw.direction === 'ltr' || raw.direction === 'rtl') override.direction = raw.direction
   if (raw.colorScheme === 'light' || raw.colorScheme === 'dark') override.colorScheme = raw.colorScheme
   if (typeof raw.locale === 'string' && raw.locale.length > 0) override.locale = raw.locale
+  const modes = coerceModes(raw.modes)
+  if (modes) override.modes = modes
   return Object.keys(override).length > 0 ? override : undefined
 }
 

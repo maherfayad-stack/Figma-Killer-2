@@ -16,6 +16,7 @@ import { describeStructuralRefusal, isStylePatchWritableToSource, refusePlacemen
 import type { PageNode } from '@core/page-tree'
 import { resolveActiveTreeTarget } from './helpers'
 import { STRUCTURAL_REFUSAL_TITLE, presentStructuralRefusal } from './structuralSourceEdits'
+import type { InstanceOverrideRouter } from './instanceOverrideActions'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 
 type InlineStyleActions = Pick<
@@ -62,20 +63,37 @@ export function applyInlineStylePatch(
   return true
 }
 
-export function createInlineStyleActions(helpers: SiteSliceHelpers): InlineStyleActions {
+export function createInlineStyleActions(helpers: SiteSliceHelpers, overrides: InstanceOverrideRouter): InlineStyleActions {
   const { mutateActiveTree, mutateTreesForNodeIds, get, set } = helpers
+
+  /** A bulk write that names exactly one node of the active tree is that node's single write — OD-19's router only sees the single-node action. */
+  const soleActiveNode = (nodeIds: readonly string[]): string | null =>
+    nodeIds.length === 1 && resolveActiveTreeTarget(get())?.tree.nodes[nodeIds[0]!] !== undefined ? nodeIds[0]! : null
 
   const inlineStyleActions: InlineStyleActions = {
   setNodeInlineStyles: (nodeId, patch) => {
-    mutateActiveTree((tree) => {
-      const node = tree.nodes[nodeId]
-      if (!node) throw new Error(`[PageTree] Node "${nodeId}" not found`)
-      // Same per-property rule as `updateNodeProps` above — a `style={{}}`
-      // entry authored as a literal is writable; one resolved from an
-      // expression (`width: `${pct}%``) is not.
-      if (!isStylePatchWritableToSource(node, patch)) return false
-      return applyInlineStylePatch(node, patch)
+    const written = () =>
+      mutateActiveTree((tree) => {
+        const node = tree.nodes[nodeId]
+        if (!node) throw new Error(`[PageTree] Node "${nodeId}" not found`)
+        // Same per-property rule as `updateNodeProps` above — a `style={{}}`
+        // entry authored as a literal is writable; one resolved from an
+        // expression (`width: `${pct}%``) is not.
+        if (!isStylePatchWritableToSource(node, patch)) return false
+        return applyInlineStylePatch(node, patch)
+      })
+    // OD-19 — a style inside a component instance is an override of THIS instance, not a rewrite of the component.
+    const overridden = overrides.route({
+      nodeId,
+      change: { styles: patch },
+      preview: (tree) => {
+        const node = tree.nodes[nodeId]
+        return node !== undefined && applyInlineStylePatch(node, patch)
+      },
+      plain: () => void written(),
+      again: (id) => get().setNodeInlineStyles(id, patch),
     })
+    if (!overridden) written()
   },
 
   setNodeInlineStylesFromGesture: (nodeId, patch, gesture) => {
@@ -95,6 +113,8 @@ export function createInlineStyleActions(helpers: SiteSliceHelpers): InlineStyle
 
   setNodesInlineStyles: (nodeIds, patch) => {
     if (nodeIds.length === 0) return
+    const sole = soleActiveNode(nodeIds)
+    if (sole !== null) return inlineStyleActions.setNodeInlineStyles(sole, patch)
     // `mutateTreesForNodeIds` wraps every touched page in ONE
     // `runHistoricMutation` transaction, so an inspector edit across an
     // N-node selection is a single undo step — the same contract
@@ -120,6 +140,8 @@ export function createInlineStyleActions(helpers: SiteSliceHelpers): InlineStyle
 
   setNodesInlineStylesPerNode: (patches, opts) => {
     if (patches.length === 0) return
+    const sole = opts === undefined ? soleActiveNode(patches.map((entry) => entry.nodeId)) : null
+    if (sole !== null) return inlineStyleActions.setNodeInlineStyles(sole, patches[0]!.patch)
     const patchByNodeId = new Map(patches.map((entry) => [entry.nodeId, entry.patch]))
     const nodeIds = patches.map((entry) => entry.nodeId)
     // Same one-transaction contract as `setNodesInlineStyles`; the only

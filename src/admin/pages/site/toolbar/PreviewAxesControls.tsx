@@ -31,6 +31,9 @@ import { useState, useSyncExternalStore, type ChangeEvent } from 'react'
 import { useAdminUi } from '@admin/state/adminUi'
 import { useEditorStore } from '@site/store/store'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
+import { getAxisMode, withAxisMode } from '@core/studio-board'
+import { axisChoices, isCatalogDrivenAxis } from '@core/studio-tokens'
+import { getStudioTokenCatalog, subscribeStudioTokenCatalog } from '@site/studio/studioTokenCatalogStore'
 import { Button } from '@ui/components/Button'
 import { Select } from '@ui/components/Select'
 import {
@@ -43,6 +46,8 @@ import {
 import styles from './PreviewAxesControls.module.css'
 
 const NO_DARK_MODE_REASON = 'No dark-mode stylesheet was detected in this project or in the design system it installs (no `.dark`/`[data-theme]` selector and no `@media (prefers-color-scheme: dark)` rule).'
+/** The default mode has no id (it is "no gate selected"); a `<select>` value needs a string for it. */
+const DEFAULT_MODE_VALUE = '__default__'
 const NO_LOCALE_REASON = 'No locale dictionary was detected in this project (no `translations[lang]`-style index, i18next/react-intl `resources` map, or `locales/*.json` directory).'
 
 export function PreviewAxesControls() {
@@ -51,7 +56,24 @@ export function PreviewAxesControls() {
   const setPreviewAxes = useEditorStore((s) => s.setPreviewAxes)
   const colorScheme = useSyncExternalStore(subscribeColorSchemeCapability, getColorSchemeCapability, getColorSchemeCapability)
   const locales = useSyncExternalStore(subscribeLocalesCapability, getLocalesCapability, getLocalesCapability)
+  const catalog = useSyncExternalStore(subscribeStudioTokenCatalog, getStudioTokenCatalog, getStudioTokenCatalog)
   const [isReparsing, setIsReparsing] = useState(false)
+
+  // CT-4: every other mode axis the project's CSS declares (`theme`,
+  // `density`, ...) gets a select. Colour scheme has its own button above and
+  // direction/locale their own controls, so they are not repeated here.
+  const extraAxes = (catalog?.axes ?? []).flatMap((axis) => {
+    if (!isCatalogDrivenAxis(axis.id) || axis.id === 'color-scheme') return []
+    const choices = axisChoices(axis)
+    return choices.length > 0 ? [{ axis, choices }] : []
+  })
+
+  const handleModeChange = (axisId: string, value: string) => {
+    const modeId = value === DEFAULT_MODE_VALUE ? undefined : value
+    const next = withAxisMode(previewAxes, axisId, modeId)
+    setPreviewAxes({ modes: next.modes ?? {} })
+    if (dir) void savePreviewAxes(dir, { modes: next.modes ?? {} })
+  }
 
   const isRtl = previewAxes.direction === 'rtl'
   const isDark = previewAxes.colorScheme === 'dark'
@@ -135,6 +157,19 @@ export function PreviewAxesControls() {
           className={styles.localeSelect}
         />
       </span>
+      {extraAxes.map(({ axis, choices }) => (
+        <Select
+          key={axis.id}
+          fieldSize="sm"
+          aria-label={`Preview ${axis.label.toLowerCase()} mode`}
+          data-testid="toolbar-preview-mode"
+          data-axis={axis.id}
+          value={getAxisMode(previewAxes, axis.id) ?? DEFAULT_MODE_VALUE}
+          onChange={(event) => handleModeChange(axis.id, event.target.value)}
+          options={choices.map((choice) => ({ value: choice.id ?? DEFAULT_MODE_VALUE, label: choice.label }))}
+          className={styles.localeSelect}
+        />
+      ))}
     </div>
   )
 }

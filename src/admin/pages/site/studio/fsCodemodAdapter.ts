@@ -47,6 +47,7 @@ import { editOutcomeKey, refusedEditKeys } from './editOutcomes'
 import { elementMovedNodeIds, retryAfterElementMoved, warnElementMoved } from './elementMovedRecovery'
 import { structuralEditNodeIds } from './structuralUndoPlan'
 import { resyncBoardAfterWrite } from './studioBoardResync'
+import { recordStyleLandings } from './styleLandings'
 import { commitClassIdsBaseline, commitNodeValuesBaseline, dropNodeValuesBaseline } from './loadedValuesBaseline'
 import { collectClassNameEdits } from './classNameWriteback'
 import {
@@ -245,6 +246,8 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       // P1-A — who every id names, as the board knows it now; sent as `expect`.
       const identities = captureIdentities(edits.flatMap((edit) => structuralEditNodeIds(edit)))
       const result = await postEdits(edits, identities)
+      // G-5 — the chip's "Saved in …": where each style edit in this batch went.
+      recordStyleLandings(result.styleLandings ?? [], cssPlan.ruleIdsByNodeId, result.undoToken)
       const moved = elementMovedNodeIds(result.refusals)
       if (moved.size > 0) {
         const movedEdits = edits.filter((edit) => moved.has(edit.nodeId))

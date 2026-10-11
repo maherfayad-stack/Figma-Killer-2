@@ -209,7 +209,7 @@ describe('ERR-8 — a paste finds what it copied', () => {
     await settle()
     expect(refusalToasts()).toEqual([])
     expect(posted).toHaveLength(1)
-    expect(posted[0]!.edits).toEqual([{ kind: 'transplant', nodeId: remote, parentNodeId: mainOf(FILE), copy: true }])
+    expect(posted[0]!.edits).toEqual([{ kind: 'transplant', nodeId: remote, parentNodeId: mainOf(FILE), copy: true, exactUndo: true }])
   })
 
   it('pastes an element whose line an edit above it moved, found again by what it is', async () => {

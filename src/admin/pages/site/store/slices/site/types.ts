@@ -31,6 +31,7 @@ import type { NewStyleRule, SiteImportTransaction } from '@core/siteImport'
 import type { FrameworkChangeImpact, FrameworkPreset } from '@core/framework'
 import type { EditorStore } from '@site/store/types'
 import type { LocalComponentSpec } from '@site/property-controls/componentPropKind'
+import type { FrameRequest } from './frameRequest'
 import type { PendingStructuralHistory } from '@site/studio/pendingStructuralOutcome'
 import type { SlotOwnerEntry } from './nodeIndex'
 import type { ImportedNodesResult } from './importedNodesResult'
@@ -73,6 +74,7 @@ import type {
  * door — every consumer already imports them from `./types`.
  */
 import type { HistoryEntry } from './historyTypes'
+import type { LayoutConversionRequest } from './layoutConversionPlan'
 import type { TransplantDestination } from './transplantDestination'
 
 export type {
@@ -185,7 +187,13 @@ export interface SiteSlice {
     inlineStyles?: Record<string, string>,
   ) => string
   /** Writes `<Card />` + its import for a component the project declares itself; `false` on a CMS tree (no source). */
-  insertProjectComponent: (component: LocalComponentSpec, parentId: string, index?: number) => boolean
+  insertProjectComponent: (
+    component: LocalComponentSpec,
+    parentId: string,
+    index?: number,
+    /** PA-3 — inline styles written as the call site's `style` prop (a layer dropped into a free frame). */
+    style?: Record<string, string>,
+  ) => boolean
 
   /**
    * Insert a fragment of imported HTML nodes into the active tree under `parentId`.
@@ -237,13 +245,7 @@ export interface SiteSlice {
   /** Multi-delete: removes every id and its descendants in one undo step. */
   deleteNodes: (nodeIds: string[]) => void
   updateNodeProps: (nodeId: string, patch: Record<string, unknown>) => void
-  /**
-   * G-6 (OD-20) - the user TYPED over a code-bound text or attribute: replace
-   * the code with this literal as one journaled source write, with a notice and
-   * Undo (`unbindActions.ts`). `false` when nothing was started (the prop is not
-   * unbindable, or the write was parked behind an in-flight structural commit
-   * and will re-plan itself).
-   */
+  /** G-6: the user typed over code-bound text/attr; one journaled write with a notice and Undo (`unbindActions.ts`). `false` when nothing started. */
   unbindNodeValue: (nodeId: string, prop: string, value: string) => boolean
   /**
    * instance-ui-01 — write ONE call-site prop on a `studio.instance` node
@@ -322,6 +324,8 @@ export interface SiteSlice {
       | { ignore: true; parentContains: boolean; offsets: { left: number; top: number } }
       | { ignore: false; releaseParent: boolean },
   ) => 'applied' | 'refused' | 'noop'
+  /** PA-7 / PA-8 — Add / Remove auto layout: the container and every child in ONE undo step, all or nothing (`layoutConversionActions.ts`). */
+  convertLayout: (request: LayoutConversionRequest) => 'applied' | 'refused' | 'noop'
   setBreakpointOverride: (nodeId: string, breakpointId: string, patch: Record<string, unknown>) => void
   clearBreakpointOverride: (nodeId: string, breakpointId: string) => void
   renameNode: (nodeId: string, label: string) => void
@@ -397,7 +401,8 @@ export interface SiteSlice {
    * produces. Refuses out loud unless the selection is a contiguous run of
    * siblings in the code. See `groupActions.ts`.
    */
-  groupNodes: (nodeIds: string[], containerModuleId?: string, defaults?: Record<string, unknown>) => string | null
+  /** `frame` (PA-6, Frame selection): the container is sized and placed and the members rebased, in this same write. */
+  groupNodes: (nodeIds: string[], containerModuleId?: string, defaults?: Record<string, unknown>, frame?: FrameRequest) => string | null
   /**
    * K3 — ⌘⇧G. The container goes; its children take its place at its own index.
    * On a studio tree that is `unwrapJsxElement`, which refuses a container

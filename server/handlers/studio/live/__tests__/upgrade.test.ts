@@ -93,7 +93,7 @@ async function handshake(options: {
 }
 
 describe('upgrade refusals', () => {
-  it('refuses a handshake from another origin (cross-site WebSocket hijacking)', async () => {
+  it('refuses a handshake from another origin (cross-origin WebSocket hijacking)', async () => {
     const { response, data } = await handshake({ cookie: ownerCookie, origin: 'https://evil.example' })
     expect(response?.status).toBe(403)
     expect(data).toBeNull()

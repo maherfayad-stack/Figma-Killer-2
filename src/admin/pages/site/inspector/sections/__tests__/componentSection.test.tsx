@@ -114,7 +114,7 @@ beforeEach(() => {
               name: 'Card',
               file: 'src/components/Card.tsx',
               exportName: 'default',
-              isDefaultExport: true,
+              isDefaultExport: true, line: 1, column: 1,
               role: 'component',
               props: [
                 { name: 'title', kind: { kind: 'string' }, required: true },

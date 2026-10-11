@@ -42,10 +42,11 @@
  *     a prune and a delete alike;
  *   - an entry is size-capped ({@link MAX_ENTRY_BYTES}) before it is read and
  *     validated with TypeBox after;
- *   - every `rel` it names is re-derived through `canonicalSourceRel`, the
- *     same guard a node id's file goes through: inside the project on the
- *     real path, app source only, never `.studio`/`.git`/`node_modules`. An
- *     entry that names anything else is `restore-unavailable`, not a write.
+ *   - every `rel` it names is re-derived through `canonicalSourceRel` in the
+ *     editor's scope (`journalStylesheets: 'allow'`, which admits a
+ *     hand-authored `.css`): inside the project on the real path, never
+ *     `.studio`/`.git`/`node_modules`, no link on the way. An entry that names
+ *     anything else is `restore-unavailable`, not a write.
  *
  * ## Bounded
  *
@@ -123,7 +124,7 @@ const UndoJournalEntrySchema = Type.Object({
 type UndoJournalEntry = Static<typeof UndoJournalEntrySchema>
 
 /** Every file a restore writes is resolved in the editor's scope — the journal is the editor's undo. */
-const EDITOR_SCOPE = { canvasLayers: 'allow' } as const
+const EDITOR_SCOPE = { canvasLayers: 'allow', journalStylesheets: 'allow' } as const
 
 /** What a write's files held before it ran: absolute path to bytes, or `null` for "did not exist". */
 export type UndoPreImage = ReadonlyMap<string, Buffer | null>

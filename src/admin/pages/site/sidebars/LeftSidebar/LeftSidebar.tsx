@@ -13,18 +13,16 @@ import { lazy, Suspense, useRef, type CSSProperties } from 'react'
 import { useEditorStore } from '@site/store/store'
 import type { LeftSidebarPanelId } from '@site/store/slices/uiSlice'
 import { AgentStoreProvider } from '@admin/ai/AgentStoreContext'
-import { FrameworkPanel } from '@site/panels/FrameworkPanel'
 import { AssetsPanel } from '@site/panels/AssetsPanel'
 import { ExplorerPanel } from '@site/panels/ExplorerPanel'
-import { DependenciesPanel } from '@site/panels/DependenciesPanel'
 import { PanelRail } from '@site/sidebars/PanelRail'
 import { PanelBoundary } from '@site/ui/PanelBoundary'
 import { PluginEditorPanel } from '@site/panels/PluginEditorPanel'
 import { SelectorsPanel } from '@site/panels/SelectorsPanel'
-import { GitPanel } from '@site/panels/GitPanel'
 import { FrameworkChangeConfirmProvider } from '@admin/shared/dialogs/FrameworkChangeConfirmDialog'
 import { SidebarResizeHandle } from '@admin/shared/SidebarResizeHandle'
 import { AgentPanelSkeleton } from './AgentPanelSkeleton'
+import { LazyPanelSlot } from './LazyPanelSlot'
 import styles from './LeftSidebar.module.css'
 
 // Image preparation and provider catalogue code belong to the AI surface, not
@@ -33,6 +31,22 @@ import styles from './LeftSidebar.module.css'
 // independently so its local draft survives panel switches after first load.
 const AgentPanel = lazy(() =>
   import('@site/panels/AgentPanel').then((module) => ({ default: module.AgentPanel })),
+)
+
+// Framework, Dependencies, Variables and Version control are not first-paint
+// code (~130 KB between them): each loads on the first open of its rail item
+// through `LazyPanelSlot`, and stays mounted-but-hidden afterwards.
+const FrameworkPanel = lazy(() =>
+  import('@site/panels/FrameworkPanel').then((module) => ({ default: module.FrameworkPanel })),
+)
+const DependenciesPanel = lazy(() =>
+  import('@site/panels/DependenciesPanel').then((module) => ({ default: module.DependenciesPanel })),
+)
+const VariablesPanel = lazy(() =>
+  import('@site/panels/VariablesPanel').then((module) => ({ default: module.VariablesPanel })),
+)
+const GitPanel = lazy(() =>
+  import('@site/panels/GitPanel').then((module) => ({ default: module.GitPanel })),
 )
 
 // Content (bilingual dictionary editor) — lazy for the same reason as
@@ -56,6 +70,7 @@ function selectActiveLeftSidebarPanel(state: ReturnType<typeof useEditorStore.ge
   if (state.selectorsPanelOpen) return 'selectors'
   if (state.frameworkPanelOpen) return 'framework'
   if (state.dependenciesPanelOpen) return 'dependencies'
+  if (state.variablesPanelOpen) return 'variables'
   if (state.contentPanelOpen) return 'content'
   if (state.gitPanelOpen) return 'git'
   if (state.isAgentOpen) return 'agent'
@@ -199,12 +214,20 @@ export function LeftSidebar({
               </div>
               <div className={styles.panelMount} hidden={effectiveActivePanel !== 'framework'}>
                 <PanelBoundary id="framework" label="Framework" frame="panel">
-                  <FrameworkPanel />
+                  <LazyPanelSlot active={effectiveActivePanel === 'framework'}><FrameworkPanel /></LazyPanelSlot>
                 </PanelBoundary>
               </div>
               <div className={styles.panelMount} hidden={effectiveActivePanel !== 'dependencies'}>
                 <PanelBoundary id="dependencies" label="Dependencies" frame="panel">
-                  <DependenciesPanel variant="docked" />
+                  <LazyPanelSlot active={effectiveActivePanel === 'dependencies'}><DependenciesPanel variant="docked" /></LazyPanelSlot>
+                </PanelBoundary>
+              </div>
+              {/* Variables (CT-3). Hidden-but-mounted so a half-typed value or
+                  rename survives a tab switch; its catalog read is gated on
+                  `variablesPanelOpen`, so being mounted costs no request. */}
+              <div className={styles.panelMount} hidden={effectiveActivePanel !== 'variables'}>
+                <PanelBoundary id="variables" label="Variables" frame="panel">
+                  <LazyPanelSlot active={effectiveActivePanel === 'variables'}><VariablesPanel variant="docked" /></LazyPanelSlot>
                 </PanelBoundary>
               </div>
               {/* Version control. Hidden-but-mounted like its siblings so a
@@ -213,7 +236,7 @@ export function LeftSidebar({
                   costs no subprocess while it is not the active panel. */}
               <div className={styles.panelMount} hidden={effectiveActivePanel !== 'git'}>
                 <PanelBoundary id="git" label="Version control" frame="panel">
-                  <GitPanel variant="docked" />
+                  <LazyPanelSlot active={effectiveActivePanel === 'git'}><GitPanel variant="docked" /></LazyPanelSlot>
                 </PanelBoundary>
               </div>
               {effectivePluginPanelId !== null && (
