@@ -31,6 +31,8 @@ const MAX_LIVE_AT_REST = 21
 /** A 20-frame board is small enough for the background fill to finish inside this window. */
 const SMALL_BOARD_FRAMES = 20
 const ALL_PICTURES_BY_MS = 90_000
+/** A cold 100-frame board zoomed all the way out shows a picture in every frame in view by this long (measured 3.7-3.9 s). */
+const COLD_ZOOM_OUT_PICTURES_BY_MS = 15_000
 
 function dump(name: string, value: unknown): void {
   mkdirSync('.tmp/poster-first', { recursive: true })
@@ -152,6 +154,8 @@ test.describe('poster-first on the 100 x 140 corpus', () => {
     annotate('cold zoom-out: iframes / pictures once settled', `${counts.liveIframes} / ${counts.posters}`)
     if (RECORD_ONLY) return
     expect(result.ms, `${result.last.cold} frames in view still blank after 120 s`).not.toBeNull()
+    expect(result.ms!, 'time until every frame in view shows a picture').toBeLessThanOrEqual(COLD_ZOOM_OUT_PICTURES_BY_MS)
+    expect(counts.liveIframes, 'live iframes once a cold zoom-out has settled').toBeLessThanOrEqual(MAX_LIVE_AT_REST)
   })
 
   test('measure: live iframes, heap, pan and zoom p95, time to pictures', { tag: '@production-bundle' }, async ({ page }) => {
