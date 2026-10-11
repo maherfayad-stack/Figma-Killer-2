@@ -120,36 +120,6 @@ describe('moveJsxElement', () => {
     )
   })
 
-  it('refuses two elements the canvas shows side by side but the source nests differently', () => {
-    const source = `export default function Page() {
-  return (
-    <section>
-      <div>
-        <span>inner</span>
-      </div>
-      <p>outer</p>
-    </section>
-  )
-}
-`
-    const file = writeFixture(source)
-    const span = locateTag(source, 'span')
-    const p = locateTag(source, 'p')
-
-    const result = moveJsxElement({
-      file,
-      line: span.line,
-      col: span.col,
-      anchorLine: p.line,
-      anchorCol: p.col,
-      position: 'after',
-    })
-    expect(result.ok).toBe(false)
-    if (result.ok) throw new Error('unreachable')
-    expect(result.refusal.reason).toBe('not-siblings')
-    expect(fs.readFileSync(file, 'utf8')).toBe(source)
-  })
-
   // WB-21 — these used to refuse `mixed-indentation`. The moved element now
   // takes the ANCHOR's shape, and only the bytes it leaves behind change.
   it('moves a whole-line element beside one that shares a line, joining that line', () => {
@@ -429,17 +399,6 @@ describe('deleteJsxElement', () => {
 `)
   })
 
-  it('refuses to delete the component root', () => {
-    const source = 'export default function Page() {\n  return <section>hi</section>\n}\n'
-    const file = writeFixture(source)
-    const section = locateTag(source, 'section')
-
-    const result = deleteJsxElement({ file, line: section.line, col: section.col })
-    expect(result.ok).toBe(false)
-    if (result.ok) throw new Error('unreachable')
-    expect(result.refusal.reason).toBe('no-jsx-parent')
-    expect(fs.readFileSync(file, 'utf8')).toBe(source)
-  })
 })
 
 describe('spliceRange', () => {

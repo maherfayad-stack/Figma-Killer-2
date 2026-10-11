@@ -9,6 +9,7 @@
 import {
   gateKey,
   type CatalogToken,
+  type JsThemeEntry,
   type ModeGate,
   type TokenCatalog,
   type TokenCollection,
@@ -91,4 +92,27 @@ export function buildVariableGroups(
 /** Tokens a removed token's readers can move to: the same family, never itself. */
 export function replacementCandidates(catalog: TokenCatalog, token: CatalogToken): string[] {
   return catalog.tokens.filter((other) => other.name !== token.name && other.family === token.family).map((other) => other.name)
+}
+
+/** How a JavaScript theme entry is named in the panel: `colors.primary.500`, or just the group when the whole group is one value. */
+export function themeEntryLabel(entry: JsThemeEntry): string {
+  return entry.path === '' ? entry.group : `${entry.group}.${entry.path}`
+}
+
+/** What a search matches in a JavaScript theme entry: where it is, its path, its value, the classes that apply it. */
+function themeEntryMatches(entry: JsThemeEntry, needle: string): boolean {
+  return [entry.file, entry.group, entry.path, entry.raw, entry.value ?? '', ...entry.utilities].some((text) => text.toLowerCase().includes(needle))
+}
+
+/** The read-only JavaScript theme rows (CT-6), grouped by the file that defines them, filtered by the search. */
+export function groupThemeEntries(entries: readonly JsThemeEntry[], query: string): Array<[file: string, entries: JsThemeEntry[]]> {
+  const needle = query.trim().toLowerCase()
+  const byFile = new Map<string, JsThemeEntry[]>()
+  for (const entry of entries) {
+    if (needle && !themeEntryMatches(entry, needle)) continue
+    const group = byFile.get(entry.file)
+    if (group) group.push(entry)
+    else byFile.set(entry.file, [entry])
+  }
+  return [...byFile]
 }

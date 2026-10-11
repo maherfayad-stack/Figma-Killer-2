@@ -18,6 +18,8 @@ export type TokenWriteCode =
   | 'in-use'
   /** A rename that would silently change what the token means (a Tailwind `@theme` name is also a utility class). */
   | 'rename-blocked'
+  /** A removal Studio cannot make safely: the variable's readers cannot be found by their spelling (a Tailwind `--spacing-*` or `--breakpoint-*`). */
+  | 'remove-blocked'
 
 export interface TokenWriteRefusal {
   readonly ok: false
@@ -42,8 +44,8 @@ export interface TokenWritePlan {
   readonly changed: ReadonlyArray<{ name: string; target: TokenTarget; file: string; line: number; from: string; to: string }>
   readonly unchanged: ReadonlyArray<{ name: string; target: TokenTarget }>
   readonly inserted: ReadonlyArray<{ name: string; target: TokenTarget; file: string }>
-  /** A rename: how many mentions of the old name moved, across how many files. */
-  readonly renamed: ReadonlyArray<{ name: string; to: string; mentions: number; files: number }>
+  /** A rename: how many mentions of the old name moved, across how many files; `unfollowed` is `file:line` of each class built at runtime (`bg-${tone}`), which a rename cannot follow. */
+  readonly renamed: ReadonlyArray<{ name: string; to: string; mentions: number; files: number; unfollowed: readonly string[] }>
   /** A remove: how many declarations went, and how many readers moved to `replacedWith`. */
   readonly removed: ReadonlyArray<{ name: string; declarations: number; movedReaders: number; replacedWith?: string }>
 }

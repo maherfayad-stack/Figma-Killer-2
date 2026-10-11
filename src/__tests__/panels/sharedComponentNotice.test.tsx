@@ -20,7 +20,7 @@ import { useEditorStore } from '@site/store/store'
 afterEach(cleanup)
 
 beforeEach(() => {
-  useEditorStore.setState({ mainEditComponent: null })
+  useEditorStore.setState({ mainEditTarget: null })
 })
 
 const NODE_ID = 'pages/Recipes.tsx:10:7~components/SectionHeading.tsx:5:7'
@@ -55,19 +55,19 @@ describe('SharedComponentNotice — instance-only by default, "Edit main compone
   it('turns into the all-instances banner until Done, and the store carries the mode', () => {
     render(<SharedComponentNotice componentName="SectionHeading" nodeId={NODE_ID} />)
     fireEvent.click(screen.getByTestId('shared-component-edit-main'))
-    expect(useEditorStore.getState().mainEditComponent).toBe('SectionHeading')
+    expect(useEditorStore.getState().mainEditTarget).toEqual({ kind: 'component', name: 'SectionHeading' })
     const banner = screen.getByRole('note').textContent ?? ''
     expect(banner).toContain('Editing the main component SectionHeading')
     expect(banner).not.toContain('change this instance only')
     expect(screen.queryByTestId('shared-component-edit-main')).toBeNull()
 
     fireEvent.click(screen.getByTestId('shared-component-done-main'))
-    expect(useEditorStore.getState().mainEditComponent).toBeNull()
+    expect(useEditorStore.getState().mainEditTarget).toBeNull()
     expect(screen.getByTestId('shared-component-edit-main')).toBeTruthy()
   })
 
   it('the banner belongs to one component: another component\'s elements stay instance-only', () => {
-    useEditorStore.setState({ mainEditComponent: 'Footer' })
+    useEditorStore.setState({ mainEditTarget: { kind: 'component', name: 'Footer' } })
     render(<SharedComponentNotice componentName="SectionHeading" nodeId={NODE_ID} />)
     expect(screen.getByRole('note').textContent).toContain('change this instance only')
   })

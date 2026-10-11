@@ -11,7 +11,10 @@
  *     siblings, the ghost, the size clamp. No second image pipeline;
  *   - SVG: `insertSvgAtTarget` (`canvasSvgInsert.ts`, shared with the icon
  *     insert and the `.svg` drop): one subtree insert when it fits as source,
- *     an `<img>` of the landed file when it is too big, a refusal otherwise.
+ *     an `<img>` of the landed file when it is too big, a refusal otherwise;
+ *   - HTML (G-10): `writeHtmlToSource` - converted to intrinsic JSX (sanitized
+ *     first, no scripts, no handlers, no `javascript:` links), its styles written
+ *     into the page's own stylesheet, all of it one undo step.
  *
  * Images and SVGs land where ⇧K's images land (`canvasSelectionInsert.ts`):
  * after the selected layer, else at the end of the active frame's root.
@@ -45,6 +48,21 @@ export function runCanvasPaste(snapshot: ClipboardSnapshot): void {
     case 'svg': {
       const target = targetOrExplain()
       if (target) void insertSvgAtTarget(decision.source, target, { undoLabel: 'Paste SVG', refusalTitle: 'Cannot paste that SVG' })
+      return
+    }
+    case 'html': {
+      const target = targetOrExplain()
+      if (!target) return
+      // A refusal has already been shown by the store, where it knew why.
+      const written = state.writeHtmlToSource(decision.html, target.parentId, { index: target.index, undoLabel: 'Paste HTML' })
+      if (written.kind === 'cms') {
+        pushToast({
+          kind: 'warning',
+          title: PASTE_TITLE,
+          body: 'This frame is not backed by a source file, so there is nowhere to write the pasted HTML.',
+          location: 'site-editor',
+        })
+      }
       return
     }
     case 'none':

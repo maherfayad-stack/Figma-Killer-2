@@ -36,6 +36,7 @@ import { registry } from '@core/module-engine'
 import {
   decodeSourceNodeId,
   describeStructuralRefusal,
+  isSiblingRun,
   planListRowCopy,
   planListRowCopyTo,
   type NodeTree,
@@ -219,7 +220,7 @@ export function createStudioSourceWrites(
     if (!targetFile) return false
     broadcastOptimisticInsert(
       `optimistic:${crypto.randomUUID()}`,
-      commit.parentNodeId,
+      commit.previewParentId ?? commit.parentNodeId,
       index ?? Number.MAX_SAFE_INTEGER,
       'div',
       undefined,
@@ -279,7 +280,7 @@ export function createStudioSourceWrites(
     const ghostId = `optimistic:${crypto.randomUUID()}`
     broadcastOptimisticInsert(
       ghostId,
-      plan.commit.parentNodeId,
+      plan.commit.previewParentId ?? plan.commit.parentNodeId,
       index ?? Number.MAX_SAFE_INTEGER,
       element.intrinsic ? element.name : 'div',
       element.intrinsic ? element.children : undefined,
@@ -289,7 +290,7 @@ export function createStudioSourceWrites(
         helpers,
         moduleId,
         moduleInsertProps(moduleId, defaults),
-        plan.commit.parentNodeId,
+        plan.commit.previewParentId ?? plan.commit.parentNodeId,
         index,
         ghostId,
         element.intrinsic ? inlineStyles : undefined,
@@ -350,7 +351,7 @@ export function createStudioSourceWrites(
       ? planListRowCopyTo(tree, rowNodes, destination.parentId, destination.index)
       : planListRowCopy(rowNodes)
     if (rows) {
-      writeListRowPlan(rows, STRUCTURAL_REFUSAL_TITLE.duplicate, { get, set })
+      writeListRowPlan(rows, STRUCTURAL_REFUSAL_TITLE.duplicate, { get, set, retry: retryWithMap })
       return true
     }
 
@@ -532,7 +533,12 @@ export function createStudioSourceWrites(
       const optimistic = previewOptimisticWrap(helpers, only, containerModuleId, resolvedDefaults) ?? undefined
       void commitStudioWrap({ nodeId: only, ...container, ...(optimistic ? { optimistic } : {}) })
     } else {
-      const optimistic = previewOptimisticGroup(helpers, plan.commit, containerModuleId, resolvedDefaults) ?? undefined
+      // G-7 - members that are not one run of siblings are gathered by the
+      // write (`gatherGroupRun.ts`); a local wrap would draw a container around
+      // a span the file does not have, so the board waits for the re-read.
+      const optimistic = isSiblingRun(tree, plan.commit)
+        ? (previewOptimisticGroup(helpers, plan.commit, containerModuleId, resolvedDefaults) ?? undefined)
+        : undefined
       void commitStudioGroup({ nodeIds: plan.commit, ...container, ...(optimistic ? { optimistic } : {}) })
     }
     return true
@@ -560,7 +566,7 @@ export function createStudioSourceWrites(
       return true
     }
     if (!plan.commit) return false // an ordinary CMS tree — nothing to write
-    void commitStudioUngroup(plan.commit, restorableContainerSpelling(tree.nodes[plan.commit]))
+    void commitStudioUngroup(plan.commit)
     return true
   }
 
@@ -573,34 +579,6 @@ export function createStudioSourceWrites(
     writeGroupToSource,
     writeUngroupToSource,
   }
-}
-
-/**
- * `store-14` — how to write this container back around its children, or `null`
- * when a re-wrap would not restore it.
- *
- * ⌘⇧G's undo is a ⌘G, and `wrapJsxElement`/`wrapJsxElements` write a BARE tag:
- * no `className`, no `style`, no `id`. So a wrapper carrying any of those
- * three is honestly un-undoable from the canvas — re-grouping would produce a
- * container that has quietly lost what the user put on it, which is the
- * half-applied write this store refuses everywhere else. The undo says so by
- * name instead (see `commitStudioUngroup`). Closing it needs `props` on the
- * `wrap`/`group` edit, which is the wrap codemod's own surface.
- *
- * `unwrapJsxElement` already refuses a COMPONENT wrapper (`has-behaviour`), so
- * everything that reaches here is an intrinsic tag the module registry can
- * spell from the node's own props — `base.container`'s `tag`/`customTag`.
- */
-function restorableContainerSpelling(
-  node: PageNode | undefined,
-): { name: string; importSpecifier?: string; designSystemImport?: true } | null {
-  if (!node) return null
-  const carriesStyling =
-    node.classIds.length > 0 ||
-    Object.keys(node.inlineStyles ?? {}).length > 0 ||
-    (typeof node.props.id === 'string' && node.props.id !== '')
-  if (carriesStyling) return null
-  return resolveContainerTag(node.moduleId, node.props)
 }
 
 /**

@@ -80,16 +80,8 @@ describe('planSourceGroup', () => {
     expect(planSourceGroup(board(), [C])).toEqual({ ok: true, commit: [C] })
   })
 
-  it('REFUSES a selection with a gap, as a toast-shaped constraint with the remedy in the sentence', () => {
-    const plan = planSourceGroup(board(), [A, C])
-    expect(plan.ok).toBe(false)
-    if (plan.ok) return
-    expect(plan.constraint.reason).toBe('multi-select')
-    expect(plan.constraint.explanation).toContain('Select siblings next to each other')
-    // `multi-select` has no button — the sentence IS the remedy, so this takes
-    // the toast path rather than opening `RefusalDialog`.
-    expect(plan.constraint.actions).toEqual([])
-    expect(plan.nodeId).toBe(A)
+  it('commits a selection with a gap in it - the write gathers the members (G-7), so no refusal reaches the person', () => {
+    expect(planSourceGroup(board(), [C, A])).toEqual({ ok: true, commit: [A, C] })
   })
 
   it('REFUSES a group inside a <ul>, with the jump action pointed at the LIST', () => {

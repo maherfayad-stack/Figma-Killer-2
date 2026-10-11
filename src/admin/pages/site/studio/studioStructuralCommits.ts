@@ -30,7 +30,6 @@ import type { StructuralCommitRollback } from '@site/store/slices/site/structura
 import { commitStructural, type StructuralCommitOptions } from './studioStructuralCommitEngine'
 import { announceCarried } from './transplantCarryNotice'
 import {
-  dissolveWrapperTemplate,
   type StructuralEditPayload,
   type StructuralInverseTemplate,
   type StructuralWriteOutcome,
@@ -292,7 +291,7 @@ export async function commitStudioWrap(wrap: {
     ],
     'Wrap refused',
     {
-      undo: { label: `Wrap in <${wrap.name}>`, template: dissolveWrapperTemplate(wrap) },
+      undo: { label: `Wrap in <${wrap.name}>`, template: { kind: 'restore-journal' } },
       ...(wrap.optimistic ? { optimistic: wrap.optimistic } : {}),
     },
   )
@@ -344,10 +343,8 @@ export async function commitStudioGroup(group: {
     ],
     group.frame ? 'Frame refused' : 'Group refused',
     {
-      // A frame rewrote the members too, so ⌘Z is the journal's pre-image.
-      undo: group.frame
-        ? { label: 'Frame selection', template: { kind: 'restore-journal' } }
-        : { label: 'Group', template: dissolveWrapperTemplate(group) },
+      // A frame rewrote the members too, and a gathering group or a component container has no plain inverse: the journal's pre-image.
+      undo: { label: group.frame ? 'Frame selection' : 'Group', template: { kind: 'restore-journal' } },
       ...(group.optimistic ? { optimistic: group.optimistic } : {}),
     },
   )
@@ -362,28 +359,15 @@ export async function commitStudioGroup(group: {
  * children get afterwards are the `line:col`s the write produces. The commit's
  * own resync is what brings them in.
  *
- * `container` is how the dissolved wrapper was spelled, which is what its undo
- * writes back around the released children. `null` means the wrapper carried
- * something a re-group would not restore (a `className`, a `style`, an `id`) —
- * the undo then refuses by name rather than writing back a container that has
- * lost half of itself. Closing that needs `props` on the `wrap`/`group` edit,
- * which is the wrap codemod's own surface.
+ * Its undo is the undo journal's `restore` (G-7), like a group's and a wrap's:
+ * a container that carried a class, an inline style, an id or behaviour (which
+ * an ungroup keeps, emptied) cannot be written back around its children by a
+ * plain re-group, and the journal's pre-image brings every byte back whatever
+ * the container was.
  */
-export async function commitStudioUngroup(
-  nodeId: string,
-  container: { name: string; importSpecifier?: string; designSystemImport?: true } | null,
-): Promise<void> {
+export async function commitStudioUngroup(nodeId: string): Promise<void> {
   await commitStructural([{ kind: 'ungroup', nodeId }], 'Ungroup refused', {
-    undo: {
-      label: 'Ungroup',
-      template: container
-        ? { kind: 'group-relocated', container }
-        : {
-            kind: 'unsupported',
-            message:
-              'That container carried styling of its own (a class, an inline style or an id), and Studio can only write a plain container back around its children — undoing it here would silently drop what it carried. Use your editor’s undo or `git` to bring it back.',
-          },
-    },
+    undo: { label: 'Ungroup', template: { kind: 'restore-journal' } },
   })
 }
 
@@ -438,6 +422,28 @@ export async function commitStudioDetachForInstance(detach: {
       landed = outcome
     },
     quiet: true,
+  })
+  return landed
+}
+
+/**
+ * G-9 (OD-24) — "Unroll list": a `.map` over an array literal written out as
+ * the elements it rendered. Resolves with what the write made once the board
+ * has re-read it (`createdNodeIds` are the written rows, in array order), or
+ * `null` when it did not land — the refusal has already been shown, as the
+ * warning toast every refused structural write gets.
+ *
+ * Its undo is the undo journal's `restore` (P3-F): the rows replace the
+ * `.map` and drop its `key`, which no edit kind can write back.
+ */
+export async function commitStudioUnrollList(unroll: { edit: StructuralEditPayload; label: string }): Promise<StructuralWriteOutcome | null> {
+  let landed: StructuralWriteOutcome | null = null
+  await commitStructural([unroll.edit], 'Unroll list refused', {
+    undo: { label: unroll.label, template: { kind: 'restore-journal' } },
+    select: 'created',
+    onLanded: (outcome) => {
+      landed = outcome
+    },
   })
   return landed
 }
@@ -514,7 +520,17 @@ export async function commitStudioInsert(insert: {
    * images are one insert, one resync and one undo step, whose inverse deletes
    * all three (`delete-created` reads every created id).
    */
-  siblings?: readonly { name: string; props: Record<string, InsertPropValue> }[]
+  siblings?: readonly { name: string; props?: Record<string, InsertPropValue>; children?: string | readonly SlotJsxNode[] }[]
+  /**
+   * G-10 - this insert is a pasted HTML fragment: `css` is the text of the
+   * `<style>` blocks that came with it. The server writes the elements AND the
+   * styles (into the page's own stylesheet, else inline) as one journaled step,
+   * so its ⌘Z is always the journal's `restore`.
+   */
+  pastedHtml?: { css?: string }
+  /** Told the server's answer (the paste reads where its styles went), and again once the board has re-read the write. */
+  onAnswer?: (answer: StudioSaveResponse) => void
+  onLanded?: StructuralCommitOptions['onLanded']
   /** What ⌘Z names this step. Defaults to `Add <name>`. */
   undoLabel?: string
   optimistic?: OptimisticPreviewHandle
@@ -527,6 +543,7 @@ export async function commitStudioInsert(insert: {
         ...(insert.anchorNodeId ? { anchorNodeId: insert.anchorNodeId, position: insert.position } : {}),
         name: insert.name,
         ...(insert.parentIsEmpty ? { exactUndo: true } : {}),
+        ...(insert.pastedHtml ? { pastedHtml: insert.pastedHtml } : {}),
         // Spread conditionally, never passed as `undefined`: the codemod
         // branches on `importSpecifier === undefined` to choose intrinsic vs
         // component, and the wire schema has it optional for the same reason.
@@ -540,8 +557,13 @@ export async function commitStudioInsert(insert: {
     ],
     'Add refused',
     {
-      undo: { label: insert.undoLabel ?? `Add ${insert.name}`, template: insert.parentIsEmpty ? { kind: 'restore-journal' } : { kind: 'delete-created' } },
+      undo: {
+        label: insert.undoLabel ?? `Add ${insert.name}`,
+        template: insert.parentIsEmpty || insert.pastedHtml ? { kind: 'restore-journal' } : { kind: 'delete-created' },
+      },
       ...(insert.optimistic ? { optimistic: insert.optimistic } : {}),
+      ...(insert.onAnswer ? { onAnswer: insert.onAnswer } : {}),
+      ...(insert.onLanded ? { onLanded: insert.onLanded } : {}),
     },
   )
 }

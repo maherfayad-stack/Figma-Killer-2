@@ -24,6 +24,7 @@ import { INLINE_ID_SEPARATOR, isUnlinkedWorkspacePath, realWorkspaceRel, unwrita
 import { inlineSegments, isInlinedNodeId, isRouteChromeNodeId } from '@core/page-tree'
 import { CANVAS_LAYER_REL_PATTERN } from '@core/studio-board'
 import { cssCreateImportTarget } from './studioCssWriteback'
+import { pastedHtmlStylesheet } from './studioInsertHtml'
 import { collapseSameTargetEdits, type DedupedStudioEdit } from './studioEditMerge'
 import { isSlotEditKind } from './studioSlotWriteback'
 import { isVariantEdit, isVariantEditKind, variantEditTouchedFiles } from './studioVariantWriteback'
@@ -309,7 +310,7 @@ function isStudioAuthoredSourceRel(rel: string): boolean {
  */
 export function isSharedSourceNodeId(nodeId: string, kind?: StudioEdit['kind']): boolean {
   // `list-item` (OD-8): an array another route may import renders there too.
-  if (kind === 'asset' || kind === 'literal' || kind === 'detach' || kind === 'swap' || kind === 'list-item' || kind === 'restore') return true
+  if (kind === 'asset' || kind === 'literal' || kind === 'detach' || kind === 'swap' || kind === 'list-item' || kind === 'unroll-list' || kind === 'restore') return true
   // P5-G — every canvas-layer kind creates, removes or moves a whole element
   // across files, exactly like `transplant`.
   if (kind !== undefined && (isStructuralEditKind(kind) || isSlotEditKind(kind) || isVariantEditKind(kind) || isCanvasLayerEditKind(kind))) return true
@@ -449,6 +450,8 @@ export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(
       // planned against the literal the previous left, and refuses honestly
       // (`list-changed`) rather than being dropped.
       edit.kind === 'list-item' ||
+      // G-9 — an unroll rewrites the list the board read; never the "same write" as a value edit on it.
+      edit.kind === 'unroll-list' ||
       // CV-3 — two adds to one component are two values, never the same write.
       isVariantEditKind(edit.kind) ||
       // P5-G — a place or lift names a real element but is never the "same
@@ -500,6 +503,12 @@ export function studioEditsTouchedFiles(
     if (edit.kind === 'css' && edit.op === 'create') {
       const importer = cssCreateImportTarget(dir, edit)
       if (importer) touchedFiles.add(join(dir, importer))
+    }
+    // G-10 - a pasted HTML fragment with CSS also writes the stylesheet the page imports.
+    if (edit.kind === 'insert' && edit.pastedHtml?.css?.trim()) {
+      const location = studioEditLocation(dir, edit.nodeId, scope)
+      const stylesheet = location ? pastedHtmlStylesheet(dir, location.rel) : null
+      if (stylesheet) touchedFiles.add(stylesheet)
     }
     // D2 G3 — a transplant writes TWO files, and only the origin is named by
     // `edit.nodeId`. The destination has to be in this set or the batch's

@@ -94,32 +94,44 @@ export function ColorValueInput({
   const shown = colorDisplayText(value)
   const [text, setText] = useState(shown)
   const [lastSyncedValue, setLastSyncedValue] = useState(value)
+  // What this field last sent upstream while `value` has not yet caught up (a
+  // write that settles later, e.g. a coalesced vector burst). The "untouched"
+  // check below must compare against it, or typing the colour the source still
+  // shows is mistaken for "nothing changed" and the pending write wins.
+  const [emitted, setEmitted] = useState<string | null>(null)
   if (lastSyncedValue !== value) {
     setLastSyncedValue(value)
+    setEmitted(null)
     setText(shown)
+  }
+  const baseline = emitted ?? shown
+
+  function emit(next: string) {
+    setEmitted(next)
+    onChange(next)
   }
 
   function handleTextBlur() {
     const s = text.trim()
     // An untouched field writes nothing: blur after a commit (Tab, Enter) or a
     // cancel (Esc) must not re-send what the source already holds.
-    if (s === shown.trim()) return
+    if (s === baseline.trim()) return
     const isTokenReference = /^var\(\s*--[a-z0-9_-]+\s*\)$/i.test(s)
     const cssSupportsColor =
       typeof CSS !== 'undefined' && typeof CSS.supports === 'function'
         ? CSS.supports('color', s)
         : true
     if (s === '' || isTokenReference || cssSupportsColor) {
-      onChange(s)
+      emit(s)
     } else {
       // Revert to last known-good value
-      setText(shown)
+      setText(baseline)
     }
   }
 
   function handleCommit(nextValue: string) {
     setText(nextValue)
-    onChange(nextValue)
+    emit(nextValue)
   }
 
   return (
@@ -137,7 +149,7 @@ export function ColorValueInput({
       monospace
       onTextChange={setText}
       onTextBlur={handleTextBlur}
-      onTextCancel={() => setText(shown)}
+      onTextCancel={() => setText(baseline)}
       onSwatchChange={handleCommit}
       onTokenSelect={handleCommit}
       onTokenPreview={previewActive ? onPreview : undefined}

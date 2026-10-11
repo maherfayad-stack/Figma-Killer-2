@@ -1,32 +1,46 @@
 /**
- * detachHooks — DET-3: the hooks a detach may MOVE, and where they go.
+ * detachHooks — DET-3 / G-3: the hooks a detach may MOVE, and where they go.
  *
  * A detached component's markup lands inside another component's body — the
  * one that encloses the call site. A hook cannot come with it as markup: the
  * rules of hooks put every hook call at the top level of a function
  * component. So a hook the markup reads is moved to the TOP of the enclosing
- * component, and the markup reads the binding there.
+ * component, and the markup reads the binding there. Two kinds move:
  *
- * That is honest for exactly one kind of hook: a CONTEXT READER — `useContext`
- * itself, or a custom hook whose body is only `useContext` (and a `useMemo` of
- * it), the shape Tier B's provider trace already recognises
- * (`isContextReaderHook`, `@core/page-parser`). Under one provider a context
- * reader returns the same value to every component, so reading it one level
- * up changes nothing that renders. Every other hook (`useState`, `useEffect`,
- * `useRef`, an arbitrary custom hook) holds state or runs effects: hoisting
- * one instance's state into the page would re-render the whole page and
- * change effect timing — a behaviour change sold as markup editing. Those
- * keep refusing `uses-hooks`.
+ * **A CONTEXT READER** — `useContext` itself, or a custom hook whose body is
+ * only `useContext` (and a `useMemo` of it), the shape Tier B's provider trace
+ * already recognises (`isContextReaderHook`, `@core/page-parser`). Under one
+ * provider a context reader returns the same value to every component, so
+ * reading it one level up changes nothing that renders. If the enclosing
+ * component already makes the SAME call its binding is reused.
+ *
+ * **A STATE HOLDER (G-3, OD-23)** — `useState`, `useReducer`, `useRef`. The
+ * instance's state becomes the enclosing component's own, under fresh names
+ * (two detached instances never share a `value`): what the detached markup
+ * reads and sets is still one piece of state, it just lives one component up.
+ * That is a behaviour change — the state now survives the markup being
+ * hidden, and the page re-renders when it changes — so it is reported
+ * (`movedHooks`) before anything is written, and it is only done where it is
+ * true to the instance:
+ *   - the call site is not inside a function (a `.map` row, a callback, a
+ *     render helper), because one hoisted state would be shared by every row
+ *     that function renders;
+ *   - the initial value is self-contained: a literal, plain data of literals,
+ *     or a module-scope name — never a prop or a body value.
+ * Everything else that holds state or runs effects (`useEffect`, `useMemo`
+ * of a prop, an arbitrary custom hook) keeps refusing `uses-hooks`; the
+ * editor answers with a component copy instead.
  *
  * The shape a movable hook must have, all of it checked:
  *   - a top-level `const` of the component's body, initialised by the call;
- *   - bound to one name, or destructured one level with plain names
- *     (`const { t, lang: language } = useLanguage()`) — no defaults, no rest;
- *   - arguments that are literals, or (for `useContext`) a context the
- *     component's module scope names — never a prop or a body value.
+ *   - bound to one name, destructured one level with plain names
+ *     (`const { t, lang: language } = useLanguage()`), or — a state holder —
+ *     an array pattern of plain names (`const [value, setValue] = useState('')`);
+ *   - arguments that are literals, or (for `useContext` and a state holder)
+ *     a name the component's module scope declares — never a prop or a body value.
  *
  * Where it goes (decided lazily, only for the hooks the markup reads):
- *   - the enclosing component already makes the SAME call (same hook
+ *   - the enclosing component already makes the SAME context call (same hook
  *     declaration, same arguments) as a top-level `const`: its binding is
  *     REUSED — a destructured key it already has is read by its local name, a
  *     missing key is added to its pattern, and a whole-value binding is read
@@ -37,45 +51,30 @@
  *   - a call site that is not inside a function component (a module-level
  *     JSX const, a lowercase render helper) has nowhere to call a hook:
  *     `uses-hooks`.
+ *   - a state holder out of a `'use client'` file into a page that is not one
+ *     makes the page a client component (`useClient`), so it still builds.
  *
  * Plans only. `detachComponent.ts` writes, and its gate checks that every
  * moved binding binds, at the markup's new position, to the enclosing
  * component's own top-level scope.
  */
-import * as path from 'node:path'
 import {
   Node,
   SyntaxKind,
   VariableDeclarationKind,
-  type CallExpression,
   type ObjectBindingPattern,
   type SourceFile,
-  type Symbol as MorphSymbol,
-  type VariableStatement,
 } from 'ts-morph'
-import { getFunctionLikeNode, isContextReaderHook, reactExportNameOf, type FunctionLike } from '@core/page-parser'
-import { fail, isWithin, type Value } from './detachSource'
+import { reactExportNameOf, type FunctionLike } from '@core/page-parser'
+import { fail, type Value } from './detachSource'
 import type { DetachNameResolver } from './detachNames'
+import { hasUseClientDirective } from './transplantStateCarry'
+import { contextReaderIdentity, resolvedDeclaration, type ComponentHook, type MovableHook } from './detachHookRead'
 
-const HOOK_CALL_RE = /^use[A-Z0-9]/
-
-/** One key of a destructured hook result: the binding the component reads, and the key it reads it from. */
-interface HookKey {
-  decl: Node
-  key: string
-  local: string
-}
-
-/** A hook call in the component's body that may be moved — see this module's doc for the shape. */
-export interface ComponentHook {
-  statement: VariableStatement
-  call: CallExpression
-  /** What the user reads in a confirm: `useLanguage`. */
-  label: string
-  binding: { kind: 'whole'; decl: Node; local: string } | { kind: 'keys'; keys: HookKey[] }
-  /** The declaration the callee resolves to — two calls are the same hook when these match. */
-  identity: unknown
-}
+// The component side lives in `detachHookRead.ts`; these are its public names, kept here because the
+// page-side planner, the transplant carry and the codemod entry all reach hooks through this module.
+export { findHookBindingForName, readComponentHooks } from './detachHookRead'
+export type { ComponentHook, MovableHook, StateHook } from './detachHookRead'
 
 /** A text edit to the page, applied by `detachComponent.ts` (descending by `pos`). */
 export interface PageTextEdit {
@@ -83,206 +82,6 @@ export interface PageTextEdit {
   /** Characters replaced at `pos` (0 for an insertion). */
   remove: number
   text: string
-}
-
-// ---------------------------------------------------------------------------
-// The component side: which hooks it calls, and may they move
-// ---------------------------------------------------------------------------
-
-function calleeName(call: CallExpression): string | undefined {
-  const callee = call.getExpression()
-  if (Node.isIdentifier(callee)) return callee.getText()
-  if (Node.isPropertyAccessExpression(callee)) return callee.getName()
-  return undefined
-}
-
-function resolvedDeclaration(symbol: MorphSymbol | undefined): Node | undefined {
-  if (!symbol) return undefined
-  const target = symbol.isAlias() ? symbol.getAliasedSymbol() ?? symbol : symbol
-  return target.getDeclarations()[0]
-}
-
-/** The identity of the hook `call` invokes, when it is a context reader — `undefined` for any other hook. */
-function contextReaderIdentity(call: CallExpression): unknown {
-  const callee = call.getExpression()
-  if (reactExportNameOf(callee) === 'useContext') return 'react:useContext'
-  if (!Node.isIdentifier(callee)) return undefined
-  const decl = resolvedDeclaration(callee.getSymbol())
-  const fn = decl ? getFunctionLikeNode(decl) : undefined
-  return fn && isContextReaderHook(fn) ? fn.compilerNode : undefined
-}
-
-/**
- * Best-effort: adds the file `call`'s callee is imported from to `call`'s own
- * ts-morph project, when it isn't already a member. A single-file (or
- * two-file) project's checker cannot resolve a cross-file symbol to a real
- * declaration otherwise — {@link contextReaderIdentity} would see an alias
- * with nothing behind it and read that as "not a context reader" rather than
- * "don't know yet". Silently does nothing for a bare specifier (an npm
- * package — `useState` from `'react'` needs no such help; it is never a
- * context reader either way) or a relative one that doesn't resolve to a
- * real file on disk.
- */
-function preloadImportTarget(call: CallExpression): void {
-  const callee = call.getExpression()
-  if (!Node.isIdentifier(callee)) return
-  const name = callee.getText()
-  const sourceFile = call.getSourceFile()
-  const importDecl = sourceFile
-    .getImportDeclarations()
-    .find(
-      (d) =>
-        d.getDefaultImport()?.getText() === name ||
-        d.getNamedImports().some((n) => (n.getAliasNode() ?? n.getNameNode()).getText() === name),
-    )
-  const specifier = importDecl?.getModuleSpecifierValue()
-  if (!specifier || !specifier.startsWith('.')) return
-  const project = sourceFile.getProject()
-  const base = path.resolve(path.dirname(sourceFile.getFilePath()), specifier)
-  for (const candidate of [base, `${base}.tsx`, `${base}.ts`, `${base}.jsx`, `${base}.js`]) {
-    if (project.getSourceFile(candidate)) return
-    if (project.addSourceFileAtPathIfExists(candidate)) return
-  }
-}
-
-function isLiteralArgument(arg: Node): boolean {
-  return (
-    Node.isStringLiteral(arg) ||
-    Node.isNoSubstitutionTemplateLiteral(arg) ||
-    Node.isNumericLiteral(arg) ||
-    Node.isTrueLiteral(arg) ||
-    Node.isFalseLiteral(arg) ||
-    Node.isNullLiteral(arg)
-  )
-}
-
-/**
- * Every hook call in `fn`'s body, each one checked movable — or a
- * `uses-hooks` refusal naming the first that is not.
- */
-export function readComponentHooks(fn: FunctionLike, componentName: string): ComponentHook[] {
-  const hooks: ComponentHook[] = []
-  const body = fn.getBody()
-  for (const call of fn.getDescendantsOfKind(SyntaxKind.CallExpression)) {
-    const name = calleeName(call)
-    if (!name || !HOOK_CALL_RE.test(name)) continue
-    const identity = contextReaderIdentity(call)
-    if (identity === undefined) {
-      fail(
-        'uses-hooks',
-        `${componentName} uses ${name} — detach moves only a hook that reads a context (like useLanguage()); state and effects stay with a component. Duplicate the component and edit the copy instead.`,
-      )
-    }
-    const decl = call.getParent()
-    const statement = Node.isVariableDeclaration(decl) ? decl.getVariableStatement() : undefined
-    if (
-      !Node.isVariableDeclaration(decl) ||
-      decl.getInitializer() !== call ||
-      !statement ||
-      statement.getParent() !== body ||
-      statement.getDeclarationKind() !== VariableDeclarationKind.Const
-    ) {
-      fail('uses-hooks', `${componentName} calls ${name} somewhere other than a top-level \`const\` of its body, so there is no single call to move.`)
-    }
-    for (const arg of call.getArguments()) {
-      const outerName = Node.isIdentifier(arg) && !isWithin(resolvedDeclaration(arg.getSymbol()) ?? fn, fn)
-      if (!isLiteralArgument(arg) && !(identity === 'react:useContext' && outerName)) {
-        fail('uses-hooks', `${componentName} passes ${name} a value its own props or body compute, which the enclosing component does not have.`)
-      }
-    }
-    hooks.push({ statement, call, label: name, binding: readHookBinding(decl.getNameNode(), componentName, name), identity })
-  }
-  return hooks
-}
-
-/**
- * The context-hook binding named `name` in `fn`'s own top-level body, when
- * there is one — the cross-file transplant's use of this module
- * (`transplantJsxElement.ts`): a captured free variable that turns out to be
- * `const { t } = useLanguage()` (or a whole-value binding) can travel by
- * re-establishing the CALL at the destination, exactly as DET-3 re-establishes
- * it one component up. `undefined` when nothing in `fn`'s body binds `name` to
- * a hook call at all — an ordinary prop or local, which stays a refusal.
- * `'unmovable'` when something DOES bind it to a hook call, but not one this
- * module's rules allow to move (not a context reader, a non-literal argument,
- * or a binding shape `readHookBinding` can't move) — the caller keeps its
- * ordinary captured-scope refusal rather than guessing.
- *
- * Deliberately narrower than {@link readComponentHooks}: that function fails
- * the WHOLE component the moment any one of its hook calls is unmovable,
- * which is correct when the component's entire body is about to move
- * (detach). A transplant moves only markup, not the rest of the component, so
- * an unrelated `useState` elsewhere in the same component is none of its
- * business — only the ONE hook binding the captured name actually needs.
- */
-export function findHookBindingForName(fn: FunctionLike, name: string): ComponentHook | 'unmovable' | undefined {
-  const body = fn.getBody()
-  for (const call of fn.getDescendantsOfKind(SyntaxKind.CallExpression)) {
-    // A plain identifier callee only — `transplantJsxElement.ts` carries the
-    // hook's own import by that same name, and re-spells a property-access
-    // callee (`i18n.useTranslation()`) wrong.
-    if (!Node.isIdentifier(call.getExpression())) continue
-    const label = calleeName(call)
-    if (!label || !HOOK_CALL_RE.test(label)) continue
-    const decl = call.getParent()
-    const statement = Node.isVariableDeclaration(decl) ? decl.getVariableStatement() : undefined
-    if (
-      !Node.isVariableDeclaration(decl) ||
-      decl.getInitializer() !== call ||
-      !statement ||
-      statement.getParent() !== body ||
-      statement.getDeclarationKind() !== VariableDeclarationKind.Const
-    ) {
-      continue
-    }
-    const nameNode = decl.getNameNode()
-    const boundNames = Node.isIdentifier(nameNode)
-      ? [nameNode.getText()]
-      : Node.isObjectBindingPattern(nameNode)
-        ? nameNode
-            .getElements()
-            .flatMap((el) => (Node.isBindingElement(el) && Node.isIdentifier(el.getNameNode()) ? [el.getNameNode().getText()] : []))
-        : []
-    if (!boundNames.includes(name)) continue
-
-    // A cross-file transplant's own ts-morph project loads only the origin
-    // and destination files (`createProject`/`loadSourceFile` in
-    // `transplantJsxElement.ts`, unlike detach's whole-workspace project) —
-    // the hook's OWN declaration file is not a member of it yet, and without
-    // that the checker cannot resolve the callee's symbol to a real function
-    // body for `contextReaderIdentity` to read. Loaded here, once, on the
-    // candidate that actually matters, rather than the whole workspace.
-    preloadImportTarget(call)
-    const identity = contextReaderIdentity(call)
-    if (identity === undefined) return 'unmovable'
-    for (const arg of call.getArguments()) {
-      if (!isLiteralArgument(arg)) return 'unmovable'
-    }
-    try {
-      return { statement, call, label, binding: readHookBinding(nameNode, '', label), identity }
-    } catch {
-      return 'unmovable'
-    }
-  }
-  return undefined
-}
-
-function readHookBinding(nameNode: Node, componentName: string, hookName: string): ComponentHook['binding'] {
-  if (Node.isIdentifier(nameNode)) return { kind: 'whole', decl: nameNode.getParentOrThrow(), local: nameNode.getText() }
-  if (!Node.isObjectBindingPattern(nameNode)) {
-    fail('uses-hooks', `${componentName} unpacks ${hookName}() in a way detach can't move (an array pattern).`)
-  }
-  const keys: HookKey[] = []
-  for (const element of nameNode.getElements()) {
-    const local = element.getNameNode()
-    const property = element.getPropertyNameNode()
-    const key = property ? (Node.isIdentifier(property) ? property.getText() : Node.isStringLiteral(property) ? property.getLiteralValue() : undefined) : local.getText()
-    if (element.getDotDotDotToken() || element.getInitializer() || !Node.isIdentifier(local) || key === undefined) {
-      fail('uses-hooks', `${componentName} unpacks ${hookName}() with a default, a rest or a nested pattern, which detach can't move.`)
-    }
-    keys.push({ decl: element, key, local: local.getText() })
-  }
-  return { kind: 'keys', keys }
 }
 
 // ---------------------------------------------------------------------------
@@ -375,10 +174,14 @@ export class DetachHookPlan {
   /** Every page-side local a read goes through; the gate checks each binds in `component`'s own body. */
   readonly boundLocals = new Set<string>()
   readonly edits: PageTextEdit[] = []
+  /** G-3 - the `'use client'` directive the page needs once a state holder lands in it, as the component's own file spells it. */
+  useClient: string | undefined
 
-  private readonly byDecl = new Map<Node, { hook: ComponentHook; key?: string }>()
-  private readonly placed = new Map<ComponentHook, (key: string | undefined) => PageRead>()
+  private readonly byDecl = new Map<Node, { hook: MovableHook; key?: string }>()
+  private readonly placed = new Map<MovableHook, (key: string | undefined) => PageRead>()
   private readonly component: FunctionLike | undefined
+  private readonly callSite: Node
+  private readonly renderArgument: (arg: Node) => string
   private readonly page: SourceFile
   private readonly names: DetachNameResolver
   private readonly componentName: string
@@ -386,13 +189,23 @@ export class DetachHookPlan {
   private takenNames: Set<string> | undefined
   private concise: { newStatements: string[] } | undefined
 
-  constructor(hooks: readonly ComponentHook[], page: SourceFile, callSite: Node, names: DetachNameResolver, componentName: string) {
+  constructor(
+    hooks: readonly MovableHook[],
+    page: SourceFile,
+    callSite: Node,
+    names: DetachNameResolver,
+    componentName: string,
+    renderArgument: (arg: Node) => string,
+  ) {
+    this.renderArgument = renderArgument
     this.page = page
     this.names = names
     this.componentName = componentName
+    this.callSite = callSite
     for (const hook of hooks) {
       if (hook.binding.kind === 'whole') this.byDecl.set(hook.binding.decl, { hook })
-      else for (const key of hook.binding.keys) this.byDecl.set(key.decl, { hook, key: key.key })
+      else if (hook.binding.kind === 'keys') for (const key of hook.binding.keys) this.byDecl.set(key.decl, { hook, key: key.key })
+      else for (const slot of hook.binding.slots) this.byDecl.set(slot.decl, { hook, key: String(slot.index) })
     }
     this.component = enclosingFunctionComponent(callSite)
   }
@@ -431,7 +244,7 @@ export class DetachHookPlan {
     this.edits.push({ pos: body.getStart(), remove: 0, text: head }, { pos: body.getEnd(), remove: 0, text: `\n${base}}` })
   }
 
-  private place(hook: ComponentHook): (key: string | undefined) => PageRead {
+  private place(hook: MovableHook): (key: string | undefined) => PageRead {
     const component = this.component
     if (!component) {
       fail(
@@ -439,12 +252,35 @@ export class DetachHookPlan {
         `${this.componentName} uses ${hook.label}(), and this call site is not inside a function component — there is nowhere to call it. Duplicate the component and edit the copy instead.`,
       )
     }
+    // An `async` component is a server component: React never calls a hook in one.
+    if (component.isAsync()) {
+      fail('uses-hooks', `${this.componentName} uses ${hook.label}(), and the component around this call site is async, which cannot call a hook.`)
+    }
+    if (hook.state) {
+      this.assertStateIsHoistable(component, hook)
+      return this.writeNewCall(component, hook)
+    }
     const existing = this.findPageCall(component, hook)
     if (existing) {
       const reuse = this.reuse(hook, existing)
       if (reuse) return reuse
     }
     return this.writeNewCall(component, hook)
+  }
+
+  /**
+   * A state holder moves up only when the call site renders exactly once per
+   * render of the enclosing component. Inside any function (a `.map` row, a
+   * callback, a render helper) it may render any number of times, and one
+   * hoisted state would be shared by all of them.
+   */
+  private assertStateIsHoistable(component: FunctionLike, hook: MovableHook): void {
+    this.assertCallSiteRendersOnce(component, () =>
+      fail(
+        'uses-hooks',
+        `${this.componentName} keeps its own state in ${hook.label}(), and this call site sits inside a function that can run once per row or per call - hoisting one state into the page would share it between them.`,
+      ),
+    )
   }
 
   private findPageCall(component: FunctionLike, hook: ComponentHook): PageHookCall | undefined {
@@ -504,18 +340,31 @@ export class DetachHookPlan {
     }
   }
 
-  private writeNewCall(component: FunctionLike, hook: ComponentHook): (key: string | undefined) => PageRead {
+  private writeNewCall(component: FunctionLike, hook: MovableHook): (key: string | undefined) => PageRead {
     const callee = hook.call.getExpression()
     const calleeText = Node.isPropertyAccessExpression(callee)
       ? `${this.outer(callee.getExpression())}.${callee.getName()}`
       : this.outer(callee)
-    const args = hook.call.getArguments().map((arg) => (Node.isIdentifier(arg) ? this.outer(arg) : arg.getText()))
+    const typeArguments = hook.call.getTypeArguments()
+    const typeText = typeArguments.length > 0 ? `<${typeArguments.map((type) => type.getText()).join(', ')}>` : ''
+    const args = hook.call.getArguments().map((arg) => {
+      if (hook.fromProps.has(arg)) return this.renderArgument(arg)
+      return Node.isIdentifier(arg) && arg.getText() !== 'undefined' ? this.outer(arg) : arg.getText()
+    })
     const locals = new Map<string | undefined, string>()
     let pattern: string
     if (hook.binding.kind === 'whole') {
       const local = this.freshName(hook.binding.local)
       locals.set(undefined, local)
       pattern = local
+    } else if (hook.binding.kind === 'slots') {
+      const parts: string[] = []
+      for (const slot of hook.binding.slots) {
+        const local = this.freshName(slot.local)
+        locals.set(String(slot.index), local)
+        parts[slot.index] = local
+      }
+      pattern = `[${Array.from(parts, (part) => part ?? '').join(', ')}]`
     } else {
       const parts: string[] = []
       for (const key of hook.binding.keys) {
@@ -525,8 +374,18 @@ export class DetachHookPlan {
       }
       pattern = `{ ${parts.join(', ')} }`
     }
-    const statement = `const ${pattern} = ${calleeText}(${args.join(', ')})`
+    const statement = `const ${pattern} = ${calleeText}${typeText}(${args.join(', ')})`
     this.movedHooks.push(hook.label)
+    if (hook.state) this.useClient ??= missingClientDirective(hook.statement.getSourceFile(), this.page)
+    this.insertStatement(component, statement)
+    return (key) => {
+      const local = locals.get(key)!
+      return { text: local, free: new Set([local]) }
+    }
+  }
+
+  /** Writes `statement` as the component's FIRST statement (a concise arrow body becomes a block), in the order statements are emitted. */
+  private insertStatement(component: FunctionLike, statement: string): void {
     const body = component.getBody()
     if (body && Node.isBlock(body)) {
       const first = body.getStatements()[0]
@@ -537,9 +396,41 @@ export class DetachHookPlan {
       this.concise ??= { newStatements: [] }
       this.concise.newStatements.push(statement)
     }
-    return (key) => {
-      const local = locals.get(key)!
-      return { text: local, free: new Set([local]) }
+  }
+
+  /**
+   * G-3 - a body value the markup reads that cannot be inlined (read twice,
+   * read in a callback, built from another body value) is computed ONCE, at the
+   * top of the page's component, under a fresh name: `const cls = <initializer>`.
+   * `initializer` is already written in terms of the page (call-site values, hook
+   * locals, other hoisted values), so this only decides WHERE it may go - the same
+   * places a state holder may: a function component that is not async, with a
+   * call site that is not inside a function. Returns the name the markup reads.
+   */
+  emitLocal(preferred: string, initializer: string): string {
+    const component = this.component
+    if (!component) {
+      fail('body-local', `${this.componentName} computes \`${preferred}\` in its body, and this call site is not inside a function component - there is nowhere to compute it once.`)
+    }
+    if (component.isAsync()) {
+      fail('body-local', `${this.componentName} computes \`${preferred}\` in its body, and the component around this call site is async, which cannot hold a computed value per render.`)
+    }
+    this.assertCallSiteRendersOnce(component, () =>
+      fail(
+        'body-local',
+        `${this.componentName} computes \`${preferred}\` once per render, and this call site sits inside a function that can run once per row or per call - one value hoisted into the page would be shared between them.`,
+      ),
+    )
+    const local = this.freshName(preferred)
+    this.insertStatement(component, `const ${local} = ${initializer}`)
+    return local
+  }
+
+  /** Calls `refuse` when the call site sits inside any function between it and `component`. */
+  private assertCallSiteRendersOnce(component: FunctionLike, refuse: () => never): void {
+    for (const ancestor of this.callSite.getAncestors()) {
+      if (ancestor === component) return
+      if (Node.isArrowFunction(ancestor) || Node.isFunctionExpression(ancestor) || Node.isFunctionDeclaration(ancestor) || Node.isMethodDeclaration(ancestor)) refuse()
     }
   }
 
@@ -562,6 +453,16 @@ export class DetachHookPlan {
       return candidate
     }
   }
+}
+
+/** The `'use client'` directive of `from`, as written there, when `to` lacks one - what a state holder moved from one into the other needs. */
+function missingClientDirective(from: SourceFile, to: SourceFile): string | undefined {
+  if (!hasUseClientDirective(from) || hasUseClientDirective(to)) return undefined
+  for (const statement of from.getStatements()) {
+    const expression = Node.isExpressionStatement(statement) ? statement.getExpression() : undefined
+    if (expression && Node.isStringLiteral(expression) && expression.getLiteralValue() === 'use client') return expression.getText()
+  }
+  return undefined
 }
 
 function keyText(key: string): string {

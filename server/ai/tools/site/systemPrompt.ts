@@ -40,13 +40,14 @@ const CMS_BUILDING_BLOCK = `Building:
  * The same block for a STUDIO-IMPORTED page — one parsed out of the user's
  * own `.tsx` — which is what `/admin/site` shows on this fork.
  *
- * It exists because the CMS block above was a promise the product stopped
- * keeping. `site_insert_html` and `site_replace_node_html` REFUSE on a
- * studio-imported tree (`store-13`: an HTML fragment has no honest single
- * source form, and roughly half the payload is a `<style>` block that targets
- * a stylesheet rather than the `.tsx`). A prompt that opens with "insert
- * structure with site_insert_html" therefore spent the model's first tool
- * call on a call that cannot succeed, and named no tool that can.
+ * It exists because the CMS block above describes a document this page is not.
+ * On a studio-imported tree `site_insert_html` WRITES (G-10: the HTML becomes
+ * JSX and its `<style>` goes into the page's stylesheet) but returns no node
+ * ids, since the elements do not exist until the file is re-read, and
+ * `site_replace_node_html` REFUSES (a replace is two writes: delete the old
+ * children, insert the new). A prompt that opens with "insert structure with
+ * site_insert_html ... then address nodes by uid" therefore sent the model
+ * after ids it cannot have, and named the tools that give them.
  *
  * ## Why this is a second STATIC prefix rather than a line in the dynamic suffix
  *
@@ -59,7 +60,7 @@ const CMS_BUILDING_BLOCK = `Building:
  * conversation never alternates and never thrashes the cache.
  */
 const STUDIO_BUILDING_BLOCK = `Building — THIS PAGE CAME FROM A REAL REACT FILE ON DISK:
-- The open page was parsed out of the project's own .tsx. Its source of truth is that file, not this editor's document, so the site_* WRITE tools do not apply to it: site_insert_html and site_replace_node_html REFUSE outright (an HTML fragment has no honest single source form, and its <style> half targets a stylesheet rather than the .tsx), and the page verbs (site_add_page, site_duplicate_page, site_delete_page, site_rename_page) would make a page no file in the repository describes.
+- The open page was parsed out of the project's own .tsx. Its source of truth is that file, not this editor's document, so the site_* WRITE tools mostly do not apply to it: site_replace_node_html REFUSES outright (a replace is two writes), site_insert_html converts the HTML to JSX and writes it into the file, with its <style> rules in the page's stylesheet, but returns no node ids until the file is re-read, and the page verbs (site_add_page, site_duplicate_page, site_delete_page, site_rename_page) would make a page no file in the repository describes.
 - Write structure with the studio_* toolset instead: studio_apply_edits' insert edit writes real JSX into the file and returns a node id you can address, studio_codemod rewrites an existing element, and studio_create_page scaffolds a real route file. Read with studio_read_file / studio_find_nodes / studio_get_node_source.
 - Reading the page as annotated HTML still works: site_read_document and site_get_node_html report the LIVE tree (every element carries uid="<nodeId>"), and those ids decode to rel:line:col — the file, line and column the element is written at. Use them to aim a studio_* edit; do not use them to aim a site_* write.`
 

@@ -38,8 +38,13 @@
  * characters that extracts digits, and the SVG sniff only looks at the first
  * and last few KB to decide whether text is shaped like an `<svg>` document.
  * The SVG itself is sanitised by `svgToJsxNode` (`sanitizeSvg`, P5-D part 1)
- * or, when it lands as a file, by the server's `sanitizeSvgBytes`. HTML on the
- * clipboard is never inserted.
+ * or, when it lands as a file, by the server's `sanitizeSvgBytes`.
+ *
+ * HTML on the clipboard (G-10) is converted to JSX by `htmlToJsx.ts`, which
+ * sanitizes it through the DOMPurify boundary first. It is offered only when it
+ * LOOKS like markup (`looksLikeHtmlDesign`): a plain-text copy arrives as
+ * `<span>text</span>` wrapped in a `<meta>`, and pasting that as an element
+ * would turn every text copy into a span.
  */
 
 /** The custom clipboard type the `copy` event writes the marker under. */
@@ -83,9 +88,25 @@ export interface ClipboardSnapshot {
   /** Raster images, in clipboard order. An SVG is never here — see `svg`. */
   images: File[]
   svg: ClipboardSvgSource | null
+  /** G-10 - foreign markup (`text/html` with no Studio marker) that looks like a design; see `looksLikeHtmlDesign`. */
+  html: string | null
 }
 
-export const UNREADABLE_CLIPBOARD: ClipboardSnapshot = { readable: false, marker: null, images: [], svg: null }
+export const UNREADABLE_CLIPBOARD: ClipboardSnapshot = { readable: false, marker: null, images: [], svg: null, html: null }
+
+/**
+ * Elements whose presence says "this is a piece of a page", not a styled run of
+ * text. A copy of plain text arrives as `<span>`s and `<meta>`; those are not
+ * enough. A `<style>` block is the other signal: a run of text carries no
+ * stylesheet, a copied component does.
+ */
+const DESIGN_ELEMENT =
+  /<(?:div|section|article|header|footer|nav|main|aside|p|h[1-6]|ul|ol|li|dl|table|form|button|input|select|textarea|img|picture|video|figure|label|blockquote|pre|hr|svg|style)[\s>/]/i
+
+/** Whether clipboard `text/html` is markup worth pasting as elements. */
+export function looksLikeHtmlDesign(html: string): boolean {
+  return DESIGN_ELEMENT.test(html)
+}
 
 const SVG_MIME = 'image/svg+xml'
 /** How far into the text an `<svg` root may start (a prolog, a DOCTYPE, comments). */
@@ -126,7 +147,8 @@ export function snapshotFromDataTransfer(data: DataTransfer | null): ClipboardSn
   const text = data.getData('text/plain')
   const svg: ClipboardSvgSource | null =
     text && looksLikeSvgDocument(text) ? { kind: 'text', markup: text } : svgFile ? { kind: 'file', file: svgFile } : null
-  return { readable: true, marker, images, svg }
+  const html = marker === null ? data.getData('text/html') : ''
+  return { readable: true, marker, images, svg, html: html && looksLikeHtmlDesign(html) ? html : null }
 }
 
 /** The subset of `ClipboardItem` read here, so the tests can hand in plain objects. */
@@ -150,11 +172,14 @@ function extensionFor(type: string): string {
 export async function snapshotFromClipboardItems(items: readonly ClipboardItemLike[]): Promise<ClipboardSnapshot> {
   let marker: number | null = null
   let svg: ClipboardSvgSource | null = null
+  let html: string | null = null
   const images: File[] = []
   for (const item of items) {
     for (const type of item.types) {
       if (type === 'text/html' && marker === null) {
-        marker = readMarkerHtml(await (await item.getType(type)).text())
+        const text = await (await item.getType(type)).text()
+        marker = readMarkerHtml(text)
+        if (marker === null && html === null && looksLikeHtmlDesign(text)) html = text
       } else if (type === 'text/plain' && svg === null) {
         const text = await (await item.getType(type)).text()
         if (looksLikeSvgDocument(text)) svg = { kind: 'text', markup: text }
@@ -166,7 +191,7 @@ export async function snapshotFromClipboardItems(items: readonly ClipboardItemLi
       }
     }
   }
-  return { readable: true, marker, images, svg }
+  return { readable: true, marker, images, svg, html: marker === null ? html : null }
 }
 
 /** What one ⌘V means. */
@@ -175,6 +200,8 @@ export type CanvasPasteDecision =
   | { kind: 'nodes' }
   | { kind: 'svg'; source: ClipboardSvgSource }
   | { kind: 'images'; files: File[] }
+  /** G-10 - markup from another page or app, written as JSX with its styles. */
+  | { kind: 'html'; html: string }
   /**
    * Nothing to paste. `foreign-marker`: the OS clipboard holds layers, but not
    * the ones this editor copied (another Studio tab copied since).
@@ -190,7 +217,8 @@ export type CanvasPasteDecision =
  *   2. An SVG document (text or file) — before raster images, because a design
  *      tool that offers both offers the SVG as the editable one.
  *   3. Raster images.
- *   4. The clipboard offers nothing Studio can paste (plain text, or it could
+ *   4. HTML markup that looks like a design (G-10).
+ *   5. The clipboard offers nothing Studio can paste (plain text, or it could
  *      not be read): the layers the slice holds, if any — what ⌘V did before
  *      this bundle, and still the answer whenever nothing newer is readable.
  */
@@ -200,6 +228,7 @@ export function decideCanvasPaste(snapshot: ClipboardSnapshot, entryCopiedAt: nu
   }
   if (snapshot.svg) return { kind: 'svg', source: snapshot.svg }
   if (snapshot.images.length > 0) return { kind: 'images', files: snapshot.images }
+  if (snapshot.html) return { kind: 'html', html: snapshot.html }
   if (entryCopiedAt !== null) return { kind: 'nodes' }
   return { kind: 'none', reason: snapshot.readable ? 'empty' : 'unreadable' }
 }

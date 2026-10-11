@@ -46,11 +46,14 @@ import {
   decodeSourceNodeId,
   describeStructuralRefusal,
   isSourceDerivedNodeId,
+  layoutFileOf,
+  planUnrollList,
   previewStructuralGroup,
   previewStructuralMove,
   refuseStructuralEdit,
   resolveContainerAnchor,
-  resolveSourceContainer,
+  resolveWriteAnchor,
+  resolveWriteContainer,
   type EditConstraint,
   type ListRowEditPlan,
   type NodeTree,
@@ -62,8 +65,10 @@ import { constraintPrimaryAction, constraintToastBody } from '../../constraintAc
 import { openSourceFile } from '../../openSourceFile'
 import type { EditorStore } from '@site/store/types'
 import { applyToThisInstanceOnly } from './instanceOnlyGesture'
+import { resolveActiveTreeTarget } from './helpers'
 import type { SourceDuplicateToCommit } from '@site/studio/studioStructuralCommits'
 import { nodeHtmlTag } from './nodeHtmlTag'
+import type { StructuralRefusalDialogState } from '../structuralRefusalDialogState'
 import type { EditorStoreSetter } from './types'
 
 /**
@@ -122,7 +127,11 @@ export function planSourceMove(
   // OD-8 — `listRow` is a reorder of `.map` rows, written to their array:
   // `commit` is `null` and the caller must NOT mutate the tree.
   if (preview.ok) return { ok: true, commit: preview.commit, ...(preview.listRow ? { listRow: preview.listRow } : {}) }
-  const node = nodeIds[0] === undefined ? undefined : tree.nodes[nodeIds[0]]
+  const moved = nodeIds[0] === undefined ? undefined : tree.nodes[nodeIds[0]]
+  // A refusal about the CONTAINER (a drop into an instance's own markup) is
+  // about that node: its origin is what "show me" opens, and its instance is
+  // the one OD-7 detaches.
+  const node = (preview.refusal.aboutNodeId !== undefined ? tree.nodes[preview.refusal.aboutNodeId] : undefined) ?? moved
   return {
     ok: false,
     constraint: describeStructuralRefusal({ refusal: preview.refusal, ...(node ? { node } : {}) }),
@@ -166,6 +175,13 @@ export interface SourceInsertCommit {
    * the insert's ⌘Z is the undo journal's `restore` (`commitStudioInsert`).
    */
   parentIsEmpty: boolean
+  /**
+   * OD-22 - the element the new child APPEARS in on the board when that is not
+   * `parentNodeId`: a drop into a layout component's children slot is written
+   * at the call site (`parentNodeId`, the instance) and rendered inside the
+   * inlined element that holds `{children}`. The optimistic preview goes there.
+   */
+  previewParentId?: string
 }
 
 /**
@@ -183,9 +199,14 @@ export function planSourceInsert(
   parentId: string,
   index?: number,
 ): StructuralPlan<SourceInsertCommit> {
-  const container = resolveSourceContainer(tree, parentId)
+  const container = resolveWriteContainer(tree, parentId)
   if (!container.ok) {
-    return { ok: false, constraint: describeStructuralRefusal({ refusal: container.refusal }) }
+    const about = container.refusal.aboutNodeId === undefined ? undefined : tree.nodes[container.refusal.aboutNodeId]
+    return {
+      ok: false,
+      constraint: describeStructuralRefusal({ refusal: container.refusal, ...(about ? { node: about } : {}) }),
+      ...(about ? { nodeId: about.id } : {}),
+    }
   }
 
   const node = container.node
@@ -196,9 +217,18 @@ export function planSourceInsert(
     return { ok: false, constraint: describeStructuralRefusal({ refusal, node }), nodeId: node.id }
   }
 
+  // OD-22 - inside a layout component's children slot the element is written
+  // at the call site (`parentNodeId` is the instance), but the drop index and
+  // the optimistic preview count the slot's own children.
+  const anchor = container.slot ? resolveWriteAnchor(tree, container, parentId, index) : resolveContainerAnchor(tree, node, index)
   return {
     ok: true,
-    commit: { parentNodeId: node.id, ...resolveContainerAnchor(tree, node, index), parentIsEmpty: node.children.length === 0 },
+    commit: {
+      parentNodeId: node.id,
+      ...anchor,
+      parentIsEmpty: container.emptyAtCallSite,
+      ...(container.slot ? { previewParentId: container.anchorOwner.id } : {}),
+    },
   }
 }
 
@@ -292,15 +322,21 @@ export function planSourceDuplicateTo(
     if (!tree.nodes[nodeId]) continue
     const landing = previewStructuralMove(tree, [nodeId], newParentId, newIndex)
     if (!landing.ok) {
-      return { ok: false, constraint: describeStructuralRefusal({ refusal: landing.refusal, node }), nodeId }
+      const about = (landing.refusal.aboutNodeId !== undefined ? tree.nodes[landing.refusal.aboutNodeId] : undefined) ?? node
+      return { ok: false, constraint: describeStructuralRefusal({ refusal: landing.refusal, node: about }), nodeId: about.id }
     }
   }
 
   if (!isSourceDerivedNodeId(first)) return { ok: true, commit: null }
 
-  const container = resolveSourceContainer(tree, newParentId)
+  const container = resolveWriteContainer(tree, newParentId)
   if (!container.ok) {
-    return { ok: false, constraint: describeStructuralRefusal({ refusal: container.refusal }) }
+    const about = container.refusal.aboutNodeId === undefined ? undefined : tree.nodes[container.refusal.aboutNodeId]
+    return {
+      ok: false,
+      constraint: describeStructuralRefusal({ refusal: container.refusal, ...(about ? { node: about } : {}) }),
+      ...(about ? { nodeId: about.id } : {}),
+    }
   }
   for (const nodeId of ids) {
     if (tree.nodes[nodeId]) continue
@@ -315,7 +351,7 @@ export function planSourceDuplicateTo(
   // names a position in a different list, so it is dropped rather than applied
   // to the wrong one — appending is an honest position. Identical reasoning to
   // `previewStructuralMove`'s reparent branch.
-  const anchor = resolveContainerAnchor(tree, container.node, container.node.id === newParentId ? newIndex : undefined)
+  const anchor = resolveWriteAnchor(tree, container, newParentId, newIndex)
   const intoFile = decodeSourceNodeId(container.node.id)?.rel
   const writeOrder = anchor.anchorNodeId !== null && anchor.position === 'after' ? [...ids].reverse() : ids
   return {
@@ -325,7 +361,7 @@ export function planSourceDuplicateTo(
       parentNodeId: container.node.id,
       ...anchor,
       ...(decodeSourceNodeId(nodeId)?.rel !== intoFile ? { crossFile: true as const } : {}),
-      ...(container.node.children.length === 0 ? { parentIsEmpty: true as const } : {}),
+      ...(container.emptyAtCallSite ? { parentIsEmpty: true as const } : {}),
     })),
   }
 }
@@ -403,7 +439,8 @@ export function planSourceGroup(
  * children, in the same file and the same scope, so an ordinary element at a
  * known location is the whole requirement here. The question only the AST can
  * answer — is this container ONLY a container, or does it carry a handler, a
- * ref, a `key`, a spread — arrives at save time as `has-behaviour`.
+ * ref, a `key`, a spread — decides, at save time, whether it is removed or
+ * kept (emptied) with its children handed to the parent (G-7).
  */
 export function planSourceUngroup(
   tree: NodeTree<PageNode>,
@@ -504,9 +541,48 @@ export const STRUCTURAL_REFUSAL_TITLE = {
  * below is untouched — `pushToast` does not go through this store's `set` at
  * all, so it was never inside this cost.
  */
+/**
+ * G-8 / G-9 — the two remedies that end with the refused gesture RUNNING: a
+ * `route-chrome` refusal can be answered by starting "Edit layout" for that
+ * layout file, a `list-row` refusal (on a list whose array is a literal in the
+ * same file) by writing the list out as elements. Each is offered only when the
+ * caller handed over what it takes to run the gesture again (`retry`) and the
+ * store; the constraint gains the matching action, the dialog gets the closure.
+ */
+function withReplayRemedies(
+  constraint: EditConstraint,
+  context: { nodeId?: string; retry?: (mapId: (nodeId: string) => string) => void; getState?: () => EditorStore },
+): { constraint: EditConstraint; replayRemedies?: NonNullable<StructuralRefusalDialogState['replayRemedies']> } {
+  const { nodeId, retry, getState } = context
+  if (!nodeId || !getState) return { constraint }
+  if (constraint.reason === 'route-chrome') {
+    const rel = layoutFileOf(nodeId)
+    if (!rel) return { constraint }
+    return {
+      constraint,
+      replayRemedies: {
+        editLayout: () => {
+          getState().setMainEditTarget({ kind: 'layout', rel })
+          // Nothing was written, so every id the gesture named is still right.
+          retry?.((id) => id)
+        },
+      },
+    }
+  }
+  if (constraint.reason === 'list-row') {
+    const tree = resolveActiveTreeTarget(getState())?.tree
+    if (!tree || !planUnrollList(tree, nodeId)) return { constraint }
+    return {
+      constraint: { ...constraint, actions: [{ label: 'Unroll list', kind: 'unroll-list' }, ...constraint.actions] },
+      replayRemedies: { unrollList: () => void getState().unrollList(nodeId, retry ? { retry } : undefined) },
+    }
+  }
+  return { constraint }
+}
+
 export function presentStructuralRefusal(
   title: (typeof STRUCTURAL_REFUSAL_TITLE)[keyof typeof STRUCTURAL_REFUSAL_TITLE],
-  constraint: EditConstraint,
+  refused: EditConstraint,
   context: {
     /** The node the refusal is about, when the plan had one — see `StructuralPlan.nodeId`. */
     nodeId?: string
@@ -534,6 +610,7 @@ export function presentStructuralRefusal(
     set: EditorStoreSetter
   },
 ): void {
+  const { constraint, replayRemedies } = withReplayRemedies(refused, context)
   const openSourceContext = context.getState
     ? {
         openSource: (origin: Parameters<typeof openSourceFile>[1]) => openSourceFile(context.getState!(), origin),
@@ -551,6 +628,7 @@ export function presentStructuralRefusal(
           constraint,
           ...(context.nodeId !== undefined ? { nodeId: context.nodeId } : {}),
           ...(context.duplicateIntoFrame ? { duplicateIntoFrame: context.duplicateIntoFrame } : {}),
+          ...(replayRemedies ? { replayRemedies } : {}),
         }
       })
     })
@@ -565,6 +643,7 @@ export function presentStructuralRefusal(
       set: context.set,
       refusedNodeId: context.nodeId,
       retry: context.retry,
+      placing: title === STRUCTURAL_REFUSAL_TITLE.move || title === STRUCTURAL_REFUSAL_TITLE.transplant || title === STRUCTURAL_REFUSAL_TITLE.insert,
       // OD-7 — both the detach and the component copy refused: ONE warning,
       // never the dialog (its remedies are the two writes that just refused).
       onRefused: () =>

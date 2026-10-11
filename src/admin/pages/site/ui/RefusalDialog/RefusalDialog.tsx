@@ -28,7 +28,7 @@ export function RefusalDialog() {
 
   if (!dialogState) return null
 
-  const { title, constraint, nodeId, duplicateIntoFrame } = dialogState
+  const { title, constraint, nodeId, duplicateIntoFrame, replayRemedies } = dialogState
 
   function handleActionSettled(action: EditConstraintAction, ok: boolean) {
     // A Detach/Extract that refused has already said why (`detachInstances`
@@ -50,6 +50,7 @@ export function RefusalDialog() {
           nodeId={nodeId}
           onActionSettled={handleActionSettled}
           duplicateIntoFrame={duplicateIntoFrame}
+          replayRemedies={replayRemedies}
         />
       }
     >

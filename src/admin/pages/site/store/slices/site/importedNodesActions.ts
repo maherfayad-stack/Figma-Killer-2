@@ -15,7 +15,7 @@ import { indexStyleRulesByName, linkImportedClassNames, mergeImportedStyleRules 
 import type { StudioSourceWrites } from './studioSourceWrites'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 
-type ImportedNodesActions = Pick<SiteSlice, 'insertImportedNodes' | 'refuseImportedNodesInto'>
+type ImportedNodesActions = Pick<SiteSlice, 'insertImportedNodes'>
 
 export function createImportedNodesActions(
   helpers: SiteSliceHelpers,
@@ -24,11 +24,6 @@ export function createImportedNodesActions(
   const { mutateActiveTreeAndSite } = helpers
 
   const actions: ImportedNodesActions = {
-    // `mcp-21` — the same guard `insertImportedNodes` runs, asked on its own by
-    // the one caller that must destroy something before it can insert. See
-    // `SiteSlice.refuseImportedNodesInto`.
-    refuseImportedNodesInto: (parentId) => refuseImportedNodesInto(parentId),
-
     insertImportedNodes: (parentId, fragment, opts) => {
       if (fragment.rootIds.length === 0) return { ok: false, message: 'That HTML carried no elements to insert.' }
       // `mcp-21` — the studio-tree refusal rides the SAME guard as the

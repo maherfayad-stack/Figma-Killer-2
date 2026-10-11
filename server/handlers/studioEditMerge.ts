@@ -33,7 +33,8 @@
  * contributed to it. Without that, a refused class edit held back only the
  * last instance's `classIds` baseline and silently adopted the rest.
  */
-import type { StudioClassNameToken, StudioEdit } from './studioEditSchemas'
+import type { StudioClassNameToken } from './studioClassEditSchema'
+import type { StudioEdit } from './studioEditSchemas'
 
 type StyleEdit = Extract<StudioEdit, { kind: 'style' }>
 type ClassEdit = Extract<StudioEdit, { kind: 'class' }>

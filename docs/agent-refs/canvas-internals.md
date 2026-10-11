@@ -661,9 +661,28 @@ Two traps worth keeping:
   default location. `shouldSuppressClick()` covers exactly one tick.
 
 `CanvasInsertionDragOverlay` draws the shared preview (a rect, or a 2px line for
-a before/after drop) and a cursor-following ghost, portaled to `document.body`
-so it can paint over an iframe. Its ghost takes children: the notch shows a
-label, the media explorer keeps its own thumbnail card.
+a before/after drop; upright beside side-by-side siblings, on the visually-near
+edge in a reversed flow) and a cursor-following ghost, portaled to
+`document.body` so it can paint over an iframe. Its ghost takes children (the
+label chip) and an optional `body`: a caller that knows the element passes
+`ghostSize` to the hook (the notch Div 100x100, an image's natural size, an
+icon's own size) and the ghost is that element at its size times
+`currentCanvasZoom()`, top-left on the pointer, at 50% opacity
+(`[data-insertion-ghost-body]`; the chip sits under it). The ghost MOVES without
+React: the hook's `insertionGhostTracker` writes `--ghost-x/y` on the ghost
+element on the same rAF as the drop resolve, and `setDrag` runs only when the
+drop PREVIEW changes (`sameDropPreview`), so a pointermove over one target is
+zero renders. A caller that cannot say what it inserts (a saved layout, a
+project component) keeps the chip alone.
+
+**Landing math (Label 2/3).** A press on the MIDDLE of an element that cannot
+hold the new one (outside `getCanvasDropZone`'s edge bands, so zone `inside`)
+lands on the side the pointer is nearer to (`nearerSiblingSide`: before the
+midpoint, after from it; flipped for a reversed flow). It used to resolve every
+such press as `after`, so the upper half of Label 3 landed one slot late. A
+press in a container's own space (the gap, a margin) goes through
+`nearestFlowIndex` as before. The Layers panel's row drops keep the append
+default: a row has no pointer geometry.
 
 **Released on the empty board (P5-G G1).** Outside every frame the gesture used
 to resolve to nothing — no preview and a release that silently did nothing,

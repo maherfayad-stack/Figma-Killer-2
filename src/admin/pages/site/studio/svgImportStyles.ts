@@ -44,6 +44,8 @@
  * sentence the user can act on, before a byte is written.
  */
 
+import { cssPropertyToStyleKey } from '@core/css-codemods/browser'
+
 /** One `property: value` pair, `!important` split off. */
 export interface CssDeclaration {
   /** Lowercased, except a custom property (`--x`), whose name is case-sensitive. */
@@ -248,21 +250,6 @@ function camelCase(name: string): string {
 }
 
 /**
- * A CSS property's key in a React `style` object: camelCase, with React's
- * vendor-prefix rule (`-webkit-x` → `WebkitX`, `-ms-x` → `msX`); a custom
- * property keeps its name, which React sets verbatim.
- */
-function styleObjectKey(property: string): string {
-  if (property.startsWith('--')) return property
-  if (property.startsWith('-ms-')) return camelCase(property.slice(1))
-  if (property.startsWith('-')) {
-    const key = camelCase(property.slice(1))
-    return key.charAt(0).toUpperCase() + key.slice(1)
-  }
-  return camelCase(property)
-}
-
-/**
  * The winning declarations, split into the two JSX shapes that can carry them:
  * presentation attributes (by their JSX name) and a React `style` object.
  */
@@ -276,7 +263,7 @@ export function declarationsToJsx(declarations: ReadonlyMap<string, string>): {
     if (PRESENTATION_PROPERTIES.has(property) && !CSS_ONLY_VALUE.test(value)) {
       attributes[camelCase(property)] = value
     } else {
-      style[styleObjectKey(property)] = value
+      style[cssPropertyToStyleKey(property)] = value
     }
   }
   return { attributes, style }

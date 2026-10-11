@@ -82,13 +82,6 @@ export interface StructuralEditPayload {
   [field: string]: unknown
 }
 
-/** How a `wrap`/`group` edit spells its container — the registry's answer, carried so an undo can write the same one back. */
-export interface StructuralContainerSpelling {
-  name: string
-  importSpecifier?: string
-  designSystemImport?: true
-}
-
 /**
  * What a gesture's inverse is, before the write has said what it made.
  *
@@ -99,8 +92,6 @@ export interface StructuralContainerSpelling {
  */
 export type StructuralInverseTemplate =
   | { kind: 'delete-created' }
-  | { kind: 'ungroup-created' }
-  | { kind: 'group-relocated'; container: StructuralContainerSpelling }
   /**
    * P3-F — the inverse of a one-shot write (delete, detach, swap, extract):
    * `restore` the undo-journal entry its batch recorded. Nothing to capture at
@@ -177,23 +168,6 @@ export function resolveStructuralInverse(
       if (outcome.createdNodeIds.length === 0) return null
       return outcome.createdNodeIds.map((nodeId) => ({ kind: 'delete', nodeId }))
     }
-    case 'ungroup-created': {
-      if (outcome.createdNodeIds.length === 0) return null
-      return outcome.createdNodeIds.map((nodeId) => ({ kind: 'ungroup', nodeId }))
-    }
-    case 'group-relocated': {
-      const [first, ...rest] = outcome.relocatedNodeIds
-      if (first === undefined) return null
-      // A container that held ONE child is re-created by `wrap`, and one that
-      // held several by `group` — the same split `writeGroupToSource` makes on
-      // the way out, so the undo writes through the codemod the gesture's own
-      // forward direction would have used.
-      return [
-        rest.length === 0
-          ? { kind: 'wrap', nodeId: first, ...template.container }
-          : { kind: 'group', nodeId: first, siblingNodeIds: rest, ...template.container },
-      ]
-    }
     case 'restore-journal':
       return outcome.undoToken === null ? null : [restoreEdit(outcome.undoToken)]
     case 'canvas-layer-delete':
@@ -242,8 +216,10 @@ const NODE_ID_FIELDS = ['anchorNodeId', 'parentNodeId'] as const
  */
 export function addressesSourceLiteral(edit: StructuralEditPayload): boolean {
   // OD-8 — a `list-item` edit names an ARRAY LITERAL's `[`, never a node; the
-  // codemod's own `length` check is its guard.
-  return edit.kind === 'asset' || edit.kind === 'list-item'
+  // codemod's own `length` check is its guard. G-9's `unroll-list` names the
+  // `.map`'s row TEMPLATE (a row id without its `#n`), which is not a board
+  // node either; its guard is the same `length` plus the array's position.
+  return edit.kind === 'asset' || edit.kind === 'list-item' || edit.kind === 'unroll-list'
 }
 
 /**
@@ -281,16 +257,24 @@ export function structuralEditNodeIds(edit: StructuralEditPayload): string[] {
  * vacating them) let it through. `historyNodeIdRemap.ts`'s isomorphic walk is
  * what makes the correspondence available; this is the part of the entry it
  * applies to.
+ *
+ * Except G-9's `unroll-list`: its `nodeId` is the row TEMPLATE's position in the
+ * file as it was BEFORE the write, not a node of any tree. The list and its
+ * unrolled rows are the same shape, so the reparse that follows its undo maps
+ * the unrolled elements onto the rows — and an element of the unrolled tree
+ * can sit on exactly that position, which would re-aim the redo at it.
  */
 export function remapStructuralEditIds(
   edits: StructuralEditPayload[],
   remap: ReadonlyMap<string, string>,
 ): StructuralEditPayload[] {
+  const remapped = (edit: StructuralEditPayload) => edit.kind !== 'unroll-list'
   // The same array reference back when nothing changed, so a reload that
   // renumbered ids elsewhere in the project keeps `remapHistoryEntries`' "real
   // keep, not a copy" property for the entries it did not touch.
-  if (!edits.some((edit) => structuralEditNodeIds(edit).some((id) => remap.has(id)))) return edits
+  if (!edits.some((edit) => remapped(edit) && structuralEditNodeIds(edit).some((id) => remap.has(id)))) return edits
   return edits.map((edit) => {
+    if (!remapped(edit)) return edit
     const next: StructuralEditPayload = { ...edit, nodeId: remap.get(edit.nodeId) ?? edit.nodeId }
     for (const field of NODE_ID_FIELDS) {
       const value = edit[field]
@@ -346,33 +330,4 @@ export interface StructuralSourceGesture {
    * gesture that touches no loose layer.
    */
   placements?: CanvasLayerPlacementChange[]
-}
-
-/**
- * `store-14` — how a ⌘G / wrap says what its own ⌘Z is.
- *
- * The inverse of "put a container around this" is "dissolve that container" —
- * the same `ungroup` write ⌘⇧G performs, which restores the children at their
- * own indentation and takes the wrapper's import with it.
- *
- * That only holds for an INTRINSIC wrapper. `unwrapJsxElement` refuses a
- * COMPONENT tag by name (`has-behaviour`): its own file decides what it
- * renders, so removing the call site is not "ungroup", it is deleting a
- * component usage. A group into a design-system container therefore has no
- * inverse this protocol can write, and says so at ⌘Z rather than posting a
- * write the server would refuse with a sentence about behaviour the user never
- * mentioned.
- */
-export function dissolveWrapperTemplate(wrapper: {
-  name: string
-  importSpecifier?: string
-  designSystemImport?: true
-}): StructuralInverseTemplate {
-  if (wrapper.importSpecifier === undefined && wrapper.designSystemImport === undefined) {
-    return { kind: 'ungroup-created' }
-  }
-  return {
-    kind: 'unsupported',
-    message: `That group was written as a <${wrapper.name}> component, and Studio only dissolves plain containers — taking it back out would mean deleting a component call site, which is a different change from the one you made. Remove it in code, or use your editor’s undo.`,
-  }
 }

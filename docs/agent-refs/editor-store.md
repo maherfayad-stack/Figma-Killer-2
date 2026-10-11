@@ -246,22 +246,24 @@ clipboard whose roots are no longer elements in this file — copied from anothe
 project, another page, or a session before the file changed — refuses by name
 instead of minting an orphan.
 
-**An HTML import refuses on a studio tree (`mcp-21`).** `insertImportedNodes`
-had the same defect and a worse blast radius: `site_insert_html` /
-`site_replace_node_html` reach it through the editor bridge, so an external MCP
-client with `ai.tools.write` could merge nanoid nodes into a real repository's
-board. It now refuses the whole fragment (`refuseImportedNodesInto`). There is
-no source write to route to instead: the importer's rule table maps HTML onto
-~15 base modules and exactly two — `base.container` and `base.text` — can spell
-themselves in a user's repo (`ModuleDefinition.sourceIntrinsic`); the `<style>`
-half of the payload belongs in a stylesheet rather than the markup; and the
-tool's own answer (the ids it created, so the caller can address them) cannot be
-produced by a write whose ids do not exist until the resync. The action returns
-`ImportedNodesResult` so the reason travels to the modal and to the tool
-instead of an invented sentence about containers. `refuseImportedNodesInto` is
-also exposed as a store action, for the one caller that must destroy before it
-inserts — `site_replace_node_html` deletes the target's children first, so a
-refusal discovered at insert time emptied the node and wrote nothing.
+**Pasted HTML is a source write on a studio tree (`mcp-21`, G-10).**
+`insertImportedNodes` merged a fragment of nanoid nodes into the page and posted
+no write, so the next parse deleted them; it was closed with a refusal, and
+G-10 replaced the refusal for HTML itself with a real write. `writeHtmlToSource`
+(`studioHtmlWrites.ts`, a SiteSlice action) converts the HTML to intrinsic JSX
+(`htmlToJsx.ts`) and posts ONE `insert` whose `pastedHtml` carries the `<style>`
+text; the server puts the elements in the container and the rules in the page's
+own stylesheet (`studioInsertHtml.ts`), and the gesture's ⌘Z is the journal's
+`restore` over both files. It returns `{ kind: 'cms' }` for an ordinary tree (the
+caller imports into the tree as before), `{ kind: 'written', report }` once
+posted (no node ids: they exist only after the re-read), or `{ kind: 'refused',
+message }` after toasting the reason. Callers: ⌘V (`canvasPaste.ts`), the
+Import HTML dialog, `site_insert_html`. `insertImportedNodes` still refuses a
+fragment of already-mapped nodes on a studio tree
+(`IMPORTED_NODES_ON_SOURCE_REFUSAL`, returned as `ImportedNodesResult`'s
+message), and `site_replace_node_html` refuses a node written in the project's
+files before it deletes anything - a replace is two writes. The full contract is
+in `docs/features/studio-import.md` ("Pasted HTML becomes JSX").
 
 **`updateNodeProps` and `setNodeInlineStyles` refuse a patch if *any* key is
 code-valued** — all-or-nothing, because a half-applied patch is a canvas that
@@ -542,7 +544,17 @@ by `instanceOnlyGesture.ts`: it detaches THIS call site
 the detached markup by child-index path, replays it (`retry(mapId)` — every
 `retry` closure now takes an id MAP), and marks the detach entry
 `linkedToNext`, so one ⌘Z undoes both (`undoRedoActions.ts` cascades). A
-detach that refuses shows the refusal dialog, as before.
+detach that refuses is answered with a component copy of that call site (the
+same replay inside it), and only when that refuses too shows one warning.
+**G-3** — the same recipe takes the gestures that CROSS the instance's edge (a
+drag out of it, a drop or insert into it, a transplant to another frame): the
+refusal names the node it is about (`StructuralRefusal.aboutNodeId`), ids
+outside the instance are re-found by identity (`relocateOutside`) because the
+detach shifted the lines above them, a replay that throws is caught and told,
+and a gesture that places something says so once ("Detached Card to place
+this. Undo restores it."). A drop into a layout component's `{children}`
+(`instanceChildrenSlot`, `props.childrenHost`) is written at the call site
+and detaches nothing.
 
 **OD-19 — a VALUE edit inside an instance is an override of that instance**
 (`instanceOverrideActions.ts`, `instanceOverridePlan.ts`). `updateNodeProps` and
@@ -555,9 +567,14 @@ OUTSIDE history: `previewActiveTreeMutation` shows the value, the hold
 (`studio/instanceOverrideHold.ts`, read by `collectNodeDiffEdits`) keeps the
 autosave diff from writing it to the component, and the write landing pushes the
 one `restore-journal` entry (`undo` option, `kind: 'push'`) — the preview is
-never a second undo step. `mainEditComponent` (+ `setMainEditComponent`) is the
-explicit all-instances mode; the router steps aside while it names the node's
-`fromComponent` (an edit to a value that is a prop of the component there gets an
+never a second undo step. `mainEditTarget` (+ `setMainEditTarget`, `mainEditMode.ts`)
+is the explicit "edit the shared thing itself" mode — `{ kind: 'component', name }`
+for all instances, or (G-8) `{ kind: 'layout', rel }` for one Next layout file,
+which lifts the `route-chrome` structural refusal for that file only
+(`@core/page-tree`'s `layoutEdit.ts` holds the one fact the pure placement rule
+reads; `setMainEditTarget` is its only writer, and a first load, a project switch,
+`createSite` and `clearSite` end the mode). The router steps aside while the
+target is the component the node's `fromComponent` names (an edit to a value that is a prop of the component there gets an
 info toast, "Set by a prop", instead of a write the server would refuse). A
 gesture parked behind another structural write is re-aimed with
 `again(relocate(id))`, like every other.

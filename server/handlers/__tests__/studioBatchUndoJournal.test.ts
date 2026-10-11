@@ -214,3 +214,41 @@ describe('refuses honestly', () => {
     expect(journal()).toEqual([])
   })
 })
+
+describe('apply a theme class from the Variables panel (CT-6)', () => {
+  const classEdit = (nodeId: string, token: string, restyle?: true): StudioEdit => ({ kind: 'class', nodeId, add: [{ kind: 'literal', token }], remove: [], ...(restyle ? { restyle } : {}) })
+
+  it('adds the class to a bare element and the journal token takes the whole attribute back', () => {
+    const h1 = nodeIdOf(PAGE, 'h1')
+    const forward = applyStudioEditBatch(dir, [classEdit(h1, 'bg-primary', true)], {}, EDITOR)
+    expect(forward.refusals).toEqual([])
+    expect(read('pages/Home.tsx')).toBe(PAGE.replace('<h1>', '<h1 className="bg-primary">'))
+    expect(forward.undoToken).toMatch(/^[0-9a-f]{32}$/)
+    expect(applyStudioEditBatch(dir, [restore(forward.undoToken!)], {}, EDITOR).refusals).toEqual([])
+    expect(read('pages/Home.tsx')).toBe(PAGE)
+  })
+
+  it('does not take away a class the author had already put there when the write is undone', () => {
+    const withClass = PAGE.replace('<h1>', '<h1 className="bg-primary p-4">')
+    write('pages/Home.tsx', withClass)
+    const forward = applyStudioEditBatch(dir, [classEdit(nodeIdOf(withClass, 'h1'), 'bg-primary', true)], {}, EDITOR)
+    expect(forward.refusals).toEqual([])
+    expect(read('pages/Home.tsx')).toBe(withClass)
+    if (forward.undoToken) applyStudioEditBatch(dir, [restore(forward.undoToken)], {}, EDITOR)
+    expect(read('pages/Home.tsx')).toBe(withClass)
+  })
+
+  it('a plain class edit (not a restyle) records no journal entry (autosave edits stay cheap)', () => {
+    const forward = applyStudioEditBatch(dir, [classEdit(nodeIdOf(PAGE, 'h1'), 'bg-primary')], {}, EDITOR)
+    expect(forward.undoToken).toBeUndefined()
+    expect(journal()).toEqual([])
+  })
+
+  it('a className the codemod cannot read is refused with its reason and nothing is written', () => {
+    const spread = PAGE.replace('<h1>', '<h1 className={42}>')
+    write('pages/Home.tsx', spread)
+    const forward = applyStudioEditBatch(dir, [classEdit(nodeIdOf(spread, 'h1'), 'bg-primary', true)], {}, EDITOR)
+    expect(forward.refusals).toHaveLength(1)
+    expect(read('pages/Home.tsx')).toBe(spread)
+  })
+})

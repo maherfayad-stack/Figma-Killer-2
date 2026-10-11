@@ -15,7 +15,7 @@
  * that classes, new styles and structure are still shared.
  *
  * The other state is the explicit one. "Edit main component" turns the
- * instance-only default off for this component (`mainEditComponent`): the same
+ * instance-only default off for this component (`mainEditTarget`, `mainEditMode.ts`): the same
  * controls then write the component's own markup, every instance changes, and
  * the notice becomes a banner that says so until "Done". The toast that follows
  * an instance-only edit offers "Apply to all (N)" for the one-off case.
@@ -27,6 +27,7 @@ import { WarningDiamondSolidIcon } from 'pixel-art-icons/icons/warning-diamond-s
 import { useEditorStore } from '@site/store/store'
 import { decodeSourceNodeId } from '@core/page-tree'
 import { inlinedSourceInstanceCount } from '@site/store/slices/site/nodeIndex'
+import { isEditingComponent } from '@site/store/slices/site/mainEditMode'
 import { Button } from '@ui/components/Button'
 import { cn } from '@ui/cn'
 import styles from './SharedComponentNotice.module.css'
@@ -53,8 +54,8 @@ export function SharedComponentNotice({ componentName, nodeId, textOrigin }: Sha
   // two nodes with the same tail are two instances of one shared component
   // writing to the same line (`studioEditLocation`, server-side).
   const instanceCount = useEditorStore((s) => inlinedSourceInstanceCount(s, nodeId))
-  const editingMain = useEditorStore((s) => s.mainEditComponent === componentName)
-  const setMainEditComponent = useEditorStore((s) => s.setMainEditComponent)
+  const editingMain = useEditorStore((s) => isEditingComponent(s.mainEditTarget, componentName))
+  const setMainEditTarget = useEditorStore((s) => s.setMainEditTarget)
 
   const componentFile = decodeSourceNodeId(nodeId)?.rel
   const textElsewhere = textOrigin !== undefined && textOrigin.rel !== componentFile ? textOrigin : undefined
@@ -86,14 +87,14 @@ export function SharedComponentNotice({ componentName, nodeId, textOrigin }: Sha
         ) : null}
         <div className={styles.actions}>
           {editingMain ? (
-            <Button variant="secondary" size="xs" onClick={() => setMainEditComponent(null)} data-testid="shared-component-done-main">
+            <Button variant="secondary" size="xs" onClick={() => setMainEditTarget(null)} data-testid="shared-component-done-main">
               Done
             </Button>
           ) : (
             <Button
               variant="secondary"
               size="xs"
-              onClick={() => setMainEditComponent(componentName)}
+              onClick={() => setMainEditTarget({ kind: 'component', name: componentName })}
               tooltip={`Write ${componentName}'s own markup instead: every place it's used changes.`}
               data-testid="shared-component-edit-main"
             >

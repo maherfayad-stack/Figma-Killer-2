@@ -98,10 +98,20 @@ describe('selection does not leak between two board frames of the same page', ()
     const sourceDoc = await waitForFrameDocument('frame-source')
     const variantDoc = await waitForFrameDocument('frame-variant')
 
-    const sourceButton = sourceDoc.querySelector('[data-node-id="cta-button"]') as HTMLElement
-    const variantButton = variantDoc.querySelector('[data-node-id="cta-button"]') as HTMLElement
-    expect(sourceButton).toBeTruthy()
-    expect(variantButton).toBeTruthy()
+    // A frame's document exists before its page tree has portalled in; wait for the node itself.
+    const findButton = async (doc: Document) => {
+      let button: HTMLElement | null = null
+      await waitFor(
+        () => {
+          button = doc.querySelector<HTMLElement>('[data-node-id="cta-button"]')
+          expect(button).toBeTruthy()
+        },
+        { timeout: 5000 },
+      )
+      return button as unknown as HTMLElement
+    }
+    const sourceButton = await findButton(sourceDoc)
+    const variantButton = await findButton(variantDoc)
 
     // Click the button inside the SOURCE frame.
     act(() => {

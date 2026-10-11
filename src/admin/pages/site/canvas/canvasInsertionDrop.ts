@@ -27,6 +27,8 @@ export interface CanvasDropPreview {
   position: CanvasInsertionTarget['position'] | 'inside' | 'canvas' | 'gap'
   /** `gap` only: the siblings' layout axis — `vertical` (stacked) draws a horizontal line, `horizontal` a vertical one. */
   axis?: CanvasDropAxis
+  /** `before` / `after` only: the neighbour's flow runs against child order, so `before` is its visually-far edge. */
+  reversed?: boolean
   label: string
 }
 
@@ -256,6 +258,8 @@ export function fixedPreviewForTarget(
     width: target.rect.width * scale,
     height: target.rect.height * scale,
     position: target.position,
+    // The line beside a sibling stands along the axis the siblings flow on.
+    ...(target.position === 'inside' ? {} : { axis: target.axis, ...(target.reversed ? { reversed: true } : {}) }),
     label,
   }
 }

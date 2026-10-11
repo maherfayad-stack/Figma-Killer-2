@@ -71,6 +71,8 @@ import { PlusIcon } from 'pixel-art-icons/icons/plus'
 import { hasStyleValue, pickMixedCell, readString } from '../../panels/PropertiesPanel/styleValueUtils'
 import { isMixed, MIXED_PLACEHOLDER } from '@ui/components/MixedValue'
 import { useSelectionModel } from '../selectionModel'
+import { AppliedStyleRow, StyleLibraryButton } from './StyleLibrary'
+import { useStyleLibrary } from './useStyleLibrary'
 import { useInspectorCommit } from '../commitApi'
 import { buildContextOnlyClassChain, buildCollapsedStoredStyles } from '../collapsedStyleBag'
 import {
@@ -118,6 +120,7 @@ export function EffectsSection() {
 
   const [addMenuOpen, setAddMenuOpen] = useState(false)
   const addTriggerRef = useRef<HTMLButtonElement>(null)
+  const styleLibrary = useStyleLibrary('effect')
   const [editing, setEditing] = useState<{ id: string; anchorRef: RefObject<HTMLElement | null> } | null>(null)
 
   if (!selectedNodeId || !selectedNode) return null
@@ -272,9 +275,16 @@ export function EffectsSection() {
     </>
   )
 
+  const headerActions = (
+    <>
+      <StyleLibraryButton library={styleLibrary} />
+      {addMenu}
+    </>
+  )
+
   // Law 1's empty header — nothing set anywhere.
   if (!setAnywhere) {
-    return <Section title="Effects" empty flush actions={addMenu} />
+    return <Section title="Effects" empty flush actions={headerActions} />
   }
 
   const entries: PropertyListEntry<EffectEntryData>[] = []
@@ -478,8 +488,9 @@ export function EffectsSection() {
   const editingEntry = editing ? entries.find((entry) => entry.id === editing.id) : undefined
 
   return (
-    <Section title="Effects" forceOpen flush actions={addMenu}>
+    <Section title="Effects" forceOpen flush actions={headerActions}>
       <div data-testid="inspector-effects-section" key={contextKey}>
+        <AppliedStyleRow library={styleLibrary} />
         <PropertyList
           listLabel="Effects"
           entries={entries}

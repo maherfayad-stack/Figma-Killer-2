@@ -40,7 +40,8 @@
  * the wire is left alone (`canvasLayerPending.ts`).
  */
 import type { Draft } from 'mutative'
-import type { Page } from '@core/page-tree'
+import { getNodeDisplayName, type Page } from '@core/page-tree'
+import { registry } from '@core/module-engine'
 import {
   FRAME_HEADER_HEIGHT,
   FRAME_HEIGHT,
@@ -50,13 +51,15 @@ import {
   getActiveBoard,
   moveLayerPlacements,
   removeLayerPlacements,
+  renameLayerPlacement,
+  reorderLayerPlacements,
   upsertBoard,
   upsertLayerPlacement,
   type Board,
   type BoardsFile,
   type CanvasLayerPlacementChange,
 } from '@core/studio-board'
-import type { EditorStoreSliceCreator } from '@site/store/types'
+import type { EditorStore, EditorStoreSliceCreator } from '@site/store/types'
 import { commitBoardChange } from './boardHistory'
 import { isCanvasLayerPending } from './canvasLayerPending'
 import { createCanvasLayerGestures, type CanvasLayerGestures } from './canvasLayerGestures'
@@ -82,6 +85,14 @@ interface CanvasLayerSlice extends CanvasLayerGestures {
   clearCanvasLayerSelection: () => void
   /** Move placements to absolute board positions as ONE undoable board entry (a drag, a nudge burst). */
   moveCanvasLayers: (moves: ReadonlyMap<string, { x: number; y: number }>, coalesceKey: string | null) => void
+  /** Name a loose layer in the Layers panel; an empty name goes back to the element's own. One undoable board entry. */
+  renameCanvasLayer: (layerId: string, name: string) => void
+  /**
+   * Move a loose layer to `toIndex` in paint order (0 = lowest) - the Layers
+   * panel lists them top-down, so its row `i` of `n` is paint index `n - 1 - i`.
+   * One undoable board entry.
+   */
+  reorderCanvasLayer: (layerId: string, toIndex: number) => void
   /**
    * Put placements to one side of a recorded change WITHOUT a history entry —
    * a canvas-layer gesture's own placement half (applied with its source write,
@@ -153,6 +164,26 @@ export const createCanvasLayerSlice: EditorStoreSliceCreator<CanvasLayerSlice> =
     if (next !== boards) commitBoardChange(set, get, coalesceKey, next)
   },
 
+  renameCanvasLayer: (layerId, name) => {
+    const { boards } = get()
+    let next: BoardsFile = boards
+    for (const board of boards.boards) {
+      const renamed = renameLayerPlacement(board, layerId, name)
+      if (renamed !== board) next = upsertBoard(next, renamed)
+    }
+    if (next !== boards) commitBoardChange(set, get, null, next)
+  },
+
+  reorderCanvasLayer: (layerId, toIndex) => {
+    const { boards } = get()
+    let next: BoardsFile = boards
+    for (const board of boards.boards) {
+      const reordered = reorderLayerPlacements(board, layerId, toIndex)
+      if (reordered !== board) next = upsertBoard(next, reordered)
+    }
+    if (next !== boards) commitBoardChange(set, get, null, next)
+  },
+
   applyCanvasLayerPlacements: (changes, side) => {
     const { boards } = get()
     const next = applyPlacementChanges(boards, changes, side)
@@ -174,6 +205,26 @@ export const createCanvasLayerSlice: EditorStoreSliceCreator<CanvasLayerSlice> =
     })
   },
 })
+
+/**
+ * What the Layers panel calls a loose layer: the name it was given, else its
+ * root element's own name (`Button`, `div`), else `Layer`. A string, so a row
+ * subscribing to it wakes only when its own label changes.
+ */
+export function canvasLayerDisplayName(
+  state: Pick<EditorStore, 'canvasLayerPages' | 'boards'>,
+  layerId: string,
+): string {
+  for (const board of state.boards.boards) {
+    const named = boardLayers(board).find((layer) => layer.id === layerId)?.name
+    if (named) return named
+  }
+  const page = state.canvasLayerPages[`canvas:${layerId}`]
+  // A layer page is the synthetic body around its one element: name the element.
+  const body = page?.nodes[page.rootNodeId]
+  const root = body?.moduleId === 'base.body' ? page?.nodes[body.children[0] ?? ''] : body
+  return root ? getNodeDisplayName(root, registry.get(root.moduleId), undefined) : 'Layer'
+}
 
 /** The heal itself, pure — see the module doc. */
 export function healPlacements(

@@ -42,6 +42,7 @@
  * split (wire shape here, dispatch behaviour there).
  */
 import { AtRuleScopeSchema, CssEditSchema } from './studioCssWriteback'
+import { ClassEditSchema } from './studioClassEditSchema'
 import {
   SlotEditSchemas,
   type StudioAddSlotPropDetail,
@@ -52,8 +53,10 @@ import { VariantEditSchemas } from './studioVariantWriteback'
 import { CanvasLayerEditSchemas, type CanvasLayerRemovedText } from './studioCanvasLayerWriteback'
 import { SvgEditSchemas } from './studioSvgWriteback'
 import { ListItemEditSchema } from './studioListItemWriteback'
+import { UnrollListEditSchema } from './studioUnrollWriteback'
 import { UndoJournalTokenSchema } from './studio/undoJournalToken'
 import type { CreatedJsxLocation } from '@core/ast-codemods'
+import type { PastedHtmlSummary } from './studioPastedHtmlStyles'
 import type { StyleLanding, StyleLandingRung } from '@core/page-tree'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
@@ -72,13 +75,20 @@ const PropEditSchema = Type.Object({
   nodeId: Type.String(),
   prop: Type.String(),
   value: Type.Union([Type.String(), Type.Number(), Type.Boolean()]),
+  /**
+   * G-6 (OD-20) - the user typed over a code-bound value: replace the code
+   * with the literal. Editor-only (it needs the undo journal) and never on an
+   * inlined id; see `studioBatchUndoJournal.ts` and `studioWriteback.ts`.
+   */
+  unbind: Type.Optional(Type.Literal(true)),
 })
 
-/** One element-text-children writeback — `setJsxText`. */
+/** One element-text-children writeback — `setJsxText`. `unbind` as on {@link PropEditSchema}. */
 const TextEditSchema = Type.Object({
   kind: Type.Literal('text'),
   nodeId: Type.String(),
   text: Type.String(),
+  unbind: Type.Optional(Type.Literal(true)),
 })
 
 /**
@@ -94,50 +104,6 @@ const StyleEditSchema = Type.Object({
   nodeId: Type.String(),
   style: Type.Record(Type.String(), Type.Union([Type.String(), Type.Number()])),
   remove: Type.Optional(Type.Array(Type.String())),
-})
-
-/**
- * One `className` token add/remove writeback (Track B2) — `setJsxClassName`.
- * Replaces Phase 0 item 0.6's honesty-only stopgap: a `node.classIds` change
- * now reaches disk here instead of only ever warning that it couldn't.
- *
- * `add`/`remove` carry TOKENS, never `StyleRule` ids — the ids are Studio's own
- * `sc-<hash>` bookkeeping. Two token shapes, because two kinds of class exist
- * in a real repo (`style-02`):
- *
- *   - `{ kind: 'literal', token }` — a class whose NAME is what the DOM
- *     carries: a plain `.css` rule, a Tailwind utility, a generated framework
- *     class. Written as a plain token in the `className` attribute.
- *   - `{ kind: 'module', file, local }` — a class declared in a CSS Module.
- *     Its DOM name is a bundler-computed hash, so writing any literal name for
- *     it produces markup that styles nothing outside the tool that computed
- *     that hash. `file` is the workspace-relative `*.module.css` path (guarded
- *     by `studioWriteback.ts`'s `resolveClassNameTokens` before it is ever
- *     turned into a specifier) and `local` is the class as WRITTEN in that file, so the
- *     codemod can emit the only reachable spelling: `styles.<local>`.
- *
- * Can REFUSE with a specific reason (`css-module-binding` /
- * `template-dynamic` / `spread-attribute` / `unsupported-call` /
- * `unsupported-expression` — `ClassNameRefusalReason` in `@core/ast-codemods`)
- * exactly like `detach`/`swap`/`css` do — see `applyStudioEdit`'s `'class'`
- * case. Since P3-C (WB-18) an ADD to an expression `className` wraps it rather
- * than refusing, and a module token whose stylesheet the file does not import
- * yet is imported after the batch (`cssModuleImportPlan.ts`), so through this
- * schema `css-module-import-missing` no longer occurs.
- */
-const ClassNameTokenSchema = Type.Union([
-  Type.Object({ kind: Type.Literal('literal'), token: Type.String() }),
-  Type.Object({ kind: Type.Literal('module'), file: Type.String(), local: Type.String() }),
-])
-
-/** One class token on the wire — `literal` or `module`. See `ClassEditSchema`. */
-export type StudioClassNameToken = Static<typeof ClassNameTokenSchema>
-
-const ClassEditSchema = Type.Object({
-  kind: Type.Literal('class'),
-  nodeId: Type.String(),
-  add: Type.Array(ClassNameTokenSchema),
-  remove: Type.Array(ClassNameTokenSchema),
 })
 
 /**
@@ -362,6 +328,8 @@ export const StudioEditSchema = Type.Union([
   ...StructuralEditSchemas,
   // OD-8 — a `.map` row's structure, written to its array (`studioListItemWriteback.ts`).
   ListItemEditSchema,
+  // G-9 / OD-24 — "Unroll list": a `.map` over an array literal becomes its rows (`studioUnrollWriteback.ts`).
+  UnrollListEditSchema,
   ...SlotEditSchemas,
   // CV-3 — add / remove a variant, add a component property (`studioVariantWriteback.ts`).
   ...VariantEditSchemas,
@@ -497,6 +465,8 @@ export interface StudioEditApplyOutcome {
    * destination already had.
    */
   carried?: readonly StudioCarriedDeclaration[]
+  /** G-10 - where a pasted HTML fragment's styles went (an `insert` with `pastedHtml`). */
+  pastedHtml?: PastedHtmlSummary
 }
 
 /** One thing a move copied to the destination - see {@link StudioEditApplyOutcome.carried}. */
@@ -697,4 +667,6 @@ export interface StudioEditBatchResult {
    * tells the user when state or data was copied. Absent when nothing was.
    */
   carried?: StudioCarriedDeclaration[]
+  /** G-10 - where each pasted HTML fragment's styles went; the board tells the user. */
+  pastedHtml?: PastedHtmlSummary[]
 }
