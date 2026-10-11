@@ -29,6 +29,7 @@ import { TextareaControl } from './TextareaControl'
 import { NumberControl } from './NumberControl'
 import { ColorControl } from './ColorControl'
 import { SelectControl } from './SelectControl'
+import { SegmentedSelectControl } from './SegmentedSelectControl'
 import { ToggleControl } from './ToggleControl'
 import { ImageControl } from './ImageControl'
 import { MediaLibraryControl } from './MediaLibraryControl'
@@ -243,7 +244,12 @@ export function PropertyControlRenderer({
       break
 
     case 'select':
-      inner = <SelectControl {...shared} options={control.options} />
+      inner =
+        control.display === 'segmented' ? (
+          <SegmentedSelectControl {...shared} options={control.options} />
+        ) : (
+          <SelectControl {...shared} options={control.options} />
+        )
       break
 
     case 'collection-index': {

@@ -44,6 +44,16 @@ let installed = false
 /** The element the user has typed into and not yet committed or left. */
 let pendingElement: EventTarget | null = null
 
+/** What the focused field held when it gained focus — see the `input` listener. */
+let textAtFocus = ''
+
+/** A field's text: an input's value, else (contentEditable) its text content. */
+function fieldText(target: EventTarget | null): string {
+  if (typeof target !== 'object' || target === null) return ''
+  const field = target as { value?: unknown; textContent?: string | null }
+  return typeof field.value === 'string' ? field.value : (field.textContent ?? '')
+}
+
 function isTextArea(target: EventTarget | null): boolean {
   return (
     typeof target === 'object' &&
@@ -69,15 +79,22 @@ function install(): void {
   document.addEventListener(
     'input',
     (event) => {
-      pendingElement = event.target
+      // A native undo that walked the field back to what it held when focus
+      // arrived has consumed the whole draft: there is nothing left for the
+      // browser's undo to do, so the NEXT ⌘Z is the editor's (a note typed
+      // into right after it was created, then undone, reaches its creation).
+      const walkedBackToStart =
+        (event as InputEvent).inputType === 'historyUndo' && fieldText(event.target) === textAtFocus
+      pendingElement = walkedBackToStart ? null : event.target
     },
     true,
   )
 
   document.addEventListener(
     'focusin',
-    () => {
+    (event) => {
       pendingElement = null
+      textAtFocus = fieldText(event.target)
     },
     true,
   )

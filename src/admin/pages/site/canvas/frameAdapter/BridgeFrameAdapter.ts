@@ -337,6 +337,16 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
     this.post({ type: 'text:edit', nodeId: ref.nodeId, occurrenceIndex: ref.occurrenceIndex, allowed, ...(text === undefined ? {} : { text }) })
   }
 
+  /** Whether the frame's runtime has said `ready` — until then a hidden bridge frame sits beside the portal fallback that is actually on screen. */
+  isFrameReady(): boolean {
+    return this.frameReady
+  }
+
+  beginTextEdit(nodeId: string, text: string): void {
+    const ref = this.toWireRef(nodeId)
+    this.post({ type: 'text:edit', nodeId: ref.nodeId, occurrenceIndex: ref.occurrenceIndex, allowed: true, text, begin: true })
+  }
+
   on<E extends FrameRuntimeEvent['type']>(event: E, handler: (msg: Extract<FrameRuntimeEvent, { type: E }>) => void): Unsubscribe {
     let set = this.eventHandlers.get(event)
     if (!set) {

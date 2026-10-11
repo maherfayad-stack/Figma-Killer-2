@@ -360,6 +360,44 @@ describe('canvasDnd', () => {
       expect(resolveCanvasInsertionTarget({ tree, candidates: reversed, point: { x: 320, y: 30 }, canHaveChildren })).toMatchObject({ index: 0 })
     })
 
+    it('gives the drop line at the gap between the neighbours, not the container outline', () => {
+      const target = resolveCanvasInsertionTarget({ tree, candidates: stack, point: { x: 100, y: 120 }, canHaveChildren })
+      // a ends at 50, b starts at 200: the line sits at the middle of that space, across the container.
+      expect(target?.gap).toEqual({
+        axis: 'vertical',
+        rect: { left: 0, right: 200, top: 125, bottom: 125, width: 200, height: 0 },
+      })
+    })
+
+    it('the first slot is at the first child top and the append at the last child bottom', () => {
+      const first = resolveCanvasInsertionTarget({
+        tree,
+        candidates: [candidate('main', 1, { left: 0, top: 0, width: 200, height: 600 }), ...stack.slice(1).map((c) => ({ ...c, rect: { ...c.rect, top: c.rect.top + 100, bottom: c.rect.bottom + 100 } }))],
+        point: { x: 100, y: 40 },
+        canHaveChildren,
+      })
+      expect(first?.gap?.rect).toMatchObject({ top: 100, height: 0 })
+      const append = resolveCanvasInsertionTarget({ tree, candidates: stack, point: { x: 100, y: 550 }, canHaveChildren })
+      expect(append?.gap?.rect).toMatchObject({ top: 450, height: 0 })
+    })
+
+    it('horizontal flow draws a vertical line down the row, between the neighbours', () => {
+      const row = [
+        candidate('main', 1, { left: 0, top: 0, width: 600, height: 100 }),
+        candidate('a', 2, { left: 0, top: 0, width: 100, height: 50 }, 'horizontal'),
+        candidate('b', 2, { left: 200, top: 10, width: 100, height: 50 }, 'horizontal'),
+        candidate('c', 2, { left: 400, top: 0, width: 100, height: 50 }, 'horizontal'),
+      ]
+      const target = resolveCanvasInsertionTarget({ tree, candidates: row, point: { x: 320, y: 30 }, canHaveChildren })
+      // index 2: between b (right edge 300) and c (left edge 400).
+      expect(target?.gap).toMatchObject({ axis: 'horizontal', rect: { left: 350, right: 350, width: 0, top: 0, bottom: 60 } })
+    })
+
+    it('a drop beside a sibling keeps its own line and carries no gap', () => {
+      const target = resolveCanvasInsertionTarget({ tree, candidates: stack, point: { x: 100, y: 5 }, canHaveChildren })
+      expect(target?.gap).toBeUndefined()
+    })
+
     it('with no child measured it keeps the append', () => {
       const target = resolveCanvasInsertionTarget({ tree, candidates: [stack[0]!], point: { x: 100, y: 120 }, canHaveChildren })
       expect(target).toMatchObject({ parentId: 'main', index: 3 })

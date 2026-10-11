@@ -51,6 +51,7 @@ import { createTransplantActions } from './transplantActions'
 import { createImageDropActions } from './imageDropActions'
 import { createSubtreeInsertActions } from './subtreeInsertActions'
 import { createInlineStyleActions } from './inlineStyleActions'
+import { createIgnoreAutoLayoutActions } from './ignoreAutoLayoutActions'
 import { createVisibilityActions } from './visibilityActions'
 import { createMoveSequenceActions } from './moveSequenceActions'
 import { duplicateNodeWithScopedClasses } from './duplicateWithScopedClasses'
@@ -79,10 +80,12 @@ type NodeActions = Pick<
   | 'updateNodeProps'
   | 'updateInstanceCallSiteProp'
   | 'setNodeInlineStyles'
+  | 'setNodeInlineStylesFromGesture'
   | 'setNodesInlineStyles'
   | 'setNodesInlineStylesPerNode'
   | 'removeNodeInlineStyleProperty'
   | 'clearNodeInlineStyles'
+  | 'setIgnoreAutoLayout'
   | 'setBreakpointOverride'
   | 'clearBreakpointOverride'
   | 'renameNode'
@@ -408,6 +411,7 @@ export function createNodeActions(helpers: SiteSliceHelpers, overrides: Instance
     },
 
     ...createInlineStyleActions(helpers, overrides),
+    ...createIgnoreAutoLayoutActions(helpers),
 
     setBreakpointOverride: (nodeId, breakpointId, patch) => {
       mutateActiveTree(

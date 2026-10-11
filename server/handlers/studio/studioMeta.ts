@@ -251,6 +251,17 @@ const StoriesMetaSchema = Type.Object({
 })
 export type StoriesMeta = Static<typeof StoriesMetaSchema>
 
+/**
+ * CV-2 — where the project's component variants galleries sit on the board.
+ * The same one-time ledger as `StoriesMetaSchema` without the off switch: a
+ * gallery frame the user deletes stays deleted, a deleted board is never
+ * re-created, and a component that gains a gallery later gets its frame.
+ */
+const ComponentsMetaSchema = Type.Object({
+  boardId: Type.Optional(Type.String({ minLength: 1 })),
+  placedPageIds: Type.Optional(Type.Array(Type.String())),
+})
+
 export const StudioMetaSchema = Type.Object({
   /** Decouples the user-facing project name from the folder slug. See `projectDisplayName`. */
   displayName: Type.Optional(Type.String({ minLength: 1 })),
@@ -360,6 +371,8 @@ export const StudioMetaSchema = Type.Object({
   previewAxes: Type.Optional(PersistedPreviewAxesSchema),
   /** W5-3 — see `StoriesMetaSchema` above. */
   stories: Type.Optional(StoriesMetaSchema),
+  /** CV-2 — see `ComponentsMetaSchema` above. */
+  components: Type.Optional(ComponentsMetaSchema),
   /** WS-12 §5.1 — see `AgentSessionSchema` above. */
   agentSession: Type.Optional(AgentSessionSchema),
   /**

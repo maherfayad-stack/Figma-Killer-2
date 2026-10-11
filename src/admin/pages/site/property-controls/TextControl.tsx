@@ -15,8 +15,13 @@ import { normalizeIdentifierInput, normalizeIdentifierValue } from '@core/utils/
 import { Input } from '@ui/components/Input'
 import { ControlRow } from '@ui/components/ControlRow'
 import { resolveCommitValue } from '@ui/components/ScrubInput'
+import { useVariableAffordance, type VariableKind } from '@ui/components/VariableField'
 import { handleNudgeKeydown } from './numericNudge'
 import { useTextFieldDraft } from './textFieldDraft'
+import styles from './TextControl.module.css'
+
+/** A field that declares no variable kinds gets no variable affordance at all. */
+const NO_VARIABLE_KINDS: readonly VariableKind[] = []
 
 interface TextControlProps extends ControlProps<string> {
   placeholder?: string
@@ -47,6 +52,14 @@ interface TextControlProps extends ControlProps<string> {
    * input's `aria-label`.
    */
   prefix?: ReactNode
+  /**
+   * The kinds of project variable this field can take. Setting it adds the
+   * "Apply variable" / "Create variable from this value" affordance (the
+   * trailing hexagon button); omitted, the field is a plain text box. The
+   * field keeps showing a bound value as its `var(--x)` text - the button is
+   * where a binding is changed or detached.
+   */
+  variableKinds?: readonly VariableKind[]
 }
 
 export function TextControl({
@@ -58,6 +71,7 @@ export function TextControl({
   normalize,
   numericUnit,
   prefix,
+  variableKinds,
   isOverride,
   disabled,
   layout,
@@ -77,6 +91,53 @@ export function TextControl({
     onCommit: (next) => onChange(propKey, next),
   })
 
+  const variable = useVariableAffordance({
+    value: variableKinds ? value : undefined,
+    accept: variableKinds ?? NO_VARIABLE_KINDS,
+    onCommit: (next) => onChange(propKey, next),
+    fieldLabel: label ?? propKey,
+    mixed,
+    disabled,
+  })
+
+  const input = (
+    <Input
+      id={`ctrl-${propKey}`}
+      type="text"
+      value={field.draft}
+      placeholder={placeholder}
+      mixed={mixed}
+      disabled={disabled}
+      prefix={prefix}
+      aria-label={label ?? propKey}
+      fieldSize="sm"
+      autoCapitalize={normalize === 'identifier' ? 'none' : undefined}
+      spellCheck={normalize === 'identifier' ? false : undefined}
+      onChange={(e) => field.onChange(e.target.value)}
+      onBlur={(e) => field.onBlur(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          // Figma: Enter commits and KEEPS focus, re-selecting the value so
+          // the next keystroke replaces it (§5.4).
+          e.preventDefault()
+          const input = e.currentTarget
+          field.commit(input.value)
+          requestAnimationFrame(() => input.select())
+          return
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          field.revert()
+          e.currentTarget.blur()
+          return
+        }
+        if (numericUnit !== undefined) {
+          handleNudgeKeydown(e, field.draft, field.applyImmediately, { emptyUnit: numericUnit })
+        }
+      }}
+    />
+  )
+
   return (
     <ControlRow
       propKey={propKey}
@@ -85,41 +146,14 @@ export function TextControl({
       isOverride={isOverride}
       disabled={disabled}
     >
-      <Input
-        id={`ctrl-${propKey}`}
-        type="text"
-        value={field.draft}
-        placeholder={placeholder}
-        mixed={mixed}
-        disabled={disabled}
-        prefix={prefix}
-        aria-label={label ?? propKey}
-        fieldSize="sm"
-        autoCapitalize={normalize === 'identifier' ? 'none' : undefined}
-        spellCheck={normalize === 'identifier' ? false : undefined}
-        onChange={(e) => field.onChange(e.target.value)}
-        onBlur={(e) => field.onBlur(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            // Figma: Enter commits and KEEPS focus, re-selecting the value so
-            // the next keystroke replaces it (§5.4).
-            e.preventDefault()
-            const input = e.currentTarget
-            field.commit(input.value)
-            requestAnimationFrame(() => input.select())
-            return
-          }
-          if (e.key === 'Escape') {
-            e.preventDefault()
-            field.revert()
-            e.currentTarget.blur()
-            return
-          }
-          if (numericUnit !== undefined) {
-            handleNudgeKeydown(e, field.draft, field.applyImmediately, { emptyUnit: numericUnit })
-          }
-        }}
-      />
+      {variableKinds ? (
+        <div className={styles.variableHost} data-variable-host="">
+          {input}
+          {variable.trigger}
+        </div>
+      ) : (
+        input
+      )}
     </ControlRow>
   )
 }

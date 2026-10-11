@@ -1,0 +1,17 @@
+/*
+ * The rectangle of a live (bridge) frame's in-frame marquee. Painted in the
+ * PARENT document, over the cross-origin iframe, from the four custom
+ * properties the hook writes per move (dynamic geometry); never pointer-active.
+ */
+.marquee {
+    position: fixed;
+    left: var(--marquee-x);
+    top: var(--marquee-y);
+    width: var(--marquee-w);
+    height: var(--marquee-h);
+    z-index: var(--tooltip-z-index);
+    box-sizing: border-box;
+    pointer-events: none;
+    border: 1px solid var(--canvas-selection-ring-color);
+    background: color-mix(in srgb, var(--canvas-selection-ring-color) 10%, transparent);
+}

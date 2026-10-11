@@ -12,8 +12,9 @@
  * target frame element lives in (`insertProjectComponent`) — through the same
  * target resolution every other Assets insert uses (`resolveInsertLocation`:
  * the selected container, else the frame root), and the same drag session
- * (`useCanvasInsertionDrag`) onto a frame. Not onto the empty board: a loose
- * board layer is a registry module, and a project component has none.
+ * (`useCanvasInsertionDrag`) onto a frame. Onto the empty board it lands as a
+ * loose layer module that imports the component by a relative path
+ * (`placeProjectComponentOnCanvas`).
  *
  * Cards are deliberately plain (name + file): rendering a project component
  * needs its real runtime, which Studio does not start for a thumbnail.
@@ -22,6 +23,7 @@ import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
 import { resolveInsertLocation, type InsertLocation } from '@site/store/insertLocation'
 import { useLocalComponentCatalog } from '@site/studio/componentCatalog'
 import type { LocalComponentSpec } from '@site/property-controls/componentPropKind'
+import { placeProjectComponentOnCanvas } from '@site/hooks/placeModuleOnCanvas'
 import { useCanvasInsertionDrag } from '@site/canvas/useCanvasInsertionDrag'
 import { CanvasInsertionDragOverlay } from '@site/canvas/CanvasInsertionDragOverlay'
 import { Button } from '@ui/components/Button'
@@ -41,6 +43,10 @@ export function ProjectComponentsSection({ query, collapsed, onToggle }: Project
 
   const drag = useCanvasInsertionDrag<LocalComponentSpec>({
     onDrop: (component, location) => insertProjectComponent(component, location.parentId, location.index),
+    freeCanvas: {
+      accepts: () => true,
+      onDrop: placeProjectComponentOnCanvas,
+    },
   })
 
   if (!catalog) return null

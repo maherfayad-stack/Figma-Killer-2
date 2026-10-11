@@ -293,6 +293,9 @@ const processes: DevProcess[] = [
     name: 'vite',
     command: viteCommand('--host', '127.0.0.1', '--port', String(VITE_PORT), '--strictPort'),
     logPath: './.tmp/dev-vite.log',
+    // Vite's `/admin/api` proxy cannot carry the presence WebSocket under Bun,
+    // so the editor connects to the backend directly (studioLiveConnection.ts).
+    env: { VITE_STUDIO_LIVE_BACKEND_PORT: String(CMS_PORT) },
   },
 ]
 

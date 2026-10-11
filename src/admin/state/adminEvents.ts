@@ -64,6 +64,19 @@ export interface CmsSiteReloadOptions {
    * — never by an unrelated one that happens to land first.
    */
   structuralOutcome?: PendingStructuralOutcome
+  /**
+   * The reload is about WHICH PROJECT the editor shows (opening one from the
+   * launcher), not about the CMS site shell (name, favicon, settings). The
+   * shell subscribers (`useSiteSummary`) skip it: it used to make the launcher
+   * re-read the whole CMS site - four requests - on every project open, for a
+   * document that had not changed.
+   */
+  siteShellUnchanged?: boolean
+}
+
+/** What `CMS_SITE_RELOAD_EVENT` carries. */
+export interface CmsSiteReloadEventDetail {
+  siteShellUnchanged: boolean
 }
 
 /**
@@ -88,7 +101,8 @@ export function requestCmsSiteReload(options: CmsSiteReloadOptions = {}): Promis
         })
       : Promise.resolve()
   if (typeof window !== 'undefined') {
-    window.dispatchEvent(new Event(CMS_SITE_RELOAD_EVENT))
+    const detail: CmsSiteReloadEventDetail = { siteShellUnchanged: options.siteShellUnchanged === true }
+    window.dispatchEvent(new CustomEvent(CMS_SITE_RELOAD_EVENT, { detail }))
   }
   return done
 }

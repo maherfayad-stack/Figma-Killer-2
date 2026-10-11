@@ -193,6 +193,8 @@ byte-exact (`transplantJsxElement.canvas.test.ts`,
 | Delete / Backspace | `canvas-layer-delete` for the selection, one write | one ⌘Z: exact bytes and placements back |
 | Arrow keys | Nudge the selection (board undo, one entry per key-hold) | board undo |
 | ⌘C, then ⌘V with an element in a frame selected | Copies the layer's root; the paste writes it into that page as `canvas-layer-place` with `copy` (the ⌥-drag's write — a module's root has no siblings, so the frame transplant cannot read it) | one ⌘Z per layer: the copy deleted |
+| Double-click a text layer; or draw a text (T) on the empty board | Edits it in place (`canvasLayerTextEdit.ts`): a text drawn on the board opens at once with its placeholder selected, once its module has been read back. Nothing is written per keystroke; ending the edit (Enter, a press elsewhere) posts ONE `text` edit into the layer module; Escape writes nothing. Keyboard caret only: the surface takes no pointer input | one ⌘Z writes the old text back |
+| Drag a project component (Assets → Project components) onto the empty board | A loose layer whose module imports the component by a relative path (`../../components/Card`, `importStyle: 'default'` for a default export) — `placeProjectComponentOnCanvas` | one ⌘Z: module deleted, placement removed |
 | Select a layer whose root is an `<svg>` | The Properties panel opens on `CanvasLayerInspector` with the Vector controls; each change is one `svg-attr` write into the layer module | one ⌘Z per change |
 
 **Hit-testing from the board.** The surface iframe would swallow every press
@@ -237,7 +239,7 @@ back (its rollback).
 | FC-3/FC-7 | Editing a loose layer's content in the inspector beyond a root `<svg>`'s Vector paint (a loose layer is selected as a whole; its nodes are not selectable, and any other root says "edit it inside a frame"); Layers-panel "Canvas" section; Measures X/Y on a placement; context menu; ⌘X and ⌘V ONTO the board |
 | FC-4 | Registering layers as drop targets for an ELEMENT drag (drop into a loose layer's children) |
 | FC-5 | Marquee selection of loose layers; resize handles; z-order keys; lock/hide UI (the placement fields exist and are honoured) |
-| FC-6 | A text drawn on the board does not open for editing (a loose layer's nodes are not selectable yet); a multi-file drop as ONE undo step (today one per layer) |
+| FC-6 | A multi-file drop as ONE undo step (today one per layer) |
 | FC-8 | `studio_list_canvas_layers` / `studio_canvas_layer` MCP tools; a digest section |
 | FC-9 | Group / ungroup loose layers |
 | FC-10 | The 50-layer perf budgets |

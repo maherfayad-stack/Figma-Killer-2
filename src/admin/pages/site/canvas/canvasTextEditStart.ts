@@ -18,14 +18,18 @@
  * A session whose frame / breakpoint match NO rendering would arm the
  * `inline-edit` rung over nothing editable — every key swallowed until
  * Escape — so when the rendering cannot be found, no session is opened.
- * Portal frames only: a live bridge frame's text edit is started by its own
- * runtime (`live-18`); there the gesture just does not open an edit (a
- * double-click still does).
+ * A live bridge frame is cross-origin: its DOM cannot be searched for the node,
+ * so the frame is named by the board frame that holds it (a ready bridge frame
+ * is the only one on screen — its portal fallback unmounts) and the runtime is
+ * asked to open the editor (`beginTextEdit`), waiting for the element to reach
+ * its DOM if the write is still on its way. The typed text then comes back as
+ * the runtime's `text:commit` (`useBridgeFrameInteraction.ts`).
  */
 import { registry } from '@core/module-engine'
 import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 import { isBridgeFrameAdapter } from './frameAdapter/BridgeFrameAdapter'
 import { listFrameAdapters } from './frameAdapter/canvasFrameAdapterRegistry'
+import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
 import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
 import { escapeCssAttributeValue } from './escapeCssAttributeValue'
 
@@ -33,12 +37,14 @@ import { escapeCssAttributeValue } from './escapeCssAttributeValue'
 export interface TextEditRendering {
   frameId: string | null
   breakpointId: string
+  /** Set for a live bridge frame: the adapter that opens the editor inside the frame. */
+  bridge?: FrameDocumentAdapter
 }
 
 /**
- * The portal frame rendering `nodeId` — preferring board frame `frameId` when
- * given. `null` when no portal frame renders it, or the frame renders through
- * a live bridge.
+ * The frame rendering `nodeId` — preferring board frame `frameId` when given.
+ * A ready live bridge frame is matched by `frameId` alone. `null` when nothing
+ * renders it.
  */
 export function findTextEditRendering(nodeId: string, frameId: string | null): TextEditRendering | null {
   const selector = `[data-node-id="${escapeCssAttributeValue(nodeId)}"]`
@@ -47,8 +53,16 @@ export function findTextEditRendering(nodeId: string, frameId: string | null): T
     const wrapper = iframe.closest<HTMLElement>('[data-frame-id]')
     const wrapperFrameId = wrapper?.dataset.frameId ?? null
     if (frameId !== null && wrapperFrameId !== frameId) continue
-    // A frame that renders through a live bridge has its own text editing.
-    if (isBridgeFrameAdapter(adapter)) return null
+    if (isBridgeFrameAdapter(adapter)) {
+      // Only a named, ready frame: a bridge frame cannot be searched for the
+      // node, and one still booting is hidden behind its portal fallback.
+      if (frameId === null || !adapter.isFrameReady()) continue
+      return {
+        frameId: wrapperFrameId,
+        breakpointId: iframe.getAttribute('data-breakpoint-id') ?? useEditorStore.getState().activeBreakpointId,
+        bridge: adapter,
+      }
+    }
     if (!isPortalFrameAdapter(adapter)) continue
     const doc = adapter.getPortalWindow()?.document
     if (!doc?.querySelector(selector)) continue
@@ -76,5 +90,9 @@ export function startCanvasTextEdit(
   if (!node || !registry.get(node.moduleId)?.inlineTextEdit) return false
   const rendering = findTextEditRendering(nodeId, preferredFrameId ?? state.selectedNodeFrameId)
   if (!rendering) return false
-  return state.startInlineEdit(nodeId, rendering.breakpointId, rendering.frameId, options)
+  const started = state.startInlineEdit(nodeId, rendering.breakpointId, rendering.frameId, options)
+  if (started && rendering.bridge) {
+    rendering.bridge.beginTextEdit(nodeId, useEditorStore.getState().activeInlineEdit?.initialValue ?? '')
+  }
+  return started
 }

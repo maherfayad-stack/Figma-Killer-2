@@ -312,3 +312,26 @@ describe('OD-7 — a gesture inside a shared component applies to this instance 
     expect(posted[3]).toEqual([restoreOf(0)])
   })
 })
+
+// W3-d — a canvas resize / Hug is a STYLE write, and on markup that lives in a
+// shared component's file it used to restyle every instance silently.
+describe('a canvas style gesture inside a shared component applies to this instance only', () => {
+  it('detaches the call site and writes the style on the detached markup, not on the shared element', async () => {
+    store().setNodeInlineStylesFromGesture(TITLE, { height: 'fit-content' }, 'Resized')
+    await settle()
+
+    expect(store().structuralRefusalDialog).toBeNull()
+    expect(posted[0]).toEqual([{ kind: 'detach', nodeId: CALL_SITE }])
+    const page = store().site!.pages[0]!
+    expect(page.nodes[DETACHED_TITLE]?.inlineStyles).toEqual({ height: 'fit-content' })
+    expect(page.nodes[DETACHED_BODY]?.inlineStyles).toBeUndefined()
+  })
+
+  it('writes straight away on markup that is not inside a shared component', async () => {
+    store().setNodeInlineStylesFromGesture(X, { height: '40px' }, 'Resized')
+    await settle()
+
+    expect(posted).toHaveLength(0)
+    expect(store().site!.pages[0]!.nodes[X]?.inlineStyles).toEqual({ height: '40px' })
+  })
+})

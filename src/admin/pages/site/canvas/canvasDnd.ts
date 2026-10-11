@@ -78,6 +78,13 @@ export interface CanvasInsertionTarget {
   overId: string
   rect: CanvasRect
   axis: CanvasDropAxis
+  /**
+   * Set when the drop lands in a flow container's own space at a child index
+   * (`position: 'inside'` over the container itself): the line where the
+   * element will sit among its children, in the same space as `rect`. The
+   * painter draws THIS instead of outlining the whole container.
+   */
+  gap?: { rect: CanvasRect; axis: CanvasDropAxis }
 }
 
 export interface CanvasInvalidDropTarget {
@@ -443,12 +450,62 @@ export function resolveCanvasInsertionTarget({
       ? nearestFlowIndex(tree, target.parentId, candidates, point)
       : target.index
 
+  const gap =
+    target.position === 'inside' && target.overId === target.parentId && index !== null
+      ? flowGapLine(tree, target.parentId, candidates, index, candidate)
+      : null
+
   return {
     ...target,
     index: index ?? target.index,
     rect: candidate.rect,
     axis: candidate.axis,
+    ...(gap ? { gap } : {}),
   }
+}
+
+/**
+ * The insertion line for child index `index` of a flow container: across the
+ * container for stacked children, down the row for side-by-side ones, centred
+ * in the space between the neighbours it falls between (or at the edge of the
+ * only neighbour for the first and last slots). `null` when no neighbour was
+ * measured — there is no gap to point at, and the container outline stays.
+ */
+function flowGapLine(
+  tree: NodeTree<PageNode>,
+  containerId: string,
+  candidates: readonly CanvasDropCandidate[],
+  index: number,
+  container: CanvasDropCandidate,
+): { rect: CanvasRect; axis: CanvasDropAxis } | null {
+  const children = tree.nodes[containerId]?.children ?? []
+  const byId = new Map(candidates.map((candidate) => [candidate.nodeId, candidate]))
+  const before = index > 0 ? byId.get(children[index - 1]!) : undefined
+  const after = byId.get(children[index] ?? '')
+  const neighbours = [before, after].filter((candidate): candidate is CanvasDropCandidate => candidate !== undefined)
+  const axis = neighbours[0]?.axis
+  if (!axis) return null
+  const reversed = neighbours[0]?.reversed === true
+  // Visual order along the axis: a reversed flow puts the later child first.
+  const [first, second] = reversed ? [after, before] : [before, after]
+  const edge = (candidate: CanvasDropCandidate | undefined, side: 'start' | 'end'): number | null => {
+    if (!candidate) return null
+    const { rect } = candidate
+    if (axis === 'vertical') return side === 'start' ? rect.top : rect.bottom
+    return side === 'start' ? rect.left : rect.right
+  }
+  const lead = edge(first, 'end')
+  const trail = edge(second, 'start')
+  const at = lead !== null && trail !== null ? (lead + trail) / 2 : (lead ?? trail)
+  if (at === null) return null
+
+  if (axis === 'vertical') {
+    const { left, right } = container.rect
+    return { axis, rect: { left, right, top: at, bottom: at, width: right - left, height: 0 } }
+  }
+  const top = Math.min(...neighbours.map((candidate) => candidate.rect.top))
+  const bottom = Math.max(...neighbours.map((candidate) => candidate.rect.bottom))
+  return { axis, rect: { left: at, right: at, top, bottom, width: 0, height: bottom - top } }
 }
 
 /**

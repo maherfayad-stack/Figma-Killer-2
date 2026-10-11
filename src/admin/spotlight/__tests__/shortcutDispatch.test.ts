@@ -108,11 +108,11 @@ describe('command shortcut dispatch', () => {
     }
   })
 
-  it('registers Cmd/Ctrl+Backspace for deleting the selected layer', () => {
+  it('registers Delete / Backspace (and Cmd/Ctrl+Backspace) for deleting the selected layer', () => {
     const binding = getKeybindingForCommand('layers.delete')
 
     expect(binding).toBeDefined()
-    expect(binding?.shortcut).toEqual({ mac: '⌘⌫', win: 'Ctrl+Backspace' })
+    expect(binding?.shortcut).toEqual({ mac: '⌫', win: 'Delete' })
     expect(binding?.match(eventLike('Backspace', { metaKey: true }))).toBe(true)
     expect(binding?.match(eventLike('Backspace', { ctrlKey: true }))).toBe(true)
   })

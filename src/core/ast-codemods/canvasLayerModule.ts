@@ -55,17 +55,21 @@ export interface CanvasLayerModule {
  * at column 0 with its own relative indentation), the bindings it needs, and
  * the statements its component body runs before returning it — the context
  * hooks a lifted element reads (`const { t } = useLanguage()`), re-established
- * by the lift's carry (`transplantJsxElement.ts`).
+ * by the lift's carry (`transplantJsxElement.ts`) - and the plain constants and
+ * handlers that carry copied: `bodyStatements` run in the component body,
+ * `moduleStatements` are written above the component.
  */
 export function buildCanvasLayerModule(
   rootJsx: string,
   imports: ReadonlyMap<string, ImportRequirement>,
   bodyStatements: readonly string[] = [],
+  moduleStatements: readonly string[] = [],
 ): CanvasLayerModule {
   const importText = renderImports(imports)
-  const componentName = freeComponentName(imports, bodyStatements)
+  const componentName = freeComponentName(imports, [...bodyStatements, ...moduleStatements])
   const body = bodyStatements.map((statement) => `  ${statement}\n`).join('')
-  const head = `${CANVAS_LAYER_MODULE_HEADER}\n${importText}\nexport default function ${componentName}() {\n${body}  return (\n    `
+  const declarations = moduleStatements.map((statement) => `${statement}\n\n`).join('')
+  const head = `${CANVAS_LAYER_MODULE_HEADER}\n${importText}\n${declarations}export default function ${componentName}() {\n${body}  return (\n    `
   const text = `${head}${indentBlock(rootJsx, '    ')}\n  )\n}\n`
   // The root's `<` sits right after `head`; the tag name one column later.
   const line = head.split('\n').length

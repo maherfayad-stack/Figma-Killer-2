@@ -25,8 +25,8 @@
  */
 import { WarningDiamondSolidIcon } from 'pixel-art-icons/icons/warning-diamond-solid'
 import { useEditorStore } from '@site/store/store'
-import { decodeSourceNodeId, isInlinedNodeId } from '@core/page-tree'
-import { inlineTailKey } from '@site/store/slices/site/nodeIndex'
+import { decodeSourceNodeId } from '@core/page-tree'
+import { inlinedSourceInstanceCount } from '@site/store/slices/site/nodeIndex'
 import { Button } from '@ui/components/Button'
 import { cn } from '@ui/cn'
 import styles from './SharedComponentNotice.module.css'
@@ -52,12 +52,7 @@ export function SharedComponentNotice({ componentName, nodeId, textOrigin }: Sha
   // `callSite~component:line:col` and its writeback target is that tail, so
   // two nodes with the same tail are two instances of one shared component
   // writing to the same line (`studioEditLocation`, server-side).
-  const instanceCount = useEditorStore((s) => {
-    if (!isInlinedNodeId(nodeId)) return 1
-    const tail = inlineTailKey(nodeId)
-    if (!tail) return 1
-    return s._inlineTailToCount.get(tail) ?? 1
-  })
+  const instanceCount = useEditorStore((s) => inlinedSourceInstanceCount(s, nodeId))
   const editingMain = useEditorStore((s) => s.mainEditComponent === componentName)
   const setMainEditComponent = useEditorStore((s) => s.setMainEditComponent)
 

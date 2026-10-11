@@ -140,3 +140,14 @@ describe('TokenAwareInput — commit guard', () => {
     expect(onCommit).not.toHaveBeenCalled()
   })
 })
+
+describe('TokenAwareInput — focus selects the value', () => {
+  it('selects the whole value on focus, so the first keystroke replaces it instead of appending (`0px` + `16` -> `0px16`)', async () => {
+    render(<TokenAwareInput aria-label="Padding" value="0px" tokens={[]} onCommit={() => {}} />)
+    const input = screen.getByLabelText('Padding') as HTMLInputElement
+    fireEvent.focus(input)
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(null)))
+    expect(input.selectionStart).toBe(0)
+    expect(input.selectionEnd).toBe(3)
+  })
+})

@@ -14,6 +14,7 @@ import type { ComponentSource } from '@core/page-parser'
 import type { ConditionDef, Page, StyleRule } from '@core/page-tree'
 import type { StyleRuleSource } from '../studioCss'
 import type { StorySummary } from './storyDiscovery'
+import type { GallerySummary } from './componentGallery'
 import type { StyledStyleRuleSource } from './styledStyleRuleSources'
 
 /** Result of the load pipeline: every parsed page, the merged component classification (keyed by node id), and the merged imported-CSS registry. */
@@ -87,6 +88,13 @@ export interface StudioLoadResult {
    * every story as an ordinary page).
    */
   stories: StorySummary[]
+  /**
+   * CV-2 — one entry per component whose variants gallery became a page above
+   * (`componentGallery.ts`). Empty for a project with no enum/boolean-prop
+   * components. Like `stories`, the `/load` route hands it to `boardFrames.ts`
+   * (`syncComponentBoardFrames`) and nothing else reads it.
+   */
+  galleries: GallerySummary[]
   /**
    * WB-23/WB-24 — what this load had to give up, per project or per page,
    * instead of failing. Empty on a healthy project. Rides the `/load` meta

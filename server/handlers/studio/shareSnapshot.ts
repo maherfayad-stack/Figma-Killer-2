@@ -189,7 +189,14 @@ export async function writeShareSnapshot(
   }
 
   if (sharedFrames.length === 0) {
-    return { ok: false, error: 'None of this board’s frames could be photographed, so there is nothing to share yet.' }
+    // Say why. The bare sentence sent people looking for a problem with the board
+    // when the cause was the capture (a browser that would not start, a frame the
+    // open tab could not photograph).
+    const reasons = [...new Set(parsed.value.frames.filter((frame) => !frame.ok && frame.error).map((frame) => frame.error as string))]
+      .slice(0, 2)
+      .map((reason) => reason.slice(0, 240))
+    const detail = reasons.length > 0 ? ` Reason: ${reasons.join(' / ')}` : ''
+    return { ok: false, error: `None of this board’s frames could be photographed, so there is nothing to share yet.${detail}` }
   }
 
   const snapshot: SharedBoard = {

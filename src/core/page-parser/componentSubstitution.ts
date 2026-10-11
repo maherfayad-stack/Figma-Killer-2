@@ -253,7 +253,13 @@ export function applySubstitutions(
           existing.kind,
         )
         for (const [key, value] of Object.entries(reread)) {
-          if (key in existing.props) continue
+          // A value the evaluator resolved while parsing the component ALONE can
+          // be a guess: `styles[variant]` with `variant` unbound picks the map's
+          // first entry (`staticEval.ts`'s dynamic-key rule). The param-bound
+          // scope knows what this call site passed, so it outranks that guess —
+          // otherwise every instance of a component shows its first variant.
+          // A literal attribute has no `resolvedProps` entry and is never replaced.
+          if (key in existing.props && (!existing.resolvedProps?.[key] || Object.is(existing.props[key], value))) continue
           patchedProps ??= { ...existing.props }
           patchedProps[key] = value
           const resolution = resolutionsByKey[key]
@@ -306,7 +312,11 @@ export function applySubstitutions(
       // No lock/resolution is recorded for either: `parsedPageToSitePage` turns
       // className into `classIds` and deletes the prop, so this value is never a
       // writeback target that could bake over the expression.
-      if (!('className' in (patchedProps ?? existing.props))) {
+      // The same outranking applies to a className the parse-time evaluator
+      // resolved without the call site's values (`styles[variant]`, above), so
+      // an expression is re-read whenever the call site passed a value at all.
+      const passesValues = [...env.values()].some((sub) => sub.kind === 'value')
+      if (passesValues || !('className' in (patchedProps ?? existing.props))) {
         const classNameAttr = attributes.find(
           (a): a is typeof attributes[number] & { getNameNode(): Node } =>
             Node.isJsxAttribute(a) && a.getNameNode().getText() === 'className',
@@ -316,9 +326,11 @@ export function applySubstitutions(
           const expr = classInitializer.getExpression()
           const resolved = expr ? tryResolveExpression(expr, paramEvalContext)?.value : undefined
           if (typeof resolved === 'string' && resolved.trim().length > 0) {
-            patchedProps ??= { ...existing.props }
-            patchedProps.className = resolved.trim()
-          } else if (expr && Node.isTemplateExpression(expr)) {
+            if (resolved.trim() !== existing.props.className) {
+              patchedProps ??= { ...existing.props }
+              patchedProps.className = resolved.trim()
+            }
+          } else if (expr && Node.isTemplateExpression(expr) && !('className' in (patchedProps ?? existing.props))) {
             const head = templateHeadClassNames(expr)
             if (head !== undefined) {
               patchedProps ??= { ...existing.props }

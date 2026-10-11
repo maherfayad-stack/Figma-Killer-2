@@ -1292,7 +1292,7 @@ describe('applyStudioEdit — the promote-component kind (E2.4/E2.1)', () => {
     expect(read('src/Page.tsx')).toContain('<Card user={user} />')
   })
 
-  it('reports a refusal through the batch rather than throwing (name-taken)', () => {
+  it('resolves a taken component name through the batch instead of refusing it', () => {
     write(
       'src/Page.tsx',
       `export default function Page() {
@@ -1311,9 +1311,12 @@ describe('applyStudioEdit — the promote-component kind (E2.4/E2.1)', () => {
       { kind: 'promote-component', nodeId: 'src/Page.tsx:3:6', componentName: 'Card' },
     ])
 
-    expect(result.written).toBe(0)
-    expect(result.refusals?.[0]?.reason).toBe('name-taken')
-    expect(read('src/Page.tsx')).toBe(before)
+    expect(result.written).toBe(1)
+    expect(result.refusals ?? []).toEqual([])
+    expect(result.promoteDetails[0]?.componentName).toBe('Card2')
+    expect(read('src/Card.tsx')).toBe('export function Card() { return <div /> }\n')
+    expect(read('src/Card2.tsx')).toContain('export function Card2')
+    expect(read('src/Page.tsx')).not.toBe(before)
   })
 
   it('is always treated as shared — extraction always shifts line numbers', () => {

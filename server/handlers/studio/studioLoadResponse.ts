@@ -146,7 +146,7 @@ export function missingStudioLoadPageIds(
  * mirrors by hand (`fsCodemodAdapter.ts`'s `StudioLoadStreamLineSchema`).
  */
 export async function* studioLoadStreamLines(
-  result: Omit<StudioLoadResult, 'stories'> & {
+  result: Omit<StudioLoadResult, 'stories' | 'galleries'> & {
     dir: string
     projectName: string
     trust: unknown

@@ -58,6 +58,9 @@ import { DeviceScrollbarInjector } from './DeviceScrollbarInjector'
 import { DEVICE_BEZEL_PX, resolveDeviceKind, type DeviceKind } from './deviceKind'
 import type { InjectableRuntimeScript } from './useRuntimeScriptBuild'
 import { CanvasFrameSkeleton } from '@admin/shared/CanvasFrameSkeleton'
+import { useAdapterReady } from './BoardFramesLayer/useAdapterReady'
+import { useBridgeFrameDiagnostics } from './useBridgeFrameDiagnostics'
+import { useLiveSurfaceSource } from './useLiveSurfaceSource'
 import styles from './CanvasLiveSurface.module.css'
 
 /**
@@ -194,6 +197,21 @@ export function CanvasLiveSurface({
     setAdapter(handle?.adapter ?? null)
   }
 
+  // The REAL app. Once the project's dev server has answered, the editing slot
+  // loads it in a bridge iframe next to the static render and hands over when
+  // the frame says `ready` - exactly `LiveBoardFrame`'s hand-off, so the pill's
+  // "Live" and what is drawn are the same fact. The static render stays under
+  // it until then (and is the only thing drawn when there is no dev server).
+  const liveSource = useLiveSurfaceSource(page, !playMode)
+  const [bridgeIframeEl, setBridgeIframeEl] = useState<HTMLIFrameElement | null>(null)
+  const [bridgeAdapter, setBridgeAdapter] = useState<FrameDocumentAdapter | null>(null)
+  const bridgeReady = useAdapterReady(bridgeAdapter)
+  useBridgeFrameDiagnostics(bridgeAdapter, liveScreenDiagnosticsScope(page?.id ?? ''))
+  const handleBridgeRef = (handle: IframeFrameSurfaceHandle | null) => {
+    setBridgeIframeEl(handle?.iframeElement ?? null)
+    setBridgeAdapter(handle?.adapter ?? null)
+  }
+
   /**
    * One screen's frame. Shared by the single editing slot and both player slots
    * so a screen cannot render differently depending on which one holds it.
@@ -288,17 +306,38 @@ export function CanvasLiveSurface({
             {playMode ? (
               <PrototypeScreenStack page={page} transition={screenTransition} renderScreen={renderScreen} />
             ) : (
-              <div className={styles.prototypeScreen} data-slot-state="front">
-                {renderScreen(page, handleIframeRef)}
-              </div>
+              <>
+                {!bridgeReady && (
+                  <div className={styles.prototypeScreen} data-slot-state="front">
+                    {renderScreen(page, handleIframeRef)}
+                  </div>
+                )}
+                {liveSource && (
+                  <div
+                    className={styles.prototypeScreen}
+                    data-slot-state="front"
+                    hidden={!bridgeReady}
+                    data-testid="canvas-live-bridge"
+                  >
+                    <IframeFrameSurface
+                      ref={handleBridgeRef}
+                      interaction="live"
+                      breakpointId={activeBreakpoint.id}
+                      width={activeBreakpoint.width}
+                      documentMode="bridge"
+                      liveFrame={liveSource}
+                    />
+                  </div>
+                )}
+              </>
             )}
 
-              <CanvasFrameAdapterContext.Provider value={adapter}>
+              <CanvasFrameAdapterContext.Provider value={bridgeReady ? bridgeAdapter : adapter}>
                 <BreakpointSelectionOverlay
                   breakpointId={activeBreakpoint.id}
                   viewportRef={viewportRef}
-                  iframeElement={iframeEl}
-                  overlayRoot={overlayRoot}
+                  iframeElement={bridgeReady ? bridgeIframeEl : iframeEl}
+                  overlayRoot={bridgeReady ? null : overlayRoot}
                 />
               </CanvasFrameAdapterContext.Provider>
 

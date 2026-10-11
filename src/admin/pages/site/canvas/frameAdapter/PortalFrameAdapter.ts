@@ -382,6 +382,9 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
    */
   startTextEdit(_nodeId: string, _allowed: boolean, _text?: string): void {}
 
+  /** A documented no-op for the same reason as {@link startTextEdit}: the store's session opens the editor in `NodeRenderer`. */
+  beginTextEdit(_nodeId: string, _text: string): void {}
+
   setInteractionMode(mode: 'design' | 'live'): void {
     if (mode === this.interactionMode) return
     this.interactionMode = mode

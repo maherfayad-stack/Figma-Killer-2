@@ -104,7 +104,7 @@ export function PaddingCluster({
           storedStyles={storedStyles}
           currentStyles={currentStyles}
           tokens={tokens}
-          onChange={onChange}
+          onChangeMany={onChangeMany}
           onPreview={onPreview}
           onClearPreview={onClearPreview}
           data-testid="css-padding-horizontal"
@@ -118,7 +118,7 @@ export function PaddingCluster({
           storedStyles={storedStyles}
           currentStyles={currentStyles}
           tokens={tokens}
-          onChange={onChange}
+          onChangeMany={onChangeMany}
           onPreview={onPreview}
           onClearPreview={onClearPreview}
           data-testid="css-padding-vertical"

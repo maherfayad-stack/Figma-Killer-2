@@ -11,20 +11,21 @@ import {
 } from '@site/panels/AssetsPanel/projectComponents'
 import { localComponentJsxName, type LocalComponentSpec } from '@site/property-controls/componentPropKind'
 
-function spec(name: string, file: string): LocalComponentSpec {
-  return { name, file, exportName: name, isDefaultExport: true, props: [] }
+function spec(name: string, file: string, role: LocalComponentSpec['role'] = 'component'): LocalComponentSpec {
+  return { name, file, exportName: name, isDefaultExport: true, role, props: [] }
 }
 
 const CATALOG = [
   spec('SheetHeader', 'components/SheetHeader.tsx'),
   spec('OnboardingHero', 'components/OnboardingHero.tsx'),
-  spec('Home', 'app/page.tsx'),
-  spec('RootLayout', 'app/layout.tsx'),
+  spec('Home', 'app/page.tsx', 'page'),
+  spec('Welcome', 'pages/Welcome.tsx', 'page'),
+  spec('LanguageProvider', 'components/LanguageProvider.tsx', 'provider'),
   spec('Button', 'design-system/Button.tsx'),
 ]
 
 describe('insertableProjectComponents', () => {
-  it("keeps the project's own components and drops route files and the built-in design system", () => {
+  it("keeps the project's own components and drops pages, providers and the built-in design system", () => {
     expect(insertableProjectComponents(CATALOG).map((c) => c.name)).toEqual(['SheetHeader', 'OnboardingHero'])
   })
 })

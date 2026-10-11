@@ -81,20 +81,20 @@
 }
 
 /*
- * Padding and margin share a row, the pair Figma puts side by side (it draws
- * horizontal/vertical padding that way; margin is the CSS fact Penpot has no
- * concept of at all — see this section's own doc). Both clusters rest as ONE
- * linked field plus their toggle, so the pair fits a row that was previously
- * two: 42px on every element with a layout.
+ * Padding and margin each get their own row. They used to share one (a linked
+ * padding field beside the margin pair), but at the default 290px sidebar that
+ * left each H / V field ~36px wide and its value clipped to "H (" - and the
+ * four expanded padding sides to "24p". One row each costs ~36px of height and
+ * gives every field room for a real value.
  */
 .spacingRow {
     display: flex;
-    align-items: center;
+    flex-direction: column;
+    align-items: stretch;
     gap: var(--inspector-space-2xs);
 }
 
 .spacingRow > * {
-    flex: 1;
     min-width: 0;
 }
 

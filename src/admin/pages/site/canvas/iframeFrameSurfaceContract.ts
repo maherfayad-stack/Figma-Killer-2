@@ -39,8 +39,8 @@ export interface IframeFrameSurfaceProps {
   onCursorMove?: (event: MouseEvent) => void
   /** Cursor leave from the iframe element. */
   onCursorLeave?: () => void
-  /** Page tree React subtree to mount inside the iframe's body. */
-  children: ReactNode
+  /** Page tree React subtree to mount inside the iframe's body. Portal mode only: a `bridge` frame renders the dev server's own app and takes none. */
+  children?: ReactNode
   /**
    * `data-*` attributes forwarded onto the iframe element itself. The
    * outgoing `data-breakpoint-id` lives on the iframe's `<body>` (so it can

@@ -126,6 +126,26 @@ describe('Ctrl/⌘+Z routing', () => {
     expect(nodeCount()).toBe(seeded.nodeCount)
   })
 
+  it('hands ⌘Z back to the editor once a native undo has walked the field back to where it started', () => {
+    // A sticky note opens focused and empty: type, undo the typing, and the
+    // next ⌘Z must reach the note's creation instead of dying in the field.
+    const { container } = render(
+      <>
+        <HistoryKeys />
+        <textarea aria-label="Note" defaultValue="" />
+      </>,
+    )
+    const ta = container.querySelector('textarea')! as HTMLTextAreaElement
+    fireEvent.focus(ta)
+    fireEvent.input(ta, { target: { value: 'hello' } })
+    pressUndo(ta)
+    expect(nodeCount()).toBe(seeded.nodeCount + 1)
+    ta.value = ''
+    ta.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'historyUndo' }))
+    pressUndo(ta)
+    expect(nodeCount()).toBe(seeded.nodeCount)
+  })
+
   it('a fresh focus clears a previous field draft', () => {
     const { container } = render(
       <>

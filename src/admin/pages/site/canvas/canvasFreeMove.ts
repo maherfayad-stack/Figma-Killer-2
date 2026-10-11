@@ -84,10 +84,15 @@
 import { registry } from '@core/module-engine'
 import {
   computeSnap,
+  containingBlockOffsets,
   inlineOffsetProperty,
   isPositionedFreely,
+  parentPlacementKind,
   parentSnapRects,
   readBoxInsets,
+  readContainingBlock,
+  resolvePlacement,
+  type ContainingBlockOffsets,
   snapSourcesFor,
   snapThresholdAtZoom,
   type SnapGuide,
@@ -201,30 +206,24 @@ export interface FreeMoveStyleInput {
 
 /**
  * Whether a ⌘-drag may write a position onto an element with this computed
- * style inside a parent with that one — and whether it must also write
- * `position: absolute`. `null` refuses.
+ * style — and whether it must also write `position: absolute`. `null` refuses.
+ * `parentContains` is whether the element's TREE parent is the box that would
+ * contain it once absolute (positioned, or transformed — see
+ * `readContainingBlock`); an absolute box in any other parent silently
+ * reparents to a distant ancestor.
  *
  * Pure. The DOM half (finding the element, the parent, and the sibling rects)
  * is {@link resolveFreeMove}.
  */
 export function planFreeMoveProperties(
   own: Pick<FreeMoveStyleInput, 'position'>,
-  parentPosition: string,
+  parentContains: boolean,
 ): { needsAbsolute: boolean } | null {
   const alreadyFree = isPositionedFreely(own.position)
   // `fixed` is contained by the viewport, not by the parent, so the parent's
-  // own position is not a question for it.
-  if (!alreadyFree && parentPosition === 'static') return null
+  // own box is not a question for it.
+  if (!alreadyFree && !parentContains) return null
   return { needsAbsolute: !alreadyFree }
-}
-
-/** The layout facts `planFreeMoveOffsets` reads off the element — plain numbers, so it is testable without layout. */
-export interface FreeMoveElementBox {
-  offsetLeft: number
-  offsetTop: number
-  offsetWidth: number
-  /** The offset parent's `clientWidth` — its padding box, the containing block of an absolute child. */
-  containerWidth: number
 }
 
 /**
@@ -235,12 +234,12 @@ export interface FreeMoveElementBox {
  * nudge can never write different properties for one layer.
  *
  * An element becoming absolute now: `left` (`insetInlineStart` under RTL) and
- * `top`, from where layout put it inside its offset parent — which IS its
- * containing block once it is absolute — so it does not jump on the first
- * pixel. Under RTL the inline start is the containing block's RIGHT edge.
+ * `top`, from `containingBlockOffsets` — its rect against the block that will
+ * really contain it — so it does not jump on the first pixel. Under RTL the
+ * inline start is the containing block's RIGHT edge.
  */
 export function planFreeMoveOffsets(
-  box: FreeMoveElementBox,
+  offsets: ContainingBlockOffsets,
   own: FreeMoveStyleInput,
   authored: ReadonlySet<NudgeOffsetProperty>,
   needsAbsolute: boolean,
@@ -248,9 +247,9 @@ export function planFreeMoveOffsets(
   if (!needsAbsolute) return planNudge(own, authored)
   const horizontal: NudgeTerm =
     inlineOffsetProperty(own.direction) === 'left'
-      ? { property: 'left', sign: 1, base: box.offsetLeft }
-      : { property: 'insetInlineStart', sign: -1, base: box.containerWidth - box.offsetLeft - box.offsetWidth }
-  return { horizontal: [horizontal], vertical: [{ property: 'top', sign: 1, base: box.offsetTop }] }
+      ? { property: 'left', sign: 1, base: offsets.left }
+      : { property: 'insetInlineStart', sign: -1, base: offsets.right }
+  return { horizontal: [horizontal], vertical: [{ property: 'top', sign: 1, base: offsets.top }] }
 }
 
 interface ResolveFreeMoveInput {
@@ -299,14 +298,22 @@ function resolveMember(
     bottom: computed.bottom,
   }
 
+  const parentElement = element.parentElement
+  const parentStyle = parentElement ? view.getComputedStyle(parentElement) : null
+  const siblingPositions = parentElement
+    ? Array.from(parentElement.children, (child) => view.getComputedStyle(child).position)
+    : null
+  const parentKind = parentStyle
+    ? parentPlacementKind({ display: parentStyle.display, position: parentStyle.position }, siblingPositions)
+    : 'flow'
   // An already-absolute element moves freely with no modifier at all — its
   // position is ALREADY what `left`/`top` say, so dragging it anywhere else
   // would be the surprising behaviour.
-  if (!isPositionedFreely(own.position) && !modifierHeld) return { kind: 'reorder' }
+  const outcome = resolvePlacement({ parentKind, childPosition: own.position, modifierHeld })
+  if (outcome === 'reorder') return { kind: 'reorder' }
 
-  const parentElement = element.parentElement
-  const parentPosition = parentElement ? view.getComputedStyle(parentElement).position : 'static'
-  const properties = planFreeMoveProperties(own, parentPosition)
+  const containing = readContainingBlock(view, element)
+  const properties = planFreeMoveProperties(own, containing !== null && containing.element === parentElement)
   if (!properties) {
     const parentNode = getParent(tree, nodeId)
     return {
@@ -329,18 +336,19 @@ function resolveMember(
   const authored = node
     ? authoredOffsets(node, useEditorStore.getState().site?.styleRules)
     : new Set<NudgeOffsetProperty>()
-  const box: FreeMoveElementBox = {
-    offsetLeft: element.offsetLeft,
-    offsetTop: element.offsetTop,
-    offsetWidth: element.offsetWidth,
-    containerWidth: (element.offsetParent as HTMLElement | null)?.clientWidth ?? 0,
-  }
+  const elementRect = element.getBoundingClientRect()
+  const offsets: ContainingBlockOffsets = containing
+    ? containingBlockOffsets(
+        { left: elementRect.left, top: elementRect.top, width: elementRect.width, height: elementRect.height },
+        containing.box,
+      )
+    : { left: 0, top: 0, right: 0, bottom: 0 }
   return {
     kind: 'member',
     member: {
       nodeId,
       preview: createInlineStylePreview(element),
-      offsets: planFreeMoveOffsets(box, own, authored, properties.needsAbsolute),
+      offsets: planFreeMoveOffsets(offsets, own, authored, properties.needsAbsolute),
       needsAbsolute: properties.needsAbsolute,
     },
   }

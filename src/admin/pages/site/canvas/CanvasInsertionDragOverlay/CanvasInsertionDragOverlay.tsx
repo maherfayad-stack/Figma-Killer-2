@@ -39,6 +39,7 @@ export function CanvasInsertionDragOverlay<TGhost>({
         <div
           className={styles.dropPreview}
           data-position={drag.preview.position}
+          data-axis={drag.preview.axis}
           style={dropPreviewStyle(drag.preview)}
           aria-hidden="true"
         >

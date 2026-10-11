@@ -71,6 +71,11 @@ const InstallProbeResponseSchema = Type.Object({
   hasNodeModules: Type.Boolean(),
   dependencyCount: Type.Number(),
   packageManager: PackageManagerSchema,
+  /** The project's own package.json sections - what the Dependencies panel lists. */
+  dependencies: Type.Record(Type.String(), Type.String()),
+  devDependencies: Type.Record(Type.String(), Type.String()),
+  /** Declared packages that are present under node_modules. */
+  installedPackages: Type.Array(Type.String()),
   /** The last known job for this project's app root, or `null` if none has ever run — lets a fresh mount (page reload, or a server restart) notice and resume a still-`'running'` job instead of silently offering "Install dependencies" again over a job that's already in flight. */
   job: Type.Union([InstallJobResponseSchema, Type.Null()]),
 })
@@ -96,6 +101,9 @@ export type InstallProbeStatus = {
   hasNodeModules: boolean
   dependencyCount: number
   packageManager: PackageManager
+  dependencies: Record<string, string>
+  devDependencies: Record<string, string>
+  installedPackages: string[]
   job: InstallJob | null
 }
 
