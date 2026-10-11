@@ -15,9 +15,13 @@
  *     (there is no project file to rename it in);
  *   - the new name is already declared, or already named in source (renaming
  *     would silently merge two things);
- *   - the token lives in Tailwind's `@theme` under a utility namespace
- *     (`--color-*`, `--spacing-*`...), where the NAME is also the utility
- *     class (`bg-brand`), which no mention-level rename can follow.
+ *   - the token lives in Tailwind's `@theme` and its rename cannot follow
+ *     the utility classes that spell the name (`tokenThemeRename.ts` says
+ *     which cases, and why).
+ *
+ * A Tailwind `@theme` variable is renamed together with the classes that read
+ * it (`bg-brand`, `hover:text-brand/50`), and a Tailwind variable counts as
+ * read by those classes when it is removed.
  *
  * ## Remove
  *
@@ -28,16 +32,15 @@
  * referring back to the removed token (a cycle) is refused.
  */
 import { removeCustomPropertyDeclarations } from '@core/css-codemods'
-import { findTokenMentions, lineOfOffset, rewriteTokenMentions, scanGatedDeclarations, type TokenEdit } from '@core/studio-tokens'
+import { findTokenMentions, isThemeNamespacedName, lineOfOffset, rewriteTokenMentions, scanGatedDeclarations, type TokenEdit } from '@core/studio-tokens'
 import { isWritableSourceRel } from '../studioEditRouting'
 import type { TokenCssSource } from './projectTokenIndex'
+import { planThemeClassReaders, planThemeRename } from './tokenThemeRename'
 import { tokenRefusal, type PlannedTokenFile, type TokenWritePlan, type TokenWriteRefusal } from './tokenWriteTypes'
 import type { TokenWorkspaceFile } from './tokenWorkspaceFiles'
 
 export type TokenRefactorEdit = Extract<TokenEdit, { op: 'rename' | 'remove' }>
 
-/** Tailwind v4 namespaces whose `@theme` names are also utility classes. */
-const TAILWIND_THEME_NAMESPACE_RE = /^--(?:color|font|text|spacing|radius|shadow|breakpoint|ease|animate|tracking|leading|blur|aspect|container)-/
 const VAR_REFERENCE_RE = /var\(\s*(--[A-Za-z0-9_-]+)/g
 const MAX_SITES_LISTED = 5
 
@@ -164,13 +167,14 @@ function planRename(
       declarations: taken.map(whereOf),
     })
   }
-  const themed = own.find((decl) => decl.inTheme && TAILWIND_THEME_NAMESPACE_RE.test(name))
-  if (themed) {
-    return tokenRefusal(0, 'rename-blocked', `${name} is a Tailwind theme variable, so its name is also the utility class (for example bg-${name.slice(8)}); renaming it would leave every class using it pointing at nothing.`, {
-      remedy: 'Create the new name with the same value, move the usages over, then remove the old one.',
-    })
-  }
-  const named = workspace.flatMap((file) => findTokenMentions(file.text).filter((mention) => mention.name === to).map(() => file.file))
+  // A Tailwind `@theme` variable is also a vocabulary of utility classes: the
+  // rename moves them too, or refuses naming why it cannot.
+  const themed = own.some((decl) => decl.inTheme) && isThemeNamespacedName(name)
+  const themePlan = themed ? planThemeRename(name, to, new Set(declarations.map((decl) => decl.name)), workspace) : null
+  if (themePlan && 'ok' in themePlan) return themePlan
+  const moves = themePlan ? themePlan.names : new Map([[name, to]])
+
+  const named = workspace.flatMap((file) => findTokenMentions(file.text).filter((mention) => [...moves.values()].includes(mention.name)).map(() => file.file))
   if (named.length > 0) {
     return tokenRefusal(0, 'invalid-input', `${to} is already named ${named.length} time${named.length === 1 ? '' : 's'} in the project's source (${siteList([...new Set(named)])}), so renaming ${name} to it would silently change what those mean.`, {
       remedy: 'Pick a name nothing uses.',
@@ -178,15 +182,24 @@ function planRename(
   }
 
   const next = new Map<string, string>()
+  const unfollowed: string[] = []
   let mentions = 0
   for (const file of workspace) {
-    const rewritten = rewriteTokenMentions(file.text, (mention) => (mention.name === name ? to : null))
-    if (rewritten.count === 0) continue
-    mentions += rewritten.count
-    next.set(file.file, rewritten.text)
+    const rewritten = rewriteTokenMentions(file.text, (mention) => moves.get(mention.name) ?? null)
+    let text = rewritten.text
+    let count = rewritten.count
+    if (themePlan) {
+      const classes = themePlan.rewriteClasses(file.file, text)
+      text = classes.text
+      count += classes.count
+      unfollowed.push(...classes.dynamic.map((line) => `${file.file}:${line}`))
+    }
+    if (count === 0) continue
+    mentions += count
+    next.set(file.file, text)
   }
   const files = changedFiles(workspace, next)
-  return { ok: true, files, changed: [], unchanged: [], inserted: [], renamed: [{ name, to, mentions, files: files.length }], removed: [] }
+  return { ok: true, files, changed: [], unchanged: [], inserted: [], renamed: [{ name, to, mentions, files: files.length, unfollowed: unfollowed.slice(0, MAX_SITES_LISTED) }], removed: [] }
 }
 
 function planRemove(
@@ -199,7 +212,10 @@ function planRemove(
   const refused = declarationRefusal(name, own, workspace, 'removed')
   if (refused) return refused
 
-  const readers: string[] = []
+  // A Tailwind `@theme` variable is also read by the utility classes that spell it.
+  const themeClasses = own.some((decl) => decl.inTheme) ? planThemeClassReaders(name, replaceWith, workspace) : null
+  if (themeClasses && 'ok' in themeClasses) return themeClasses
+  const readers: string[] = [...(themeClasses?.readers ?? [])]
   for (const file of workspace) {
     file.text.split(/\r?\n/).forEach((line, index) => {
       for (const mention of findTokenMentions(line)) {
@@ -236,6 +252,11 @@ function planRemove(
       const rewritten = rewriteTokenMentions(text, (mention) => (mention.name === name && !mention.declaration ? replaceWith : null))
       moved += rewritten.count
       text = rewritten.text
+      const classes = themeClasses?.rewriteClasses?.(file.file, text)
+      if (classes) {
+        moved += classes.count
+        text = classes.text
+      }
     }
     if (declaringFiles.has(file.file)) {
       const removal = removeCustomPropertyDeclarations(text, name)

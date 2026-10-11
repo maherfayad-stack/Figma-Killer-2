@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { buildTokenCatalog, scanTokenUsage } from './tokenCatalog'
+import { buildTokenCatalog, scanTokenUsage, withTokenUsage } from './tokenCatalog'
 import type { TokenCssSource } from './projectTokenIndex'
 
 const src = (file: string, css: string, origin: TokenCssSource['origin'] = 'project'): TokenCssSource => ({ file, origin, css })
@@ -104,7 +104,7 @@ describe('buildTokenCatalog', () => {
 
   it('attaches usage only when given', () => {
     expect(token('--space-md').usage).toBeUndefined()
-    const withUsage = buildTokenCatalog([src('a.css', ':root{--a:1px;--b:2px}')], new Map([['--a', { count: 3, sites: [{ file: 'x.tsx', line: 4 }] }]]))
+    const withUsage = withTokenUsage(buildTokenCatalog([src('a.css', ':root{--a:1px;--b:2px}')]), new Map([['--a', { count: 3, sites: [{ file: 'x.tsx', line: 4 }] }]]))
     expect(withUsage.tokens.map((t) => t.usage?.count)).toEqual([3, 0])
   })
 })

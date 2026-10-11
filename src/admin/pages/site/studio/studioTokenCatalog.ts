@@ -28,7 +28,7 @@ const WriteResponseSchema = Type.Object({
   ok: Type.Literal(true),
   files: Type.Array(Type.Object({ path: Type.String(), hash: Type.String() })),
   inserted: Type.Array(Type.Object({ name: Type.String() })),
-  renamed: Type.Array(Type.Object({ name: Type.String(), to: Type.String(), mentions: Type.Integer(), files: Type.Integer() })),
+  renamed: Type.Array(Type.Object({ name: Type.String(), to: Type.String(), mentions: Type.Integer(), files: Type.Integer(), unfollowed: Type.Array(Type.String()) })),
   removed: Type.Array(Type.Object({ name: Type.String(), declarations: Type.Integer(), movedReaders: Type.Integer(), replacedWith: Type.Optional(Type.String()) })),
   /** The undo-journal entry that puts every file this write changed back; `null` when it could not be journaled. */
   undoToken: Type.Union([Type.String(), Type.Null()]),

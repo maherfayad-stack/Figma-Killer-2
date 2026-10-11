@@ -71,12 +71,6 @@ describe('planTokenEdits - rename', () => {
     expect(planTokenEdits(sources(), [{ op: 'rename', name: '--nope', to: '--x' }], workspace())).toMatchObject({ ok: false, code: 'no-such-token' })
   })
 
-  it('refuses a Tailwind theme variable whose name is also a utility class', () => {
-    const theme: TokenCssSource = { file: 'src/tw.css', origin: 'project', css: '@theme {\n  --color-brand: #fff;\n}\n' }
-    const plan = planTokenEdits([theme], [{ op: 'rename', name: '--color-brand', to: '--color-main' }], [{ file: 'src/tw.css', text: theme.css }])
-    expect(plan).toMatchObject({ ok: false, code: 'rename-blocked' })
-  })
-
   it('must be the only edit in its request', () => {
     const plan = planTokenEdits(
       sources(),
