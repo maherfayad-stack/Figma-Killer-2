@@ -11,6 +11,7 @@ import { ColorsSwatchSolidIcon } from 'pixel-art-icons/icons/colors-swatch-solid
 import { GlobeSolidIcon } from 'pixel-art-icons/icons/globe-solid'
 import { CloudUploadSolidIcon } from 'pixel-art-icons/icons/cloud-upload-solid'
 import { PackageSolidIcon } from 'pixel-art-icons/icons/package-solid'
+import { Settings2SolidIcon } from 'pixel-art-icons/icons/settings-2-solid'
 import { Button } from '@ui/components/Button'
 import {
   assignRailAccents,
@@ -89,6 +90,15 @@ const PRIMARY_RAIL_ITEMS: PrimaryRailItem[] = [
     iconName: 'globe-solid',
     group: 'content',
   },
+  // Variables - the project's design tokens (CSS custom properties), modes and
+  // usage. Next to Framework and Classes: it is the third thing you style FROM.
+  {
+    id: 'variables',
+    label: 'Variables',
+    icon: Settings2SolidIcon,
+    iconName: 'settings-2-solid',
+    group: 'style',
+  },
   // Dependencies - the project's own package.json and whether it is installed.
   // It has a rail entry because the Live pill and a missing-package banner both
   // send people here; a destination with no door was how "Install dependencies"
@@ -147,6 +157,7 @@ export function PanelRail({
   const dependenciesOpen = useEditorStore((s) => s.dependenciesPanelOpen)
   const contentOpen = useEditorStore((s) => s.contentPanelOpen)
   const gitOpen = useEditorStore((s) => s.gitPanelOpen)
+  const variablesOpen = useEditorStore((s) => s.variablesPanelOpen)
   const agentOpen = useEditorStore((s) => s.isAgentOpen)
   const commentsPaneOpen = useEditorStore((s) => s.commentsPaneOpen)
   const setCommentsPaneOpen = useEditorStore((s) => s.setCommentsPaneOpen)
@@ -174,6 +185,7 @@ export function PanelRail({
     selectors: selectorsOpen,
     framework: frameworkOpen,
     dependencies: dependenciesOpen,
+    variables: variablesOpen,
     content: contentOpen,
     git: gitOpen,
   } satisfies Record<LeftSidebarPanelId, boolean>

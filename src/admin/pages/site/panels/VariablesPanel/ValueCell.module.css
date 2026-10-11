@@ -1,0 +1,32 @@
+/* ValueCell - one token value under one mode. */
+
+.cell {
+    min-width: 0;
+}
+
+.swatch {
+    display: block;
+    width: var(--space-m);
+    height: var(--space-m);
+    flex: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--swatch);
+}
+
+.readOnly {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: 0 var(--space-xs);
+    color: var(--text-muted);
+}
+
+.readOnlyText {
+    overflow: hidden;
+    font-family: monospace;
+    font-size: var(--text-xs);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}

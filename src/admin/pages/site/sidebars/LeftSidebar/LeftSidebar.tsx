@@ -22,6 +22,7 @@ import { PanelBoundary } from '@site/ui/PanelBoundary'
 import { PluginEditorPanel } from '@site/panels/PluginEditorPanel'
 import { SelectorsPanel } from '@site/panels/SelectorsPanel'
 import { GitPanel } from '@site/panels/GitPanel'
+import { VariablesPanel } from '@site/panels/VariablesPanel'
 import { FrameworkChangeConfirmProvider } from '@admin/shared/dialogs/FrameworkChangeConfirmDialog'
 import { SidebarResizeHandle } from '@admin/shared/SidebarResizeHandle'
 import { AgentPanelSkeleton } from './AgentPanelSkeleton'
@@ -56,6 +57,7 @@ function selectActiveLeftSidebarPanel(state: ReturnType<typeof useEditorStore.ge
   if (state.selectorsPanelOpen) return 'selectors'
   if (state.frameworkPanelOpen) return 'framework'
   if (state.dependenciesPanelOpen) return 'dependencies'
+  if (state.variablesPanelOpen) return 'variables'
   if (state.contentPanelOpen) return 'content'
   if (state.gitPanelOpen) return 'git'
   if (state.isAgentOpen) return 'agent'
@@ -205,6 +207,14 @@ export function LeftSidebar({
               <div className={styles.panelMount} hidden={effectiveActivePanel !== 'dependencies'}>
                 <PanelBoundary id="dependencies" label="Dependencies" frame="panel">
                   <DependenciesPanel variant="docked" />
+                </PanelBoundary>
+              </div>
+              {/* Variables (CT-3). Hidden-but-mounted so a half-typed value or
+                  rename survives a tab switch; its catalog read is gated on
+                  `variablesPanelOpen`, so being mounted costs no request. */}
+              <div className={styles.panelMount} hidden={effectiveActivePanel !== 'variables'}>
+                <PanelBoundary id="variables" label="Variables" frame="panel">
+                  <VariablesPanel variant="docked" />
                 </PanelBoundary>
               </div>
               {/* Version control. Hidden-but-mounted like its siblings so a
