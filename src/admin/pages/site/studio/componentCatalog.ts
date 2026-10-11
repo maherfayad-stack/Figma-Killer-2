@@ -91,6 +91,8 @@ const COMPONENT_DEFINITION_KINDS: ReadonlySet<string> = new Set([
   'remove-variant',
   'add-component-prop',
   'expose-prop',
+  'expose-class',
+  'promote-class-override',
   'add-slot-prop',
   'promote-component',
   'restore',

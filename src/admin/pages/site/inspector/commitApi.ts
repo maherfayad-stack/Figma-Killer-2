@@ -215,6 +215,8 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
   const clearPreviewNodeStyles = useEditorStore((s) => s.clearPreviewNodeStyles)
   const updateNodeProps = useEditorStore((s) => s.updateNodeProps)
   const setBreakpointOverride = useEditorStore((s) => s.setBreakpointOverride)
+  const overrideClassOnInstance = useEditorStore((s) => s.overrideClassOnInstance)
+  const instanceClassEditIsLocal = useEditorStore((s) => s.instanceClassEditIsLocal)
 
   const {
     selectedNodeId,
@@ -262,6 +264,13 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
       const optimisticPatch = optimisticStylePatch(patch, 'send')
       if (optimisticPatch) for (const id of inlineTargetIds) broadcastOptimisticStyle(id, optimisticPatch)
     } else if (target.kind === 'class') {
+      // G-2b - inside a shared component's instance the class edit is this instance's alone (a modifier class on its
+      // call site); the store took it over, so the shared class is not written. Paint the same look in live frames.
+      if (!isMultiSelect && overrideClassOnInstance({ nodeId: selectedNodeId, classId: target.classId, patch, contextId: activeContextId })) {
+        const optimisticPatch = optimisticStylePatch(patch, 'drop')
+        if (optimisticPatch) broadcastOptimisticStyle(selectedNodeId, optimisticPatch)
+        return
+      }
       if (activeContextId) {
         setClassContextStyles(target.classId, activeContextId, patch as Partial<CSSPropertyBag>)
       } else {
@@ -291,7 +300,12 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
   }
 
   const previewToTarget = (target: WriteTarget, patch: Partial<CSSPropertyBag>) => {
-    if (target.kind === 'class') {
+    if (target.kind === 'class' && !isMultiSelect && selectedNodeId && instanceClassEditIsLocal(selectedNodeId, target.classId)) {
+      // G-2b - the edit will land on this instance alone, so the preview paints this element, not the shared class.
+      setPreviewNodeStyles({ nodeIds: [selectedNodeId], styles: patch })
+      const optimisticPatch = optimisticStylePatch(patch, 'drop')
+      if (optimisticPatch) broadcastOptimisticStyle(selectedNodeId, optimisticPatch)
+    } else if (target.kind === 'class') {
       // The class preview channel has no conditional-layer target — same
       // guard `WriteTargetStyleComposer.tsx`'s `handlePreview` used, and the
       // same reason `writeToTarget`'s class branch skips the in-frame paint
@@ -323,6 +337,8 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
 
   const clearToTarget = (target: WriteTarget, keys: string[]) => {
     if (target.kind === 'class') {
+      // G-2b - clearing a class value cannot be limited to one instance; the store says so, then the ordinary clear runs.
+      if (selectedNodeId && !isMultiSelect) overrideClassOnInstance({ nodeId: selectedNodeId, classId: target.classId, patch: Object.fromEntries(keys.map((key) => [key, null])), contextId: null })
       clearClassStyleProperties(target.classId, keys as ReadonlyArray<keyof CSSPropertyBag>)
     } else if (target.kind === 'inline') {
       writeToTarget(target, Object.fromEntries(keys.map((k) => [k, null])))

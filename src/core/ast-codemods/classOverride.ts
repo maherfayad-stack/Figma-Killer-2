@@ -289,7 +289,8 @@ export function promoteClassOverride(params: PromoteClassOverrideParams): ClassO
     pageFile.refreshFromFileSystemSync()
     originals.set(pageFile, pageFile.getFullText())
     const callSite = findJsxElementAtLocationOrThrow(pageFile, location.file, location.line, location.col)
-    const base = params.selector.trim()
+    // The panel may name the instance's own modifier rule; the base is what it is built on.
+    const base = parseModifierSelector(params.selector)?.base ?? params.selector.trim()
     if (singleClassName(base) === null) refuse('class-selector-unsupported', 'Only a rule that is one plain class (like .card) can take a value from one instance.')
     const tokens = classNamesOnElement(callSite).literals
     const found = existingModifier(params.css.text, base, tokens, params.css.convention)
