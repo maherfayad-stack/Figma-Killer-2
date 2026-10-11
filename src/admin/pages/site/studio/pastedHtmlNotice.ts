@@ -42,6 +42,7 @@ export function leftOutSentence(report: HtmlToJsxReport): string | null {
     report.handlers > 0 ? plural(report.handlers, 'event handler') : null,
     report.unsafeUrls > 0 ? plural(report.unsafeUrls, 'unsafe link') : null,
     report.styleDeclarations > 0 ? plural(report.styleDeclarations, 'inline style declaration') : null,
+    report.otherAttributes > 0 ? plural(report.otherAttributes, 'unrecognised attribute') : null,
   ].filter((part): part is string => part !== null)
   const svg = report.svgRefusals.slice(0, 1)
   if (parts.length === 0 && svg.length === 0) return null

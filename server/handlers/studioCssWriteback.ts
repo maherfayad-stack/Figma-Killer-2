@@ -113,6 +113,7 @@
  * (or its own destination resolution) named — so there is no honest sentence
  * to show a user, only an attack to decline.
  */
+import postcss from 'postcss'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { QuoteKind } from 'ts-morph'
@@ -667,6 +668,17 @@ export function insertPastedRules(
   const filePath = resolveContainedCssPath(dir, fileRel)
   if (filePath === null) return { applied: false }
   let css = readFileSync(filePath, 'utf8')
+  // Never merge: `insertRule` sets declarations on an existing exact selector,
+  // which would overwrite the user's own rule. The planner renames a pasted class
+  // the file already uses; reaching this with a taken selector is a bug, and the
+  // caller puts the page back.
+  const scopeOf = (parent: postcss.Container | undefined): string =>
+    parent && parent.type === 'atrule' ? `${(parent as postcss.AtRule).name} ${(parent as postcss.AtRule).params}`.trim() : ''
+  const ruled = new Set<string>()
+  postcss.parse(css).walkRules((existing) => { ruled.add(`${scopeOf(existing.parent)}|${existing.selector.trim()}`) })
+  for (const rule of rules) {
+    if (ruled.has(`${rule.atRule ?? ''}|${rule.selector.trim()}`)) throw new Error(`${rule.selector} is already ruled in ${fileRel}; a paste never merges into it`)
+  }
   for (const rule of rules) css = insertRule(css, rule.selector, rule.declarations, { atRule: rule.atRule }).css
   writeSourceFile(filePath, css)
   return { applied: true }

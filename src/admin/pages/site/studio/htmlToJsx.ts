@@ -52,6 +52,7 @@ import { isSafeUrl } from '@core/html-sanitize'
 import { isEventHandlerAttributeName, isReservedRuntimeDataAttributeName } from '@core/htmlAttributes'
 import { sanitizePastedHtml } from '@core/sanitize'
 import { isSafeIntrinsicTagName, VOID_HTML_ELEMENTS } from '@core/utils/htmlTags'
+import { isAllowedPastedProp } from '@core/utils/pastedHtmlProps'
 import { MAX_PASTED_CSS_CHARS, MAX_PASTED_DEPTH, MAX_PASTED_ELEMENTS, MAX_PASTED_HTML_CHARS } from '@core/utils/pastedHtmlLimits'
 import type { JsonDataValue } from '@core/utils/jsonData'
 import { cssValueLoadsExternalResource, markupToJsxAttributeName } from '@core/vector'
@@ -121,7 +122,7 @@ export function htmlToJsx(html: string): HtmlToJsxResult {
     }
   }
 
-  const report: HtmlToJsxReport = { scripts: 0, handlers: 0, unsafeUrls: 0, styleDeclarations: 0, svgRefusals: [] }
+  const report: HtmlToJsxReport = { scripts: 0, handlers: 0, unsafeUrls: 0, styleDeclarations: 0, otherAttributes: 0, svgRefusals: [] }
   const parsed = new DOMParser().parseFromString(html, 'text/html')
   report.scripts = parsed.querySelectorAll('script').length
   for (const element of Array.from(parsed.querySelectorAll('*'))) {
@@ -379,6 +380,10 @@ function convertAttributes(element: Element, tag: string, context: ConversionCon
 
     const jsxName = jsxAttributeName(name, tag, inputType)
     if (!jsxName || RESERVED_PROPS.has(jsxName) || !JSX_ATTRIBUTE_NAME.test(jsxName)) continue
+    if (!isAllowedPastedProp(jsxName)) {
+      context.report.otherAttributes += 1 // the server's allowlist, applied here so the paste is not refused whole
+      continue
+    }
 
     if (BOOLEAN_ATTRIBUTES.has(name) && (value === '' || value.toLowerCase() === name)) {
       props[jsxName] = true

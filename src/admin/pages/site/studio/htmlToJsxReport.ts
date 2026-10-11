@@ -12,6 +12,8 @@ export interface HtmlToJsxReport {
   unsafeUrls: number
   /** Inline `style` declarations removed (an external resource, or a value the CSS sanitizer refuses). */
   styleDeclarations: number
+  /** Attributes outside the shared allowlist (`pastedHtmlProps.ts`) that were not written. */
+  otherAttributes: number
   /** One sentence per `<svg>` that was not written, and why. */
   svgRefusals: string[]
 }

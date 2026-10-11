@@ -9,7 +9,7 @@
  * One-way dependency: this module imports nothing from
  * `studioStructuralWriteback.ts`, which imports these back.
  */
-import { MAX_PASTED_CSS_CHARS } from '@core/utils/pastedHtmlLimits'
+import { MAX_PASTED_CSS_CHARS, MAX_PROP_TEXT_CHARS } from '@core/utils/pastedHtmlLimits'
 import { Type } from '@core/utils/typeboxHelpers'
 
 /**
@@ -33,7 +33,7 @@ export const DesignSystemImportSchema = Type.Literal(true, {
  * platform="ios" value={0}/>` and reloaded from source as an empty bar.
  */
 export const JsonDataValueSchema = Type.Recursive((Self) =>
-  Type.Union([Type.String(), Type.Number(), Type.Boolean(), Type.Null(), Type.Array(Self), Type.Record(Type.String(), Self)]),
+  Type.Union([Type.String({ maxLength: MAX_PROP_TEXT_CHARS }), Type.Number(), Type.Boolean(), Type.Null(), Type.Array(Self), Type.Record(Type.String(), Self)]),
 )
 
 /**
@@ -75,7 +75,7 @@ const AssetImportPropSchema = Type.Object({
 
 const JsxPropValueSchema = Type.Recursive((Self) =>
   Type.Union([
-    Type.String(),
+    Type.String({ maxLength: MAX_PROP_TEXT_CHARS }),
     Type.Number(),
     Type.Boolean(),
     Type.Null(),

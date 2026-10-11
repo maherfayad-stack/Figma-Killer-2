@@ -24,13 +24,21 @@ export function escapeHtml(value: unknown): string {
   return String(value ?? '').replace(/[&<>"']/g, (ch) => HTML_ESCAPE_MAP[ch])
 }
 
+/** What a browser ignores before it reads a URL's scheme: tab/newline anywhere, then leading C0 controls and spaces (`"\u0001javascript:"` is `javascript:`). */
+function stripUrlNoise(url: string): string {
+  const compact = url.replace(/[\t\n\r]/g, '')
+  let start = 0
+  while (start < compact.length && compact.charCodeAt(start) <= 0x20) start += 1
+  return compact.slice(start).trimEnd()
+}
+
 /**
  * Return true when a URL is safe for href/src/action attributes.
  * Blocks javascript:, vbscript:, and data: schemes after the same tab/newline
  * normalisation browsers apply during URL parsing.
  */
 export function isSafeUrl(url: string): boolean {
-  const normalized = url.replace(/[\t\n\r]/g, '').trim().toLowerCase()
+  const normalized = stripUrlNoise(url).toLowerCase()
   return (
     !normalized.startsWith('javascript:') &&
     !normalized.startsWith('vbscript:') &&

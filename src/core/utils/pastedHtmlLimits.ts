@@ -15,5 +15,7 @@ export const MAX_PASTED_HTML_CHARS = 512 * 1024
 export const MAX_PASTED_ELEMENTS = 1500
 /** How deep the pasted tree may nest. */
 export const MAX_PASTED_DEPTH = 40
+/** Characters one prop value may carry (an inline `data:` image is the largest honest one); enforced by the wire schema BEFORE the recursive walk. */
+export const MAX_PROP_TEXT_CHARS = 256 * 1024
 /** Characters of `<style>` text that may travel with a paste. */
 export const MAX_PASTED_CSS_CHARS = 256 * 1024

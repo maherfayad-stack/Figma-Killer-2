@@ -95,7 +95,13 @@ export function pastedHtmlStylesheet(dir: string, targetRel: string): string | n
 const MAX_SCANNED_FILES = 3000
 const MAX_SCANNED_BYTES = 1024 * 1024
 const CLASS_IN_CSS = /\.(-?[_a-zA-Z][\w-]*)/g
-const CLASS_ATTRIBUTE = /\bclass(?:Name)?\s*=\s*(?:"([^"]*)"|'([^']*)'|\{\s*["'`]([^"'`]*)["'`]\s*\})/g
+/**
+ * Every quoted string in a source file. A class reaches an element through
+ * `className="a b"`, `clsx('a', { b: on })`, `cn(...)`, `` `${x} a` ``, a lookup
+ * table - the only thing they share is that the name is written in a string.
+ * Over-approximate on purpose: a pasted class that merely LOOKS used is renamed.
+ */
+const QUOTED_STRING = /(["'`])((?:\\.|(?!\1)[^\\\n])*)\1/g
 
 /**
  * Class names a pasted class must not share: every class a project stylesheet
@@ -106,6 +112,10 @@ const CLASS_ATTRIBUTE = /\bclass(?:Name)?\s*=\s*(?:"([^"]*)"|'([^']*)'|\{\s*["'`
 function takenClassNames(dir: string, destination: StyleDestination | null): Set<string> {
   const taken = new Set<string>()
   if (!destination) return taken
+  // The destination's own selectors, read directly and without a size cap: a
+  // name already ruled there is NEVER merged into (`insertRule` would overwrite).
+  const own = readFileOrNull(join(dir, ...destination.file.split('/')))
+  for (const match of (own ?? '').matchAll(CLASS_IN_CSS)) taken.add(match[1]!)
   const scan = (rel: string, pattern: RegExp, group: (match: RegExpExecArray) => string | undefined): void => {
     const text = readIfSmall(join(dir, ...rel.split('/')))
     if (text === null) return
@@ -120,9 +130,17 @@ function takenClassNames(dir: string, destination: StyleDestination | null): Set
   const files = listWorkspaceFiles(dir).slice(0, MAX_SCANNED_FILES)
   for (const rel of files) {
     if (/\.css$/i.test(rel)) scan(rel, CLASS_IN_CSS, (match) => match[1])
-    else if (/\.(tsx|jsx|ts|js|html)$/i.test(rel)) scan(rel, CLASS_ATTRIBUTE, (match) => match[1] ?? match[2] ?? match[3])
+    else if (/\.(tsx|jsx|ts|js|html)$/i.test(rel)) scan(rel, QUOTED_STRING, (match) => match[2])
   }
   return taken
+}
+
+function readFileOrNull(path: string): string | null {
+  try {
+    return readFileSync(path, 'utf8')
+  } catch {
+    return null
+  }
 }
 
 function readIfSmall(path: string): string | null {

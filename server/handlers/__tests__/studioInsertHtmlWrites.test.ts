@@ -213,6 +213,47 @@ export default function Classes() {
     expect(read('pages/classes.css')).toContain('.slot-2 {')
   })
 
+  it('renames a class the project uses only through clsx or a template string, never merging into the user rule', () => {
+    write('pages/Other.tsx', `import clsx from 'clsx'
+export default function Other({ on }: { on: boolean }) {
+  return <div className={clsx('base', on && 'card')}>x</div>
+}
+`)
+    write('pages/classes.css', `${GLOBAL_CSS}
+.card {
+  color: green;
+}
+`)
+    const before = read('pages/classes.css')
+    const result = applyStudioEditBatch(
+      dir,
+      [paste('pages/Classes.tsx', GLOBAL_PAGE, 'main', { name: 'div', props: { className: 'card' }, children: 'x', pastedHtml: { css: '.card { color: red }' } })],
+      {},
+      EDITOR,
+    )
+    expect(result.refusals).toEqual([])
+    expect(read('pages/Classes.tsx')).toContain('<div className="card-2">x</div>')
+    expect(read('pages/classes.css')).toBe(`${before}
+.card-2 {
+  color: red;
+}
+`)
+    expect(read('pages/classes.css')).toContain(`.card {
+  color: green;
+}`)
+  })
+
+  it('renames a class used only in a template string of another file', () => {
+    write('pages/Other.tsx', 'export const tone = (x: string) => `tile ${x} card`' + String.fromCharCode(10))
+    applyStudioEditBatch(
+      dir,
+      [paste('pages/Classes.tsx', GLOBAL_PAGE, 'main', { name: 'div', props: { className: 'tile' }, children: 'x', pastedHtml: { css: '.tile { color: red }' } })],
+      {},
+      EDITOR,
+    )
+    expect(read('pages/Classes.tsx')).toContain('className="tile-2"')
+  })
+
   it('a rule that names none of the paste classes is never written', () => {
     const result = applyStudioEditBatch(
       dir,
@@ -413,6 +454,14 @@ describe('hostile pasted input is refused whole', () => {
   it('a style value that loads a resource', () =>
     refuses({ name: 'div', props: { style: { background: 'url(https://tracker.example/p.gif)' } }, pastedHtml: {} }))
   it('a React-reserved prop', () => refuses({ name: 'div', props: { ref: 'x' }, pastedHtml: {} }))
+  it('attribute case does not matter: HREF, an uppercase ACTION on a form, xlinkHref, a control character before the scheme', () => {
+    refuses({ name: 'a', props: { HREF: 'javascript:alert(1)' }, children: 'x', pastedHtml: {} })
+    refuses({ name: 'form', props: { ACTION: 'javascript:alert(1)' }, pastedHtml: {} })
+    refuses({ name: 'a', props: { xlinkHref: 'javascript:alert(1)' }, children: 'x', pastedHtml: {} })
+    refuses({ name: 'a', props: { href: 'javascript:alert(1)' }, children: 'x', pastedHtml: {} })
+  })
+  it('an <animate> that sets href from values', () =>
+    refuses({ name: 'svg', children: [{ name: 'a', children: [{ name: 'animate', props: { attributeName: 'href', values: 'javascript:alert(1)' } }] }], pastedHtml: {} }))
 
   it('an oversized paste', () => {
     const children = Array.from({ length: 1600 }, () => ({ name: 'li' }))
