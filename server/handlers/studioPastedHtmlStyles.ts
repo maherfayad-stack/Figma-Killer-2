@@ -20,8 +20,9 @@
  *    RENAMED (`.card` -> `.card-2`, in the rule and on the element) rather than
  *    merged into the existing rule. Nothing already on the board changes.
  *  - **every selector of the rule contains one of them**, as a class outside
- *    any `:not(...)`/`:is(...)`, and nothing after it reaches a sibling
- *    (`+` / `~`): `.hero a:hover` and `.hero > p` qualify, `a`, `*`, `:root`,
+ *    any `:not(...)`/`:is(...)`, and the step out of that compound is not a
+ *    sibling combinator (`+` / `~`): `.hero a:hover`, `.hero > p` and
+ *    `.hero a + b` qualify, `a`, `*`, `:root`,
  *    `.hero + p` do not. A rule that does not qualify is SKIPPED AND REPORTED,
  *    never written.
  *  - an at-rule is written only as `@media` / `@supports` / `@container`
@@ -143,7 +144,7 @@ function parseRules(css: string, summary: StylePlan['summary']): ParsedRule[] {
       return
     }
     const declarations = rule.nodes.flatMap((child) =>
-      child.type === 'decl' ? [{ prop: child.prop, value: child.value, important: child.important === true }] : [],
+      child.type === 'decl' ? [{ prop: child.prop, value: child.value.trim(), important: child.important === true }] : [],
     )
     rules.push({ selectors: rule.selectors.map((selector) => selector.trim().replace(/\s+/g, ' ')), declarations, ...(atRule ? { atRule } : {}) })
   }
@@ -267,7 +268,10 @@ function isScopedTo(selector: string, owned: ReadonlySet<string>): boolean {
   const hits = classes.filter((c) => c.depth === 0 && owned.has(c.name))
   if (hits.length === 0) return false
   const last = Math.max(...hits.map((c) => c.compound))
-  return combinators.slice(last).every((kind) => kind === ' ' || kind === '>')
+  // Only the step OUT of the owned compound can leave the paste: `.hero + p` is
+  // the user's next sibling, `.hero a + b` is another child of `.hero`.
+  const next = combinators[last]
+  return next === undefined || next === ' ' || next === '>'
 }
 
 function renameClasses(selector: string, renames: ReadonlyMap<string, string>): string {
