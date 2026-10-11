@@ -229,7 +229,7 @@ export {
   type FrameFitMetrics,
 } from './frameFitRules'
 
-export { OVERLAY_ID_ATTR } from './overlayStyleAttr'
+export { OVERLAY_ID_ATTR, OVERLAY_REVISION_ATTR, STYLE_CHANGE_OBSERVER_OPTIONS } from './overlayStyleAttr'
 
 export {
   RESIZE_HANDLES,

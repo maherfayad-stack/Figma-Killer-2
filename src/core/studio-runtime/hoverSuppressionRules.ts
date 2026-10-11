@@ -46,6 +46,8 @@
  * forced-state preview either; that gap is inherent to Tier 2, not a bug in
  * this module.
  */
+import { STYLE_CHANGE_OBSERVER_OPTIONS } from './overlayStyleAttr'
+
 
 /**
  * The class token `:hover` becomes. Nothing in a canvas frame wears it, and
@@ -261,8 +263,10 @@ export function suppressHoverInDocument(doc: Document, shouldRewrite: (owner: El
     if (owner?.nodeType !== 1 || !shouldRewrite(owner)) continue
     try {
       // The text the injector wrote IS what the parser consumed, so it keys
-      // the plan exactly. A sheet with no text of its own (a `<link>`) has
-      // nothing to key on and takes the uncached walk.
+      // the plan exactly. A sheet with no text of its own - a `<link>`, or an
+      // overlay whose rules are edited in place (`OVERLAY_REVISION_ATTR`), whose
+      // rules ARE the only copy - has nothing to key on and takes the uncached
+      // walk.
       const text = owner.textContent
       if (text) applyHoverPlan(sheet, planHoverRewrites(sheet, text))
       else rewriteHoverInRuleList(sheet.cssRules)
@@ -282,8 +286,9 @@ export interface HoverSuppressionController {
  * Starts the re-run loop: every one of the content stylesheets rewrites its
  * own `<style>` element's `textContent` whenever ITS input changes, which
  * throws away the whole sheet and reparses it from the author's text —
- * undoing this pass. A `MutationObserver` on `<head>` catches that and
- * re-applies, coalesced to one animation frame so a burst of writes costs one
+ * undoing this pass (an in-place rule edit does the same to the rules it
+ * inserts, and announces itself with `OVERLAY_REVISION_ATTR`). A
+ * `MutationObserver` on `<head>` catches both and re-applies, coalesced to one animation frame so a burst of writes costs one
  * walk.
  *
  * No cleanup pass restores the original selectors on `dispose()` — a
@@ -314,7 +319,7 @@ export function startHoverSuppression(
   if (head) {
     run()
     observer = new MutationObserverCtor(schedule)
-    observer.observe(head, { childList: true, subtree: true, characterData: true })
+    observer.observe(head, STYLE_CHANGE_OBSERVER_OPTIONS)
   }
 
   return {

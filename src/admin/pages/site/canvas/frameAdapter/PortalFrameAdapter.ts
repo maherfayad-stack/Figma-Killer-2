@@ -21,6 +21,7 @@ import {
   collectNodeGeometry,
   createGeometryDirtySignal,
   OVERLAY_ID_ATTR,
+  OVERLAY_REVISION_ATTR,
   SELECTION_CHROME_RULES,
   SELECTION_OVERLAY_ROOT_ID,
   SELECTION_STYLE_TAG_ID,
@@ -37,7 +38,9 @@ import type { FrameGeometrySnapshot } from '../frameGeometry/frameGeometryTypes'
 import { applyPreviewAxesToFrameDocument } from '../previewAxesFrameEffect'
 import { currentModeAxes } from '../modeRootPlan'
 import { escapeCssAttributeValue } from '../escapeCssAttributeValue'
+import { OverlayRulePatcher } from './overlayRuleDiff'
 import type {
+  ApplyOverlayOptions,
   DropCandidateGeometry,
   FrameDocumentAdapter,
   FrameRuntimeEvent,
@@ -131,6 +134,14 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
    * write is skipped here, once, for every injector (P6-C).
    */
   private readonly overlayCss = new Map<string, string>()
+  /**
+   * The rule patcher of each `incremental` overlay (SB-7). `null` is a
+   * decision, not an absence: this overlay is in text mode for good, either
+   * because the browser gave its `<style>` no sheet to patch or because a patch
+   * failed and the sheet was rebuilt from text.
+   */
+  private readonly overlayPatchers = new Map<string, OverlayRulePatcher | null>()
+  private overlayRevision = 0
   private readonly selectionRings = new Map<string, HTMLDivElement>()
   private hoverRing: HTMLDivElement | null = null
   private hoverNodeId: string | null = null
@@ -239,7 +250,7 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
     if (this.hoverRing && this.hoverNodeId !== null) this.positionRingOnNode(this.hoverRing, this.hoverNodeId)
   }
 
-  applyOverlay(id: string, css: string): void {
+  applyOverlay(id: string, css: string, options?: ApplyOverlayOptions): void {
     let el = this.overlayStyles.get(id)
     if (!el) {
       el = this.doc.createElement('style')
@@ -250,13 +261,42 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
     }
     if (this.overlayCss.get(id) === css) return
     this.overlayCss.set(id, css)
+    if (options?.incremental && this.patchOverlayRules(id, el, css)) return
     el.textContent = css
+  }
+
+  /**
+   * Brings an `incremental` overlay's sheet to `css` as rule-level edits, so the
+   * browser restyles only what the changed rules match. False when the overlay
+   * is in text mode (the caller then writes the text). The `<style>` of a
+   * patched overlay never has text: its rules are the only copy, which is also
+   * what keeps hover suppression's text-keyed plan cache from reading a stale
+   * string. Observers of the head are told through `OVERLAY_REVISION_ATTR`.
+   */
+  private patchOverlayRules(id: string, el: HTMLStyleElement, css: string): boolean {
+    let patcher = this.overlayPatchers.get(id)
+    if (patcher === undefined) {
+      patcher = el.sheet && !el.textContent ? new OverlayRulePatcher(el.sheet) : null
+      this.overlayPatchers.set(id, patcher)
+    }
+    if (!patcher) return false
+    try {
+      patcher.apply(css)
+    } catch (err) {
+      console.warn(`[PortalFrameAdapter] overlay "${id}" could not be patched rule by rule; rewriting its text:`, err)
+      this.overlayPatchers.set(id, null)
+      return false
+    }
+    this.overlayRevision += 1
+    el.setAttribute(OVERLAY_REVISION_ATTR, String(this.overlayRevision))
+    return true
   }
 
   removeOverlay(id: string): void {
     this.overlayStyles.get(id)?.remove()
     this.overlayStyles.delete(id)
     this.overlayCss.delete(id)
+    this.overlayPatchers.delete(id)
   }
 
   private ensureOverlayRoot(): HTMLDivElement | null {
@@ -498,6 +538,7 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
     for (const el of this.overlayStyles.values()) el.remove()
     this.overlayStyles.clear()
     this.overlayCss.clear()
+    this.overlayPatchers.clear()
 
     for (const ring of this.selectionRings.values()) ring.remove()
     this.selectionRings.clear()

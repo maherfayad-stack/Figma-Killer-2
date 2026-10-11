@@ -16,6 +16,7 @@
  * and only once the parent has asked for geometry (a frame nobody indexes pays
  * nothing):
  *  - **the `<head>`**: a `<style>` rewritten by the class/authored-CSS injectors
+ *    (its text, or its rules edited in place — `STYLE_CHANGE_OBSERVER_OPTIONS`)
  *    moves boxes without touching the body;
  *  - **`load`** (an image or stylesheet finishing), **font loading**
  *    (`document.fonts` `loadingdone`) and **`transitionend`/`animationend`**:
@@ -29,6 +30,7 @@
  * `measureAll`). A live app mutating every frame therefore costs one message
  * per measurement, not one per mutation.
  */
+import { STYLE_CHANGE_OBSERVER_OPTIONS } from './overlayStyleAttr'
 import { isSelectionChromeMutation } from './selectionChromeMutation'
 
 export interface GeometryDirtySignal {
@@ -63,7 +65,7 @@ export function createGeometryDirtySignal(doc: Document, view: Window & typeof g
         const headObserver = new MutationObserverCtor((records) => {
           if (!records.every(isSelectionChromeMutation)) notify()
         })
-        headObserver.observe(doc.head, { childList: true, subtree: true, characterData: true })
+        headObserver.observe(doc.head, STYLE_CHANGE_OBSERVER_OPTIONS)
         releases.push(() => headObserver.disconnect())
       } catch (_err) {
         // A cross-realm node some browser realms refuse to observe: the body observer and the

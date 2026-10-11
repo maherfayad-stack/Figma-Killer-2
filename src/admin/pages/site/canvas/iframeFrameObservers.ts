@@ -1,3 +1,5 @@
+import { STYLE_CHANGE_OBSERVER_OPTIONS } from '@core/studio-runtime'
+
 interface IframeObserverConstructors {
   ResizeObserver: typeof ResizeObserver
   MutationObserver: typeof MutationObserver
@@ -40,11 +42,7 @@ export function observeIframeMutations(
       subtree: true,
       characterData: true,
     })
-    observer.observe(head, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-    })
+    observer.observe(head, STYLE_CHANGE_OBSERVER_OPTIONS)
     return observer
   } catch (_err) {
     // Some browser runtimes reject observing srcDoc iframe nodes from the
