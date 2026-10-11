@@ -11,15 +11,16 @@
  * frame: its node lives in the layer's own `canvas:<id>` page, and the
  * `svg-attr` write lands in `.studio/canvas/<id>.tsx` through the editor's
  * `/save` (the only batch allowed to write a layer module — FC-1). Any other
- * root says plainly that its properties are edited inside a frame for now
- * (FC-7, `docs/features/free-canvas.md`), rather than showing controls that
- * would write to the wrong document.
+ * root gets the layer style controls (size, fill, stroke, radius, opacity, and
+ * a text layer's colour and size): inline `style` values, written to the same
+ * `.studio/canvas/<id>.tsx` through the editor's `/save`.
  */
 import { useEditorStore } from '@site/store/store'
 import { canvasLayerPageId } from '@core/studio-board'
 import { Section } from '@ui/components/Section'
 import { canvasLayerRootNodeId } from '@site/store/slices/canvasLayerGestures'
 import { LazyVectorPaintControls } from '@site/inspector/sections/LazyVectorPaintControls'
+import { LazyLayerStyleControls } from '@site/inspector/sections/LazyLayerStyleControls'
 import styles from './CanvasLayerInspector.module.css'
 
 export function CanvasLayerInspector() {
@@ -55,11 +56,10 @@ export function CanvasLayerInspector() {
   }
 
   return (
-    <div className={styles.panel} data-testid="canvas-layer-inspector">
-      <p className={styles.note}>
-        A loose layer’s styles are edited inside a frame for now: drag it into one, edit it there, and drag it back out if
-        you want it on the board.
-      </p>
+    <div data-testid="canvas-layer-inspector">
+      <Section title="Layer" forceOpen>
+        <LazyLayerStyleControls key={rootId} nodeId={rootId} node={root} />
+      </Section>
     </div>
   )
 }

@@ -32,11 +32,18 @@ export async function fetchBoards(dir?: string): Promise<BoardsFile> {
   return parseBoardsFile(res.boards)
 }
 
-/** Persist `boards` to `dir` (server default workspace when omitted). */
-export async function saveBoards(boards: BoardsFile, dir?: string): Promise<void> {
-  await apiRequest('/admin/api/studio/boards', {
+/**
+ * Persist `boards` to `dir` (server default workspace when omitted) and return
+ * the file as the server now holds it. `knownBoardIds` is every board this
+ * editor has read or written: the server keeps any board on disk that is
+ * neither in `boards` nor listed (one it made since this editor last read),
+ * so the answer can hold boards the caller does not have yet.
+ */
+export async function saveBoards(boards: BoardsFile, dir: string | undefined, knownBoardIds: readonly string[]): Promise<BoardsFile> {
+  const res = await apiRequest('/admin/api/studio/boards', {
     method: 'POST',
-    body: { dir, boards },
+    body: { dir, boards, knownBoardIds },
     schema: BoardsPostResponseSchema,
   })
+  return parseBoardsFile(res.boards)
 }

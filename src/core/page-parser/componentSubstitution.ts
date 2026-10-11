@@ -169,6 +169,75 @@ export function buildSubstitutionEnv(fn: FunctionLike, callSite: SubstitutionCal
 }
 
 /**
+ * G-2b — what a component hands on when it spreads its own props into a
+ * component it renders: `<Inner {...props} />`, or `{...rest}` after a
+ * destructure. The page's call site passed these, so the inner call site has
+ * them too, in JSX order, and the inner component's elements read the page's
+ * values (`applySubstitutions` merges them onto the inner call-site node).
+ */
+export interface SpreadForward {
+  /** The identifiers that stand for the forwarded object: the undestructured `props` parameter, or the `...rest` binding. */
+  names: ReadonlySet<string>
+  /** What this component's own call site passed. */
+  callSite: SubstitutionCallSite
+  /** The attributes the component destructures by name: they are not in `rest`. Empty for an undestructured parameter. */
+  omit: ReadonlySet<string>
+  /** The component's own call site is on the page, or is itself forwarded that way: the page stays the one honest target. */
+  atPage: boolean
+}
+
+export function buildSpreadForward(fn: FunctionLike, callSite: SubstitutionCallSite, atPage: boolean): SpreadForward | undefined {
+  const first = fn.getParameters()[0]
+  if (!first) return undefined
+  const pattern = first.getNameNode()
+  if (Node.isIdentifier(pattern)) return { names: new Set([pattern.getText()]), callSite, omit: new Set(), atPage }
+  if (!Node.isObjectBindingPattern(pattern)) return undefined
+  const elements = pattern.getElements()
+  const rest = elements.find((element) => element.getDotDotDotToken() !== undefined)
+  const restName = rest?.getNameNode()
+  if (!restName || !Node.isIdentifier(restName)) return undefined
+  const omit = new Set(elements.filter((element) => element !== rest).map((element) => element.getPropertyNameNode()?.getText() ?? element.getName()))
+  return { names: new Set([restName.getText()]), callSite, omit, atPage }
+}
+
+/**
+ * The props a call site gets from spreading the enclosing component's own props,
+ * in JSX order: a later explicit attribute wins over the spread, a spread wins
+ * over an earlier one, and an attribute whose value could not be read removes
+ * the spread's value for its name (it is code the spread no longer decides).
+ * `undefined` when there is no such spread, or when ANOTHER spread sits on the
+ * call site (it could set any name, so nothing is merged).
+ */
+function forwardedProps(
+  attributes: readonly Node[],
+  existing: Pick<ParsedNode, 'props'>,
+  forward: SpreadForward,
+): { values: Map<string, ParsedPropValue>; code: string[] } | undefined {
+  let sawForward = false
+  const merged = new Map<string, { value: ParsedPropValue; fromSpread: boolean }>()
+  for (const attr of attributes) {
+    if (Node.isJsxSpreadAttribute(attr)) {
+      const expr = attr.getExpression()
+      if (!Node.isIdentifier(expr) || !forward.names.has(expr.getText())) return undefined
+      sawForward = true
+      for (const [key, value] of Object.entries(forward.callSite.props)) {
+        if (key !== 'children' && !forward.omit.has(key)) merged.set(key, { value, fromSpread: true })
+      }
+      continue
+    }
+    if (!Node.isJsxAttribute(attr)) continue
+    const name = attr.getNameNode().getText()
+    if (Object.hasOwn(existing.props, name)) merged.set(name, { value: existing.props[name]!, fromSpread: false })
+    else merged.delete(name)
+  }
+  if (!sawForward) return undefined
+  const values = new Map<string, ParsedPropValue>()
+  for (const [key, entry] of merged) if (entry.fromSpread) values.set(key, entry.value)
+  const code = (forward.callSite.codeProps ?? []).filter((key) => key !== 'children' && !forward.omit.has(key))
+  return { values, code }
+}
+
+/**
  * Whether `el` is in the component's output no matter what its props are: no
  * branch (`? :`, `&&`, `||`, `??`, an `if` or `switch` around the `return`) and
  * no callback (a `.map` row) stands between it and the function. An element
@@ -216,6 +285,7 @@ export function applySubstitutions(
   relFile: string,
   fn: FunctionLike,
   evalOptions: StaticEvalOptions | undefined,
+  forward?: SpreadForward,
   /**
    * G-3 / OD-22 - collects the id of every plain element that renders the
    * component's `{children}` directly (`<div className="body">{children}</div>`).
@@ -225,7 +295,7 @@ export function applySubstitutions(
    */
   childrenHosts?: string[],
 ): ParsedPage {
-  if (env.size === 0) return subPage
+  if (env.size === 0 && !forward) return subPage
   const nodes = { ...subPage.nodes }
 
   const idFor = (el: Node): string => {
@@ -309,6 +379,38 @@ export function applySubstitutions(
         if (key === 'text') return // text's code-ness is `codeText`, not a `codeProps` entry
         const codeProps = patchedCodeProps ?? existing.codeProps ?? []
         if (!codeProps.includes(key)) patchedCodeProps = [...codeProps, key]
+      }
+
+      // G-2b — a call site that spreads this component's own props forwards what the
+      // page passed: the inner component reads the page's values, not nothing.
+      let patchedOrigins: Record<string, ValueOrigin> | undefined
+      let spreadForwarded = false
+      const forwarded = forward && existing.kind === 'component' ? forwardedProps(attributes, existing, forward) : undefined
+      if (forward && forwarded) {
+        spreadForwarded = forward.atPage
+        for (const [key, value] of forwarded.values) {
+          patchedProps ??= { ...existing.props }
+          patchedProps[key] = value
+          const origin = forward.callSite.literalPropOrigins?.[key]
+          if (origin) {
+            patchedOrigins ??= { ...existing.literalPropOrigins }
+            patchedOrigins[key] = origin
+          }
+          const resolution = forward.callSite.resolvedProps?.[key]
+          if (resolution) {
+            patchedResolved ??= { ...existing.resolvedProps }
+            patchedResolved[key] = resolution
+          }
+          const feed = forward.callSite.propFeeds?.[key]
+          if (feed !== undefined) {
+            patchedFeeds ??= { ...existing.propFeeds }
+            patchedFeeds[key] = feed
+          }
+        }
+        // The values are the outer instance's, never this call site's own: they are code here.
+        const codeProps = new Set(patchedCodeProps ?? existing.codeProps ?? [])
+        for (const key of [...forwarded.values.keys(), ...forwarded.code]) codeProps.add(key)
+        patchedCodeProps = [...codeProps]
       }
 
       // Re-read EVERY attribute against the param-bound scope, filling only the
@@ -504,6 +606,7 @@ export function applySubstitutions(
       if (
         patchedProps ||
         patchedFeeds ||
+        spreadForwarded ||
         patchedStyles !== existing.inlineStyles ||
         patchedText !== existing.text ||
         patchedChildren !== existing.children
@@ -520,6 +623,8 @@ export function applySubstitutions(
           ...(patchedResolved ? { resolvedProps: patchedResolved } : {}),
           ...(patchedCodeProps ? { codeProps: patchedCodeProps } : {}),
           ...(patchedFeeds ? { propFeeds: patchedFeeds } : {}),
+          ...(patchedOrigins ? { literalPropOrigins: patchedOrigins } : {}),
+          ...(spreadForwarded ? { spreadForwarded: true as const } : {}),
           children: patchedChildren,
         }
       }

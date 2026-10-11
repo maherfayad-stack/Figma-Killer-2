@@ -91,12 +91,12 @@ describe('the writes — one call for the whole selection', () => {
   })
 
   it('5 sets 50 % on every selected layer', () => {
-    setSelectionOpacity(5)
+    setSelectionOpacity(5, 1_000)
     expect(batch).toEqual([{ ids: ['a', 'b'], patch: { opacity: '0.5' } }])
   })
 
   it('0 clears only the layers that have their own opacity', () => {
-    setSelectionOpacity(0)
+    setSelectionOpacity(0, 5_000)
     expect(batch).toEqual([{ ids: ['a'], patch: { opacity: null } }])
   })
 
@@ -106,5 +106,43 @@ describe('the writes — one call for the whole selection', () => {
       { nodeId: 'a', patch: { scale: '-1 1' } },
       { nodeId: 'b', patch: { scale: null } },
     ]])
+  })
+
+  it('two digits typed quickly are one percentage: 5 then 0 is 50 %, not 100 %', () => {
+    setSelectionOpacity(5, 10_000)
+    setSelectionOpacity(0, 10_200)
+    expect(batch.at(-1)?.patch).toEqual({ opacity: '0.5' })
+  })
+
+  it('a second digit after a pause starts a new number', () => {
+    setSelectionOpacity(5, 20_000)
+    setSelectionOpacity(2, 21_000)
+    expect(batch.map((call) => call.patch)).toEqual([{ opacity: '0.5' }, { opacity: '0.2' }])
+  })
+
+  it('5 then 5 is 55 %', () => {
+    setSelectionOpacity(5, 30_000)
+    setSelectionOpacity(5, 30_100)
+    expect(batch.at(-1)?.patch).toEqual({ opacity: '0.55' })
+  })
+
+  it('leaves a component call site out: it takes no style here, so writing one only earns an unsaved-style warning', () => {
+    const state = useEditorStore.getState()
+    const home = state.site!.pages[0]!
+    useEditorStore.setState({
+      site: {
+        ...state.site!,
+        pages: [{ ...home, nodes: { ...home.nodes, c: makeNode({ id: 'c', moduleId: 'studio.instance', parentId: 'root' }) } }],
+      },
+      selectedNodeIds: ['a', 'c'],
+    } as Parameters<typeof useEditorStore.setState>[0])
+
+    setSelectionOpacity(5, 40_000)
+    expect(batch).toEqual([{ ids: ['a'], patch: { opacity: '0.5' } }])
+
+    batch.length = 0
+    useEditorStore.setState({ selectedNodeIds: ['c'] } as Parameters<typeof useEditorStore.setState>[0])
+    setSelectionOpacity(5, 50_000)
+    expect(batch).toEqual([])
   })
 })

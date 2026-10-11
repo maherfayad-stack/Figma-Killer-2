@@ -23,6 +23,20 @@ export function removeBoard(file: BoardsFile, boardId: string): BoardsFile {
 }
 
 /**
+ * `incoming` (what an editor is saving) plus every board of `stored` (what is on
+ * disk) that the editor has never seen: its id is neither in `incoming` nor in
+ * `knownBoardIds`. The server makes boards the editor did not (the Components
+ * and Stories boards, an agent's board), and an editor holding a list it read
+ * before that must not delete them just by saving. A board the editor KNEW and
+ * dropped is a removal the author asked for, and stays removed.
+ */
+export function withUnseenBoards(incoming: BoardsFile, stored: BoardsFile, knownBoardIds: readonly string[]): BoardsFile {
+  const accounted = new Set([...knownBoardIds, ...incoming.boards.map((b) => b.id)])
+  const unseen = stored.boards.filter((b) => !accounted.has(b.id))
+  return unseen.length === 0 ? incoming : { ...incoming, boards: [...incoming.boards, ...unseen] }
+}
+
+/**
  * The board `activeBoardId` names, or `null` when nothing is active or the id
  * no longer resolves (a board removed while it was active). The read
  * counterpart to `upsertBoard`/`removeBoard`.

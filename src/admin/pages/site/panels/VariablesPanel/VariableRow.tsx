@@ -9,13 +9,15 @@
  * whose every declaration is a project file; for the others the row says why
  * instead of offering a control that cannot write.
  */
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { EditSolidIcon } from 'pixel-art-icons/icons/edit-solid'
 import { CodeIcon } from 'pixel-art-icons/icons/code'
+import { MoreHorizontalSolidIcon } from 'pixel-art-icons/icons/more-horizontal-solid'
 import { TrashSolidIcon } from 'pixel-art-icons/icons/trash-solid'
 import { themeApplyClasses, type TokenEdit } from '@core/studio-tokens'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { Button } from '@ui/components/Button'
+import { ContextMenu, ContextMenuItem } from '@ui/components/ContextMenu'
 import { Input } from '@ui/components/Input'
 import { Select } from '@ui/components/Select'
 import { ApplyClassStrip } from './ApplyClassStrip'
@@ -72,6 +74,8 @@ export function VariableRow({ row, replacements, busy, onWrite, applyBlockedReas
   const { token } = row
   const [mode, setMode] = useState<'view' | 'rename' | 'remove'>('view')
   const [showApply, setShowApply] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuTriggerRef = useRef<HTMLButtonElement>(null)
   const [nameDraft, setNameDraft] = useState(token.name)
   const [replacement, setReplacement] = useState('')
   const { error, run, clearError } = useRowRunner(onWrite)
@@ -110,12 +114,116 @@ export function VariableRow({ row, replacements, busy, onWrite, applyBlockedReas
     if (ok) close()
   }
 
+  async function commitValue(cell: VariableCell, value: string): Promise<void> {
+    await run({
+      edits: [valueEdit(row, cell, value)],
+      undoLabel: `Edit ${token.name}`,
+      summary: () => `${token.name} (${cell.column.label}) is now ${value}.`,
+    })
+  }
+
   const readOnlyReason = row.editable ? null : `Declared outside the project (${token.decls.find((decl) => decl.origin !== 'project')?.file ?? 'a package'}), so Studio does not edit it in place.`
 
   return (
     <li className={styles.row} data-testid={`variable-row-${token.name}`}>
+      <div className={styles.line}>
       <div className={styles.nameCell}>
-        {mode === 'rename' ? (
+        <div className={styles.nameText}>
+          <span className={styles.name} title={readOnlyReason ?? token.name}>
+            {token.name}
+          </span>
+          <span className={styles.uses} title={row.usage ? row.usage.sites.map((site) => `${site.file}:${site.line}`).join('\n') : undefined}>
+            {uses === null ? '' : uses === 0 ? 'unused' : `${uses} use${uses === 1 ? '' : 's'}`}
+          </span>
+        </div>
+        <Button
+          ref={menuTriggerRef}
+          variant="ghost"
+          size="xs"
+          iconOnly
+          aria-label={`Actions for ${token.name}`}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          disabled={busy}
+          onClick={() => setMenuOpen(!menuOpen)}
+        >
+          <MoreHorizontalSolidIcon size={12} aria-hidden="true" />
+        </Button>
+        {menuOpen ? (
+          <ContextMenu
+            anchorRef={menuTriggerRef}
+            triggerRef={menuTriggerRef}
+            align="end"
+            side="auto"
+            offset={4}
+            minWidth={180}
+            ariaLabel={`Actions for ${token.name}`}
+            onClose={() => setMenuOpen(false)}
+          >
+            {classes.length > 0 ? (
+              <ContextMenuItem
+                onClick={() => {
+                  setMenuOpen(false)
+                  setShowApply(!showApply)
+                }}
+              >
+                <CodeIcon size={11} aria-hidden="true" />
+                Apply as a class
+              </ContextMenuItem>
+            ) : null}
+            <ContextMenuItem
+              disabled={!row.editable}
+              title={readOnlyReason ?? undefined}
+              onClick={() => {
+                setMenuOpen(false)
+                setMode('rename')
+              }}
+            >
+              <EditSolidIcon size={11} aria-hidden="true" />
+              Rename
+            </ContextMenuItem>
+            <ContextMenuItem
+              danger
+              disabled={!row.editable || uses === null}
+              title={readOnlyReason ?? undefined}
+              onClick={() => {
+                setMenuOpen(false)
+                setMode('remove')
+              }}
+            >
+              <TrashSolidIcon size={11} aria-hidden="true" />
+              Remove
+            </ContextMenuItem>
+          </ContextMenu>
+        ) : null}
+      </div>
+
+      {row.cells.map((cell) => (
+        <div key={cell.column.id} className={styles.valueCell}>
+          <ValueCell
+            name={token.name}
+            cell={cell}
+            isColor={isColor}
+            editable={row.editable}
+            busy={busy}
+            onCommit={(value) => commitValue(cell, value)}
+          />
+        </div>
+      ))}
+      </div>
+
+      {row.scoped.map((cell) => (
+        <div key={cell.column.id} className={styles.scopeRow}>
+          <span className={styles.scopeLabel} title={cell.decl ? `${cell.decl.file}${cell.decl.line ? `:${cell.decl.line}` : ''}` : undefined}>
+            in {cell.column.label}
+            {cell.decl ? <span className={styles.scopeFile}>{cell.decl.file}</span> : null}
+          </span>
+          <ValueCell name={token.name} cell={cell} isColor={isColor} editable={row.editable} busy={busy} onCommit={(value) => commitValue(cell, value)} />
+        </div>
+      ))}
+
+      {mode === 'rename' ? (
+        <div className={styles.confirm} role="group" aria-label={`Rename ${token.name}`}>
           <Input
             fieldSize="xs"
             monospace
@@ -130,91 +238,20 @@ export function VariableRow({ row, replacements, busy, onWrite, applyBlockedReas
               else if (event.key === 'Escape') close()
             }}
           />
-        ) : (
-          <span className={styles.name} title={readOnlyReason ?? token.name}>
-            {token.name}
-          </span>
-        )}
-        <span className={styles.uses} title={row.usage ? row.usage.sites.map((site) => `${site.file}:${site.line}`).join('\n') : undefined}>
-          {uses === null ? '' : uses === 0 ? 'unused' : `${uses} use${uses === 1 ? '' : 's'}`}
-        </span>
-      </div>
-
-      {row.cells.map((cell) => (
-        <div key={cell.column.id} className={styles.valueCell}>
-          <ValueCell
-            name={token.name}
-            cell={cell}
-            isColor={isColor}
-            editable={row.editable}
-            busy={busy}
-            onCommit={async (value) => {
-              await run({
-                edits: [valueEdit(row, cell, value)],
-                undoLabel: `Edit ${token.name}`,
-                summary: () => `${token.name} (${cell.column.label}) is now ${value}.`,
-              })
-            }}
-          />
-        </div>
-      ))}
-
-      <div className={styles.actions}>
-        {mode === 'rename' ? (
-          <>
+          <div className={styles.confirmActions}>
             <Button variant="primary" size="xs" disabled={busy || !nameValid} onClick={() => void rename()}>
               Rename
             </Button>
             <Button variant="ghost" size="xs" onClick={close}>
               Cancel
             </Button>
-          </>
-        ) : (
-          <>
-            {classes.length > 0 ? (
-              <Button
-                variant="ghost"
-                size="xs"
-                iconOnly
-                aria-label={`Apply ${token.name} as a class`}
-                tooltip="Apply as a class"
-                pressed={showApply}
-                onClick={() => setShowApply(!showApply)}
-              >
-                <CodeIcon size={11} aria-hidden="true" />
-              </Button>
-            ) : null}
-            <Button
-              variant="ghost"
-              size="xs"
-              iconOnly
-              aria-label={`Rename ${token.name}`}
-              tooltip={readOnlyReason ?? 'Rename (updates every use)'}
-              disabled={busy || !row.editable}
-              onClick={() => setMode('rename')}
-            >
-              <EditSolidIcon size={11} aria-hidden="true" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="xs"
-              iconOnly
-              dangerHover
-              aria-label={`Remove ${token.name}`}
-              tooltip={readOnlyReason ?? 'Remove'}
-              disabled={busy || !row.editable || uses === null}
-              pressed={mode === 'remove'}
-              onClick={() => setMode(mode === 'remove' ? 'view' : 'remove')}
-            >
-              <TrashSolidIcon size={11} aria-hidden="true" />
-            </Button>
-          </>
-        )}
-      </div>
+          </div>
+        </div>
+      ) : null}
 
       {row.otherDeclarations > 0 ? (
         <p className={styles.note}>
-          Also declared under {row.otherDeclarations} other condition{row.otherDeclarations === 1 ? '' : 's'} (a width breakpoint or component scope).
+          Also declared under {row.otherDeclarations} other condition{row.otherDeclarations === 1 ? '' : 's'} (a width breakpoint or similar); edit those in the stylesheet.
         </p>
       ) : null}
       {readOnlyReason ? <p className={styles.note}>{readOnlyReason}</p> : null}

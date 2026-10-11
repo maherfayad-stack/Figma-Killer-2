@@ -345,6 +345,10 @@ function useStudioBoardsPersistence(): void {
   // reflects the real on-disk file — the baseline `boardsSaveGuard.ts`
   // compares an outgoing save against. `null` until the first one lands.
   const lastKnownGoodFrameIdsRef = useRef<Set<string> | null>(null)
+  // Every board id this editor has read or saved. Sent with each save so the
+  // server can tell a board the author removed from one it made in the
+  // meantime (the Components board) and keep the second.
+  const knownBoardIdsRef = useRef<string[]>([])
   // Suppresses toast spam while a refusal keeps recurring — reset the moment
   // a save actually goes through (or a fresh load re-establishes the
   // baseline), so a NEW episode still gets its own toast.
@@ -384,6 +388,7 @@ function useStudioBoardsPersistence(): void {
           // A real load — reflects the on-disk file at this instant. New
           // baseline for the save guard; a fresh episode may warn again.
           lastKnownGoodFrameIdsRef.current = collectFrameIds(file)
+          knownBoardIdsRef.current = file.boards.map((b) => b.id)
           warnedAboutRefusalRef.current = false
         })
         .catch((err) => {
@@ -497,11 +502,16 @@ function useStudioBoardsPersistence(): void {
       import('@site/studio/boardsApi')
         .then(({ saveBoards }) => {
           const dir = getStudioWorkspaceDir()
-          return retryWhileUnreachable(() => saveBoards(snapshot, dir))
+          return retryWhileUnreachable(() => saveBoards(snapshot, dir, knownBoardIdsRef.current))
         })
-        .then(() => {
+        .then((saved) => {
           const st = useEditorStore.getState()
+          // A board the server added is known only once it is in the store;
+          // until then a later save must not read its absence as a removal.
+          knownBoardIdsRef.current = [...new Set([...knownBoardIdsRef.current, ...snapshot.boards.map((b) => b.id)])]
           if (st.boards === snapshot) {
+            st.adoptServerBoards(saved)
+            knownBoardIdsRef.current = saved.boards.map((b) => b.id)
             // Nothing changed during the save — safe to clear the dirty flag.
             st.markBoardsClean()
             // This save's payload is now confirmed on disk — new baseline.

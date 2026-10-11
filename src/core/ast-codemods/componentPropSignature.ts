@@ -33,6 +33,13 @@ export interface OptionalProp {
   binding: string
   /** The TypeScript type written for it: `ReactNode`, `string`, … */
   type: string
+  /**
+   * Add the property to the props TYPE only, leaving the destructure alone: a
+   * component that spreads its props on (`{...rest}`) must keep the prop in
+   * `rest`, but a caller passing it still has to type-check. A property the
+   * type already declares is left as it is.
+   */
+  typeOnly?: boolean
   /** A type-only import the type needs (`ReactNode` from `react`) — added only when a type is actually written. */
   typeImport?: { name: string; module: string }
 }
@@ -120,7 +127,7 @@ function addMember(sourceFile: SourceFile, shape: TypeLiteralNode | InterfaceDec
 
 function addToExistingParameter(sourceFile: SourceFile, first: ParameterDeclaration, prop: OptionalProp): SignatureEditOutcome {
   const pattern = first.getNameNode()
-  if (Node.isObjectBindingPattern(pattern)) {
+  if (Node.isObjectBindingPattern(pattern) && !prop.typeOnly) {
     const elements = pattern.getElements().map((element) => ({ text: element.getText(), rest: element.getDotDotDotToken() !== undefined }))
     const rest = elements.findIndex((element) => element.rest)
     const texts = elements.map((element) => element.text)
@@ -133,6 +140,7 @@ function addToExistingParameter(sourceFile: SourceFile, first: ParameterDeclarat
 
   const shape = resolvePropsShape(sourceFile, typeNode)
   if (!shape.ok) return { ok: false, message: shape.message.replace('<name>', prop.name) }
+  if (prop.typeOnly && shape.shape.getMembers().some((member) => Node.isPropertySignature(member) && member.getName() === prop.name)) return { ok: true }
   ensureTypeImport(sourceFile, prop.typeImport)
   addMember(sourceFile, shape.shape, { name: prop.name, type: prop.type })
   return { ok: true }

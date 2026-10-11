@@ -179,4 +179,53 @@ describe('Ctrl/⌘+Z routing', () => {
     pressUndo(ta)
     expect(nodeCount()).toBe(seeded.nodeCount + 1)
   })
+
+  it('a button that keeps focus never holds ⌘Z, even after a draft in a field that has just unmounted', () => {
+    // The add-variant form: type a name, Enter submits, the field unmounts and
+    // focus lands back on the "+" button. The next ⌘Z is the editor's.
+    function Form({ open }: { open: boolean }) {
+      return (
+        <>
+          <HistoryKeys />
+          <button type="button" aria-label="Add a variant">
+            +
+          </button>
+          {open && <input aria-label="Name" />}
+        </>
+      )
+    }
+    const { container, rerender } = render(<Form open />)
+    const input = container.querySelector('input[aria-label="Name"]')! as HTMLInputElement
+    fireEvent.focus(input)
+    fireEvent.input(input, { target: { value: 'outline' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    rerender(<Form open={false} />)
+    const button = container.querySelector('button[aria-label="Add a variant"]')! as HTMLButtonElement
+    button.focus()
+    pressUndo(button)
+    expect(nodeCount()).toBe(seeded.nodeCount)
+  })
+
+  it('a checkbox, a range or a select does not hold ⌘Z after it fires input: they have no text undo of their own', () => {
+    const { container } = render(
+      <>
+        <HistoryKeys />
+        <input aria-label="On" type="checkbox" />
+        <input aria-label="Amount" type="range" />
+        <select aria-label="Kind">
+          <option>a</option>
+          <option>b</option>
+        </select>
+      </>,
+    )
+    for (const selector of ['input[type="checkbox"]', 'input[type="range"]', 'select']) {
+      const control = container.querySelector(selector)! as HTMLElement
+      fireEvent.focus(control)
+      fireEvent.input(control)
+      // Reset the one undoable edit between controls.
+      seeded = seedSiteWithOneUndoableEdit()
+      pressUndo(control)
+      expect(nodeCount()).toBe(seeded.nodeCount)
+    }
+  })
 })

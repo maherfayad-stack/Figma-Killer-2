@@ -28,15 +28,30 @@
     border-radius: var(--inspector-field-radius);
     color: var(--text-subtle);
     opacity: 0;
+    visibility: hidden;
     pointer-events: none;
-    transition: opacity 90ms ease;
+    transition: opacity 90ms ease, visibility 0s;
 }
 
-[data-variable-host]:hover .trigger,
+/* A hover only REVEALS the button after a short dwell. On a narrow field (a
+ * radius corner, a padding side) the 24px button covers most of the input, so
+ * a click that arrives with the pointer - the ordinary way to focus a field -
+ * would open the variable picker instead and type into its search. `visibility`
+ * keeps the button out of hit-testing until the dwell has passed; focus and an
+ * open picker show it at once. */
+[data-variable-host]:hover .trigger {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transition: opacity 90ms ease 350ms, visibility 0s 350ms;
+}
+
 [data-variable-host]:focus-within .trigger,
 .trigger[data-open='true'] {
     opacity: 1;
+    visibility: visible;
     pointer-events: auto;
+    transition: opacity 90ms ease, visibility 0s;
 }
 
 .trigger:hover {
@@ -46,6 +61,7 @@
 
 .trigger:focus-visible {
     opacity: 1;
+    visibility: visible;
     pointer-events: auto;
 }
 

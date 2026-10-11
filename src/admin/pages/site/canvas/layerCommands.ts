@@ -8,14 +8,14 @@
  * (`LayerNodeContextMenu`). None of them re-derives a rule.
  */
 import { getParent } from '@core/page-tree'
-import { inferAutoLayout, isAutoLayoutDisplay } from '@core/studio-runtime'
+import { isAutoLayoutDisplay } from '@core/studio-runtime'
 import { registry } from '@core/module-engine'
 import { pushToast } from '@ui/components/Toast'
 import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 import { measureInRenderingFrame } from './canvasSelectionMeasure'
-import { armCreatedNodeFollowUp } from './createdNodeFollowUp'
 import { addAutoLayout, removeAutoLayoutKeepPositions } from './layoutConversion'
-import { runSelectionStyleCommand } from './selectionStyleCommands'
+import { planWrapAutoLayout, type MeasuredBox } from './layoutConversionPatches'
+import type { NodeRect } from './frameAdapter/FrameDocumentAdapter'
 
 // ── Bring to front / send to back (IX-9) ─────────────────────────────────────
 
@@ -66,12 +66,11 @@ function isContainer(moduleId: string, isRoot: boolean): boolean {
  * the way Figma's does: the children keep their positions
  * (`removeAutoLayoutKeepPositions`).
  *
- * Anything else — a leaf, or several layers — is wrapped first (one layer:
- * `wrapNode`; siblings: ⌘G's `groupNodes`) and the new wrapper is laid out the
- * way the layers ran, gap included. On a studio tree the wrapper exists only
- * once its write lands, so that half runs as a follow-up on it
- * (`createdNodeFollowUp.ts`): two undo entries, the wrap and the layout, which
- * is honest about the two writes it made.
+ * Anything else — a leaf, or several layers — is wrapped (`groupNodes`, one
+ * layer or a run of siblings) in a container that is WRITTEN with the layout the
+ * layers ran in: direction, gap and alignment read off their margin boxes
+ * (`planWrapAutoLayout`), in the same write, so it is one undo entry and nothing
+ * moves.
  */
 export async function toggleFlexLayout(): Promise<void> {
   const store = useEditorStore.getState()
@@ -90,38 +89,37 @@ export async function toggleFlexLayout(): Promise<void> {
 
   const layerIds = ids.filter((id) => id !== tree.rootNodeId)
   if (layerIds.length === 0) return
-  const measured = await measureInRenderingFrame(layerIds, [], store.activeBreakpointId, layerIds)
-  const rects = [...layerIds]
-    .sort((a, b) => (tree.nodes[tree.nodes[a]?.parentId ?? '']?.children.indexOf(a) ?? 0) - (tree.nodes[tree.nodes[b]?.parentId ?? '']?.children.indexOf(b) ?? 0))
-    .flatMap((id) => {
-      const rect = measured?.get(id)?.rect
-      return rect ? [rect] : []
-    })
-  // The wrapper hugs exactly these layers, so its own padding is nothing.
-  const bounds = rects.length > 0
-    ? {
-        x: Math.min(...rects.map((rect) => rect.x)),
-        y: Math.min(...rects.map((rect) => rect.y)),
-        width: Math.max(...rects.map((rect) => rect.x + rect.width)) - Math.min(...rects.map((rect) => rect.x)),
-        height: Math.max(...rects.map((rect) => rect.y + rect.height)) - Math.min(...rects.map((rect) => rect.y)),
-      }
-    : { x: 0, y: 0, width: 0, height: 0 }
-  const inferred = inferAutoLayout(rects, bounds)
-  const layOut = () =>
-    runSelectionStyleCommand((commit) =>
-      commit.commitStyleMany({
-        display: 'flex',
-        flexDirection: inferred.direction,
-        alignItems: inferred.align,
-        ...(inferred.gap > 0 ? { gap: `${inferred.gap}px` } : {}),
-      }),
-    )
-  armCreatedNodeFollowUp(() => layOut())
-  const wrapperId = layerIds.length === 1
-    ? store.wrapNode(layerIds[0]!, 'base.container')
-    : store.groupNodes(layerIds)
-  // A CMS tree mints the wrapper at once: select it, which runs the follow-up.
+  const measured = await measureInRenderingFrame(layerIds, MARGIN_PROPERTIES, store.activeBreakpointId, layerIds)
+  const sourceIndex = (id: string) => tree.nodes[tree.nodes[id]?.parentId ?? '']?.children.indexOf(id) ?? 0
+  const layers = [...layerIds].sort((a, b) => sourceIndex(a) - sourceIndex(b)).flatMap((id) => {
+    const measurement = measured?.get(id)
+    return measurement?.rect ? [{ id, rect: measurement.rect, style: measurement.computedStyle }] : []
+  })
+  // The wrapper is written WITH its layout: one write, one undo entry, and the layers never
+  // sit in a plain block that would collapse the spacing their parent gave them.
+  const wrapperStyle = layers.length === layerIds.length ? planWrapAutoLayout(layers.map(measuredBoxOf)) : {}
+  const wrapperId = store.groupNodes(layerIds, undefined, undefined, { wrapperStyle, memberStyles: {} })
+  // A CMS tree mints the wrapper at once: select it. A source write selects it when it lands.
   if (typeof wrapperId === 'string' && wrapperId) useEditorStore.getState().selectNode(wrapperId)
+}
+
+const MARGIN_PROPERTIES = ['margin-top', 'margin-right', 'margin-bottom', 'margin-left']
+
+/** A measured layer as the wrap plan reads it: its border box and margins (nothing else is needed to place a gap). */
+function measuredBoxOf(layer: { id: string; rect: NodeRect; style: Record<string, string> }): MeasuredBox {
+  const margin = (edge: string) => Number.parseFloat(layer.style[`margin-${edge}`] ?? '') || 0
+  const none = { top: 0, right: 0, bottom: 0, left: 0 }
+  return {
+    nodeId: layer.id,
+    rect: layer.rect,
+    position: 'static',
+    display: 'block',
+    boxSizing: 'border-box',
+    margin: { top: margin('top'), right: margin('right'), bottom: margin('bottom'), left: margin('left') },
+    padding: none,
+    border: none,
+    inline: {},
+  }
 }
 
 // ── Copy / paste style (IX-props) ────────────────────────────────────────────
