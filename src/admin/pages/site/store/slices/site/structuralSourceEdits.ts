@@ -52,7 +52,8 @@ import {
   previewStructuralMove,
   refuseStructuralEdit,
   resolveContainerAnchor,
-  resolveSourceContainer,
+  resolveWriteAnchor,
+  resolveWriteContainer,
   type EditConstraint,
   type ListRowEditPlan,
   type NodeTree,
@@ -126,7 +127,11 @@ export function planSourceMove(
   // OD-8 — `listRow` is a reorder of `.map` rows, written to their array:
   // `commit` is `null` and the caller must NOT mutate the tree.
   if (preview.ok) return { ok: true, commit: preview.commit, ...(preview.listRow ? { listRow: preview.listRow } : {}) }
-  const node = nodeIds[0] === undefined ? undefined : tree.nodes[nodeIds[0]]
+  const moved = nodeIds[0] === undefined ? undefined : tree.nodes[nodeIds[0]]
+  // A refusal about the CONTAINER (a drop into an instance's own markup) is
+  // about that node: its origin is what "show me" opens, and its instance is
+  // the one OD-7 detaches.
+  const node = (preview.refusal.aboutNodeId !== undefined ? tree.nodes[preview.refusal.aboutNodeId] : undefined) ?? moved
   return {
     ok: false,
     constraint: describeStructuralRefusal({ refusal: preview.refusal, ...(node ? { node } : {}) }),
@@ -170,6 +175,13 @@ export interface SourceInsertCommit {
    * the insert's ⌘Z is the undo journal's `restore` (`commitStudioInsert`).
    */
   parentIsEmpty: boolean
+  /**
+   * OD-22 - the element the new child APPEARS in on the board when that is not
+   * `parentNodeId`: a drop into a layout component's children slot is written
+   * at the call site (`parentNodeId`, the instance) and rendered inside the
+   * inlined element that holds `{children}`. The optimistic preview goes there.
+   */
+  previewParentId?: string
 }
 
 /**
@@ -187,9 +199,14 @@ export function planSourceInsert(
   parentId: string,
   index?: number,
 ): StructuralPlan<SourceInsertCommit> {
-  const container = resolveSourceContainer(tree, parentId)
+  const container = resolveWriteContainer(tree, parentId)
   if (!container.ok) {
-    return { ok: false, constraint: describeStructuralRefusal({ refusal: container.refusal }) }
+    const about = container.refusal.aboutNodeId === undefined ? undefined : tree.nodes[container.refusal.aboutNodeId]
+    return {
+      ok: false,
+      constraint: describeStructuralRefusal({ refusal: container.refusal, ...(about ? { node: about } : {}) }),
+      ...(about ? { nodeId: about.id } : {}),
+    }
   }
 
   const node = container.node
@@ -200,9 +217,18 @@ export function planSourceInsert(
     return { ok: false, constraint: describeStructuralRefusal({ refusal, node }), nodeId: node.id }
   }
 
+  // OD-22 - inside a layout component's children slot the element is written
+  // at the call site (`parentNodeId` is the instance), but the drop index and
+  // the optimistic preview count the slot's own children.
+  const anchor = container.slot ? resolveWriteAnchor(tree, container, parentId, index) : resolveContainerAnchor(tree, node, index)
   return {
     ok: true,
-    commit: { parentNodeId: node.id, ...resolveContainerAnchor(tree, node, index), parentIsEmpty: node.children.length === 0 },
+    commit: {
+      parentNodeId: node.id,
+      ...anchor,
+      parentIsEmpty: container.emptyAtCallSite,
+      ...(container.slot ? { previewParentId: container.anchorOwner.id } : {}),
+    },
   }
 }
 
@@ -296,15 +322,21 @@ export function planSourceDuplicateTo(
     if (!tree.nodes[nodeId]) continue
     const landing = previewStructuralMove(tree, [nodeId], newParentId, newIndex)
     if (!landing.ok) {
-      return { ok: false, constraint: describeStructuralRefusal({ refusal: landing.refusal, node }), nodeId }
+      const about = (landing.refusal.aboutNodeId !== undefined ? tree.nodes[landing.refusal.aboutNodeId] : undefined) ?? node
+      return { ok: false, constraint: describeStructuralRefusal({ refusal: landing.refusal, node: about }), nodeId: about.id }
     }
   }
 
   if (!isSourceDerivedNodeId(first)) return { ok: true, commit: null }
 
-  const container = resolveSourceContainer(tree, newParentId)
+  const container = resolveWriteContainer(tree, newParentId)
   if (!container.ok) {
-    return { ok: false, constraint: describeStructuralRefusal({ refusal: container.refusal }) }
+    const about = container.refusal.aboutNodeId === undefined ? undefined : tree.nodes[container.refusal.aboutNodeId]
+    return {
+      ok: false,
+      constraint: describeStructuralRefusal({ refusal: container.refusal, ...(about ? { node: about } : {}) }),
+      ...(about ? { nodeId: about.id } : {}),
+    }
   }
   for (const nodeId of ids) {
     if (tree.nodes[nodeId]) continue
@@ -319,7 +351,7 @@ export function planSourceDuplicateTo(
   // names a position in a different list, so it is dropped rather than applied
   // to the wrong one — appending is an honest position. Identical reasoning to
   // `previewStructuralMove`'s reparent branch.
-  const anchor = resolveContainerAnchor(tree, container.node, container.node.id === newParentId ? newIndex : undefined)
+  const anchor = resolveWriteAnchor(tree, container, newParentId, newIndex)
   const intoFile = decodeSourceNodeId(container.node.id)?.rel
   const writeOrder = anchor.anchorNodeId !== null && anchor.position === 'after' ? [...ids].reverse() : ids
   return {
@@ -329,7 +361,7 @@ export function planSourceDuplicateTo(
       parentNodeId: container.node.id,
       ...anchor,
       ...(decodeSourceNodeId(nodeId)?.rel !== intoFile ? { crossFile: true as const } : {}),
-      ...(container.node.children.length === 0 ? { parentIsEmpty: true as const } : {}),
+      ...(container.emptyAtCallSite ? { parentIsEmpty: true as const } : {}),
     })),
   }
 }
@@ -611,6 +643,7 @@ export function presentStructuralRefusal(
       set: context.set,
       refusedNodeId: context.nodeId,
       retry: context.retry,
+      placing: title === STRUCTURAL_REFUSAL_TITLE.move || title === STRUCTURAL_REFUSAL_TITLE.transplant || title === STRUCTURAL_REFUSAL_TITLE.insert,
       // OD-7 — both the detach and the component copy refused: ONE warning,
       // never the dialog (its remedies are the two writes that just refused).
       onRefused: () =>

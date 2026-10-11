@@ -145,6 +145,13 @@ export type StructuralRefusalReason =
 export interface StructuralRefusal {
   reason: StructuralRefusalReason
   message: string
+  /**
+   * The node the refusal is about when it is NOT the one the gesture moves: the
+   * container a move would land in. G-3's detach-and-replay needs it - a drop
+   * into an instance is refused because of the DESTINATION, and it is the
+   * destination's instance that has to be detached.
+   */
+  aboutNodeId?: string
 }
 
 /** The fields these rules read — structural, so a `BaseNode` can be asked the question too. */
@@ -227,7 +234,8 @@ export function refuseStructuralEdit(input: StructuralEditQuestion): StructuralR
       // no refusal for its absence - only for a container that cannot take it.
       const { destination } = input
       const destinationPlacement = refusePlacement(destination)
-      if (destinationPlacement) return destinationPlacement
+      // G-3: the refusal is about the CONTAINER, so detach-and-replay knows whose instance to detach.
+      if (destinationPlacement) return { ...destinationPlacement, aboutNodeId: destination.id }
       const fromFile = decodeSourceNodeId(node.id)?.rel
       const intoFile = decodeSourceNodeId(destination.id)?.rel
       if (fromFile !== intoFile) {
