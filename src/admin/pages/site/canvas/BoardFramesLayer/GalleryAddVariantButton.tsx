@@ -1,7 +1,7 @@
 /**
  * GalleryAddVariantButton — the "+" in a variants-gallery frame's header
  * (CV-3): add a variant to the component the gallery shows. It renders on a
- * gallery frame only (its body's first child is the gallery grid) and, for one, only once the
+ * gallery frame only (`isGalleryPage`) and, for one, only once the
  * component catalog has said the component is a local one Studio can write.
  *
  * The component is read off the gallery page's own cells — every cell is an
@@ -13,7 +13,7 @@
  * double-click rename, hence the two stopped events.
  */
 import { useRef, useState } from 'react'
-import { isGalleryGridNodeId } from '@core/component-variants'
+import { isGalleryPage } from '@core/component-variants'
 import type { Page } from '@core/page-tree'
 import { LazyAddVariantPopover } from '@site/inspector/sections/LazyAddVariantPopover'
 import { enumPropsOf } from '@site/inspector/sections/variantAxes'
@@ -28,8 +28,7 @@ interface GalleryInstanceProps {
 }
 
 export function GalleryAddVariantButton({ page }: { page: Page }) {
-  const grid = page.nodes[page.rootNodeId]?.children[0]
-  if (grid === undefined || !isGalleryGridNodeId(grid)) return null
+  if (!isGalleryPage(page)) return null
   return <GalleryAddVariant page={page} />
 }
 

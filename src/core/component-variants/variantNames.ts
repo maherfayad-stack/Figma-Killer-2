@@ -44,3 +44,20 @@ export function galleryNodeIdPrefix(pageId: string): string {
 export function isGalleryGridNodeId(nodeId: string): boolean {
   return nodeId.startsWith(GALLERY_NODE_ID_PREFIX) && nodeId.endsWith(':grid')
 }
+
+/** The part of a page `isGalleryPage` reads; `Page` satisfies it. */
+interface PageShape {
+  rootNodeId: string
+  nodes: Readonly<Record<string, { children?: readonly string[] } | undefined>>
+}
+
+/**
+ * Whether a page is a component's variants gallery: its body's first child is
+ * the gallery grid. A gallery is DERIVED on every load and placed on its own
+ * Components board by the server, so nothing that lays out "every page" (the
+ * default board's seed) may treat it as one of the project's pages.
+ */
+export function isGalleryPage(page: PageShape): boolean {
+  const grid = page.nodes[page.rootNodeId]?.children?.[0]
+  return grid !== undefined && isGalleryGridNodeId(grid)
+}

@@ -132,3 +132,42 @@ test.describe('CV-3 — Add variant from the gallery header', () => {
     expect(journalEntries(), 'the restored entry was not consumed').toHaveLength(0)
   })
 })
+
+test.describe('CV-3 — a brand-new project seeds its first board with the project pages only', () => {
+  test.setTimeout(240_000)
+
+  let fresh: FixtureProject
+  const readFresh = (rel: string) => fs.readFileSync(path.join(fresh.dir, ...rel.split('/')), 'utf8')
+
+  test.beforeAll(() => {
+    // No `.studio/boards.json`: the client seeds the first board with a frame per page.
+    // A variants gallery is derived and belongs to the server-placed Components board, so
+    // the seed must not put its frame on the project's own board.
+    fresh = createAuthoredFixtureProject('__e2e-component-add-variant-fresh', {
+      'pages/Home.tsx': HOME,
+      'components/Button.tsx': BUTTON,
+      'components/Button.css': BUTTON_CSS,
+      '.studio/meta.json': JSON.stringify({ pagesDir: 'pages', trust: 'static' }, null, 2) + '\n',
+    })
+  })
+
+  test.afterAll(() => {
+    if (fresh) removeFixtureProject(fresh)
+  })
+
+  test('the seeded first board holds the home page and no gallery frame', async ({ page }) => {
+    await openFixtureBoard(page, fresh, { autoSave: true })
+    await expect(page.locator('[data-page-id="home"]').first()).toBeAttached({ timeout: 60_000 })
+    await expect(page.locator(`[data-page-id="${PAGE_ID}"]`)).toHaveCount(0)
+
+    await expect
+      .poll(
+        () => {
+          const boards = JSON.parse(readFresh('.studio/boards.json')) as { boards: Array<{ frames: Array<{ pageId: string }> }> }
+          return boards.boards[0]?.frames.map((frame) => frame.pageId)
+        },
+        { timeout: 60_000 },
+      )
+      .toEqual(['home'])
+  })
+})
