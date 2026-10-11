@@ -37,7 +37,8 @@
 import { openSourceFile } from '../../openSourceFile'
 import { commitStudioTransplant } from '@site/studio/studioStructuralCommits'
 import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
-import { STRUCTURAL_REFUSAL_TITLE, planSourceTransplant, presentStructuralRefusal } from './structuralSourceEdits'
+import { STRUCTURAL_REFUSAL_TITLE, presentStructuralRefusal } from './structuralSourceEdits'
+import { planSourceTransplant } from './transplantPlan'
 import type { Page, SiteDocument } from '@core/page-tree'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 
@@ -125,6 +126,7 @@ export function createTransplantActions(helpers: SiteSliceHelpers): TransplantAc
         anchorNodeId: commit.anchorNodeId,
         position: commit.position,
         copy: commit.copy,
+        parentIsEmpty: commit.copy && destinationPage.nodes[commit.destinationParentNodeId]?.children.length === 0,
         openSource: (origin) => openSourceFile(get(), origin),
       })
     },

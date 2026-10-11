@@ -186,7 +186,29 @@ describe('W2-2 — a same-file move is undone byte for byte', () => {
 
     store().redo()
     await project.waitFor(() => project.saves.length === 3)
+    // Redo re-issues the move against the ids the restored file has, not the ids the first write renumbered them to.
+    expect(project.saves[2]!.edits).toEqual(project.saves[0]!.edits)
     await project.waitFor(() => project.read('pages/Product.tsx') === moved)
+  }, 30_000)
+
+  it('moves two elements in one gesture, then one ⌘Z restores the file byte for byte', async () => {
+    const product = pageNamed('roduct')
+    store().setActivePage(product.id)
+    const main = nodeAt(product, 6)
+    store().moveNodesInSequence([
+      { nodeId: nodeAt(product, 8).id, parentId: main.id, index: 3 },
+      { nodeId: nodeAt(product, 7).id, parentId: main.id, index: 3 },
+    ])
+    await project.waitFor(() => project.saves.length === 1)
+    await project.waitFor(() => store().canUndo)
+    expect(project.saves[0]!.edits).toHaveLength(2)
+    expect(project.read('pages/Product.tsx')).not.toBe(PRODUCT)
+
+    store().undo()
+    await project.waitFor(() => project.saves.length === 2)
+    await project.waitFor(() => !store().canUndo)
+    expect(project.saves[1]!.edits[0]!.kind).toBe('restore')
+    expect(project.read('pages/Product.tsx')).toBe(PRODUCT)
   }, 30_000)
 
   it('reparents into a sibling container, then ⌘Z restores the blank line and indentation', async () => {
@@ -236,6 +258,27 @@ describe('W2-2 — an insert into a self-closing element is undone byte for byte
     store().undo()
     await project.waitFor(() => project.saves.length === 2)
     expect(project.saves[1]!.edits[0]!.kind).toBe('delete')
+  }, 30_000)
+
+  it('copies a sibling into `<section />` (Alt-drag, paste), then ⌘Z restores the self-closing form and ⌘⇧Z writes the copy again', async () => {
+    project = await openRealSourceProject({ 'pages/Home.tsx': HOME })
+    const home = pageNamed('ome')
+    store().setActivePage(home.id)
+    store().duplicateNodesTo([nodeAt(home, 5).id], nodeAt(home, 4).id, 0)
+    await project.waitFor(() => project.saves.length === 1)
+    await project.waitFor(() => store().canUndo)
+    const copied = project.read('pages/Home.tsx')
+    expect(copied).not.toBe(HOME)
+
+    store().undo()
+    await project.waitFor(() => project.saves.length === 2)
+    await project.waitFor(() => !store().canUndo)
+    expect(project.saves[1]!.edits[0]!.kind).toBe('restore')
+    expect(project.read('pages/Home.tsx')).toBe(HOME)
+
+    store().redo()
+    await project.waitFor(() => project.saves.length === 3)
+    await project.waitFor(() => project.read('pages/Home.tsx') === copied)
   }, 30_000)
 
   it('an OD-7 insert into a shared component\'s self-closing root: one ⌘Z puts `<Frame />` back', async () => {

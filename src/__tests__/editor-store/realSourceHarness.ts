@@ -24,6 +24,7 @@ import { noteBoardRead, resetSourceIdentities } from '@site/studio/sourceIdentit
 import { setStudioLoadedDir } from '@site/studio/studioWorkspaceDir'
 import { makeSite } from '../fixtures'
 import { applyStudioEditBatchLocked } from '../../../server/handlers/studioWriteback'
+import { applyStudioEditSequenceLocked } from '../../../server/handlers/studioEditSequence'
 import { loadStudioPages } from '../../../server/handlers/studioPageLoad'
 import { studioLoadStreamLines } from '../../../server/handlers/studio/studioLoadResponse'
 
@@ -71,8 +72,10 @@ export async function openRealSourceProject(files: Record<string, string>): Prom
       const body = JSON.parse(String(init?.body)) as {
         edits: Parameters<typeof applyStudioEditBatchLocked>[1]
         expect?: Parameters<typeof applyStudioEditBatchLocked>[2]
+        sequence?: boolean
       }
-      const result = await applyStudioEditBatchLocked(dir, body.edits, body.expect ?? {}, { canvasLayers: 'allow', journal: true })
+      // The route's own choice: a `sequence` body is the ordered, step-by-step writer.
+      const result = await (body.sequence ? applyStudioEditSequenceLocked : applyStudioEditBatchLocked)(dir, body.edits, body.expect ?? {}, { canvasLayers: 'allow', journal: true })
       saves.push({ edits: [...body.edits] })
       return new Response(
         JSON.stringify({

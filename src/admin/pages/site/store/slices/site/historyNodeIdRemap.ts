@@ -136,7 +136,13 @@ function remapStructural(
   // re-addressing. Without it, undoing a duplicate after some other structural
   // write landed above it would delete whichever element inherited that line.
   const { source } = structural
-  const forward = remapStructuralEditIds(source.forward, remap)
+  // An entry whose write has not landed yet (`inverse` still `null`, awaiting
+  // its `fill`) is being remapped by THAT write's own reload. Its `forward`
+  // addresses the file as it was BEFORE the write, which is exactly the file
+  // an undo restores and a redo then runs against; shifting it by the write's
+  // own renumbering re-aims the redo at whichever element inherited the line.
+  const writePending = source.inverse === null && source.inverseTemplate.kind !== 'unsupported'
+  const forward = writePending ? source.forward : remapStructuralEditIds(source.forward, remap)
   const inverse = source.inverse === null ? null : remapStructuralEditIds(source.inverse, remap)
   if (forward === source.forward && inverse === source.inverse) return structural
   return { gesture: 'source', source: { ...source, forward, inverse } }

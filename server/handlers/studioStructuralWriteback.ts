@@ -170,6 +170,8 @@ const DuplicateEditSchema = Type.Object({
   parentNodeId: Type.Optional(Type.String()),
   anchorNodeId: Type.Optional(Type.String()),
   position: Type.Optional(Type.Union([Type.Literal('before'), Type.Literal('after')])),
+  /** As on `insert`: the copy lands in a childless parent, so the editor's undo is the journal's `restore`. */
+  exactUndo: Type.Optional(Type.Literal(true)),
 })
 
 /**
@@ -281,6 +283,8 @@ const TransplantEditSchema = Type.Object({
   anchorNodeId: Type.Optional(Type.String()),
   position: Type.Optional(Type.Union([Type.Literal('before'), Type.Literal('after')])),
   copy: Type.Optional(Type.Boolean()),
+  /** A COPY into a childless parent: as on `insert`, the editor's undo is the journal's `restore`. */
+  exactUndo: Type.Optional(Type.Literal(true)),
 })
 
 /** The structural edit kinds, folded into `StudioEditSchema` by `studioWriteback.ts`. */

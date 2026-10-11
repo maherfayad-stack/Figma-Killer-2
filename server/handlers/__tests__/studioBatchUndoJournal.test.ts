@@ -164,6 +164,23 @@ describe('refuses honestly', () => {
     expect(journal()).toEqual([])
   })
 
+  it('a sequence of moves is journaled ONCE: one token restores every file the steps changed', () => {
+    const before = read('pages/Home.tsx')
+    const result = applyStudioEditSequence(
+      dir,
+      [
+        { kind: 'move', nodeId: nodeIdOf(PAGE, 'h1'), anchorNodeId: nodeIdOf(PAGE, 'Badge'), position: 'after' },
+      ],
+      {},
+      EDITOR,
+    )
+    expect(result.written).toBe(1)
+    expect(result.undoToken).toBeDefined()
+    expect(journal()).toHaveLength(1)
+    applyStudioEditBatch(dir, [restore(result.undoToken!)], {}, EDITOR)
+    expect(read('pages/Home.tsx')).toBe(before)
+  })
+
   it('a sequence records no journal entry for its steps', () => {
     const result = applyStudioEditSequence(dir, [{ kind: 'delete', nodeId: nodeIdOf(PAGE, 'Badge') }], {}, EDITOR)
     expect(result.written).toBe(1)

@@ -27,6 +27,7 @@
 import { decodeSourceNodeId } from '@core/page-tree'
 import type { OptimisticPreviewHandle } from '@site/store/slices/site/structuralOptimism'
 import type { StructuralCommitRollback } from '@site/store/slices/site/structuralCommitRollback'
+import type { SourceDuplicateToCommit } from '@site/store/slices/site/structuralSourceEdits'
 import { commitStructural, type StructuralCommitOptions } from './studioStructuralCommitEngine'
 import {
   dissolveWrapperTemplate,
@@ -116,7 +117,8 @@ export async function commitStudioMove(edit: StructuralEditPayload, rollback?: S
  * The undo: a MOVE is taken back by the undo journal's `restore` (both files
  * back, byte for byte — an id recorded before the write cannot name the
  * container the element left, because the write pruned the import above it),
- * and a COPY by deleting what it made.
+ * and a COPY by deleting what it made (into a childless container, by the same
+ * `restore`: the copy may have expanded a self-closing `<X />`).
  */
 export async function commitStudioTransplant(transplant: {
   nodeId: string
@@ -124,6 +126,8 @@ export async function commitStudioTransplant(transplant: {
   anchorNodeId: string | null
   position: 'before' | 'after'
   copy: boolean
+  /** A COPY into a container with no children: its undo is the journal's `restore` (see {@link commitStudioDuplicateTo}). */
+  parentIsEmpty?: boolean
   /** Opens a source file in the code panel - the remedy for a binding that cannot travel. */
   openSource: (origin: { rel: string; line: number; col: number }) => void
 }): Promise<void> {
@@ -137,6 +141,7 @@ export async function commitStudioTransplant(transplant: {
           ? { anchorNodeId: transplant.anchorNodeId, position: transplant.position }
           : {}),
         ...(transplant.copy ? { copy: true } : {}),
+        ...(transplant.parentIsEmpty ? { exactUndo: true as const } : {}),
       },
     ],
     'Cannot move this between frames',
@@ -152,7 +157,7 @@ export async function commitStudioTransplant(transplant: {
       undo: {
         label: transplant.copy ? 'Copy into another frame' : 'Move into another frame',
         template: transplant.copy
-          ? { kind: 'delete-created' }
+          ? transplant.parentIsEmpty ? { kind: 'restore-journal' } : { kind: 'delete-created' }
           : { kind: 'restore-journal' },
       },
     },
@@ -197,7 +202,7 @@ export async function commitStudioDuplicate(
  * deletes every copy.
  */
 export async function commitStudioDuplicateTo(
-  copies: readonly { nodeId: string; parentNodeId: string; anchorNodeId: string | null; position: 'before' | 'after'; crossFile?: true }[],
+  copies: readonly SourceDuplicateToCommit[],
 ): Promise<void> {
   const edits: StructuralEditPayload[] = copies.map((copy) => ({
     kind: copy.crossFile ? 'transplant' : 'duplicate',
@@ -205,8 +210,12 @@ export async function commitStudioDuplicateTo(
     parentNodeId: copy.parentNodeId,
     ...(copy.anchorNodeId ? { anchorNodeId: copy.anchorNodeId, position: copy.position } : {}),
     ...(copy.crossFile ? { copy: true } : {}),
+    ...(copy.parentIsEmpty ? { exactUndo: true } : {}),
   }))
-  const options = { undo: { label: 'Duplicate', template: { kind: 'delete-created' as const } } }
+  // A copy into a childless container may expand `<X />`; deleting it would
+  // leave `<X>` + newline + `</X>`. The journal's `restore` is the exact undo.
+  const exact = copies.some((copy) => copy.parentIsEmpty)
+  const options = { undo: { label: 'Duplicate', template: exact ? { kind: 'restore-journal' as const } : { kind: 'delete-created' as const } } }
   if (edits.length > 1) await commitStudioSequence(edits, 'Duplicate refused', options)
   else if (edits.length === 1) await commitStructural(edits, 'Duplicate refused', options)
 }
