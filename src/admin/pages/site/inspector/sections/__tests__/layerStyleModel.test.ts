@@ -50,3 +50,9 @@ describe('layerStyleModel', () => {
     expect(previousValues(node({ background: '#fff' }), change)).toEqual({ background: '#fff', border: undefined })
   })
 })
+
+describe('layerStyleModel numbers', () => {
+  it('a numeric opacity is a fraction, not pixels', () => {
+    expect(readLayerStyle(node({ opacity: 0.5 })).opacityPercent).toBe('50')
+  })
+})

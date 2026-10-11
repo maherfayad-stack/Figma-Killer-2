@@ -68,7 +68,8 @@ export function readLayerStyle(node: PageNode): LayerStyleReading {
   const fillKey = inline.background === undefined && inline.backgroundColor !== undefined ? 'backgroundColor' : 'background'
   const border = textOf(inline.border)
   const borderMatch = border === null ? null : BORDER.exec(border)
-  const opacity = textOf(inline.opacity)
+  // Opacity is a bare number in React too, but it is not a length.
+  const opacity = typeof inline.opacity === 'number' ? String(inline.opacity) : textOf(inline.opacity)
   return {
     width: textOf(inline.width),
     height: textOf(inline.height),
