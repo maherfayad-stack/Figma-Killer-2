@@ -39,6 +39,7 @@ import {
   type InlineOffsetProperty,
   type ParentPlacementKind,
 } from '@core/studio-runtime'
+import { resolvePortalDocument } from './frameAdapter/resolvePortalDocument'
 import { ownElementForNode } from './canvasNodeLookup'
 
 /** What a placement needs to know about the parent a new layer lands in. */
@@ -142,7 +143,7 @@ export function newLayerPlacementAt(
   clientRect: ClientRectLike,
   modifierHeld: boolean,
 ): NewLayerPlacement {
-  const doc = iframe?.contentDocument
+  const doc = iframe ? resolvePortalDocument(iframe) : null
   if (!iframe || !doc) return FLOW
   const frameRect = iframe.getBoundingClientRect()
   const scaleX = iframe.clientWidth > 0 ? frameRect.width / iframe.clientWidth : 1

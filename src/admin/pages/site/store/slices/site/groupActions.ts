@@ -29,7 +29,8 @@
 import { registry } from '@core/module-engine'
 import { unwrapNode, wrapNodes } from '@core/page-tree'
 import type { PageNode } from '@core/page-tree'
-import type { FrameRequest, SiteSlice, SiteSliceHelpers } from './types'
+import type { FrameRequest } from './frameRequest'
+import type { SiteSlice, SiteSliceHelpers } from './types'
 import type { StudioSourceWrites } from './studioSourceWrites'
 
 /**

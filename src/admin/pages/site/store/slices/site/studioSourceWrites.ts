@@ -73,7 +73,8 @@ import {
   previewOptimisticWrap,
 } from './structuralOptimism'
 import { writeListRowPlan } from './listRowSourceWrites'
-import type { FrameRequest, SiteSliceHelpers } from './types'
+import type { FrameRequest } from './frameRequest'
+import type { SiteSliceHelpers } from './types'
 
 /**
  * The writers, plus the two pre-write questions `studioSourceRefusals.ts`

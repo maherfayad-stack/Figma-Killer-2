@@ -109,6 +109,7 @@ for (const zoomPercent of [100, 50]) {
       const box = (await free.boundingBox())!
 
       await page.getByTestId('canvas-draw-tool-rectangle').click()
+      await expect(page.locator('[data-canvas-draw-layer="rectangle"]')).toBeVisible()
       const startX = box.x + 60 * zoom
       const startY = box.y + 50 * zoom
       await page.mouse.move(startX, startY)
@@ -167,6 +168,7 @@ test.describe('a frame with in-flow content', () => {
     const draw = async (withModifier: boolean) => {
       const box = (await flow.boundingBox())!
       await page.getByTestId('canvas-draw-tool-rectangle').click()
+      await expect(page.locator('[data-canvas-draw-layer="rectangle"]')).toBeVisible()
       const x = box.x + 200 * zoom
       const y = box.y + 100 * zoom
       if (withModifier) await page.keyboard.down('Control')
