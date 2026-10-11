@@ -170,7 +170,6 @@ function assertForwarded(levels: readonly Level[]): void {
 function assertNoStrayClassNames(project: Project, workspaceRoot: string, levels: readonly Level[]): void {
   for (const [k, level] of levels.entries()) {
     const sites = allCallSites(project, workspaceRoot, level.componentFile, level.target.exportedName ?? level.identifier, exportNameOf(level.componentFile, level.target.declaration))
-    console.error('DEBUG sites', sites.map((s) => `${s.getSourceFile().getFilePath()}:${s.getStart()}`), level.target.exportedName, level.identifier)
     for (const site of sites) {
       const sameAs = (other: JsxOpeningLikeElement): boolean => site.getSourceFile() === other.getSourceFile() && site.getStart() === other.getStart()
       if (sameAs(level.callSite)) continue
@@ -233,7 +232,6 @@ export function exposeClassOverride(params: ExposeClassOverrideParams): ClassOve
       const known = params.projectClassNames()
       const stem = kebab(path.basename(page.callFile.getFilePath()).replace(/\.[^.]+$/, '')) || 'page'
       const ordinal = page.callFile.getDescendants().filter((node) => (Node.isJsxOpeningElement(node) || Node.isJsxSelfClosingElement(node)) && node.getTagNameNode().getText() === page.callSite.getTagNameNode().getText()).findIndex((node) => node.getStart() === page.callSite.getStart()) + 1
-      console.error('DEBUG ordinal', ordinal, page.callSite.getStart(), page.callFile.getFilePath())
       token = freshName(`${baseName}-${stem}-${Math.max(ordinal, 1)}`, (candidate) => known.has(candidate) || hasWord(pageText, candidate) || hasWord(componentText, candidate))
       modifier = modifierSelector(base, token, convention)
     }

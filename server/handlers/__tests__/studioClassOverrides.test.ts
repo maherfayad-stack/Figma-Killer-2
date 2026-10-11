@@ -88,7 +88,7 @@ async function board(component = 'Tier'): Promise<Board> {
   const order = (node: PageNode) => Number(/:(\d+):\d+$/.exec(node.id)?.[1] ?? 0)
   const instances = loaded.pages
     .flatMap((page) => Object.values(page.nodes))
-    .filter((node) => node.moduleId === 'studio.instance' && (node.props as { componentName?: string }).componentName === component)
+    .filter((node) => node.moduleId === 'studio.instance' && (node.props as { componentName?: string }).componentName === component && node.id.startsWith('pages/'))
     .sort((a, b) => order(a) - order(b))
   return { pages: loaded.pages, styleRules: loaded.styleRules, instances }
 }
@@ -236,7 +236,6 @@ describe('the file\'s own idiom', () => {
       ].join('\n'),
     )
     const before = await board()
-    console.error('DEBUG ids', before.instances.map((i) => i.id), before.instances[2]!.children)
     const result = applyStudioEditBatch(dir, [exposeClass(before.instances[2]!.children[0]!, { padding: '1px' })], {}, EDITOR)
     expect(result.refusals).toEqual([])
     expect(read('components/Tier.tsx')).toContain('<section className={cn("tier", wide && "tier--wide", className)}>')
