@@ -73,6 +73,7 @@ import {
 import { callSitePosition, inlineDepth, inlineSegments, type SourceFingerprintExpectations, type StyleLanding } from '@core/page-tree'
 import type { Project } from 'ts-morph'
 import { applyCssEdit } from './studioCssWriteback'
+import type { PastedHtmlSummary } from './studioPastedHtmlStyles'
 import { withProjectWriteLock } from './studio/projectWriteLock'
 import { snapshotImportsBeforeRemoval } from './studioBatchImportPrune'
 import { applyRestoreEdit, openBatchUndoJournal, RESTYLE_ROLLED_BACK_REASON } from './studioBatchUndoJournal'
@@ -513,6 +514,8 @@ export function applyStudioEditBatch(
   const removed: StudioEditBatchResult['removed'] = []
   // G-1 — what each landed `transplant` copied to its destination.
   const carried: StudioCarriedDeclaration[] = []
+  // G-10 - where each pasted HTML fragment's styles went.
+  const pastedHtml: PastedHtmlSummary[] = []
   // OD-8 — each written `list-item` edit's array, pinned from the file's end.
   const listArrayPositions: { nodeId: string; position: CreatedNodePosition[] }[] = []
   // WB-24 — no edit writes into a file that does not parse (`studioSyntaxGuard.ts`).
@@ -551,6 +554,7 @@ export function applyStudioEditBatch(
         if (outcome.promoteDetail) promoteDetails.push({ nodeId: edit.nodeId, ...outcome.promoteDetail })
         for (const text of outcome.removed ?? []) removed.push({ nodeId: edit.nodeId, ...text })
         for (const entry of outcome.carried ?? []) carried.push({ name: entry.name, as: entry.as, how: entry.how })
+        if (outcome.pastedHtml) pastedHtml.push(outcome.pastedHtml)
         const array = edit.kind === 'list-item' ? studioEditLocation(dir, edit.nodeId, scope) : null
         if (array) {
           const position: CreatedNodePosition[] = []
@@ -666,6 +670,7 @@ export function applyStudioEditBatch(
       resolveCreatedNodeIds(position, lineCountAfter).map((to) => ({ nodeId: sentId.get(nodeId) ?? nodeId, to })),
     ),
     ...(carried.length > 0 ? { carried } : {}),
+    ...(pastedHtml.length > 0 ? { pastedHtml } : {}),
     ...(undoToken ? { undoToken } : {}),
   }
 }

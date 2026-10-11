@@ -15,6 +15,7 @@ import type { JsonDataValue } from '@core/utils/jsonData'
 import type { JsxChildRangeReason } from './jsxChildRange'
 import type { ImportRequirement } from './jsxImportEdits'
 import { BoundAssetImport, isAssetImportRef, type AssetImportRef } from './jsxAssetImports'
+import { ClassNameTokens } from './jsxClassTokens'
 
 /**
  * A prop written onto the new element.
@@ -47,6 +48,7 @@ export type InsertableJsxPropValue =
   | JsxPropElement
   | AssetImportRef
   | BoundAssetImport
+  | ClassNameTokens
   | InsertableJsxPropValue[]
   | { [key: string]: InsertableJsxPropValue }
 
@@ -180,6 +182,7 @@ const PLAIN_OBJECT_KEY = /^[A-Za-z_$][\w$]*$/
  */
 function jsxExpressionLiteral(value: InsertableJsxPropValue, unit: string): string {
   if (value instanceof BoundAssetImport) return value.local
+  if (value instanceof ClassNameTokens) return value.expression()
   if (isAssetImportRef(value)) {
     // `validateSubtree` refuses an unbound ref before any render; reaching
     // here means a caller skipped it, and writing the object literal would
@@ -223,6 +226,27 @@ function isTooLongToInline(rendered: string): boolean {
   return rendered.includes('\n') || rendered.length > 72
 }
 
+/**
+ * Characters a JSX attribute STRING cannot carry as itself. JSX string
+ * attributes have no backslash escapes (a quote preceded by a backslash still
+ * ends the string) and they decode HTML entities (`"a&amp;b"` means `a&b`), so
+ * a value holding either, a control character or a line separator is written as
+ * an expression container around a JS string literal instead, where
+ * `JSON.stringify`'s escaping IS the language's.
+ */
+function needsExpressionAttribute(value: string): boolean {
+  for (const char of value) {
+    const code = char.codePointAt(0)!
+    if (char === '"' || char === '\\' || char === '&' || code < 0x20 || code === 0x2028 || code === 0x2029) return true
+  }
+  return false
+}
+
+/** `"value"`, or `{"value"}` when the value cannot sit in a JSX string attribute as written. */
+function jsxAttributeString(value: string): string {
+  return needsExpressionAttribute(value) ? `{${JSON.stringify(value)}}` : `"${value}"`
+}
+
 export function renderJsxNode(node: InsertJsxNode, unit: string): string {
   const parts: string[] = []
   for (const [key, value] of Object.entries(node.props ?? {})) {
@@ -234,7 +258,7 @@ export function renderJsxNode(node: InsertJsxNode, unit: string): string {
       continue
     }
     if (typeof value === 'string') {
-      parts.push(`${key}=${JSON.stringify(value)}`)
+      parts.push(`${key}=${jsxAttributeString(value)}`)
       continue
     }
     // Numbers, `null`, and every structured value are JSX EXPRESSIONS, not
@@ -270,7 +294,7 @@ function* walkSubtree(node: InsertJsxNode): Generator<InsertJsxNode> {
 
 /** Every {@link JsxPropElement} nested anywhere inside one prop value. */
 function* walkPropElements(value: InsertableJsxPropValue): Generator<InsertJsxNode> {
-  if (value instanceof BoundAssetImport || isAssetImportRef(value)) return
+  if (value instanceof BoundAssetImport || value instanceof ClassNameTokens || isAssetImportRef(value)) return
   if (isJsxPropElement(value)) {
     yield* walkSubtree(value.__jsx)
     return
@@ -373,7 +397,7 @@ export function validateSubtree(root: InsertJsxNode): { ok: false; refusal: Inse
 
 /** Whether an unbound {@link AssetImportRef} sits anywhere inside one prop value. */
 function containsUnboundAssetImport(value: InsertableJsxPropValue): boolean {
-  if (value instanceof BoundAssetImport) return false
+  if (value instanceof BoundAssetImport || value instanceof ClassNameTokens) return false
   if (isAssetImportRef(value)) return true
   if (isJsxPropElement(value)) return false // its own props are walked as a node of the subtree
   if (Array.isArray(value)) return value.some(containsUnboundAssetImport)

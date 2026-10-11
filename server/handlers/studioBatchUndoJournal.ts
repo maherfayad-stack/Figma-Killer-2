@@ -94,6 +94,8 @@ export function isJournaled(edit: StudioEdit): boolean {
     // the insert leaves `<X>` + newline + `</X>`, which is not what was there.
     // The client asks for the pre-image exactly when the parent had no children.
     ((edit.kind === 'insert' || edit.kind === 'duplicate') && edit.exactUndo === true) ||
+    // G-10 - a pasted HTML fragment writes the page AND its stylesheet; only the pre-image names both.
+    (edit.kind === 'insert' && edit.pastedHtml !== undefined) ||
     // CT-5 - a restyle (apply / create / detach a text or effect style) is a
     // class edit, an inline-style strip and, for a create, a new rule in a
     // stylesheet - possibly a brand-new one. Only the pre-image takes all of
