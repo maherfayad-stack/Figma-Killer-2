@@ -36,7 +36,7 @@ export type StudioClassToken =
   | { kind: 'module'; file: string; local: string }
 
 export type StudioEditPayload =
-  | { kind: 'prop'; nodeId: string; prop: string; value: string | number | boolean }
+  | { kind: 'prop'; nodeId: string; prop: string; value: string | number | boolean; path?: readonly (string | number)[] }
   | { kind: 'text'; nodeId: string; text: string }
   | { kind: 'style'; nodeId: string; style: Record<string, string | number> }
   | { kind: 'class'; nodeId: string; add: StudioClassToken[]; remove: StudioClassToken[] }

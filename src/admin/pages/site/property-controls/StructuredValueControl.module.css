@@ -1,0 +1,49 @@
+/* The nested rows of a list or object prop (`StructuredValueControl.tsx`). */
+.group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-space-2xs);
+}
+
+.header {
+    justify-content: flex-start;
+    width: 100%;
+    gap: var(--inspector-space-xs);
+    color: var(--text);
+}
+
+.chevron {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    transition: transform 100ms ease;
+}
+
+.chevronOpen {
+    transform: rotate(90deg);
+}
+
+.title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    text-align: start;
+}
+
+.summary {
+    flex-shrink: 0;
+    color: var(--text-subtle);
+    font-size: var(--text-xs);
+}
+
+/* One hairline marks the nesting; no fill, no second border (the panel's own rule). */
+.children {
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-space-2xs);
+    margin-inline-start: var(--inspector-space-m);
+    padding-inline-start: var(--inspector-space-m);
+    border-inline-start: 1px solid var(--border);
+}

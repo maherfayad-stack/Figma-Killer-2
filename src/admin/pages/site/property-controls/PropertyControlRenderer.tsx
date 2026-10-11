@@ -38,6 +38,8 @@ import { SvgControl } from './SvgControl'
 import { SlotControl } from './SlotControl'
 import { CodeValueControl } from './CodeValueControl'
 import { DataTableControl } from './DataTableControl'
+import { StructuredValueControl, type PropPathWrite } from './StructuredValueControl'
+import { collectionIndexOptions } from './collectionIndexOptions'
 import { cn } from '@ui/cn'
 import styles from './controls.module.css'
 
@@ -69,6 +71,12 @@ interface RenderControlOptions {
    * entry of `items`. Only that control reads it.
    */
   siblingProps?: Record<string, unknown>
+  /**
+   * Writes one literal INSIDE this prop's inline list/object (`StructuredValueControl`).
+   * Given only where such a write can land (a source-backed node, the prop writable);
+   * without it a structured value is the read-only "N items, set in code" row.
+   */
+  onChangePath?: (propKey: string, write: PropPathWrite) => void
   /**
    * Whether a text area may hold a line break (Shift+Enter). False when the text
    * lands in a JSX attribute or a string literal elsewhere. Only `textarea` reads it.
@@ -113,32 +121,6 @@ function isStructuredValue(control: PropertyControl, value: unknown): value is r
 }
 
 /**
- * The sibling collection's entries as select options, labelled the way a person
- * would name them.
- *
- * A design system's list entries are objects (`{ icon, label }`) or bare strings
- * (`SegmentedControl`'s `items={['Flights', 'Stays']}`), so both are read. An
- * entry with no readable name still gets a row — dropping it would shift every
- * index after it and silently select the wrong tab.
- */
-function collectionIndexOptions(collection: unknown): { label: string; value: string }[] {
-  if (!Array.isArray(collection)) return []
-  return collection.map((item, index) => ({ label: collectionEntryLabel(item, index), value: String(index) }))
-}
-
-/** One entry's display name: its own label/title, the string it is, or its position. */
-function collectionEntryLabel(item: unknown, index: number): string {
-  if (typeof item === 'string' && item.trim() !== '') return item
-  if (typeof item === 'object' && item !== null) {
-    for (const key of ['label', 'title', 'name', 'text']) {
-      const value = (item as Record<string, unknown>)[key]
-      if (typeof value === 'string' && value.trim() !== '') return value
-    }
-  }
-  return `Item ${index + 1}`
-}
-
-/**
  * G-6 - a code-bound value may be typed over only through a free-text field. A
  * select, a number or a toggle bound to code stays the read-only stand-in:
  * typing a string into one would invent a value the control could not show.
@@ -163,6 +145,7 @@ export function PropertyControlRenderer({
   constraint,
   ownerNodeId,
   siblingProps,
+  onChangePath,
   multiline,
 }: RenderControlOptions) {
   const layout = resolveControlLayout(control)
@@ -202,6 +185,20 @@ export function PropertyControlRenderer({
   // marker no user should ever see, in place of the affordance for the icon
   // they had just successfully inserted.
   const isSlot = control.type === 'slot'
+
+  // A list or object written inline in the source: its literals are editable one by one.
+  if (!isSlot && constraint === undefined && onChangePath !== undefined && isStructuredValue(control, value)) {
+    return (
+      <div data-testid={`property-control-${propKey}`} data-category={category} data-layout={layout}>
+        <StructuredValueControl
+          {...shared}
+          value={value}
+          example={control.type === 'code' ? control.example : undefined}
+          onChangePath={onChangePath}
+        />
+      </div>
+    )
+  }
 
   // Nothing writable behind this control: either the value has no scalar form,
   // or the node itself refuses writes. Same read-only row for both.

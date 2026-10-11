@@ -465,7 +465,9 @@ export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(
       continue
     }
     const prop = 'prop' in edit ? String((edit as { prop?: unknown }).prop) : ''
-    const key = `${loc.rel}:${loc.line}:${loc.col}|${edit.kind}|${prop}`
+    // A write inside a list/object attribute (`path`) is one value per path, never the attribute's own.
+    const path = 'path' in edit ? JSON.stringify((edit as { path?: unknown }).path) : ''
+    const key = `${loc.rel}:${loc.line}:${loc.col}|${edit.kind}|${prop}|${path}`
     const earlier = byTarget.get(key)
     byTarget.set(key, earlier ? collapseSameTargetEdits(earlier, edit) : edit)
   }

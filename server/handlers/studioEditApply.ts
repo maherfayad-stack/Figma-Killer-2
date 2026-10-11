@@ -11,6 +11,7 @@ import {
   setImportSpecifier,
   setJsxClassName,
   setJsxProp,
+  setJsxPropPath,
   setJsxStyle,
   setJsxTagName,
   setJsxText,
@@ -143,6 +144,11 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
       // WB-11 — an attribute holding code refuses `binding-overwrite` rather
       // than baking a literal over the binding (`studioEditRefusals.ts`).
       const prop = edit.prop.startsWith('callSiteProps:') ? edit.prop.slice('callSiteProps:'.length) : edit.prop
+      if (edit.path) {
+        // One literal inside the attribute's inline list/object, not the attribute itself.
+        setJsxPropPath({ ...loc, prop, path: edit.path, value: edit.value, project })
+        return { applied: true }
+      }
       setJsxProp({ ...loc, prop, value: edit.value, ...(edit.unbind ? { unbind: true } : {}), project })
       return { applied: true }
     }

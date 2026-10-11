@@ -57,6 +57,18 @@ async function openBoard(page: Page): Promise<FrameLocator> {
   return canvasContentFrame(frame)
 }
 
+/**
+ * The label of the newest undo entry once it has the inverse its write reported:
+ * the write has landed AND the board has re-read it. `null` until then.
+ */
+async function topEntryLabel(page: Page): Promise<string | null> {
+  return page.evaluate(async () => {
+    const { useEditorStore } = await import('/src/admin/pages/site/store/store.ts' as string)
+    const top = useEditorStore.getState()._historyPast.at(-1)
+    return top?.structural?.gesture === 'source' && top.structural.source.inverse !== null ? (top.structural.source.label as string) : null
+  })
+}
+
 async function insertFromAssets(page: Page, query: string, assetId: string): Promise<void> {
   await page.getByTestId('panel-rail-assets').click()
   const assets = page.getByTestId('assets-panel')
@@ -90,6 +102,7 @@ test.describe('O1: the first design-system insert brings the design system', () 
     expect(metaDesignSystem()).toBe('alm')
 
     // One Ctrl+Z: the page, the folder and the meta field go together.
+    await expect.poll(() => topEntryLabel(page)).toBe('Add TabBar')
     await page.getByTestId('canvas-root').focus()
     await page.keyboard.press('Control+z')
     await expect.poll(() => read('pages', 'Home.tsx'), { timeout: 30_000 }).toBe(HOME_BEFORE)
@@ -173,5 +186,57 @@ test.describe('O6: every prop of an instance has a control that writes the call 
     await expect.poll(() => read('pages', 'Home.tsx'), { timeout: 30_000 }).toContain('value={1}')
     // The list itself is shown, read-only, not dropped from the panel.
     await expect(props.getByTestId('property-control-items')).toBeVisible()
+  })
+})
+
+const NAVBAR_PAGE = `import { Navbar } from '../design-system'
+
+export default function Home() {
+  return (
+    <div className="wrap">
+      <Navbar title="Trips" segmentedControl={{ items: ['Flights', 'Stays'], value: 0 }} chips={[{ label: 'Dates', dropdown: true, selected: false }]} />
+    </div>
+  )
+}
+`
+
+test.describe('O6: the literals inside a list or object prop are editable one by one', () => {
+  test.setTimeout(240_000)
+
+  test.beforeEach(() => {
+    fixture = createAuthoredFixtureProject('__e2e-owner-nested', {
+      'pages/Home.tsx': NAVBAR_PAGE,
+      'design-system/index.js': 'export function Navbar() { return null }',
+    })
+  })
+  test.afterEach(() => {
+    removeFixtureProject(fixture)
+  })
+
+  test('Navbar: the selected segment is a select, a chip is a switch, and one Ctrl+Z puts the bytes back', async ({ page }) => {
+    const contentFrame = await openBoard(page)
+    const props = page.getByTestId('module-properties')
+    await selectModule(page, contentFrame, 'alm.Navbar')
+
+    const segment = props.getByTestId('property-control-segmentedControl.value')
+    await expect(segment, 'Navbar has no control for the selected segment').toBeVisible({ timeout: 15_000 })
+    await segment.getByRole('combobox').click()
+    await page.getByRole('option', { name: 'Stays' }).click()
+    await expect.poll(() => read('pages', 'Home.tsx'), { timeout: 30_000 }).toContain("segmentedControl={{ items: ['Flights', 'Stays'], value: 1 }}")
+
+    // A chip's flag, inside the list.
+    const chip = props.getByTestId('property-control-chips.0.selected')
+    await expect(chip).toBeVisible({ timeout: 15_000 })
+    await chip.getByRole('switch').click()
+    await expect.poll(() => read('pages', 'Home.tsx'), { timeout: 30_000 }).toContain("chips={[{ label: 'Dates', dropdown: true, selected: true }]}")
+
+    // Everything else in the file is exactly what it was, and Undo twice returns the original bytes.
+    await expect.poll(() => topEntryLabel(page)).toBe('Set chips.0.selected')
+    await page.getByTestId('canvas-root').focus()
+    await page.keyboard.press('Control+z')
+    await expect.poll(() => read('pages', 'Home.tsx'), { timeout: 30_000 }).toContain('selected: false')
+    await expect.poll(() => topEntryLabel(page)).toBe('Set segmentedControl.value')
+    await page.keyboard.press('Control+z')
+    await expect.poll(() => read('pages', 'Home.tsx'), { timeout: 30_000 }).toBe(NAVBAR_PAGE)
   })
 })

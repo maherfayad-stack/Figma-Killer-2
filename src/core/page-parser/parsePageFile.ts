@@ -528,6 +528,7 @@ function processElement(
     ...(lock.lockReason ? { lockReason: lock.lockReason } : {}),
     ...(codeProps.length > 0 ? { codeProps } : {}),
     ...(propsResult.codeFunctionPaths.length > 0 ? { codeFunctionPaths: propsResult.codeFunctionPaths } : {}),
+    ...(propsResult.inlineLiteralProps.length > 0 ? { inlineLiteralProps: propsResult.inlineLiteralProps } : {}),
     // `codeText` covers two different reasons the text isn't a literal: it
     // resolved (via code, hence `resolution`) OR it definitely could NOT
     // resolve (`hasCodeText`) — both mean "this node's text came from an

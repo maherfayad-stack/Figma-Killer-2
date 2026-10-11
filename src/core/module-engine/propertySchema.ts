@@ -193,7 +193,12 @@ export const PropertyControlSchema = Type.Recursive((Self) => Type.Union([
    * whole prop surface is visible even where Studio cannot edit all of it.
    */
   Type.Object(
-    { ...PropertyControlBaseSchema, type: Type.Literal('code') },
+    {
+      ...PropertyControlBaseSchema,
+      type: Type.Literal('code'),
+      /** The component's documented value for this prop: keys it shows that a call site lacks are offered as unset rows. */
+      example: Type.Optional(Type.Unknown()),
+    },
     { additionalProperties: false },
   ),
   Type.Object(

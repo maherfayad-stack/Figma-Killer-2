@@ -80,7 +80,9 @@ export function buildSchema(props: PropSpec[]): ModuleDefinition['schema'] {
     if (isCanvasDrivenProp(p.name)) continue
     const control = controlForPropKind(p.name, propKindFor(p))
     if (!control) continue
-    schema[p.name] = p.appliesWhen ? { ...control, appliesWhen: p.appliesWhen } : control
+    const gated = p.appliesWhen ? { ...control, appliesWhen: p.appliesWhen } : control
+    // A list prop carries its documented example, so the nested editor can offer the keys the call site has not written.
+    schema[p.name] = gated.type === 'code' && p.example !== undefined ? { ...gated, example: p.example } : gated
   }
   return schema as ModuleDefinition['schema']
 }

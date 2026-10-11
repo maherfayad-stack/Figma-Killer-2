@@ -143,6 +143,18 @@ export function canUnbindProp(node: SourceWritableNode & { id?: string }, prop: 
   return (node.codeProps ?? []).includes(prop) && node.resolvedProps?.[prop]?.origin === undefined
 }
 
+/**
+ * True when the literals INSIDE `prop` can be edited one by one: the attribute
+ * is an inline list/object written in the source (`PageNode.inlineLiteralProps`,
+ * which sits inside `codeProps`, so {@link isPropWritableToSource} is false for
+ * the whole value) on an element with ONE plain source location. An inlined
+ * component's element is excluded - its source is shared by every instance, and
+ * a `.map` row has no location of its own.
+ */
+export function canEditInlineLiterals(node: SourceWritableNode & { id: string; inlineLiteralProps?: string[] }, prop: string): boolean {
+  return node.inlineLiteralProps?.includes(prop) === true && hasWritableSourceLocation(node.id) && !isInlinedNodeId(node.id)
+}
+
 /** True when `property`'s inline-style value can be written back to source. */
 export function isStyleWritableToSource(node: SourceWritableNode, property: string): boolean {
   return isPropWritableToSource(node, styleValueKey(property))

@@ -30,7 +30,7 @@
  * from being editable without touching the panel shell.
  */
 import { PropertyControlRenderer } from '@site/property-controls/PropertyControlRenderer'
-import { evaluateCondition, explainPropConstraint, hasWritableSourceLocation, isPropWritableToSource } from '@core/page-tree'
+import { canEditInlineLiterals, evaluateCondition, explainPropConstraint, hasWritableSourceLocation, isPropWritableToSource } from '@core/page-tree'
 import type {
   AnyModuleDefinition,
   PropertyApplicability,
@@ -44,6 +44,7 @@ import { ParamPromotableRow } from './ParamPromotableRow'
 import { FormSettingsPanel } from './FormSettingsPanel'
 import { isFormSettingsModule } from './formSettingsAnalysis'
 import { ImageSourceSection } from './ImageSourceSection'
+import { commitStudioPropPath } from '@site/studio/studioPropPathCommit'
 
 const PROMOTED_FORM_PROPERTY_KEYS = new Set(['mode', 'formId', 'targetTableId'])
 
@@ -167,6 +168,8 @@ export function renderModuleTabContent(args: ModuleTabContentArgs): React.ReactN
       continue
     }
 
+    // A list or object written inline in the source: each literal in it is its own row (`StructuredValueControl`).
+    const inlineLiteralsEditable = !inVisualComponent && canEditInlineLiterals(selectedNode, key)
     const row =
       inVisualComponent && activeDocument?.kind === 'visualComponent' && selectedNodeId ? (
         <ParamPromotableRow
@@ -190,7 +193,8 @@ export function renderModuleTabContent(args: ModuleTabContentArgs): React.ReactN
           // Only `collection-index` reads this: `TabBar.value` names one entry
           // of the sibling `items`, so its options are the node's own data.
           siblingProps={resolvedPropsForBreakpoint}
-          constraint={explainPropConstraint(selectedNode, key, resolvedPropsForBreakpoint[key]) ?? undefined}
+          onChangePath={inlineLiteralsEditable ? (propKey, write) => void commitStudioPropPath({ nodeId: selectedNode.id, prop: propKey, path: write.path, value: write.value }) : undefined}
+          constraint={inlineLiteralsEditable ? undefined : (explainPropConstraint(selectedNode, key, resolvedPropsForBreakpoint[key]) ?? undefined)}
           // E2.5 — only `SlotControl` reads this: a package/design-system
           // component's own `node`-kind prop is filled directly on ITS OWN
           // element (unlike `studio.instance`, there's no separate call

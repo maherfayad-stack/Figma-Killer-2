@@ -69,6 +69,8 @@ export function isJournaled(edit: StudioEdit): boolean {
     JOURNALED_KINDS.has(edit.kind) ||
     // G-6 (OD-20): typing over code replaces it, and the bytes it replaced come back only from the pre-image.
     ((edit.kind === 'prop' || edit.kind === 'text') && edit.unbind === true) ||
+    // A literal inside a list/object attribute: the key a write may APPEND has no inverse edit, the pre-image has.
+    (edit.kind === 'prop' && edit.path !== undefined) ||
     // PA-6 — a frame rewrites the wrapper AND every member's offsets; no `ungroup`
     // gives those back, the pre-image does.
     (edit.kind === 'group' && edit.frame !== undefined) ||

@@ -1,5 +1,7 @@
 export { setJsxProp, JsxPropTargetError } from './setJsxProp'
 export type { SetJsxPropParams } from './setJsxProp'
+export { setJsxPropPath } from './setJsxPropPath'
+export type { PropPathSegment, SetJsxPropPathParams } from './setJsxPropPath'
 export { readJsxProps } from './readJsxProps'
 export type { JsxLiteralProps, ReadJsxPropsParams } from './readJsxProps'
 export { setJsxText, JsxTextTargetError } from './setJsxText'

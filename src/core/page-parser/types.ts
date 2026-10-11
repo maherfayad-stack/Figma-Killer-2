@@ -217,6 +217,15 @@ export interface ParsedNode {
    */
   codeFunctionPaths?: string[]
   /**
+   * Prop names (a subset of `codeProps`) whose attribute is itself an inline
+   * list or object LITERAL - `chips={[{ label: 'Dates' }]}`,
+   * `segmentedControl={{ items, value }}` - as opposed to a name or call that
+   * evaluated to one (`items={TABS}`). The literals inside the first are the
+   * user's own bytes, so the inspector may offer to edit them one by one
+   * (`setJsxPropPath`); the second is a binding, and stays read-only.
+   */
+  inlineLiteralProps?: string[]
+  /**
    * True when the element's sole child WAS an expression rather than a
    * literal JSX child — regardless of whether §7 could resolve it to a value.
    * Set for BOTH cases: a resolution that produced `text` (`{c.heading}`) and

@@ -31,6 +31,7 @@
  * is read by NAME off the `Project`'s own source files, and its `getTypeNode()`
  * is the literal text the author wrote.
  */
+import { INDEX_PROP_NAME_RE, pickIndexedCollection } from '@core/utils/collectionIndexNames'
 import { basename } from 'node:path'
 import {
   Node,
@@ -381,22 +382,14 @@ function pascalCaseFromFileBase(relPath: string): string | undefined {
   return PASCAL_CASE_RE.test(capitalized) ? capitalized : undefined
 }
 
-/** Number props that, by name, say "which entry is current" - `TabBar.value`, `activeIndex`, `selectedTab`. */
-const INDEX_PROP_NAME_RE = /^(?:value|index|(?:selected|active|current)(?:Index|Tab|Item|Step|Segment)?|tabIndex|step)$/
-
-/** A list prop named like what it holds, preferred when a component has several. */
-const COLLECTION_NAME_RE = /^(?:items|tabs|options|segments|steps|pages|slides|choices|chips)$/
-
 /**
  * A number named like a selection, next to ONE list the component takes, is an
  * index into that list: the panel then offers the list's own entries to choose
  * from instead of a bare number (`collectionIndex`, the same kind the built-in
- * design system's manifest records). With several lists, only one named like a
- * list of choices counts; with none such, it stays a number.
+ * design system's manifest records). See `collectionIndexNames.ts` for the rule.
  */
 function markCollectionIndexes(props: PropSpec[]): PropSpec[] {
-  const collections = props.filter((prop) => prop.kind.kind === 'collection').map((prop) => prop.name)
-  const target = collections.length === 1 ? collections[0] : collections.find((name) => COLLECTION_NAME_RE.test(name))
+  const target = pickIndexedCollection(props.filter((prop) => prop.kind.kind === 'collection').map((prop) => prop.name))
   if (target === undefined) return props
   return props.map((prop) =>
     prop.kind.kind === 'number' && INDEX_PROP_NAME_RE.test(prop.name) ? { ...prop, kind: { kind: 'collectionIndex', collection: target } } : prop,

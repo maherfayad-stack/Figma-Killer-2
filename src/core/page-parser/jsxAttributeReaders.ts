@@ -142,6 +142,15 @@ function interpolationStartsAClass(expression: Node | undefined): boolean {
  * Restricting it this way also keeps `base.*` modules and the publisher's
  * prop-escaping on the scalar diet they were written for.
  */
+/** `[...]` or `{...}` written right there, through any parentheses or `as` / `satisfies` wrapper. */
+function isInlineLiteral(expression: Node): boolean {
+  let current = expression
+  while (Node.isParenthesizedExpression(current) || Node.isAsExpression(current) || Node.isSatisfiesExpression(current)) {
+    current = current.getExpression()
+  }
+  return Node.isArrayLiteralExpression(current) || Node.isObjectLiteralExpression(current)
+}
+
 export function extractProps(
   attributes: (JsxAttribute | JsxSpreadAttribute)[],
   ctx: ParseContext,
@@ -158,6 +167,8 @@ export function extractProps(
    * `actions[0].onClick`) — see `ParsedNode.codeFunctionPaths`.
    */
   codeFunctionPaths: string[]
+  /** Structured props whose attribute is an inline list/object literal - see `ParsedNode.inlineLiteralProps`. */
+  inlineLiteralProps: string[]
   assetOrigin?: ValueOrigin
   /** P3-C — a COMPONENT call site's string-literal attributes, by name. See `ParsedNode.literalPropOrigins`. */
   literalOrigins: Record<string, ValueOrigin>
@@ -169,6 +180,7 @@ export function extractProps(
   const codeProps: string[] = []
   /** See the `codeFunctionPaths` field on this function's own return type, above. */
   const codeFunctionPaths: string[] = []
+  const inlineLiteralProps: string[] = []
   // First resolved import-backed asset value wins — mirrors `textOrigin`'s
   // "only the first" scoping (see its doc comment in `./types`): a node
   // rarely has more than one image-shaped prop, and picking one honest target
@@ -336,6 +348,7 @@ export function extractProps(
             result[name] = withNestedIconValues(expression, structured.value, ctx.eval)
           }
           codeProps.push(name)
+          if (isInlineLiteral(expression)) inlineLiteralProps.push(name)
           for (const fnPath of structured.functionPaths) {
             // No dot before a `[N]` array-index segment — `actions[0].onClick`,
             // never `actions.[0].onClick`.
@@ -402,6 +415,7 @@ export function extractProps(
     resolutionsByKey,
     codeProps,
     codeFunctionPaths,
+    inlineLiteralProps,
     literalOrigins,
     ...(assetOrigin ? { assetOrigin } : {}),
   }

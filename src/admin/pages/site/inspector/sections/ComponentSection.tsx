@@ -66,11 +66,12 @@
 import { useRef, useState } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { detachRefusalFor } from '@site/store/slices/site/instanceDetachability'
-import { explainPropConstraint, hasWritableSourceLocation, type PageNode } from '@core/page-tree'
+import { canEditInlineLiterals, explainPropConstraint, hasWritableSourceLocation, type PageNode } from '@core/page-tree'
 import { PropertyControlRenderer } from '@site/property-controls/PropertyControlRenderer'
 import { buildComponentCallSiteRows } from '../../panels/PropertiesPanel/componentCallSiteRows'
 import { useLocalComponentCatalog, findLocalComponentSpec } from '@site/studio/componentCatalog'
 import { InstanceSwapPopover } from '@site/property-controls/InstanceSwapPopover'
+import { commitStudioPropPath } from '@site/studio/studioPropPathCommit'
 import { Button } from '@ui/components/Button'
 import { SegmentedControl } from '@ui/components/SegmentedControl'
 import { ControlRow } from '@ui/components/ControlRow'
@@ -229,7 +230,9 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
               // reachable, same as `pkg-02`'s unconditional `node`-kind
               // handling for package components.
               const isSlot = control.type === 'slot'
-              const constraint = isSlot
+              // A list or object written inline at the call site: each literal in it is its own row.
+              const inlineLiteralsEditable = canEditInlineLiterals(node, `callSiteProps:${key}`)
+              const constraint = isSlot || inlineLiteralsEditable
                 ? undefined
                 : (explainPropConstraint(node, `callSiteProps:${key}`, value) ?? undefined)
               return (
@@ -245,6 +248,7 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
                     ownerNodeId={nodeId}
                     // `collection-index` (`value` / `activeIndex` next to `items`) offers the list's own entries.
                     siblingProps={callSiteProps}
+                    onChangePath={inlineLiteralsEditable ? (propKey, write) => void commitStudioPropPath({ nodeId, prop: propKey, path: write.path, value: write.value }) : undefined}
                     multiline={false} // a call-site prop is a JSX attribute
                   />
                 </div>

@@ -50,6 +50,7 @@ export type { JsxTagKind } from './jsxTagKind'
 export {
   isPropWritableToSource,
   canUnbindProp,
+  canEditInlineLiterals,
   isPropPatchWritableToSource,
   isStyleWritableToSource,
   isStylePatchWritableToSource,

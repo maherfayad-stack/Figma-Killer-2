@@ -150,6 +150,11 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       ? (node.codeFunctionPaths ?? []).map((path) => `callSiteProps:${path}`)
       : (node.codeFunctionPaths ?? [])
 
+    // The structured props written as an inline literal, keyed like `codeProps`.
+    const inlineLiteralProps = node.instanceOf
+      ? (node.inlineLiteralProps ?? []).map((name) => `callSiteProps:${name}`)
+      : (node.inlineLiteralProps ?? [])
+
     // R2 — `node.resolvedProps` remapped the exact same way `codeProps` just
     // was, so a key here always lines up with a key in `codeProps`: an
     // instance's keys move into the `callSiteProps:<name>` namespace,
@@ -313,6 +318,7 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       // questions — see `PageNode.codeProps`.
       ...(codeProps.length > 0 ? { codeProps } : {}),
       ...(codeFunctionPaths.length > 0 ? { codeFunctionPaths } : {}),
+      ...(inlineLiteralProps.length > 0 ? { inlineLiteralProps } : {}),
       // Carry the source `style={{…}}` through so the canvas renders the real
       // inline styles (`NodeRenderer` reads `node.inlineStyles`). Without this
       // an authored flex/gap/etc. layout is invisible on the board.

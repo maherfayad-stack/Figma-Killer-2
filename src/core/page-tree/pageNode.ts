@@ -163,6 +163,13 @@ export const PageNodeSchema = Type.Object({
    */
   codeFunctionPaths: Type.Optional(Type.Array(Type.String())),
   /**
+   * Studio import - the structured props (a subset of `codeProps`) whose attribute
+   * is an inline list/object literal rather than a binding: the literals inside
+   * are the user's own bytes and are edited one by one. See
+   * `ParsedNode.inlineLiteralProps` in `@core/page-parser`.
+   */
+  inlineLiteralProps: Type.Optional(Type.Array(Type.String())),
+  /**
    * Studio import (§2) — the local component this node was inlined out of
    * (`'SheetHeader'`). Provenance, not a lock: the node is editable and its
    * writeback target is that component's own source location.
@@ -307,6 +314,7 @@ export function parsePageNode(raw: unknown, nodePath: string): PageNode {
   const assetOrigin = parseAssetOrigin(r.assetOrigin)
   const codeProps = parseCodeProps(r.codeProps)
   const codeFunctionPaths = parseCodeFunctionPaths(r.codeFunctionPaths)
+  const inlineLiteralProps = parseCodeProps(r.inlineLiteralProps)
   const propFeeds = parsePropFeeds(r.propFeeds)
 
   return {
@@ -319,6 +327,7 @@ export function parsePageNode(raw: unknown, nodePath: string): PageNode {
     ...(assetOrigin !== undefined ? { assetOrigin } : {}),
     ...(codeProps !== undefined ? { codeProps } : {}),
     ...(codeFunctionPaths !== undefined ? { codeFunctionPaths } : {}),
+    ...(inlineLiteralProps !== undefined ? { inlineLiteralProps } : {}),
     ...(typeof r.sourceFingerprint === 'string' && r.sourceFingerprint.length > 0
       ? { sourceFingerprint: r.sourceFingerprint }
       : {}),

@@ -82,6 +82,13 @@ const PropEditSchema = Type.Object({
    * inlined id; see `studioBatchUndoJournal.ts` and `studioWriteback.ts`.
    */
   unbind: Type.Optional(Type.Literal(true)),
+  /**
+   * The value is not the attribute's but one literal INSIDE its inline list or
+   * object: `['segmentedControl', 'value']` writes `value` of
+   * `segmentedControl={{ items, value }}`, `['chips', 0, 'selected']` the first
+   * chip's flag (`setJsxPropPath`). Never with `unbind`.
+   */
+  path: Type.Optional(Type.Array(Type.Union([Type.String(), Type.Integer({ minimum: 0 })]), { minItems: 1, maxItems: 8 })),
 })
 
 /** One element-text-children writeback — `setJsxText`. `unbind` as on {@link PropEditSchema}. */
