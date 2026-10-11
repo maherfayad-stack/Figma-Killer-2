@@ -150,7 +150,10 @@ export function hasWritableSourceLocation(nodeId: string): boolean {
  * row is what a designer means by restyling a list item, and the editor says
  * so before and after the write. Nothing else may use this to reach a row's
  * source: a row's TEXT and props are per-row values with their own origins,
- * and a structural edit on a row is the array literal's business.
+ * and a structural edit on a row is the array literal's business — except
+ * G-9's "Unroll list", which rewrites the `.map` that renders every row: its
+ * `unroll-list` edit names this template, and the codemod re-derives the array
+ * and the callback from the AST before it writes a byte.
  */
 export function loopTemplateNodeId(nodeId: string): string | null {
   const segments = nodeId.split(INLINE_ID_SEPARATOR)

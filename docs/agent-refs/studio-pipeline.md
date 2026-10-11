@@ -410,7 +410,7 @@ container around a contiguous run of siblings, ⌘G) and **`ungroup`**
 (`unwrapJsxElement` — the container goes, its children take its place, ⌘⇧G),
 and D2 G3's **`transplant`** (`transplantJsxElement` — a move whose two ends
 are in two different FILES, the write behind dragging an element from one board
-frame into another) — and everything else refuses out loud.
+frame into another) — and everything else refuses out loud. G-9 adds a tenth write that is not a placement: **`unroll-list`** (`unrollMapExpression` — a `.map` over an array literal written out as the rows it rendered; its own module `studioUnrollWriteback.ts`, journaled, replays the refused gesture on the new elements).
 
 **`transplant` is the one kind whose destination is deliberately in another
 file**, which is why it has its own server entry (`applyTransplantEdit`) rather
@@ -492,9 +492,9 @@ from the node id and `lockReason` alone:
 
 | Refusal | Because |
 |---|---|
-| `list-row` | a `.map` row — one piece of JSX renders every row. A row ROOT's reorder/delete/duplicate/paste write its array instead (OD-8); what still refuses is a gesture the array cannot express, a node inside a row, or an array not written in this file |
+| `list-row` | a `.map` row — one piece of JSX renders every row. A row ROOT's reorder/delete/duplicate/paste write its array instead (OD-8); what still refuses is a gesture the array cannot express, a node inside a row, or an array not written in this file. **G-9: for a list whose array is a literal in this file the remedy is "Unroll list"** (`kind: 'unroll-list'`, `unrollMapExpression`): the `.map` is written out as its N rows, then the refused gesture is replayed on them, one ⌘Z for both. OD-24 is still "proposed"; this is the program doc's recommendation |
 | `shared-component` | an inlined id — the markup is in the component's own file, so a move there moves every instance |
-| `route-chrome` | a Next `layout`/`template` — one file, many frames |
+| `route-chrome` | a Next `layout`/`template` — one file, many frames. **G-8: not while the user is in "Edit layout" for that file** (`layoutEdit.ts`, the same mode as "Edit main component": `mainEditTarget`, `mainEditMode.ts`); the refusal's remedy is `edit-layout`, which starts the mode and re-runs the gesture |
 | `code-placed` | the parser recorded a structural `lockReason` |
 | `insert` | asked about the CONTAINER, not a node — it refuses only when the container itself is a `.map` row / inlined / route chrome / code-placed |
 | `reparent` | no container to write into, or one that is not an ordinary element. An in-place `duplicate`/`wrap` carries no refusal of its own beyond the four above; a `duplicate` WITH a destination (K2's Alt+drag) asks the reparent question about that destination too |

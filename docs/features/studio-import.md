@@ -584,7 +584,7 @@ If the server refuses an `override` for a reason that means "cannot prove the ot
 
 **Apply to all (N)** is `promote-override` (`promoteOverrideToDefault.ts`): the values the instance overrides become the component's defaults (`heading = 'New text'`) and the call site stops passing them, so every instance that did not override them shows the new value; an instance with its OWN value keeps it. `nodeId` is the inlined id of ANY element of that instance, one call site deep — its head is the call site, its tail names the component file, both through `studioEditLocation`, and the codemod refuses `not-in-component` when the file the call site's import resolves to is not that tail's. Refusals: `not-an-override` (the call site does not pass it as a plain value, or the string carries an entity that would mean something else in JS), `no-default` (the component has no `prop = <literal>` to rewrite), `unresolvable` / `package-component`. Journaled; ⌘Z returns to the override, byte for byte.
 
-**Edit main component** (`mainEditComponent`, `SharedComponentNotice`) is the explicit all-instances mode: while it names the node's component the router steps aside and the same controls write the component's markup. The notice says which of the two it is.
+**Edit main component** (`mainEditTarget = { kind: 'component', name }`, `SharedComponentNotice`) is the explicit all-instances mode: while it names the node's component the router steps aside and the same controls write the component's markup. The notice says which of the two it is. It is ONE mode with "Edit layout" (G-8, below): `mainEditMode.ts` holds the one target (`component` | `layout`), the one setter (`setMainEditTarget`, the only writer) and the rule that starting one ends the other.
 
 #### A value that is ALREADY a prop (`propFeeds`) — every instance stays editable (G-2a)
 
@@ -996,6 +996,41 @@ The other half of OD-8: reorder (drag, ⌥↑/↓, a grid-row ↑/↓), delete, 
 **No op carries client bytes.** The ops are `reorder`, `remove` and `copy`; a remove's ⌘Z is the undo journal's `restore`, not an insert of the removed text (the `insert` op and its `not-data`/`invalid-import` shape checks existed only for that undo, and are gone with it).
 
 Regression tests: `src/core/ast-codemods/__tests__/editListItems.test.ts`, `src/core/page-parser/__tests__/listRowSource.test.ts`, `src/core/page-tree/__tests__/listRowPlans.test.ts`, `src/__tests__/editor-store/listRowArrayWrites.test.ts`, `server/handlers/__tests__/studioListItemWrites.test.ts`, `tests/e2e/list-rows-edit-the-array.e2e.ts`.
+
+### Unroll list — a `.map` becomes the elements it rendered (G-9, OD-24)
+
+The gestures the array cannot express — wrap, group, a move into another container, an edit to a node INSIDE a row, a paste into a row — have no place in the source that is one row's alone. "Unroll list" gives them one: it rewrites `{ROWS.map((row, i) => <li key={row.id}>{row.label}</li>)}` into the N `<li>`s it renders, with each row's plain values written where the callback read them, and the store then **replays the gesture the user tried** against the new elements. It is explicit, menu-only and lossy by design (the list stops being drawn from its array), and **OD-24 is still "proposed"**: this implements the program doc's recommendation, not a settled decision.
+
+| Layer | What it does |
+|---|---|
+| Offer | the refusal dialog (a `list-row` refusal whose node is in a list `planUnrollList` accepts — `ListRowSource.kind === 'array'`, not inlined), the Layers context menu ("Unroll list"), and the command palette (`layers.unrollList`). Never offered for an imported, computed, prop-fed, spread, nested or multi-root list: the parser already stamped those `refused` |
+| Wire | `kind: 'unroll-list'` (`studioUnrollWriteback.ts`): `nodeId` is the row ROOT's template position (a row id without its `#n` — `loopTemplateNodeId`, the one JSX site that renders every row), `array` the literal's `[` in the SAME file, `length` its item count. Both ids go through `studioEditLocation`'s path guard; an `array` in another file refuses `not-literal` |
+| Codemod | `unrollMapExpression` (`@core/ast-codemods`). Locates, never executes; the write is a splice of the file's own bytes (`jsxChildRange.ts`). Returns `created` (verified against the re-parsed file) so the batch mints `createdNodeIds` in array order |
+| Undo | the undo journal's `restore` (`studioBatchUndoJournal.ts`): the rows replace the `.map` and drop its `key`, which no edit kind writes back. Byte-exact; redo re-posts the same edit. `remapStructuralEditIds` skips `unroll-list` — its `nodeId` is a pre-write template position, and the unrolled tree is the same shape as the list, so the reparse remap would otherwise alias it onto an unrolled element |
+| Replay | `unrollListActions.ts`: write the rows, then `retry(mapId)` the refused gesture with every id it named taken through `buildReparseNodeIdRemap(before, after)` — the page tree before and after has the same shape (a `.map`'s rows were already N nodes), so rows, what is inside them and every element below the list whose line moved are all accounted for. If it cannot account for every row the gesture is NOT replayed against guessed ids ("Make the change again"). The two history entries are linked (`gestureReplayLink.ts`, shared with OD-7): one ⌘Z undoes both. Every `list-row` refusal path hands over its `retry` (`writeListRowPlan`'s new `retry` context field) |
+| Notice | one info toast with Undo: "`DISHES` is now 3 separate elements in your file, no longer drawn from the array. The array is left where it was." |
+
+**What it will unroll** — exactly what it can prove. The `.map` is written directly as a JSX child with ONE inline arrow/function-expression callback whose parameters are plain identifiers and whose body is the JSX it returns (concise, or a block holding only `return <jsx>`). The receiver is an array literal, or a `const` array literal in the file's scope chain. Every item is plain DATA: strings, numbers, booleans, `null`, and objects/arrays of those — an item that calls, spreads or reads another binding would change meaning when copied into the callback's scope (`not-literal`). The item and index parameters are only READ (`param-assigned`) and nothing inside redeclares them (`shadowed-param`). At most 100 items (`too-long`). A multi-line item handed along whole (`pick(row)`) refuses `multi-line-value`. Every refusal leaves the file byte-identical.
+
+**How a reference is written.** `row.label` over `'Alpha'` becomes the text `Alpha` as a JSX child, `"Alpha"` as an attribute (braces only when the text has `{}<>&"'` or edge whitespace), and the literal's own source text anywhere else; a number reads as its digits and is parenthesised where it would not parse (`(9.5).toFixed(2)`, `10 - (-5)`); `.length` and `[0]` on an item's array follow the data; the index reads as the row's position; a reference that stops short of a primitive (`pick(row)`, `{...row}`) is the item's own source text. The row's `key` is dropped. The array itself stays: it may feed other lists and it is the user's data.
+
+Regression tests: `src/core/ast-codemods/__tests__/unrollMapExpression.test.ts` (shapes, every refusal byte-identical, CRLF), `server/handlers/__tests__/studioUnrollListWrites.test.ts` (real load → save → journal restore, path guard), `src/__tests__/editor-store/unrollListRealSource.test.ts` (menu action, replayed refused delete, one byte-exact ⌘Z, never offered for an imported array), `src/core/page-tree/__tests__/listRowUnroll.test.ts`.
+
+### Edit layout — structural gestures on a Next layout, on request (G-8)
+
+A Next `layout`/`template` is composed into every route below it, so a move, delete, wrap, group or insert on its markup is refused `route-chrome`: the write has one target, but the change lands in N frames the user did not point at. "Edit layout (N routes)" is the explicit opt-in, and it is **the same mode as "Edit main component"** (`mainEditMode.ts`: `mainEditTarget = { kind: 'layout', rel }`; one setter, one target at a time, ended by "Done").
+
+| Piece | What it does |
+|---|---|
+| Rule | `refusePlacement` does not refuse a `route-chrome` node whose file is the one being edited (`isEditedLayoutNodeId`, `layoutEdit.ts`). The fact is module-level because the rule is asked from places with no store (drag preview, plugin dispatcher), like `markSoleInstanceComponentFile`; `setMainEditTarget` is the only writer and nothing on the server ever sets it. ONE file: another layout, a template, a shared component a layout renders, a `.map` row and a `lockReason` all refuse exactly as before |
+| Offer | the `route-chrome` constraint's first action is `edit-layout`: the refusal dialog (which then re-runs the refused gesture — nothing was written, so every id is still right), the Layers menu footer, and `LayoutNotice` in the properties panel, which also states how many routes draw the file. The label carries the count (`layoutRouteCount`) |
+| Visible | `LayoutNotice` becomes a banner; `LayoutEditChip` in the toolbar ("Editing layout app/layout.tsx · 2 routes · Done") outlives the selection |
+| Ends | "Done", starting "Edit main component", `createSite`/`clearSite`, and any `loadSite` that is not a re-read of the open project (no baseline) — a layout of the same name in another project is never edited on the strength of a choice made in this one |
+| Write | unchanged: the ordinary structural commit, journaled; the resync is narrow to the routes the file feeds (`reload-scope`). Values (text, attributes, styles) on layout nodes were never refused and are unchanged |
+
+Not covered: a gesture that moves an element from a page INTO an edited layout (a cross-file `transplant` whose destination is `layout.tsx`) is not tested and rides the transplant codemod's own refusals.
+
+Regression tests: `src/core/page-tree/__tests__/layoutEdit.test.ts`, `src/__tests__/editor-store/layoutEditModeRealSource.test.ts` (real App Router project: refusal, remedy + replay, byte-exact ⌘Z, Done, one-file scope, project switch), `tests/e2e/layout-edit-mode.e2e.ts` (real browser, production bundle).
 
 ### The writeback path is contained
 
@@ -1554,9 +1589,9 @@ Until `struct-01` the `StudioEdit` union carried value kinds only, and `saveSite
 
 | Refusal | Because |
 |---|---|
-| `list-row` | a `.map` row — one piece of source JSX renders every row. Since OD-8 a row ROOT's reorder, delete and duplicate write its ARRAY instead, so what refuses is a gesture the array cannot express (wrap, group, reparent), a node inside a row, or a row whose array is not written here — each named in the sentence |
+| `list-row` | a `.map` row — one piece of source JSX renders every row. Since OD-8 a row ROOT's reorder, delete and duplicate write its ARRAY instead, so what refuses is a gesture the array cannot express (wrap, group, reparent), a node inside a row, or a row whose array is not written here — each named in the sentence. **G-9: for a list whose array is a literal in this file, the dialog's remedy is "Unroll list"** — see below |
 | `shared-component` | an inlined id: the markup lives in the component's own file, so moving it here moves every instance. (Stricter than the VALUE rule, which writes and warns — a drag says "move THIS one", and there is no way to honour that.) |
-| `route-chrome` | a Next `layout`/`template`, composed into every route below it |
+| `route-chrome` | a Next `layout`/`template`, composed into every route below it. **G-8: not while that file is being edited** — see "Edit layout" below. The refusal's remedy is "Edit layout (N routes)" |
 | `code-placed` | the parser recorded a structural `lockReason` (spread, dynamic child) |
 | ~~`multi-select` (wrap)~~ | P3-D: a wrap of several elements is a group (one container around their run) |
 | `reparent` | asked with no container to write into, or with one that is not an ordinary element. **Not** a blanket refusal any more: W4-1 |
