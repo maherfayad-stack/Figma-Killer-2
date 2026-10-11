@@ -167,7 +167,7 @@ describe('a multi-selection detach is one sequence, and one ⌘Z', () => {
   })
 
   it('takes the whole sequence back when one step refuses — nothing written, nothing journaled', () => {
-    write('components/Counter.tsx', "import { useState } from 'react'\nexport function Counter() {\n  const [n] = useState(0)\n  return <b>{n}</b>\n}\n")
+    write('components/Counter.tsx', "import { useEffect } from 'react'\nexport function Counter() {\n  useEffect(() => {}, [])\n  return <b>0</b>\n}\n")
     const page = PAGE.replace("import { Card } from '../components/Card'", "import { Card } from '../components/Card'\nimport { Counter } from '../components/Counter'").replace('<Card title="Two" />', '<Counter />')
     write('pages/Home.tsx', page)
     const result = applyStudioEditSequence(

@@ -544,7 +544,17 @@ by `instanceOnlyGesture.ts`: it detaches THIS call site
 the detached markup by child-index path, replays it (`retry(mapId)` — every
 `retry` closure now takes an id MAP), and marks the detach entry
 `linkedToNext`, so one ⌘Z undoes both (`undoRedoActions.ts` cascades). A
-detach that refuses shows the refusal dialog, as before.
+detach that refuses is answered with a component copy of that call site (the
+same replay inside it), and only when that refuses too shows one warning.
+**G-3** — the same recipe takes the gestures that CROSS the instance's edge (a
+drag out of it, a drop or insert into it, a transplant to another frame): the
+refusal names the node it is about (`StructuralRefusal.aboutNodeId`), ids
+outside the instance are re-found by identity (`relocateOutside`) because the
+detach shifted the lines above them, a replay that throws is caught and told,
+and a gesture that places something says so once ("Detached Card to place
+this. Undo restores it."). A drop into a layout component's `{children}`
+(`instanceChildrenSlot`, `props.childrenHost`) is written at the call site
+and detaches nothing.
 
 **OD-19 — a VALUE edit inside an instance is an override of that instance**
 (`instanceOverrideActions.ts`, `instanceOverridePlan.ts`). `updateNodeProps` and

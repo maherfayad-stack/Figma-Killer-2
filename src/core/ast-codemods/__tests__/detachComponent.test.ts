@@ -419,44 +419,6 @@ describe('detachComponentInstance — body locals (bug 4)', () => {
     expect(text).not.toContain('label')
   })
 
-  it('refuses `body-local` for a const the markup reads twice', () => {
-    write('components/Heading.tsx', [
-      'export function Heading({ title }: { title: string }) {',
-      '  const label = title.toUpperCase()',
-      '  return <h2 title={label}>{label}</h2>',
-      '}',
-      '',
-    ].join('\n'))
-    const source = [
-      "import { Heading } from '../components/Heading'",
-      'export default function Home() {',
-      '  return <Heading title="Confirm" />',
-      '}',
-      '',
-    ].join('\n')
-    const message = expectRefusedUntouched('pages/Home.tsx', source, 'Heading', 'body-local')
-    expect(message).toContain('label')
-  })
-
-  it('refuses `body-local` for a const computed from another body value', () => {
-    write('components/Heading.tsx', [
-      'export function Heading({ title }: { title: string }) {',
-      '  const base = title.trim()',
-      '  const label = base.toUpperCase()',
-      '  return <h2>{label}</h2>',
-      '}',
-      '',
-    ].join('\n'))
-    const source = [
-      "import { Heading } from '../components/Heading'",
-      'export default function Home() {',
-      '  return <Heading title="Confirm" />',
-      '}',
-      '',
-    ].join('\n')
-    expectRefusedUntouched('pages/Home.tsx', source, 'Heading', 'body-local')
-  })
-
   it('refuses `body-local` for a tag chosen by a body value, naming the tag', () => {
     write('components/Banner.tsx', [
       "import { InfoIcon, WarnIcon } from './icons'",
@@ -675,11 +637,35 @@ describe('detachComponentInstance — sub-component import reconciliation', () =
     expect(text).toContain('<ul>{FIXED.map((item) => <li key={item}>{item}</li>)}</ul>')
   })
 
-  it('refuses `unbound-reference` for a module-scope const the component file does not export', () => {
+  it('copies a pure module-scope const the component file does not export, instead of importing a name that module does not have', () => {
     // The pre-DET-1 codemod wrote `import { FIXED } from '../components/List'`
-    // here — an import of a name that module does not export.
+    // here - an import of a name that module does not export. G-3 copies the
+    // declaration into the page's module scope instead.
     write('components/List.tsx', [
       "const FIXED = ['x', 'y']",
+      'export function List() {',
+      '  return <ul>{FIXED.map((item) => <li key={item}>{item}</li>)}</ul>',
+      '}',
+      '',
+    ].join('\n'))
+    const source = [
+      "import { List } from '../components/List'",
+      'export default function Home() {',
+      '  return <List />',
+      '}',
+      '',
+    ].join('\n')
+    const { result, text } = detachTag('pages/Home.tsx', source, 'List')
+    expect(result.ok).toBe(true)
+    expect(text).not.toContain("from '../components/List'")
+    expect(text).toContain("const FIXED = ['x', 'y']")
+    expect(text).toContain('<ul>{FIXED.map((item) => <li key={item}>{item}</li>)}</ul>')
+  })
+
+  it('refuses `unbound-reference` for a module-scope const whose initializer runs code, naming it', () => {
+    write('components/List.tsx', [
+      "function build() { return ['x'] }",
+      'const FIXED = build()',
       'export function List() {',
       '  return <ul>{FIXED.map((item) => <li key={item}>{item}</li>)}</ul>',
       '}',
@@ -962,25 +948,6 @@ describe('detachComponentInstance — refusals', () => {
     expectRefusedUntouched('pages/Home.tsx', source, 'div', 'not-a-component')
   })
 
-  it('refuses a component using useState', () => {
-    write('components/Counter.tsx', [
-      "import { useState } from 'react'",
-      'export function Counter() {',
-      '  const [n] = useState(0)',
-      '  return <span>{n}</span>',
-      '}',
-      '',
-    ].join('\n'))
-    const source = [
-      "import { Counter } from '../components/Counter'",
-      'export default function Home() {',
-      '  return <Counter />',
-      '}',
-      '',
-    ].join('\n')
-    expectRefusedUntouched('pages/Home.tsx', source, 'Counter', 'uses-hooks')
-  })
-
   it('refuses a component using a custom hook', () => {
     write('components/Widget.tsx', [
       "function useWidgetState() { return 1 }",
@@ -998,40 +965,6 @@ describe('detachComponentInstance — refusals', () => {
       '',
     ].join('\n')
     expectRefusedUntouched('pages/Home.tsx', source, 'Widget', 'uses-hooks')
-  })
-
-  it('refuses a component that maps over one of its own props', () => {
-    write('components/List.tsx', [
-      "export function List({ items }: { items: string[] }) {",
-      '  return <ul>{items.map((item) => <li key={item}>{item}</li>)}</ul>',
-      '}',
-      '',
-    ].join('\n'))
-    const source = [
-      "import { List } from '../components/List'",
-      'export default function Home() {',
-      "  return <List items={['a', 'b']} />",
-      '}',
-      '',
-    ].join('\n')
-    expectRefusedUntouched('pages/Home.tsx', source, 'List', 'maps-over-props')
-  })
-
-  it('refuses a component taking an undestructured props parameter', () => {
-    write('components/Card.tsx', [
-      'export function Card(props) {',
-      '  return <div>{props.title}</div>',
-      '}',
-      '',
-    ].join('\n'))
-    const source = [
-      "import { Card } from '../components/Card'",
-      'export default function Home() {',
-      '  return <Card title="Hi" />',
-      '}',
-      '',
-    ].join('\n')
-    expectRefusedUntouched('pages/Home.tsx', source, 'Card', 'unsupported-params')
   })
 
   it('refuses `unsupported-params` for a nested destructure the markup reads', () => {

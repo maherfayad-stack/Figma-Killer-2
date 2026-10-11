@@ -34,7 +34,8 @@ import { applyTextEdits, type TextEdit } from './jsxChildRange'
 import { lineIndentAt, reindentBlock } from './jsxChildPlacement'
 import { bindingNames, bindingScopeAt, freeVariableReferenceRanges } from './subtreeFreeVariables'
 
-const STATE_HOOKS = new Set(['useState', 'useReducer', 'useRef'])
+/** The React hooks whose whole meaning is "a value this component keeps" - shared with detach's hoist (`detachHookRead.ts`), which also takes `useId`. */
+export const STATE_HOOKS: ReadonlySet<string> = new Set(['useState', 'useReducer', 'useRef'])
 const HOOK_NAME_RE = /^use[A-Z0-9]/
 
 /** One `const [a, setA] = useState(init)` (or `useReducer`, or `const ref = useRef(init)`) of the origin component. */
@@ -142,7 +143,7 @@ export function classifyOwned(component: FunctionLike, name: string, reference: 
 // Where a copied hook may be written
 // ---------------------------------------------------------------------------
 
-function hasUseClientDirective(source: SourceFile): boolean {
+export function hasUseClientDirective(source: SourceFile): boolean {
   for (const statement of source.getStatements()) {
     if (!Node.isExpressionStatement(statement)) return false
     const expression = statement.getExpression()

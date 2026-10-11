@@ -251,7 +251,7 @@ describe('DET-3 — a context reader moves into the enclosing component', () => 
     expectRefusedUntouched('pages/Home.tsx', source, 'Greeting', 'uses-hooks')
   })
 
-  it('refuses `uses-hooks` for a context reader handed one of the component\'s own props', () => {
+  it('writes the call site\'s value into a context reader handed one of the component\'s own props, and refuses one the call site computes', () => {
     write('i18n.tsx', [
       "import { createContext, useContext } from 'react'",
       'export const LangContext = createContext({})',
@@ -276,7 +276,18 @@ describe('DET-3 — a context reader moves into the enclosing component', () => 
       '}',
       '',
     ].join('\n')
-    expectRefusedUntouched('pages/Home.tsx', source, 'Section', 'uses-hooks')
+    const { result, text } = detachTag('pages/Home.tsx', source, 'Section')
+    if (!result.ok) throw new Error(result.refusal.message)
+    expect(text).toContain('const copy = useSection("intro")')
+    expect(text).toContain('<main><p>{copy.title}</p></main>')
+    const computed = [
+      "import { Section } from '../components/Section'",
+      'export default function Home({ which }: { which: string }) {',
+      '  return <main><Section id={which} /></main>',
+      '}',
+      '',
+    ].join('\n')
+    expectRefusedUntouched('pages/Home.tsx', computed, 'Section', 'uses-hooks')
   })
 })
 

@@ -159,7 +159,7 @@ export function resolveConstraintAction(
     const onSettled = context.onSettled
     // The action presents its own confirm and refusal; this only reports
     // whether the instance is gone, which is what `RefusalDialog` waits on.
-    return () => void detach([nodeId]).then((outcome) => onSettled?.(outcome === 'detached' || outcome === 'handed-off'))
+    return () => void detach([nodeId]).then((outcome) => onSettled?.(outcome === 'detached' || outcome === 'handed-off' || outcome === 'copied'))
   }
   if (action.kind === 'extract' && context.nodeId !== undefined) {
     const nodeId = context.nodeId
