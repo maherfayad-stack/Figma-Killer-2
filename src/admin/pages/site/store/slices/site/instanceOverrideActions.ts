@@ -48,6 +48,7 @@ import { commitStudioInstanceOverride, commitStudioPromoteOverride, type Instanc
 import { resolveActiveTreeTarget } from './helpers'
 import { inlineTailKey } from './nodeIndex'
 import { planInstanceOverride, refusalSentence, type OverrideChange, type PlannedOverride } from './instanceOverridePlan'
+import type { InstanceOverrideSlice } from './instanceOverrideTypes'
 import { isEditingComponent } from './mainEditMode'
 import type { OptimisticPreviewHandle } from './structuralOptimism'
 import type { SiteSliceHelpers } from './types'
