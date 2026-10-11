@@ -96,6 +96,7 @@ export type { ListRowEditPlan, ListRowPlan } from './listRowPlans'
 // element "inside the page" means, and whether a selection is one run (K3).
 export {
   previewStructuralGroup,
+  isSiblingRun,
   previewStructuralMove,
   resolveContainerAnchor,
   resolveSourceContainer,

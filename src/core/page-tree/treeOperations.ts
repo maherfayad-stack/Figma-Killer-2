@@ -53,7 +53,7 @@ interface ApplyTreeOperationResult {
 /** Throw if this structural operation has no honest target in a studio-imported source file. */
 function assertSourceStructureWritable(
   tree: NodeTree<PageNode>,
-  kind: StructuralEditKind,
+  kind: Exclude<StructuralEditKind, 'reparent'>,
   nodeId: string,
 ): void {
   const node = tree.nodes[nodeId]

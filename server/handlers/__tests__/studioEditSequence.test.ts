@@ -144,14 +144,16 @@ describe('applyStudioEditSequence', () => {
       <h3>C</h3>
 `)
     write(source)
-    // Step 2 is written against an element that is not C's sibling.
+    // Step 2 is written against an element INSIDE the one it moves (it would
+    // leave neither with a place) - the first step's write must be taken back.
     const result = applyStudioEditSequence(tmpDir, [
       { kind: 'move', nodeId: id(source, 'h1'), anchorNodeId: id(source, 'h3'), position: 'after' },
-      { kind: 'move', nodeId: id(source, 'h3'), anchorNodeId: id(source, 'h2'), position: 'after' },
+      { kind: 'move', nodeId: id(source, 'section'), anchorNodeId: id(source, 'h2'), position: 'after' },
     ])
     expect(result.written).toBe(0)
     expect(result.refusals).toHaveLength(1)
-    expect(result.refusals[0]!.nodeId).toBe(id(source, 'h3'))
+    expect(result.refusals[0]!.reason).toBe('into-own-descendant')
+    expect(result.refusals[0]!.nodeId).toBe(id(source, 'section'))
     expect(read()).toBe(source)
   })
 

@@ -30,7 +30,6 @@ import type { StructuralCommitRollback } from '@site/store/slices/site/structura
 import type { SourceDuplicateToCommit } from '@site/store/slices/site/structuralSourceEdits'
 import { commitStructural, type StructuralCommitOptions } from './studioStructuralCommitEngine'
 import {
-  dissolveWrapperTemplate,
   type StructuralEditPayload,
   type StructuralInverseTemplate,
   type StructuralWriteOutcome,
@@ -249,7 +248,7 @@ export async function commitStudioWrap(wrap: {
     ],
     'Wrap refused',
     {
-      undo: { label: `Wrap in <${wrap.name}>`, template: dissolveWrapperTemplate(wrap) },
+      undo: { label: `Wrap in <${wrap.name}>`, template: { kind: 'restore-journal' } },
       ...(wrap.optimistic ? { optimistic: wrap.optimistic } : {}),
     },
   )
@@ -294,7 +293,7 @@ export async function commitStudioGroup(group: {
     ],
     'Group refused',
     {
-      undo: { label: 'Group', template: dissolveWrapperTemplate(group) },
+      undo: { label: 'Group', template: { kind: 'restore-journal' } },
       ...(group.optimistic ? { optimistic: group.optimistic } : {}),
     },
   )
@@ -309,28 +308,15 @@ export async function commitStudioGroup(group: {
  * children get afterwards are the `line:col`s the write produces. The commit's
  * own resync is what brings them in.
  *
- * `container` is how the dissolved wrapper was spelled, which is what its undo
- * writes back around the released children. `null` means the wrapper carried
- * something a re-group would not restore (a `className`, a `style`, an `id`) —
- * the undo then refuses by name rather than writing back a container that has
- * lost half of itself. Closing that needs `props` on the `wrap`/`group` edit,
- * which is the wrap codemod's own surface.
+ * Its undo is the undo journal's `restore` (G-7), like a group's and a wrap's:
+ * a container that carried a class, an inline style, an id or behaviour (which
+ * an ungroup keeps, emptied) cannot be written back around its children by a
+ * plain re-group, and the journal's pre-image brings every byte back whatever
+ * the container was.
  */
-export async function commitStudioUngroup(
-  nodeId: string,
-  container: { name: string; importSpecifier?: string; designSystemImport?: true } | null,
-): Promise<void> {
+export async function commitStudioUngroup(nodeId: string): Promise<void> {
   await commitStructural([{ kind: 'ungroup', nodeId }], 'Ungroup refused', {
-    undo: {
-      label: 'Ungroup',
-      template: container
-        ? { kind: 'group-relocated', container }
-        : {
-            kind: 'unsupported',
-            message:
-              'That container carried styling of its own (a class, an inline style or an id), and Studio can only write a plain container back around its children — undoing it here would silently drop what it carried. Use your editor’s undo or `git` to bring it back.',
-          },
-    },
+    undo: { label: 'Ungroup', template: { kind: 'restore-journal' } },
   })
 }
 

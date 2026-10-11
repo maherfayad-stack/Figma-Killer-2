@@ -2080,13 +2080,13 @@ describe('applyStudioEditBatch — group / ungroup on a real imported page (K3)'
     expect(read(REL)).toBe(GROUPED_FEATURE_ROW)
   })
 
-  it('REFUSES a run with an unselected sibling in the middle, and writes nothing', () => {
+  it('a run with an unselected sibling in the middle is no longer refused for the gap (G-7): here the <ul> is what refuses, and nothing is written', () => {
     const result = applyStudioEditBatch(tmpDir, [
       { kind: 'group', nodeId: at('li', 1), siblingNodeIds: [at('li', 3)], name: 'div' },
     ])
 
     expect(result.written).toBe(0)
-    expect(result.refusals?.[0]?.reason).toBe('not-contiguous')
+    expect(result.refusals?.[0]?.reason).toBe('content-model')
     expect(read(REL)).toBe(IMPORTED_PAGE)
   })
 
@@ -2120,22 +2120,20 @@ describe('applyStudioEditBatch — group / ungroup on a real imported page (K3)'
     expect(read(REL)).toBe(IMPORTED_PAGE)
   })
 
-  it('REFUSES ungrouping a container that carries behaviour, and writes nothing', () => {
+  it('ungrouping a container that carries behaviour keeps it - here an empty husk, so the file is untouched (G-7)', () => {
     // `<span … dangerouslySetInnerHTML={{…}} />` is a container doing more than
-    // holding children: dissolving it would drop the markup it injects.
+    // holding children, and it holds none: there is nothing to hand back, and
+    // dissolving it would drop the markup it injects. It stays, byte for byte.
     const result = applyStudioEditBatch(tmpDir, [{ kind: 'ungroup', nodeId: at('span', 1) }])
 
-    expect(result.written).toBe(0)
-    expect(result.refusals?.[0]?.reason).toBe('has-behaviour')
-    expect(result.refusals?.[0]?.message).toContain('dangerouslySetInnerHTML')
+    expect(result.refusals).toEqual([])
     expect(read(REL)).toBe(IMPORTED_PAGE)
   })
 
-  it('REFUSES ungrouping a COMPONENT — that would delete a usage, not a group', () => {
+  it('ungrouping a COMPONENT keeps its call site - a usage is not a group (G-7)', () => {
     const result = applyStudioEditBatch(tmpDir, [{ kind: 'ungroup', nodeId: at('IOSStatusBar') }])
 
-    expect(result.written).toBe(0)
-    expect(result.refusals?.[0]?.reason).toBe('has-behaviour')
+    expect(result.refusals).toEqual([])
     expect(read(REL)).toBe(IMPORTED_PAGE)
   })
 

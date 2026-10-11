@@ -82,13 +82,6 @@ export interface StructuralEditPayload {
   [field: string]: unknown
 }
 
-/** How a `wrap`/`group` edit spells its container — the registry's answer, carried so an undo can write the same one back. */
-export interface StructuralContainerSpelling {
-  name: string
-  importSpecifier?: string
-  designSystemImport?: true
-}
-
 /**
  * What a gesture's inverse is, before the write has said what it made.
  *
@@ -99,8 +92,6 @@ export interface StructuralContainerSpelling {
  */
 export type StructuralInverseTemplate =
   | { kind: 'delete-created' }
-  | { kind: 'ungroup-created' }
-  | { kind: 'group-relocated'; container: StructuralContainerSpelling }
   /**
    * P3-F — the inverse of a one-shot write (delete, detach, swap, extract):
    * `restore` the undo-journal entry its batch recorded. Nothing to capture at
@@ -176,23 +167,6 @@ export function resolveStructuralInverse(
     case 'delete-created': {
       if (outcome.createdNodeIds.length === 0) return null
       return outcome.createdNodeIds.map((nodeId) => ({ kind: 'delete', nodeId }))
-    }
-    case 'ungroup-created': {
-      if (outcome.createdNodeIds.length === 0) return null
-      return outcome.createdNodeIds.map((nodeId) => ({ kind: 'ungroup', nodeId }))
-    }
-    case 'group-relocated': {
-      const [first, ...rest] = outcome.relocatedNodeIds
-      if (first === undefined) return null
-      // A container that held ONE child is re-created by `wrap`, and one that
-      // held several by `group` — the same split `writeGroupToSource` makes on
-      // the way out, so the undo writes through the codemod the gesture's own
-      // forward direction would have used.
-      return [
-        rest.length === 0
-          ? { kind: 'wrap', nodeId: first, ...template.container }
-          : { kind: 'group', nodeId: first, siblingNodeIds: rest, ...template.container },
-      ]
     }
     case 'restore-journal':
       return outcome.undoToken === null ? null : [restoreEdit(outcome.undoToken)]
@@ -346,33 +320,4 @@ export interface StructuralSourceGesture {
    * gesture that touches no loose layer.
    */
   placements?: CanvasLayerPlacementChange[]
-}
-
-/**
- * `store-14` — how a ⌘G / wrap says what its own ⌘Z is.
- *
- * The inverse of "put a container around this" is "dissolve that container" —
- * the same `ungroup` write ⌘⇧G performs, which restores the children at their
- * own indentation and takes the wrapper's import with it.
- *
- * That only holds for an INTRINSIC wrapper. `unwrapJsxElement` refuses a
- * COMPONENT tag by name (`has-behaviour`): its own file decides what it
- * renders, so removing the call site is not "ungroup", it is deleting a
- * component usage. A group into a design-system container therefore has no
- * inverse this protocol can write, and says so at ⌘Z rather than posting a
- * write the server would refuse with a sentence about behaviour the user never
- * mentioned.
- */
-export function dissolveWrapperTemplate(wrapper: {
-  name: string
-  importSpecifier?: string
-  designSystemImport?: true
-}): StructuralInverseTemplate {
-  if (wrapper.importSpecifier === undefined && wrapper.designSystemImport === undefined) {
-    return { kind: 'ungroup-created' }
-  }
-  return {
-    kind: 'unsupported',
-    message: `That group was written as a <${wrapper.name}> component, and Studio only dissolves plain containers — taking it back out would mean deleting a component call site, which is a different change from the one you made. Remove it in code, or use your editor’s undo.`,
-  }
 }
