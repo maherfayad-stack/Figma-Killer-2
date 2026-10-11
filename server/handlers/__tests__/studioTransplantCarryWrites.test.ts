@@ -154,6 +154,49 @@ export default function DayPass() {
   })
 })
 
+describe("a prop default is the page's own value, never a shared component's", () => {
+  const TAG_REL = 'components/Tag.tsx'
+  const TAG = `export default function Tag({ label = 'New' }: { label?: string }) {
+  return (
+    <div className="tag">
+      <span>{label}</span>
+    </div>
+  )
+}
+`
+
+  it('an element inlined out of a component keeps refusing the prop by name - the call site decides its value', () => {
+    write(TAG_REL, TAG)
+    write(PASS_REL, PASS)
+    const page = `import Tag from '../components/Tag'
+
+export default function Board() {
+  return (
+    <main>
+      <Tag label="Hot" />
+    </main>
+  )
+}
+`
+    write(BOARD_REL, page)
+
+    const result = batch([
+      {
+        kind: 'transplant',
+        // The id the board mints for the <span> inlined at the call site: call site ~ component.
+        nodeId: `${id(BOARD_REL, page, 'Tag')}~${id(TAG_REL, TAG, 'span')}`,
+        parentNodeId: id(PASS_REL, PASS, 'main'),
+        copy: true,
+      },
+    ])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals[0]!.reason).toBe('captured-scope')
+    expect(result.refusals[0]!.message).toContain('"label" (a prop)')
+    expect(read(PASS_REL)).toBe(PASS)
+  })
+})
+
 describe('several cross-file copies pasted as one sequence', () => {
   it('report what they carried and are taken back by ONE restore, byte for byte', () => {
     write(BOARD_REL, BOARD)
