@@ -61,12 +61,11 @@ import {
   type OutboundRuntimeMessage,
 } from '@core/studio-runtime'
 import type { PreviewAxes } from '@core/studio-board'
+import type { FrameGeometrySnapshot, NodeGeometry } from '../frameGeometry/frameGeometryTypes'
 import type {
   DropCandidateGeometry,
   FrameDocumentAdapter,
-  FrameGeometrySnapshot,
   FrameRuntimeEvent,
-  NodeGeometry,
   NodeMeasurement,
   NodeRef,
   OptimisticDomOps,

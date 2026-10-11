@@ -42,7 +42,7 @@
  * to a drop target) confirms with the native hit test while the frame is live;
  * a poster frame has nothing else to ask.
  */
-import type { FrameGeometrySnapshot } from '../frameAdapter/FrameDocumentAdapter'
+import type { FrameGeometrySnapshot } from './frameGeometryTypes'
 import { PackedRTree } from './packedRTree'
 
 export interface BoardPoint {

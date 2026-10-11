@@ -33,12 +33,12 @@ import {
   type HoverSuppressionController,
   type ScrollUnrollController,
 } from '@core/studio-runtime'
+import type { FrameGeometrySnapshot } from '../frameGeometry/frameGeometryTypes'
 import { applyPreviewAxesToFrameDocument } from '../previewAxesFrameEffect'
 import { escapeCssAttributeValue } from '../escapeCssAttributeValue'
 import type {
   DropCandidateGeometry,
   FrameDocumentAdapter,
-  FrameGeometrySnapshot,
   FrameRuntimeEvent,
   NodeMeasurement,
   NodeRect,

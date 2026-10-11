@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { FrameGeometrySnapshot, NodeGeometry } from '@site/canvas/frameAdapter/FrameDocumentAdapter'
+import type { FrameGeometrySnapshot, NodeGeometry } from '@site/canvas/frameGeometry/frameGeometryTypes'
 import { FrameGeometryIndex } from '@site/canvas/frameGeometry/frameGeometryIndex'
 
 function node(nodeId: string, x: number, y: number, width: number, height: number, parent: number, extra: Partial<NodeGeometry> = {}): NodeGeometry {

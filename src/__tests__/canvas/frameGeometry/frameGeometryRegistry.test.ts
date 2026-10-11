@@ -6,7 +6,8 @@
  * share one read, and a hit is found in the topmost frame under the point.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import type { FrameDocumentAdapter, FrameGeometrySnapshot, FrameRuntimeEvent, NodeGeometry } from '@site/canvas/frameAdapter/FrameDocumentAdapter'
+import type { FrameDocumentAdapter, FrameRuntimeEvent } from '@site/canvas/frameAdapter/FrameDocumentAdapter'
+import type { FrameGeometrySnapshot, NodeGeometry } from '@site/canvas/frameGeometry/frameGeometryTypes'
 import { registerFrameAdapter, unregisterFrameAdapter } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
 import { BOARD_ORIGIN_SPAN } from '@site/canvas/BoardCanvasLayer/canvasLayerGeometry'
 import { getFrameGeometry, hitTestBoard, onFrameGeometryDirty, peekFrameGeometry } from '@site/canvas/frameGeometry/frameGeometryRegistry'

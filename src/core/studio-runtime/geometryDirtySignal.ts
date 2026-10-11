@@ -8,7 +8,7 @@
  *
  * Both frames already run a subtree `childList` + `attributes` MutationObserver
  * on the body for ring repositioning (`runtime.ts`' `layoutObserver`,
- * `PortalFrameAdapter`' `armRingTracking`). That observer is the signal for
+ * `PortalFrameAdapter`' `armLayoutTracking`). That observer is the signal for
  * every content or style-attribute change, so it calls {@link
  * GeometryDirtySignal.notify}; this module adds NO body observer.
  *
