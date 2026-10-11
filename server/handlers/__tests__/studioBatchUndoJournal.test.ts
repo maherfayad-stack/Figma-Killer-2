@@ -216,7 +216,7 @@ describe('refuses honestly', () => {
 })
 
 describe('apply a theme class from the Variables panel (CT-6)', () => {
-  const classEdit = (nodeId: string, token: string, exactUndo?: true): StudioEdit => ({ kind: 'class', nodeId, add: [{ kind: 'literal', token }], remove: [], ...(exactUndo ? { exactUndo } : {}) })
+  const classEdit = (nodeId: string, token: string, restyle?: true): StudioEdit => ({ kind: 'class', nodeId, add: [{ kind: 'literal', token }], remove: [], ...(restyle ? { restyle } : {}) })
 
   it('adds the class to a bare element and the journal token takes the whole attribute back', () => {
     const h1 = nodeIdOf(PAGE, 'h1')
@@ -238,7 +238,7 @@ describe('apply a theme class from the Variables panel (CT-6)', () => {
     expect(read('pages/Home.tsx')).toBe(withClass)
   })
 
-  it('a class edit that did not ask for exact undo records no journal entry (autosave edits stay cheap)', () => {
+  it('a plain class edit (not a restyle) records no journal entry (autosave edits stay cheap)', () => {
     const forward = applyStudioEditBatch(dir, [classEdit(nodeIdOf(PAGE, 'h1'), 'bg-primary')], {}, EDITOR)
     expect(forward.undoToken).toBeUndefined()
     expect(journal()).toEqual([])

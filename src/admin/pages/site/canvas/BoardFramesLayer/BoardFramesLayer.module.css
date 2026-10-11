@@ -351,3 +351,11 @@
     background: var(--bg-surface);
     border-radius: 0 0 var(--radius) var(--radius);
 }
+
+/* Mode chip / "+ Mode" in a frame header (CT-4): the same quiet treatment as
+   `.axesBadge`, but pressable, so the header's other children keep their space. */
+.modeChip {
+    flex-shrink: 0;
+    color: var(--text-subtle);
+    white-space: nowrap;
+}

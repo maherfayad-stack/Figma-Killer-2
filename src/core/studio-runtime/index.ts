@@ -102,6 +102,10 @@ export {
   RUNTIME_ERROR_SOURCE_MAX,
   DropCandidatesMessageSchema,
   DropCandidatesResultMessageSchema,
+  GEOMETRY_NODES_MAX,
+  GeometryDirtyMessageSchema,
+  MeasureAllMessageSchema,
+  MeasureAllResultMessageSchema,
   DROP_CANDIDATES_MAX,
   OPTIMISTIC_STYLE_CLEARED,
   DROP_CANDIDATE_CHILD_RECTS_MAX,
@@ -118,10 +122,15 @@ export {
   type NodeMeasurement,
   type TextEditReplyMessage,
   type DropCandidateWire,
+  type GeometryNodeWire,
   type ResizeCommitPatch,
   type ResizeSizingMarkers,
   type ResizeSnapContext,
 } from './messages'
+
+export { nodeVisualRect, type CanvasRectSource, type ClientRectLike } from './nodeVisualRect'
+export { collectNodeGeometry, paintRankOf, type FrameGeometryRead } from './nodeGeometry'
+export { createGeometryDirtySignal, type GeometryDirtySignal } from './geometryDirtySignal'
 
 export { installInlineTextEdit, type InlineTextEditController, type InlineTextEditOptions } from './inlineTextEdit'
 

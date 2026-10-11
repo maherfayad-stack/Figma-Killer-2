@@ -19,7 +19,7 @@
  * calls `notifyCreatedStylesheets` (`studioSaveRequests.ts`) once the save
  * response arrives, alongside the refusal handling.
  *
- * Track B2 — `class` (`server/handlers/studioEditSchemas.ts`'s
+ * Track B2 — `class` (`server/handlers/studioClassEditSchema.ts`'s
  * `ClassEditSchema`, matching `classNameWriteback.ts`'s `ClassNameEditPayload`)
  * replaces Phase 0 item 0.6's honesty-only stopgap: a `node.classIds` add/
  * remove now reaches disk via `setJsxClassName` instead of only ever warning

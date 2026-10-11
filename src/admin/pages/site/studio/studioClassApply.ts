@@ -10,11 +10,11 @@
  * template, a shared component's call site) arrives as the engine's usual
  * warning with the server's sentence, and nothing is written.
  *
- * One commit for the whole selection, and one undo entry: the edit asks for the
- * journal's pre-image (`exactUndo`), because whether the class was already on
- * an element is something only the source knows - an inverse "remove the class"
- * would take away one the author had put there. The journal puts every file
- * back byte for byte instead.
+ * One commit for the whole selection, and one undo entry: the edit is marked
+ * `restyle` (CT-5), which journals the batch and makes it all-or-nothing, because
+ * whether the class was already on an element is something only the source
+ * knows - an inverse "remove the class" would take away one the author had put
+ * there. The journal puts every file back byte for byte instead.
  */
 import { commitStructural } from './studioStructuralCommitEngine'
 
@@ -23,7 +23,7 @@ export async function commitStudioApplyClass(nodeIds: readonly string[], token: 
   if (nodeIds.length === 0) return false
   let landed = false
   await commitStructural(
-    nodeIds.map((nodeId) => ({ kind: 'class', nodeId, add: [{ kind: 'literal', token }], remove: [], exactUndo: true })),
+    nodeIds.map((nodeId) => ({ kind: 'class', nodeId, add: [{ kind: 'literal', token }], remove: [], restyle: true })),
     'Could not apply the class',
     { undo: { label: `Apply ${token}`, template: { kind: 'restore-journal' } }, onLanded: () => { landed = true } },
   )

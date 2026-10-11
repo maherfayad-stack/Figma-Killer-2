@@ -2309,8 +2309,9 @@ opens and when the project's stylesheets change). The contract of a value cell:
   `theme`, a package reference) shows what is written and says it is computed.
   The one thing that works is **apply as a class**: it adds `bg-primary` (etc.)
   to the selection's `className` as a literal `class` edit (`setJsxClassName`),
-  one commit for the selection, with `exactUndo` so the journal puts the file
-  back byte for byte even if the class was already there. A token file no
+  one commit for the selection, marked `restyle` (CT-5) so the batch is journaled and
+  all-or-nothing: Undo puts the file back byte for byte even if the class was
+  already there. A token file no
   Tailwind config reads has no class to apply and says so.
 - **Remove** (`{ op: 'remove', replaceWith? }`) deletes all declarations (and
   rules left empty). A token still read needs `replaceWith` (same family,
@@ -2320,6 +2321,53 @@ opens and when the project's stylesheets change). The contract of a value cell:
 
 `studio_set_tokens` takes `rename` / `remove` (each its own call) next to
 `set`, through the same planner.
+
+### §10.9 Text and effect styles (CT-5)
+
+Figma's text and effect styles are a library the document owns. Here they are
+the project's own classes: **a text style is a class whose declarations are one
+typography bundle, an effect style one shadow/blur bundle** (`studio/
+textStyleDiscovery.ts`, read from the registry the board loaded, so it covers
+`.css` and `*.module.css` alike; a CSS Module class is listed by its local
+name). Text: at least two declarations, one of them family/size/weight/line
+height/letter spacing, and nothing but typography (alignment, colour and
+wrapping are tolerated companions; `margin` or `display` make it a component's
+class). Effect: only `box-shadow`, `filter`, `backdrop-filter`, `text-shadow`,
+at least one not `text-shadow`. Framework-generated utilities, ambient rules,
+`@keyframes` and styled-component classes are never styles.
+
+The Text and Effects section headers carry a styles button (single selection
+only) whose menu lists the project's styles of that family, then **Create ...
+style from selection** and, while one is applied, **Detach style**; the applied
+style also shows as a chip at the top of the section with its detach button.
+Each gesture is planned by `studio/textStylePlan.ts` into edits the writeback
+already has and posted as ONE structural commit (`textStyleCommit.ts`):
+
+| gesture | edits |
+|---|---|
+| apply | `class` add (and take off the family's other style) + `style` strip of the inline values the class now owns - an inline value outranks a class, so leaving it would make the click do nothing |
+| create | `css` insert (the new `.text-<name>` / `.effect-<name>` rule, from the values the layer shows: its classes in cascade order, then its inline values; a value the layer computes in code is not copied) + `class` add + `style` strip. The rule goes where the class picker puts a new class (`resolveCssInsertDestination`); with no stylesheet at all the server makes a plain global `studio.css` |
+| detach | `class` remove + `style` set of the class's declarations inline, except the ones the element already set itself. Refused for a style that also changes at a breakpoint (a `style=""` attribute cannot be media-queried) |
+
+Every `class` edit carries `restyle: true` (`studioEditSchemas.ts`), which asks
+the batch for two things no other class edit gets: it is **journaled** - the
+journal's pre-image also holds the stylesheet a `css` edit names (a CSS edit
+names a file, not a `line:col`, so it is not in the touched-file set) and the
+stylesheet a create made - and it is **all or nothing**
+(`BatchUndoJournal.rollbackRestyle`): if any edit of the batch refuses, every
+file goes back to the pre-image, a created stylesheet is removed, `written` is
+0, and the edits that had run are reported `restyle-rolled-back` after the real
+refusal. Without that, a refused `className` (an expression the codemod cannot
+rewrite) would have left the inline values stripped and no class on the layer.
+Cmd+Z is the journal's `restore` (all files byte for byte); Cmd+Shift+Z posts
+the same edits again.
+
+A refusal the client can know (a name taken, a layer computed in code, a
+generated `.map` row) is a sentence in the name popover or a warning toast
+("Style not applied"), never a silent no-op. Not built: hover preview of a
+style on the canvas (an inline value would mask it), multi-selection, and
+breakpoint-aware create.
+
 ## §11. What an inspector gesture costs the undo stack
 
 Two defects made Ctrl+Z read as broken from the Properties panel. Both were

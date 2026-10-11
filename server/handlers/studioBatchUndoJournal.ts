@@ -19,7 +19,7 @@
  * indentation no inverse move reproduces),
  * a free-canvas `canvas-layer-lift` / `canvas-layer-place` that MOVES (the page
  * and the layer module), a Frame selection (a `group` with a `frame`, PA-6), and an `insert` that asked for an exact undo
- * (`exactUndo`, also asked of a `duplicate`, a copying `transplant` and CT-6's apply-a-theme-class `class` edit: whether the class was already there is not something its inverse can know), and CV-3's `add-variant` / `remove-variant` / `add-component-prop` (a component's signature plus its stylesheet). A batch holding any of them records ONE
+ * (`exactUndo`, also asked of a `duplicate` and a copying `transplant`: it writes into a childless parent), and CV-3's `add-variant` / `remove-variant` / `add-component-prop` (a component's signature plus its stylesheet). A batch holding any of them records ONE
  * entry covering every file the batch changed, so one gesture is one token,
  * however many elements a multi-select delete removed and across however
  * many files.
@@ -47,6 +47,7 @@
  * of them into bytes it was never aimed at. A `restore` in a batch of more
  * than one edit is refused by name, before anything runs.
  */
+import { existsSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { styleLandingNeedsJournal, type StyleLanding } from '@core/page-tree'
 import { cssEditStylesheet } from './studioCssWriteback'
@@ -82,13 +83,36 @@ export function isJournaled(edit: StudioEdit): boolean {
     // An insert into a childless parent expands `<X />` to `<X>…</X>`; deleting
     // the insert leaves `<X>` + newline + `</X>`, which is not what was there.
     // The client asks for the pre-image exactly when the parent had no children.
-    ((edit.kind === 'insert' || edit.kind === 'duplicate' || edit.kind === 'class') && edit.exactUndo === true)
+    ((edit.kind === 'insert' || edit.kind === 'duplicate') && edit.exactUndo === true) ||
+    // CT-5 - a restyle (apply / create / detach a text or effect style) is a
+    // class edit, an inline-style strip and, for a create, a new rule in a
+    // stylesheet - possibly a brand-new one. Only the pre-image takes all of
+    // that back byte for byte (the class token's `className` may have been
+    // created, wrapped or emptied; the new rule's block is a CST insertion).
+    isRestyleEdit(edit)
   )
+}
+
+/** CT-5 - the refusal reason of an edit that wrote, then was taken back because another edit of its restyle batch refused. */
+export const RESTYLE_ROLLED_BACK_REASON = 'restyle-rolled-back'
+
+/** CT-5 - the class edit that marks its whole batch as one restyle gesture. */
+export function isRestyleEdit(edit: StudioEdit): boolean {
+  return edit.kind === 'class' && edit.restyle === true
 }
 
 export interface BatchUndoJournal {
   /** A `restore` that may not run in this batch, as its refusal — `null` for every other edit. */
   refuse: (edit: StudioEdit) => StudioEditRefusal | null
+  /**
+   * CT-5 - a restyle batch is ALL OR NOTHING. Called after the loop with
+   * whether any edit refused and the workspace-relative files the batch
+   * created: when it is a restyle that refused, every file goes back to the
+   * pre-image, every created file is removed, and this returns `true` - the
+   * caller reports `written: 0`. Any other batch returns `false` and is left
+   * alone.
+   */
+  rollbackRestyle: (refused: boolean, createdFiles: readonly string[]) => boolean
   /**
    * After the batch: record what it changed, and return the token — `undefined`
    * when nothing was recorded. `landings` is where each style edit landed: a
@@ -114,11 +138,14 @@ export function openBatchUndoJournal(
     if (edit.kind === 'restore' && journaling) for (const file of undoJournalFiles(dir, edit.token)) touchedFiles.add(file)
   }
   const oneShot = edits.some(isJournaled)
+  const restyling = edits.some(isRestyleEdit)
   // A `css` edit's stylesheet is not in `touchedFiles` (its id decodes to no
-  // source location), so the pre-image names it separately.
+  // source location), so the pre-image names it separately. A restyle needs
+  // its pre-image for the rollback even when nothing is journaled (an agent's batch).
   const styleEdits = journaling && edits.some((edit) => edit.kind === 'css' || edit.kind === 'styled')
-  const stylesheets = styleEdits ? edits.flatMap((edit) => (edit.kind === 'css' ? (cssEditStylesheet(dir, edit) ?? []) : [])) : []
-  const preImage = oneShot || styleEdits ? (journaling ? captureUndoPreImage([...touchedFiles, ...stylesheets]) : null) : null
+  const stylesheets = styleEdits || restyling ? edits.flatMap((edit) => (edit.kind === 'css' ? (cssEditStylesheet(dir, edit) ?? []) : [])) : []
+  const preImage = (journaling && (oneShot || styleEdits)) || restyling ? captureUndoPreImage([...touchedFiles, ...stylesheets]) : null
+  const absolute = (rel: string): string => join(dir, ...rel.split('/'))
 
   return {
     refuse: (edit) => {
@@ -131,10 +158,22 @@ export function openBatchUndoJournal(
       }
       return null
     },
+    rollbackRestyle: (refused, createdFiles) => {
+      if (!restyling || !refused || !preImage) return false
+      for (const [file, bytes] of preImage) {
+        if (bytes === null) rmSync(file, { force: true })
+        else writeFileSync(file, bytes)
+      }
+      for (const rel of createdFiles) {
+        const file = absolute(rel)
+        if (existsSync(file)) rmSync(file, { force: true })
+      }
+      return true
+    },
     commit: (written, createdFiles, landings) => {
-      if (!preImage || written === 0) return undefined
+      if (!journaling || !preImage || written === 0) return undefined
       if (!oneShot && !landings.some((landing) => styleLandingNeedsJournal(landing.rung))) return undefined
-      return recordUndoJournal(dir, preImage, createdFiles.map((rel) => join(dir, ...rel.split('/')))) ?? undefined
+      return recordUndoJournal(dir, preImage, createdFiles.map(absolute)) ?? undefined
     },
   }
 }

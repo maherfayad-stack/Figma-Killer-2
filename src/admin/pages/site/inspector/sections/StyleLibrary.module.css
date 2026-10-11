@@ -1,0 +1,85 @@
+/* StyleLibrary - the Text / Effects style picker (CT-5). The trigger lives in
+   the section header's actions slot; the applied-style row sits at the top of
+   the section body, only while a style is applied, so a layer without one pays
+   no height for the feature. */
+
+.appliedRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--inspector-field-gap);
+    min-width: 0;
+}
+
+.appliedChip {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: var(--inspector-row-h);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--inspector-space-s);
+    padding: 0 var(--inspector-space-m);
+    border-radius: var(--inspector-field-radius);
+    background: var(--inspector-field-bg);
+    color: var(--text);
+    font-size: var(--text-xs);
+}
+
+.appliedName {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.appliedSummary {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-subtle);
+}
+
+.menuItemBody {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    min-width: 0;
+}
+
+.menuItemSummary {
+    color: var(--text-subtle);
+    font-size: var(--text-xs);
+}
+
+.menuEmpty {
+    padding: var(--inspector-space-m) var(--inspector-pad-x);
+    color: var(--text-subtle);
+    font-size: var(--text-xs);
+}
+
+.nameForm {
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-space-m);
+    padding: var(--inspector-space-m);
+}
+
+.nameActions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--inspector-space-s);
+}
+
+.nameError {
+    margin: 0;
+    color: var(--danger-text);
+    font-size: var(--text-xs);
+}
+
+.nameHint {
+    margin: 0;
+    color: var(--text-subtle);
+    font-size: var(--text-xs);
+}

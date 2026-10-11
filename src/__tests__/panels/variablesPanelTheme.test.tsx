@@ -176,14 +176,14 @@ describe('VariablesPanel - apply by utility class', () => {
     expect(saved).toHaveLength(0)
   })
 
-  it('posts ONE literal class edit with exact undo for the selected element', async () => {
+  it('posts ONE literal class edit, marked restyle (journaled), for the selected element', async () => {
     stubServer()
     useEditorStore.setState({ selectedNodeIds: [NODE], selectedNodeId: NODE })
     await renderPanel()
     fireEvent.click(screen.getByLabelText('Apply colors.berry as a class'))
     fireEvent.click(screen.getByRole('button', { name: 'bg-berry' }))
     await waitFor(() => expect(saved).toHaveLength(1))
-    expect(saved[0]).toMatchObject([{ kind: 'class', nodeId: NODE, add: [{ kind: 'literal', token: 'bg-berry' }], remove: [], exactUndo: true }])
+    expect(saved[0]).toMatchObject([{ kind: 'class', nodeId: NODE, add: [{ kind: 'literal', token: 'bg-berry' }], remove: [], restyle: true }])
   })
 
   it('a refusal is the engine warning, never an Added message', async () => {

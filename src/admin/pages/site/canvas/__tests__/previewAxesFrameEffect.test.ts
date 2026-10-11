@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { GlobalWindow } from 'happy-dom'
 import { applyPreviewAxesToFrameDocument, parseClassSchemeSelector, VENDOR_THEME_ATTR } from '../previewAxesFrameEffect'
 import { DARK_SCHEME_ATTR } from '../darkSchemeCssTransform'
+import type { ModeAxis } from '@core/studio-tokens'
 
 function freshHtmlElement(): HTMLElement {
   const window = new GlobalWindow()
@@ -98,5 +99,41 @@ describe('applyPreviewAxesToFrameDocument', () => {
     expect(html.attributes.length).toBeGreaterThan(0) // dir/scheme still set
     applyPreviewAxesToFrameDocument(html, { direction: 'ltr', colorScheme: 'dark' }, { mechanism: 'none' })
     expect(html.classList.length).toBe(0)
+  })
+})
+
+describe('applyPreviewAxesToFrameDocument: catalog mode gates (CT-4)', () => {
+  const classScheme: ModeAxis = {
+    id: 'color-scheme',
+    label: 'Color scheme',
+    modes: [{ id: 'dark', label: 'Dark', gate: { kind: 'class', className: 'dark' } }],
+  }
+  const density: ModeAxis = {
+    id: 'density',
+    label: 'Density',
+    modes: [{ id: 'compact', label: 'compact', gate: { kind: 'attr', attr: 'data-density', value: 'compact' } }],
+  }
+
+  it("toggles the project's own class gate from the catalog, with no probe result", () => {
+    const html = freshHtmlElement()
+    applyPreviewAxesToFrameDocument(html, { direction: 'ltr', colorScheme: 'dark' }, null, [classScheme])
+    expect(html.classList.contains('dark')).toBe(true)
+    applyPreviewAxesToFrameDocument(html, { direction: 'ltr', colorScheme: 'light' }, null, [classScheme])
+    expect(html.classList.contains('dark')).toBe(false)
+  })
+
+  it('does not also run the probe-derived class toggle when the catalog drives the scheme', () => {
+    const html = freshHtmlElement()
+    applyPreviewAxesToFrameDocument(html, { direction: 'ltr', colorScheme: 'dark' }, { mechanism: 'class', selector: '.probe-dark' }, [classScheme])
+    expect(html.classList.contains('probe-dark')).toBe(false)
+    expect(html.classList.contains('dark')).toBe(true)
+  })
+
+  it('applies a non-scheme axis from axes.modes and clears it when back on default', () => {
+    const html = freshHtmlElement()
+    applyPreviewAxesToFrameDocument(html, { direction: 'ltr', colorScheme: 'light', modes: { density: 'compact' } }, null, [density])
+    expect(html.getAttribute('data-density')).toBe('compact')
+    applyPreviewAxesToFrameDocument(html, { direction: 'ltr', colorScheme: 'light' }, null, [density])
+    expect(html.hasAttribute('data-density')).toBe(false)
   })
 })

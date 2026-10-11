@@ -115,6 +115,7 @@
  *     `canvasRootRef.current` rather than JSX pointer props on `.layer`, and
  *     how that also resolves who wins against `useCanvas`'s pan gesture).
  */
+import { useStudioTokenCatalogSync } from '@site/studio/useStudioTokenCatalogSync'
 import {
   useContext,
   useEffect,
@@ -167,6 +168,9 @@ interface FrameRetention {
 const INITIAL_RETENTION: FrameRetention = { key: '\u0000', ids: EMPTY_RETENTION }
 
 export function BoardFramesLayer() {
+  // CT-4: the frames' mode chips and the gates they apply come from the token
+  // catalog; the board keeps it current rather than waiting on the inspector.
+  useStudioTokenCatalogSync()
   // C3 (this change) — subscribe to `board.frames` alone, not the whole
   // `Board`. Every board-mutating helper does copy-on-write on the whole
   // `Board` object for Mutative/history correctness, so `selectActiveBoard`
